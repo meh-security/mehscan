@@ -1377,20 +1377,27 @@ fn portable_json_value(value: &impl serde::Serialize) -> Result<serde_json::Valu
     Ok(value)
 }
 
+fn is_absolute_artifact_path(path: &str) -> bool {
+    Path::new(path).is_absolute()
+        || path.starts_with('/')
+        || path.starts_with("\\\\")
+        || matches!(
+            path.as_bytes(),
+            [drive, b':', separator, ..]
+                if drive.is_ascii_alphabetic() && matches!(separator, b'/' | b'\\')
+        )
+}
+
 fn make_json_paths_portable(value: &mut serde_json::Value) -> Result<(), String> {
     match value {
         serde_json::Value::Object(fields) => {
             for (name, value) in fields {
                 if matches!(name.as_str(), "root" | "scanRoot")
-                    && value
-                        .as_str()
-                        .is_some_and(|path| Path::new(path).is_absolute())
+                    && value.as_str().is_some_and(is_absolute_artifact_path)
                 {
                     *value = serde_json::Value::String(".".to_string());
                 } else if matches!(name.as_str(), "path" | "uri")
-                    && value
-                        .as_str()
-                        .is_some_and(|path| Path::new(path).is_absolute())
+                    && value.as_str().is_some_and(is_absolute_artifact_path)
                 {
                     return Err(format!(
                         "refusing to serialize absolute artifact location {:?}",
@@ -1635,16 +1642,25 @@ mod tests {
     fn portable_json_hides_roots_and_rejects_absolute_locations() {
         let portable = portable_json_value(&serde_json::json!({
             "root": "C:/private/checkout",
+            "scanRoot": "/private/checkout",
             "location": { "path": "src/main.rs" }
         }))
         .expect("relative location should serialize");
         assert_eq!(portable["root"], ".");
+        assert_eq!(portable["scanRoot"], ".");
 
-        assert!(
-            portable_json_value(&serde_json::json!({
-                "location": { "path": "C:/private/checkout/src/main.rs" }
-            }))
-            .is_err()
-        );
+        for absolute in [
+            "C:/private/checkout/src/main.rs",
+            "/private/checkout/src/main.rs",
+            r"\\server\share\src\main.rs",
+        ] {
+            assert!(
+                portable_json_value(&serde_json::json!({
+                    "location": { "path": absolute }
+                }))
+                .is_err(),
+                "absolute path should be rejected: {absolute}"
+            );
+        }
     }
 }

@@ -10,6 +10,8 @@
 *.userosscache
 *.sln.docstates
 *.env
+!tests/fixtures/secret-files/positive/.env
+!tests/fixtures/secret-files/allowlisted/by-path.env
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs

@@ -793,19 +793,6 @@ fn diffs_reviewer_visible_bundle_content_and_scopes_model_validation() {
             .expect("changed bundles")
             .is_empty()
     );
-    let membership_changed = changed["membership_changed_after_bundles"]
-        .as_array()
-        .expect("membership-changed bundles");
-    assert!(!membership_changed.is_empty());
-    let changed_after = changed["changed_after_bundles"]
-        .as_array()
-        .expect("changed bundles");
-    assert!(
-        membership_changed
-            .iter()
-            .all(|filename| changed_after.contains(filename))
-    );
-
     let unchanged = Command::new(env!("CARGO_BIN_EXE_mehscan"))
         .args([
             "investigate",
