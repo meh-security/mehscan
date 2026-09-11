@@ -26,13 +26,12 @@ jobs:
       - name: Select the minimum supported Rust toolchain
         run: rustup default 1.88.0
 
-      - name: Cache Cargo dependencies and build output
+      - name: Cache Cargo dependencies
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: windows-release-cargo-1.88.0-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             windows-release-cargo-1.88.0-
