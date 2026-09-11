@@ -84,6 +84,16 @@ to copy them elsewhere, `-Version` for an explicit preview version, or
 `-SkipBuild` to package an already-built release executable. `-SkipSmoke` is
 available for packaging diagnosis, but should not be used for a release gate.
 
+Official release archives are built from version tags by GitHub Actions, not
+uploaded from a developer workstation. The release workflow tests the pinned
+source, builds and smoke-tests the archive, publishes its SHA-256 checksum, and
+records GitHub artifact provenance for the archive. Verify a downloaded archive
+with:
+
+```text
+gh attestation verify mehscan-v0.1.0-windows-x86_64.zip -R meh-security/mehscan
+```
+
 Code analysis uses available host parallelism by default, capped at 32 workers.
 Use `--jobs N` for a reproducible override. Dependency, build, generated, cache,
 and minified trees are filtered. Tests and fixtures are excluded from SAST by

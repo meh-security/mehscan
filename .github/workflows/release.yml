@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build, test, and attest Windows release
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install the minimum supported Rust toolchain
+        run: rustup toolchain install 1.88.0 --profile minimal --no-self-update
+
+      - name: Select the minimum supported Rust toolchain
+        run: rustup default 1.88.0
+
+      - name: Cache Cargo dependencies and build output
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-release-cargo-1.88.0-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            windows-release-cargo-1.88.0-
+
+      - name: Test all targets
+        run: cargo test --all-targets --locked
+
+      - name: Build and smoke-test the release archive
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          ./scripts/build-preview.ps1 -Version $version
+
+      - name: Attest the CI-built release archive
+        uses: actions/attest@v4
+        with:
+          subject-path: target/release-artifacts/*.zip
+
+      - name: Upload the release archive and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: mehscan-release
+          path: |
+            target/release-artifacts/*.zip
+            target/release-artifacts/*.zip.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download the attested release files
+        uses: actions/download-artifact@v5
+        with:
+          name: mehscan-release
+          path: dist
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}"
+          dist/*
+          --repo "${GITHUB_REPOSITORY}"
+          --verify-tag
+          --generate-notes
+          --title "${GITHUB_REF_NAME}"

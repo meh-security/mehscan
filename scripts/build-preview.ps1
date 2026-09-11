@@ -53,7 +53,7 @@ function Assert-SafeTemporaryPath([string]$Path) {
 
 try {
     if (-not $SkipBuild) {
-        & cargo build --manifest-path (Join-Path $repositoryRoot 'Cargo.toml') -p mehscan-cli --release
+        & cargo build --manifest-path (Join-Path $repositoryRoot 'Cargo.toml') -p mehscan-cli --release --locked
         if ($LASTEXITCODE -ne 0) {
             throw "Release build failed with exit code $LASTEXITCODE"
         }
