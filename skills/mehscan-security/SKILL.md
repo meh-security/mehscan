@@ -107,40 +107,42 @@ For bundle responses, echo the exact `bundle_fingerprint`, provide every
 mehscan investigate review-bundle-triage --bundle REQUEST --responses RESPONSE
 ```
 
-Treat each request file as one independent model call. Do not ask one model
-turn to process a directory or a sequence of bundles: experiments show that
-large multi-bundle tasks encourage one repeated verdict template even when the
-individual request files are small. The generation default remains 20 reviews
-per bundle; lower `--max-reviews` only for a measured retry or evaluation.
+Treat each request file as one independent review invocation. Do not process a
+directory or sequence of bundles in one context: large multi-bundle tasks can
+encourage repeated verdict templates even when individual request files are
+small. The generation default remains 20 reviews per bundle; lower
+`--max-reviews` only for a measured retry or evaluation.
 
-Use Luna-medium as the normal first-pass review tier. Model routing follows the
-payload, not the CWE or rule name:
+Use the default capable review configuration for the first pass. Route review
+effort by payload completeness and decision quality, not by provider, model
+name, CWE, or rule:
 
 - decision-critical truncation means regenerate or gather context;
 - non-empty `decision_facts.unresolved` means retain the exact `needs_review`
-  check or gather that fact, not pay a larger model to invent it;
+  check or gather that fact rather than escalating to infer it;
 - empty `decision_facts.unresolved` means require a decisive verdict using the
   exact deterministic `confidence_policy`;
 - reject capability drift, operands absent from the payload, re-asking supplied
-  facts, and generic repeated summaries, then retry once in a fresh Luna call;
-- use Terra-medium only when a complete payload still receives a repeated,
-  contract-valid but evidence-inconsistent Luna decision;
-- use Sol at most for a high-impact Luna/Terra disagreement after those checks.
+  facts, and generic repeated summaries, then retry once with fresh context;
+- use a stronger independent reviewer only when a complete payload still
+  receives a repeated, contract-valid but evidence-inconsistent decision;
+- reserve the highest-cost or deepest review configuration for a high-impact
+  disagreement that remains after those checks.
 
-Record escalation history by exact review or payload fingerprint. Do not mark
-an entire CWE, capability, or rule as requiring an expensive model from one
-disagreement.
+Record the reviewer configuration and escalation history by exact review or
+payload fingerprint. Do not mark an entire CWE, capability, or rule as
+requiring an expensive reviewer from one disagreement.
 
 After all manifest responses validate, generate both canonical consumer
-artifacts. Use the exact model-specific response directory rather than copying
-it to a generic name:
+artifacts. Use the exact reviewer-specific response directory rather than
+copying it to a generic name:
 
 ```text
-mehscan report --run DIR --responses RESPONSES_DIR --format json --output mehscan-findings.json --reviewer MODEL
-mehscan report --run DIR --responses RESPONSES_DIR --format sarif --output mehscan-results.sarif --reviewer MODEL
+mehscan report --run DIR --responses RESPONSES_DIR --format json --output mehscan-findings.json --reviewer REVIEWER_ID
+mehscan report --run DIR --responses RESPONSES_DIR --format sarif --output mehscan-results.sarif --reviewer REVIEWER_ID
 ```
 
-The model writes only the strict verdict response. Never ask it to construct
+The reviewer writes only the strict verdict response. Never ask it to construct
 finding JSON or SARIF: the CLI joins deterministic rule, location, flow, and
 provenance fields and publishes only confirmed issues to SARIF. Preserve
 `needs_review` in canonical JSON.
