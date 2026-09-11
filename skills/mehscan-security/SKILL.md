@@ -18,22 +18,23 @@ Resolve the executable in this order:
    availability from a previous task or a filename elsewhere on disk.
 3. In a Mehscan source checkout, check `target/release/mehscan` (or
    `mehscan.exe` on Windows).
-4. If no executable is available, try the latest published release from
-   `meh-security/mehscan`. Detect the host OS and architecture and select only
-   an asset whose platform and architecture components match exactly; never
-   substitute a differently named target. Download its `.sha256` companion,
-   verify the digest, and verify release provenance with
-   `gh attestation verify ARCHIVE --repo meh-security/mehscan` before extracting
-   or executing it. Confirm the extracted `mehscan --version` matches the
-   release tag. Use a task-scoped temporary or tool cache directory, not the
-   repository being scanned.
+4. If no executable is available, run the bundled
+   `scripts/install-mehscan.ps1` from this skill directory. It selects the
+   latest exact OS/architecture release asset, verifies its checksum and GitHub
+   build provenance, validates archive membership and the release manifest,
+   then returns the installed executable path. Pass `-Version` only when the
+   user requested a particular release and `-InstallDirectory` when the task
+   requires a specific cache.
 5. If no exact release asset exists, or checksum/provenance verification cannot
    succeed, do not execute the download. Build the release CLI only when the
    current checkout contains Mehscan and building is within scope; otherwise
    report that the scanner is unavailable for this target.
 
-Use only the official GitHub repository for automatic downloads. Never
-download ast-grep; Mehscan includes the components it uses.
+The installer requires an authenticated GitHub CLI and fails closed when the
+target, checksum, provenance, archive, manifest, or version cannot be verified.
+Do not reproduce its download logic ad hoc or weaken a failed check. Use only
+the official GitHub repository for automatic downloads. Never download
+ast-grep; Mehscan includes the components it uses.
 
 Run `mehscan --help` before assuming an option exists. Keep the scan root inside
 the repository the user authorized. Directory discovery honors repository-local

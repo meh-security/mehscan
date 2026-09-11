@@ -66,7 +66,8 @@ try {
         (Join-Path $repositoryRoot 'LICENSE'),
         (Join-Path $repositoryRoot 'THIRD_PARTY_NOTICES.md'),
         (Join-Path $repositoryRoot 'skills\mehscan-security\SKILL.md'),
-        (Join-Path $repositoryRoot 'skills\mehscan-security\agents\openai.yaml')
+        (Join-Path $repositoryRoot 'skills\mehscan-security\agents\openai.yaml'),
+        (Join-Path $repositoryRoot 'skills\mehscan-security\scripts\install-mehscan.ps1')
     )
     foreach ($source in $requiredSources) {
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
@@ -79,12 +80,14 @@ try {
     }
 
     New-Item -ItemType Directory -Path (Join-Path $stageRoot 'skills\mehscan-security\agents') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $stageRoot 'skills\mehscan-security\scripts') -Force | Out-Null
     Copy-Item -LiteralPath $binaryPath -Destination (Join-Path $stageRoot 'mehscan.exe')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'README.md') -Destination $stageRoot
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'LICENSE') -Destination $stageRoot
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'THIRD_PARTY_NOTICES.md') -Destination $stageRoot
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills\mehscan-security\SKILL.md') -Destination (Join-Path $stageRoot 'skills\mehscan-security')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills\mehscan-security\agents\openai.yaml') -Destination (Join-Path $stageRoot 'skills\mehscan-security\agents')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills\mehscan-security\scripts\install-mehscan.ps1') -Destination (Join-Path $stageRoot 'skills\mehscan-security\scripts')
 
     $expectedFiles = @(
         'LICENSE',
@@ -92,6 +95,7 @@ try {
         'README.md',
         'release-manifest.json',
         'skills/mehscan-security/agents/openai.yaml',
+        'skills/mehscan-security/scripts/install-mehscan.ps1',
         'skills/mehscan-security/SKILL.md',
         'THIRD_PARTY_NOTICES.md'
     ) | Sort-Object
