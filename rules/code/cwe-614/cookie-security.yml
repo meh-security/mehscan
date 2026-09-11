@@ -1,0 +1,271 @@
+- id: csharp-cookie-secure-flag
+  version: 1
+  title: .NET cookie Secure flag configuration
+  language: csharp
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-614]
+  match:
+    any:
+      - pattern: $OPTIONS.Cookie.SecurePolicy = $VALUE
+        context: |
+          class Pattern { void PatternContext() { $OPTIONS.Cookie.SecurePolicy = $VALUE; } }
+        selector: assignment_expression
+        captures: { secure: VALUE }
+  tags: [cookie, secure, configuration]
+  ai: &cookie_secure_guidance
+    investigate:
+      - the evaluated Secure option and whether the cookie can travel over plaintext transport
+      - environment-specific overrides, proxy termination, and production defaults
+      - the sensitivity and lifetime of the cookie value
+    verify:
+      - inspect the final browser-visible Set-Cookie header for the affected route and production environment
+      - confirm the cookie carries authentication or other sensitive state and can be sent over an untrusted plaintext channel
+    exclude:
+      - do not report from cookie-option syntax alone when the effective value enables Secure
+      - do not assume proxy TLS termination removes the need for Secure; decide from the final browser-visible cookie and reachable external transport
+  provenance: &csharp_cookie_provenance
+    note: .NET cookie transport-security configuration mapped to CWE-614 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/614.html
+      - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.cookiebuilder.securepolicy
+
+- id: csharp-cookie-httponly-flag
+  version: 1
+  title: .NET cookie HttpOnly flag configuration
+  language: csharp
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-1004]
+  match:
+    any:
+      - pattern: $OPTIONS.Cookie.HttpOnly = $VALUE
+        context: |
+          class Pattern { void PatternContext() { $OPTIONS.Cookie.HttpOnly = $VALUE; } }
+        selector: assignment_expression
+        captures: { http_only: VALUE }
+  tags: [cookie, http-only, configuration]
+  ai: &cookie_httponly_guidance
+    investigate:
+      - the evaluated HttpOnly option and whether browser script access is required
+      - environment-specific overrides and framework defaults
+      - the sensitivity and lifetime of the cookie value
+    verify:
+      - inspect the final browser-visible Set-Cookie header for the affected route and production environment
+      - confirm the cookie carries authentication or other sensitive state and is readable by browser script
+    exclude:
+      - do not report from cookie-option syntax alone when the effective value enables HttpOnly
+      - do not classify a deliberately script-readable non-sensitive cookie as an authentication-cookie weakness
+  provenance:
+    note: .NET cookie script-access configuration mapped to CWE-1004 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/1004.html
+      - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.cookiebuilder.httponly
+
+- id: java-cookie-secure-flag
+  version: 1
+  title: Java cookie Secure flag configuration
+  language: java
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-614]
+  match:
+    any:
+      - pattern: $COOKIE.setSecure($VALUE)
+        captures: { secure: VALUE }
+  tags: [cookie, secure, configuration]
+  ai: *cookie_secure_guidance
+  provenance: &java_cookie_secure_provenance
+    note: Java cookie transport-security configuration mapped to CWE-614 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/614.html
+      - https://jakarta.ee/specifications/platform/10/apidocs/jakarta/servlet/http/cookie
+
+- id: java-cookie-httponly-flag
+  version: 1
+  title: Java cookie HttpOnly flag configuration
+  language: java
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-1004]
+  match:
+    any:
+      - pattern: $COOKIE.setHttpOnly($VALUE)
+        captures: { http_only: VALUE }
+  tags: [cookie, http-only, configuration]
+  ai: *cookie_httponly_guidance
+  provenance:
+    note: Java cookie script-access configuration mapped to CWE-1004 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/1004.html
+      - https://jakarta.ee/specifications/platform/10/apidocs/jakarta/servlet/http/cookie
+
+- id: javascript-cookie-secure-flag
+  version: 1
+  title: JavaScript cookie Secure flag configuration
+  language: javascript
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-614]
+  match: &javascript_cookie_secure_match
+    any:
+      - pattern: '$RESPONSE.cookie($NAME, $PAYLOAD, { secure: $VALUE })'
+        captures: { secure: VALUE }
+  tags: [cookie, secure, configuration]
+  ai: *cookie_secure_guidance
+  provenance: &javascript_cookie_secure_provenance
+    note: Express cookie transport-security configuration mapped to CWE-614 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/614.html
+      - https://expressjs.com/en/4x/api.html#res.cookie
+
+- id: javascript-cookie-httponly-flag
+  version: 1
+  title: JavaScript cookie HttpOnly flag configuration
+  language: javascript
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-1004]
+  match: &javascript_cookie_httponly_match
+    any:
+      - pattern: '$RESPONSE.cookie($NAME, $PAYLOAD, { httpOnly: $VALUE })'
+        captures: { http_only: VALUE }
+  tags: [cookie, http-only, configuration]
+  ai: *cookie_httponly_guidance
+  provenance: &javascript_cookie_httponly_provenance
+    note: Express cookie script-access configuration mapped to CWE-1004 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/1004.html
+      - https://expressjs.com/en/4x/api.html#res.cookie
+
+- id: typescript-cookie-secure-flag
+  version: 1
+  title: TypeScript cookie Secure flag configuration
+  language: typescript
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-614]
+  match: *javascript_cookie_secure_match
+  tags: [cookie, secure, configuration]
+  ai: *cookie_secure_guidance
+  provenance: *javascript_cookie_secure_provenance
+
+- id: typescript-cookie-httponly-flag
+  version: 1
+  title: TypeScript cookie HttpOnly flag configuration
+  language: typescript
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-1004]
+  match: *javascript_cookie_httponly_match
+  tags: [cookie, http-only, configuration]
+  ai: *cookie_httponly_guidance
+  provenance: *javascript_cookie_httponly_provenance
+
+- id: tsx-cookie-secure-flag
+  version: 1
+  title: TSX cookie Secure flag configuration
+  language: tsx
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-614]
+  match: *javascript_cookie_secure_match
+  tags: [cookie, secure, configuration]
+  ai: *cookie_secure_guidance
+  provenance: *javascript_cookie_secure_provenance
+
+- id: tsx-cookie-httponly-flag
+  version: 1
+  title: TSX cookie HttpOnly flag configuration
+  language: tsx
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-1004]
+  match: *javascript_cookie_httponly_match
+  tags: [cookie, http-only, configuration]
+  ai: *cookie_httponly_guidance
+  provenance: *javascript_cookie_httponly_provenance
+
+- id: python-cookie-secure-flag
+  version: 1
+  title: Python cookie Secure flag configuration
+  language: python
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-614]
+  match:
+    any:
+      - pattern: $RESPONSE.set_cookie($NAME, $PAYLOAD, secure=$VALUE)
+        captures: { secure: VALUE }
+  tags: [cookie, secure, configuration]
+  ai: *cookie_secure_guidance
+  provenance: &python_cookie_secure_provenance
+    note: Python response-cookie transport-security configuration mapped to CWE-614 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/614.html
+      - https://www.starlette.io/responses/#set-cookie
+
+- id: python-cookie-httponly-flag
+  version: 1
+  title: Python cookie HttpOnly flag configuration
+  language: python
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-1004]
+  match:
+    any:
+      - pattern: $RESPONSE.set_cookie($NAME, $PAYLOAD, httponly=$VALUE)
+        captures: { http_only: VALUE }
+  tags: [cookie, http-only, configuration]
+  ai: *cookie_httponly_guidance
+  provenance:
+    note: Python response-cookie script-access configuration mapped to CWE-1004 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/1004.html
+      - https://www.starlette.io/responses/#set-cookie
+
+- id: go-cookie-secure-flag
+  version: 1
+  title: Go cookie Secure flag configuration
+  language: go
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-614]
+  match:
+    any:
+      - pattern: 'http.Cookie{Secure: $VALUE}'
+        context: |
+          package pattern
+          func patternContext() { _ = http.Cookie{Secure: $VALUE} }
+        selector: composite_literal
+        captures: { secure: VALUE }
+  tags: [cookie, secure, configuration]
+  ai: *cookie_secure_guidance
+  provenance: &go_cookie_secure_provenance
+    note: Go cookie transport-security configuration mapped to CWE-614 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/614.html
+      - https://pkg.go.dev/net/http#Cookie
+
+- id: go-cookie-httponly-flag
+  version: 1
+  title: Go cookie HttpOnly flag configuration
+  language: go
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-1004]
+  match:
+    any:
+      - pattern: 'http.Cookie{HttpOnly: $VALUE}'
+        context: |
+          package pattern
+          func patternContext() { _ = http.Cookie{HttpOnly: $VALUE} }
+        selector: composite_literal
+        captures: { http_only: VALUE }
+  tags: [cookie, http-only, configuration]
+  ai: *cookie_httponly_guidance
+  provenance:
+    note: Go cookie script-access configuration mapped to CWE-1004 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/1004.html
+      - https://pkg.go.dev/net/http#Cookie

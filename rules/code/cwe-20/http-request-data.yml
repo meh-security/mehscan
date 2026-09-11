@@ -1,0 +1,483 @@
+- id: csharp-http-request-data
+  version: 1
+  title: ASP.NET Core request-controlled data access
+  language: csharp
+  kind: source
+  capability: http_request_data
+  confidence: medium
+  cwe: [CWE-20]
+  match:
+    any:
+      - pattern: Request.Query[$NAME]
+        captures: { name: NAME }
+      - pattern: Request.Form[$NAME]
+        captures: { name: NAME }
+      - pattern: Request.RouteValues[$NAME]
+        captures: { name: NAME }
+      - pattern: Request.Headers[$NAME]
+        captures: { name: NAME }
+      - pattern: Request.Cookies[$NAME]
+        captures: { name: NAME }
+      - pattern: HttpContext.Request.Query[$NAME]
+        captures: { name: NAME }
+      - pattern: HttpContext.Request.Form[$NAME]
+        captures: { name: NAME }
+      - pattern: HttpContext.Request.RouteValues[$NAME]
+        captures: { name: NAME }
+      - pattern: HttpContext.Request.Headers[$NAME]
+        captures: { name: NAME }
+      - pattern: HttpContext.Request.Cookies[$NAME]
+        captures: { name: NAME }
+      - pattern: Request.QueryString[$NAME]
+        captures: { name: NAME }
+      - pattern: Request.Params[$NAME]
+        captures: { name: NAME }
+      - pattern: HttpContext.Current.Request.QueryString[$NAME]
+        captures: { name: NAME }
+      - pattern: HttpContext.Current.Request.Form[$NAME]
+        captures: { name: NAME }
+      - pattern: HttpContext.Current.Request.Params[$NAME]
+        captures: { name: NAME }
+  tags: [http, request, attacker-controlled, aspnet-core]
+  ai: &request_guidance
+    investigate:
+      - the external request field represented by this access
+      - validation, normalization, authorization, and trust-boundary assumptions
+      - downstream use in security-sensitive operations and output contexts
+  provenance:
+    note: ASP.NET Core request collections mapped to attacker-controlled input review.
+    references:
+      - https://cwe.mitre.org/data/definitions/20.html
+      - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.httprequest
+
+- id: java-http-request-data
+  version: 1
+  title: Java Servlet request-controlled data access
+  language: java
+  kind: source
+  capability: http_request_data
+  confidence: medium
+  cwe: [CWE-20]
+  match:
+    any:
+      - pattern: request.getParameter($NAME)
+        captures: { name: NAME }
+      - pattern: request.getInputStream()
+      - pattern: request.getReader()
+      - pattern: request.getPathInfo()
+      - pattern: request.getHeader($NAME)
+        captures: { name: NAME }
+      - pattern: request.getCookies()
+  tags: [http, request, attacker-controlled, servlet]
+  ai: *request_guidance
+  provenance:
+    note: Jakarta Servlet request accessors mapped to attacker-controlled input review.
+    references:
+      - https://cwe.mitre.org/data/definitions/20.html
+      - https://jakarta.ee/specifications/servlet/6.1/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest
+
+- id: javascript-http-request-data
+  version: 1
+  title: Express request-controlled data access
+  language: javascript
+  kind: source
+  capability: http_request_data
+  confidence: medium
+  cwe: [CWE-20]
+  match: &express_request_match
+    any:
+      - pattern: req.body.$NAME
+        captures: { name: NAME }
+      - pattern: req.body[$NAME]
+        captures: { name: NAME }
+      - pattern: req.query.$NAME
+        captures: { name: NAME }
+      - pattern: req.query[$NAME]
+        captures: { name: NAME }
+      - pattern: req.params.$NAME
+        captures: { name: NAME }
+      - pattern: req.params[$NAME]
+        captures: { name: NAME }
+      - pattern: req.headers.$NAME
+        captures: { name: NAME }
+      - pattern: req.headers[$NAME]
+        captures: { name: NAME }
+      - pattern: req.header($NAME)
+        captures: { name: NAME }
+      - pattern: req.get($NAME)
+        captures: { name: NAME }
+      - pattern: req.cookies.$NAME
+        captures: { name: NAME }
+      - pattern: req.cookies[$NAME]
+        captures: { name: NAME }
+  tags: [http, request, attacker-controlled, express]
+  ai: *request_guidance
+  provenance: &express_request_provenance
+    note: Express request properties and accessors mapped to attacker-controlled input review.
+    references:
+      - https://cwe.mitre.org/data/definitions/20.html
+      - https://expressjs.com/en/4x/api.html#req
+
+- id: typescript-http-request-data
+  version: 1
+  title: TypeScript Express request-controlled data access
+  language: typescript
+  kind: source
+  capability: http_request_data
+  confidence: medium
+  cwe: [CWE-20]
+  match: *express_request_match
+  tags: [http, request, attacker-controlled, express]
+  ai: *request_guidance
+  provenance: *express_request_provenance
+
+- id: tsx-http-request-data
+  version: 1
+  title: TSX Express request-controlled data access
+  language: tsx
+  kind: source
+  capability: http_request_data
+  confidence: medium
+  cwe: [CWE-20]
+  match: *express_request_match
+  tags: [http, request, attacker-controlled, express]
+  ai: *request_guidance
+  provenance: *express_request_provenance
+
+- id: javascript-angular-route-data
+  version: 1
+  title: Angular route-controlled data access
+  language: javascript
+  kind: source
+  capability: http_request_data
+  confidence: medium
+  cwe: [CWE-20]
+  match: &angular_route_data_match
+    any:
+      - pattern: $ROUTE.snapshot.queryParams.$NAME
+        captures: { name: NAME }
+      - pattern: $ROUTE.snapshot.queryParams[$NAME]
+        captures: { name: NAME }
+      - pattern: $ROUTE.snapshot.params.$NAME
+        captures: { name: NAME }
+      - pattern: $ROUTE.snapshot.params[$NAME]
+        captures: { name: NAME }
+  tags: [browser, angular, route, attacker-controlled]
+  ai: *request_guidance
+  provenance: &angular_route_data_provenance
+    note: Angular snapshot route and query parameters are mapped to browser-controlled input review.
+    references:
+      - https://cwe.mitre.org/data/definitions/20.html
+      - https://angular.dev/api/router/ActivatedRouteSnapshot
+
+- id: typescript-angular-route-data
+  version: 1
+  title: Angular route-controlled data access
+  language: typescript
+  kind: source
+  capability: http_request_data
+  confidence: medium
+  cwe: [CWE-20]
+  match: *angular_route_data_match
+  tags: [browser, angular, route, attacker-controlled]
+  ai: *request_guidance
+  provenance: *angular_route_data_provenance
+
+- id: tsx-angular-route-data
+  version: 1
+  title: Angular route-controlled data access
+  language: tsx
+  kind: source
+  capability: http_request_data
+  confidence: medium
+  cwe: [CWE-20]
+  match: *angular_route_data_match
+  tags: [browser, angular, route, attacker-controlled]
+  ai: *request_guidance
+  provenance: *angular_route_data_provenance
+
+- id: python-http-request-data
+  version: 1
+  title: Python web request-controlled data access
+  language: python
+  kind: source
+  capability: http_request_data
+  confidence: medium
+  cwe: [CWE-20]
+  match:
+    any:
+      - pattern: request.args[$NAME]
+        captures: { name: NAME }
+      - pattern: request.args.get($NAME)
+        captures: { name: NAME }
+      - pattern: request.args.get($NAME, $DEFAULT)
+        captures: { name: NAME }
+      - pattern: request.form[$NAME]
+        captures: { name: NAME }
+      - pattern: request.form.get($NAME)
+        captures: { name: NAME }
+      - pattern: request.form.get($NAME, $DEFAULT)
+        captures: { name: NAME }
+      - pattern: request.json[$NAME]
+        captures: { name: NAME }
+      - pattern: request.get_json()
+      - pattern: request.GET[$NAME]
+        captures: { name: NAME }
+      - pattern: request.GET.get($NAME)
+        captures: { name: NAME }
+      - pattern: request.GET.get($NAME, $DEFAULT)
+        captures: { name: NAME }
+      - pattern: request.POST[$NAME]
+        captures: { name: NAME }
+      - pattern: request.POST.get($NAME)
+        captures: { name: NAME }
+      - pattern: request.POST.get($NAME, $DEFAULT)
+        captures: { name: NAME }
+      - pattern: request.data
+      - pattern: request.data[$NAME]
+        captures: { name: NAME }
+      - pattern: request.data.get($NAME)
+        captures: { name: NAME }
+      - pattern: request.data.get($NAME, $DEFAULT)
+        captures: { name: NAME }
+      - pattern: request.query_params
+      - pattern: request.query_params[$NAME]
+        captures: { name: NAME }
+      - pattern: request.query_params.get($NAME)
+        captures: { name: NAME }
+      - pattern: request.query_params.get($NAME, $DEFAULT)
+        captures: { name: NAME }
+      - pattern: request.FILES[$NAME]
+        captures: { name: NAME }
+      - pattern: request.FILES.get($NAME)
+        captures: { name: NAME }
+      - pattern: request.META[$NAME]
+        captures: { name: NAME }
+      - pattern: request.META.get($NAME)
+        captures: { name: NAME }
+      - pattern: request.body
+      - pattern: request.view_args[$NAME]
+        captures: { name: NAME }
+      - pattern: request.headers[$NAME]
+        captures: { name: NAME }
+      - pattern: request.headers.get($NAME)
+        captures: { name: NAME }
+      - pattern: request.headers.get($NAME, $DEFAULT)
+        captures: { name: NAME }
+      - pattern: request.cookies[$NAME]
+        captures: { name: NAME }
+      - pattern: request.cookies.get($NAME)
+        captures: { name: NAME }
+      - pattern: request.cookies.get($NAME, $DEFAULT)
+        captures: { name: NAME }
+      - pattern: request.COOKIES[$NAME]
+        captures: { name: NAME }
+      - pattern: request.COOKIES.get($NAME)
+        captures: { name: NAME }
+      - pattern: request.COOKIES.get($NAME, $DEFAULT)
+        captures: { name: NAME }
+  tags: [http, request, attacker-controlled, django, flask]
+  ai: *request_guidance
+  provenance:
+    note: Django and Flask request collections mapped to attacker-controlled input review.
+    references:
+      - https://cwe.mitre.org/data/definitions/20.html
+      - https://flask.palletsprojects.com/en/stable/api/#flask.Request
+      - https://docs.djangoproject.com/en/stable/ref/request-response/
+
+- id: go-http-request-data
+  version: 1
+  title: Go HTTP request-controlled data access
+  language: go
+  kind: source
+  capability: http_request_data
+  confidence: medium
+  cwe: [CWE-20]
+  match:
+    any:
+      - pattern: r.FormValue($NAME)
+        context: |
+          package pattern
+          func patternContext() { r.FormValue($NAME) }
+        selector: call_expression
+        captures: { name: NAME }
+      - pattern: req.FormValue($NAME)
+        context: |
+          package pattern
+          func patternContext() { req.FormValue($NAME) }
+        selector: call_expression
+        captures: { name: NAME }
+      - pattern: c.PostForm($NAME)
+        context: |
+          package pattern
+          func patternContext() { c.PostForm($NAME) }
+        selector: call_expression
+        captures: { name: NAME }
+      - pattern: r.URL.Query().Get($NAME)
+        captures: { name: NAME }
+      - pattern: req.URL.Query().Get($NAME)
+        captures: { name: NAME }
+      - pattern: c.Query($NAME)
+        context: |
+          package pattern
+          func patternContext() { c.Query($NAME) }
+        selector: call_expression
+        captures: { name: NAME }
+      - pattern: r.PathValue($NAME)
+        context: |
+          package pattern
+          func patternContext() { r.PathValue($NAME) }
+        selector: call_expression
+        captures: { name: NAME }
+      - pattern: req.PathValue($NAME)
+        context: |
+          package pattern
+          func patternContext() { req.PathValue($NAME) }
+        selector: call_expression
+        captures: { name: NAME }
+      - pattern: c.Param($NAME)
+        context: |
+          package pattern
+          func patternContext() { c.Param($NAME) }
+        selector: call_expression
+        captures: { name: NAME }
+      - pattern: r.Header.Get($NAME)
+        captures: { name: NAME }
+      - pattern: req.Header.Get($NAME)
+        captures: { name: NAME }
+      - pattern: c.GetHeader($NAME)
+        context: |
+          package pattern
+          func patternContext() { c.GetHeader($NAME) }
+        selector: call_expression
+        captures: { name: NAME }
+      - pattern: r.Cookie($NAME)
+        context: |
+          package pattern
+          func patternContext() { r.Cookie($NAME) }
+        selector: call_expression
+        captures: { name: NAME }
+      - pattern: req.Cookie($NAME)
+        context: |
+          package pattern
+          func patternContext() { req.Cookie($NAME) }
+        selector: call_expression
+        captures: { name: NAME }
+      - pattern: c.Cookie($NAME)
+        context: |
+          package pattern
+          func patternContext() { c.Cookie($NAME) }
+        selector: call_expression
+        captures: { name: NAME }
+  tags: [http, request, attacker-controlled, net-http, gin]
+  ai: *request_guidance
+  provenance:
+    note: Go net/http and Gin request accessors mapped to attacker-controlled input review.
+    references:
+      - https://cwe.mitre.org/data/definitions/20.html
+      - https://pkg.go.dev/net/http#Request
+      - https://gin-gonic.com/en/docs/examples/querystring-param/
+
+- id: rust-axum-request-extractor
+  version: 1
+  title: Rust Axum request extractor binding
+  language: rust
+  kind: source
+  capability: http_request_data
+  confidence: medium
+  cwe: [CWE-20]
+  match:
+    any:
+      - pattern: $EXTRACTOR($PARAMETER)
+        context: |
+          async fn handler($EXTRACTOR($PARAMETER): Path<String>) {}
+        selector: tuple_struct_pattern
+        captures: { extractor: EXTRACTOR, parameter: PARAMETER }
+  tags: [http, request, attacker-controlled, rust, axum, extractor]
+  ai: *request_guidance
+  provenance:
+    note: Axum tuple-struct handler extractors mapped to request input; exact crate identity is not yet resolved, so same-name custom types remain a review question.
+    references:
+      - https://cwe.mitre.org/data/definitions/20.html
+      - https://docs.rs/axum/latest/axum/extract/
+
+- id: rust-actix-request-data
+  version: 1
+  title: Rust Actix request-controlled data access
+  language: rust
+  kind: source
+  capability: http_request_data
+  confidence: medium
+  cwe: [CWE-20]
+  match:
+    any:
+      - pattern: $REQUEST.match_info().get($NAME)
+        captures: { name: NAME }
+      - pattern: $REQUEST.query_string()
+        captures: { request: REQUEST }
+      - pattern: $REQUEST.headers().get($NAME)
+        captures: { name: NAME }
+      - pattern: $REQUEST.cookie($NAME)
+        captures: { name: NAME }
+  tags: [http, request, attacker-controlled, rust, actix-web]
+  ai: *request_guidance
+  provenance:
+    note: Recognizable Actix HttpRequest access chains mapped to request input; receiver type remains a bounded review question.
+    references:
+      - https://cwe.mitre.org/data/definitions/20.html
+      - https://docs.rs/actix-web/latest/actix_web/struct.HttpRequest.html
+
+- id: rust-file-content-input
+  version: 1
+  title: Rust external file content input
+  language: rust
+  kind: source
+  capability: external_input
+  confidence: medium
+  cwe: [CWE-20]
+  match:
+    any:
+      - pattern: $READ_FUNCTION($PATH)
+        captures: { path: PATH }
+  tags: [external-input, filesystem, rust]
+  ai:
+    investigate:
+      - who can create or modify the file at deployment and runtime
+      - whether the returned content reaches a security-sensitive operation
+      - validation or fixed-format constraints applied after the read
+    verify:
+      - distinguish user-controlled files from packaged or administrator-only configuration
+      - confirm influence on the relevant sink rather than treating the read alone as a vulnerability
+    exclude:
+      - do not claim attacker control solely because std fs reads the file
+  provenance:
+    note: Content returned by exact std fs read functions is external input; path control is separately represented by filesystem sink evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/20.html
+      - https://doc.rust-lang.org/std/fs/fn.read_to_string.html
+
+- id: rust-iron-request-data
+  version: 1
+  title: Rust Iron request URL data
+  language: rust
+  kind: source
+  capability: http_request_data
+  confidence: high
+  cwe: [CWE-20]
+  match:
+    any:
+      - pattern: $REQUEST.url.to_string()
+        captures: { request: REQUEST }
+      - pattern: $REQUEST.url.to_owned()
+        captures: { request: REQUEST }
+      - pattern: $REQUEST.url.path()
+        captures: { request: REQUEST }
+      - pattern: $REQUEST.url.query()
+        captures: { request: REQUEST }
+  tags: [http, request, attacker-controlled, rust, iron]
+  ai: *request_guidance
+  provenance:
+    note: URL components read from a parameter proven to be an Iron Request are mapped to request input.
+    references:
+      - https://cwe.mitre.org/data/definitions/20.html
+      - https://docs.rs/iron/latest/iron/request/struct.Request.html

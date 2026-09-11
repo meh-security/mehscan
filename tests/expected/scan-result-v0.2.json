@@ -1,0 +1,71 @@
+{
+  "schema_version": "0.2",
+  "root": "C:/fixture",
+  "evidence": [
+    {
+      "id": "ev-0000000000000001",
+      "kind": "sink",
+      "capability": "database_query",
+      "location": {
+        "path": "app.py",
+        "start": { "line": 2, "column": 5, "byte_offset": 12 },
+        "end": { "line": 2, "column": 26, "byte_offset": 33 }
+      },
+      "enclosing_symbol": "load_user",
+      "captures": {
+        "query": {
+          "text": "query",
+          "location": {
+            "path": "app.py",
+            "start": { "line": 2, "column": 20, "byte_offset": 27 },
+            "end": { "line": 2, "column": 25, "byte_offset": 32 }
+          }
+        }
+      },
+      "cwe_candidates": ["CWE-89"],
+      "tags": ["database", "sql"],
+      "confidence": "high",
+      "provenance": {
+        "resolution": "ast",
+        "engine": "ast-grep 0.45.1 + symbol-normalizer",
+        "rule_version": 1
+      },
+      "symbol_resolution": {
+        "canonical": "sqlite3.Cursor.execute",
+        "observed": "cursor.execute",
+        "method": "unqualified",
+        "confidence": "ambiguous"
+      },
+      "rule_id": "python-database-query"
+    }
+  ],
+  "coverage": {
+    "totals": {
+      "discovered": 1,
+      "scanned": 1,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0
+    },
+    "languages": {
+      "python": {
+        "discovered": 1,
+        "scanned": 1,
+        "parse_failed": 0,
+        "evidence": 1
+      }
+    },
+    "security_surfaces": { "database_query": 1 },
+    "cwe": [
+      {
+        "cwe": "CWE-89",
+        "level": "partial",
+        "supported_languages": ["python"]
+      }
+    ],
+    "files": [
+      { "path": "app.py", "language": "python", "status": "scanned" }
+    ],
+    "ignored_subtrees": []
+  }
+}

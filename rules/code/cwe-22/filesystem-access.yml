@@ -1,0 +1,492 @@
+- id: csharp-filesystem-read
+  version: 2
+  title: .NET filesystem read
+  language: csharp
+  kind: sink
+  capability: filesystem_read
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: File.ReadAllText($PATH)
+        captures: { path: PATH }
+      - pattern: File.ReadAllBytes($PATH)
+        captures: { path: PATH }
+      - pattern: File.OpenRead($PATH)
+        captures: { path: PATH }
+      - pattern: File.ReadAllLines($PATH)
+        captures: { path: PATH }
+      - pattern: File.ReadLines($PATH)
+        captures: { path: PATH }
+      - pattern: File.OpenText($PATH)
+        captures: { path: PATH }
+      - pattern: Directory.GetFiles($PATH)
+        captures: { path: PATH }
+      - pattern: Directory.GetFiles($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: Directory.EnumerateFiles($PATH)
+        captures: { path: PATH }
+      - pattern: Directory.EnumerateFiles($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: Directory.GetDirectories($PATH)
+        captures: { path: PATH }
+      - pattern: Directory.GetDirectories($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+  symbols:
+    - canonical: System.IO.File.ReadAllText
+      captures: { path: 0 }
+    - canonical: System.IO.File.ReadAllBytes
+      captures: { path: 0 }
+    - canonical: System.IO.File.OpenRead
+      captures: { path: 0 }
+    - canonical: System.IO.File.ReadAllLines
+      captures: { path: 0 }
+    - canonical: System.IO.File.ReadLines
+      captures: { path: 0 }
+    - canonical: System.IO.File.OpenText
+      captures: { path: 0 }
+    - canonical: System.IO.Directory.GetFiles
+      captures: { path: 0 }
+    - canonical: System.IO.Directory.EnumerateFiles
+      captures: { path: 0 }
+    - canonical: System.IO.Directory.GetDirectories
+      captures: { path: 0 }
+  tags: [filesystem, path]
+  ai: &filesystem_guidance
+    investigate:
+      - origin and normalization of the path
+      - allowed roots, traversal segments, symlinks, and platform path behavior
+      - authorization and tenant boundaries for the referenced resource
+  provenance: &csharp_filesystem_provenance
+    note: .NET filesystem APIs mapped to the CWE-22 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://learn.microsoft.com/en-us/dotnet/api/system.io.file
+
+- id: csharp-filesystem-write
+  version: 2
+  title: .NET filesystem write
+  language: csharp
+  kind: sink
+  capability: filesystem_write
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: File.WriteAllText($PATH, $CONTENT)
+        captures: { path: PATH }
+      - pattern: File.WriteAllBytes($PATH, $CONTENT)
+        captures: { path: PATH }
+      - pattern: File.OpenWrite($PATH)
+        captures: { path: PATH }
+      - pattern: File.Create($PATH)
+        captures: { path: PATH }
+      - pattern: File.AppendAllText($PATH, $CONTENT)
+        captures: { path: PATH }
+      - pattern: File.AppendAllLines($PATH, $CONTENT)
+        captures: { path: PATH }
+      - pattern: File.Delete($PATH)
+        captures: { path: PATH }
+      - pattern: Directory.CreateDirectory($PATH)
+        captures: { path: PATH }
+      - pattern: Directory.Delete($PATH)
+        captures: { path: PATH }
+      - pattern: Directory.Delete($PATH, $RECURSIVE)
+        captures: { path: PATH }
+  symbols:
+    - canonical: System.IO.File.WriteAllText
+      captures: { path: 0 }
+    - canonical: System.IO.File.WriteAllBytes
+      captures: { path: 0 }
+    - canonical: System.IO.File.OpenWrite
+      captures: { path: 0 }
+    - canonical: System.IO.File.Create
+      captures: { path: 0 }
+    - canonical: System.IO.File.AppendAllText
+      captures: { path: 0 }
+    - canonical: System.IO.File.AppendAllLines
+      captures: { path: 0 }
+    - canonical: System.IO.File.Delete
+      captures: { path: 0 }
+    - canonical: System.IO.Directory.CreateDirectory
+      captures: { path: 0 }
+    - canonical: System.IO.Directory.Delete
+      captures: { path: 0 }
+  tags: [filesystem, path]
+  ai: *filesystem_guidance
+  provenance: *csharp_filesystem_provenance
+
+- id: java-filesystem-read
+  version: 1
+  title: Java filesystem read
+  language: java
+  kind: sink
+  capability: filesystem_read
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: Files.readString($PATH)
+        captures: { path: PATH }
+      - pattern: Files.readAllBytes($PATH)
+        captures: { path: PATH }
+      - pattern: Files.newBufferedReader($PATH)
+        captures: { path: PATH }
+      - pattern: Files.newInputStream($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+  symbols:
+    - canonical: java.nio.file.Files.readString
+      captures: { path: 0 }
+    - canonical: java.nio.file.Files.readAllBytes
+      captures: { path: 0 }
+    - canonical: java.nio.file.Files.newBufferedReader
+      captures: { path: 0 }
+    - canonical: java.nio.file.Files.newInputStream
+      captures: { path: 0 }
+  tags: [filesystem, path]
+  ai: *filesystem_guidance
+  provenance: &java_filesystem_provenance
+    note: Java NIO filesystem APIs mapped to the CWE-22 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/nio/file/Files.html
+
+- id: java-filesystem-write
+  version: 1
+  title: Java filesystem write
+  language: java
+  kind: sink
+  capability: filesystem_write
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: Files.write($PATH, $CONTENT)
+        captures: { path: PATH }
+      - pattern: Files.write($PATH, $CONTENT, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: Files.writeString($PATH, $CONTENT)
+        captures: { path: PATH }
+      - pattern: Files.writeString($PATH, $CONTENT, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: Files.newBufferedWriter($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+  symbols:
+    - canonical: java.nio.file.Files.write
+      captures: { path: 0 }
+    - canonical: java.nio.file.Files.writeString
+      captures: { path: 0 }
+    - canonical: java.nio.file.Files.newBufferedWriter
+      captures: { path: 0 }
+  tags: [filesystem, path]
+  ai: *filesystem_guidance
+  provenance: *java_filesystem_provenance
+
+- id: javascript-filesystem-read
+  version: 1
+  title: Node.js filesystem read
+  language: javascript
+  kind: sink
+  capability: filesystem_read
+  cwe: [CWE-22]
+  match: &node_filesystem_read_match
+    any:
+      - pattern: fs.readFile($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: fs.readFileSync($PATH)
+        captures: { path: PATH }
+      - pattern: fs.readFileSync($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: fs.createReadStream($PATH)
+        captures: { path: PATH }
+      - pattern: fs.createReadStream($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: fs.promises.readFile($PATH)
+        captures: { path: PATH }
+      - pattern: fs.promises.readFile($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+  symbols: &node_filesystem_read_symbols
+    - canonical: fs.readFile
+      captures: { path: 0 }
+    - canonical: fs.readFileSync
+      captures: { path: 0 }
+    - canonical: fs.createReadStream
+      captures: { path: 0 }
+    - canonical: fs.promises.readFile
+      captures: { path: 0 }
+  tags: [filesystem, path, nodejs]
+  ai: *filesystem_guidance
+  provenance: &node_filesystem_provenance
+    note: Node.js filesystem APIs mapped to the CWE-22 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://nodejs.org/api/fs.html
+
+- id: javascript-filesystem-write
+  version: 1
+  title: Node.js filesystem write
+  language: javascript
+  kind: sink
+  capability: filesystem_write
+  cwe: [CWE-22]
+  match: &node_filesystem_write_match
+    any:
+      - pattern: fs.writeFile($PATH, $CONTENT, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: fs.writeFileSync($PATH, $CONTENT)
+        captures: { path: PATH }
+      - pattern: fs.writeFileSync($PATH, $CONTENT, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: fs.createWriteStream($PATH)
+        captures: { path: PATH }
+      - pattern: fs.createWriteStream($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: fs.promises.writeFile($PATH, $CONTENT, $$$ARGUMENTS)
+        captures: { path: PATH }
+  symbols: &node_filesystem_write_symbols
+    - canonical: fs.writeFile
+      captures: { path: 0 }
+    - canonical: fs.writeFileSync
+      captures: { path: 0 }
+    - canonical: fs.createWriteStream
+      captures: { path: 0 }
+    - canonical: fs.promises.writeFile
+      captures: { path: 0 }
+    - canonical: fs/promises.writeFile
+      captures: { path: 0 }
+  tags: [filesystem, path, nodejs]
+  ai: *filesystem_guidance
+  provenance: *node_filesystem_provenance
+
+- id: typescript-filesystem-read
+  version: 1
+  title: Node.js filesystem read
+  language: typescript
+  kind: sink
+  capability: filesystem_read
+  cwe: [CWE-22]
+  match: *node_filesystem_read_match
+  symbols: *node_filesystem_read_symbols
+  tags: [filesystem, path, nodejs]
+  ai: *filesystem_guidance
+  provenance: *node_filesystem_provenance
+
+- id: typescript-filesystem-write
+  version: 1
+  title: Node.js filesystem write
+  language: typescript
+  kind: sink
+  capability: filesystem_write
+  cwe: [CWE-22]
+  match: *node_filesystem_write_match
+  symbols: *node_filesystem_write_symbols
+  tags: [filesystem, path, nodejs]
+  ai: *filesystem_guidance
+  provenance: *node_filesystem_provenance
+
+- id: tsx-filesystem-read
+  version: 1
+  title: Node.js filesystem read
+  language: tsx
+  kind: sink
+  capability: filesystem_read
+  cwe: [CWE-22]
+  match: *node_filesystem_read_match
+  symbols: *node_filesystem_read_symbols
+  tags: [filesystem, path, nodejs]
+  ai: *filesystem_guidance
+  provenance: *node_filesystem_provenance
+
+- id: tsx-filesystem-write
+  version: 1
+  title: Node.js filesystem write
+  language: tsx
+  kind: sink
+  capability: filesystem_write
+  cwe: [CWE-22]
+  match: *node_filesystem_write_match
+  symbols: *node_filesystem_write_symbols
+  tags: [filesystem, path, nodejs]
+  ai: *filesystem_guidance
+  provenance: *node_filesystem_provenance
+
+- id: python-filesystem-read
+  version: 1
+  title: Python filesystem read
+  language: python
+  kind: sink
+  capability: filesystem_read
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: open($PATH)
+        captures: { path: PATH }
+      - pattern: open($PATH, "r")
+        captures: { path: PATH }
+      - pattern: open($PATH, "rb")
+        captures: { path: PATH }
+      - pattern: open($PATH, 'r')
+        captures: { path: PATH }
+      - pattern: open($PATH, 'rb')
+        captures: { path: PATH }
+      - pattern: codecs.open($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+  tags: [filesystem, path]
+  ai: *filesystem_guidance
+  provenance: &python_filesystem_provenance
+    note: Python file-opening APIs mapped to the CWE-22 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://docs.python.org/3/library/functions.html#open
+
+- id: python-filesystem-write
+  version: 1
+  title: Python filesystem write
+  language: python
+  kind: sink
+  capability: filesystem_write
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: open($PATH, "w")
+        captures: { path: PATH }
+      - pattern: open($PATH, "wb")
+        captures: { path: PATH }
+      - pattern: open($PATH, "a")
+        captures: { path: PATH }
+      - pattern: open($PATH, 'w')
+        captures: { path: PATH }
+      - pattern: open($PATH, 'wb')
+        captures: { path: PATH }
+      - pattern: open($PATH, 'a')
+        captures: { path: PATH }
+      - pattern: os.remove($PATH)
+        captures: { path: PATH }
+      - pattern: os.unlink($PATH)
+        captures: { path: PATH }
+  symbols:
+    - canonical: os.remove
+      captures: { path: 0 }
+    - canonical: os.unlink
+      captures: { path: 0 }
+  tags: [filesystem, path]
+  ai: *filesystem_guidance
+  provenance: *python_filesystem_provenance
+
+- id: go-filesystem-read
+  version: 1
+  title: Go filesystem read
+  language: go
+  kind: sink
+  capability: filesystem_read
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: os.Open($PATH)
+        context: |
+          package pattern
+          func patternContext() { os.Open($PATH) }
+        selector: call_expression
+        captures: { path: PATH }
+      - pattern: os.ReadFile($PATH)
+        context: |
+          package pattern
+          func patternContext() { os.ReadFile($PATH) }
+        selector: call_expression
+        captures: { path: PATH }
+      - pattern: os.OpenFile($PATH, $FLAGS, $PERMISSIONS)
+        captures: { path: PATH }
+  symbols:
+    - canonical: os.Open
+      captures: { path: 0 }
+    - canonical: os.ReadFile
+      captures: { path: 0 }
+    - canonical: os.OpenFile
+      captures: { path: 0 }
+  tags: [filesystem, path]
+  ai: *filesystem_guidance
+  provenance: &go_filesystem_provenance
+    note: Go os package APIs mapped to the CWE-22 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://pkg.go.dev/os
+
+- id: go-filesystem-write
+  version: 1
+  title: Go filesystem write
+  language: go
+  kind: sink
+  capability: filesystem_write
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: os.Create($PATH)
+        context: |
+          package pattern
+          func patternContext() { os.Create($PATH) }
+        selector: call_expression
+        captures: { path: PATH }
+      - pattern: os.WriteFile($PATH, $CONTENT, $PERMISSIONS)
+        captures: { path: PATH }
+      - pattern: os.Remove($PATH)
+        context: |
+          package pattern
+          func patternContext() { os.Remove($PATH) }
+        selector: call_expression
+        captures: { path: PATH }
+  symbols:
+    - canonical: os.Create
+      captures: { path: 0 }
+    - canonical: os.WriteFile
+      captures: { path: 0 }
+    - canonical: os.Remove
+      captures: { path: 0 }
+  tags: [filesystem, path]
+  ai: *filesystem_guidance
+  provenance: *go_filesystem_provenance
+
+- id: rust-filesystem-read
+  version: 1
+  title: Rust filesystem read
+  language: rust
+  kind: sink
+  capability: filesystem_read
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: std::fs::read($PATH)
+        captures: { path: PATH }
+      - pattern: std::fs::read_to_string($PATH)
+        captures: { path: PATH }
+      - pattern: std::fs::read_dir($PATH)
+        captures: { path: PATH }
+      - pattern: File::open($PATH)
+        captures: { path: PATH }
+      - pattern: std::fs::File::open($PATH)
+        captures: { path: PATH }
+  tags: [filesystem, path, rust]
+  ai: *filesystem_guidance
+  provenance: &rust_filesystem_provenance
+    note: Rust standard filesystem entrypoints mapped to path-traversal review; imported short names require local identity verification.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://doc.rust-lang.org/std/fs/
+
+- id: rust-filesystem-write
+  version: 1
+  title: Rust filesystem write or removal
+  language: rust
+  kind: sink
+  capability: filesystem_write
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: std::fs::write($PATH, $CONTENT)
+        captures: { path: PATH, content: CONTENT }
+      - pattern: std::fs::remove_file($PATH)
+        captures: { path: PATH }
+      - pattern: std::fs::remove_dir_all($PATH)
+        captures: { path: PATH }
+      - pattern: File::create($PATH)
+        captures: { path: PATH }
+      - pattern: std::fs::File::create($PATH)
+        captures: { path: PATH }
+  tags: [filesystem, path, rust]
+  ai: *filesystem_guidance
+  provenance: *rust_filesystem_provenance

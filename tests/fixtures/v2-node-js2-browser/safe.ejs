@@ -1,0 +1,11 @@
+<script>
+window.addEventListener('message', event => {
+  if (event.origin !== 'https://trusted.example') return;
+  const xhr = new XMLHttpRequest();
+  xhr.withCredentials = true;
+  xhr.open('POST', '/organization/add-user');
+  xhr.send('user=' + event.data);
+  document.getElementById('output').textContent = event.data;
+});
+window.parent.postMessage({ ready: true }, 'https://trusted.example');
+</script>

@@ -1,0 +1,78 @@
+{
+  "schema_version": "0.9",
+  "root": "C:/fixture",
+  "evidence": [
+    {
+      "id": "ev-0000000000000001",
+      "kind": "sanitizer",
+      "capability": "sql_parameterization",
+      "location": {
+        "path": "query.py",
+        "start": { "line": 2, "column": 5, "byte_offset": 24 },
+        "end": { "line": 2, "column": 42, "byte_offset": 61 }
+      },
+      "enclosing_symbol": "load_user",
+      "captures": {
+        "parameters": {
+          "text": "(user_id,)",
+          "location": {
+            "path": "query.py",
+            "start": { "line": 2, "column": 31, "byte_offset": 50 },
+            "end": { "line": 2, "column": 41, "byte_offset": 60 }
+          }
+        },
+        "query": {
+          "text": "query",
+          "location": {
+            "path": "query.py",
+            "start": { "line": 2, "column": 24, "byte_offset": 43 },
+            "end": { "line": 2, "column": 29, "byte_offset": 48 }
+          }
+        }
+      },
+      "cwe_candidates": ["CWE-89"],
+      "tags": ["database", "sql", "parameterization", "db-api"],
+      "confidence": "medium",
+      "provenance": {
+        "resolution": "ast",
+        "engine": "ast-grep 0.45.1",
+        "rule_version": 1
+      },
+      "context": {
+        "comment": false,
+        "reachability": { "state": "reachable" },
+        "availability": { "state": "always" }
+      },
+      "rule_id": "python-sql-parameterization"
+    }
+  ],
+  "coverage": {
+    "totals": {
+      "discovered": 1,
+      "scanned": 1,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0
+    },
+    "languages": {
+      "python": {
+        "discovered": 1,
+        "scanned": 1,
+        "parse_failed": 0,
+        "evidence": 1
+      }
+    },
+    "security_surfaces": { "sql_parameterization": 1 },
+    "cwe": [
+      {
+        "cwe": "CWE-89",
+        "level": "partial",
+        "supported_languages": ["python"]
+      }
+    ],
+    "files": [
+      { "path": "query.py", "language": "python", "status": "scanned" }
+    ],
+    "ignored_subtrees": []
+  }
+}

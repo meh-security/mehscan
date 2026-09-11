@@ -1,0 +1,149 @@
+- id: csharp-uploaded-filename-validation
+  version: 1
+  title: .NET uploaded basename validation
+  language: csharp
+  kind: validation
+  capability: uploaded_filename_validation
+  confidence: medium
+  cwe: [CWE-434, CWE-22]
+  match:
+    any:
+      - pattern: Path.GetFileName($VALUE) == $VALUE
+        captures: { value: VALUE }
+      - pattern: $VALUE == Path.GetFileName($VALUE)
+        captures: { value: VALUE }
+  tags: [http, upload, filename, validation, basename, dotnet]
+  ai: &filename_validation_guidance
+    investigate:
+      - whether the checked filename is exactly the value used to construct the storage path
+      - application-generated names rather than trusting a client-supplied basename
+      - extension allowlists, double extensions, trailing dots/spaces, and case behavior
+      - content signatures and size limits rather than trusting declared content type
+      - destination confinement, overwrite prevention, execution permissions, and malware scanning
+  provenance:
+    note: .NET basename equality checks mapped to contextual uploaded-filename validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://learn.microsoft.com/en-us/aspnet/core/mvc/models/file-uploads
+
+- id: java-uploaded-filename-validation
+  version: 1
+  title: Java uploaded basename validation
+  language: java
+  kind: validation
+  capability: uploaded_filename_validation
+  confidence: medium
+  cwe: [CWE-434, CWE-22]
+  match:
+    any:
+      - pattern: Paths.get($VALUE).getFileName().toString().equals($VALUE)
+        captures: { value: VALUE }
+      - pattern: $VALUE.equals(Paths.get($VALUE).getFileName().toString())
+        captures: { value: VALUE }
+  tags: [http, upload, filename, validation, basename, java]
+  ai: *filename_validation_guidance
+  provenance:
+    note: Java basename equality checks mapped to contextual uploaded-filename validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/nio/file/Path.html#getFileName()
+
+- id: javascript-uploaded-filename-validation
+  version: 1
+  title: Node.js uploaded basename validation
+  language: javascript
+  kind: validation
+  capability: uploaded_filename_validation
+  confidence: medium
+  cwe: [CWE-434, CWE-22]
+  match: &javascript_filename_validation_match
+    any:
+      - pattern: 'path.basename($VALUE) === $VALUE'
+        captures: { value: VALUE }
+      - pattern: '$VALUE === path.basename($VALUE)'
+        captures: { value: VALUE }
+  tags: [http, upload, filename, validation, basename, nodejs]
+  ai: *filename_validation_guidance
+  provenance: &javascript_filename_validation_provenance
+    note: Node.js basename equality checks mapped to contextual uploaded-filename validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://nodejs.org/api/path.html#pathbasenamepath-suffix
+
+- id: typescript-uploaded-filename-validation
+  version: 1
+  title: Node.js uploaded basename validation
+  language: typescript
+  kind: validation
+  capability: uploaded_filename_validation
+  confidence: medium
+  cwe: [CWE-434, CWE-22]
+  match: *javascript_filename_validation_match
+  tags: [http, upload, filename, validation, basename, nodejs]
+  ai: *filename_validation_guidance
+  provenance: *javascript_filename_validation_provenance
+
+- id: tsx-uploaded-filename-validation
+  version: 1
+  title: Node.js uploaded basename validation
+  language: tsx
+  kind: validation
+  capability: uploaded_filename_validation
+  confidence: medium
+  cwe: [CWE-434, CWE-22]
+  match: *javascript_filename_validation_match
+  tags: [http, upload, filename, validation, basename, nodejs]
+  ai: *filename_validation_guidance
+  provenance: *javascript_filename_validation_provenance
+
+- id: python-uploaded-filename-validation
+  version: 1
+  title: Python uploaded basename validation
+  language: python
+  kind: validation
+  capability: uploaded_filename_validation
+  confidence: medium
+  cwe: [CWE-434, CWE-22]
+  match:
+    any:
+      - pattern: os.path.basename($VALUE) == $VALUE
+        captures: { value: VALUE }
+      - pattern: $VALUE == os.path.basename($VALUE)
+        captures: { value: VALUE }
+  tags: [http, upload, filename, validation, basename, python]
+  ai: *filename_validation_guidance
+  provenance:
+    note: Python basename equality checks mapped to contextual uploaded-filename validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://docs.python.org/3/library/os.path.html#os.path.basename
+
+- id: go-uploaded-filename-validation
+  version: 1
+  title: Go uploaded basename validation
+  language: go
+  kind: validation
+  capability: uploaded_filename_validation
+  confidence: medium
+  cwe: [CWE-434, CWE-22]
+  match:
+    any:
+      - pattern: filepath.Base($VALUE) == $VALUE
+        context: |
+          package pattern
+          func patternContext() { _ = filepath.Base($VALUE) == $VALUE }
+        selector: binary_expression
+        captures: { value: VALUE }
+      - pattern: $VALUE == filepath.Base($VALUE)
+        context: |
+          package pattern
+          func patternContext() { _ = $VALUE == filepath.Base($VALUE) }
+        selector: binary_expression
+        captures: { value: VALUE }
+  tags: [http, upload, filename, validation, basename, go]
+  ai: *filename_validation_guidance
+  provenance:
+    note: Go basename equality checks mapped to contextual uploaded-filename validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://pkg.go.dev/path/filepath#Base

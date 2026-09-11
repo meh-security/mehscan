@@ -1,0 +1,272 @@
+- id: csharp-outbound-http
+  version: 1
+  title: .NET outbound HTTP request
+  language: csharp
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: WebRequest.Create($URL)
+        captures: { endpoint: URL }
+  symbols:
+    - canonical: System.Net.WebRequest.Create
+      captures: { endpoint: 0 }
+  tags: [http, network, ssrf]
+  ai: &outbound_guidance
+    investigate:
+      - origin and validation of the host, scheme, port, and path
+      - redirects, DNS behavior, private ranges, and metadata endpoints
+      - authentication material and sensitive response handling
+  provenance:
+    note: Legacy static WebRequest construction is mapped here; HttpClient instance calls are emitted by the typed C# call summary to avoid same-name lookalikes.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpclient
+
+- id: java-outbound-http
+  version: 1
+  title: Java outbound HTTP request
+  language: java
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: HttpRequest.newBuilder($URI)
+        captures: { endpoint: URI }
+      - pattern: $CLIENT.send($REQUEST, $HANDLER)
+        captures: { request: REQUEST }
+      - pattern: $CLIENT.sendAsync($REQUEST, $HANDLER)
+        captures: { request: REQUEST }
+      - pattern: $REST_TEMPLATE.getForObject($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: $REST_TEMPLATE.postForObject($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+  symbols:
+    - canonical: java.net.http.HttpRequest.newBuilder
+      captures: { endpoint: 0 }
+  tags: [http, network, ssrf]
+  ai: *outbound_guidance
+  provenance:
+    note: Java HTTP client APIs mapped to the CWE-918 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.net.http/java/net/http/HttpClient.html
+
+- id: javascript-outbound-http
+  version: 1
+  title: JavaScript outbound HTTP request
+  language: javascript
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match: &node_outbound_match
+    any:
+      - pattern: fetch($URL)
+        captures: { endpoint: URL }
+      - pattern: fetch($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: axios.get($URL)
+        captures: { endpoint: URL }
+      - pattern: axios.get($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: axios.post($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: needle.get($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: http.get($URL)
+        captures: { endpoint: URL }
+      - pattern: http.get($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: http.request($URL)
+        captures: { endpoint: URL }
+      - pattern: http.request($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: https.get($URL)
+        captures: { endpoint: URL }
+      - pattern: https.get($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: https.request($URL)
+        captures: { endpoint: URL }
+      - pattern: https.request($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: html_to_pdf.generatePdf($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+  symbols: &node_outbound_symbols
+    - canonical: fetch
+      captures: { endpoint: 0 }
+    - canonical: axios.get
+      captures: { endpoint: 0 }
+    - canonical: axios.default.get
+      captures: { endpoint: 0 }
+    - canonical: axios.post
+      captures: { endpoint: 0 }
+    - canonical: needle.get
+      captures: { endpoint: 0 }
+    - canonical: http.get
+      captures: { endpoint: 0 }
+    - canonical: http.request
+      captures: { endpoint: 0 }
+    - canonical: https.get
+      captures: { endpoint: 0 }
+    - canonical: https.request
+      captures: { endpoint: 0 }
+    - canonical: html-pdf-node.generatePdf
+      captures: { endpoint: 0 }
+  tags: [http, network, ssrf]
+  ai: *outbound_guidance
+  provenance: &node_outbound_provenance
+    note: Web and Node.js HTTP APIs, including the Needle client, mapped to the CWE-918 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://nodejs.org/api/http.html
+
+- id: typescript-outbound-http
+  version: 1
+  title: TypeScript outbound HTTP request
+  language: typescript
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match: *node_outbound_match
+  symbols: *node_outbound_symbols
+  tags: [http, network, ssrf]
+  ai: *outbound_guidance
+  provenance: *node_outbound_provenance
+
+- id: tsx-outbound-http
+  version: 1
+  title: TSX outbound HTTP request
+  language: tsx
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match: *node_outbound_match
+  symbols: *node_outbound_symbols
+  tags: [http, network, ssrf]
+  ai: *outbound_guidance
+  provenance: *node_outbound_provenance
+
+- id: python-outbound-http
+  version: 1
+  title: Python outbound HTTP request
+  language: python
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: requests.get($URL)
+        captures: { endpoint: URL }
+      - pattern: requests.get($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: requests.post($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: requests.request($METHOD, $URL, $$$ARGUMENTS)
+        captures: { endpoint: URL, method: METHOD }
+      - pattern: urllib.request.urlopen($URL)
+        captures: { endpoint: URL }
+      - pattern: urllib.request.urlopen($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: httpx.get($URL)
+        captures: { endpoint: URL }
+      - pattern: httpx.get($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+  symbols:
+    - canonical: requests.get
+      captures: { endpoint: 0 }
+    - canonical: requests.post
+      captures: { endpoint: 0 }
+    - canonical: requests.request
+      captures: { method: 0, endpoint: 1 }
+    - canonical: urllib.request.urlopen
+      captures: { endpoint: 0 }
+    - canonical: httpx.get
+      captures: { endpoint: 0 }
+  tags: [http, network, ssrf]
+  ai: *outbound_guidance
+  provenance:
+    note: Python URL-opening APIs mapped to the CWE-918 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://docs.python.org/3/library/urllib.request.html#urllib.request.urlopen
+
+- id: go-outbound-http
+  version: 1
+  title: Go outbound HTTP request
+  language: go
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: http.Get($URL)
+        context: |
+          package pattern
+          func patternContext() { http.Get($URL) }
+        selector: call_expression
+        captures: { endpoint: URL }
+      - pattern: http.Post($URL, $CONTENT_TYPE, $BODY)
+        captures: { endpoint: URL }
+      - pattern: http.NewRequest($METHOD, $URL, $BODY)
+        captures: { endpoint: URL, method: METHOD }
+      - pattern: http.NewRequestWithContext($CONTEXT, $METHOD, $URL, $BODY)
+        captures: { endpoint: URL, method: METHOD, context: CONTEXT }
+      - pattern: $CLIENT.Do($REQUEST)
+        context: |
+          package pattern
+          func patternContext() { $CLIENT.Do($REQUEST) }
+        selector: call_expression
+        captures: { request: REQUEST }
+  symbols:
+    - canonical: net/http.Get
+      captures: { endpoint: 0 }
+    - canonical: net/http.Post
+      captures: { endpoint: 0 }
+    - canonical: net/http.NewRequest
+      captures: { method: 0, endpoint: 1 }
+    - canonical: net/http.NewRequestWithContext
+      captures: { context: 0, method: 1, endpoint: 2 }
+  tags: [http, network, ssrf]
+  ai: *outbound_guidance
+  provenance:
+    note: Go net/http client APIs mapped to the CWE-918 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://pkg.go.dev/net/http
+
+- id: rust-outbound-http
+  version: 1
+  title: Rust outbound HTTP request
+  language: rust
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: reqwest::get($URL)
+        captures: { endpoint: URL }
+      - pattern: reqwest::blocking::get($URL)
+        captures: { endpoint: URL }
+      - pattern: $REQUEST_FUNCTION($URL)
+        captures: { endpoint: URL }
+      - pattern: reqwest::Client::new().get($URL)
+        captures: { endpoint: URL }
+      - pattern: reqwest::Client::new().post($URL)
+        captures: { endpoint: URL }
+      - pattern: reqwest::Client::new().request($METHOD, $URL)
+        captures: { method: METHOD, endpoint: URL }
+      - pattern: $CLIENT.get($URL)
+        captures: { client: CLIENT, endpoint: URL }
+      - pattern: $CLIENT.post($URL)
+        captures: { client: CLIENT, endpoint: URL }
+      - pattern: $CLIENT.request($METHOD, $URL)
+        captures: { client: CLIENT, method: METHOD, endpoint: URL }
+  tags: [http, network, ssrf, rust, reqwest]
+  ai: *outbound_guidance
+  provenance:
+    note: Exact Reqwest free functions, inline clients, imported aliases, and locally proven client receivers mapped to outbound destination review.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://docs.rs/reqwest/latest/reqwest/

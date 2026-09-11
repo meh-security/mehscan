@@ -1,0 +1,178 @@
+- id: csharp-tls-certificate-validation
+  version: 1
+  title: .NET TLS certificate validation callback
+  language: csharp
+  kind: security_configuration
+  capability: tls_configuration
+  cwe: [CWE-295]
+  match:
+    any:
+      - pattern: $HANDLER.ServerCertificateCustomValidationCallback = ($REQUEST, $CERTIFICATE, $CHAIN, $ERRORS) => $DECISION
+        context: |
+          class Pattern {
+            void PatternContext() {
+              $HANDLER.ServerCertificateCustomValidationCallback = ($REQUEST, $CERTIFICATE, $CHAIN, $ERRORS) => $DECISION;
+            }
+          }
+        selector: assignment_expression
+        captures: { decision: DECISION }
+      - pattern: $HANDLER.ServerCertificateCustomValidationCallback = $CALLBACK
+        context: |
+          class Pattern {
+            void PatternContext() {
+              $HANDLER.ServerCertificateCustomValidationCallback = $CALLBACK;
+            }
+          }
+        selector: assignment_expression
+        captures: { callback: CALLBACK }
+  tags: [tls, certificate-validation, configuration]
+  ai: &tls_guidance
+    investigate:
+      - whether certificate chain and hostname validation can be bypassed
+      - the evaluated option or callback behavior and its environment-specific scope
+      - compensating trust controls, test-only boundaries, and production reachability
+    verify:
+      - resolve the effective boolean or callback result on the production client path
+      - confirm whether a certificate or hostname that normal validation rejects can be accepted
+      - inspect the authoritative runtime client configuration and any environment-specific override
+    exclude:
+      - do not report from callback or option syntax alone when the evaluated behavior preserves certificate and hostname validation
+      - do not treat an explicitly test-only trust override as production exposure without evidence that production can select it
+  provenance:
+    note: .NET certificate-validation callback configuration mapped to CWE-295 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/295.html
+      - https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpclienthandler.servercertificatecustomvalidationcallback
+
+- id: java-tls-hostname-verifier
+  version: 1
+  title: Java TLS hostname verifier configuration
+  language: java
+  kind: security_configuration
+  capability: tls_configuration
+  cwe: [CWE-295]
+  match:
+    any:
+      - pattern: $CLIENT.hostnameVerifier(($HOST, $SESSION) -> $DECISION)
+        captures: { decision: DECISION }
+      - pattern: $CLIENT.hostnameVerifier($VERIFIER)
+        captures: { verifier: VERIFIER }
+  tags: [tls, hostname-verification, configuration]
+  ai: *tls_guidance
+  provenance:
+    note: Java hostname-verifier configuration mapped to CWE-295 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/295.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/javax/net/ssl/HostnameVerifier.html
+
+- id: javascript-tls-reject-unauthorized
+  version: 1
+  title: Node.js TLS peer verification option
+  language: javascript
+  kind: security_configuration
+  capability: tls_configuration
+  cwe: [CWE-295]
+  match: &javascript_tls_match
+    any:
+      - pattern: 'tls.connect({ rejectUnauthorized: $VALUE })'
+        captures: { verification: VALUE }
+      - pattern: 'https.request({ rejectUnauthorized: $VALUE })'
+        captures: { verification: VALUE }
+      - pattern: 'new https.Agent({ rejectUnauthorized: $VALUE })'
+        captures: { verification: VALUE }
+  tags: [tls, certificate-validation, configuration]
+  ai: *tls_guidance
+  provenance: &javascript_tls_provenance
+    note: Node.js rejectUnauthorized options mapped to CWE-295 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/295.html
+      - https://nodejs.org/api/tls.html
+
+- id: typescript-tls-reject-unauthorized
+  version: 1
+  title: TypeScript TLS peer verification option
+  language: typescript
+  kind: security_configuration
+  capability: tls_configuration
+  cwe: [CWE-295]
+  match: *javascript_tls_match
+  tags: [tls, certificate-validation, configuration]
+  ai: *tls_guidance
+  provenance: *javascript_tls_provenance
+
+- id: tsx-tls-reject-unauthorized
+  version: 1
+  title: TSX TLS peer verification option
+  language: tsx
+  kind: security_configuration
+  capability: tls_configuration
+  cwe: [CWE-295]
+  match: *javascript_tls_match
+  tags: [tls, certificate-validation, configuration]
+  ai: *tls_guidance
+  provenance: *javascript_tls_provenance
+
+- id: python-tls-verification
+  version: 1
+  title: Python TLS verification configuration
+  language: python
+  kind: security_configuration
+  capability: tls_configuration
+  cwe: [CWE-295]
+  match:
+    any:
+      - pattern: $CONTEXT.check_hostname = $VALUE
+        captures: { verification: VALUE }
+      - pattern: $SESSION.verify = $VALUE
+        captures: { verification: VALUE }
+  tags: [tls, certificate-validation, configuration]
+  ai: *tls_guidance
+  provenance:
+    note: Python hostname and certificate verification options mapped to CWE-295 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/295.html
+      - https://docs.python.org/3/library/ssl.html#ssl.SSLContext.check_hostname
+
+- id: go-tls-insecure-skip-verify
+  version: 1
+  title: Go TLS peer verification configuration
+  language: go
+  kind: security_configuration
+  capability: tls_configuration
+  cwe: [CWE-295]
+  match:
+    any:
+      - pattern: 'tls.Config{InsecureSkipVerify: $VALUE}'
+        context: |
+          package pattern
+          func patternContext() { _ = tls.Config{InsecureSkipVerify: $VALUE} }
+        selector: composite_literal
+        captures: { verification: VALUE }
+  tags: [tls, certificate-validation, configuration]
+  ai: *tls_guidance
+  provenance:
+    note: Go InsecureSkipVerify configuration mapped to CWE-295 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/295.html
+      - https://pkg.go.dev/crypto/tls#Config
+
+- id: rust-reqwest-tls-verification
+  version: 1
+  title: Rust reqwest TLS peer verification configuration
+  language: rust
+  kind: security_configuration
+  capability: tls_configuration
+  cwe: [CWE-295]
+  match:
+    any:
+      - pattern: $CLIENT.danger_accept_invalid_certs($VALUE)
+        captures: { client: CLIENT, verification: VALUE }
+      - pattern: $CLIENT.danger_accept_invalid_hostnames($VALUE)
+        captures: { client: CLIENT, verification: VALUE }
+  tags: [tls, certificate-validation, hostname-validation, configuration, rust, reqwest]
+  ai: *tls_guidance
+  provenance:
+    note: Reqwest dangerous certificate and hostname acceptance options mapped to CWE-295 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/295.html
+      - https://docs.rs/reqwest/latest/reqwest/struct.ClientBuilder.html

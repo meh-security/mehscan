@@ -1,0 +1,81 @@
+{
+  "schema_version": "0.5",
+  "root": "C:/fixture",
+  "evidence": [
+    {
+      "id": "ev-0000000000000001",
+      "kind": "entrypoint",
+      "capability": "http_request_handling",
+      "location": {
+        "path": "app.js",
+        "start": { "line": 2, "column": 1, "byte_offset": 20 },
+        "end": { "line": 2, "column": 29, "byte_offset": 48 }
+      },
+      "enclosing_symbol": "configure",
+      "captures": {
+        "route": {
+          "text": "\"/admin\"",
+          "location": {
+            "path": "app.js",
+            "start": { "line": 2, "column": 9, "byte_offset": 28 },
+            "end": { "line": 2, "column": 17, "byte_offset": 36 }
+          }
+        }
+      },
+      "cwe_candidates": ["CWE-306", "CWE-862"],
+      "tags": ["http", "entrypoint", "express"],
+      "confidence": "high",
+      "provenance": {
+        "resolution": "ast",
+        "engine": "ast-grep 0.45.1",
+        "rule_version": 1
+      },
+      "context": {
+        "comment": false,
+        "reachability": { "state": "reachable" },
+        "availability": { "state": "always" },
+        "literals": {
+          "route": {
+            "state": "known",
+            "value": { "kind": "string", "value": "/admin" }
+          }
+        }
+      },
+      "rule_id": "javascript-http-entrypoint"
+    }
+  ],
+  "coverage": {
+    "totals": {
+      "discovered": 1,
+      "scanned": 1,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0
+    },
+    "languages": {
+      "javascript": {
+        "discovered": 1,
+        "scanned": 1,
+        "parse_failed": 0,
+        "evidence": 1
+      }
+    },
+    "security_surfaces": { "http_request_handling": 1 },
+    "cwe": [
+      {
+        "cwe": "CWE-306",
+        "level": "partial",
+        "supported_languages": ["javascript"]
+      },
+      {
+        "cwe": "CWE-862",
+        "level": "partial",
+        "supported_languages": ["javascript"]
+      }
+    ],
+    "files": [
+      { "path": "app.js", "language": "javascript", "status": "scanned" }
+    ],
+    "ignored_subtrees": []
+  }
+}

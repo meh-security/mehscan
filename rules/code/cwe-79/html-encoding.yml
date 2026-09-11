@@ -1,0 +1,178 @@
+- id: csharp-html-encoding
+  version: 1
+  title: .NET HTML text encoding
+  language: csharp
+  kind: sanitizer
+  capability: html_encoding
+  confidence: medium
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: HtmlEncoder.Default.Encode($VALUE)
+        captures: { value: VALUE }
+      - pattern: WebUtility.HtmlEncode($VALUE)
+        captures: { value: VALUE }
+      - pattern: System.Net.WebUtility.HtmlEncode($VALUE)
+        captures: { value: VALUE }
+  tags: [html, xss, encoding, dotnet]
+  ai: &encoding_guidance
+    investigate:
+      - the browser output context where the encoded value is inserted
+      - whether HTML-text encoding is appropriate for attributes, URLs, JavaScript, or CSS
+      - decoding, trusted-markup conversion, or concatenation after encoding
+      - template-engine autoescaping and explicit bypasses
+  provenance:
+    note: .NET HTML text encoders mapped to contextual XSS protection evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://learn.microsoft.com/en-us/aspnet/core/security/cross-site-scripting
+
+- id: java-html-encoding
+  version: 1
+  title: OWASP Java HTML encoding
+  language: java
+  kind: sanitizer
+  capability: html_encoding
+  confidence: medium
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: Encode.forHtml($VALUE)
+        captures: { value: VALUE }
+      - pattern: Encode.forHtmlContent($VALUE)
+        captures: { value: VALUE }
+  tags: [html, xss, encoding, java, owasp]
+  ai: *encoding_guidance
+  provenance:
+    note: OWASP Java Encoder HTML APIs mapped to contextual XSS protection evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://owasp.org/www-project-java-encoder/
+
+- id: javascript-html-encoding
+  version: 1
+  title: Node HTML entity encoding
+  language: javascript
+  kind: sanitizer
+  capability: html_encoding
+  confidence: medium
+  cwe: [CWE-79]
+  match: &node_html_encoding_match
+    any:
+      - pattern: he.encode($VALUE)
+        captures: { value: VALUE }
+      - pattern: entities.encode($VALUE)
+        captures: { value: VALUE }
+      - pattern: entities.encodeHTML($VALUE)
+        captures: { value: VALUE }
+      - pattern: entities.escapeUTF8($VALUE)
+        captures: { value: VALUE }
+  tags: [html, xss, encoding, nodejs]
+  ai: *encoding_guidance
+  provenance: &node_html_encoding_provenance
+    note: The he package encode API mapped to contextual XSS protection evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://www.npmjs.com/package/he
+
+- id: typescript-html-encoding
+  version: 1
+  title: Node HTML entity encoding
+  language: typescript
+  kind: sanitizer
+  capability: html_encoding
+  confidence: medium
+  cwe: [CWE-79]
+  match: *node_html_encoding_match
+  tags: [html, xss, encoding, nodejs]
+  ai: *encoding_guidance
+  provenance: *node_html_encoding_provenance
+
+- id: tsx-html-encoding
+  version: 1
+  title: Node HTML entity encoding
+  language: tsx
+  kind: sanitizer
+  capability: html_encoding
+  confidence: medium
+  cwe: [CWE-79]
+  match: *node_html_encoding_match
+  tags: [html, xss, encoding, nodejs]
+  ai: *encoding_guidance
+  provenance: *node_html_encoding_provenance
+
+- id: python-html-encoding
+  version: 1
+  title: Python HTML text encoding
+  language: python
+  kind: sanitizer
+  capability: html_encoding
+  confidence: medium
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: html.escape($VALUE)
+        captures: { value: VALUE }
+      - pattern: markupsafe.escape($VALUE)
+        captures: { value: VALUE }
+      - pattern: format_html($FORMAT, $$$VALUE)
+        captures: { value: VALUE }
+      - pattern: django.utils.html.format_html($FORMAT, $$$VALUE)
+        captures: { value: VALUE }
+  tags: [html, xss, encoding, python]
+  ai: *encoding_guidance
+  provenance:
+    note: Python HTML escaping APIs mapped to contextual XSS protection evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://docs.python.org/3/library/html.html#html.escape
+
+- id: go-html-encoding
+  version: 1
+  title: Go HTML text encoding
+  language: go
+  kind: sanitizer
+  capability: html_encoding
+  confidence: medium
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: html.EscapeString($VALUE)
+        context: |
+          package pattern
+          func patternContext() { _ = html.EscapeString($VALUE) }
+        selector: call_expression
+        captures: { value: VALUE }
+      - pattern: template.HTMLEscapeString($VALUE)
+        context: |
+          package pattern
+          func patternContext() { _ = template.HTMLEscapeString($VALUE) }
+        selector: call_expression
+        captures: { value: VALUE }
+  tags: [html, xss, encoding, go]
+  ai: *encoding_guidance
+  provenance:
+    note: Go HTML escaping functions mapped to contextual XSS protection evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://pkg.go.dev/html#EscapeString
+
+- id: rust-ammonia-html-sanitization
+  version: 1
+  title: Rust Ammonia HTML sanitization
+  language: rust
+  kind: sanitizer
+  capability: html_encoding
+  confidence: high
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: $CLEAN($VALUE)
+        captures: { value: VALUE }
+  tags: [html, xss, sanitization, rust, ammonia]
+  ai: *encoding_guidance
+  provenance:
+    note: Exact ammonia clean calls mapped as HTML-fragment sanitization; context outside an HTML fragment remains a review question.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://docs.rs/ammonia/latest/ammonia/fn.clean.html

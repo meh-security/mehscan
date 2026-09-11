@@ -1,0 +1,150 @@
+- id: csharp-authorization-policy
+  version: 1
+  title: ASP.NET Core endpoint authorization policy
+  language: csharp
+  kind: guard
+  capability: authorization
+  cwe: [CWE-862]
+  match:
+    any:
+      - pattern: $ENDPOINT.RequireAuthorization($POLICY)
+        captures: { policy: POLICY }
+      - pattern: $ENDPOINT.RequireAuthorization()
+  tags: [http, authorization, aspnet-core, policy]
+  ai: &authorization_guidance
+    investigate:
+      - the policy, role, permission, subject, and resource represented by the guard
+      - whether the guard executes before every sensitive operation on the protected route
+      - default-deny behavior, ownership checks, bypass paths, and failure handling
+  provenance:
+    note: ASP.NET Core endpoint authorization policies mapped to CWE-862 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/862.html
+      - https://learn.microsoft.com/en-us/aspnet/core/security/authorization/policies
+
+- id: java-method-authorization
+  version: 1
+  title: Spring method authorization guard
+  language: java
+  kind: guard
+  capability: authorization
+  cwe: [CWE-862]
+  match:
+    any:
+      - pattern: '@PreAuthorize($POLICY)'
+        context: |
+          class Pattern { @PreAuthorize($POLICY) void patternContext() {} }
+        selector: annotation
+        captures: { policy: POLICY }
+      - pattern: '@Secured($POLICY)'
+        context: |
+          class Pattern { @Secured($POLICY) void patternContext() {} }
+        selector: annotation
+        captures: { policy: POLICY }
+  tags: [http, authorization, spring-security, policy]
+  ai: *authorization_guidance
+  provenance:
+    note: Spring Security method annotations mapped to CWE-862 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/862.html
+      - https://docs.spring.io/spring-security/reference/servlet/authorization/method-security.html
+
+- id: javascript-acl-authorization
+  version: 1
+  title: JavaScript ACL authorization decision
+  language: javascript
+  kind: guard
+  capability: authorization
+  cwe: [CWE-862]
+  match: &javascript_authorization_match
+    any:
+      - pattern: acl.isAllowed($USER, $RESOURCE, $PERMISSION)
+        captures: { subject: USER, resource: RESOURCE, permission: PERMISSION }
+  symbols: &javascript_authorization_symbols
+    - canonical: acl.isAllowed
+      captures: { subject: 0, resource: 1, permission: 2 }
+  tags: [http, authorization, acl, policy]
+  ai: *authorization_guidance
+  provenance: &javascript_authorization_provenance
+    note: JavaScript ACL decisions mapped to CWE-862 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/862.html
+      - https://github.com/OptimalBits/node_acl
+
+- id: typescript-acl-authorization
+  version: 1
+  title: TypeScript ACL authorization decision
+  language: typescript
+  kind: guard
+  capability: authorization
+  cwe: [CWE-862]
+  match: *javascript_authorization_match
+  symbols: *javascript_authorization_symbols
+  tags: [http, authorization, acl, policy]
+  ai: *authorization_guidance
+  provenance: *javascript_authorization_provenance
+
+- id: tsx-acl-authorization
+  version: 1
+  title: TSX ACL authorization decision
+  language: tsx
+  kind: guard
+  capability: authorization
+  cwe: [CWE-862]
+  match: *javascript_authorization_match
+  symbols: *javascript_authorization_symbols
+  tags: [http, authorization, acl, policy]
+  ai: *authorization_guidance
+  provenance: *javascript_authorization_provenance
+
+- id: python-permission-required-authorization
+  version: 1
+  title: Django permission-required authorization guard
+  language: python
+  kind: guard
+  capability: authorization
+  cwe: [CWE-862]
+  match:
+    any:
+      - pattern: '@permission_required($POLICY)'
+        context: |
+          @permission_required($POLICY)
+          def pattern_context(): pass
+        selector: decorator
+        captures: { policy: POLICY }
+      - pattern: '@permission_classes($POLICY)'
+        context: |
+          @permission_classes($POLICY)
+          def pattern_context(): pass
+        selector: decorator
+        captures: { policy: POLICY }
+  tags: [http, authorization, django, permission]
+  ai: *authorization_guidance
+  provenance:
+    note: Django permission_required decorators mapped to CWE-862 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/862.html
+      - https://docs.djangoproject.com/en/5.2/topics/auth/default/#the-permission-required-decorator
+
+- id: go-casbin-authorization
+  version: 1
+  title: Go Casbin authorization decision
+  language: go
+  kind: guard
+  capability: authorization
+  cwe: [CWE-862]
+  match:
+    any:
+      - pattern: enforcer.Enforce($SUBJECT, $RESOURCE, $ACTION)
+        context: |
+          package pattern
+          func patternContext() { enforcer.Enforce($SUBJECT, $RESOURCE, $ACTION) }
+        selector: call_expression
+        captures: { subject: SUBJECT, resource: RESOURCE, permission: ACTION }
+  tags: [http, authorization, casbin, policy]
+  ai: *authorization_guidance
+  provenance:
+    note: Casbin policy-enforcement decisions mapped to CWE-862 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/862.html
+      - https://pkg.go.dev/github.com/casbin/casbin/v2#Enforcer.Enforce

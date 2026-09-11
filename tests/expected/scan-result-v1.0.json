@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "root": "C:/fixture",
+  "evidence": [],
+  "security_paths": [
+    {
+      "id": "path-0000000000000001",
+      "source_evidence_id": "ev-source",
+      "sink_evidence_id": "ev-sink",
+      "capability": "database_query",
+      "cwe_candidates": ["CWE-89"],
+      "state": "propagated",
+      "steps": [
+        {
+          "kind": "source",
+          "location": {
+            "path": "query.py",
+            "start": { "line": 2, "column": 13, "byte_offset": 28 },
+            "end": { "line": 2, "column": 31, "byte_offset": 46 }
+          },
+          "evidence_id": "ev-source"
+        },
+        {
+          "kind": "assignment",
+          "location": {
+            "path": "query.py",
+            "start": { "line": 2, "column": 5, "byte_offset": 20 },
+            "end": { "line": 2, "column": 31, "byte_offset": 46 }
+          },
+          "symbol": "query"
+        },
+        {
+          "kind": "sink",
+          "location": {
+            "path": "query.py",
+            "start": { "line": 3, "column": 5, "byte_offset": 51 },
+            "end": { "line": 3, "column": 26, "byte_offset": 72 }
+          },
+          "evidence_id": "ev-sink"
+        }
+      ],
+      "uncertainty_reasons": ["source_observation_not_high_confidence"],
+      "provenance": {
+        "engine": "mehscan bounded-local-flow 1",
+        "maximum_propagation_depth": 4
+      }
+    }
+  ],
+  "coverage": {
+    "totals": {
+      "discovered": 1,
+      "scanned": 1,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0
+    },
+    "languages": {},
+    "security_surfaces": {},
+    "cwe": [],
+    "files": [],
+    "ignored_subtrees": []
+  }
+}

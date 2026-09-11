@@ -1,0 +1,131 @@
+- id: csharp-file-upload-source
+  version: 1
+  title: ASP.NET Core uploaded-file access
+  language: csharp
+  kind: source
+  capability: file_upload
+  cwe: [CWE-434]
+  match:
+    any:
+      - pattern: $REQUEST.Form.Files
+        context: |
+          class Pattern {
+            void PatternContext() { var files = $REQUEST.Form.Files; }
+          }
+        selector: member_access_expression
+        captures: { request: REQUEST }
+  tags: [http, upload, file, request]
+  ai: &upload_guidance
+    investigate:
+      - attacker control of filename, content type, size, extension, and file contents
+      - storage location, canonical path construction, overwrite behavior, and execution exposure
+      - validation, malware scanning, authorization, quotas, and lifecycle cleanup
+  provenance:
+    note: ASP.NET Core uploaded-file access mapped to CWE-434 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.iformfile
+
+- id: java-file-upload-source
+  version: 1
+  title: Java servlet uploaded-file access
+  language: java
+  kind: source
+  capability: file_upload
+  cwe: [CWE-434]
+  match:
+    any:
+      - pattern: $REQUEST.getPart($FIELD)
+        captures: { field: FIELD }
+      - pattern: $REQUEST.getParts()
+  tags: [http, upload, file, request, servlet]
+  ai: *upload_guidance
+  provenance:
+    note: Java servlet multipart access mapped to CWE-434 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://jakarta.ee/specifications/servlet/6.1/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest
+
+- id: javascript-file-upload-source
+  version: 1
+  title: Express uploaded-file access
+  language: javascript
+  kind: source
+  capability: file_upload
+  cwe: [CWE-434]
+  match: &javascript_upload_match
+    any:
+      - pattern: req.file
+      - pattern: req.files
+  tags: [http, upload, file, request, express, multer]
+  ai: *upload_guidance
+  provenance: &javascript_upload_provenance
+    note: Express/Multer uploaded-file access mapped to CWE-434 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://github.com/expressjs/multer#file-information
+
+- id: typescript-file-upload-source
+  version: 1
+  title: TypeScript Express uploaded-file access
+  language: typescript
+  kind: source
+  capability: file_upload
+  cwe: [CWE-434]
+  match: *javascript_upload_match
+  tags: [http, upload, file, request, express, multer]
+  ai: *upload_guidance
+  provenance: *javascript_upload_provenance
+
+- id: tsx-file-upload-source
+  version: 1
+  title: TSX Express uploaded-file access
+  language: tsx
+  kind: source
+  capability: file_upload
+  cwe: [CWE-434]
+  match: *javascript_upload_match
+  tags: [http, upload, file, request, express, multer]
+  ai: *upload_guidance
+  provenance: *javascript_upload_provenance
+
+- id: python-file-upload-source
+  version: 1
+  title: Django uploaded-file access
+  language: python
+  kind: source
+  capability: file_upload
+  cwe: [CWE-434]
+  match:
+    any:
+      - pattern: request.FILES
+  tags: [http, upload, file, request, django]
+  ai: *upload_guidance
+  provenance:
+    note: Django uploaded-file access mapped to CWE-434 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://docs.djangoproject.com/en/5.2/topics/http/file-uploads/
+
+- id: go-file-upload-source
+  version: 1
+  title: Go multipart uploaded-file access
+  language: go
+  kind: source
+  capability: file_upload
+  cwe: [CWE-434]
+  match:
+    any:
+      - pattern: $REQUEST.FormFile($FIELD)
+        context: |
+          package pattern
+          func patternContext() { $REQUEST.FormFile($FIELD) }
+        selector: call_expression
+        captures: { field: FIELD }
+  tags: [http, upload, file, request, multipart, go-net-http]
+  ai: *upload_guidance
+  provenance:
+    note: Go multipart FormFile access mapped to CWE-434 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://pkg.go.dev/net/http#Request.FormFile

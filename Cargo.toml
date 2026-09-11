@@ -1,0 +1,40 @@
+[workspace]
+members = [
+  "crates/core",
+  "crates/engine",
+  "crates/cli",
+  "crates/ast-grep/core",
+  "crates/ast-grep/config",
+  "crates/ast-grep/language",
+  "crates/ast-grep/outline",
+]
+default-members = ["crates/core", "crates/engine", "crates/cli"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.88.0"
+readme = "README.md"
+
+[workspace.dependencies]
+ast-grep-core = { path = "crates/ast-grep/core", version = "0.45.1", default-features = false }
+ast-grep-config = { path = "crates/ast-grep/config", version = "0.45.1" }
+ast-grep-language = { path = "crates/ast-grep/language", version = "0.45.1", default-features = false }
+ast-grep-outline = { path = "crates/ast-grep/outline", version = "0.45.1" }
+
+bit-set = "0.11.0"
+ignore = "0.4.22"
+regex = "1.10.4"
+serde = { version = "1.0.200", features = ["derive"] }
+serde_regex = "1.2.0"
+serde_yaml = "0.9.33"
+tree-sitter = "0.26.3"
+thiserror = "2.0.0"
+schemars = "1.0.0"
+anyhow = "1.0.82"
+dashmap = "6.0.0"
+
+[profile.release]
+lto = true

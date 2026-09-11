@@ -1,0 +1,188 @@
+- id: csharp-dynamic-code
+  version: 1
+  title: .NET dynamic code evaluation
+  language: csharp
+  kind: sink
+  capability: dynamic_code_execution
+  cwe: [CWE-94]
+  match:
+    any:
+      - pattern: CSharpScript.EvaluateAsync($CODE)
+        captures: { code: CODE }
+      - pattern: CSharpScript.EvaluateAsync($CODE, $$$ARGUMENTS)
+        captures: { code: CODE }
+      - pattern: CSharpScript.RunAsync($CODE)
+        captures: { code: CODE }
+      - pattern: CSharpScript.RunAsync($CODE, $$$ARGUMENTS)
+        captures: { code: CODE }
+  symbols:
+    - canonical: Microsoft.CodeAnalysis.CSharp.Scripting.CSharpScript.EvaluateAsync
+      captures: { code: 0 }
+    - canonical: Microsoft.CodeAnalysis.CSharp.Scripting.CSharpScript.RunAsync
+      captures: { code: 0 }
+  tags: [code, dynamic-execution]
+  ai: &dynamic_code_guidance
+    investigate:
+      - origin and allowed grammar of the code or script
+      - sandbox boundaries and accessible host capabilities
+      - authorization, isolation, resource limits, and error disclosure
+  provenance:
+    note: Roslyn scripting APIs mapped to the CWE-94 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/94.html
+      - https://learn.microsoft.com/en-us/dotnet/csharp/roslyn-sdk/scripting-api-samples
+
+- id: java-dynamic-code
+  version: 1
+  title: Java script evaluation
+  language: java
+  kind: sink
+  capability: dynamic_code_execution
+  cwe: [CWE-94]
+  match:
+    any:
+      - pattern: new ScriptEngineManager().getEngineByName($LANGUAGE).eval($CODE)
+        captures: { code: CODE, language: LANGUAGE }
+      - pattern: new javax.script.ScriptEngineManager().getEngineByName($LANGUAGE).eval($CODE)
+        captures: { code: CODE, language: LANGUAGE }
+  tags: [code, dynamic-execution]
+  ai: *dynamic_code_guidance
+  provenance:
+    note: Explicit Java ScriptEngineManager evaluation mapped to the CWE-94 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/94.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.scripting/javax/script/ScriptEngine.html
+
+- id: javascript-dynamic-code
+  version: 1
+  title: JavaScript dynamic code evaluation
+  language: javascript
+  kind: sink
+  capability: dynamic_code_execution
+  cwe: [CWE-94]
+  match: &javascript_dynamic_code_match
+    any:
+      - pattern: eval($CODE)
+        captures: { code: CODE }
+      - pattern: Function($CODE)
+        captures: { code: CODE }
+      - pattern: Function($$$PARAMETERS, $CODE)
+        captures: { code: CODE }
+      - pattern: new Function($CODE)
+        captures: { code: CODE }
+      - pattern: new Function($$$PARAMETERS, $CODE)
+        captures: { code: CODE }
+      - pattern: vm.runInNewContext($CODE)
+        captures: { code: CODE }
+      - pattern: vm.runInNewContext($CODE, $$$ARGUMENTS)
+        captures: { code: CODE }
+      - pattern: vm.runInThisContext($CODE)
+        captures: { code: CODE }
+      - pattern: vm.runInThisContext($CODE, $$$ARGUMENTS)
+        captures: { code: CODE }
+      - pattern: vm.runInContext($CODE, $$$ARGUMENTS)
+        captures: { code: CODE }
+  symbols: &javascript_dynamic_code_symbols
+    - canonical: eval
+      captures: { code: 0 }
+    - canonical: Function
+      captures: { code: 0 }
+    - canonical: vm.runInNewContext
+      captures: { code: 0 }
+    - canonical: vm.runInThisContext
+      captures: { code: 0 }
+    - canonical: vm.runInContext
+      captures: { code: 0 }
+  tags: [code, dynamic-execution]
+  ai: *dynamic_code_guidance
+  provenance: &javascript_dynamic_code_provenance
+    note: JavaScript and Node.js evaluation APIs mapped to the CWE-94 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/94.html
+      - https://nodejs.org/api/vm.html
+
+- id: typescript-dynamic-code
+  version: 1
+  title: TypeScript dynamic code evaluation
+  language: typescript
+  kind: sink
+  capability: dynamic_code_execution
+  cwe: [CWE-94]
+  match: *javascript_dynamic_code_match
+  symbols: *javascript_dynamic_code_symbols
+  tags: [code, dynamic-execution]
+  ai: *dynamic_code_guidance
+  provenance: *javascript_dynamic_code_provenance
+
+- id: tsx-dynamic-code
+  version: 1
+  title: TSX dynamic code evaluation
+  language: tsx
+  kind: sink
+  capability: dynamic_code_execution
+  cwe: [CWE-94]
+  match: *javascript_dynamic_code_match
+  symbols: *javascript_dynamic_code_symbols
+  tags: [code, dynamic-execution]
+  ai: *dynamic_code_guidance
+  provenance: *javascript_dynamic_code_provenance
+
+- id: python-dynamic-code
+  version: 1
+  title: Python dynamic code evaluation
+  language: python
+  kind: sink
+  capability: dynamic_code_execution
+  cwe: [CWE-94]
+  match:
+    any:
+      - pattern: eval($CODE)
+        captures: { code: CODE }
+      - pattern: eval($CODE, $$$ARGUMENTS)
+        captures: { code: CODE }
+      - pattern: exec($CODE)
+        captures: { code: CODE }
+      - pattern: exec($CODE, $$$ARGUMENTS)
+        captures: { code: CODE }
+      - pattern: compile($CODE, $FILENAME, $MODE)
+        captures: { code: CODE }
+  symbols:
+    - canonical: eval
+      captures: { code: 0 }
+    - canonical: exec
+      captures: { code: 0 }
+    - canonical: compile
+      captures: { code: 0 }
+  tags: [code, dynamic-execution]
+  ai: *dynamic_code_guidance
+  provenance:
+    note: Python dynamic execution built-ins mapped to the CWE-94 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/94.html
+      - https://docs.python.org/3/library/functions.html#eval
+
+- id: go-dynamic-code
+  version: 1
+  title: Go dynamic plugin loading
+  language: go
+  kind: sink
+  capability: dynamic_code_execution
+  cwe: [CWE-94]
+  match:
+    any:
+      - pattern: plugin.Open($PATH)
+        context: |
+          package pattern
+          func patternContext() { plugin.Open($PATH) }
+        selector: call_expression
+        captures: { code: PATH }
+  symbols:
+    - canonical: plugin.Open
+      captures: { code: 0 }
+  tags: [code, dynamic-execution, plugin]
+  ai: *dynamic_code_guidance
+  provenance:
+    note: Go plugin loading mapped to the CWE-94 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/94.html
+      - https://pkg.go.dev/plugin

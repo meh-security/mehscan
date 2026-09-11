@@ -1,0 +1,62 @@
+{
+  "schema_version": "2.1",
+  "root": "C:/fixture",
+  "evidence": [
+    {
+      "id": "ev-fixed-format-transform",
+      "kind": "sanitizer",
+      "capability": "fixed_format_transform",
+      "location": {
+        "path": "login.ts",
+        "start": { "line": 4, "column": 20, "byte_offset": 110 },
+        "end": { "line": 4, "column": 47, "byte_offset": 137 }
+      },
+      "captures": {
+        "value": {
+          "text": "req.body.password",
+          "location": {
+            "path": "login.ts",
+            "start": { "line": 4, "column": 34, "byte_offset": 124 },
+            "end": { "line": 4, "column": 51, "byte_offset": 141 }
+          }
+        }
+      },
+      "tags": ["value-transform", "fixed-width", "lowercase-hexadecimal-output"],
+      "confidence": "high",
+      "provenance": {
+        "resolution": "ast",
+        "engine": "ast-grep 0.45.1 + project-fixed-format-summary",
+        "rule_version": 1
+      },
+      "context": {
+        "comment": false,
+        "value_transform": {
+          "output_format": "lowercase_hexadecimal",
+          "exact_length": 32,
+          "algorithm": "md5"
+        }
+      },
+      "symbol_resolution": {
+        "canonical": "lib/insecurity.hash",
+        "observed": "security.hash",
+        "method": "alias",
+        "confidence": "high"
+      },
+      "rule_id": "typescript-fixed-format-transform"
+    }
+  ],
+  "coverage": {
+    "totals": {
+      "discovered": 1,
+      "scanned": 1,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0
+    },
+    "languages": {},
+    "security_surfaces": { "fixed_format_transform": 1 },
+    "cwe": [],
+    "files": [],
+    "ignored_subtrees": []
+  }
+}

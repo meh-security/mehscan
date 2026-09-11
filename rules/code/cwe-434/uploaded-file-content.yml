@@ -1,0 +1,130 @@
+- id: csharp-uploaded-file-content
+  version: 1
+  title: ASP.NET uploaded file content
+  language: csharp
+  kind: source
+  capability: uploaded_file_content
+  confidence: medium
+  cwe: [CWE-434]
+  match:
+    any:
+      - pattern: $REQUEST.Form.Files[$INDEX].OpenReadStream()
+        captures: { request: REQUEST, index: INDEX }
+  tags: [http, upload, content, attacker-controlled, dotnet]
+  ai: &uploaded_content_guidance
+    investigate:
+      - whether uploaded bytes reach a parser, interpreter, renderer, archive extractor, or storage sink
+      - content signature, content type, size, decompression, malware, and parser configuration
+      - whether validation is applied to the same bytes before the security-sensitive operation
+  provenance:
+    note: ASP.NET uploaded streams mapped to attacker-controlled file-content evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://learn.microsoft.com/en-us/aspnet/core/mvc/models/file-uploads
+
+- id: java-uploaded-file-content
+  version: 1
+  title: Java servlet uploaded file content
+  language: java
+  kind: source
+  capability: uploaded_file_content
+  confidence: medium
+  cwe: [CWE-434]
+  match:
+    any:
+      - pattern: $REQUEST.getPart($FIELD).getInputStream()
+        captures: { field: FIELD }
+  tags: [http, upload, content, attacker-controlled, java, servlet]
+  ai: *uploaded_content_guidance
+  provenance:
+    note: Servlet uploaded streams mapped to attacker-controlled file-content evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://jakarta.ee/specifications/servlet/6.1/apidocs/jakarta.servlet/jakarta/servlet/http/part
+
+- id: javascript-uploaded-file-content
+  version: 1
+  title: Multer uploaded file content
+  language: javascript
+  kind: source
+  capability: uploaded_file_content
+  confidence: medium
+  cwe: [CWE-434]
+  match: &javascript_uploaded_content_match
+    any:
+      - pattern: req.file.buffer
+      - pattern: req.files[$INDEX].buffer
+        captures: { index: INDEX }
+  tags: [http, upload, content, attacker-controlled, multer, javascript]
+  ai: *uploaded_content_guidance
+  provenance: &javascript_uploaded_content_provenance
+    note: Multer memory-storage buffers mapped to attacker-controlled file-content evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://github.com/expressjs/multer#file-information
+
+- id: typescript-uploaded-file-content
+  version: 1
+  title: Multer uploaded file content
+  language: typescript
+  kind: source
+  capability: uploaded_file_content
+  confidence: medium
+  cwe: [CWE-434]
+  match: *javascript_uploaded_content_match
+  tags: [http, upload, content, attacker-controlled, multer, typescript]
+  ai: *uploaded_content_guidance
+  provenance: *javascript_uploaded_content_provenance
+
+- id: tsx-uploaded-file-content
+  version: 1
+  title: Multer uploaded file content
+  language: tsx
+  kind: source
+  capability: uploaded_file_content
+  confidence: medium
+  cwe: [CWE-434]
+  match: *javascript_uploaded_content_match
+  tags: [http, upload, content, attacker-controlled, multer, tsx]
+  ai: *uploaded_content_guidance
+  provenance: *javascript_uploaded_content_provenance
+
+- id: python-uploaded-file-content
+  version: 1
+  title: Django uploaded file content
+  language: python
+  kind: source
+  capability: uploaded_file_content
+  confidence: medium
+  cwe: [CWE-434]
+  match:
+    any:
+      - pattern: request.FILES[$FIELD].read()
+        captures: { field: FIELD }
+  tags: [http, upload, content, attacker-controlled, django, python]
+  ai: *uploaded_content_guidance
+  provenance:
+    note: Django uploaded bytes mapped to attacker-controlled file-content evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://docs.djangoproject.com/en/5.2/ref/files/uploads/
+
+- id: go-uploaded-file-content
+  version: 1
+  title: Go multipart uploaded file content
+  language: go
+  kind: source
+  capability: uploaded_file_content
+  confidence: medium
+  cwe: [CWE-434]
+  match:
+    any:
+      - pattern: $REQUEST.MultipartForm.File[$FIELD][$INDEX].Open()
+        captures: { request: REQUEST, field: FIELD, index: INDEX }
+  tags: [http, upload, content, attacker-controlled, multipart, go]
+  ai: *uploaded_content_guidance
+  provenance:
+    note: Go multipart file streams mapped to attacker-controlled file-content evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://pkg.go.dev/mime/multipart#FileHeader.Open

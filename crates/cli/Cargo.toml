@@ -1,0 +1,18 @@
+[package]
+name = "mehscan-cli"
+version = "0.1.0"
+description = "Command-line interface for the Mehscan evidence-first source security scanner"
+edition.workspace = true
+rust-version.workspace = true
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "mehscan"
+path = "src/main.rs"
+
+[dependencies]
+mehscan-core = { path = "../core" }
+mehscan-engine = { path = "../engine" }
+serde.workspace = true
+serde_json = "1.0.116"

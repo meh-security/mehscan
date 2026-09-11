@@ -1,0 +1,76 @@
+{
+  "schema_version": "0.8",
+  "root": "C:/fixture",
+  "evidence": [
+    {
+      "id": "ev-0000000000000001",
+      "kind": "source",
+      "capability": "http_request_data",
+      "location": {
+        "path": "route.js",
+        "start": { "line": 2, "column": 17, "byte_offset": 37 },
+        "end": { "line": 2, "column": 34, "byte_offset": 54 }
+      },
+      "enclosing_symbol": "handler",
+      "captures": {
+        "name": {
+          "text": "\"email\"",
+          "location": {
+            "path": "route.js",
+            "start": { "line": 2, "column": 26, "byte_offset": 46 },
+            "end": { "line": 2, "column": 33, "byte_offset": 53 }
+          }
+        }
+      },
+      "cwe_candidates": ["CWE-20"],
+      "tags": ["http", "request", "attacker-controlled", "express"],
+      "confidence": "medium",
+      "provenance": {
+        "resolution": "ast",
+        "engine": "ast-grep 0.45.1",
+        "rule_version": 1
+      },
+      "context": {
+        "comment": false,
+        "reachability": { "state": "reachable" },
+        "availability": { "state": "always" },
+        "literals": {
+          "name": {
+            "state": "known",
+            "value": { "kind": "string", "value": "email" }
+          }
+        }
+      },
+      "rule_id": "javascript-http-request-data"
+    }
+  ],
+  "coverage": {
+    "totals": {
+      "discovered": 1,
+      "scanned": 1,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0
+    },
+    "languages": {
+      "javascript": {
+        "discovered": 1,
+        "scanned": 1,
+        "parse_failed": 0,
+        "evidence": 1
+      }
+    },
+    "security_surfaces": { "http_request_data": 1 },
+    "cwe": [
+      {
+        "cwe": "CWE-20",
+        "level": "partial",
+        "supported_languages": ["javascript"]
+      }
+    ],
+    "files": [
+      { "path": "route.js", "language": "javascript", "status": "scanned" }
+    ],
+    "ignored_subtrees": []
+  }
+}

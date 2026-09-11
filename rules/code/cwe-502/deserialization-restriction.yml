@@ -1,0 +1,135 @@
+- id: java-deserialization-restriction
+  version: 1
+  title: Java explicit deserialization target type
+  language: java
+  kind: validation
+  capability: deserialization_restriction
+  confidence: medium
+  cwe: [CWE-502]
+  match:
+    any:
+      - pattern: $MAPPER.readValue($PAYLOAD, $TYPE.class)
+        captures: { payload: PAYLOAD, type: TYPE }
+  tags: [deserialization, type-restriction, json, java]
+  ai: &restriction_guidance
+    investigate:
+      - whether the captured type is fixed by trusted code rather than attacker-controlled metadata
+      - polymorphism, custom converters, callbacks, and object construction side effects
+      - size, depth, duplicate-member, and resource-consumption limits
+      - whether the exact restricted expression receives the untrusted payload
+  provenance:
+    note: A Jackson readValue target type mapped to contextual type-restriction evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/502.html
+      - https://javadoc.io/doc/com.fasterxml.jackson.core/jackson-databind/latest/com/fasterxml/jackson/databind/ObjectMapper.html
+
+- id: javascript-deserialization-restriction
+  version: 1
+  title: JavaScript YAML schema restriction
+  language: javascript
+  kind: validation
+  capability: deserialization_restriction
+  confidence: medium
+  cwe: [CWE-502]
+  match: &javascript_restriction_match
+    any:
+      - pattern: 'yaml.load($PAYLOAD, { schema: yaml.JSON_SCHEMA })'
+        captures: { payload: PAYLOAD }
+      - pattern: 'yaml.load($PAYLOAD, { schema: yaml.FAILSAFE_SCHEMA })'
+        captures: { payload: PAYLOAD }
+      - pattern: 'jsyaml.load($PAYLOAD, { schema: jsyaml.JSON_SCHEMA })'
+        captures: { payload: PAYLOAD }
+      - pattern: 'jsyaml.load($PAYLOAD, { schema: jsyaml.FAILSAFE_SCHEMA })'
+        captures: { payload: PAYLOAD }
+      - pattern: yaml.safeLoad($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: yaml.safeLoad($PAYLOAD, $$$OPTIONS)
+        captures: { payload: PAYLOAD }
+      - pattern: jsyaml.safeLoad($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: jsyaml.safeLoad($PAYLOAD, $$$OPTIONS)
+        captures: { payload: PAYLOAD }
+  symbols: &javascript_restriction_symbols
+    - canonical: js-yaml.safeLoad
+      captures: { payload: 0 }
+  tags: [deserialization, schema-restriction, yaml, javascript]
+  ai: *restriction_guidance
+  provenance: &javascript_restriction_provenance
+    note: An explicit js-yaml schema mapped to contextual format and type-restriction evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/502.html
+      - https://github.com/nodeca/js-yaml#load-string---options-
+
+- id: typescript-deserialization-restriction
+  version: 1
+  title: TypeScript YAML schema restriction
+  language: typescript
+  kind: validation
+  capability: deserialization_restriction
+  confidence: medium
+  cwe: [CWE-502]
+  match: *javascript_restriction_match
+  symbols: *javascript_restriction_symbols
+  tags: [deserialization, schema-restriction, yaml, typescript]
+  ai: *restriction_guidance
+  provenance: *javascript_restriction_provenance
+
+- id: tsx-deserialization-restriction
+  version: 1
+  title: TSX YAML schema restriction
+  language: tsx
+  kind: validation
+  capability: deserialization_restriction
+  confidence: medium
+  cwe: [CWE-502]
+  match: *javascript_restriction_match
+  symbols: *javascript_restriction_symbols
+  tags: [deserialization, schema-restriction, yaml, tsx]
+  ai: *restriction_guidance
+  provenance: *javascript_restriction_provenance
+
+- id: python-deserialization-restriction
+  version: 1
+  title: Python safe YAML loader restriction
+  language: python
+  kind: validation
+  capability: deserialization_restriction
+  confidence: medium
+  cwe: [CWE-502]
+  match:
+    any:
+      - pattern: yaml.safe_load($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: yaml.load($PAYLOAD, Loader=yaml.SafeLoader)
+        captures: { payload: PAYLOAD }
+  tags: [deserialization, loader-restriction, yaml, python]
+  ai: *restriction_guidance
+  provenance:
+    note: PyYAML safe loader selection mapped to contextual loader-restriction evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/502.html
+      - https://pyyaml.org/wiki/PyYAMLDocumentation
+
+- id: go-deserialization-restriction
+  version: 1
+  title: Go explicit JSON destination type
+  language: go
+  kind: validation
+  capability: deserialization_restriction
+  confidence: medium
+  cwe: [CWE-502]
+  match:
+    any:
+      - pattern: json.Unmarshal($PAYLOAD, &$TYPE{})
+        context: |
+          package pattern
+          func patternContext() { json.Unmarshal($PAYLOAD, &$TYPE{}) }
+        selector: call_expression
+        captures: { payload: PAYLOAD, type: TYPE }
+  tags: [deserialization, type-restriction, json, go]
+  ai: *restriction_guidance
+  provenance:
+    note: A Go JSON decode into an explicit destination mapped to contextual type-restriction evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/502.html
+      - https://pkg.go.dev/encoding/json#Unmarshal

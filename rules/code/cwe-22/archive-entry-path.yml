@@ -1,0 +1,24 @@
+- id: csharp-zip-entry-full-name
+  version: 1
+  title: .NET ZIP archive entry path
+  language: csharp
+  kind: source
+  capability: archive_entry_path
+  confidence: high
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: $ENTRY.FullName
+        captures: { path: ENTRY }
+  tags: [archive, zip, entry-path, attacker-controlled]
+  ai:
+    investigate:
+      - whether the archive can be supplied or influenced by an attacker
+      - whether the full entry path reaches extraction or a filesystem write
+      - canonicalization and component-boundary containment beneath the intended extraction root
+      - symlink, overwrite, decompression-size, and storage-isolation policy
+  provenance:
+    note: Seed matching for ZipArchiveEntry.FullName; exact C# type identity replaces this broad observation before path construction.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://learn.microsoft.com/en-us/dotnet/api/system.io.compression.ziparchiveentry.fullname

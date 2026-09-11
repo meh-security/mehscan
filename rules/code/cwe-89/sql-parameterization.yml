@@ -1,0 +1,248 @@
+- id: csharp-sql-parameterization
+  version: 1
+  title: .NET SQL parameter binding
+  language: csharp
+  kind: sanitizer
+  capability: sql_parameterization
+  confidence: medium
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: $COMMAND.Parameters.AddWithValue($NAME, $VALUE)
+        captures: { parameter: NAME, value: VALUE }
+      - pattern: new SqlParameter($NAME, $VALUE)
+        captures: { parameter: NAME, value: VALUE }
+  tags: [database, sql, parameterization, dotnet]
+  ai: &parameterization_guidance
+    investigate:
+      - whether every untrusted value occupies a data placeholder rather than SQL syntax
+      - whether placeholder names and counts agree with the associated query
+      - dynamic identifiers, clauses, and fragments that parameter binding cannot protect
+  provenance:
+    note: ADO.NET SQL parameter APIs mapped to independent parameterization evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://learn.microsoft.com/en-us/dotnet/api/system.data.sqlclient.sqlparametercollection.addwithvalue
+
+- id: java-sql-parameterization
+  version: 1
+  title: JDBC prepared statement and parameter binding
+  language: java
+  kind: sanitizer
+  capability: sql_parameterization
+  confidence: medium
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: $CONNECTION.prepareStatement($QUERY)
+        captures: { query: QUERY }
+      - pattern: statement.setString($INDEX, $VALUE)
+        captures: { parameter: INDEX, value: VALUE }
+      - pattern: statement.setInt($INDEX, $VALUE)
+        captures: { parameter: INDEX, value: VALUE }
+      - pattern: statement.setLong($INDEX, $VALUE)
+        captures: { parameter: INDEX, value: VALUE }
+      - pattern: statement.setObject($INDEX, $VALUE)
+        captures: { parameter: INDEX, value: VALUE }
+      - pattern: preparedStatement.setString($INDEX, $VALUE)
+        captures: { parameter: INDEX, value: VALUE }
+      - pattern: ps.setString($INDEX, $VALUE)
+        captures: { parameter: INDEX, value: VALUE }
+      - pattern: pstmt.setString($INDEX, $VALUE)
+        captures: { parameter: INDEX, value: VALUE }
+  tags: [database, sql, parameterization, jdbc]
+  ai: *parameterization_guidance
+  provenance:
+    note: JDBC prepared statements and value setters mapped to independent parameterization evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.sql/java/sql/Connection.html#prepareStatement(java.lang.String)
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.sql/java/sql/PreparedStatement.html
+
+- id: javascript-sql-parameterization
+  version: 1
+  title: JavaScript database parameter binding
+  language: javascript
+  kind: sanitizer
+  capability: sql_parameterization
+  confidence: medium
+  cwe: [CWE-89]
+  match: &javascript_parameterization_match
+    any:
+      - pattern: 'sequelize.query($QUERY, { bind: $VALUES, $$$OPTIONS })'
+        captures: { query: QUERY, parameters: VALUES }
+      - pattern: 'sequelize.query($QUERY, { bind: $VALUES })'
+        captures: { query: QUERY, parameters: VALUES }
+      - pattern: '$DATABASE.sequelize.query($QUERY, { bind: $VALUES, $$$OPTIONS })'
+        captures: { database: DATABASE, query: QUERY, parameters: VALUES }
+      - pattern: '$DATABASE.sequelize.query($QUERY, { bind: $VALUES })'
+        captures: { database: DATABASE, query: QUERY, parameters: VALUES }
+      - pattern: 'sequelize.query($QUERY, { replacements: $VALUES, $$$OPTIONS })'
+        captures: { query: QUERY, parameters: VALUES }
+      - pattern: 'sequelize.query($QUERY, { replacements: $VALUES })'
+        captures: { query: QUERY, parameters: VALUES }
+      - pattern: '$DATABASE.sequelize.query($QUERY, { replacements: $VALUES, $$$OPTIONS })'
+        captures: { database: DATABASE, query: QUERY, parameters: VALUES }
+      - pattern: '$DATABASE.sequelize.query($QUERY, { replacements: $VALUES })'
+        captures: { database: DATABASE, query: QUERY, parameters: VALUES }
+      - pattern: pool.query($QUERY, $VALUES)
+        captures: { query: QUERY, parameters: VALUES }
+      - pattern: connection.query($QUERY, $VALUES)
+        captures: { query: QUERY, parameters: VALUES }
+      - pattern: $DATABASE.raw($QUERY, $VALUES)
+        captures: { database: DATABASE, query: QUERY, parameters: VALUES }
+  tags: [database, sql, parameterization, nodejs, sequelize]
+  ai: *parameterization_guidance
+  provenance: &javascript_parameterization_provenance
+    note: Node database value arrays and Sequelize bind/replacement options mapped to independent parameterization evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://sequelize.org/docs/v6/core-concepts/raw-queries/#replacements
+      - https://node-postgres.com/features/queries
+
+- id: typescript-sql-parameterization
+  version: 1
+  title: TypeScript database parameter binding
+  language: typescript
+  kind: sanitizer
+  capability: sql_parameterization
+  confidence: medium
+  cwe: [CWE-89]
+  match: *javascript_parameterization_match
+  tags: [database, sql, parameterization, nodejs, sequelize]
+  ai: *parameterization_guidance
+  provenance: *javascript_parameterization_provenance
+
+- id: tsx-sql-parameterization
+  version: 1
+  title: TSX database parameter binding
+  language: tsx
+  kind: sanitizer
+  capability: sql_parameterization
+  confidence: medium
+  cwe: [CWE-89]
+  match: *javascript_parameterization_match
+  tags: [database, sql, parameterization, nodejs, sequelize]
+  ai: *parameterization_guidance
+  provenance: *javascript_parameterization_provenance
+
+- id: python-sql-parameterization
+  version: 1
+  title: Python DB-API parameter binding
+  language: python
+  kind: sanitizer
+  capability: sql_parameterization
+  confidence: medium
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: cursor.execute($QUERY, $VALUES)
+        captures: { query: QUERY, parameters: VALUES }
+      - pattern: cursor.executemany($QUERY, $VALUES)
+        captures: { query: QUERY, parameters: VALUES }
+      - pattern: connection.execute($QUERY, $VALUES)
+        captures: { query: QUERY, parameters: VALUES }
+  tags: [database, sql, parameterization, db-api]
+  ai: *parameterization_guidance
+  provenance:
+    note: Python DB-API second-argument values mapped to independent parameterization evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://docs.python.org/3/library/sqlite3.html#how-to-use-placeholders-to-bind-values-in-sql-queries
+
+- id: go-sql-parameterization
+  version: 1
+  title: Go database/sql parameter binding
+  language: go
+  kind: sanitizer
+  capability: sql_parameterization
+  confidence: medium
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: $DB.Query($QUERY, $VALUE)
+        context: |
+          package pattern
+          func patternContext() { $DB.Query($QUERY, $VALUE) }
+        selector: call_expression
+        captures: { query: QUERY, parameter: VALUE }
+      - pattern: $DB.Query($QUERY, $VALUE, $$$VALUES)
+        captures: { query: QUERY, parameter: VALUE }
+      - pattern: $DB.QueryContext($CONTEXT, $QUERY, $VALUE)
+        context: |
+          package pattern
+          func patternContext() { $DB.QueryContext($CONTEXT, $QUERY, $VALUE) }
+        selector: call_expression
+        captures: { query: QUERY, parameter: VALUE }
+      - pattern: $DB.QueryContext($CONTEXT, $QUERY, $VALUE, $$$VALUES)
+        captures: { query: QUERY, parameter: VALUE }
+      - pattern: $DB.QueryRow($QUERY, $VALUE)
+        context: |
+          package pattern
+          func patternContext() { $DB.QueryRow($QUERY, $VALUE) }
+        selector: call_expression
+        captures: { query: QUERY, parameter: VALUE }
+      - pattern: $DB.QueryRow($QUERY, $VALUE, $$$VALUES)
+        captures: { query: QUERY, parameter: VALUE }
+      - pattern: $DB.QueryRowContext($CONTEXT, $QUERY, $VALUE)
+        context: |
+          package pattern
+          func patternContext() { $DB.QueryRowContext($CONTEXT, $QUERY, $VALUE) }
+        selector: call_expression
+        captures: { query: QUERY, parameter: VALUE }
+      - pattern: $DB.QueryRowContext($CONTEXT, $QUERY, $VALUE, $$$VALUES)
+        captures: { query: QUERY, parameter: VALUE }
+      - pattern: $DB.Exec($QUERY, $VALUE)
+        context: |
+          package pattern
+          func patternContext() { $DB.Exec($QUERY, $VALUE) }
+        selector: call_expression
+        captures: { query: QUERY, parameter: VALUE }
+      - pattern: $DB.Exec($QUERY, $VALUE, $$$VALUES)
+        captures: { query: QUERY, parameter: VALUE }
+      - pattern: $DB.ExecContext($CONTEXT, $QUERY, $VALUE)
+        context: |
+          package pattern
+          func patternContext() { $DB.ExecContext($CONTEXT, $QUERY, $VALUE) }
+        selector: call_expression
+        captures: { query: QUERY, parameter: VALUE }
+      - pattern: $DB.ExecContext($CONTEXT, $QUERY, $VALUE, $$$VALUES)
+        captures: { query: QUERY, parameter: VALUE }
+  tags: [database, sql, parameterization, database-sql]
+  ai: *parameterization_guidance
+  provenance:
+    note: Go database/sql query arguments mapped to independent parameterization evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://go.dev/doc/database/sql-injection
+
+- id: rust-sql-parameterization
+  version: 1
+  title: Rust SQL placeholder binding
+  language: rust
+  kind: sanitizer
+  capability: sql_parameterization
+  confidence: high
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: $QUERY_FUNCTION($QUERY).bind($VALUE)
+        captures: { query: QUERY, parameter: VALUE }
+      - pattern: $QUERY_FUNCTION($QUERY).bind::<$TYPE, $INFERRED>($VALUE)
+        captures: { query: QUERY, parameter: VALUE }
+      - pattern: $DATABASE.query($QUERY, $PARAMETERS)
+        captures: { query: QUERY, parameter: PARAMETERS }
+      - pattern: $DATABASE.query_one($QUERY, $PARAMETERS)
+        captures: { query: QUERY, parameter: PARAMETERS }
+      - pattern: $DATABASE.query_opt($QUERY, $PARAMETERS)
+        captures: { query: QUERY, parameter: PARAMETERS }
+      - pattern: $DATABASE.execute($QUERY, $PARAMETERS)
+        captures: { query: QUERY, parameter: PARAMETERS }
+  tags: [database, sql, parameterization, rust]
+  ai: *parameterization_guidance
+  provenance:
+    note: Placeholder-aware binding on exact Rust database APIs; a bind call without a placeholder is deliberately not treated as protection.
+    references:
+      - https://docs.rs/sqlx/latest/sqlx/fn.query.html
+      - https://docs.rs/diesel/latest/diesel/query_builder/struct.SqlQuery.html
+      - https://docs.rs/postgres/latest/postgres/struct.Client.html

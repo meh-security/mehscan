@@ -1,0 +1,535 @@
+- id: cwe-89-remote-request-to-database-query
+  version: 3
+  source: { capabilities: [http_request_data, rpc_request_data, external_input] }
+  sink:
+    capability: database_query
+    input_roles: [query]
+  protection:
+    capability: sql_parameterization
+    application: related_capture
+    relation_role: query
+    value_roles: [parameters, parameter, value]
+  cwe_candidates: [CWE-89]
+  strategy: bounded_local_value
+
+- id: cwe-78-remote-request-to-process-execution
+  version: 3
+  source: { capabilities: [http_request_data, rpc_request_data, external_input] }
+  sink:
+    capability: process_execution
+    input_roles: [command, arguments]
+  protection:
+    capability: process_argument_separation
+    application: related_capture
+    relation_role: command
+    value_roles: [arguments, value]
+  cwe_candidates: [CWE-78]
+  strategy: bounded_local_value
+
+- id: cwe-78-stored-user-content-to-process-execution
+  version: 1
+  source: { capability: stored_user_content }
+  sink:
+    capability: process_execution
+    input_roles: [command, arguments]
+  protection:
+    capability: process_argument_separation
+    application: related_capture
+    relation_role: command
+    value_roles: [arguments, value]
+  cwe_candidates: [CWE-78]
+  strategy: bounded_local_value
+
+- id: cwe-94-remote-request-to-dynamic-code
+  version: 3
+  source: { capabilities: [http_request_data, rpc_request_data, external_input] }
+  sink:
+    capability: dynamic_code_execution
+    input_roles: [code]
+  protection:
+    capability: dynamic_code_restriction
+    application: related_capture
+    relation_role: code
+    value_roles: [code]
+  cwe_candidates: [CWE-94]
+  strategy: bounded_local_value
+
+- id: cwe-90-remote-request-to-ldap-filter
+  version: 1
+  source: { capabilities: [http_request_data, rpc_request_data] }
+  sink:
+    capability: ldap_query
+    input_roles: [filter]
+  protection:
+    capability: ldap_filter_encoding
+    application: value_transform
+    relation_role: filter
+    value_roles: [value]
+  cwe_candidates: [CWE-90]
+  strategy: bounded_local_value
+
+- id: cwe-90-remote-request-to-ldap-distinguished-name
+  version: 1
+  source: { capabilities: [http_request_data, rpc_request_data] }
+  sink:
+    capability: ldap_query
+    input_roles: [distinguished_name]
+  protection:
+    capability: ldap_distinguished_name_encoding
+    application: value_transform
+    relation_role: distinguished_name
+    value_roles: [value]
+  cwe_candidates: [CWE-90]
+  strategy: bounded_local_value
+
+- id: cwe-94-stored-user-content-to-dynamic-code
+  version: 1
+  source: { capability: stored_user_content }
+  sink:
+    capability: dynamic_code_execution
+    input_roles: [code]
+  protection:
+    capability: dynamic_code_restriction
+    application: related_capture
+    relation_role: code
+    value_roles: [code]
+  cwe_candidates: [CWE-94]
+  strategy: bounded_local_value
+
+- id: cwe-1336-remote-request-to-template-evaluation
+  version: 1
+  source: { capabilities: [http_request_data, rpc_request_data] }
+  sink:
+    capability: template_evaluation
+    input_roles: [template]
+  cwe_candidates: [CWE-1336]
+  strategy: bounded_local_value
+
+- id: cwe-79-remote-request-to-html-output
+  version: 2
+  source: { capabilities: [http_request_data, rpc_request_data] }
+  sink:
+    capability: html_output
+    input_roles: [content]
+  protection:
+    capability: html_encoding
+    application: value_transform
+    relation_role: content
+    value_roles: [value]
+  cwe_candidates: [CWE-79]
+  strategy: bounded_local_value
+
+- id: cwe-113-remote-request-to-http-header
+  version: 1
+  source: { capability: http_request_data }
+  sink:
+    capability: http_header_output
+    input_roles: [header_value]
+  cwe_candidates: [CWE-113]
+  strategy: bounded_local_value
+
+- id: cwe-117-remote-request-to-rendered-log-message
+  version: 1
+  source: { capabilities: [http_request_data, rpc_request_data] }
+  sink:
+    capability: logging
+    input_roles: [message]
+  cwe_candidates: [CWE-117]
+  strategy: bounded_local_value
+
+- id: cwe-79-stored-subtitle-to-html-output
+  version: 1
+  source: { capability: stored_user_content }
+  sink:
+    capability: html_output
+    input_roles: [content]
+  cwe_candidates: [CWE-79]
+  strategy: stored_subtitle_file
+
+- id: cwe-79-stored-content-to-html-output
+  version: 1
+  source: { capability: stored_user_content }
+  sink:
+    capability: html_output
+    input_roles: [content]
+  protection:
+    capability: html_encoding
+    application: value_transform
+    relation_role: content
+    value_roles: [value]
+  cwe_candidates: [CWE-79]
+  strategy: bounded_local_value
+
+- id: cwe-79-browser-input-to-html-output
+  version: 1
+  source: { capability: browser_input }
+  sink:
+    capability: html_output
+    input_roles: [content]
+  protection:
+    capability: html_encoding
+    application: value_transform
+    relation_role: content
+    value_roles: [value]
+  cwe_candidates: [CWE-79]
+  strategy: bounded_local_value
+
+- id: cwe-601-browser-input-to-navigation
+  version: 1
+  source: { capability: browser_input }
+  sink:
+    capability: browser_navigation
+    input_roles: [destination]
+  cwe_candidates: [CWE-601]
+  strategy: bounded_local_value
+
+- id: cwe-352-browser-message-to-credentialed-request
+  version: 1
+  source: { capability: browser_input }
+  sink:
+    capability: browser_credentialed_request
+    input_roles: [request_data]
+  protection:
+    capability: authorization
+    application: related_capture
+    relation_role: request_data
+    value_roles: [value]
+  cwe_candidates: [CWE-352]
+  strategy: bounded_local_value
+
+- id: cwe-200-credential-to-wildcard-browser-message
+  version: 1
+  source: { capability: credential_material }
+  sink:
+    capability: browser_message_send
+    input_roles: [message]
+  cwe_candidates: [CWE-200]
+  strategy: bounded_local_value
+
+- id: cwe-22-remote-request-to-filesystem-read
+  version: 3
+  source: { capabilities: [http_request_data, rpc_request_data, external_input] }
+  sink:
+    capability: filesystem_read
+    input_roles: [path]
+  protection:
+    capability: path_canonicalization
+    application: value_transform
+    relation_role: path
+    value_roles: [value]
+  cwe_candidates: [CWE-22]
+  strategy: bounded_local_value
+
+- id: cwe-22-remote-request-to-filesystem-write
+  version: 3
+  source: { capabilities: [http_request_data, rpc_request_data, external_input] }
+  sink:
+    capability: filesystem_write
+    input_roles: [path]
+  protection:
+    capability: path_canonicalization
+    application: value_transform
+    relation_role: path
+    value_roles: [value]
+  cwe_candidates: [CWE-22]
+  strategy: bounded_local_value
+
+- id: cwe-94-remote-request-to-python-source-content-write
+  version: 1
+  source: { capabilities: [http_request_data, rpc_request_data, external_input] }
+  sink:
+    capability: filesystem_write
+    input_roles: [content]
+  cwe_candidates: [CWE-94]
+  strategy: bounded_local_value
+
+- id: cwe-918-remote-request-to-outbound-network
+  version: 2
+  source: { capabilities: [http_request_data, rpc_request_data] }
+  sink:
+    capability: outbound_network_request
+    input_roles: [endpoint]
+  protection:
+    capability: url_parsing
+    application: value_transform
+    relation_role: endpoint
+    value_roles: [value]
+  cwe_candidates: [CWE-918]
+  strategy: bounded_local_value
+
+- id: cwe-601-remote-request-to-redirect
+  version: 2
+  source: { capabilities: [http_request_data, rpc_request_data] }
+  sink:
+    capability: redirect
+    input_roles: [location]
+  protection:
+    capability: url_parsing
+    application: value_transform
+    relation_role: location
+    value_roles: [value]
+  cwe_candidates: [CWE-601]
+  strategy: bounded_local_value
+
+- id: cwe-639-remote-request-to-resource-access
+  version: 2
+  source: { capabilities: [http_request_data, rpc_request_data] }
+  sink:
+    capability: resource_access
+    input_roles: [filter]
+  cwe_candidates: [CWE-639]
+  strategy: bounded_local_value
+
+- id: cwe-200-remote-request-to-sensitive-response-field
+  version: 1
+  source: { capability: http_request_data }
+  sink:
+    capability: resource_access
+    input_roles: [field_selector]
+  cwe_candidates: [CWE-200]
+  strategy: bounded_local_value
+
+- id: cwe-620-remote-password-change-without-reauthentication
+  version: 1
+  source: { capability: http_request_data }
+  sink:
+    capability: authentication
+    input_roles: [new_password]
+  cwe_candidates: [CWE-620]
+  strategy: bounded_local_value
+
+- id: cwe-916-password-material-to-storage-transform
+  version: 1
+  source: { capability: credential_material }
+  sink:
+    capability: cryptographic_hash
+    input_roles: [password]
+  cwe_candidates: [CWE-916]
+  strategy: bounded_local_value
+
+- id: cwe-943-remote-request-to-nosql-query
+  version: 1
+  source: { capability: http_request_data }
+  sink:
+    capability: database_query
+    input_roles: [nosql_query]
+  cwe_candidates: [CWE-943]
+  strategy: bounded_local_value
+
+- id: cwe-915-remote-object-to-sensitive-model
+  version: 1
+  source: { capability: http_request_data }
+  sink:
+    capability: resource_access
+    input_roles: [assigned_fields]
+  cwe_candidates: [CWE-915]
+  strategy: bounded_local_value
+
+- id: cwe-1321-remote-key-to-dynamic-property-write
+  version: 1
+  source: { capability: http_request_data }
+  sink:
+    capability: resource_access
+    input_roles: [property_key]
+  cwe_candidates: [CWE-1321]
+  strategy: bounded_local_value
+
+- id: cwe-434-uploaded-path-to-filesystem-write
+  version: 1
+  source: { capability: uploaded_file_path }
+  sink:
+    capability: filesystem_write
+    input_roles: [path]
+  protection:
+    capability: path_canonicalization
+    application: value_transform
+    relation_role: path
+    value_roles: [value]
+  cwe_candidates: [CWE-434, CWE-22]
+  strategy: bounded_local_value
+
+- id: cwe-22-archive-entry-to-filesystem-write
+  version: 1
+  source: { capability: archive_entry_path }
+  sink:
+    capability: filesystem_write
+    input_roles: [path]
+  protection:
+    capability: path_containment_check
+    application: related_capture
+    relation_role: path
+    value_roles: [base]
+  cwe_candidates: [CWE-22]
+  strategy: bounded_local_value
+
+- id: cwe-434-streamed-content-to-file-storage
+  version: 1
+  source: { capabilities: [uploaded_file_content, http_request_data] }
+  sink:
+    capability: file_upload
+    input_roles: [content]
+  cwe_candidates: [CWE-434]
+  strategy: bounded_local_value
+
+- id: cwe-502-remote-request-to-deserialization
+  version: 3
+  source: { capabilities: [http_request_data, rpc_request_data, external_input] }
+  sink:
+    capability: deserialization
+    input_roles: [payload]
+  protection:
+    capability: deserialization_restriction
+    application: related_capture
+    relation_role: payload
+    value_roles: [payload]
+  cwe_candidates: [CWE-502]
+  strategy: bounded_local_value
+
+- id: cwe-502-uploaded-content-to-deserialization
+  version: 1
+  source: { capabilities: [uploaded_file_content, file_upload] }
+  sink:
+    capability: deserialization
+    input_roles: [payload]
+  protection:
+    capability: deserialization_restriction
+    application: related_capture
+    relation_role: payload
+    value_roles: [payload]
+  cwe_candidates: [CWE-502]
+  strategy: bounded_local_value
+
+- id: cwe-611-uploaded-content-to-xml-parser
+  version: 1
+  source: { capability: uploaded_file_content }
+  sink:
+    capability: xml_parsing
+    input_roles: [payload]
+  cwe_candidates: [CWE-611]
+  strategy: bounded_local_value
+
+- id: cwe-611-remote-request-to-xml-parser
+  version: 1
+  source: { capabilities: [http_request_data, rpc_request_data] }
+  sink:
+    capability: xml_parsing
+    input_roles: [payload]
+  cwe_candidates: [CWE-611]
+  strategy: bounded_local_value
+
+- id: cwe-321-credential-to-hardcoded-jwt-signing
+  version: 1
+  source: { capability: credential_material }
+  sink:
+    capability: token_generation
+    input_roles: [signing_key]
+  cwe_candidates: [CWE-321]
+  strategy: bounded_local_value
+
+- id: cwe-613-credential-to-session-lifecycle
+  version: 1
+  source: { capability: credential_material }
+  sink:
+    capability: authentication
+    input_roles: [session_token]
+  cwe_candidates: [CWE-613]
+  strategy: bounded_local_value
+
+- id: cwe-613-credential-to-token-without-expiry
+  version: 1
+  source: { capability: credential_material }
+  sink:
+    capability: token_generation
+    input_roles: [expiry_key]
+  cwe_candidates: [CWE-613]
+  strategy: bounded_local_value
+
+- id: cwe-347-request-token-to-jwt-verification
+  version: 1
+  source: { capability: http_request_data }
+  sink:
+    capability: authentication
+    input_roles: [token]
+  cwe_candidates: [CWE-347]
+  strategy: bounded_local_value
+
+- id: cwe-345-request-token-to-unverified-identity
+  version: 1
+  source: { capability: http_request_data }
+  sink:
+    capability: authentication
+    input_roles: [unverified_token]
+  cwe_candidates: [CWE-345]
+  strategy: bounded_local_value
+
+- id: cwe-614-credential-to-cookie-transport
+  version: 1
+  source: { capability: credential_material }
+  sink:
+    capability: cookie_configuration
+    input_roles: [secure_payload]
+  cwe_candidates: [CWE-614]
+  strategy: bounded_local_value
+
+- id: cwe-1004-credential-to-script-readable-cookie
+  version: 1
+  source: { capability: credential_material }
+  sink:
+    capability: cookie_configuration
+    input_roles: [http_only_payload]
+  cwe_candidates: [CWE-1004]
+  strategy: bounded_local_value
+
+- id: cwe-352-cookie-request-to-state-change
+  version: 1
+  source: { capability: http_request_data }
+  sink:
+    capability: resource_access
+    input_roles: [operation]
+  cwe_candidates: [CWE-352]
+  strategy: bounded_local_value
+
+- id: cwe-942-origin-to-cors-policy
+  version: 1
+  source: { capability: http_request_data }
+  sink:
+    capability: http_request_handling
+    input_roles: [policy]
+  cwe_candidates: [CWE-942]
+  strategy: bounded_local_value
+
+- id: cwe-307-forwarded-address-to-rate-limit
+  version: 1
+  source: { capability: http_request_data }
+  sink:
+    capability: authentication
+    input_roles: [client_key]
+  cwe_candidates: [CWE-307]
+  strategy: bounded_local_value
+
+- id: cwe-640-reset-token-lifecycle
+  version: 1
+  source: { capability: credential_material }
+  sink:
+    capability: authentication
+    input_roles: [reset_token]
+  cwe_candidates: [CWE-640]
+  strategy: bounded_local_value
+
+- id: cwe-312-credential-to-plaintext-model-storage
+  version: 1
+  source: { capability: credential_material }
+  sink:
+    capability: resource_access
+    input_roles: [stored_value]
+  cwe_candidates: [CWE-312]
+  strategy: bounded_local_value
+
+- id: cwe-20-model-tool-input-to-privileged-operation
+  version: 1
+  source: { capability: model_tool_input }
+  sink:
+    capability: resource_access
+    input_roles: [operation]
+  cwe_candidates: [CWE-20]
+  strategy: bounded_local_value

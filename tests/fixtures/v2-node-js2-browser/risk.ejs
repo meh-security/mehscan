@@ -1,0 +1,21 @@
+<pre>
+  Tutorial only: document.body.innerHTML = event.data
+</pre>
+<script>
+const output = document.getElementById('output');
+window.addEventListener('message', event => {
+  output.innerHTML = event.data;
+  const xhr = new XMLHttpRequest();
+  xhr.withCredentials = true;
+  xhr.open('POST', '/organization/add-user');
+  xhr.send('user=' + event.data);
+});
+
+const token = "<%-apiToken%>";
+window.opener.postMessage({ token: token }, '*');
+
+const socket = io.connect(window.location.origin);
+socket.on('new_message', data => {
+  output.innerHTML = data.message;
+});
+</script>

@@ -1,0 +1,81 @@
+{
+  "schema_version": "1.4",
+  "root": "C:/fixture",
+  "evidence": [
+    {
+      "id": "ev-url-parsing",
+      "kind": "sanitizer",
+      "capability": "url_parsing",
+      "location": {
+        "path": "proxy.ts",
+        "start": { "line": 2, "column": 23, "byte_offset": 38 },
+        "end": { "line": 2, "column": 46, "byte_offset": 61 }
+      },
+      "captures": {
+        "value": {
+          "text": "req.query.url",
+          "location": {
+            "path": "proxy.ts",
+            "start": { "line": 2, "column": 31, "byte_offset": 46 },
+            "end": { "line": 2, "column": 44, "byte_offset": 59 }
+          }
+        }
+      },
+      "cwe_candidates": ["CWE-918"],
+      "tags": ["http", "network", "ssrf", "url", "parsing", "typescript"],
+      "confidence": "medium",
+      "provenance": {
+        "resolution": "ast",
+        "engine": "ast-grep 0.45.1",
+        "rule_version": 1
+      },
+      "rule_id": "typescript-url-parsing"
+    },
+    {
+      "id": "ev-url-validation",
+      "kind": "validation",
+      "capability": "url_destination_validation",
+      "location": {
+        "path": "proxy.ts",
+        "start": { "line": 3, "column": 7, "byte_offset": 68 },
+        "end": { "line": 3, "column": 43, "byte_offset": 104 }
+      },
+      "captures": {
+        "endpoint": {
+          "text": "destination",
+          "location": {
+            "path": "proxy.ts",
+            "start": { "line": 3, "column": 7, "byte_offset": 68 },
+            "end": { "line": 3, "column": 18, "byte_offset": 79 }
+          }
+        }
+      },
+      "cwe_candidates": ["CWE-918"],
+      "tags": ["http", "network", "ssrf", "url", "validation", "typescript"],
+      "confidence": "medium",
+      "provenance": {
+        "resolution": "ast",
+        "engine": "ast-grep 0.45.1",
+        "rule_version": 1
+      },
+      "rule_id": "typescript-url-destination-validation"
+    }
+  ],
+  "coverage": {
+    "totals": {
+      "discovered": 1,
+      "scanned": 1,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0
+    },
+    "languages": {},
+    "security_surfaces": {
+      "url_destination_validation": 1,
+      "url_parsing": 1
+    },
+    "cwe": [],
+    "files": [],
+    "ignored_subtrees": []
+  }
+}

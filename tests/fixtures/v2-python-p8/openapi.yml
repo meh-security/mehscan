@@ -1,0 +1,29 @@
+openapi: 3.0.0
+info:
+  title: P8 fixture
+  version: 1.0.0
+servers:
+  - url: /api
+paths:
+  /unsafe:
+    post:
+      operationId: api.unsafe
+      requestBody:
+        content:
+          application/json:
+            schema:
+              x-body-name: payload
+  /safe:
+    post:
+      operationId: "api.safe"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              x-body-name: "payload"
+  /missing:
+    get:
+      operationId: api.missing
+      parameters:
+        - name: query
+          in: query

@@ -1,0 +1,170 @@
+- id: csharp-url-parsing
+  version: 1
+  title: .NET URL parsing
+  language: csharp
+  kind: sanitizer
+  capability: url_parsing
+  confidence: medium
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: new Uri($VALUE)
+        captures: { value: VALUE }
+      - pattern: new Uri($VALUE, UriKind.Absolute)
+        captures: { value: VALUE }
+  tags: [http, network, ssrf, url, parsing, dotnet]
+  ai: &url_parsing_guidance
+    investigate:
+      - whether the parsed scheme and hostname are explicitly validated
+      - redirects, DNS rebinding, private ranges, loopback, and metadata endpoints
+      - userinfo, alternate IP encodings, ports, fragments, and parser differentials
+      - whether the parsed value is exactly the destination used by the network API
+  provenance:
+    note: .NET Uri construction mapped to contextual URL parsing evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://learn.microsoft.com/en-us/dotnet/api/system.uri
+
+- id: java-url-parsing
+  version: 1
+  title: Java URL parsing
+  language: java
+  kind: sanitizer
+  capability: url_parsing
+  confidence: medium
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: URI.create($VALUE)
+        captures: { value: VALUE }
+      - pattern: new URI($VALUE)
+        captures: { value: VALUE }
+  tags: [http, network, ssrf, url, parsing, java]
+  ai: *url_parsing_guidance
+  provenance:
+    note: Java URI construction mapped to contextual URL parsing evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/net/URI.html
+
+- id: javascript-url-parsing
+  version: 1
+  title: JavaScript URL parsing
+  language: javascript
+  kind: sanitizer
+  capability: url_parsing
+  confidence: medium
+  cwe: [CWE-918]
+  match: &javascript_url_parsing_match
+    any:
+      - pattern: new URL($VALUE)
+        captures: { value: VALUE }
+      - pattern: new URL($VALUE, $BASE)
+        captures: { value: VALUE, base: BASE }
+  tags: [http, network, ssrf, url, parsing, javascript]
+  ai: *url_parsing_guidance
+  provenance: &javascript_url_parsing_provenance
+    note: WHATWG URL construction mapped to contextual URL parsing evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://developer.mozilla.org/en-US/docs/Web/API/URL/URL
+
+- id: typescript-url-parsing
+  version: 1
+  title: TypeScript URL parsing
+  language: typescript
+  kind: sanitizer
+  capability: url_parsing
+  confidence: medium
+  cwe: [CWE-918]
+  match: *javascript_url_parsing_match
+  tags: [http, network, ssrf, url, parsing, typescript]
+  ai: *url_parsing_guidance
+  provenance: *javascript_url_parsing_provenance
+
+- id: tsx-url-parsing
+  version: 1
+  title: TSX URL parsing
+  language: tsx
+  kind: sanitizer
+  capability: url_parsing
+  confidence: medium
+  cwe: [CWE-918]
+  match: *javascript_url_parsing_match
+  tags: [http, network, ssrf, url, parsing, tsx]
+  ai: *url_parsing_guidance
+  provenance: *javascript_url_parsing_provenance
+
+- id: python-url-parsing
+  version: 1
+  title: Python URL parsing
+  language: python
+  kind: sanitizer
+  capability: url_parsing
+  confidence: medium
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: urllib.parse.urlparse($VALUE)
+        captures: { value: VALUE }
+      - pattern: urllib.parse.urlsplit($VALUE)
+        captures: { value: VALUE }
+  tags: [http, network, ssrf, url, parsing, python]
+  ai: *url_parsing_guidance
+  provenance:
+    note: Python urllib component parsing mapped to contextual URL parsing evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://docs.python.org/3/library/urllib.parse.html
+
+- id: go-url-parsing
+  version: 1
+  title: Go URL parsing
+  language: go
+  kind: sanitizer
+  capability: url_parsing
+  confidence: medium
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: url.Parse($VALUE)
+        context: |
+          package pattern
+          func patternContext() { _, _ = url.Parse($VALUE) }
+        selector: call_expression
+        captures: { value: VALUE }
+      - pattern: url.ParseRequestURI($VALUE)
+        context: |
+          package pattern
+          func patternContext() { _, _ = url.ParseRequestURI($VALUE) }
+        selector: call_expression
+        captures: { value: VALUE }
+  tags: [http, network, ssrf, url, parsing, go]
+  ai: *url_parsing_guidance
+  provenance:
+    note: Go net/url parsing mapped to contextual URL parsing evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://pkg.go.dev/net/url
+
+- id: rust-url-parsing
+  version: 1
+  title: Rust URL parsing
+  language: rust
+  kind: sanitizer
+  capability: url_parsing
+  confidence: medium
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: Url::parse($VALUE)
+        captures: { value: VALUE }
+      - pattern: url::Url::parse($VALUE)
+        captures: { value: VALUE }
+  tags: [http, network, ssrf, url, parsing, rust]
+  ai: *url_parsing_guidance
+  provenance:
+    note: Rust url crate parsing mapped to contextual URL parsing evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://docs.rs/url/latest/url/struct.Url.html#method.parse

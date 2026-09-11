@@ -1,0 +1,146 @@
+- id: csharp-redirect-destination-validation
+  version: 1
+  title: ASP.NET local redirect validation
+  language: csharp
+  kind: validation
+  capability: redirect_destination_validation
+  confidence: medium
+  cwe: [CWE-601]
+  match:
+    any:
+      - pattern: Url.IsLocalUrl($LOCATION)
+        captures: { location: LOCATION }
+  tags: [http, redirect, open-redirect, validation, dotnet]
+  ai: &redirect_validation_guidance
+    investigate:
+      - whether the checked value is exactly the value later used by the redirect sink
+      - whether the validation guard dominates every path to the redirect
+      - encoded separators, backslashes, control characters, and parser differentials
+      - scheme-relative //host destinations and host-only checks that do not constrain scheme
+      - proxy-derived origins, host-header trust, and application base-path assumptions
+  provenance:
+    note: ASP.NET local-URL checks mapped to contextual redirect validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/601.html
+      - https://learn.microsoft.com/en-us/aspnet/core/security/preventing-open-redirects
+
+- id: java-redirect-destination-validation
+  version: 1
+  title: Java relative redirect validation
+  language: java
+  kind: validation
+  capability: redirect_destination_validation
+  confidence: medium
+  cwe: [CWE-601]
+  match:
+    any:
+      - pattern: '!URI.create($LOCATION).isAbsolute()'
+        captures: { location: LOCATION }
+      - pattern: '!new URI($LOCATION).isAbsolute()'
+        captures: { location: LOCATION }
+  tags: [http, redirect, open-redirect, validation, java]
+  ai: *redirect_validation_guidance
+  provenance:
+    note: Java relative-URI checks mapped to contextual redirect validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/601.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/net/URI.html#isAbsolute()
+
+- id: javascript-redirect-destination-validation
+  version: 1
+  title: JavaScript same-origin redirect validation
+  language: javascript
+  kind: validation
+  capability: redirect_destination_validation
+  confidence: medium
+  cwe: [CWE-601]
+  match: &javascript_redirect_validation_match
+    any:
+      - pattern: new URL($LOCATION, $BASE).origin === $BASE.origin
+        captures: { location: LOCATION, base: BASE }
+      - pattern: $BASE.origin === new URL($LOCATION, $BASE).origin
+        captures: { location: LOCATION, base: BASE }
+      - pattern: new URL($LOCATION, $BASE).host === $BASE.host
+        captures: { location: LOCATION, base: BASE }
+      - pattern: $BASE.host === new URL($LOCATION, $BASE).host
+        captures: { location: LOCATION, base: BASE }
+  tags: [http, redirect, open-redirect, validation, same-origin, javascript]
+  ai: *redirect_validation_guidance
+  provenance: &javascript_redirect_validation_provenance
+    note: WHATWG URL same-origin and same-host comparisons mapped to contextual redirect validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/601.html
+      - https://developer.mozilla.org/en-US/docs/Web/API/URL/origin
+      - https://expressjs.com/en/advanced/best-practice-security.html#prevent-open-redirects
+
+- id: typescript-redirect-destination-validation
+  version: 1
+  title: TypeScript same-origin redirect validation
+  language: typescript
+  kind: validation
+  capability: redirect_destination_validation
+  confidence: medium
+  cwe: [CWE-601]
+  match: *javascript_redirect_validation_match
+  tags: [http, redirect, open-redirect, validation, same-origin, typescript]
+  ai: *redirect_validation_guidance
+  provenance: *javascript_redirect_validation_provenance
+
+- id: tsx-redirect-destination-validation
+  version: 1
+  title: TSX same-origin redirect validation
+  language: tsx
+  kind: validation
+  capability: redirect_destination_validation
+  confidence: medium
+  cwe: [CWE-601]
+  match: *javascript_redirect_validation_match
+  tags: [http, redirect, open-redirect, validation, same-origin, tsx]
+  ai: *redirect_validation_guidance
+  provenance: *javascript_redirect_validation_provenance
+
+- id: python-redirect-destination-validation
+  version: 1
+  title: Django redirect destination validation
+  language: python
+  kind: validation
+  capability: redirect_destination_validation
+  confidence: medium
+  cwe: [CWE-601]
+  match:
+    any:
+      - pattern: url_has_allowed_host_and_scheme($LOCATION, allowed_hosts=$ALLOWED)
+        captures: { location: LOCATION, allowlist: ALLOWED }
+      - pattern: url_has_allowed_host_and_scheme($LOCATION, allowed_hosts=$ALLOWED, require_https=$REQUIRE_HTTPS)
+        captures: { location: LOCATION, allowlist: ALLOWED, require_https: REQUIRE_HTTPS }
+  tags: [http, redirect, open-redirect, validation, django, python]
+  ai: *redirect_validation_guidance
+  provenance:
+    note: Django allowed-host and scheme checks mapped to contextual redirect validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/601.html
+      - https://docs.djangoproject.com/en/stable/ref/utils/#django.utils.http.url_has_allowed_host_and_scheme
+
+- id: go-redirect-destination-validation
+  version: 1
+  title: Go relative redirect validation
+  language: go
+  kind: validation
+  capability: redirect_destination_validation
+  confidence: medium
+  cwe: [CWE-601]
+  match:
+    any:
+      - pattern: '!$URL.IsAbs()'
+        context: |
+          package pattern
+          func patternContext() { _ = !$URL.IsAbs() }
+        selector: unary_expression
+        captures: { location: URL }
+  tags: [http, redirect, open-redirect, validation, go]
+  ai: *redirect_validation_guidance
+  provenance:
+    note: Go relative-URL checks mapped to contextual redirect validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/601.html
+      - https://pkg.go.dev/net/url#URL.IsAbs

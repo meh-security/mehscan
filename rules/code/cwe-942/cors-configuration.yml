@@ -1,0 +1,37 @@
+- id: rust-permissive-cors-review
+  version: 1
+  title: Rust permissive CORS configuration
+  language: rust
+  kind: security_configuration
+  capability: cors_configuration
+  confidence: medium
+  cwe: [CWE-942]
+  match:
+    any:
+      - pattern: $CORS.allow_any_origin()
+        captures: { configuration: CORS }
+      - pattern: $HEADERS.set(AccessControlAllowOrigin::Any)
+        captures: { configuration: HEADERS }
+      - pattern: $CORS.allow_origin($ORIGIN)
+        captures: { configuration: CORS, origin: ORIGIN }
+      - pattern: CorsLayer::permissive()
+      - pattern: CorsLayer::very_permissive()
+  tags: [http, cors, configuration, review, rust]
+  ai:
+    investigate:
+      - whether this code controls the effective browser-facing CORS response
+      - the routes, methods, headers, credentials, and sensitive response data covered
+      - environment-specific middleware plus reverse-proxy, gateway, or service-mesh overrides
+    verify:
+      - inspect the effective Access-Control-Allow-Origin and credentials headers in the deployed environment
+      - confirm whether untrusted browser origins gain a capability they should not have
+      - distinguish a public unauthenticated API from credentialed or sensitive endpoints
+    exclude:
+      - do not report a vulnerability from wildcard syntax alone
+      - do not recommend an application-code fix when an enforced gateway policy owns the control
+  provenance:
+    note: Exact wildcard-origin configuration mapped to review; deployment ownership and exposed capability determine whether remediation is required.
+    references:
+      - https://cwe.mitre.org/data/definitions/942.html
+      - https://docs.rs/warp/latest/warp/filters/cors/struct.Builder.html
+      - https://docs.rs/tower-http/latest/tower_http/cors/struct.CorsLayer.html

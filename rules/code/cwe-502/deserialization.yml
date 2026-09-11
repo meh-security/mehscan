@@ -1,0 +1,241 @@
+- id: csharp-binary-deserialization
+  version: 1
+  title: .NET object deserialization
+  language: csharp
+  kind: sink
+  capability: deserialization
+  cwe: [CWE-502]
+  match:
+    any:
+      - pattern: new BinaryFormatter().Deserialize($PAYLOAD)
+        captures: { payload: PAYLOAD }
+  tags: [deserialization, binary, object-graph]
+  ai: &deserialization_guidance
+    investigate:
+      - provenance and attacker control of the serialized payload
+      - type restrictions, allowlists, signatures, and integrity boundaries
+      - gadget availability and side effects during object construction
+  provenance:
+    note: BinaryFormatter seed matching; the C# analyzer replaces this observation with exact type identity and project/runtime applicability.
+    references:
+      - https://cwe.mitre.org/data/definitions/502.html
+      - https://learn.microsoft.com/en-us/dotnet/standard/serialization/binaryformatter-security-guide
+
+- id: java-object-deserialization
+  version: 1
+  title: Java native object read
+  language: java
+  kind: sink
+  capability: deserialization
+  cwe: [CWE-502]
+  match:
+    any:
+      - pattern: new ObjectInputStream($INPUT).readObject()
+        captures: { payload: INPUT }
+      - pattern: $MAPPER.readValue($PAYLOAD, $TYPE)
+        captures: { payload: PAYLOAD, type: TYPE }
+  tags: [deserialization, java-native, object-graph]
+  ai: *deserialization_guidance
+  provenance:
+    note: Java ObjectInputStream object reads mapped to CWE-502 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/502.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/io/ObjectInputStream.html
+      - https://javadoc.io/doc/com.fasterxml.jackson.core/jackson-databind/latest/com/fasterxml/jackson/databind/ObjectMapper.html
+
+- id: javascript-yaml-deserialization
+  version: 1
+  title: JavaScript YAML deserialization
+  language: javascript
+  kind: sink
+  capability: deserialization
+  cwe: [CWE-502]
+  match: &javascript_deserialization_match
+    any:
+      - pattern: yaml.load($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: 'yaml.load($PAYLOAD, { schema: $SCHEMA })'
+        captures: { payload: PAYLOAD, type: SCHEMA }
+      - pattern: 'yaml.load($PAYLOAD, { schema: $SCHEMA, $$$OPTIONS })'
+        captures: { payload: PAYLOAD, type: SCHEMA }
+      - pattern: jsyaml.load($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: 'jsyaml.load($PAYLOAD, { schema: $SCHEMA })'
+        captures: { payload: PAYLOAD, type: SCHEMA }
+      - pattern: 'jsyaml.load($PAYLOAD, { schema: $SCHEMA, $$$OPTIONS })'
+        captures: { payload: PAYLOAD, type: SCHEMA }
+  symbols: &javascript_deserialization_symbols
+    - canonical: yaml.load
+      captures: { payload: 0 }
+    - canonical: js-yaml.load
+      captures: { payload: 0 }
+  tags: [deserialization, yaml, object-graph]
+  ai: *deserialization_guidance
+  provenance: &javascript_deserialization_provenance
+    note: JavaScript YAML loading mapped to CWE-502 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/502.html
+      - https://github.com/nodeca/js-yaml#load-string---options-
+
+- id: javascript-node-serialize-deserialization
+  version: 1
+  title: Node.js executable object deserialization
+  language: javascript
+  kind: sink
+  capability: deserialization
+  confidence: high
+  cwe: [CWE-502]
+  match: &node_serialize_match
+    any:
+      - pattern: serialize.unserialize($PAYLOAD)
+        captures: { payload: PAYLOAD }
+  symbols: &node_serialize_symbols
+    - canonical: node-serialize.unserialize
+      captures: { payload: 0 }
+  tags: [deserialization, node-serialize, executable-functions, nodejs]
+  ai: *deserialization_guidance
+  provenance: &node_serialize_provenance
+    note: node-serialize unserialize can reconstruct executable function payloads and is unsafe for attacker-controlled data.
+    references:
+      - https://cwe.mitre.org/data/definitions/502.html
+      - https://github.com/luin/serialize#unserialize
+
+- id: typescript-node-serialize-deserialization
+  version: 1
+  title: Node.js executable object deserialization
+  language: typescript
+  kind: sink
+  capability: deserialization
+  confidence: high
+  cwe: [CWE-502]
+  match: *node_serialize_match
+  symbols: *node_serialize_symbols
+  tags: [deserialization, node-serialize, executable-functions, nodejs]
+  ai: *deserialization_guidance
+  provenance: *node_serialize_provenance
+
+- id: tsx-node-serialize-deserialization
+  version: 1
+  title: Node.js executable object deserialization
+  language: tsx
+  kind: sink
+  capability: deserialization
+  confidence: high
+  cwe: [CWE-502]
+  match: *node_serialize_match
+  symbols: *node_serialize_symbols
+  tags: [deserialization, node-serialize, executable-functions, nodejs]
+  ai: *deserialization_guidance
+  provenance: *node_serialize_provenance
+
+- id: typescript-yaml-deserialization
+  version: 1
+  title: TypeScript YAML deserialization
+  language: typescript
+  kind: sink
+  capability: deserialization
+  cwe: [CWE-502]
+  match: *javascript_deserialization_match
+  symbols: *javascript_deserialization_symbols
+  tags: [deserialization, yaml, object-graph]
+  ai: *deserialization_guidance
+  provenance: *javascript_deserialization_provenance
+
+- id: tsx-yaml-deserialization
+  version: 1
+  title: TSX YAML deserialization
+  language: tsx
+  kind: sink
+  capability: deserialization
+  cwe: [CWE-502]
+  match: *javascript_deserialization_match
+  symbols: *javascript_deserialization_symbols
+  tags: [deserialization, yaml, object-graph]
+  ai: *deserialization_guidance
+  provenance: *javascript_deserialization_provenance
+
+- id: python-pickle-deserialization
+  version: 1
+  title: Python object deserialization
+  language: python
+  kind: sink
+  capability: deserialization
+  cwe: [CWE-502]
+  match:
+    any:
+      - pattern: pickle.load($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: pickle.loads($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: yaml.load($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: yaml.load($PAYLOAD, yaml.Loader)
+        captures: { payload: PAYLOAD }
+      - pattern: yaml.load($PAYLOAD, Loader=yaml.Loader)
+        captures: { payload: PAYLOAD }
+      - pattern: yaml.load($PAYLOAD, Loader=yaml.UnsafeLoader)
+        captures: { payload: PAYLOAD }
+  symbols:
+    - canonical: pickle.load
+      captures: { payload: 0 }
+    - canonical: pickle.loads
+      captures: { payload: 0 }
+  tags: [deserialization, pickle, unsafe-yaml, object-graph]
+  ai: *deserialization_guidance
+  provenance:
+    note: Python pickle and YAML loading mapped to CWE-502 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/502.html
+      - https://docs.python.org/3/library/pickle.html
+      - https://pyyaml.org/wiki/PyYAMLDocumentation
+
+- id: go-gob-deserialization
+  version: 1
+  title: Go gob value decoding
+  language: go
+  kind: sink
+  capability: deserialization
+  cwe: [CWE-502]
+  match:
+    any:
+      - pattern: gob.NewDecoder($PAYLOAD).Decode($TARGET)
+        context: |
+          package pattern
+          func patternContext() { gob.NewDecoder($PAYLOAD).Decode($TARGET) }
+        selector: call_expression
+        captures: { payload: PAYLOAD, type: TARGET }
+  tags: [deserialization, gob, object-graph]
+  ai: *deserialization_guidance
+  provenance:
+    note: Go gob Decode calls mapped to CWE-502 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/502.html
+      - https://pkg.go.dev/encoding/gob#NewDecoder
+
+- id: rust-data-deserialization
+  version: 1
+  title: Rust data deserialization
+  language: rust
+  kind: sink
+  capability: deserialization
+  confidence: medium
+  cwe: [CWE-502]
+  match:
+    any:
+      - pattern: serde_json::from_str($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: serde_json::from_slice($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: serde_yaml::from_str($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: toml::from_str($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: bincode::deserialize($PAYLOAD)
+        captures: { payload: PAYLOAD }
+  tags: [deserialization, rust, structured-data]
+  ai: *deserialization_guidance
+  provenance:
+    note: Rust structured-data decoding is contextual evidence, not an automatic vulnerability; target type, validation, size limits, and custom Deserialize behavior determine impact.
+    references:
+      - https://cwe.mitre.org/data/definitions/502.html
+      - https://docs.rs/serde/latest/serde/trait.Deserialize.html

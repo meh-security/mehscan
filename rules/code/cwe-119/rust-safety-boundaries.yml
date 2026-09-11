@@ -1,0 +1,70 @@
+- id: rust-unsafe-boundary
+  version: 1
+  title: Rust unsafe boundary
+  language: rust
+  kind: sensitive_operation
+  capability: memory_safety_boundary
+  confidence: medium
+  cwe: [CWE-119]
+  match:
+    any:
+      - pattern: unsafe { $$$BODY }
+        captures: { body: BODY }
+      - pattern: unsafe fn $FUNCTION($$$PARAMETERS) { $$$BODY }
+        captures: { function: FUNCTION, body: BODY }
+      - pattern: pub unsafe fn $FUNCTION($$$PARAMETERS) { $$$BODY }
+        captures: { function: FUNCTION, body: BODY }
+      - pattern: unsafe trait $TRAIT { $$$BODY }
+        captures: { trait: TRAIT, body: BODY }
+      - pattern: pub unsafe trait $TRAIT { $$$BODY }
+        captures: { trait: TRAIT, body: BODY }
+      - pattern: unsafe impl $TRAIT for $TYPE { $$$BODY }
+        captures: { trait: TRAIT, type: TYPE, body: BODY }
+  tags: [rust, unsafe, memory-safety, review]
+  ai:
+    investigate:
+      - the safety invariant that callers and the unsafe body must preserve
+      - raw pointer provenance, bounds, alignment, initialization, aliasing, lifetime, and thread-safety assumptions that are actually relevant
+      - whether attacker-controlled values or untrusted native state can violate those assumptions
+    verify:
+      - inspect the complete unsafe block or declaration plus its safe wrapper and callers
+      - identify tests, assertions, ownership constraints, and dependency contracts supporting the stated invariant
+    exclude:
+      - do not classify unsafe syntax alone as a vulnerability
+      - do not recommend removing unsafe when the invariant is valid and the boundary is necessary
+      - do not treat examples, tests, or analyzer fixtures as production exposure unless included explicitly
+  provenance:
+    note: Syntactic unsafe boundaries are review inventory; memory corruption requires a violated invariant and reachable impact.
+    references:
+      - https://doc.rust-lang.org/reference/unsafe-keyword.html
+      - https://doc.rust-lang.org/nomicon/meet-safe-and-unsafe.html
+
+- id: rust-native-interop-boundary
+  version: 1
+  title: Rust native interoperability boundary
+  language: rust
+  kind: sensitive_operation
+  capability: native_interop_boundary
+  confidence: medium
+  cwe: [CWE-119]
+  match:
+    any:
+      - pattern: extern "C" { $$$ITEMS }
+        captures: { items: ITEMS }
+  tags: [rust, ffi, native, memory-safety, review]
+  ai:
+    investigate:
+      - ownership, lifetime, nullability, buffer length, ABI, unwinding, and thread-safety contracts across the boundary
+      - whether pointers, lengths, callbacks, or native return values can be influenced by an untrusted party
+      - the native library identity, version, loading path, and deployment trust boundary
+    verify:
+      - inspect the declarations together with every safe wrapper and the authoritative native API contract
+      - confirm allocation and deallocation use compatible runtimes and that errors cannot cross the ABI incorrectly
+    exclude:
+      - do not classify an extern declaration alone as a vulnerability
+      - do not assume a native call is attacker reachable without an evidenced input path
+  provenance:
+    note: Exact C ABI declaration blocks are review inventory; exploitability depends on the wrapper and native contract.
+    references:
+      - https://cwe.mitre.org/data/definitions/119.html
+      - https://doc.rust-lang.org/nomicon/ffi.html

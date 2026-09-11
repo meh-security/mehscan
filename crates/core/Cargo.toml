@@ -1,0 +1,14 @@
+[package]
+name = "mehscan-core"
+version = "0.1.0"
+description = "Stable evidence, candidate, finding, and report types for Mehscan"
+edition.workspace = true
+rust-version.workspace = true
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json = "1.0.116"

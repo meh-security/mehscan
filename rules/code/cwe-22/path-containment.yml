@@ -1,0 +1,165 @@
+- id: csharp-path-containment-check
+  version: 1
+  title: .NET base-path containment check
+  language: csharp
+  kind: validation
+  capability: path_containment_check
+  confidence: medium
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: Path.GetFullPath($PATH).StartsWith(Path.GetFullPath($BASE), StringComparison.Ordinal)
+        captures: { path: PATH, base: BASE }
+      - pattern: Path.GetFullPath($PATH).StartsWith(Path.GetFullPath($BASE), StringComparison.OrdinalIgnoreCase)
+        captures: { path: PATH, base: BASE }
+  tags: [filesystem, path, containment, validation, dotnet]
+  ai: &containment_guidance
+    investigate:
+      - whether both the candidate and base were canonicalized before comparison
+      - whether the comparison respects path-component boundaries rather than only string prefixes
+      - case-sensitivity, separator, alternate-root, and platform-specific behavior
+      - whether the checked value is exactly the value later used by the filesystem API
+      - symlink resolution and time-of-check/time-of-use races
+  provenance:
+    note: Ordinal path-prefix comparisons mapped to contextual base-directory validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://learn.microsoft.com/en-us/dotnet/api/system.string.startswith
+
+- id: java-path-containment-check
+  version: 1
+  title: Java base-path containment check
+  language: java
+  kind: validation
+  capability: path_containment_check
+  confidence: medium
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: Paths.get($PATH).normalize().startsWith(Paths.get($BASE).normalize())
+        captures: { path: PATH, base: BASE }
+      - pattern: Path.of($PATH).normalize().startsWith(Path.of($BASE).normalize())
+        captures: { path: PATH, base: BASE }
+  tags: [filesystem, path, containment, validation, java]
+  ai: *containment_guidance
+  provenance:
+    note: Java Path startsWith checks mapped to contextual base-directory validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/nio/file/Path.html#startsWith(java.nio.file.Path)
+
+- id: javascript-path-containment-check
+  version: 1
+  title: Node.js base-path containment check
+  language: javascript
+  kind: validation
+  capability: path_containment_check
+  confidence: medium
+  cwe: [CWE-22]
+  match: &node_path_containment_match
+    any:
+      - pattern: 'path.relative($BASE, $PATH).startsWith("..")'
+        captures: { path: PATH, base: BASE }
+  tags: [filesystem, path, containment, validation, nodejs]
+  ai: *containment_guidance
+  provenance: &node_path_containment_provenance
+    note: Node.js relative-path parent-segment checks mapped to contextual base-directory validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://nodejs.org/api/path.html#pathrelativefrom-to
+
+- id: typescript-path-containment-check
+  version: 1
+  title: Node.js base-path containment check
+  language: typescript
+  kind: validation
+  capability: path_containment_check
+  confidence: medium
+  cwe: [CWE-22]
+  match: *node_path_containment_match
+  tags: [filesystem, path, containment, validation, nodejs]
+  ai: *containment_guidance
+  provenance: *node_path_containment_provenance
+
+- id: tsx-path-containment-check
+  version: 1
+  title: Node.js base-path containment check
+  language: tsx
+  kind: validation
+  capability: path_containment_check
+  confidence: medium
+  cwe: [CWE-22]
+  match: *node_path_containment_match
+  tags: [filesystem, path, containment, validation, nodejs]
+  ai: *containment_guidance
+  provenance: *node_path_containment_provenance
+
+- id: python-path-containment-check
+  version: 1
+  title: Python base-path containment check
+  language: python
+  kind: validation
+  capability: path_containment_check
+  confidence: medium
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: os.path.commonpath([$BASE, $PATH]) == $BASE
+        captures: { path: PATH, base: BASE }
+      - pattern: $BASE == os.path.commonpath([$BASE, $PATH])
+        captures: { path: PATH, base: BASE }
+      - pattern: os.path.commonpath(($BASE, $PATH)) == $BASE
+        captures: { path: PATH, base: BASE }
+      - pattern: $BASE == os.path.commonpath(($BASE, $PATH))
+        captures: { path: PATH, base: BASE }
+  tags: [filesystem, path, containment, validation, python]
+  ai: *containment_guidance
+  provenance:
+    note: Python common-path equality checks mapped to contextual base-directory validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://docs.python.org/3/library/os.path.html#os.path.commonpath
+
+- id: go-path-containment-check
+  version: 1
+  title: Go local-path containment check
+  language: go
+  kind: validation
+  capability: path_containment_check
+  confidence: medium
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: filepath.IsLocal($PATH)
+        context: |
+          package pattern
+          func patternContext() { _ = filepath.IsLocal($PATH) }
+        selector: call_expression
+        captures: { path: PATH }
+  tags: [filesystem, path, containment, validation, go]
+  ai: *containment_guidance
+  provenance:
+    note: Go lexical local-path checks mapped to contextual base-directory validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://pkg.go.dev/path/filepath#IsLocal
+
+- id: rust-path-containment-check
+  version: 1
+  title: Rust path-component containment check
+  language: rust
+  kind: validation
+  capability: path_containment_check
+  confidence: medium
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: $PATH.strip_prefix($BASE)
+        captures: { path: PATH, base: BASE }
+  tags: [filesystem, path, containment, validation, rust]
+  ai: *containment_guidance
+  provenance:
+    note: Rust component-aware strip_prefix checks mapped to contextual base-directory validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://doc.rust-lang.org/std/path/struct.Path.html#method.strip_prefix

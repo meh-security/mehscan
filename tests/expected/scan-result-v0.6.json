@@ -1,0 +1,74 @@
+{
+  "schema_version": "0.6",
+  "root": "C:/fixture",
+  "evidence": [
+    {
+      "id": "ev-0000000000000001",
+      "kind": "secret",
+      "capability": "credential_material",
+      "location": {
+        "path": "app.js",
+        "start": { "line": 2, "column": 15, "byte_offset": 34 },
+        "end": { "line": 2, "column": 35, "byte_offset": 54 }
+      },
+      "captures": {
+        "secret": {
+          "text": "[REDACTED]",
+          "location": {
+            "path": "app.js",
+            "start": { "line": 2, "column": 15, "byte_offset": 34 },
+            "end": { "line": 2, "column": 35, "byte_offset": 54 }
+          }
+        }
+      },
+      "cwe_candidates": ["CWE-798"],
+      "tags": ["secret", "credential", "high_entropy"],
+      "confidence": "medium",
+      "provenance": {
+        "resolution": "textual",
+        "engine": "mehscan-secrets 0.1",
+        "rule_version": 1
+      },
+      "context": {
+        "comment": false,
+        "secret": {
+          "detector": "generic_high_entropy_assignment",
+          "fingerprint": "sec-fnv1a64-0000000000000001",
+          "redacted": "[REDACTED]",
+          "value_length": 20,
+          "entropy_millibits_per_character": 4100
+        }
+      },
+      "rule_id": "secret-generic-high-entropy-assignment"
+    }
+  ],
+  "coverage": {
+    "totals": {
+      "discovered": 1,
+      "scanned": 1,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0
+    },
+    "languages": {
+      "javascript": {
+        "discovered": 1,
+        "scanned": 1,
+        "parse_failed": 0,
+        "evidence": 1
+      }
+    },
+    "security_surfaces": { "credential_material": 1 },
+    "cwe": [
+      {
+        "cwe": "CWE-798",
+        "level": "partial",
+        "supported_languages": ["javascript"]
+      }
+    ],
+    "files": [
+      { "path": "app.js", "language": "javascript", "status": "scanned" }
+    ],
+    "ignored_subtrees": []
+  }
+}

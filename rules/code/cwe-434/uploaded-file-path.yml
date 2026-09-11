@@ -1,0 +1,139 @@
+- id: csharp-uploaded-file-path
+  version: 1
+  title: ASP.NET uploaded filename path
+  language: csharp
+  kind: source
+  capability: uploaded_file_path
+  confidence: medium
+  cwe: [CWE-434, CWE-22]
+  match:
+    any:
+      - pattern: $REQUEST.Form.Files[$INDEX].FileName
+        captures: { request: REQUEST, index: INDEX }
+  tags: [http, upload, filename, path, attacker-controlled, dotnet]
+  ai: &uploaded_path_guidance
+    investigate:
+      - whether the client-supplied filename contributes to the persisted path
+      - application-generated names, destination roots, traversal, and overwrite behavior
+      - extension, content signature, content type, size, and malware validation
+      - execution permissions, public serving, archive extraction, and lifecycle cleanup
+  provenance:
+    note: ASP.NET uploaded filenames mapped to attacker-controlled storage-path evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://learn.microsoft.com/en-us/aspnet/core/mvc/models/file-uploads
+
+- id: java-uploaded-file-path
+  version: 1
+  title: Java servlet uploaded filename path
+  language: java
+  kind: source
+  capability: uploaded_file_path
+  confidence: medium
+  cwe: [CWE-434, CWE-22]
+  match:
+    any:
+      - pattern: $REQUEST.getPart($FIELD).getSubmittedFileName()
+        captures: { field: FIELD }
+  tags: [http, upload, filename, path, attacker-controlled, java, servlet]
+  ai: *uploaded_path_guidance
+  provenance:
+    note: Servlet submitted filenames mapped to attacker-controlled storage-path evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://jakarta.ee/specifications/servlet/6.1/apidocs/jakarta.servlet/jakarta/servlet/http/part
+
+- id: javascript-uploaded-file-path
+  version: 1
+  title: Multer uploaded filename or temporary path
+  language: javascript
+  kind: source
+  capability: uploaded_file_path
+  confidence: medium
+  cwe: [CWE-434, CWE-22]
+  match: &javascript_uploaded_path_match
+    any:
+      - pattern: req.file.originalname
+      - pattern: req.file.filename
+      - pattern: req.file.path
+      - pattern: req.files[$INDEX].originalname
+        captures: { index: INDEX }
+      - pattern: req.files[$INDEX].filename
+        captures: { index: INDEX }
+      - pattern: req.files[$INDEX].path
+        captures: { index: INDEX }
+  tags: [http, upload, filename, path, attacker-controlled, multer, javascript]
+  ai: *uploaded_path_guidance
+  provenance: &javascript_uploaded_path_provenance
+    note: Multer original names, storage names, and temporary paths mapped to uploaded-file path evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://github.com/expressjs/multer#file-information
+
+- id: typescript-uploaded-file-path
+  version: 1
+  title: Multer uploaded filename or temporary path
+  language: typescript
+  kind: source
+  capability: uploaded_file_path
+  confidence: medium
+  cwe: [CWE-434, CWE-22]
+  match: *javascript_uploaded_path_match
+  tags: [http, upload, filename, path, attacker-controlled, multer, typescript]
+  ai: *uploaded_path_guidance
+  provenance: *javascript_uploaded_path_provenance
+
+- id: tsx-uploaded-file-path
+  version: 1
+  title: Multer uploaded filename or temporary path
+  language: tsx
+  kind: source
+  capability: uploaded_file_path
+  confidence: medium
+  cwe: [CWE-434, CWE-22]
+  match: *javascript_uploaded_path_match
+  tags: [http, upload, filename, path, attacker-controlled, multer, tsx]
+  ai: *uploaded_path_guidance
+  provenance: *javascript_uploaded_path_provenance
+
+- id: python-uploaded-file-path
+  version: 1
+  title: Django uploaded filename or temporary path
+  language: python
+  kind: source
+  capability: uploaded_file_path
+  confidence: medium
+  cwe: [CWE-434, CWE-22]
+  match:
+    any:
+      - pattern: request.FILES[$FIELD].name
+        captures: { field: FIELD }
+      - pattern: request.FILES[$FIELD].temporary_file_path()
+        captures: { field: FIELD }
+  tags: [http, upload, filename, path, attacker-controlled, django, python]
+  ai: *uploaded_path_guidance
+  provenance:
+    note: Django uploaded names and temporary-file paths mapped to uploaded-file path evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://docs.djangoproject.com/en/5.2/ref/files/uploads/
+
+- id: go-uploaded-file-path
+  version: 1
+  title: Go multipart uploaded filename path
+  language: go
+  kind: source
+  capability: uploaded_file_path
+  confidence: medium
+  cwe: [CWE-434, CWE-22]
+  match:
+    any:
+      - pattern: $REQUEST.MultipartForm.File[$FIELD][$INDEX].Filename
+        captures: { request: REQUEST, field: FIELD, index: INDEX }
+  tags: [http, upload, filename, path, attacker-controlled, multipart, go]
+  ai: *uploaded_path_guidance
+  provenance:
+    note: Go multipart FileHeader filenames mapped to attacker-controlled storage-path evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://pkg.go.dev/mime/multipart#FileHeader

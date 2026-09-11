@@ -1,0 +1,28 @@
+- id: rust-file-log-write
+  version: 1
+  title: Rust file-backed log write
+  language: rust
+  kind: sink
+  capability: logging
+  confidence: medium
+  cwe: [CWE-117, CWE-532]
+  match:
+    any:
+      - pattern: $WRITER.write_all($MESSAGE)
+        captures: { writer: WRITER, message: MESSAGE }
+  tags: [logging, file, sensitive-data, rust]
+  ai:
+    investigate:
+      - whether untrusted line breaks or delimiters can forge log records
+      - whether credentials, payment data, tokens, or personal data are written in clear text
+      - file permissions, retention, access controls, and downstream log processing
+    verify:
+      - confirm the receiver is the application log file and the captured value reaches it
+      - distinguish security-relevant data exposure from ordinary operational logging
+    exclude:
+      - do not claim path traversal when only log content is request-controlled
+  provenance:
+    note: Locally proven file writers using std io Write are mapped to log-injection and clear-text-data review.
+    references:
+      - https://cwe.mitre.org/data/definitions/117.html
+      - https://cwe.mitre.org/data/definitions/532.html

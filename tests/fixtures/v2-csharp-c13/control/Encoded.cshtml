@@ -1,0 +1,15 @@
+@using System.Text.Encodings.Web
+@using System.Text.Json
+@model ContextModel
+<div title="@Html.Raw(HtmlEncoder.Default.Encode(Model.Title))">profile</div>
+<a href="@Html.Raw(HtmlEncoder.Default.Encode(Model.ReturnUrl))">continue</a>
+<a href="@Html.Raw(UrlEncoder.Default.Encode(Model.QueryValue))">search</a>
+<script>
+    const message = '@Html.Raw(JavaScriptEncoder.Default.Encode(Model.Message))';
+    const config = @Html.Raw(Json.Serialize(Model.Config));
+    const systemConfig = @Html.Raw(JsonSerializer.Serialize(Model.SystemConfig));
+</script>
+
+<div title="@Model.OrdinaryTitle">ordinary Razor encoding</div>
+<a href="@Model.OrdinaryUrl">ordinary Razor encoding</a>
+<script>const ordinary = '@Json.Serialize(Model.OrdinaryMessage)';</script>

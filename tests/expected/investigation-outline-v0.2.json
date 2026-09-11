@@ -1,0 +1,28 @@
+{
+  "schema_version": "0.2",
+  "root": "C:/repo",
+  "operation": "get_file_outline",
+  "provenance": {
+    "resolution": "ast",
+    "engine": "ast-grep-outline 0.45.1"
+  },
+  "truncated": false,
+  "results": {
+    "path": "app.py",
+    "language": "python",
+    "symbols": [
+      {
+        "name": "review",
+        "symbol_type": "function",
+        "signature": "def review(command):",
+        "ast_kind": "function_definition",
+        "location": {
+          "path": "app.py",
+          "start": { "line": 1, "column": 1, "byte_offset": 0 },
+          "end": { "line": 2, "column": 18, "byte_offset": 39 }
+        },
+        "is_exported": true
+      }
+    ]
+  }
+}

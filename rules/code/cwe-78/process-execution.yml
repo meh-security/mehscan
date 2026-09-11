@@ -1,0 +1,271 @@
+- id: csharp-process-start
+  version: 1
+  title: .NET process execution
+  language: csharp
+  kind: sink
+  capability: process_execution
+  cwe: [CWE-78]
+  match:
+    any:
+      - pattern: Process.Start($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: Process.Start($FILE, $ARGUMENTS)
+        captures: { command: FILE, arguments: ARGUMENTS }
+      - pattern: System.Diagnostics.Process.Start($COMMAND)
+        captures: { command: COMMAND }
+  symbols:
+    - canonical: System.Diagnostics.Process.Start
+      captures: { command: 0, arguments: 1 }
+  tags: [command, process]
+  ai: &process_guidance
+    investigate:
+      - origin of the executable and arguments
+      - shell interpretation and command construction
+      - validation, allowlists, and authorization context
+  provenance: &prototype_provenance
+    note: Runtime process-launch API mapped to the CWE-78 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/78.html
+      - https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.process.start
+
+- id: java-process-execution
+  version: 1
+  title: Java process execution
+  language: java
+  kind: sink
+  capability: process_execution
+  cwe: [CWE-78]
+  match:
+    any:
+      - pattern: Runtime.getRuntime().exec($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: new ProcessBuilder($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: new ProcessBuilder($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+  tags: [command, process]
+  ai: *process_guidance
+  provenance:
+    note: Java process-launch APIs mapped to the CWE-78 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/78.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/ProcessBuilder.html
+
+- id: javascript-child-process
+  version: 1
+  title: Node.js child process execution
+  language: javascript
+  kind: sink
+  capability: process_execution
+  cwe: [CWE-78]
+  match:
+    any:
+      - pattern: child_process.exec($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.execSync($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.execFile($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.execFile($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: child_process.spawn($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.spawn($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: child_process.spawnSync($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.spawnSync($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+  symbols: &node_process_symbols
+    - canonical: child_process.exec
+      captures: { command: 0 }
+    - canonical: child_process.execSync
+      captures: { command: 0 }
+    - canonical: child_process.execFile
+      captures: { command: 0, arguments: 1 }
+    - canonical: child_process.spawn
+      captures: { command: 0, arguments: 1 }
+    - canonical: child_process.spawnSync
+      captures: { command: 0, arguments: 1 }
+  tags: [command, process, nodejs]
+  ai: *process_guidance
+  provenance: &node_process_provenance
+    note: Node.js child-process APIs mapped to the CWE-78 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/78.html
+      - https://nodejs.org/api/child_process.html
+
+- id: typescript-child-process
+  version: 1
+  title: Node.js child process execution
+  language: typescript
+  kind: sink
+  capability: process_execution
+  cwe: [CWE-78]
+  match:
+    any:
+      - pattern: child_process.exec($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.execSync($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.execFile($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.execFile($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: child_process.spawn($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.spawn($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: child_process.spawnSync($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.spawnSync($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+  symbols: *node_process_symbols
+  tags: [command, process, nodejs]
+  ai: *process_guidance
+  provenance: *node_process_provenance
+
+- id: tsx-child-process
+  version: 1
+  title: Node.js child process execution
+  language: tsx
+  kind: sink
+  capability: process_execution
+  cwe: [CWE-78]
+  match:
+    any:
+      - pattern: child_process.exec($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.execSync($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.execFile($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.execFile($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: child_process.spawn($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.spawn($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: child_process.spawnSync($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.spawnSync($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+  symbols: *node_process_symbols
+  tags: [command, process, nodejs]
+  ai: *process_guidance
+  provenance: *node_process_provenance
+
+- id: python-process-execution
+  version: 1
+  title: Python process execution
+  language: python
+  kind: sink
+  capability: process_execution
+  cwe: [CWE-78]
+  match:
+    any:
+      - pattern: os.system($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: os.popen($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: subprocess.Popen($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: subprocess.Popen($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND }
+      - pattern: subprocess.run($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: subprocess.run($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND }
+      - pattern: subprocess.call($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: subprocess.call($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND }
+      - pattern: subprocess.check_call($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: subprocess.check_call($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND }
+      - pattern: subprocess.check_output($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: subprocess.check_output($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND }
+  symbols:
+    - canonical: subprocess.Popen
+      captures: { command: 0 }
+    - canonical: subprocess.run
+      captures: { command: 0 }
+    - canonical: subprocess.call
+      captures: { command: 0 }
+    - canonical: subprocess.check_call
+      captures: { command: 0 }
+    - canonical: subprocess.check_output
+      captures: { command: 0 }
+    - canonical: os.system
+      captures: { command: 0 }
+    - canonical: os.popen
+      captures: { command: 0 }
+  tags: [command, process]
+  ai: *process_guidance
+  provenance:
+    note: Python process-launch APIs mapped to the CWE-78 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/78.html
+      - https://docs.python.org/3/library/subprocess.html
+
+- id: go-process-execution
+  version: 1
+  title: Go process execution
+  language: go
+  kind: sink
+  capability: process_execution
+  cwe: [CWE-78]
+  match:
+    any:
+      - pattern: exec.Command($COMMAND)
+        context: |
+          package pattern
+          func patternContext() { exec.Command($COMMAND) }
+        selector: call_expression
+        captures: { command: COMMAND }
+      - pattern: exec.Command($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: exec.CommandContext($CONTEXT, $COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS, context: CONTEXT }
+  symbols:
+    - canonical: os/exec.Command
+      captures: { command: 0 }
+    - canonical: os/exec.CommandContext
+      captures: { context: 0, command: 1 }
+  tags: [command, process]
+  ai: *process_guidance
+  provenance:
+    note: Go process-launch APIs mapped to the CWE-78 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/78.html
+      - https://pkg.go.dev/os/exec
+
+- id: rust-process-execution
+  version: 1
+  title: Rust process execution
+  language: rust
+  kind: sink
+  capability: process_execution
+  cwe: [CWE-78]
+  match:
+    any:
+      - pattern: Command::new($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: std::process::Command::new($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: $BUILDER::new($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: $COMMAND.arg($ARGUMENT)
+        captures: { command: COMMAND, arguments: ARGUMENT }
+      - pattern: $COMMAND.args($ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+  tags: [command, process, rust]
+  ai: *process_guidance
+  provenance:
+    note: Rust standard process builder creation and argument attachment mapped to the CWE-78 investigation surface; shell interpretation depends on the selected executable.
+    references:
+      - https://cwe.mitre.org/data/definitions/78.html
+      - https://doc.rust-lang.org/std/process/struct.Command.html

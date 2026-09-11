@@ -1,0 +1,56 @@
+- id: javascript-sequelize-resource-access
+  version: 1
+  title: JavaScript Sequelize object resource access
+  language: javascript
+  kind: sink
+  capability: resource_access
+  confidence: medium
+  cwe: [CWE-639]
+  match: &sequelize_resource_access
+    any:
+      - pattern: '$MODEL.findOne({ where: $FILTER })'
+        captures: { model: MODEL, filter: FILTER }
+      - pattern: '$MODEL.findOne({ where: $FILTER, $$$OPTIONS })'
+        captures: { model: MODEL, filter: FILTER }
+      - pattern: '$MODEL.destroy({ where: $FILTER })'
+        captures: { model: MODEL, filter: FILTER }
+      - pattern: '$MODEL.destroy({ where: $FILTER, $$$OPTIONS })'
+        captures: { model: MODEL, filter: FILTER }
+  tags: [authorization, idor, object-level-authorization, sequelize]
+  ai: &resource_access_guidance
+    investigate:
+      - whether a request-selected resource identifier reaches the lookup filter
+      - whether the same filter enforces an owner, account, or tenant constraint
+      - whether identity constraints come from authenticated server-side context rather than caller-controlled data
+      - whether nearby challenge, audit, or telemetry hooks actually block unauthorized access
+  provenance: &sequelize_resource_access_provenance
+    note: Sequelize single-resource reads and deletes mapped to bounded object-level authorization review.
+    references:
+      - https://cwe.mitre.org/data/definitions/639.html
+      - https://sequelize.org/docs/v6/core-concepts/model-querying-finders/
+
+- id: typescript-sequelize-resource-access
+  version: 1
+  title: TypeScript Sequelize object resource access
+  language: typescript
+  kind: sink
+  capability: resource_access
+  confidence: medium
+  cwe: [CWE-639]
+  match: *sequelize_resource_access
+  tags: [authorization, idor, object-level-authorization, sequelize]
+  ai: *resource_access_guidance
+  provenance: *sequelize_resource_access_provenance
+
+- id: tsx-sequelize-resource-access
+  version: 1
+  title: TSX Sequelize object resource access
+  language: tsx
+  kind: sink
+  capability: resource_access
+  confidence: medium
+  cwe: [CWE-639]
+  match: *sequelize_resource_access
+  tags: [authorization, idor, object-level-authorization, sequelize]
+  ai: *resource_access_guidance
+  provenance: *sequelize_resource_access_provenance

@@ -1,0 +1,51 @@
+- id: javascript-jwt-token-generation
+  version: 1
+  title: JavaScript JWT token generation
+  language: javascript
+  kind: security_configuration
+  capability: token_generation
+  cwe: [CWE-613, CWE-347]
+  match: &jwt_sign_match
+    any:
+      - pattern: '$JWT.sign($PAYLOAD, $KEY, $$$OPTIONS)'
+        captures: { payload: PAYLOAD, key: KEY }
+  tags: [jwt, signing, token-lifecycle]
+  ai: &jwt_guidance
+    investigate:
+      - Is token expiry bounded and is the signing algorithm explicit?
+      - Does signing key material come from an operational secret boundary?
+    verify:
+      - resolve the effective expiry, signing algorithm, and key origin for the emitted token
+      - confirm the token is accepted as a security credential and that its verification policy matches the signing policy
+    exclude:
+      - do not report token-generation syntax alone without identifying a concrete weak lifecycle, algorithm, or key-management decision
+      - do not expose signing key material in the review response; report only its provenance and security properties
+  provenance: &jwt_provenance
+    note: JWT signing configuration mapped to bounded token-lifecycle review.
+    references:
+      - https://cwe.mitre.org/data/definitions/613.html
+      - https://cwe.mitre.org/data/definitions/347.html
+
+- id: typescript-jwt-token-generation
+  version: 1
+  title: TypeScript JWT token generation
+  language: typescript
+  kind: security_configuration
+  capability: token_generation
+  cwe: [CWE-613, CWE-347]
+  match: *jwt_sign_match
+  tags: [jwt, signing, token-lifecycle]
+  ai: *jwt_guidance
+  provenance: *jwt_provenance
+
+- id: tsx-jwt-token-generation
+  version: 1
+  title: TSX JWT token generation
+  language: tsx
+  kind: security_configuration
+  capability: token_generation
+  cwe: [CWE-613, CWE-347]
+  match: *jwt_sign_match
+  tags: [jwt, signing, token-lifecycle]
+  ai: *jwt_guidance
+  provenance: *jwt_provenance

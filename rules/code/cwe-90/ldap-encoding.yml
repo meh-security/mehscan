@@ -1,0 +1,53 @@
+- id: csharp-antixss-ldap-filter-encoding
+  version: 1
+  title: AntiXSS LDAP filter-value encoding
+  language: csharp
+  kind: sanitizer
+  capability: ldap_filter_encoding
+  confidence: medium
+  cwe: [CWE-90]
+  match:
+    any:
+      - pattern: Encoder.LdapFilterEncode($VALUE)
+        captures: { value: VALUE }
+      - pattern: Microsoft.Security.Application.Encoder.LdapFilterEncode($VALUE)
+        captures: { value: VALUE }
+  symbols:
+    - canonical: Microsoft.Security.Application.Encoder.LdapFilterEncode
+      captures: { value: 0 }
+  tags: [ldap, filter, encoding, antixss, dotnet]
+  ai: &ldap_encoding_guidance
+    investigate:
+      - whether the encoder matches the LDAP filter-value context
+      - concatenation or decoding after encoding
+      - custom wrappers and validation not proven by this observation
+  provenance:
+    note: The exact AntiXSS filter encoder is contextual protection evidence for LDAP filter values.
+    references:
+      - https://cwe.mitre.org/data/definitions/90.html
+      - https://codeql.github.com/codeql-query-help/csharp/cs-ldap-injection/
+
+- id: csharp-antixss-ldap-dn-encoding
+  version: 1
+  title: AntiXSS LDAP distinguished-name value encoding
+  language: csharp
+  kind: sanitizer
+  capability: ldap_distinguished_name_encoding
+  confidence: medium
+  cwe: [CWE-90]
+  match:
+    any:
+      - pattern: Encoder.LdapDistinguishedNameEncode($VALUE)
+        captures: { value: VALUE }
+      - pattern: Microsoft.Security.Application.Encoder.LdapDistinguishedNameEncode($VALUE)
+        captures: { value: VALUE }
+  symbols:
+    - canonical: Microsoft.Security.Application.Encoder.LdapDistinguishedNameEncode
+      captures: { value: 0 }
+  tags: [ldap, distinguished-name, encoding, antixss, dotnet]
+  ai: *ldap_encoding_guidance
+  provenance:
+    note: The exact AntiXSS distinguished-name encoder is contextual protection evidence for LDAP DN values.
+    references:
+      - https://cwe.mitre.org/data/definitions/90.html
+      - https://codeql.github.com/codeql-query-help/csharp/cs-ldap-injection/

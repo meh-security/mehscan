@@ -1,0 +1,193 @@
+- id: csharp-http-redirect
+  version: 1
+  title: ASP.NET Core redirect response
+  language: csharp
+  kind: sink
+  capability: redirect
+  cwe: [CWE-601]
+  match:
+    any:
+      - pattern: $RESPONSE.Redirect($LOCATION)
+        captures: { location: LOCATION }
+      - pattern: Results.Redirect($LOCATION)
+        captures: { location: LOCATION }
+  tags: [http, redirect, navigation]
+  ai: &redirect_guidance
+    investigate:
+      - provenance and attacker control of the redirect destination
+      - scheme, host, path, canonicalization, and allowlist validation
+      - trust-boundary changes, authentication flows, and phishing impact
+  provenance:
+    note: ASP.NET Core redirects mapped to CWE-601 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/601.html
+      - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.httpresponse.redirect
+
+- id: csharp-controller-http-redirect
+  version: 1
+  title: ASP.NET controller URL redirect
+  language: csharp
+  kind: sink
+  capability: redirect
+  confidence: medium
+  cwe: [CWE-601]
+  match:
+    any:
+      - pattern: Redirect($LOCATION)
+        captures: { location: LOCATION }
+      - pattern: RedirectPermanent($LOCATION)
+        captures: { location: LOCATION }
+      - pattern: RedirectPreserveMethod($LOCATION)
+        captures: { location: LOCATION }
+      - pattern: RedirectPermanentPreserveMethod($LOCATION)
+        captures: { location: LOCATION }
+  tags: [http, redirect, navigation, aspnet-core, controller]
+  ai: *redirect_guidance
+  provenance:
+    note: ASP.NET ControllerBase URL redirect helpers mapped to CWE-601 review with medium confidence because inherited receiver types are not compiler-resolved.
+    references:
+      - https://cwe.mitre.org/data/definitions/601.html
+      - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.mvc.controllerbase.redirect
+      - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.mvc.controllerbase.redirectpermanent
+
+- id: java-http-redirect
+  version: 1
+  title: Java servlet redirect response
+  language: java
+  kind: sink
+  capability: redirect
+  cwe: [CWE-601]
+  match:
+    any:
+      - pattern: $RESPONSE.sendRedirect($LOCATION)
+        captures: { location: LOCATION }
+  tags: [http, redirect, navigation, servlet]
+  ai: *redirect_guidance
+  provenance:
+    note: Java servlet redirects mapped to CWE-601 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/601.html
+      - https://jakarta.ee/specifications/servlet/6.1/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletresponse
+
+- id: javascript-http-redirect
+  version: 1
+  title: Express redirect response
+  language: javascript
+  kind: sink
+  capability: redirect
+  cwe: [CWE-601]
+  match: &javascript_redirect_match
+    any:
+      - pattern: res.redirect($LOCATION)
+        captures: { location: LOCATION }
+      - pattern: res.redirect($STATUS, $LOCATION)
+        captures: { location: LOCATION }
+  tags: [http, redirect, navigation, express]
+  ai: *redirect_guidance
+  provenance: &javascript_redirect_provenance
+    note: Express redirects mapped to CWE-601 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/601.html
+      - https://expressjs.com/en/4x/api.html#res.redirect
+
+- id: typescript-http-redirect
+  version: 1
+  title: TypeScript Express redirect response
+  language: typescript
+  kind: sink
+  capability: redirect
+  cwe: [CWE-601]
+  match: *javascript_redirect_match
+  tags: [http, redirect, navigation, express]
+  ai: *redirect_guidance
+  provenance: *javascript_redirect_provenance
+
+- id: tsx-http-redirect
+  version: 1
+  title: TSX Express redirect response
+  language: tsx
+  kind: sink
+  capability: redirect
+  cwe: [CWE-601]
+  match: *javascript_redirect_match
+  tags: [http, redirect, navigation, express]
+  ai: *redirect_guidance
+  provenance: *javascript_redirect_provenance
+
+- id: python-http-redirect
+  version: 1
+  title: Python redirect response
+  language: python
+  kind: sink
+  capability: redirect
+  cwe: [CWE-601]
+  match:
+    any:
+      - pattern: RedirectResponse($LOCATION)
+        captures: { location: LOCATION }
+      - pattern: redirect($LOCATION)
+        captures: { location: LOCATION }
+      - pattern: flask.redirect($LOCATION)
+        captures: { location: LOCATION }
+  tags: [http, redirect, navigation, fastapi, flask]
+  ai: *redirect_guidance
+  provenance:
+    note: Python redirect responses mapped to CWE-601 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/601.html
+      - https://fastapi.tiangolo.com/advanced/custom-response/#redirectresponse
+
+- id: go-http-redirect
+  version: 1
+  title: Go HTTP redirect response
+  language: go
+  kind: sink
+  capability: redirect
+  cwe: [CWE-601]
+  match:
+    any:
+      - pattern: http.Redirect($WRITER, $REQUEST, $LOCATION, $STATUS)
+        context: |
+          package pattern
+          func patternContext() { http.Redirect($WRITER, $REQUEST, $LOCATION, $STATUS) }
+        selector: call_expression
+        captures: { location: LOCATION }
+  symbols:
+    - canonical: net/http.Redirect
+      captures: { location: 2 }
+  tags: [http, redirect, navigation, go-net-http]
+  ai: *redirect_guidance
+  provenance:
+    note: Go net/http redirects mapped to CWE-601 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/601.html
+      - https://pkg.go.dev/net/http#Redirect
+
+- id: rust-axum-http-redirect
+  version: 1
+  title: Rust Axum redirect response
+  language: rust
+  kind: sink
+  capability: redirect
+  cwe: [CWE-601]
+  match:
+    any:
+      - pattern: Redirect::to($LOCATION)
+        captures: { location: LOCATION }
+      - pattern: Redirect::temporary($LOCATION)
+        captures: { location: LOCATION }
+      - pattern: Redirect::permanent($LOCATION)
+        captures: { location: LOCATION }
+      - pattern: axum::response::Redirect::to($LOCATION)
+        captures: { location: LOCATION }
+      - pattern: axum::response::Redirect::temporary($LOCATION)
+        captures: { location: LOCATION }
+      - pattern: axum::response::Redirect::permanent($LOCATION)
+        captures: { location: LOCATION }
+  tags: [http, redirect, navigation, rust, axum]
+  ai: *redirect_guidance
+  provenance:
+    note: Axum redirect constructors mapped to destination review; imported short-name identity remains a review fact until Rust use-resolution is implemented.
+    references:
+      - https://cwe.mitre.org/data/definitions/601.html
+      - https://docs.rs/axum/latest/axum/response/struct.Redirect.html

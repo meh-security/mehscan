@@ -1,0 +1,211 @@
+- id: csharp-database-query
+  version: 1
+  title: .NET database query construction and execution
+  language: csharp
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: new SqlCommand($QUERY)
+        captures: { query: QUERY }
+      - pattern: new SqlCommand($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: $DATABASE.ExecuteSqlRaw($QUERY)
+        captures: { query: QUERY }
+      - pattern: $DATABASE.ExecuteSqlRaw($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: $DATABASE.FromSqlRaw($QUERY)
+        captures: { query: QUERY }
+      - pattern: $DATABASE.FromSqlRaw($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+  tags: [database, sql]
+  ai: &database_guidance
+    investigate:
+      - origin and construction of the query text
+      - parameter binding versus string interpolation or concatenation
+      - authorization and tenant constraints around the queried data
+  provenance:
+    note: .NET SQL command APIs mapped to the CWE-89 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://learn.microsoft.com/en-us/dotnet/api/system.data.sqlclient.sqlcommand
+
+- id: java-database-query
+  version: 1
+  title: Java database query construction and execution
+  language: java
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: $STATEMENT.executeQuery($QUERY)
+        captures: { query: QUERY }
+      - pattern: $STATEMENT.executeUpdate($QUERY)
+        captures: { query: QUERY }
+      - pattern: $CONNECTION.prepareStatement($QUERY)
+        captures: { query: QUERY }
+      - pattern: $ENTITY_MANAGER.createNativeQuery($QUERY)
+        captures: { query: QUERY }
+  tags: [database, sql]
+  ai: *database_guidance
+  provenance:
+    note: JDBC statement APIs mapped to the CWE-89 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.sql/java/sql/Statement.html
+
+- id: javascript-database-query
+  version: 1
+  title: JavaScript database query execution
+  language: javascript
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match: &node_database_match
+    any:
+      - pattern: pool.query($QUERY)
+        captures: { query: QUERY }
+      - pattern: pool.query($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: connection.query($QUERY)
+        captures: { query: QUERY }
+      - pattern: connection.query($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: sequelize.query($QUERY)
+        captures: { query: QUERY }
+      - pattern: sequelize.query($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: $DATABASE.sequelize.query($QUERY)
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: $DATABASE.sequelize.query($QUERY, $$$ARGUMENTS)
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: prisma.$queryRawUnsafe($QUERY)
+        captures: { query: QUERY }
+      - pattern: prisma.$queryRawUnsafe($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+  tags: [database, sql, nodejs]
+  ai: *database_guidance
+  provenance: &node_database_provenance
+    note: Common Node.js database query APIs mapped to the CWE-89 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://node-postgres.com/features/queries
+
+- id: typescript-database-query
+  version: 1
+  title: TypeScript database query execution
+  language: typescript
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match: *node_database_match
+  tags: [database, sql, nodejs]
+  ai: *database_guidance
+  provenance: *node_database_provenance
+
+- id: tsx-database-query
+  version: 1
+  title: TSX database query execution
+  language: tsx
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match: *node_database_match
+  tags: [database, sql, nodejs]
+  ai: *database_guidance
+  provenance: *node_database_provenance
+
+- id: python-database-query
+  version: 1
+  title: Python database query execution
+  language: python
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: cursor.execute($QUERY)
+        captures: { query: QUERY }
+      - pattern: cursor.execute($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: cursor.executemany($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: cursor.executescript($QUERY)
+        captures: { query: QUERY }
+      - pattern: connection.execute($QUERY)
+        captures: { query: QUERY }
+      - pattern: connection.execute($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+  tags: [database, sql]
+  ai: *database_guidance
+  provenance:
+    note: Python DB-API query methods mapped to the CWE-89 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://docs.python.org/3/library/sqlite3.html#sqlite3.Cursor.execute
+
+- id: go-database-query
+  version: 1
+  title: Go database query execution
+  language: go
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: $DB.Query($QUERY)
+        context: |
+          package pattern
+          func patternContext() { $DB.Query($QUERY) }
+        selector: call_expression
+        captures: { query: QUERY }
+      - pattern: $DB.Query($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: $DB.QueryContext($CONTEXT, $QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY, context: CONTEXT }
+      - pattern: $DB.Exec($QUERY)
+        context: |
+          package pattern
+          func patternContext() { $DB.Exec($QUERY) }
+        selector: call_expression
+        captures: { query: QUERY }
+      - pattern: $DB.Exec($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: $DB.ExecContext($CONTEXT, $QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY, context: CONTEXT }
+  tags: [database, sql]
+  ai: *database_guidance
+  provenance:
+    note: Go database/sql query APIs mapped to the CWE-89 investigation surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://pkg.go.dev/database/sql
+
+- id: rust-database-query
+  version: 1
+  title: Rust SQL query execution
+  language: rust
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: $QUERY_FUNCTION($QUERY)
+        captures: { query: QUERY }
+      - pattern: $DATABASE.query($QUERY, $PARAMETERS)
+        captures: { database: DATABASE, query: QUERY, parameters: PARAMETERS }
+      - pattern: $DATABASE.query_one($QUERY, $PARAMETERS)
+        captures: { database: DATABASE, query: QUERY, parameters: PARAMETERS }
+      - pattern: $DATABASE.query_opt($QUERY, $PARAMETERS)
+        captures: { database: DATABASE, query: QUERY, parameters: PARAMETERS }
+      - pattern: $DATABASE.execute($QUERY, $PARAMETERS)
+        captures: { database: DATABASE, query: QUERY, parameters: PARAMETERS }
+  tags: [database, sql, rust]
+  ai: *database_guidance
+  provenance:
+    note: Exact SQLx and Diesel function identities plus locally proven postgres Client receivers are mapped to review; unrelated same-name functions and receiver methods are excluded.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://docs.rs/sqlx/latest/sqlx/fn.query.html

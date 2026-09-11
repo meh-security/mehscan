@@ -1,0 +1,350 @@
+- id: csharp-http-entrypoint
+  version: 1
+  title: ASP.NET Core minimal API entrypoint
+  language: csharp
+  kind: entrypoint
+  capability: http_request_handling
+  cwe: [CWE-306, CWE-862]
+  match:
+    any:
+      - pattern: $APP.MapGet($ROUTE, $HANDLER)
+        captures: { route: ROUTE, handler: HANDLER }
+      - pattern: $APP.MapPost($ROUTE, $HANDLER)
+        captures: { route: ROUTE, handler: HANDLER }
+      - pattern: $APP.MapPut($ROUTE, $HANDLER)
+        captures: { route: ROUTE, handler: HANDLER }
+      - pattern: $APP.MapDelete($ROUTE, $HANDLER)
+        captures: { route: ROUTE, handler: HANDLER }
+  tags: [http, entrypoint, aspnet-core]
+  ai: &entrypoint_guidance
+    investigate:
+      - request-controlled inputs bound by the route and handler
+      - authentication and authorization requirements applied to the endpoint
+      - state changes, sensitive resources, validation, and response exposure
+  provenance: &csharp_web_provenance
+    note: ASP.NET Core minimal API route registration mapped to HTTP entrypoint review.
+    references:
+      - https://cwe.mitre.org/data/definitions/862.html
+      - https://learn.microsoft.com/en-us/aspnet/core/fundamentals/minimal-apis
+
+- id: csharp-authentication-middleware
+  version: 1
+  title: ASP.NET Core authentication middleware
+  language: csharp
+  kind: guard
+  capability: authentication
+  cwe: [CWE-306]
+  match:
+    any:
+      - pattern: $APP.UseAuthentication()
+  tags: [http, authentication, aspnet-core, middleware]
+  ai: &authentication_guidance
+    investigate:
+      - the routes and pipeline segment covered by the authentication control
+      - configured schemes, credential validation, session handling, and failure behavior
+      - ordering, bypass paths, anonymous exceptions, and environment-specific registration
+  provenance:
+    note: ASP.NET Core authentication middleware mapped to CWE-306 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/306.html
+      - https://learn.microsoft.com/en-us/aspnet/core/fundamentals/middleware/
+
+- id: java-http-entrypoint
+  version: 1
+  title: Spring HTTP controller entrypoint
+  language: java
+  kind: entrypoint
+  capability: http_request_handling
+  cwe: [CWE-306, CWE-862]
+  match:
+    any:
+      - pattern: '@GetMapping($ROUTE)'
+        context: |
+          class Pattern { @GetMapping($ROUTE) void patternContext() {} }
+        selector: annotation
+        captures: { route: ROUTE }
+      - pattern: '@PostMapping($ROUTE)'
+        context: |
+          class Pattern { @PostMapping($ROUTE) void patternContext() {} }
+        selector: annotation
+        captures: { route: ROUTE }
+      - pattern: '@RequestMapping($ROUTE)'
+        context: |
+          class Pattern { @RequestMapping($ROUTE) void patternContext() {} }
+        selector: annotation
+        captures: { route: ROUTE }
+  tags: [http, entrypoint, spring]
+  ai: *entrypoint_guidance
+  provenance:
+    note: Spring MVC mapping annotations mapped to HTTP entrypoint review.
+    references:
+      - https://cwe.mitre.org/data/definitions/862.html
+      - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-requestmapping.html
+
+- id: java-http-basic-authentication
+  version: 1
+  title: Spring Security HTTP Basic authentication
+  language: java
+  kind: guard
+  capability: authentication
+  cwe: [CWE-306]
+  match:
+    any:
+      - pattern: $HTTP.httpBasic()
+      - pattern: $HTTP.httpBasic($$$OPTIONS)
+  tags: [http, authentication, spring-security]
+  ai: *authentication_guidance
+  provenance:
+    note: Spring Security HTTP Basic configuration mapped to CWE-306 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/306.html
+      - https://docs.spring.io/spring-security/reference/servlet/authentication/passwords/basic.html
+
+- id: javascript-http-entrypoint
+  version: 1
+  title: Express HTTP route entrypoint
+  language: javascript
+  kind: entrypoint
+  capability: http_request_handling
+  cwe: [CWE-306, CWE-862]
+  match: &javascript_entrypoint_match
+    any:
+      - pattern: app.get($ROUTE, $$$HANDLERS)
+        captures: { route: ROUTE }
+      - pattern: app.post($ROUTE, $$$HANDLERS)
+        captures: { route: ROUTE }
+      - pattern: app.put($ROUTE, $$$HANDLERS)
+        captures: { route: ROUTE }
+      - pattern: app.delete($ROUTE, $$$HANDLERS)
+        captures: { route: ROUTE }
+      - pattern: router.get($ROUTE, $$$HANDLERS)
+        captures: { route: ROUTE }
+      - pattern: router.post($ROUTE, $$$HANDLERS)
+        captures: { route: ROUTE }
+      - pattern: router.put($ROUTE, $$$HANDLERS)
+        captures: { route: ROUTE }
+      - pattern: router.delete($ROUTE, $$$HANDLERS)
+        captures: { route: ROUTE }
+  tags: [http, entrypoint, express]
+  ai: *entrypoint_guidance
+  provenance: &javascript_entrypoint_provenance
+    note: Express route registration mapped to HTTP entrypoint review.
+    references:
+      - https://cwe.mitre.org/data/definitions/862.html
+      - https://expressjs.com/en/guide/routing.html
+
+- id: javascript-passport-authentication
+  version: 1
+  title: Passport authentication middleware
+  language: javascript
+  kind: guard
+  capability: authentication
+  cwe: [CWE-306]
+  match: &javascript_authentication_match
+    any:
+      - pattern: passport.authenticate($STRATEGY)
+        captures: { strategy: STRATEGY }
+      - pattern: passport.authenticate($STRATEGY, $$$OPTIONS)
+        captures: { strategy: STRATEGY }
+  symbols: &javascript_authentication_symbols
+    - canonical: passport.authenticate
+      captures: { strategy: 0 }
+  tags: [http, authentication, passport, middleware]
+  ai: *authentication_guidance
+  provenance: &javascript_authentication_provenance
+    note: Passport authentication middleware mapped to CWE-306 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/306.html
+      - https://www.passportjs.org/concepts/authentication/middleware/
+
+- id: typescript-http-entrypoint
+  version: 1
+  title: TypeScript Express HTTP route entrypoint
+  language: typescript
+  kind: entrypoint
+  capability: http_request_handling
+  cwe: [CWE-306, CWE-862]
+  match: *javascript_entrypoint_match
+  tags: [http, entrypoint, express]
+  ai: *entrypoint_guidance
+  provenance: *javascript_entrypoint_provenance
+
+- id: typescript-passport-authentication
+  version: 1
+  title: TypeScript Passport authentication middleware
+  language: typescript
+  kind: guard
+  capability: authentication
+  cwe: [CWE-306]
+  match: *javascript_authentication_match
+  symbols: *javascript_authentication_symbols
+  tags: [http, authentication, passport, middleware]
+  ai: *authentication_guidance
+  provenance: *javascript_authentication_provenance
+
+- id: tsx-http-entrypoint
+  version: 1
+  title: TSX Express HTTP route entrypoint
+  language: tsx
+  kind: entrypoint
+  capability: http_request_handling
+  cwe: [CWE-306, CWE-862]
+  match: *javascript_entrypoint_match
+  tags: [http, entrypoint, express]
+  ai: *entrypoint_guidance
+  provenance: *javascript_entrypoint_provenance
+
+- id: tsx-passport-authentication
+  version: 1
+  title: TSX Passport authentication middleware
+  language: tsx
+  kind: guard
+  capability: authentication
+  cwe: [CWE-306]
+  match: *javascript_authentication_match
+  symbols: *javascript_authentication_symbols
+  tags: [http, authentication, passport, middleware]
+  ai: *authentication_guidance
+  provenance: *javascript_authentication_provenance
+
+- id: python-http-entrypoint
+  version: 1
+  title: Python HTTP route entrypoint
+  language: python
+  kind: entrypoint
+  capability: http_request_handling
+  cwe: [CWE-306, CWE-862]
+  match:
+    any:
+      - pattern: '@app.get($ROUTE)'
+        context: |
+          @app.get($ROUTE)
+          def pattern_context(): pass
+        selector: decorator
+        captures: { route: ROUTE }
+      - pattern: '@app.post($ROUTE)'
+        context: |
+          @app.post($ROUTE)
+          def pattern_context(): pass
+        selector: decorator
+        captures: { route: ROUTE }
+      - pattern: '@router.get($ROUTE)'
+        context: |
+          @router.get($ROUTE)
+          def pattern_context(): pass
+        selector: decorator
+        captures: { route: ROUTE }
+      - pattern: '@router.post($ROUTE)'
+        context: |
+          @router.post($ROUTE)
+          def pattern_context(): pass
+        selector: decorator
+        captures: { route: ROUTE }
+      - pattern: path($ROUTE, $HANDLER)
+        captures: { route: ROUTE, handler: HANDLER }
+      - pattern: re_path($ROUTE, $HANDLER)
+        captures: { route: ROUTE, handler: HANDLER }
+      - pattern: '@api_view($METHODS)'
+        context: |
+          @api_view($METHODS)
+          def pattern_context(): pass
+        selector: decorator
+        captures: { methods: METHODS }
+  tags: [http, entrypoint, django, fastapi]
+  ai: *entrypoint_guidance
+  provenance:
+    note: Django and FastAPI route registration mapped to HTTP entrypoint review.
+    references:
+      - https://cwe.mitre.org/data/definitions/862.html
+      - https://fastapi.tiangolo.com/tutorial/path-operation-decorators/
+
+- id: python-login-required-authentication
+  version: 1
+  title: Django login-required authentication guard
+  language: python
+  kind: guard
+  capability: authentication
+  cwe: [CWE-306]
+  match:
+    any:
+      - pattern: '@login_required'
+        context: |
+          @login_required
+          def pattern_context(): pass
+        selector: decorator
+      - pattern: '@jwt_auth_required'
+        context: |
+          @jwt_auth_required
+          def pattern_context(): pass
+        selector: decorator
+      - pattern: '@authentication_classes($CLASSES)'
+        context: |
+          @authentication_classes($CLASSES)
+          def pattern_context(): pass
+        selector: decorator
+        captures: { classes: CLASSES }
+  tags: [http, authentication, django, decorator]
+  ai: *authentication_guidance
+  provenance:
+    note: Django login_required decorators mapped to CWE-306 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/306.html
+      - https://docs.djangoproject.com/en/5.2/topics/auth/default/#the-login-required-decorator
+
+- id: go-http-entrypoint
+  version: 1
+  title: Go net/http entrypoint
+  language: go
+  kind: entrypoint
+  capability: http_request_handling
+  cwe: [CWE-306, CWE-862]
+  match:
+    any:
+      - pattern: http.HandleFunc($ROUTE, $HANDLER)
+        context: |
+          package pattern
+          func patternContext() { http.HandleFunc($ROUTE, $HANDLER) }
+        selector: call_expression
+        captures: { route: ROUTE, handler: HANDLER }
+      - pattern: $MUX.HandleFunc($ROUTE, $HANDLER)
+        context: |
+          package pattern
+          func patternContext() { $MUX.HandleFunc($ROUTE, $HANDLER) }
+        selector: call_expression
+        captures: { route: ROUTE, handler: HANDLER }
+  symbols:
+    - canonical: net/http.HandleFunc
+      captures: { route: 0, handler: 1 }
+  tags: [http, entrypoint, go-net-http]
+  ai: *entrypoint_guidance
+  provenance:
+    note: Go net/http handler registration mapped to HTTP entrypoint review.
+    references:
+      - https://cwe.mitre.org/data/definitions/862.html
+      - https://pkg.go.dev/net/http#HandleFunc
+
+- id: go-gin-basic-authentication
+  version: 1
+  title: Gin Basic authentication middleware
+  language: go
+  kind: guard
+  capability: authentication
+  cwe: [CWE-306]
+  match:
+    any:
+      - pattern: gin.BasicAuth($ACCOUNTS)
+        context: |
+          package pattern
+          func patternContext() { gin.BasicAuth($ACCOUNTS) }
+        selector: call_expression
+        captures: { accounts: ACCOUNTS }
+  symbols:
+    - canonical: github.com/gin-gonic/gin.BasicAuth
+      captures: { accounts: 0 }
+  tags: [http, authentication, gin, middleware]
+  ai: *authentication_guidance
+  provenance:
+    note: Gin BasicAuth middleware mapped to CWE-306 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/306.html
+      - https://pkg.go.dev/github.com/gin-gonic/gin#BasicAuth

@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.7",
+  "root": "C:/fixture",
+  "evidence": [
+    {
+      "id": "ev-deserialization-restriction",
+      "kind": "validation",
+      "capability": "deserialization_restriction",
+      "location": {
+        "path": "decode.ts",
+        "start": { "line": 3, "column": 10, "byte_offset": 45 },
+        "end": { "line": 3, "column": 72, "byte_offset": 107 }
+      },
+      "captures": {
+        "payload": {
+          "text": "req.body.payload",
+          "location": {
+            "path": "decode.ts",
+            "start": { "line": 3, "column": 20, "byte_offset": 55 },
+            "end": { "line": 3, "column": 36, "byte_offset": 71 }
+          }
+        }
+      },
+      "cwe_candidates": ["CWE-502"],
+      "tags": ["deserialization", "schema-restriction", "yaml", "typescript"],
+      "confidence": "medium",
+      "provenance": {
+        "resolution": "ast",
+        "engine": "ast-grep 0.45.1",
+        "rule_version": 1
+      },
+      "rule_id": "typescript-deserialization-restriction"
+    }
+  ],
+  "coverage": {
+    "totals": {
+      "discovered": 1,
+      "scanned": 1,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0
+    },
+    "languages": {},
+    "security_surfaces": { "deserialization_restriction": 1 },
+    "cwe": [],
+    "files": [],
+    "ignored_subtrees": []
+  }
+}

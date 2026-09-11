@@ -1,0 +1,71 @@
+{
+  "schema_version": "1.6",
+  "root": "C:/fixture",
+  "evidence": [
+    {
+      "id": "ev-uploaded-file-path",
+      "kind": "source",
+      "capability": "uploaded_file_path",
+      "location": {
+        "path": "upload.ts",
+        "start": { "line": 3, "column": 23, "byte_offset": 55 },
+        "end": { "line": 3, "column": 44, "byte_offset": 76 }
+      },
+      "cwe_candidates": ["CWE-434", "CWE-22"],
+      "tags": ["http", "upload", "filename", "path", "attacker-controlled", "multer", "typescript"],
+      "confidence": "medium",
+      "provenance": {
+        "resolution": "ast",
+        "engine": "ast-grep 0.45.1",
+        "rule_version": 1
+      },
+      "rule_id": "typescript-uploaded-file-path"
+    },
+    {
+      "id": "ev-uploaded-filename-validation",
+      "kind": "validation",
+      "capability": "uploaded_filename_validation",
+      "location": {
+        "path": "upload.ts",
+        "start": { "line": 4, "column": 7, "byte_offset": 83 },
+        "end": { "line": 4, "column": 43, "byte_offset": 119 }
+      },
+      "captures": {
+        "value": {
+          "text": "filename",
+          "location": {
+            "path": "upload.ts",
+            "start": { "line": 4, "column": 21, "byte_offset": 97 },
+            "end": { "line": 4, "column": 29, "byte_offset": 105 }
+          }
+        }
+      },
+      "cwe_candidates": ["CWE-434", "CWE-22"],
+      "tags": ["http", "upload", "filename", "validation", "basename", "nodejs"],
+      "confidence": "medium",
+      "provenance": {
+        "resolution": "ast",
+        "engine": "ast-grep 0.45.1",
+        "rule_version": 1
+      },
+      "rule_id": "typescript-uploaded-filename-validation"
+    }
+  ],
+  "coverage": {
+    "totals": {
+      "discovered": 1,
+      "scanned": 1,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0
+    },
+    "languages": {},
+    "security_surfaces": {
+      "uploaded_file_path": 1,
+      "uploaded_filename_validation": 1
+    },
+    "cwe": [],
+    "files": [],
+    "ignored_subtrees": []
+  }
+}

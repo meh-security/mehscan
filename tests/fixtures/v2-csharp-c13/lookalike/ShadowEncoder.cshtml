@@ -1,0 +1,9 @@
+@using System.Text.Encodings.Web
+@functions {
+    public sealed class HtmlEncoder
+    {
+        public static HtmlEncoder Default { get; } = new HtmlEncoder();
+        public string Encode(string value) => value;
+    }
+}
+<div title="@Html.Raw(HtmlEncoder.Default.Encode(Model.Title))">profile</div>

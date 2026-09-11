@@ -1,0 +1,70 @@
+{
+  "schema_version": "0.7",
+  "root": "C:/fixture",
+  "evidence": [
+    {
+      "id": "ev-0000000000000001",
+      "kind": "secret",
+      "capability": "credential_material",
+      "location": {
+        "path": ".env",
+        "start": { "line": 1, "column": 19, "byte_offset": 18 },
+        "end": { "line": 1, "column": 39, "byte_offset": 38 }
+      },
+      "captures": {
+        "secret": {
+          "text": "[REDACTED]",
+          "location": {
+            "path": ".env",
+            "start": { "line": 1, "column": 19, "byte_offset": 18 },
+            "end": { "line": 1, "column": 39, "byte_offset": 38 }
+          }
+        }
+      },
+      "cwe_candidates": ["CWE-798"],
+      "tags": ["secret", "credential", "high_entropy"],
+      "confidence": "medium",
+      "provenance": {
+        "resolution": "textual",
+        "engine": "mehscan-secrets 0.1",
+        "rule_version": 1
+      },
+      "context": {
+        "comment": false,
+        "secret": {
+          "detector": "generic_high_entropy_assignment",
+          "fingerprint": "sec-fnv1a64-0000000000000001",
+          "redacted": "[REDACTED]",
+          "value_length": 20,
+          "entropy_millibits_per_character": 4100
+        }
+      },
+      "rule_id": "secret-generic-high-entropy-assignment"
+    }
+  ],
+  "coverage": {
+    "totals": {
+      "discovered": 1,
+      "scanned": 0,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0,
+      "secret_scanned": 1,
+      "secret_suppressed": 2
+    },
+    "languages": {},
+    "security_surfaces": { "credential_material": 1 },
+    "cwe": [
+      {
+        "cwe": "CWE-798",
+        "level": "partial",
+        "supported_languages": [],
+        "language_independent": true
+      }
+    ],
+    "files": [
+      { "path": ".env", "status": "secret_scanned" }
+    ],
+    "ignored_subtrees": []
+  }
+}

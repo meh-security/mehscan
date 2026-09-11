@@ -1,0 +1,30 @@
+{
+  "schema_version": "0.2",
+  "root": "C:/repo",
+  "operation": "build_investigation_units",
+  "filter": {},
+  "limits": {
+    "max_units": 25,
+    "context_lines": 20,
+    "max_evidence_per_unit": 100,
+    "max_imports_per_unit": 50,
+    "max_source_lines": 400,
+    "max_source_bytes": 65536
+  },
+  "truncated": false,
+  "units": [],
+  "coverage": {
+    "totals": {
+      "discovered": 0,
+      "scanned": 0,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0
+    },
+    "languages": {},
+    "security_surfaces": {},
+    "cwe": [],
+    "files": [],
+    "ignored_subtrees": []
+  }
+}

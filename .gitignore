@@ -427,3 +427,15 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Other
+/target/
+/apps/
+**/bin/
+**/obj/
+/.mehscan/
+/mehscan-review/
+/mehscan-findings.json
+/mehscan-results.sarif
+Thumbs.db
+.DS_Store

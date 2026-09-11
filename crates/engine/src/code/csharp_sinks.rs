@@ -1,0 +1,657 @@
+use std::collections::BTreeMap;
+use std::ops::Range;
+
+use ast_grep_core::Node;
+use ast_grep_core::tree_sitter::StrDoc;
+use ast_grep_language::SupportLang;
+use mehscan_core::{
+    Capability, Capture, Confidence, Evidence, EvidenceContext, EvidenceKind, Language, Location,
+    Position, Provenance, Resolution,
+};
+
+use super::comments::CommentRanges;
+use super::conditional::ConditionalRegions;
+use super::context::enclosing_symbol;
+use super::literals::LiteralEnvironment;
+use super::reachability;
+
+const RULE_ID: &str = "csharp-sql-command-text";
+const ENGINE: &str = "mehscan csharp-command-summary 1";
+const DAPPER_RULE_ID: &str = "csharp-dapper-database-query";
+const WEBCLIENT_RULE_ID: &str = "csharp-webclient-outbound-http";
+const HTTPCLIENT_RULE_ID: &str = "csharp-httpclient-outbound-http";
+const CALL_ENGINE: &str = "mehscan csharp-call-summary 1";
+
+pub(crate) fn add_typed_property_sinks<'tree>(
+    path: &str,
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    language: Language,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    if language != Language::Csharp {
+        return;
+    }
+
+    for assignment in root
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "assignment_expression")
+    {
+        if comments.is_in_comment(assignment.range()) || assignment_operator(&assignment) != "=" {
+            continue;
+        }
+        let Some(left) = assignment.field("left") else {
+            continue;
+        };
+        let Some((receiver, member)) = member_assignment(&left) else {
+            continue;
+        };
+        if member != "CommandText" {
+            continue;
+        }
+        let Some(receiver_kind) =
+            database_command_receiver_kind(root, &assignment, receiver.as_str())
+        else {
+            continue;
+        };
+        let Some(query) = assignment.field("right") else {
+            continue;
+        };
+        evidence.push(Evidence {
+            id: evidence_id(path, assignment.range().start, assignment.range().end),
+            kind: EvidenceKind::Sink,
+            capability: Capability::DatabaseQuery,
+            location: location(path, &assignment),
+            enclosing_symbol: enclosing_symbol(&assignment),
+            captures: BTreeMap::from([
+                (
+                    "query".to_string(),
+                    Capture {
+                        text: query.text().into_owned(),
+                        location: location(path, &query),
+                    },
+                ),
+                (
+                    "command".to_string(),
+                    Capture {
+                        text: receiver,
+                        location: location(path, &left),
+                    },
+                ),
+            ]),
+            cwe_candidates: vec!["CWE-89".to_string()],
+            tags: vec![
+                "database".to_string(),
+                "sql".to_string(),
+                "ado-net".to_string(),
+                "command-text".to_string(),
+                receiver_kind.to_string(),
+            ],
+            confidence: Confidence::High,
+            provenance: Provenance {
+                resolution: Resolution::Ast,
+                engine: ENGINE.to_string(),
+                rule_version: 1,
+            },
+            context: EvidenceContext {
+                comment: comments.is_in_comment(assignment.range()),
+                reachability: Some(reachability::classify(&assignment, literals)),
+                availability: Some(conditional.availability_for(assignment.range())),
+                ..EvidenceContext::default()
+            },
+            symbol_resolution: None,
+            rule_id: RULE_ID.to_string(),
+            related_evidence: Vec::new(),
+        });
+    }
+
+    let dapper_imported = has_dapper_import(root);
+    for invocation in root
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "invocation_expression")
+    {
+        if comments.is_in_comment(invocation.range()) {
+            continue;
+        }
+        let Some((receiver, method, argument)) = typed_instance_call(&invocation) else {
+            continue;
+        };
+        if dapper_imported
+            && matches!(
+                method.as_str(),
+                "Query"
+                    | "QueryAsync"
+                    | "Execute"
+                    | "ExecuteAsync"
+                    | "QueryMultiple"
+                    | "QueryMultipleAsync"
+            )
+            && receiver_is_database_connection(root, &invocation, &receiver)
+        {
+            push_call_sink(
+                path,
+                &invocation,
+                &argument,
+                "query",
+                DAPPER_RULE_ID,
+                Capability::DatabaseQuery,
+                "CWE-89",
+                &["database", "sql", "dapper", "typed-receiver"],
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+        } else if matches!(
+            method.as_str(),
+            "GetAsync"
+                | "GetStringAsync"
+                | "GetByteArrayAsync"
+                | "GetStreamAsync"
+                | "PostAsync"
+                | "PutAsync"
+                | "PatchAsync"
+                | "DeleteAsync"
+        ) && receiver_is_http_client(root, &invocation, &receiver)
+        {
+            push_call_sink(
+                path,
+                &invocation,
+                &argument,
+                "endpoint",
+                HTTPCLIENT_RULE_ID,
+                Capability::OutboundNetworkRequest,
+                "CWE-918",
+                &["http", "network", "ssrf", "httpclient", "typed-receiver"],
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+        } else if matches!(
+            method.as_str(),
+            "DownloadString"
+                | "DownloadStringTaskAsync"
+                | "DownloadData"
+                | "DownloadDataTaskAsync"
+                | "OpenRead"
+                | "OpenReadTaskAsync"
+        ) && receiver_has_type(root, &invocation, &receiver, is_webclient_type)
+        {
+            push_call_sink(
+                path,
+                &invocation,
+                &argument,
+                "endpoint",
+                WEBCLIENT_RULE_ID,
+                Capability::OutboundNetworkRequest,
+                "CWE-918",
+                &["http", "network", "ssrf", "webclient", "typed-receiver"],
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_call_sink<'tree>(
+    path: &str,
+    invocation: &Node<'tree, StrDoc<SupportLang>>,
+    argument: &Node<'tree, StrDoc<SupportLang>>,
+    capture_role: &str,
+    rule_id: &str,
+    capability: Capability,
+    cwe: &str,
+    tags: &[&str],
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    evidence.push(Evidence {
+        id: evidence_id_for(
+            rule_id,
+            path,
+            invocation.range().start,
+            invocation.range().end,
+        ),
+        kind: EvidenceKind::Sink,
+        capability,
+        location: location(path, invocation),
+        enclosing_symbol: enclosing_symbol(invocation),
+        captures: BTreeMap::from([(
+            capture_role.to_string(),
+            Capture {
+                text: argument.text().into_owned(),
+                location: location(path, argument),
+            },
+        )]),
+        cwe_candidates: vec![cwe.to_string()],
+        tags: tags.iter().map(|tag| (*tag).to_string()).collect(),
+        confidence: Confidence::Medium,
+        provenance: Provenance {
+            resolution: Resolution::Ast,
+            engine: CALL_ENGINE.to_string(),
+            rule_version: 1,
+        },
+        context: EvidenceContext {
+            comment: comments.is_in_comment(invocation.range()),
+            reachability: Some(reachability::classify(invocation, literals)),
+            availability: Some(conditional.availability_for(invocation.range())),
+            ..EvidenceContext::default()
+        },
+        symbol_resolution: None,
+        rule_id: rule_id.to_string(),
+        related_evidence: Vec::new(),
+    });
+}
+
+fn typed_instance_call<'tree>(
+    invocation: &Node<'tree, StrDoc<SupportLang>>,
+) -> Option<(String, String, Node<'tree, StrDoc<SupportLang>>)> {
+    let function = invocation.field("function")?;
+    if function.kind().as_ref() != "member_access_expression" {
+        return None;
+    }
+    let receiver = function.field("expression")?;
+    let method = function.field("name")?;
+    let receiver = simple_identifier(receiver.text().trim())?.to_string();
+    let method_text = method.text();
+    let method = method_text.split('<').next()?.trim().to_string();
+    let arguments = invocation.field("arguments")?;
+    let first = arguments.children().find(|child| child.is_named())?;
+    Some((receiver, method, argument_expression(first)?))
+}
+
+fn argument_expression(
+    argument: Node<'_, StrDoc<SupportLang>>,
+) -> Option<Node<'_, StrDoc<SupportLang>>> {
+    if argument.kind().as_ref() != "argument" {
+        return Some(argument);
+    }
+    argument.children().find(|child| child.is_named())
+}
+
+fn has_dapper_import(root: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    root.dfs()
+        .filter(|node| node.kind().as_ref() == "using_directive")
+        .map(|node| {
+            node.text()
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>()
+        })
+        .any(|using| matches!(using.as_str(), "usingDapper;" | "globalusingDapper;"))
+}
+
+fn assignment_operator(assignment: &Node<'_, StrDoc<SupportLang>>) -> String {
+    assignment
+        .field("operator")
+        .map(|operator| operator.text().into_owned())
+        .unwrap_or_default()
+}
+
+fn member_assignment(left: &Node<'_, StrDoc<SupportLang>>) -> Option<(String, String)> {
+    if left.kind().as_ref() != "member_access_expression" {
+        return None;
+    }
+    let receiver = left.field("expression")?;
+    let member = left.field("name")?;
+    let receiver = simple_identifier(receiver.text().trim())?.to_string();
+    Some((receiver, member.text().into_owned()))
+}
+
+fn database_command_receiver_kind(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    assignment: &Node<'_, StrDoc<SupportLang>>,
+    receiver: &str,
+) -> Option<&'static str> {
+    if receiver_has_type(root, assignment, receiver, is_database_command_type) {
+        return Some("typed-receiver");
+    }
+    (database_command_factory_initialized_receiver(root, assignment, receiver)
+        && database_command_is_executed(root, assignment, receiver))
+    .then_some("factory-created-receiver")
+}
+
+fn database_command_is_executed(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    assignment: &Node<'_, StrDoc<SupportLang>>,
+    receiver: &str,
+) -> bool {
+    let scope = scope_range(assignment, root);
+    root.dfs().any(|node| {
+        if node.kind().as_ref() != "invocation_expression"
+            || node.range().start <= assignment.range().end
+            || node.range().end > scope.end
+        {
+            return false;
+        }
+        let Some(function) = node.field("function") else {
+            return false;
+        };
+        if function.kind().as_ref() != "member_access_expression"
+            || function
+                .field("expression")
+                .is_none_or(|value| value.text().trim() != receiver)
+        {
+            return false;
+        }
+        function.field("name").is_some_and(|name| {
+            matches!(
+                name.text().trim(),
+                "ExecuteReader"
+                    | "ExecuteReaderAsync"
+                    | "ExecuteNonQuery"
+                    | "ExecuteNonQueryAsync"
+                    | "ExecuteScalar"
+                    | "ExecuteScalarAsync"
+                    | "ExecuteXmlReader"
+                    | "ExecuteXmlReaderAsync"
+            )
+        })
+    })
+}
+
+fn database_command_factory_initialized_receiver(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    use_site: &Node<'_, StrDoc<SupportLang>>,
+    receiver: &str,
+) -> bool {
+    let scope = scope_range(use_site, root);
+    root.dfs().any(|node| {
+        if node.kind().as_ref() != "variable_declarator"
+            || scope.start > node.range().start
+            || node.range().end > scope.end
+            || node.range().start >= use_site.range().start
+            || node
+                .field("name")
+                .is_none_or(|name| name.text().trim() != receiver)
+        {
+            return false;
+        }
+        let Some(initializer) = node.field("value").or_else(|| {
+            node.children()
+                .filter(|child| child.is_named())
+                .find(|child| child.kind().as_ref() == "invocation_expression")
+        }) else {
+            return false;
+        };
+        let text = compact(initializer.text().as_ref());
+        if text.contains(".Database.GetDbConnection().CreateCommand(") {
+            return true;
+        }
+        let Some(invocation) = initializer
+            .dfs()
+            .find(|child| child.kind().as_ref() == "invocation_expression")
+        else {
+            return false;
+        };
+        let Some(function) = invocation.field("function") else {
+            return false;
+        };
+        if function.kind().as_ref() != "member_access_expression"
+            || function
+                .field("name")
+                .is_none_or(|name| name.text().trim() != "CreateCommand")
+        {
+            return false;
+        }
+        let Some(factory_receiver) = function.field("expression") else {
+            return false;
+        };
+        let factory_receiver_text = factory_receiver.text();
+        let Some(connection) = simple_identifier(factory_receiver_text.trim()) else {
+            return false;
+        };
+        receiver_is_database_connection(root, &node, connection)
+    })
+}
+
+fn receiver_has_type(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    use_site: &Node<'_, StrDoc<SupportLang>>,
+    receiver: &str,
+    predicate: fn(&str) -> bool,
+) -> bool {
+    if root.dfs().any(|node| {
+        node.kind().as_ref() == "field_declaration"
+            && node
+                .dfs()
+                .find(|child| child.kind().as_ref() == "variable_declaration")
+                .and_then(|declaration| declaration.field("type"))
+                .is_some_and(|kind| predicate(kind.text().as_ref()))
+            && node.dfs().any(|child| {
+                child.kind().as_ref() == "variable_declarator"
+                    && child
+                        .field("name")
+                        .is_some_and(|name| name.text().trim() == receiver)
+            })
+    }) {
+        return true;
+    }
+    let scope = scope_range(use_site, root);
+    let before = use_site.range().start;
+    let mut events = root
+        .dfs()
+        .filter(|node| {
+            scope.start <= node.range().start
+                && node.range().end <= scope.end
+                && node.range().start < before
+                && scope_range(node, root) == scope
+        })
+        .filter_map(|node| receiver_type_event(node, receiver, predicate))
+        .collect::<Vec<_>>();
+    events.sort_by_key(|(offset, _)| *offset);
+    events.last().is_some_and(|(_, proven)| *proven)
+}
+
+fn receiver_is_database_connection(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    use_site: &Node<'_, StrDoc<SupportLang>>,
+    receiver: &str,
+) -> bool {
+    receiver_has_type(root, use_site, receiver, is_database_connection_type)
+        || factory_initialized_receiver(
+            root,
+            use_site,
+            receiver,
+            &[
+                "CreateConnection",
+                "CreateConnectionAsync",
+                "OpenConnection",
+                "OpenConnectionAsync",
+            ],
+        )
+}
+
+fn receiver_is_http_client(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    use_site: &Node<'_, StrDoc<SupportLang>>,
+    receiver: &str,
+) -> bool {
+    receiver_has_type(root, use_site, receiver, is_http_client_type)
+        || factory_initialized_receiver(root, use_site, receiver, &["CreateClient"])
+}
+
+fn factory_initialized_receiver(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    use_site: &Node<'_, StrDoc<SupportLang>>,
+    receiver: &str,
+    factories: &[&str],
+) -> bool {
+    let scope = scope_range(use_site, root);
+    root.dfs().any(|node| {
+        node.kind().as_ref() == "variable_declarator"
+            && scope.start <= node.range().start
+            && node.range().end <= scope.end
+            && node.range().start < use_site.range().start
+            && node
+                .field("name")
+                .is_some_and(|name| name.text().trim() == receiver)
+            && factories
+                .iter()
+                .any(|factory| compact(node.text().as_ref()).contains(&format!(".{factory}(")))
+    })
+}
+
+fn receiver_type_event(
+    node: Node<'_, StrDoc<SupportLang>>,
+    receiver: &str,
+    predicate: fn(&str) -> bool,
+) -> Option<(usize, bool)> {
+    match node.kind().as_ref() {
+        "parameter" => {
+            let name = node.field("name")?;
+            (name.text().trim() == receiver).then(|| {
+                (
+                    node.range().start,
+                    node.field("type")
+                        .is_some_and(|kind| predicate(kind.text().as_ref())),
+                )
+            })
+        }
+        "variable_declarator" => {
+            let name = node.field("name")?;
+            if name.text().trim() != receiver {
+                return None;
+            }
+            let declared_type = node
+                .parent()
+                .filter(|parent| parent.kind().as_ref() == "variable_declaration")
+                .and_then(|declaration| declaration.field("type"))
+                .is_some_and(|kind| predicate(kind.text().as_ref()));
+            let constructed_type = node
+                .dfs()
+                .find(|child| child.kind().as_ref() == "object_creation_expression")
+                .and_then(|creation| creation.field("type"))
+                .is_some_and(|kind| predicate(kind.text().as_ref()));
+            Some((node.range().start, declared_type || constructed_type))
+        }
+        "assignment_expression" => {
+            let left = node.field("left")?;
+            if simple_identifier(left.text().trim())? != receiver {
+                return None;
+            }
+            let right = node.field("right")?;
+            let constructed_type = right
+                .dfs()
+                .find(|child| child.kind().as_ref() == "object_creation_expression")
+                .and_then(|creation| creation.field("type"))
+                .is_some_and(|kind| predicate(kind.text().as_ref()));
+            Some((node.range().start, constructed_type))
+        }
+        _ => None,
+    }
+}
+
+fn is_database_command_type(observed: &str) -> bool {
+    matches!(
+        observed.trim().trim_end_matches('?').rsplit('.').next(),
+        Some("SqlCommand" | "DbCommand" | "IDbCommand")
+    )
+}
+
+fn is_database_connection_type(observed: &str) -> bool {
+    matches!(
+        observed.trim().trim_end_matches('?').rsplit('.').next(),
+        Some(
+            "IDbConnection"
+                | "DbConnection"
+                | "SqlConnection"
+                | "NpgsqlConnection"
+                | "MySqlConnection"
+                | "MySqlConnector"
+                | "SQLiteConnection"
+                | "SqliteConnection"
+                | "OracleConnection"
+        )
+    )
+}
+
+fn is_webclient_type(observed: &str) -> bool {
+    matches!(
+        observed.trim().trim_end_matches('?').rsplit('.').next(),
+        Some("WebClient")
+    )
+}
+
+fn is_http_client_type(observed: &str) -> bool {
+    matches!(
+        observed.trim().trim_end_matches('?').rsplit('.').next(),
+        Some("HttpClient")
+    )
+}
+
+fn compact(text: &str) -> String {
+    text.chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
+}
+
+fn scope_range(
+    node: &Node<'_, StrDoc<SupportLang>>,
+    root: &Node<'_, StrDoc<SupportLang>>,
+) -> Range<usize> {
+    node.ancestors()
+        .find(|ancestor| {
+            matches!(
+                ancestor.kind().as_ref(),
+                "method_declaration"
+                    | "constructor_declaration"
+                    | "local_function_statement"
+                    | "lambda_expression"
+                    | "anonymous_method_expression"
+            )
+        })
+        .map(|ancestor| ancestor.range())
+        .unwrap_or_else(|| root.range())
+}
+
+fn simple_identifier(text: &str) -> Option<&str> {
+    let mut characters = text.chars();
+    let first = characters.next()?;
+    if !(first == '_' || first.is_alphabetic())
+        || !characters.all(|character| character == '_' || character.is_alphanumeric())
+    {
+        return None;
+    }
+    Some(text)
+}
+
+fn location(path: &str, node: &Node<'_, StrDoc<SupportLang>>) -> Location {
+    let start = node.start_pos();
+    let end = node.end_pos();
+    Location {
+        path: path.to_string(),
+        start: Position {
+            line: start.line() + 1,
+            column: start.column(node) + 1,
+            byte_offset: node.range().start,
+        },
+        end: Position {
+            line: end.line() + 1,
+            column: end.column(node) + 1,
+            byte_offset: node.range().end,
+        },
+    }
+}
+
+fn evidence_id(path: &str, start: usize, end: usize) -> String {
+    evidence_id_for(RULE_ID, path, start, end)
+}
+
+fn evidence_id_for(rule_id: &str, path: &str, start: usize, end: usize) -> String {
+    let input = format!("{path}\0{rule_id}\0{start}\0{end}");
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in input.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("ev-{hash:016x}")
+}

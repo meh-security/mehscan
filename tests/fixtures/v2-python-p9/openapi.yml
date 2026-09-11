@@ -1,0 +1,38 @@
+openapi: 3.0.0
+info:
+  title: P9 fixture
+  version: 1.0.0
+paths:
+  /file:
+    post:
+      operationId: api.unsafe_file
+      requestBody:
+        content:
+          application/json:
+            schema:
+              x-body-name: payload
+  /file-safe:
+    get:
+      operationId: api.safe_file
+  /url:
+    post:
+      operationId: api.unsafe_url
+      requestBody:
+        content:
+          application/json:
+            schema:
+              x-body-name: payload
+  /url-safe:
+    get:
+      operationId: api.safe_url
+  /template:
+    post:
+      operationId: api.unsafe_template
+      requestBody:
+        content:
+          application/json:
+            schema:
+              x-body-name: payload
+  /template-safe:
+    get:
+      operationId: api.safe_template

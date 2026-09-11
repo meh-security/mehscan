@@ -1,0 +1,64 @@
+- id: csharp-multipart-section-body
+  version: 1
+  title: ASP.NET Core multipart section body
+  language: csharp
+  kind: source
+  capability: uploaded_file_content
+  confidence: high
+  cwe: [CWE-434]
+  match:
+    any:
+      - pattern: $SECTION.Body
+        captures: { content: SECTION }
+  tags: [http, multipart, streaming, upload, content]
+  ai: &streaming_upload_guidance
+    investigate:
+      - whether the multipart request and section are attacker controlled
+      - where the exact section bytes are stored, parsed, rendered, or executed
+      - per-section and total-request size limits and concurrency assumptions
+      - content signature, permitted format, decompression, malware, and storage isolation
+  provenance: &streaming_upload_provenance
+    note: Seed matching for MultipartSection.Body; exact MultipartReader provenance replaces the broad C# observation.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://learn.microsoft.com/en-us/aspnet/core/mvc/models/file-uploads
+
+- id: csharp-multipart-content-disposition-filename
+  version: 1
+  title: ASP.NET Core multipart client filename
+  language: csharp
+  kind: source
+  capability: uploaded_file_path
+  confidence: high
+  cwe: [CWE-434, CWE-22]
+  match:
+    any:
+      - pattern: $DISPOSITION.FileName.Value
+        captures: { path: DISPOSITION }
+      - pattern: $DISPOSITION.FileNameStar.Value
+        captures: { path: DISPOSITION }
+  tags: [http, multipart, upload, filename, attacker-controlled]
+  ai: *streaming_upload_guidance
+  provenance:
+    note: Seed matching for multipart content-disposition filenames; exact parsed-section provenance replaces the broad C# observation.
+    references:
+      - https://cwe.mitre.org/data/definitions/434.html
+      - https://learn.microsoft.com/en-us/dotnet/api/microsoft.net.http.headers.contentdispositionheadervalue.filename
+
+- id: csharp-streamed-upload-file-copy
+  version: 1
+  title: ASP.NET Core streamed upload storage
+  language: csharp
+  kind: sink
+  capability: file_upload
+  confidence: medium
+  cwe: [CWE-434]
+  match:
+    any:
+      - pattern: $SECTION.Body.CopyToAsync($DESTINATION)
+        captures: { content: SECTION, destination: DESTINATION }
+      - pattern: $SECTION.Body.CopyTo($DESTINATION)
+        captures: { content: SECTION, destination: DESTINATION }
+  tags: [http, multipart, streaming, upload, storage]
+  ai: *streaming_upload_guidance
+  provenance: *streaming_upload_provenance

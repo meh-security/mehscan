@@ -1,0 +1,139 @@
+- id: csharp-dynamic-code-restriction
+  version: 1
+  title: .NET scripting reference restriction
+  language: csharp
+  kind: validation
+  capability: dynamic_code_restriction
+  confidence: medium
+  cwe: [CWE-94]
+  match:
+    any:
+      - pattern: CSharpScript.EvaluateAsync($CODE, ScriptOptions.Default.WithReferences(typeof($TYPE).Assembly))
+        captures: { code: CODE, allowlist: TYPE }
+      - pattern: CSharpScript.RunAsync($CODE, ScriptOptions.Default.WithReferences(typeof($TYPE).Assembly))
+        captures: { code: CODE, allowlist: TYPE }
+  tags: [code, dynamic-execution, references, restriction, dotnet]
+  ai: &restriction_guidance
+    investigate:
+      - whether every reachable reference, import, global, and host object is intentionally exposed
+      - whether the accepted language or grammar is narrower than the dynamic language itself
+      - authorization, isolation, time, memory, output, and side-effect boundaries
+      - whether the exact restricted expression receives the untrusted code
+  provenance:
+    note: A fixed Roslyn assembly reference mapped to contextual execution-restriction evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/94.html
+      - https://learn.microsoft.com/en-us/dotnet/csharp/roslyn-sdk/scripting-api-samples
+
+- id: java-dynamic-code-restriction
+  version: 1
+  title: Java fixed scripting language selection
+  language: java
+  kind: validation
+  capability: dynamic_code_restriction
+  confidence: medium
+  cwe: [CWE-94]
+  match:
+    any:
+      - pattern: new ScriptEngineManager().getEngineByName("javascript").eval($CODE)
+        captures: { code: CODE }
+      - pattern: new ScriptEngineManager().getEngineByName("JavaScript").eval($CODE)
+        captures: { code: CODE }
+  tags: [code, dynamic-execution, language-selection, restriction, java]
+  ai: *restriction_guidance
+  provenance:
+    note: Fixed JavaScript engine selection mapped to contextual language-selection evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/94.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.scripting/javax/script/ScriptEngineManager.html
+
+- id: javascript-dynamic-code-restriction
+  version: 1
+  title: JavaScript empty VM context
+  language: javascript
+  kind: validation
+  capability: dynamic_code_restriction
+  confidence: medium
+  cwe: [CWE-94]
+  match: &javascript_restriction_match
+    any:
+      - pattern: vm.runInNewContext($CODE, Object.create(null))
+        captures: { code: CODE }
+  tags: [code, dynamic-execution, context, restriction, javascript]
+  ai: *restriction_guidance
+  provenance: &javascript_restriction_provenance
+    note: A null-prototype Node VM context mapped to contextual execution-restriction evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/94.html
+      - https://nodejs.org/api/vm.html
+
+- id: typescript-dynamic-code-restriction
+  version: 1
+  title: TypeScript empty VM context
+  language: typescript
+  kind: validation
+  capability: dynamic_code_restriction
+  confidence: medium
+  cwe: [CWE-94]
+  match: *javascript_restriction_match
+  tags: [code, dynamic-execution, context, restriction, typescript]
+  ai: *restriction_guidance
+  provenance: *javascript_restriction_provenance
+
+- id: tsx-dynamic-code-restriction
+  version: 1
+  title: TSX empty VM context
+  language: tsx
+  kind: validation
+  capability: dynamic_code_restriction
+  confidence: medium
+  cwe: [CWE-94]
+  match: *javascript_restriction_match
+  tags: [code, dynamic-execution, context, restriction, tsx]
+  ai: *restriction_guidance
+  provenance: *javascript_restriction_provenance
+
+- id: python-dynamic-code-restriction
+  version: 1
+  title: Python empty builtins context
+  language: python
+  kind: validation
+  capability: dynamic_code_restriction
+  confidence: medium
+  cwe: [CWE-94]
+  match:
+    any:
+      - pattern: 'eval($CODE, {"__builtins__": {}})'
+        captures: { code: CODE }
+  tags: [code, dynamic-execution, globals, restriction, python]
+  ai: *restriction_guidance
+  provenance:
+    note: An empty Python builtins mapping mapped to contextual execution-restriction evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/94.html
+      - https://docs.python.org/3/library/functions.html#eval
+
+- id: go-dynamic-code-restriction
+  version: 1
+  title: Go plugin basename restriction
+  language: go
+  kind: validation
+  capability: dynamic_code_restriction
+  confidence: medium
+  cwe: [CWE-94]
+  match:
+    any:
+      - pattern: plugin.Open(filepath.Base($PATH))
+        context: |
+          package pattern
+          func patternContext() { plugin.Open(filepath.Base($PATH)) }
+        selector: call_expression
+        captures: { code: PATH }
+  tags: [code, dynamic-execution, plugin, path, restriction, go]
+  ai: *restriction_guidance
+  provenance:
+    note: Basename-only Go plugin selection mapped to contextual path-restriction evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/94.html
+      - https://pkg.go.dev/plugin
+      - https://pkg.go.dev/path/filepath#Base

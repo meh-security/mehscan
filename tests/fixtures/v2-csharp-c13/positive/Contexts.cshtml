@@ -1,0 +1,10 @@
+@model ContextModel
+@using System.Text.Encodings.Web
+@using System.Text.Json
+<div title="@Html.Raw(Model.Title)">profile</div>
+<a href="@Html.Raw(Model.ReturnUrl)">continue</a>
+<script>
+    const message = '@Html.Raw(Model.Message)';
+    const config = @Html.Raw(Model.Config);
+    const relaxed = @Html.Raw(JsonSerializer.Serialize(Model.Config, new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
+</script>

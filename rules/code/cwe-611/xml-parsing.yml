@@ -1,0 +1,83 @@
+- id: javascript-libxml2-xxe-parser
+  version: 1
+  title: JavaScript libxml2 XML parsing with explicit options
+  language: javascript
+  kind: sink
+  capability: xml_parsing
+  confidence: medium
+  cwe: [CWE-611]
+  match: &javascript_libxml2_match
+    any:
+      - pattern: '$LIBXML.XmlDocument.fromString($PAYLOAD, { option: $OPTIONS })'
+        captures: { payload: PAYLOAD, options: OPTIONS }
+      - pattern: '$LIBXML.XmlDocument.fromString($PAYLOAD, { option: $OPTIONS, $$$REST })'
+        captures: { payload: PAYLOAD, options: OPTIONS }
+      - pattern: '$LIBXML.parseXmlString($PAYLOAD, { noent: true })'
+        captures: { payload: PAYLOAD }
+      - pattern: '$LIBXML.parseXmlString($PAYLOAD, { noent: true, $$$REST })'
+        captures: { payload: PAYLOAD }
+  tags: [xml, xxe, libxml2, external-entity]
+  ai: &xxe_guidance
+    investigate:
+      - whether the XML payload originates from an upload, request, message, or external service
+      - whether entity substitution, DTD loading, filesystem, or network input providers are enabled
+      - whether the same parser invocation disables external entities and network access
+  provenance: &libxml2_provenance
+    note: Explicit libxml2 XmlDocument parsing is mapped to CWE-611 review; option semantics and input provenance decide exploitability.
+    references:
+      - https://cwe.mitre.org/data/definitions/611.html
+      - https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html
+
+- id: typescript-libxml2-xxe-parser
+  version: 1
+  title: TypeScript libxml2 XML parsing with explicit options
+  language: typescript
+  kind: sink
+  capability: xml_parsing
+  confidence: medium
+  cwe: [CWE-611]
+  match: *javascript_libxml2_match
+  tags: [xml, xxe, libxml2, external-entity]
+  ai: *xxe_guidance
+  provenance: *libxml2_provenance
+
+- id: tsx-libxml2-xxe-parser
+  version: 1
+  title: TSX libxml2 XML parsing with explicit options
+  language: tsx
+  kind: sink
+  capability: xml_parsing
+  confidence: medium
+  cwe: [CWE-611]
+  match: *javascript_libxml2_match
+  tags: [xml, xxe, libxml2, external-entity]
+  ai: *xxe_guidance
+  provenance: *libxml2_provenance
+
+- id: python-sax-external-entity-parser
+  version: 1
+  title: Python SAX or pulldom XML parsing with an explicit parser
+  language: python
+  kind: sink
+  capability: xml_parsing
+  confidence: medium
+  cwe: [CWE-611]
+  match:
+    any:
+      - pattern: parseString($PAYLOAD, parser=$PARSER)
+        captures: { payload: PAYLOAD, parser: PARSER }
+      - pattern: pulldom.parseString($PAYLOAD, parser=$PARSER)
+        captures: { payload: PAYLOAD, parser: PARSER }
+      - pattern: xml.dom.pulldom.parseString($PAYLOAD, parser=$PARSER)
+        captures: { payload: PAYLOAD, parser: PARSER }
+  tags: [xml, xxe, sax, pulldom, external-entity, python]
+  ai:
+    investigate:
+      - whether the payload is controlled by an HTTP request, upload, message, or external service
+      - whether the exact parser has feature_external_ges or feature_external_pes enabled
+      - whether entity expansion can read local files or perform network requests
+  provenance:
+    note: Python SAX or pulldom parsing with an explicit parser is review evidence; the parser feature configuration decides XXE exposure.
+    references:
+      - https://cwe.mitre.org/data/definitions/611.html
+      - https://docs.python.org/3/library/xml.html#xml-vulnerabilities

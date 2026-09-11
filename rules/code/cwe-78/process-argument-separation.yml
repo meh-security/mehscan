@@ -1,0 +1,185 @@
+- id: csharp-process-argument-separation
+  version: 1
+  title: .NET structured process argument
+  language: csharp
+  kind: sanitizer
+  capability: process_argument_separation
+  confidence: medium
+  cwe: [CWE-78]
+  match:
+    any:
+      - pattern: $START_INFO.ArgumentList.Add($VALUE)
+        captures: { process: START_INFO, value: VALUE }
+  tags: [command, process, argument-separation, dotnet]
+  ai: &argument_guidance
+    investigate:
+      - whether the executable itself is fixed or constrained
+      - whether an explicit shell, command interpreter, or script reintroduces parsing
+      - option injection and target-program semantics despite separated arguments
+      - platform-specific process and quoting behavior
+  provenance:
+    note: ProcessStartInfo.ArgumentList mapped to contextual argument-separation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/78.html
+      - https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.processstartinfo.argumentlist
+
+- id: java-process-argument-separation
+  version: 1
+  title: Java structured process arguments
+  language: java
+  kind: sanitizer
+  capability: process_argument_separation
+  confidence: medium
+  cwe: [CWE-78]
+  match:
+    any:
+      - pattern: new ProcessBuilder($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+  tags: [command, process, argument-separation, java]
+  ai: *argument_guidance
+  provenance:
+    note: ProcessBuilder program and argument elements mapped to contextual argument-separation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/78.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/ProcessBuilder.html
+
+- id: javascript-process-argument-separation
+  version: 1
+  title: Node.js direct process execution with argument array
+  language: javascript
+  kind: sanitizer
+  capability: process_argument_separation
+  confidence: medium
+  cwe: [CWE-78]
+  match: &node_argument_match
+    any:
+      - pattern: child_process.execFile($COMMAND, $ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: child_process.spawn($COMMAND, $ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: child_process.spawnSync($COMMAND, $ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+  symbols: &node_argument_symbols
+    - canonical: child_process.execFile
+      captures: { command: 0, arguments: 1 }
+    - canonical: child_process.spawn
+      captures: { command: 0, arguments: 1 }
+    - canonical: child_process.spawnSync
+      captures: { command: 0, arguments: 1 }
+  tags: [command, process, argument-separation, nodejs]
+  ai: *argument_guidance
+  provenance: &node_argument_provenance
+    note: Node direct-execution APIs with a separate argument array mapped to contextual protection evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/78.html
+      - https://nodejs.org/api/child_process.html
+
+- id: typescript-process-argument-separation
+  version: 1
+  title: Node.js direct process execution with argument array
+  language: typescript
+  kind: sanitizer
+  capability: process_argument_separation
+  confidence: medium
+  cwe: [CWE-78]
+  match: *node_argument_match
+  symbols: *node_argument_symbols
+  tags: [command, process, argument-separation, nodejs]
+  ai: *argument_guidance
+  provenance: *node_argument_provenance
+
+- id: tsx-process-argument-separation
+  version: 1
+  title: Node.js direct process execution with argument array
+  language: tsx
+  kind: sanitizer
+  capability: process_argument_separation
+  confidence: medium
+  cwe: [CWE-78]
+  match: *node_argument_match
+  symbols: *node_argument_symbols
+  tags: [command, process, argument-separation, nodejs]
+  ai: *argument_guidance
+  provenance: *node_argument_provenance
+
+- id: python-process-argument-separation
+  version: 1
+  title: Python subprocess argument sequence without a shell
+  language: python
+  kind: sanitizer
+  capability: process_argument_separation
+  confidence: medium
+  cwe: [CWE-78]
+  match:
+    any:
+      - pattern: subprocess.Popen([$COMMAND, $$$ARGUMENTS], shell=False)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: subprocess.run([$COMMAND, $$$ARGUMENTS], shell=False)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: subprocess.call([$COMMAND, $$$ARGUMENTS], shell=False)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: subprocess.check_call([$COMMAND, $$$ARGUMENTS], shell=False)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: subprocess.check_output([$COMMAND, $$$ARGUMENTS], shell=False)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+  tags: [command, process, argument-separation, python]
+  ai: *argument_guidance
+  provenance:
+    note: Python subprocess sequences with an explicitly disabled shell mapped to contextual protection evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/78.html
+      - https://docs.python.org/3/library/subprocess.html
+
+- id: go-process-argument-separation
+  version: 1
+  title: Go direct process execution with separate arguments
+  language: go
+  kind: sanitizer
+  capability: process_argument_separation
+  confidence: medium
+  cwe: [CWE-78]
+  match:
+    any:
+      - pattern: exec.Command($COMMAND, $ARGUMENT)
+        context: |
+          package pattern
+          func patternContext() { exec.Command($COMMAND, $ARGUMENT) }
+        selector: call_expression
+        captures: { command: COMMAND, arguments: ARGUMENT }
+      - pattern: exec.Command($COMMAND, $ARGUMENT, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENT }
+      - pattern: exec.CommandContext($CONTEXT, $COMMAND, $ARGUMENT, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENT, context: CONTEXT }
+  tags: [command, process, argument-separation, go]
+  ai: *argument_guidance
+  provenance:
+    note: Go os/exec program and argument parameters mapped to contextual argument-separation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/78.html
+      - https://pkg.go.dev/os/exec
+
+- id: rust-process-argument-separation
+  version: 1
+  title: Rust structured process argument
+  language: rust
+  kind: sanitizer
+  capability: process_argument_separation
+  confidence: medium
+  cwe: [CWE-78]
+  match:
+    any:
+      - pattern: Command::new($COMMAND).arg($ARGUMENT)
+        captures: { command: COMMAND, arguments: ARGUMENT }
+      - pattern: Command::new($COMMAND).args($ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: std::process::Command::new($COMMAND).arg($ARGUMENT)
+        captures: { command: COMMAND, arguments: ARGUMENT }
+      - pattern: std::process::Command::new($COMMAND).args($ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+  tags: [command, process, argument-separation, rust]
+  ai: *argument_guidance
+  provenance:
+    note: Rust std process program and argument APIs mapped to contextual argument-separation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/78.html
+      - https://doc.rust-lang.org/std/process/struct.Command.html

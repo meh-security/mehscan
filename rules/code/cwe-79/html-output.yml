@@ -1,0 +1,314 @@
+- id: csharp-html-output
+  version: 1
+  title: ASP.NET Core response-body output
+  language: csharp
+  kind: sink
+  capability: html_output
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: $RESPONSE.WriteAsync($HTML)
+        captures: { content: HTML }
+      - pattern: Results.Content($HTML, "text/html")
+        captures: { content: HTML }
+  tags: [http, response, html, xss]
+  ai: &html_guidance
+    investigate:
+      - provenance and attacker control of the rendered content
+      - output context, encoding, sanitization, and template autoescaping
+      - browser interpretation, content type, trusted markup boundaries, and CSP
+  provenance:
+    note: ASP.NET Core response-body writes mapped to CWE-79 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://learn.microsoft.com/en-us/aspnet/core/fundamentals/use-http-context
+
+- id: csharp-aspnet-explicit-html-output
+  version: 1
+  title: ASP.NET explicit trusted HTML output
+  language: csharp
+  kind: sink
+  capability: html_output
+  confidence: medium
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: Html.Raw($HTML)
+        captures: { content: HTML }
+      - pattern: Content($HTML, "text/html")
+        captures: { content: HTML }
+      - pattern: Content($HTML, "text/html; charset=utf-8")
+        captures: { content: HTML }
+      - pattern: new HtmlString($HTML)
+        captures: { content: HTML }
+      - pattern: new MarkupString($HTML)
+        captures: { content: HTML }
+      - pattern: $BUILDER.AppendHtml($HTML)
+        captures: { content: HTML }
+  tags: [http, response, html, xss, aspnet-core, razor, blazor, trusted-markup]
+  ai: *html_guidance
+  provenance:
+    note: ASP.NET and Razor/Blazor trusted-markup APIs and explicit HTML response helpers mapped to CWE-79 review with medium confidence because inherited receiver types are not compiler-resolved.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.mvc.rendering.ihtmlhelper.raw
+      - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.mvc.controllerbase.content
+
+- id: java-html-output
+  version: 1
+  title: Java servlet response output
+  language: java
+  kind: sink
+  capability: html_output
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: $RESPONSE.getWriter().write($HTML)
+        captures: { content: HTML }
+      - pattern: $RESPONSE.getWriter().print($HTML)
+        captures: { content: HTML }
+  tags: [http, response, html, xss, servlet]
+  ai: *html_guidance
+  provenance:
+    note: Java servlet writer output mapped to CWE-79 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://jakarta.ee/specifications/servlet/6.1/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletresponse
+
+- id: javascript-html-output
+  version: 1
+  title: Express response output
+  language: javascript
+  kind: sink
+  capability: html_output
+  cwe: [CWE-79]
+  match: &javascript_html_match
+    any:
+      - pattern: res.send($HTML)
+        captures: { content: HTML }
+      - pattern: res.render($TEMPLATE, $$$DATA)
+        captures: { template: TEMPLATE, content: DATA }
+  tags: [http, response, html, xss, express]
+  ai: *html_guidance
+  provenance: &javascript_html_provenance
+    note: Express response rendering mapped to CWE-79 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://expressjs.com/en/4x/api.html#res.send
+
+- id: typescript-html-output
+  version: 1
+  title: TypeScript Express response output
+  language: typescript
+  kind: sink
+  capability: html_output
+  cwe: [CWE-79]
+  match: *javascript_html_match
+  tags: [http, response, html, xss, express]
+  ai: *html_guidance
+  provenance: *javascript_html_provenance
+
+- id: tsx-html-output
+  version: 1
+  title: TSX Express response output
+  language: tsx
+  kind: sink
+  capability: html_output
+  cwe: [CWE-79]
+  match: *javascript_html_match
+  tags: [http, response, html, xss, express]
+  ai: *html_guidance
+  provenance: *javascript_html_provenance
+
+- id: javascript-angular-html-trust-bypass
+  version: 1
+  title: Angular trusted browser content bypass
+  language: javascript
+  kind: sink
+  capability: html_output
+  confidence: high
+  cwe: [CWE-79]
+  match: &angular_html_bypass_match
+    any:
+      - pattern: $SANITIZER.bypassSecurityTrustHtml($HTML)
+        captures: { content: HTML }
+      - pattern: $SANITIZER.bypassSecurityTrustScript($HTML)
+        captures: { content: HTML }
+      - pattern: $SANITIZER.bypassSecurityTrustUrl($HTML)
+        captures: { content: HTML }
+      - pattern: $SANITIZER.bypassSecurityTrustResourceUrl($HTML)
+        captures: { content: HTML }
+      - pattern: document.write($HTML)
+        captures: { content: HTML }
+      - pattern: $WINDOW.document.write($HTML)
+        captures: { content: HTML }
+  tags: [browser, angular, trusted-content-bypass, xss]
+  ai: *html_guidance
+  provenance: &angular_html_bypass_provenance
+    note: Angular sanitizer bypass APIs and browser document writes explicitly cross the browser content trust boundary.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://angular.dev/best-practices/security
+
+- id: typescript-angular-html-trust-bypass
+  version: 1
+  title: Angular trusted browser content bypass
+  language: typescript
+  kind: sink
+  capability: html_output
+  confidence: high
+  cwe: [CWE-79]
+  match: *angular_html_bypass_match
+  tags: [browser, angular, trusted-content-bypass, xss]
+  ai: *html_guidance
+  provenance: *angular_html_bypass_provenance
+
+- id: tsx-angular-html-trust-bypass
+  version: 1
+  title: Angular trusted browser content bypass
+  language: tsx
+  kind: sink
+  capability: html_output
+  confidence: high
+  cwe: [CWE-79]
+  match: *angular_html_bypass_match
+  tags: [browser, angular, trusted-content-bypass, xss]
+  ai: *html_guidance
+  provenance: *angular_html_bypass_provenance
+
+- id: python-html-output
+  version: 1
+  title: Python explicit HTML response
+  language: python
+  kind: sink
+  capability: html_output
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: HTMLResponse($HTML)
+        captures: { content: HTML }
+      - pattern: render_template($TEMPLATE, $$$DATA)
+        captures: { template: TEMPLATE, content: DATA }
+      - pattern: HttpResponse($HTML)
+        captures: { content: HTML }
+      - pattern: mark_safe($HTML)
+        captures: { content: HTML }
+      - pattern: django.utils.safestring.mark_safe($HTML)
+        captures: { content: HTML }
+  tags: [http, response, html, xss, django, fastapi, flask, trusted-markup]
+  ai: *html_guidance
+  provenance:
+    note: Python explicit HTML responses, template rendering, and trusted-markup bypasses mapped to CWE-79 review; Django render is summarized separately only for unsafe template contexts.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://fastapi.tiangolo.com/advanced/custom-response/#html-response
+
+- id: go-html-output
+  version: 1
+  title: Go trusted HTML conversion
+  language: go
+  kind: sink
+  capability: html_output
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: template.HTML($HTML)
+        context: |
+          package pattern
+          func patternContext() { _ = template.HTML($HTML) }
+        selector: call_expression
+        captures: { content: HTML }
+  symbols:
+    - canonical: html/template.HTML
+      captures: { content: 0 }
+  tags: [http, response, html, xss, trusted-markup]
+  ai: *html_guidance
+  provenance:
+    note: Go trusted HTML conversion mapped to CWE-79 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://pkg.go.dev/html/template#HTML
+
+- id: rust-axum-html-output
+  version: 1
+  title: Rust Axum HTML response
+  language: rust
+  kind: sink
+  capability: html_output
+  confidence: medium
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: Html($CONTENT)
+        captures: { content: CONTENT }
+      - pattern: axum::response::Html($CONTENT)
+        captures: { content: CONTENT }
+  tags: [http, response, html, xss, rust, axum]
+  ai: *html_guidance
+  provenance:
+    note: Axum explicit HTML responses mapped to browser-output review; template engines and escaped text responses require separate semantics.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://docs.rs/axum/latest/axum/response/struct.Html.html
+
+- id: rust-iron-response-body
+  version: 1
+  title: Rust Iron response body
+  language: rust
+  kind: sink
+  capability: html_output
+  confidence: medium
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: Response::with(($STATUS, $CONTENT))
+        captures: { status: STATUS, content: CONTENT }
+      - pattern: iron::Response::with(($STATUS, $CONTENT))
+        captures: { status: STATUS, content: CONTENT }
+  tags: [http, response, html, xss, rust, iron]
+  ai: *html_guidance
+  provenance:
+    note: Iron response body construction mapped to review; verify the effective Content-Type and nosniff policy before concluding browser HTML interpretation.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://docs.rs/iron/latest/iron/modifiers/
+
+- id: rust-warp-html-output
+  version: 1
+  title: Rust Warp explicit HTML reply
+  language: rust
+  kind: sink
+  capability: html_output
+  confidence: high
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: warp::reply::html($CONTENT)
+        captures: { content: CONTENT }
+  tags: [http, response, html, xss, rust, warp]
+  ai: *html_guidance
+  provenance:
+    note: Only Warp's explicit HTML reply is mapped; plain String replies are text/plain and are not HTML sinks.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://docs.rs/warp/latest/warp/reply/fn.html.html
+
+- id: rust-actix-html-output
+  version: 1
+  title: Rust Actix explicit HTML response
+  language: rust
+  kind: sink
+  capability: html_output
+  confidence: high
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: $RESPONSE.content_type("text/html").body($CONTENT)
+        captures: { response: RESPONSE, content: CONTENT }
+  tags: [http, response, html, xss, rust, actix-web]
+  ai: *html_guidance
+  provenance:
+    note: Actix response builders with an explicit text/html content type are mapped to browser-output review.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://docs.rs/actix-web/latest/actix_web/struct.HttpResponseBuilder.html

@@ -1,0 +1,155 @@
+- id: csharp-hash-algorithm-selection
+  version: 1
+  title: .NET hash algorithm selection
+  language: csharp
+  kind: security_configuration
+  capability: cryptographic_hash
+  cwe: [CWE-327]
+  match:
+    any:
+      - pattern: HashAlgorithm.Create($ALGORITHM)
+        captures: { algorithm: ALGORITHM }
+  symbols:
+    - canonical: System.Security.Cryptography.HashAlgorithm.Create
+      captures: { algorithm: 0 }
+  tags: [cryptography, hash, algorithm-selection]
+  ai: &hash_guidance
+    investigate:
+      - the selected algorithm and the security purpose of the digest
+      - whether collision resistance, password hashing, signatures, or integrity are required
+      - compatibility constraints and whether a stronger supported construction is available
+    verify:
+      - resolve the effective algorithm value and the data or security decision protected by the digest
+      - confirm whether an attacker can benefit from violating the required collision, preimage, password-cost, signature, or integrity property
+    exclude:
+      - do not report a weak algorithm used only as a non-security checksum, cache key, or compatibility identifier
+      - do not classify dynamic algorithm-selection syntax without resolving a weak effective value and a security-sensitive purpose
+  provenance:
+    note: .NET name-based hash selection mapped to CWE-327 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/327.html
+      - https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.hashalgorithm.create
+
+- id: java-hash-algorithm-selection
+  version: 1
+  title: Java hash algorithm selection
+  language: java
+  kind: security_configuration
+  capability: cryptographic_hash
+  cwe: [CWE-327]
+  match:
+    any:
+      - pattern: MessageDigest.getInstance($ALGORITHM)
+        captures: { algorithm: ALGORITHM }
+      - pattern: MessageDigest.getInstance($ALGORITHM, $$$ARGUMENTS)
+        captures: { algorithm: ALGORITHM }
+  symbols:
+    - canonical: java.security.MessageDigest.getInstance
+      captures: { algorithm: 0 }
+  tags: [cryptography, hash, algorithm-selection]
+  ai: *hash_guidance
+  provenance:
+    note: Java MessageDigest algorithm selection mapped to CWE-327 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/327.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/security/MessageDigest.html
+
+- id: javascript-hash-algorithm-selection
+  version: 1
+  title: Node.js hash algorithm selection
+  language: javascript
+  kind: security_configuration
+  capability: cryptographic_hash
+  cwe: [CWE-327]
+  match: &javascript_hash_match
+    any:
+      - pattern: crypto.createHash($ALGORITHM)
+        captures: { algorithm: ALGORITHM }
+      - pattern: crypto.createHash($ALGORITHM, $$$OPTIONS)
+        captures: { algorithm: ALGORITHM }
+  symbols: &javascript_hash_symbols
+    - canonical: crypto.createHash
+      captures: { algorithm: 0 }
+  tags: [cryptography, hash, algorithm-selection]
+  ai: *hash_guidance
+  provenance: &javascript_hash_provenance
+    note: Node.js createHash algorithm selection mapped to CWE-327 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/327.html
+      - https://nodejs.org/api/crypto.html#cryptocreatehashalgorithm-options
+
+- id: typescript-hash-algorithm-selection
+  version: 1
+  title: TypeScript hash algorithm selection
+  language: typescript
+  kind: security_configuration
+  capability: cryptographic_hash
+  cwe: [CWE-327]
+  match: *javascript_hash_match
+  symbols: *javascript_hash_symbols
+  tags: [cryptography, hash, algorithm-selection]
+  ai: *hash_guidance
+  provenance: *javascript_hash_provenance
+
+- id: tsx-hash-algorithm-selection
+  version: 1
+  title: TSX hash algorithm selection
+  language: tsx
+  kind: security_configuration
+  capability: cryptographic_hash
+  cwe: [CWE-327]
+  match: *javascript_hash_match
+  symbols: *javascript_hash_symbols
+  tags: [cryptography, hash, algorithm-selection]
+  ai: *hash_guidance
+  provenance: *javascript_hash_provenance
+
+- id: python-hash-algorithm-selection
+  version: 1
+  title: Python hash algorithm selection
+  language: python
+  kind: security_configuration
+  capability: cryptographic_hash
+  cwe: [CWE-327]
+  match:
+    any:
+      - pattern: hashlib.new($ALGORITHM)
+        captures: { algorithm: ALGORITHM }
+      - pattern: hashlib.new($ALGORITHM, $$$ARGUMENTS)
+        captures: { algorithm: ALGORITHM }
+  symbols:
+    - canonical: hashlib.new
+      captures: { algorithm: 0 }
+  tags: [cryptography, hash, algorithm-selection]
+  ai: *hash_guidance
+  provenance:
+    note: Python hashlib name-based algorithm selection mapped to CWE-327 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/327.html
+      - https://docs.python.org/3/library/hashlib.html#hashlib.new
+
+- id: go-hash-algorithm-selection
+  version: 1
+  title: Go keyed-hash algorithm selection
+  language: go
+  kind: security_configuration
+  capability: cryptographic_hash
+  cwe: [CWE-327]
+  match:
+    any:
+      - pattern: hmac.New($ALGORITHM, $KEY)
+        context: |
+          package pattern
+          func patternContext() { hmac.New($ALGORITHM, $KEY) }
+        selector: call_expression
+        captures: { algorithm: ALGORITHM }
+  symbols:
+    - canonical: crypto/hmac.New
+      captures: { algorithm: 0 }
+  tags: [cryptography, hash, algorithm-selection]
+  ai: *hash_guidance
+  provenance:
+    note: Go HMAC hash-constructor selection mapped to CWE-327 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/327.html
+      - https://pkg.go.dev/crypto/hmac#New

@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.1",
+  "root": "C:/fixture",
+  "evidence": [],
+  "security_paths": [
+    {
+      "id": "path-0000000000000002",
+      "source_evidence_id": "ev-source",
+      "sink_evidence_id": "ev-process",
+      "capability": "process_execution",
+      "cwe_candidates": ["CWE-78"],
+      "state": "protected",
+      "steps": [
+        {
+          "kind": "source",
+          "location": {
+            "path": "process.py",
+            "start": { "line": 2, "column": 31, "byte_offset": 46 },
+            "end": { "line": 2, "column": 51, "byte_offset": 66 }
+          },
+          "evidence_id": "ev-source"
+        },
+        {
+          "kind": "protection",
+          "location": {
+            "path": "process.py",
+            "start": { "line": 2, "column": 5, "byte_offset": 20 },
+            "end": { "line": 2, "column": 66, "byte_offset": 81 }
+          },
+          "evidence_id": "ev-protection"
+        },
+        {
+          "kind": "sink",
+          "location": {
+            "path": "process.py",
+            "start": { "line": 2, "column": 5, "byte_offset": 20 },
+            "end": { "line": 2, "column": 66, "byte_offset": 81 }
+          },
+          "evidence_id": "ev-process"
+        }
+      ],
+      "protection_evidence_ids": ["ev-protection"],
+      "uncertainty_reasons": ["source_observation_not_high_confidence"],
+      "provenance": {
+        "engine": "mehscan bounded-local-flow 1",
+        "maximum_propagation_depth": 4
+      }
+    }
+  ],
+  "coverage": {
+    "totals": {
+      "discovered": 1,
+      "scanned": 1,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0
+    },
+    "languages": {},
+    "security_surfaces": { "process_argument_separation": 1 },
+    "cwe": [],
+    "files": [],
+    "ignored_subtrees": []
+  }
+}

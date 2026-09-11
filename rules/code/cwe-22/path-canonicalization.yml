@@ -1,0 +1,195 @@
+- id: csharp-path-canonicalization
+  version: 1
+  title: .NET path canonicalization
+  language: csharp
+  kind: sanitizer
+  capability: path_canonicalization
+  confidence: medium
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: Path.GetFullPath($VALUE)
+        captures: { value: VALUE }
+      - pattern: Path.GetFullPath($VALUE, $BASE)
+        captures: { value: VALUE, base: BASE }
+      - pattern: System.IO.Path.GetFullPath($VALUE)
+        captures: { value: VALUE }
+      - pattern: System.IO.Path.GetFullPath($VALUE, $BASE)
+        captures: { value: VALUE, base: BASE }
+  tags: [filesystem, path, canonicalization, dotnet]
+  ai: &canonicalization_guidance
+    investigate:
+      - whether the canonical result, rather than the original value, reaches the filesystem API
+      - whether the canonical result is confined to an intended base directory
+      - path-boundary, case-sensitivity, alternate-root, and platform-specific behavior
+      - symlink resolution and time-of-check/time-of-use races
+  provenance:
+    note: .NET absolute path resolution mapped to contextual path protection evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://learn.microsoft.com/en-us/dotnet/api/system.io.path.getfullpath
+
+- id: java-path-canonicalization
+  version: 1
+  title: Java path canonicalization
+  language: java
+  kind: sanitizer
+  capability: path_canonicalization
+  confidence: medium
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: Paths.get($VALUE).normalize()
+        captures: { value: VALUE }
+      - pattern: Path.of($VALUE).normalize()
+        captures: { value: VALUE }
+      - pattern: Paths.get($VALUE).toRealPath()
+        captures: { value: VALUE }
+      - pattern: Path.of($VALUE).toRealPath()
+        captures: { value: VALUE }
+      - pattern: new File($VALUE).getCanonicalPath()
+        captures: { value: VALUE }
+      - pattern: new File($VALUE).getCanonicalFile()
+        captures: { value: VALUE }
+  tags: [filesystem, path, canonicalization, java]
+  ai: *canonicalization_guidance
+  provenance:
+    note: Java path normalization and real-path APIs mapped to contextual path protection evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/nio/file/Path.html
+
+- id: javascript-path-canonicalization
+  version: 1
+  title: Node.js path canonicalization
+  language: javascript
+  kind: sanitizer
+  capability: path_canonicalization
+  confidence: medium
+  cwe: [CWE-22]
+  match: &node_path_canonicalization_match
+    any:
+      - pattern: path.normalize($VALUE)
+        captures: { value: VALUE }
+      - pattern: path.resolve($VALUE)
+        captures: { value: VALUE }
+      - pattern: path.resolve($BASE, $VALUE)
+        captures: { value: VALUE, base: BASE }
+  tags: [filesystem, path, canonicalization, nodejs]
+  ai: *canonicalization_guidance
+  provenance: &node_path_canonicalization_provenance
+    note: Node.js lexical path normalization mapped to contextual path protection evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://nodejs.org/api/path.html
+
+- id: typescript-path-canonicalization
+  version: 1
+  title: Node.js path canonicalization
+  language: typescript
+  kind: sanitizer
+  capability: path_canonicalization
+  confidence: medium
+  cwe: [CWE-22]
+  match: *node_path_canonicalization_match
+  tags: [filesystem, path, canonicalization, nodejs]
+  ai: *canonicalization_guidance
+  provenance: *node_path_canonicalization_provenance
+
+- id: tsx-path-canonicalization
+  version: 1
+  title: Node.js path canonicalization
+  language: tsx
+  kind: sanitizer
+  capability: path_canonicalization
+  confidence: medium
+  cwe: [CWE-22]
+  match: *node_path_canonicalization_match
+  tags: [filesystem, path, canonicalization, nodejs]
+  ai: *canonicalization_guidance
+  provenance: *node_path_canonicalization_provenance
+
+- id: python-path-canonicalization
+  version: 1
+  title: Python path canonicalization
+  language: python
+  kind: sanitizer
+  capability: path_canonicalization
+  confidence: medium
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: os.path.realpath($VALUE)
+        captures: { value: VALUE }
+      - pattern: os.path.abspath($VALUE)
+        captures: { value: VALUE }
+      - pattern: Path($VALUE).resolve()
+        captures: { value: VALUE }
+      - pattern: pathlib.Path($VALUE).resolve()
+        captures: { value: VALUE }
+  tags: [filesystem, path, canonicalization, python]
+  ai: *canonicalization_guidance
+  provenance:
+    note: Python absolute and real-path APIs mapped to contextual path protection evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://docs.python.org/3/library/os.path.html#os.path.realpath
+      - https://docs.python.org/3/library/pathlib.html#pathlib.Path.resolve
+
+- id: go-path-canonicalization
+  version: 1
+  title: Go path canonicalization
+  language: go
+  kind: sanitizer
+  capability: path_canonicalization
+  confidence: medium
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: filepath.Clean($VALUE)
+        context: |
+          package pattern
+          func patternContext() { _ = filepath.Clean($VALUE) }
+        selector: call_expression
+        captures: { value: VALUE }
+      - pattern: filepath.Abs($VALUE)
+        context: |
+          package pattern
+          func patternContext() { _, _ = filepath.Abs($VALUE) }
+        selector: call_expression
+        captures: { value: VALUE }
+      - pattern: filepath.EvalSymlinks($VALUE)
+        context: |
+          package pattern
+          func patternContext() { _, _ = filepath.EvalSymlinks($VALUE) }
+        selector: call_expression
+        captures: { value: VALUE }
+  tags: [filesystem, path, canonicalization, go]
+  ai: *canonicalization_guidance
+  provenance:
+    note: Go lexical, absolute, and symlink-resolving path APIs mapped to contextual path protection evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://pkg.go.dev/path/filepath
+
+- id: rust-path-canonicalization
+  version: 1
+  title: Rust path canonicalization
+  language: rust
+  kind: sanitizer
+  capability: path_canonicalization
+  confidence: medium
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: $PATH.canonicalize()
+        captures: { value: PATH }
+      - pattern: std::fs::canonicalize($PATH)
+        captures: { value: PATH }
+  tags: [filesystem, path, canonicalization, rust]
+  ai: *canonicalization_guidance
+  provenance:
+    note: Rust filesystem canonicalization mapped to contextual path protection evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://doc.rust-lang.org/std/fs/fn.canonicalize.html

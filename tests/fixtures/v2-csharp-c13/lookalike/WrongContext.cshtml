@@ -1,0 +1,9 @@
+@using System.Text.Encodings.Web
+<div title="@Html.Raw(JavaScriptEncoder.Default.Encode(Model.Title))">profile</div>
+<script>
+    const message = '@Html.Raw(HtmlEncoder.Default.Encode(Model.Message))';
+</script>
+<a href="@Html.Raw(JavaScriptEncoder.Default.Encode(Model.ReturnUrl))">continue</a>
+<button onclick="show('@Html.Raw(HtmlEncoder.Default.Encode(Model.Command))')">show</button>
+<div style="background: @Html.Raw(HtmlEncoder.Default.Encode(Model.Css))">styled</div>
+<div title="@Html.Raw(Json.Serialize(Model.Title))">serialized in the wrong context</div>

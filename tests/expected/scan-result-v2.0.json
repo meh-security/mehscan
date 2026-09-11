@@ -1,0 +1,39 @@
+{
+  "schema_version": "2.0",
+  "root": "C:/fixture",
+  "evidence": [
+    {
+      "id": "ev-stored-user-content",
+      "kind": "source",
+      "capability": "stored_user_content",
+      "location": {
+        "path": "profile.ts",
+        "start": { "line": 3, "column": 20, "byte_offset": 82 },
+        "end": { "line": 3, "column": 33, "byte_offset": 95 }
+      },
+      "cwe_candidates": ["CWE-20"],
+      "tags": ["stored-data", "user-content", "attacker-controlled", "model-lookup"],
+      "confidence": "medium",
+      "provenance": {
+        "resolution": "ast",
+        "engine": "ast-grep 0.45.1 + stored-model-source",
+        "rule_version": 1
+      },
+      "rule_id": "typescript-stored-user-content"
+    }
+  ],
+  "coverage": {
+    "totals": {
+      "discovered": 1,
+      "scanned": 1,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0
+    },
+    "languages": {},
+    "security_surfaces": { "stored_user_content": 1 },
+    "cwe": [],
+    "files": [],
+    "ignored_subtrees": []
+  }
+}

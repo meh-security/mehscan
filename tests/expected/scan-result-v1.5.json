@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.5",
+  "root": "C:/fixture",
+  "evidence": [
+    {
+      "id": "ev-redirect-validation",
+      "kind": "validation",
+      "capability": "redirect_destination_validation",
+      "location": {
+        "path": "login.ts",
+        "start": { "line": 4, "column": 7, "byte_offset": 72 },
+        "end": { "line": 4, "column": 57, "byte_offset": 122 }
+      },
+      "captures": {
+        "base": {
+          "text": "base",
+          "location": {
+            "path": "login.ts",
+            "start": { "line": 4, "column": 28, "byte_offset": 93 },
+            "end": { "line": 4, "column": 32, "byte_offset": 97 }
+          }
+        },
+        "location": {
+          "text": "destination",
+          "location": {
+            "path": "login.ts",
+            "start": { "line": 4, "column": 15, "byte_offset": 80 },
+            "end": { "line": 4, "column": 26, "byte_offset": 91 }
+          }
+        }
+      },
+      "cwe_candidates": ["CWE-601"],
+      "tags": ["http", "redirect", "open-redirect", "validation", "same-origin", "typescript"],
+      "confidence": "medium",
+      "provenance": {
+        "resolution": "ast",
+        "engine": "ast-grep 0.45.1",
+        "rule_version": 1
+      },
+      "rule_id": "typescript-redirect-destination-validation"
+    }
+  ],
+  "coverage": {
+    "totals": {
+      "discovered": 1,
+      "scanned": 1,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0
+    },
+    "languages": {},
+    "security_surfaces": { "redirect_destination_validation": 1 },
+    "cwe": [],
+    "files": [],
+    "ignored_subtrees": []
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mehscan Security"
+  short_description: "Run and triage Mehscan security scans"
+  default_prompt: "Scan this repository with Mehscan and return concise evidence-backed security decisions."

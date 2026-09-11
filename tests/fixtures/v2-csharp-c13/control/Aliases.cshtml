@@ -1,0 +1,4 @@
+@using H = System.Text.Encodings.Web.HtmlEncoder
+@inject System.Text.Encodings.Web.JavaScriptEncoder JsEncoder
+<div title="@Html.Raw(H.Default.Encode(Model.Title))">profile</div>
+<script>const message = '@Html.Raw(JsEncoder.Encode(Model.Message))';</script>

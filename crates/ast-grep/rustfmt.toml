@@ -1,0 +1,2 @@
+# Keep the vendored crates byte-identical to the local upstream checkout.
+tab_spaces = 2

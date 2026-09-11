@@ -1,0 +1,185 @@
+- id: csharp-url-destination-validation
+  version: 1
+  title: .NET URL destination validation
+  language: csharp
+  kind: validation
+  capability: url_destination_validation
+  confidence: medium
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: $URI.Scheme == Uri.UriSchemeHttps
+        captures: { endpoint: URI }
+      - pattern: Uri.UriSchemeHttps == $URI.Scheme
+        captures: { endpoint: URI }
+      - pattern: $ALLOWED.Contains($URI.Host)
+        captures: { endpoint: URI, allowlist: ALLOWED }
+  tags: [http, network, ssrf, url, validation, dotnet]
+  ai: &url_validation_guidance
+    investigate:
+      - whether both scheme and normalized hostname are constrained to intended values
+      - exact-host matching rather than suffix or substring confusion
+      - private, loopback, link-local, multicast, and cloud metadata addresses
+      - DNS resolution and redirect targets after the initial validation
+      - whether the checked parsed value is exactly the destination later requested
+  provenance:
+    note: .NET URI scheme and host-allowlist checks mapped to contextual destination validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://learn.microsoft.com/en-us/dotnet/api/system.uri.scheme
+      - https://learn.microsoft.com/en-us/dotnet/api/system.uri.host
+
+- id: java-url-destination-validation
+  version: 1
+  title: Java URL destination validation
+  language: java
+  kind: validation
+  capability: url_destination_validation
+  confidence: medium
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: $URI.getScheme().equals("https")
+        captures: { endpoint: URI }
+      - pattern: '"https".equals($URI.getScheme())'
+        captures: { endpoint: URI }
+      - pattern: $ALLOWED.contains($URI.getHost())
+        captures: { endpoint: URI, allowlist: ALLOWED }
+  tags: [http, network, ssrf, url, validation, java]
+  ai: *url_validation_guidance
+  provenance:
+    note: Java URI scheme and host-allowlist checks mapped to contextual destination validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/net/URI.html
+
+- id: javascript-url-destination-validation
+  version: 1
+  title: JavaScript URL destination validation
+  language: javascript
+  kind: validation
+  capability: url_destination_validation
+  confidence: medium
+  cwe: [CWE-918]
+  match: &javascript_url_validation_match
+    any:
+      - pattern: '$URL.protocol === "https:"'
+        captures: { endpoint: URL }
+      - pattern: '"https:" === $URL.protocol'
+        captures: { endpoint: URL }
+      - pattern: $ALLOWED.includes($URL.hostname)
+        captures: { endpoint: URL, allowlist: ALLOWED }
+  tags: [http, network, ssrf, url, validation, javascript]
+  ai: *url_validation_guidance
+  provenance: &javascript_url_validation_provenance
+    note: WHATWG URL protocol and hostname-allowlist checks mapped to contextual destination validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://developer.mozilla.org/en-US/docs/Web/API/URL/protocol
+      - https://developer.mozilla.org/en-US/docs/Web/API/URL/hostname
+
+- id: typescript-url-destination-validation
+  version: 1
+  title: TypeScript URL destination validation
+  language: typescript
+  kind: validation
+  capability: url_destination_validation
+  confidence: medium
+  cwe: [CWE-918]
+  match: *javascript_url_validation_match
+  tags: [http, network, ssrf, url, validation, typescript]
+  ai: *url_validation_guidance
+  provenance: *javascript_url_validation_provenance
+
+- id: tsx-url-destination-validation
+  version: 1
+  title: TSX URL destination validation
+  language: tsx
+  kind: validation
+  capability: url_destination_validation
+  confidence: medium
+  cwe: [CWE-918]
+  match: *javascript_url_validation_match
+  tags: [http, network, ssrf, url, validation, tsx]
+  ai: *url_validation_guidance
+  provenance: *javascript_url_validation_provenance
+
+- id: python-url-destination-validation
+  version: 1
+  title: Python URL destination validation
+  language: python
+  kind: validation
+  capability: url_destination_validation
+  confidence: medium
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: $URL.scheme == "https"
+        captures: { endpoint: URL }
+      - pattern: '"https" == $URL.scheme'
+        captures: { endpoint: URL }
+      - pattern: $URL.hostname in $ALLOWED
+        captures: { endpoint: URL, allowlist: ALLOWED }
+  tags: [http, network, ssrf, url, validation, python]
+  ai: *url_validation_guidance
+  provenance:
+    note: Python parsed-URL scheme and hostname-allowlist checks mapped to contextual destination validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://docs.python.org/3/library/urllib.parse.html
+
+- id: go-url-destination-validation
+  version: 1
+  title: Go URL destination validation
+  language: go
+  kind: validation
+  capability: url_destination_validation
+  confidence: medium
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: $URL.Scheme == "https"
+        context: |
+          package pattern
+          func patternContext() { _ = $URL.Scheme == "https" }
+        selector: binary_expression
+        captures: { endpoint: URL }
+      - pattern: $URL.Hostname() == $HOST
+        context: |
+          package pattern
+          func patternContext() { _ = $URL.Hostname() == $HOST }
+        selector: binary_expression
+        captures: { endpoint: URL, allowed_host: HOST }
+  tags: [http, network, ssrf, url, validation, go]
+  ai: *url_validation_guidance
+  provenance:
+    note: Go parsed-URL scheme and hostname checks mapped to contextual destination validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://pkg.go.dev/net/url
+
+- id: rust-url-destination-validation
+  version: 1
+  title: Rust URL destination validation
+  language: rust
+  kind: validation
+  capability: url_destination_validation
+  confidence: medium
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: $URL.scheme() == "https"
+        captures: { endpoint: URL }
+      - pattern: '"https" == $URL.scheme()'
+        captures: { endpoint: URL }
+      - pattern: $ALLOWED.contains(&$URL.host_str())
+        captures: { endpoint: URL, allowlist: ALLOWED }
+      - pattern: $URL.host_str() == Some($HOST)
+        captures: { endpoint: URL, allowed_host: HOST }
+  tags: [http, network, ssrf, url, validation, rust]
+  ai: *url_validation_guidance
+  provenance:
+    note: Rust parsed-URL scheme and exact host checks mapped to contextual destination validation evidence.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://docs.rs/url/latest/url/struct.Url.html

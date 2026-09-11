@@ -1,0 +1,4 @@
+@model BlogViewModel
+<article>@Model.Contents</article>
+<aside>@Html.Encode(Model.Summary)</aside>
+@* @Html.Raw(Model.CommentedOut) *@

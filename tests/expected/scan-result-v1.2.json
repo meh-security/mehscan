@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.2",
+  "root": "C:/fixture",
+  "evidence": [
+    {
+      "id": "ev-html-encoding",
+      "kind": "sanitizer",
+      "capability": "html_encoding",
+      "location": {
+        "path": "response.py",
+        "start": { "line": 2, "column": 15, "byte_offset": 30 },
+        "end": { "line": 2, "column": 49, "byte_offset": 64 }
+      },
+      "captures": {
+        "value": {
+          "text": "request.args[\"value\"]",
+          "location": {
+            "path": "response.py",
+            "start": { "line": 2, "column": 27, "byte_offset": 42 },
+            "end": { "line": 2, "column": 48, "byte_offset": 63 }
+          }
+        }
+      },
+      "cwe_candidates": ["CWE-79"],
+      "tags": ["html", "xss", "encoding", "python"],
+      "confidence": "medium",
+      "provenance": {
+        "resolution": "ast",
+        "engine": "ast-grep 0.45.1",
+        "rule_version": 1
+      },
+      "rule_id": "python-html-encoding"
+    }
+  ],
+  "coverage": {
+    "totals": {
+      "discovered": 1,
+      "scanned": 1,
+      "ignored": 0,
+      "unsupported": 0,
+      "parse_failed": 0
+    },
+    "languages": {},
+    "security_surfaces": { "html_encoding": 1 },
+    "cwe": [],
+    "files": [],
+    "ignored_subtrees": []
+  }
+}
