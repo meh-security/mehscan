@@ -22,9 +22,11 @@ Resolve the executable in this order:
    `scripts/install-mehscan.ps1` from this skill directory. It selects the
    latest exact OS/architecture release asset, verifies its checksum and GitHub
    build provenance, validates archive membership and the release manifest,
-   then returns the installed executable path. Pass `-Version` only when the
-   user requested a particular release and `-InstallDirectory` when the task
-   requires a specific cache.
+   installs into a versioned user-owned location, and returns the executable's
+   absolute path. On Linux and macOS it applies executable permissions and
+   conservatively publishes `~/.local/bin/mehscan` without replacing an
+   unrelated entry. Pass `-Version` only when the user requested a particular
+   release and `-InstallDirectory` when the task requires a specific location.
 5. If no exact release asset exists, or checksum/provenance verification cannot
    succeed, do not execute the download. Build the release CLI only when the
    current checkout contains Mehscan and building is within scope; otherwise
@@ -35,6 +37,10 @@ target, checksum, provenance, archive, manifest, or version cannot be verified.
 Do not reproduce its download logic ad hoc or weaken a failed check. Use only
 the official GitHub repository for automatic downloads. Never download
 ast-grep; Mehscan includes the components it uses.
+
+After installation, use the returned absolute executable path for the rest of
+the task; do not assume the current process has refreshed `PATH`. The installer
+tests `--version` from the final filesystem before returning.
 
 Run `mehscan --help` before assuming an option exists. Keep the scan root inside
 the repository the user authorized. Directory discovery honors repository-local

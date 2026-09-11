@@ -77,17 +77,56 @@ function Get-Target {
 }
 
 function Get-DefaultInstallRoot {
+    $userProfile = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+    if ([string]::IsNullOrWhiteSpace($userProfile)) {
+        throw 'Could not resolve the current user profile directory'
+    }
+    return [IO.Path]::Combine($userProfile, '.mehscan', 'cli')
+}
+
+function Publish-UserPathLink {
+    param(
+        [Parameter(Mandatory)][string]$Executable,
+        [Parameter(Mandatory)][string]$ManagedRoot,
+        [Parameter(Mandatory)][string]$BinaryName
+    )
+
     if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
-        $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
-        if (-not [string]::IsNullOrWhiteSpace($localAppData)) {
-            return [IO.Path]::Combine($localAppData, 'mehscan')
-        }
+        return
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($env:XDG_CACHE_HOME) -and [IO.Path]::IsPathRooted($env:XDG_CACHE_HOME)) {
-        return [IO.Path]::Combine($env:XDG_CACHE_HOME, 'mehscan')
+    $userProfile = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+    $localBin = [IO.Path]::Combine($userProfile, '.local', 'bin')
+    $linkPath = [IO.Path]::Combine($localBin, $BinaryName)
+    New-Item -ItemType Directory -Path $localBin -Force | Out-Null
+
+    $existing = Get-Item -LiteralPath $linkPath -Force -ErrorAction SilentlyContinue
+    if ($null -ne $existing) {
+        if ($existing.LinkType -ne 'SymbolicLink') {
+            Write-Verbose "Leaving existing non-symlink PATH entry unchanged: $linkPath"
+            return
+        }
+        $resolvedTarget = $existing.ResolveLinkTarget($true)
+        $managedPrefix = [IO.Path]::GetFullPath($ManagedRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if ($null -eq $resolvedTarget -or
+            -not $resolvedTarget.FullName.StartsWith($managedPrefix, [StringComparison]::Ordinal)) {
+            Write-Verbose "Leaving externally managed PATH symlink unchanged: $linkPath"
+            return
+        }
+        Remove-Item -LiteralPath $linkPath -Force
     }
-    return [IO.Path]::Combine([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile), '.cache', 'mehscan')
+
+    try {
+        New-Item -ItemType SymbolicLink -Path $linkPath -Target $Executable | Out-Null
+        if ((Read-MehscanVersion $linkPath) -eq $null) {
+            throw 'PATH link execution test failed'
+        }
+        Write-Verbose "Published Mehscan PATH link: $linkPath"
+    }
+    catch {
+        Remove-Item -LiteralPath $linkPath -Force -ErrorAction SilentlyContinue
+        Write-Verbose "Could not publish optional PATH link: $_"
+    }
 }
 
 $requestedTag = Normalize-VersionTag $Version
@@ -136,8 +175,11 @@ if ($archiveAsset.size -le 0 -or $archiveAsset.size -gt $maximumArchiveBytes) {
     throw "Release asset size is outside the allowed range: $($archiveAsset.size) bytes"
 }
 
-if ([string]::IsNullOrWhiteSpace($InstallDirectory)) {
-    $InstallDirectory = [IO.Path]::Combine((Get-DefaultInstallRoot), $tag, "$($target.Platform)-$($target.Architecture)")
+$usingDefaultInstallDirectory = [string]::IsNullOrWhiteSpace($InstallDirectory)
+$managedInstallRoot = $null
+if ($usingDefaultInstallDirectory) {
+    $managedInstallRoot = Get-DefaultInstallRoot
+    $InstallDirectory = [IO.Path]::Combine($managedInstallRoot, $tag, "$($target.Platform)-$($target.Architecture)")
 }
 $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory)
 $destination = [IO.Path]::Combine($InstallDirectory, $target.BinaryName)
@@ -230,22 +272,33 @@ try {
     }
 
     $extractedBinary = [IO.Path]::Combine($extractionRoot, $target.BinaryName)
+    New-Item -ItemType Directory -Path $InstallDirectory -Force | Out-Null
+    $stagedName = if ($target.Platform -eq 'windows') {
+        ".mehscan.$([guid]::NewGuid().ToString('N')).exe"
+    } else {
+        ".mehscan.$([guid]::NewGuid().ToString('N')).tmp"
+    }
+    $stagedDestination = [IO.Path]::Combine($InstallDirectory, $stagedName)
+    Copy-Item -LiteralPath $extractedBinary -Destination $stagedDestination
     if ($target.Platform -ne 'windows') {
-        & chmod 700 $extractedBinary
+        & chmod 755 $stagedDestination
         if ($LASTEXITCODE -ne 0) {
-            throw 'Could not make the Mehscan executable runnable'
+            throw 'Could not make the installed Mehscan binary executable'
         }
     }
-    $binaryVersion = Read-MehscanVersion $extractedBinary
-    if ($null -eq $binaryVersion -or "v$binaryVersion" -cne $tag) {
-        throw "Downloaded executable does not report version $($tag.Substring(1))"
+    $stagedVersion = Read-MehscanVersion $stagedDestination
+    if ($null -eq $stagedVersion -or "v$stagedVersion" -cne $tag) {
+        throw "Installed executable does not report version $($tag.Substring(1))"
     }
-
-    New-Item -ItemType Directory -Path $InstallDirectory -Force | Out-Null
-    $stagedDestination = [IO.Path]::Combine($InstallDirectory, ".$($target.BinaryName).$([guid]::NewGuid().ToString('N')).tmp")
-    Copy-Item -LiteralPath $extractedBinary -Destination $stagedDestination
     Move-Item -LiteralPath $stagedDestination -Destination $destination -Force
     $stagedDestination = $null
+    $installedVersion = Read-MehscanVersion $destination
+    if ($null -eq $installedVersion -or "v$installedVersion" -cne $tag) {
+        throw "Final installed executable does not report version $($tag.Substring(1))"
+    }
+    if ($usingDefaultInstallDirectory) {
+        Publish-UserPathLink -Executable $destination -ManagedRoot $managedInstallRoot -BinaryName $target.BinaryName
+    }
     Write-Output $destination
 }
 finally {
