@@ -130,11 +130,13 @@ JSON output preserves the evidence inventory, coverage, diagnostics, and
 bounded security paths. Candidate output is compact review input. Scan SARIF
 2.1.0 uses `review` results and code flows without pretending that every
 candidate is a confirmed vulnerability. After AI review, `mehscan report`
-produces canonical finding JSON or confirmed-issue SARIF:
+produces canonical finding JSON, confirmed-issue SARIF, and a human-readable
+Markdown handoff:
 
 ```text
-mehscan report --run mehscan-review --responses mehscan-review/responses-luna --format json --output mehscan-findings.json --reviewer luna-medium
-mehscan report --run mehscan-review --responses mehscan-review/responses-luna --format sarif --output mehscan-results.sarif --reviewer luna-medium
+mehscan report --run mehscan-review --responses mehscan-review/responses-reviewer --format json --output mehscan-findings.json --reviewer reviewer-id
+mehscan report --run mehscan-review --responses mehscan-review/responses-reviewer --format sarif --output mehscan-results.sarif --reviewer reviewer-id
+mehscan report --run mehscan-review --responses mehscan-review/responses-reviewer --format markdown --output mehscan-report.md --reviewer reviewer-id --include-dismissed true
 ```
 
 The final output contract and field boundaries are documented in

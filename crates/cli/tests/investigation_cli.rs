@@ -649,6 +649,41 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
         })
     }));
 
+    let markdown = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "report",
+            "--run",
+            output_dir.to_str().expect("run path should be UTF-8"),
+            "--responses",
+            model_responses
+                .to_str()
+                .expect("response path should be UTF-8"),
+            "--format",
+            "markdown",
+            "--reviewer",
+            "test-model",
+            "--include-dismissed",
+            "true",
+        ])
+        .output()
+        .expect("finding Markdown CLI should run");
+    assert!(
+        markdown.status.success(),
+        "finding Markdown CLI failed: {:?}",
+        markdown.stderr
+    );
+    let markdown = String::from_utf8(markdown.stdout).expect("Markdown should be UTF-8");
+    assert!(markdown.starts_with("# Mehscan security report\n"));
+    assert!(markdown.contains("- Reviewer: `test-model`"));
+    assert!(markdown.contains("| Confirmed issues |"));
+    assert!(markdown.contains("## Not issues"));
+    assert!(
+        markdown.find("## Review next").expect("review section")
+            < markdown
+                .find("## Confirmed issues")
+                .expect("confirmed section")
+    );
+
     let sarif = Command::new(env!("CARGO_BIN_EXE_mehscan"))
         .args([
             "report",

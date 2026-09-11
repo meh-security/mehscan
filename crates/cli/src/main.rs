@@ -53,6 +53,7 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let format = match parsed.optional("--format").as_deref().unwrap_or("json") {
         "json" => ReportOutputFormat::Json,
         "sarif" => ReportOutputFormat::Sarif,
+        "markdown" | "md" => ReportOutputFormat::Markdown,
         value => return Err(format!("unsupported report format {value:?}")),
     };
     let reviewer = parsed.optional("--reviewer");
@@ -76,6 +77,7 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
             &mehscan_core::FindingSarifLog::from_finding_report(&report),
             output.as_deref(),
         ),
+        ReportOutputFormat::Markdown => write_text(&report.to_markdown(), output.as_deref()),
     }
 }
 
@@ -846,6 +848,17 @@ fn write_json<T: serde::Serialize>(value: &T, output: Option<&Path>) -> Result<(
     }
 }
 
+fn write_text(value: &str, output: Option<&Path>) -> Result<(), String> {
+    match output {
+        Some(path) => fs::write(path, value)
+            .map_err(|error| format!("could not write report {}: {error}", path.display())),
+        None => {
+            print!("{value}");
+            Ok(())
+        }
+    }
+}
+
 fn write_path_review_bundles(
     output: &std::path::Path,
     bundle_set: &mehscan_core::PathReviewBundleSet,
@@ -1434,6 +1447,7 @@ enum ScanOutputFormat {
 enum ReportOutputFormat {
     Json,
     Sarif,
+    Markdown,
 }
 
 fn print_summary(result: &mehscan_core::ScanResult) {
@@ -1530,13 +1544,13 @@ fn print_benchmark_summary(report: &mehscan_engine::benchmark::BenchmarkReport) 
 
 fn print_help() {
     println!(
-        "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact]\n  mehscan report --run DIR [--responses DIR] [--format json|sarif] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n\nRun a command with --help for details."
+        "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact]\n  mehscan report --run DIR [--responses DIR] [--format json|sarif|markdown] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n\nRun a command with --help for details."
     );
 }
 
 fn print_report_help() {
     println!(
-        "USAGE:\n  mehscan report --run DIR [--responses DIR] [--format json|sarif] [--output PATH] [--reviewer NAME] [--include-dismissed true|false]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. --responses defaults to DIR/responses."
+        "USAGE:\n  mehscan report --run DIR [--responses DIR] [--format json|sarif|markdown] [--output PATH] [--reviewer NAME] [--include-dismissed true|false]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. Markdown is the human-readable summary and prioritizes unresolved review checks before confirmed and dismissed results; use --include-dismissed true to include not-issue summaries. --responses defaults to DIR/responses."
     );
 }
 

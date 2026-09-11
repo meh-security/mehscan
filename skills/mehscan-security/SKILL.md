@@ -101,7 +101,9 @@ CORS, TLS, cookies, or rate limiting may be owned by a gateway or platform and
 normally require an effective-control check.
 
 For bundle responses, echo the exact `bundle_fingerprint`, provide every
-`review_id` once, put checks only on `needs_review`, and validate each response:
+`review_id` once, and include `checks` on every result. Use an empty array for
+`issue` and `not_issue`; for `needs_review`, copy only decisive missing facts
+from the supplied unresolved set. Validate each response:
 
 ```text
 mehscan investigate review-bundle-triage --bundle REQUEST --responses RESPONSE
@@ -133,13 +135,14 @@ Record the reviewer configuration and escalation history by exact review or
 payload fingerprint. Do not mark an entire CWE, capability, or rule as
 requiring an expensive reviewer from one disagreement.
 
-After all manifest responses validate, generate both canonical consumer
-artifacts. Use the exact reviewer-specific response directory rather than
-copying it to a generic name:
+After all manifest responses validate, generate the canonical machine report,
+its SARIF projection, and the human-readable Markdown report. Use the exact
+reviewer-specific response directory rather than copying it to a generic name:
 
 ```text
 mehscan report --run DIR --responses RESPONSES_DIR --format json --output mehscan-findings.json --reviewer REVIEWER_ID
 mehscan report --run DIR --responses RESPONSES_DIR --format sarif --output mehscan-results.sarif --reviewer REVIEWER_ID
+mehscan report --run DIR --responses RESPONSES_DIR --format markdown --output mehscan-report.md --reviewer REVIEWER_ID --include-dismissed true
 ```
 
 The reviewer writes only the strict verdict response. Never ask it to construct
@@ -149,7 +152,8 @@ provenance fields and publishes only confirmed issues to SARIF. Preserve
 
 ## Report
 
-Treat `mehscan-findings.json` as the canonical report and SARIF as its IDE/CI
-projection. If a human summary is requested, derive it from the canonical JSON:
-lead with confirmed issues, then unresolved items with their exact checks.
-Evidence counts and candidate counts are not vulnerability counts.
+Treat `mehscan-findings.json` as the canonical report, SARIF as its IDE/CI
+projection, and `mehscan-report.md` as the human handoff. The Markdown report
+puts unresolved items and their exact checks first, followed by confirmed
+issues and the affirmative reasons for dismissed candidates. Evidence counts
+and candidate counts are not vulnerability counts.
