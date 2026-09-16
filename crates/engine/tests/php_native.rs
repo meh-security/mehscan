@@ -198,8 +198,7 @@ fn php_native_boundaries_preserve_identity_scope_and_safe_alternatives() {
             .evidence
             .iter()
             .find(|e| e.id == path.sink_evidence_id)
-        {
-            if [
+            && [
                 "script_encoding_is_not_protection",
                 "unrelated_control",
                 "branch_only_control",
@@ -208,14 +207,13 @@ fn php_native_boundaries_preserve_identity_scope_and_safe_alternatives() {
                 "normalization_is_not_containment",
             ]
             .contains(&sink.enclosing_symbol.as_deref().unwrap_or_default())
-            {
-                assert_ne!(
-                    path.state,
-                    SecurityPathState::Protected,
-                    "borrowed control: {:?}",
-                    sink
-                );
-            }
+        {
+            assert_ne!(
+                path.state,
+                SecurityPathState::Protected,
+                "borrowed control: {:?}",
+                sink
+            );
         }
     }
     assert!(
