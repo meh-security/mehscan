@@ -202,11 +202,16 @@ mehscan report --run mehscan-review --responses mehscan-review/responses-reviewe
 The final output contract and field boundaries are documented in
 [Mehscan review and reporting contract](docs/output-contract.md).
 
-The Markdown projection consolidates confirmed instances only when their rule,
-human-readable title, capability, and remediation match. The summary still
-counts individual findings, and every grouped instance retains its own
+The Markdown projection consolidates confirmed instances when their behavioral
+title, capability, and remediation match, even across different rule IDs. The
+summary counts instances rather than unique vulnerabilities, and every instance retains its own
 location, severity, confidence, and evidence-backed description. Canonical JSON
 and SARIF remain ungrouped machine projections.
+
+Titles and remediation follow the specific security invariant, using shared
+cross-language policy instead of broad category defaults. New bundle manifests
+retain scan coverage and source-scope limitations for the final report; legacy
+runs explicitly disclose when that metadata is unavailable.
 
 Reachability, conditional availability, literal values, request context,
 protection observations, and provenance remain contextual facts. They annotate

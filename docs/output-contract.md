@@ -96,7 +96,7 @@ A reported result uses one name for each concept:
 
 - `id`: stable instance identity;
 - `rule_id`: stable security invariant identity;
-- `title`: deterministic rule title;
+- `title`: deterministic behavioral title selected for the specific invariant;
 - `description`: validated instance-specific reviewer summary;
 - `status`: `issue` or `needs_review`;
 - `severity`: impact level plus its source;
@@ -137,12 +137,25 @@ counts, review-required items with decisive checks, confirmed issue summaries,
 and not-issue summaries when `--include-dismissed true` is set. Markdown is a
 projection for people, not a replacement for canonical JSON or SARIF.
 
-Confirmed instances are consolidated under one root-cause heading only when
-their rule ID, human title, capability, and remediation text match. A grouped
+Confirmed instances are consolidated under one repair heading when
+their behavioral title, capability, and remediation text match, including
+equivalent operations observed by different rule IDs. A grouped
 heading states its instance count; each instance retains its own location,
 severity, confidence, and description. Summary counts continue to count
 finding instances rather than Markdown headings. This presentation grouping
 does not mutate canonical JSON, SARIF, verdicts, or finding identifiers.
+
+Remediation is selected for the operation or weakness, not merely a broad
+capability such as authentication or resource access. Unsupported invariants
+leave remediation unset and emit an actionable quality warning instead of an
+unrelated category fix. Known native-memory repairs remain invariant-specific.
+
+New manifests optionally record coverage totals and source-scope limitations,
+which the CLI projects into canonical scan metadata and Markdown. Older runs
+remain readable and disclose missing coverage totals. Availability from explicit
+source context is rendered without claiming deployment activation. Related
+feature-policy descriptors are labeled as associations and never promoted into
+proof that the reported operation is gated.
 
 ## Storage defaults
 

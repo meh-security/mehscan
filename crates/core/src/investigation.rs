@@ -623,6 +623,11 @@ pub struct PathReviewBundleManifestEntry {
 pub struct PathReviewBundleManifest {
     pub schema_version: String,
     pub root: String,
+    /// Optional for compatibility with already reviewed release bundles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<crate::CoverageTotals>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scope: Vec<String>,
     pub operation: String,
     pub job_fingerprint: String,
     pub max_input_bytes: usize,

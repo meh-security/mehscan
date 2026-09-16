@@ -17,6 +17,10 @@ pub struct FindingReportTool {
 pub struct FindingReportScan {
     pub root: String,
     pub job_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<crate::CoverageTotals>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scope: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -105,6 +109,9 @@ pub struct ReportedFinding {
     pub primary_location: Location,
     #[serde(default, skip_serializing_if = "EvidenceContext::is_empty")]
     pub context: EvidenceContext,
+    /// Policy references are not proof that the reported operation is gated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_feature_policies: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flow: Option<FindingFlow>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -169,7 +176,7 @@ impl FindingReport {
         output.push_str("\n## Summary\n\n");
         output.push_str("| Outcome | Count | Meaning |\n| --- | ---: | --- |\n");
         output.push_str(&format!(
-            "| Confirmed issues | {} | Supported by the supplied evidence |\n",
+            "| Confirmed finding instances | {} | Supported by the supplied evidence; not a unique-vulnerability total |\n",
             self.summary.findings
         ));
         output.push_str(&format!(
@@ -187,6 +194,16 @@ impl FindingReport {
             self.summary.needs_review_decisions,
             self.summary.not_issue_decisions
         ));
+
+        output.push_str("\n## Scope and limitations\n\nStatic source review; runtime activation and exploit reproduction are not established. Ignored and unsupported material is outside coverage. Severity defaults are not a validated impact ranking.\n\n");
+        if let Some(coverage) = &self.scan.coverage {
+            output.push_str(&format!("Files: {} discovered, {} scanned, {} ignored, {} parse-failed, {} unsupported. Parse-failed files may retain partial evidence outside invalid syntax.\n\n", coverage.discovered, coverage.scanned, coverage.ignored, coverage.parse_failed, coverage.unsupported));
+        } else {
+            output.push_str("Coverage totals were not recorded in this legacy review run.\n\n");
+        }
+        for scope in &self.scan.scope {
+            output.push_str(&format!("- {}\n", markdown_text(scope)));
+        }
 
         output.push_str("\n## Review next\n\n");
         if self.review_required.is_empty() {
@@ -255,8 +272,7 @@ fn grouped_confirmed_findings(findings: &[ReportedFinding]) -> Vec<Vec<&Reported
             .map(|value| value.text.as_str());
         if let Some(group) = groups.iter_mut().find(|group| {
             let first = group[0];
-            first.rule_id == finding.rule_id
-                && first.title == finding.title
+            first.title == finding.title
                 && first.category == finding.category
                 && first.remediation.as_ref().map(|value| value.text.as_str()) == remediation
         }) {
@@ -312,6 +328,7 @@ fn render_finding_group(output: &mut String, index: usize, findings: &[&Reported
             enum_label(finding.confidence),
             markdown_text(&finding.description)
         ));
+        render_availability(output, finding);
     }
     output.push('\n');
 }
@@ -349,6 +366,8 @@ fn render_finding(
         markdown_text(&finding.description)
     ));
 
+    render_availability(output, finding);
+
     if include_checks {
         output.push_str("\nRequired checks:\n\n");
         for check in &finding.checks {
@@ -373,6 +392,24 @@ fn enum_label(value: impl std::fmt::Debug) -> String {
         label.extend(character.to_lowercase());
     }
     label
+}
+
+fn render_availability(output: &mut String, finding: &ReportedFinding) {
+    for policy in &finding.related_feature_policies {
+        output.push_str(&format!("\n- Related feature policy: {} (association only; runtime gating is not established)\n", markdown_text(policy)));
+    }
+    if let Some(availability) = &finding.context.availability
+        && availability.state != crate::AvailabilityState::Always
+    {
+        output.push_str(&format!(
+            "\n- Source availability: {}",
+            enum_label(availability.state)
+        ));
+        if let Some(condition) = &availability.condition {
+            output.push_str(&format!(" — {}", markdown_text(condition)));
+        }
+        output.push('\n');
+    }
 }
 
 fn markdown_text(value: &str) -> String {
@@ -441,6 +478,7 @@ mod tests {
             language: None,
             primary_location: location("routes/search.ts", 23),
             context: EvidenceContext::default(),
+            related_feature_policies: Vec::new(),
             flow: None,
             related_locations: Vec::new(),
             checks,
@@ -464,6 +502,8 @@ mod tests {
             scan: FindingReportScan {
                 root: ".".to_string(),
                 job_fingerprint: "job-1".to_string(),
+                coverage: None,
+                scope: Vec::new(),
             },
             triage: FindingReportTriage {
                 response_schema_version: "1.0".to_string(),
@@ -492,7 +532,7 @@ mod tests {
         };
 
         let markdown = report.to_markdown();
-        assert!(markdown.contains("| Confirmed issues | 1 |"));
+        assert!(markdown.contains("| Confirmed finding instances | 1 |"));
         assert!(markdown.contains("| Review required | 1 |"));
         assert!(markdown.contains("| Not issues | 1 |"));
         assert!(markdown.contains("Confirm the effective query parameterization."));
@@ -515,6 +555,7 @@ mod tests {
         });
         let mut second = first.clone();
         second.id = "finding-2".to_string();
+        second.rule_id = "cpp-other-rule-for-same-invariant".to_string();
         second.primary_location = location("src/reader.cpp", 71);
         second.description = "A second decoder performs the same unchecked read.".to_string();
         let report = FindingReport {
@@ -527,6 +568,8 @@ mod tests {
             scan: FindingReportScan {
                 root: ".".to_string(),
                 job_fingerprint: "job-1".to_string(),
+                coverage: None,
+                scope: Vec::new(),
             },
             triage: FindingReportTriage {
                 response_schema_version: "1.0".to_string(),

@@ -685,6 +685,12 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
     assert_eq!(finding_report["report_kind"], "triaged_findings");
     assert_eq!(finding_report["triage"]["reviewer"], "test-model");
     assert_eq!(finding_report["scan"]["root"], ".");
+    assert_eq!(finding_report["scan"]["coverage"], manifest["coverage"]);
+    assert!(
+        finding_report["scan"]["scope"]
+            .as_array()
+            .is_some_and(|scope| !scope.is_empty())
+    );
     assert_portable_artifact_paths(&finding_report);
     assert_eq!(
         finding_report["summary"]["reviewed"],
@@ -734,7 +740,9 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
     let markdown = String::from_utf8(markdown.stdout).expect("Markdown should be UTF-8");
     assert!(markdown.starts_with("# Mehscan security report\n"));
     assert!(markdown.contains("- Reviewer: `test-model`"));
-    assert!(markdown.contains("| Confirmed issues |"));
+    assert!(markdown.contains("| Confirmed finding instances |"));
+    assert!(markdown.contains("## Scope and limitations"));
+    assert!(markdown.contains("not a unique-vulnerability total"));
     assert!(markdown.contains("## Not issues"));
     assert!(
         markdown.find("## Review next").expect("review section")

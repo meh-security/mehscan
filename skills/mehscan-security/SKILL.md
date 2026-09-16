@@ -124,6 +124,12 @@ decisive `issue` or `not_issue` judgment from the supplied evidence. A bounded
 ordinary API-boundary observation may be `not_issue` at medium confidence
 without claiming that the surrounding component is generally safe.
 
+Keep checks verbatim, but make the summary actionable: name the producer,
+handler, model validator, or configuration artifact to obtain, the exact value
+or control to inspect, and the outcomes that would change the verdict. If a
+path is not supplied, request the artifact for the named component and field
+rather than inventing a file path or repeating a generic attacker-control question.
+
 Answer concrete unresolved facts before requesting more evidence. Do not invent cross-function flow, runtime dispatch, persistence,
 deployment controls, or exploitability. A nearby guard or sanitizer counts only
 when it protects the same value and operation. Missing application headers,
@@ -231,9 +237,15 @@ projection, and `mehscan-report.md` as the human handoff. The Markdown report
 puts unresolved items and their exact checks first, followed by confirmed
 issues and the affirmative reasons for dismissed candidates. Evidence counts
 and candidate counts are not vulnerability counts. Confirmed Markdown issues
-with the same rule, human title, capability, and remediation are presented as
-one root-cause group; the summary count still counts finding instances, and
+with the same behavioral title, capability, and remediation are presented as
+one repair group even when their rule IDs differ; the summary counts finding
+instances rather than independently deduplicated vulnerabilities, and
 every instance retains its own location and decision metadata.
+
+New bundle manifests retain coverage totals and source-scope limitations for
+report projection. Legacy runs remain readable and explicitly disclose missing
+coverage metadata. Operation-specific titles and repairs are shared across
+languages; unknown invariants must not receive an unrelated category default.
 
 Directory discovery prunes conventional `singleheader` and `single-header`
 amalgamation trees as generated distribution artifacts. Do not claim those
