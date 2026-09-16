@@ -64,13 +64,15 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     parsed.finish()?;
 
     let (manifest, bundle_responses) = read_complete_bundle_responses(&run, responses.as_deref())?;
-    let report = engine(mehscan_engine::investigation::build_finding_report(
+    let mut report = engine(mehscan_engine::investigation::build_finding_report(
         manifest.root,
         env!("CARGO_PKG_VERSION"),
         reviewer,
         &bundle_responses,
         include_dismissed,
     ))?;
+    report.scan.coverage = manifest.coverage;
+    report.scan.scope = manifest.scope;
     match format {
         ReportOutputFormat::Json => write_json(&report, output.as_deref()),
         ReportOutputFormat::Sarif => write_json(
