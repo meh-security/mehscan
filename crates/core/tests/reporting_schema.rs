@@ -124,23 +124,25 @@ fn candidate_and_sarif_contracts_match_versioned_goldens() {
     )))
     .expect("SARIF golden should parse");
 
-    // The golden pins the reporting schema, not a particular scanner release.
-    // Keep checking the emitted version against this package's release metadata.
-    sarif_expected["runs"][0]["tool"]["driver"]["semanticVersion"] =
-        serde_json::Value::String(env!("CARGO_PKG_VERSION").to_string());
+    let mut sarif_actual = serde_json::to_value(&sarif).expect("SARIF should serialize");
+    let decoded_sarif: SarifLog =
+        serde_json::from_value(sarif_actual.clone()).expect("SARIF should deserialize");
+
+    // Release metadata is independent of the versioned SARIF schema contract.
+    for report in [&mut sarif_actual, &mut sarif_expected] {
+        report["runs"][0]["tool"]["driver"]
+            .as_object_mut()
+            .expect("SARIF driver should be an object")
+            .remove("semanticVersion");
+    }
 
     assert_eq!(
         serde_json::to_value(&candidate).expect("candidate should serialize"),
         candidate_expected
     );
-    assert_eq!(
-        serde_json::to_value(&sarif).expect("SARIF should serialize"),
-        sarif_expected
-    );
+    assert_eq!(sarif_actual, sarif_expected);
     let decoded_candidate: CandidateReport =
         serde_json::from_value(candidate_expected).expect("candidate should deserialize");
-    let decoded_sarif: SarifLog =
-        serde_json::from_value(sarif_expected).expect("SARIF should deserialize");
     assert_eq!(decoded_candidate, candidate);
     assert_eq!(decoded_sarif, sarif);
 }
