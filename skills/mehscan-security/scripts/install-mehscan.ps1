@@ -2,15 +2,15 @@
 param(
     [string]$Version,
     [string]$InstallDirectory,
-    [switch]$ForceDownload
+    [switch]$ForceDownload,
+    [string]$SourceDigest
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'public-download.ps1')
 
 $repository = 'meh-security/mehscan'
-$signerWorkflow = 'meh-security/mehscan/.github/workflows/release.yml'
-$maximumArchiveBytes = 262144000
 $maximumExpandedBytes = 1073741824
 $maximumArchiveFiles = 100
 
@@ -130,7 +130,11 @@ function Publish-UserPathLink {
 }
 
 $requestedTag = Normalize-VersionTag $Version
-if (-not $ForceDownload) {
+if ($SourceDigest -and ($SourceDigest -cnotmatch '^[0-9a-f]{40}$' -or -not $requestedTag)) {
+    throw 'SourceDigest requires an exact version and a lowercase 40-character Git commit'
+}
+# A caller-supplied provenance pin must not be satisfied by a PATH version check.
+if (-not $ForceDownload -and -not $SourceDigest) {
     $pathCommand = Get-Command 'mehscan' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -ne $pathCommand) {
         $pathVersion = Read-MehscanVersion $pathCommand.Source
@@ -143,38 +147,25 @@ if (-not $ForceDownload) {
 
 $ghCommand = Get-Command 'gh' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($null -eq $ghCommand) {
-    throw 'GitHub CLI (gh) is required to securely download and verify a Mehscan release'
+    throw 'GitHub CLI (gh) with attestation verification is required; login is not needed. No unverified installation fallback is available.'
 }
 Invoke-GitHubCli @('attestation', 'verify', '--help') | Out-Null
 
 $target = Get-Target
-$releaseArguments = @('release', 'view')
-if ($null -ne $requestedTag) {
-    $releaseArguments += $requestedTag
-}
-$releaseArguments += @('--repo', $repository, '--json', 'tagName,isDraft,isPrerelease,assets')
-$release = Invoke-GitHubCli $releaseArguments | ConvertFrom-Json
+$release = Get-PublicRelease -Repository $repository -RequestedTag $requestedTag -Platform $target.Platform -Architecture $target.Architecture
 $tag = Normalize-VersionTag $release.tagName
-if ($release.isDraft -or $release.isPrerelease) {
-    throw "Refusing non-final release: $tag"
-}
 if ($null -ne $requestedTag -and $tag -cne $requestedTag) {
     throw "GitHub returned release $tag when $requestedTag was requested"
+}
+# Immutable pins distributed with the trusted skill protect known releases against tag movement.
+$releasePins = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../references/release-pins.json') -Raw | ConvertFrom-Json -AsHashtable
+if (-not $SourceDigest -and $releasePins.ContainsKey($tag)) { $SourceDigest = $releasePins[$tag] }
+if ($releasePins.ContainsKey($tag) -and $releasePins[$tag] -cnotmatch '^[0-9a-f]{40}$') {
+    throw "Malformed source commit pin for $tag"
 }
 
 $assetName = "mehscan-$tag-$($target.Platform)-$($target.Architecture).zip"
 $checksumName = "$assetName.sha256"
-$assetNames = @($release.assets | ForEach-Object { $_.name })
-foreach ($requiredName in @($assetName, $checksumName)) {
-    if (@($assetNames | Where-Object { $_ -ceq $requiredName }).Count -ne 1) {
-        throw "Release $tag has no unique asset named $requiredName"
-    }
-}
-$archiveAsset = @($release.assets | Where-Object { $_.name -ceq $assetName })[0]
-if ($archiveAsset.size -le 0 -or $archiveAsset.size -gt $maximumArchiveBytes) {
-    throw "Release asset size is outside the allowed range: $($archiveAsset.size) bytes"
-}
-
 $usingDefaultInstallDirectory = [string]::IsNullOrWhiteSpace($InstallDirectory)
 $managedInstallRoot = $null
 if ($usingDefaultInstallDirectory) {
@@ -191,13 +182,13 @@ $stagedDestination = $null
 
 try {
     New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
-    Invoke-GitHubCli @(
-        'release', 'download', $tag,
-        '--repo', $repository,
-        '--dir', $temporaryRoot,
-        '--pattern', $assetName,
-        '--pattern', $checksumName
-    ) | Out-Null
+    foreach ($downloadName in @($assetName, $checksumName)) {
+        $downloadAsset = @($release.assets | Where-Object { $_.name -ceq $downloadName })[0]
+        Invoke-PublicRequest -Uri $downloadAsset.browser_download_url -MaximumBytes $downloadAsset.size -OutputPath ([IO.Path]::Combine($temporaryRoot, $downloadName))
+        if ((Get-Item -LiteralPath ([IO.Path]::Combine($temporaryRoot, $downloadName))).Length -ne $downloadAsset.size) {
+            throw "Downloaded asset size differs from release metadata: $downloadName"
+        }
+    }
 
     $archivePath = [IO.Path]::Combine($temporaryRoot, $assetName)
     $checksumPath = [IO.Path]::Combine($temporaryRoot, $checksumName)
@@ -206,23 +197,12 @@ try {
         throw 'GitHub CLI did not download both required release files'
     }
 
-    $checksumText = (Get-Content -LiteralPath $checksumPath -Raw).Trim()
-    if ($checksumText -notmatch '^([0-9a-fA-F]{64})  ([^/\\\r\n]+)$' -or $Matches[2] -cne $assetName) {
-        throw "Malformed checksum file: $checksumName"
-    }
-    $expectedHash = $Matches[1].ToLowerInvariant()
-    $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($actualHash -cne $expectedHash) {
-        throw "SHA-256 mismatch for $assetName"
-    }
-
-    Invoke-GitHubCli @(
-        'attestation', 'verify', $archivePath,
-        '--repo', $repository,
-        '--signer-workflow', $signerWorkflow,
-        '--source-ref', "refs/tags/$tag",
-        '--deny-self-hosted-runners'
-    ) | Out-Null
+    $actualHash = Assert-ArchiveChecksum -ArchivePath $archivePath -ChecksumPath $checksumPath -AssetName $assetName
+    $bundles = @(Get-PublicAttestationBundles -Repository $repository -Digest $actualHash)
+    $bundlePath = [IO.Path]::Combine($temporaryRoot, 'attestations.jsonl')
+    [IO.File]::WriteAllText($bundlePath, ($bundles -join "`n"), [Text.UTF8Encoding]::new($false))
+    $verificationArguments = Get-VerificationArguments -ArchivePath $archivePath -BundlePath $bundlePath -Tag $tag -SourceDigest $SourceDigest
+    Invoke-GitHubCli $verificationArguments | Out-Null
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)

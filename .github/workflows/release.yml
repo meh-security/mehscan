@@ -10,6 +10,7 @@ on:
     paths:
       - ".github/workflows/release.yml"
       - "scripts/build-preview.ps1"
+      - "scripts/test-installer.ps1"
       - "skills/**"
 
 permissions: {}
@@ -45,6 +46,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Test public installer contracts
+        shell: pwsh
+        run: ./scripts/test-installer.ps1
 
       - name: Verify the tagged commit belongs to main
         if: github.ref_type == 'tag'
