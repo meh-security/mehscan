@@ -160,6 +160,7 @@ pub(crate) fn scan_source(
     let parse_context_microseconds = parse_started.elapsed().as_micros();
 
     let mut evidence = Vec::new();
+    let php_context = (language == Language::Php).then(|| super::php::PhpContext::build(&root));
     let mut seen = BTreeSet::new();
     let declarative_started = Instant::now();
     let mut declarative_patterns_considered = 0;
@@ -167,10 +168,14 @@ pub(crate) fn scan_source(
     for compiled_rule in rules {
         for compiled_pattern in &compiled_rule.patterns {
             declarative_patterns_considered += 1;
-            if compiled_pattern
-                .required_source_text
-                .as_ref()
-                .is_some_and(|required| !source.contains(required))
+            // PHP keywords and function names are case-insensitive. The AST
+            // matcher remains authoritative; a case-sensitive text prefilter
+            // must not discard a valid PHP match.
+            if language != Language::Php
+                && compiled_pattern
+                    .required_source_text
+                    .as_ref()
+                    .is_some_and(|required| !source.contains(required))
             {
                 declarative_patterns_skipped += 1;
                 continue;
@@ -178,6 +183,11 @@ pub(crate) fn scan_source(
             for matched in root.find_all(&compiled_pattern.pattern) {
                 let range = matched.range();
                 if comments.is_in_comment(range.clone()) {
+                    continue;
+                }
+                if php_context.as_ref().is_some_and(|context| {
+                    !context.accepts(&compiled_rule.rule.id, matched.get_node())
+                }) {
                     continue;
                 }
                 if language == Language::Rust

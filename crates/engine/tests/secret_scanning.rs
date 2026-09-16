@@ -86,7 +86,7 @@ fn detects_and_redacts_credentials_in_code_and_comments() {
     );
     assert!(
         result.coverage.cwe.iter().any(|coverage| {
-            coverage.cwe == "CWE-798" && coverage.supported_languages.len() == 10
+            coverage.cwe == "CWE-798" && coverage.supported_languages.len() == 11
         })
     );
 }

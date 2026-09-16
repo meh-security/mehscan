@@ -12954,7 +12954,11 @@ impl RepositorySources {
 impl OutlineExtractors {
     fn build() -> Result<Self, EngineError> {
         let mut rules_by_language = BTreeMap::new();
-        for rule in parse_outline_rules::<SupportLang>(DEFAULT_OUTLINE_RULES)
+        // PHP source files use the mixed grammar; upstream PHP-only defaults
+        // remain unchanged in the copied outline crate.
+        let outline_rules =
+            DEFAULT_OUTLINE_RULES.replace("language: Php\n", "language: php-mixed\n");
+        for rule in parse_outline_rules::<SupportLang>(&outline_rules)
             .map_err(|error| EngineError(format!("built-in outline rules are invalid: {error}")))?
         {
             if let Some(language) = all_languages()
@@ -13013,7 +13017,7 @@ impl OutlineExtractors {
     }
 }
 
-fn all_languages() -> [Language; 9] {
+fn all_languages() -> [Language; 10] {
     [
         Language::C,
         Language::Cpp,
@@ -13023,6 +13027,7 @@ fn all_languages() -> [Language; 9] {
         Language::Typescript,
         Language::Tsx,
         Language::Python,
+        Language::Php,
         Language::Go,
     ]
 }

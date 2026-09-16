@@ -1,0 +1,479 @@
+- id: php-http-request-data
+  version: 1
+  title: HTTP request superglobal read
+  language: php
+  kind: source
+  capability: http_request_data
+  cwe:
+  - CWE-20
+  match:
+    any:
+    - pattern: $SOURCE[$KEY]
+      context: <?php $SOURCE[$KEY];
+      selector: subscript_expression
+      captures:
+        field: KEY
+  tags:
+  - php
+  ai:
+    investigate:
+    - Identify the exact request field, lexical scope, reassignment, and consumer boundary.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/security.php
+    - https://cwe.mitre.org/data/definitions/20.html
+- id: php-command-execution
+  version: 1
+  title: PHP shell command execution
+  language: php
+  kind: sink
+  capability: process_execution
+  cwe:
+  - CWE-78
+  match:
+    any:
+    - pattern: $FUNCTION($COMMAND)
+      context: <?php $FUNCTION($COMMAND);
+      selector: function_call_expression
+      captures: &id001
+        command: COMMAND
+    - pattern: $FUNCTION($COMMAND, $$$REST)
+      context: <?php $FUNCTION($COMMAND, $$$REST);
+      selector: function_call_expression
+      captures: *id001
+  tags:
+  - php
+  - shell
+  - command
+  ai:
+    investigate:
+    - Confirm the command argument's origin, shell interpretation, and any exact argument allowlist.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/security.php
+    - https://cwe.mitre.org/data/definitions/78.html
+- id: php-mysqli-query
+  version: 1
+  title: mysqli SQL query
+  language: php
+  kind: sink
+  capability: database_query
+  cwe:
+  - CWE-89
+  match:
+    any:
+    - pattern: $FUNCTION($CONNECTION, $QUERY)
+      context: <?php $FUNCTION($CONNECTION, $QUERY);
+      selector: function_call_expression
+      captures: &id002
+        query: QUERY
+    - pattern: $FUNCTION($CONNECTION, $QUERY, $$$REST)
+      context: <?php $FUNCTION($CONNECTION, $QUERY, $$$REST);
+      selector: function_call_expression
+      captures: *id002
+  tags:
+  - php
+  - sql
+  ai:
+    investigate:
+    - Check whether request values enter SQL syntax rather than separately bound driver parameters.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/security.php
+    - https://cwe.mitre.org/data/definitions/89.html
+- id: php-pdo-query
+  version: 1
+  title: PDO SQL query or preparation
+  language: php
+  kind: sink
+  capability: database_query
+  cwe:
+  - CWE-89
+  match:
+    any:
+    - pattern: $DATABASE->$METHOD($QUERY)
+      context: <?php $DATABASE->$METHOD($QUERY);
+      selector: member_call_expression
+      captures: &id003
+        query: QUERY
+    - pattern: $DATABASE->$METHOD($QUERY, $$$REST)
+      context: <?php $DATABASE->$METHOD($QUERY, $$$REST);
+      selector: member_call_expression
+      captures: *id003
+  tags:
+  - php
+  - sql
+  - pdo
+  ai:
+    investigate:
+    - Verify the exact PDO receiver and SQL construction. Preparing interpolated SQL does not protect
+      it.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/security.php
+    - https://cwe.mitre.org/data/definitions/89.html
+- id: php-mysqli-parameterization
+  version: 1
+  title: mysqli separately bound query values
+  language: php
+  kind: validation
+  capability: sql_parameterization
+  cwe:
+  - CWE-89
+  match:
+    any:
+    - pattern: $FUNCTION($CONNECTION, $QUERY, $PARAMETERS)
+      context: <?php $FUNCTION($CONNECTION, $QUERY, $PARAMETERS);
+      selector: function_call_expression
+      captures:
+        query: QUERY
+        parameters: PARAMETERS
+  tags:
+  - php
+  - sql
+  - parameters
+  - control
+  ai:
+    investigate:
+    - Fixed SQL and separate driver parameters protect values; dynamic identifiers or interpolated SQL
+      remain distinct.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/security.php
+    - https://cwe.mitre.org/data/definitions/89.html
+- id: php-html-output
+  version: 1
+  title: PHP emitted response content
+  language: php
+  kind: sink
+  capability: html_output
+  cwe:
+  - CWE-79
+  match:
+    any:
+    - pattern: echo $CONTENT;
+      context: <?php echo $CONTENT;
+      selector: echo_statement
+      captures:
+        content: CONTENT
+  tags:
+  - php
+  - html
+  - response
+  ai:
+    investigate:
+    - Verify browser response/output context and the exact emitted value; JSON, logs, and static text
+      are different boundaries.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/security.php
+    - https://cwe.mitre.org/data/definitions/79.html
+- id: php-html-encoding
+  version: 1
+  title: PHP HTML entity encoding
+  language: php
+  kind: sanitizer
+  capability: html_encoding
+  cwe:
+  - CWE-79
+  match:
+    any:
+    - pattern: $FUNCTION($VALUE)
+      context: <?php $FUNCTION($VALUE);
+      selector: function_call_expression
+      captures: &id004
+        value: VALUE
+    - pattern: $FUNCTION($VALUE, $$$REST)
+      context: <?php $FUNCTION($VALUE, $$$REST);
+      selector: function_call_expression
+      captures: *id004
+  tags:
+  - php
+  - html
+  - encoding
+  - control
+  ai:
+    investigate:
+    - Encoding protects only compatible HTML text or quoted attributes, not script, style, URL, or arbitrary
+      template contexts.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/security.php
+    - https://cwe.mitre.org/data/definitions/79.html
+- id: php-shell-argument-quoting
+  version: 1
+  title: PHP shell argument quoting
+  language: php
+  kind: validation
+  capability: process_argument_separation
+  cwe:
+  - CWE-78
+  match:
+    any:
+    - pattern: $FUNCTION($VALUE)
+      context: <?php $FUNCTION($VALUE);
+      selector: function_call_expression
+      captures:
+        value: VALUE
+  tags:
+  - php
+  - shell
+  - argument
+  - control
+  ai:
+    investigate:
+    - Argument quoting alone does not authorize or constrain the executable and is not a complete command-level
+      control.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/security.php
+    - https://cwe.mitre.org/data/definitions/78.html
+- id: php-filesystem-read
+  version: 1
+  title: PHP filesystem read
+  language: php
+  kind: sink
+  capability: filesystem_read
+  cwe:
+  - CWE-22
+  match:
+    any:
+    - pattern: $FUNCTION($PATH)
+      context: <?php $FUNCTION($PATH);
+      selector: function_call_expression
+      captures: &id005
+        path: PATH
+    - pattern: $FUNCTION($PATH, $$$REST)
+      context: <?php $FUNCTION($PATH, $$$REST);
+      selector: function_call_expression
+      captures: *id005
+  tags:
+  - php
+  - filesystem
+  ai:
+    investigate:
+    - Inspect decoded path selection, containment, symlinks, and any remote stream-wrapper behavior.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/security.php
+    - https://cwe.mitre.org/data/definitions/22.html
+- id: php-filesystem-write
+  version: 1
+  title: PHP filesystem write
+  language: php
+  kind: sink
+  capability: filesystem_write
+  cwe:
+  - CWE-22
+  match:
+    any:
+    - pattern: $FUNCTION($PATH, $CONTENT)
+      context: <?php $FUNCTION($PATH, $CONTENT);
+      selector: function_call_expression
+      captures: &id006
+        path: PATH
+        content: CONTENT
+    - pattern: $FUNCTION($PATH, $CONTENT, $$$REST)
+      context: <?php $FUNCTION($PATH, $CONTENT, $$$REST);
+      selector: function_call_expression
+      captures: *id006
+  tags:
+  - php
+  - filesystem
+  ai:
+    investigate:
+    - Inspect the exact destination path and boundary; writing fixed server-owned files is not path traversal.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/security.php
+    - https://cwe.mitre.org/data/definitions/22.html
+- id: php-path-canonicalization
+  version: 1
+  title: PHP realpath normalization
+  language: php
+  kind: validation
+  capability: path_canonicalization
+  cwe:
+  - CWE-22
+  match:
+    any:
+    - pattern: $FUNCTION($PATH)
+      context: <?php $FUNCTION($PATH);
+      selector: function_call_expression
+      captures:
+        path: PATH
+  tags:
+  - php
+  - filesystem
+  - normalization
+  - control
+  ai:
+    investigate:
+    - realpath normalizes an existing path; it does not independently enforce an allowed directory or
+      no-follow policy.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/security.php
+    - https://cwe.mitre.org/data/definitions/22.html
+- id: php-deserialization
+  version: 1
+  title: PHP native unserialization
+  language: php
+  kind: sink
+  capability: deserialization
+  cwe:
+  - CWE-502
+  match:
+    any:
+    - pattern: $FUNCTION($PAYLOAD)
+      context: <?php $FUNCTION($PAYLOAD);
+      selector: function_call_expression
+      captures: &id007
+        payload: PAYLOAD
+    - pattern: $FUNCTION($PAYLOAD, $$$REST)
+      context: <?php $FUNCTION($PAYLOAD, $$$REST);
+      selector: function_call_expression
+      captures: *id007
+  tags:
+  - php
+  - serialization
+  - php-native
+  ai:
+    investigate:
+    - Check payload origin and reachable classes/magic methods. allowed_classes=false does not make untrusted
+      unserialize input safe.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/security.php
+    - https://cwe.mitre.org/data/definitions/502.html
+- id: php-dynamic-code
+  version: 1
+  title: PHP eval code execution
+  language: php
+  kind: sink
+  capability: dynamic_code_execution
+  cwe:
+  - CWE-94
+  match:
+    any:
+    - pattern: $FUNCTION($CODE)
+      context: <?php $FUNCTION($CODE);
+      selector: function_call_expression
+      captures:
+        code: CODE
+  tags:
+  - php
+  - eval
+  - execution
+  ai:
+    investigate:
+    - Trace executable code origin and the complete permitted grammar; arbitrary helper transformations
+      remain unresolved.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/security.php
+    - https://cwe.mitre.org/data/definitions/94.html

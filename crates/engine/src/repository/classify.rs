@@ -55,10 +55,11 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
         "py" | "pyi" | "py3" | "pyw" => FileClass::Supported(Language::Python),
         "go" => FileClass::Supported(Language::Go),
         "rs" => FileClass::Supported(Language::Rust),
+        "php" | "phtml" | "php5" | "php7" | "php8" => FileClass::Supported(Language::Php),
         "json" | "json5" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" | "config"
         | "properties" | "xml" | "env" | "tf" | "tfvars" | "hcl" | "md" | "markdown" | "txt"
         | "sql" | "graphql" | "sh" | "bash" | "zsh" | "ps1" => FileClass::SecretOnly,
-        "php" | "kt" | "kts" | "rb" | "scala" | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => {
+        "kt" | "kts" | "rb" | "scala" | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => {
             FileClass::UnsupportedSource
         }
         _ => FileClass::Ignored,
@@ -145,6 +146,9 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
         || name.ends_with("Tests.java")
         || name.ends_with("Test.cs")
         || name.ends_with("Tests.cs")
+        || name.ends_with("Test.php")
+        || name.ends_with("Tests.php")
+        || lower.ends_with(".generated.php")
         || lower.ends_with(".d.ts")
         || lower.ends_with(".d.mts")
         || lower.ends_with(".d.cts")

@@ -40,6 +40,10 @@ Mehscan is under active development. Current language coverage includes:
 - Java;
 - JavaScript, TypeScript, and TSX across server, browser, and serverless code;
 - Python;
+- initial PHP native API coverage for request superglobals, mysqli and locally
+  identified PDO, command execution, emitted HTML, filesystem operations,
+  unserialization, and dynamic code; see [the PHP profile](docs/php-coverage.md)
+  for the bounded flow model and unsupported framework behavior;
 - Go;
 - Rust.
 

@@ -285,6 +285,9 @@ fn build_family_paths(
                         item.kind,
                         EvidenceKind::Sanitizer | EvidenceKind::Validation
                     ) && !is_definitely_unreachable(item)
+                        // These PHP APIs retain useful control evidence but do
+                        // not establish output-context safety or containment.
+                        && !matches!(item.rule_id.as_str(), "php-html-encoding" | "php-path-canonicalization")
                         && (item.capability == protection.capability
                             || (family.sink.capability == Capability::Redirect
                                 && item.capability == Capability::RedirectDestinationValidation)
@@ -329,6 +332,25 @@ fn build_family_paths(
         let Some((_, first_target)) = target_nodes.first() else {
             continue;
         };
+        // Native PHP controls may preserve a reviewed input, but an arbitrary
+        // helper's return value needs a summary. Keep its sink as an observation.
+        if language == Language::Php
+            && target_nodes.iter().any(|(_, target)| {
+                target.dfs().any(|call| {
+                    matches!(
+                        call.kind().as_ref(),
+                        "function_call_expression" | "member_call_expression"
+                    ) && !evidence.iter().any(|item| {
+                        matches!(
+                            item.kind,
+                            EvidenceKind::Sanitizer | EvidenceKind::Validation
+                        ) && location_range(&item.location) == call.range()
+                    })
+                })
+            })
+        {
+            continue;
+        }
         let sink_scope = scope_range(first_target, root);
         let sink_in_control_flow = target_nodes
             .iter()
@@ -2309,6 +2331,26 @@ fn propagated_steps_with_options(
                     .cloned(),
                 Some(("value".to_string(), "JavaScript string composition")),
             )
+        } else if language == Language::Php
+            && matches!(
+                assignment.right.kind().as_ref(),
+                "binary_expression" | "encapsed_string"
+            )
+            && !assignment.right.dfs().any(|n| {
+                matches!(
+                    n.kind().as_ref(),
+                    "function_call_expression" | "member_call_expression" | "assignment_expression"
+                )
+            })
+        {
+            (
+                semantic_identifiers(&assignment.right)
+                    .into_iter()
+                    .filter_map(|identifier| tracked.get(&identifier))
+                    .min_by_key(|value| (value.depth, value.steps.len()))
+                    .cloned(),
+                Some(("value".to_string(), "PHP string composition")),
+            )
         } else if matches!(
             language,
             Language::Javascript | Language::Typescript | Language::Tsx
@@ -3052,6 +3094,7 @@ fn is_function_scope(kind: &str) -> bool {
             | "anonymous_method_expression"
             | "function_literal"
             | "function_item"
+            | "anonymous_function"
     )
 }
 
@@ -3516,6 +3559,7 @@ fn identifiers(node: &Node<'_, StrDoc<SupportLang>>) -> BTreeSet<String> {
             matches!(
                 candidate.kind().as_ref(),
                 "identifier"
+                    | "variable_name"
                     | "shorthand_property_identifier"
                     | "shorthand_property_identifier_pattern"
             )
@@ -3539,6 +3583,7 @@ fn semantic_identifier_nodes<'tree>(
             matches!(
                 candidate.kind().as_ref(),
                 "identifier"
+                    | "variable_name"
                     | "shorthand_property_identifier"
                     | "shorthand_property_identifier_pattern"
             ) && !is_member_name(candidate)
@@ -3559,7 +3604,7 @@ fn is_member_name(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
 }
 
 fn simple_identifier(text: &str) -> Option<&str> {
-    let mut characters = text.chars();
+    let mut characters = text.strip_prefix('$').unwrap_or(text).chars();
     let first = characters.next()?;
     if !(first == '_' || first.is_alphabetic())
         || !characters.all(|character| character == '_' || character.is_alphanumeric())
