@@ -870,9 +870,10 @@ fn collect_sql_summaries(source: &str, summaries: &mut BTreeMap<String, Vec<SqlP
             continue;
         };
         let body = &source[open_body..=close_body];
-        let has_execution = [".Query(", ".QueryRow(", ".Exec(", ".ExecContext("]
+        let has_execution = [".Query(", ".QueryRow(", ".ExecContext("]
             .iter()
-            .any(|operation| body.contains(operation));
+            .any(|operation| body.contains(operation))
+            || has_non_process_exec_call(body);
         let parameterized = body.contains(".Prepare(")
             || ((body.contains(".Query(") || body.contains(".Exec(")) && body.contains('?'));
         let unsafe_query = body.contains("fmt.Sprintf(")
@@ -923,6 +924,27 @@ fn collect_sql_summaries(source: &str, summaries: &mut BTreeMap<String, Vec<SqlP
         }
         cursor = close_body + 1;
     }
+}
+
+pub(crate) fn is_known_process_exec(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    node.field("function")
+        .is_some_and(|function| matches!(function.text().trim(), "unix.Exec" | "syscall.Exec"))
+}
+
+fn has_non_process_exec_call(source: &str) -> bool {
+    let mut rest = source;
+    while let Some(index) = rest.find(".Exec(") {
+        let prefix = &rest[..index];
+        let receiver = prefix
+            .rsplit(|character: char| character != '_' && !character.is_ascii_alphanumeric())
+            .next()
+            .unwrap_or_default();
+        if !matches!(receiver, "unix" | "syscall") {
+            return true;
+        }
+        rest = &rest[index + ".Exec(".len()..];
+    }
+    false
 }
 
 fn collect_ldap_summaries(

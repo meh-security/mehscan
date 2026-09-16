@@ -67,7 +67,10 @@ try {
         (Join-Path $repositoryRoot 'THIRD_PARTY_NOTICES.md'),
         (Join-Path $repositoryRoot 'skills\mehscan-security\SKILL.md'),
         (Join-Path $repositoryRoot 'skills\mehscan-security\agents\openai.yaml'),
-        (Join-Path $repositoryRoot 'skills\mehscan-security\scripts\install-mehscan.ps1')
+        (Join-Path $repositoryRoot 'skills\mehscan-security\references\native-c-cpp.md'),
+        (Join-Path $repositoryRoot 'skills\mehscan-security\scripts\install-mehscan.ps1'),
+        (Join-Path $repositoryRoot 'skills\mehscan-report-quality\SKILL.md'),
+        (Join-Path $repositoryRoot 'skills\mehscan-report-quality\agents\openai.yaml')
     )
     foreach ($source in $requiredSources) {
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
@@ -80,21 +83,29 @@ try {
     }
 
     New-Item -ItemType Directory -Path (Join-Path $stageRoot 'skills\mehscan-security\agents') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $stageRoot 'skills\mehscan-security\references') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $stageRoot 'skills\mehscan-security\scripts') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $stageRoot 'skills\mehscan-report-quality\agents') -Force | Out-Null
     Copy-Item -LiteralPath $binaryPath -Destination (Join-Path $stageRoot 'mehscan.exe')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'README.md') -Destination $stageRoot
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'LICENSE') -Destination $stageRoot
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'THIRD_PARTY_NOTICES.md') -Destination $stageRoot
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills\mehscan-security\SKILL.md') -Destination (Join-Path $stageRoot 'skills\mehscan-security')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills\mehscan-security\agents\openai.yaml') -Destination (Join-Path $stageRoot 'skills\mehscan-security\agents')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills\mehscan-security\references\native-c-cpp.md') -Destination (Join-Path $stageRoot 'skills\mehscan-security\references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills\mehscan-security\scripts\install-mehscan.ps1') -Destination (Join-Path $stageRoot 'skills\mehscan-security\scripts')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills\mehscan-report-quality\SKILL.md') -Destination (Join-Path $stageRoot 'skills\mehscan-report-quality')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills\mehscan-report-quality\agents\openai.yaml') -Destination (Join-Path $stageRoot 'skills\mehscan-report-quality\agents')
 
     $expectedFiles = @(
         'LICENSE',
         'mehscan.exe',
         'README.md',
         'release-manifest.json',
+        'skills/mehscan-report-quality/agents/openai.yaml',
+        'skills/mehscan-report-quality/SKILL.md',
         'skills/mehscan-security/agents/openai.yaml',
+        'skills/mehscan-security/references/native-c-cpp.md',
         'skills/mehscan-security/scripts/install-mehscan.ps1',
         'skills/mehscan-security/SKILL.md',
         'THIRD_PARTY_NOTICES.md'
@@ -149,7 +160,7 @@ try {
         if ($candidateReport.candidates.Count -lt 1) {
             throw 'Extracted executable candidate scan returned no candidates'
         }
-        $sarifText = & $extractedBinary scan $fixtureTarget --format sarif
+        $sarifText = & $extractedBinary scan $fixtureTarget --format sarif-candidates
         if ($LASTEXITCODE -ne 0) {
             throw 'Extracted executable SARIF scan failed'
         }

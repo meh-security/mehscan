@@ -526,7 +526,7 @@ fn prepare_review_verdict_pack(
                     )));
                 }
                 PathReviewTaskPayload::SecurityPath {
-                    review: matches[0].clone(),
+                    review: Box::new(matches[0].clone()),
                 }
             }
             ReviewVerdictKind::Observation => {
@@ -553,7 +553,7 @@ fn prepare_review_verdict_pack(
                     )));
                 }
                 PathReviewTaskPayload::Observation {
-                    review: matches[0].clone(),
+                    review: Box::new(matches[0].clone()),
                 }
             }
         };
@@ -1372,7 +1372,14 @@ fn relative_path_string(path: &Path) -> String {
 
 fn language_for_path(path: &str) -> Option<Language> {
     let path = path.to_ascii_lowercase();
-    if path.ends_with(".cs") {
+    if path.ends_with(".c") {
+        Some(Language::C)
+    } else if [".cc", ".cpp", ".cxx", ".c++", ".h", ".hh", ".hpp", ".hxx"]
+        .iter()
+        .any(|extension| path.ends_with(extension))
+    {
+        Some(Language::Cpp)
+    } else if path.ends_with(".cs") {
         Some(Language::Csharp)
     } else if path.ends_with(".java") {
         Some(Language::Java)
@@ -1401,6 +1408,8 @@ const fn mode_id(mode: EvaluationMode) -> &'static str {
 
 const fn language_id(language: Language) -> &'static str {
     match language {
+        Language::C => "c",
+        Language::Cpp => "cpp",
         Language::Csharp => "cs",
         Language::Java => "java",
         Language::Javascript => "js",

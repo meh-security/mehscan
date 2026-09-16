@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use ast_grep_core::tree_sitter::StrDoc;
-use ast_grep_core::{AstGrep, Pattern};
+use ast_grep_core::{AstGrep, Node, Pattern};
 use ast_grep_language::SupportLang;
 use ast_grep_outline::DEFAULT_OUTLINE_RULES;
 use ast_grep_outline::combined_extractor::CombinedExtractors;
@@ -12,25 +12,26 @@ use ast_grep_outline::model::{OutlineEntry, OutlineItem, OutlineMember, SymbolTy
 use mehscan_core::{
     CandidateReport, Capability, DismissedReview, EnclosingSymbolResult, Evidence, EvidenceFilter,
     EvidenceKind, EvidenceResults, FINDING_REPORT_SCHEMA_VERSION, FileOutline, FindingFlow,
-    FindingProvenance, FindingRelatedLocation, FindingReport, FindingReportScan,
-    FindingReportSummary, FindingReportTool, FindingReportTriage, FindingStatus,
+    FindingProvenance, FindingRelatedLocation, FindingRemediation, FindingReport,
+    FindingReportScan, FindingReportSummary, FindingReportTool, FindingReportTriage, FindingStatus,
     InvestigationAnchor, InvestigationJob, InvestigationLimits, InvestigationUnit,
-    InvestigationUnitProvenance, Language, LiteralState, LiteralValue, Location, ObservationReview,
-    ObservationReviewBasis, OutlineSymbol, PATH_REVIEW_BUNDLE_SCHEMA_VERSION,
-    PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, PathReview, PathReviewBasis, PathReviewBundle,
-    PathReviewBundleCategory, PathReviewBundleIssueGroup, PathReviewBundleManifest,
-    PathReviewBundleManifestEntry, PathReviewBundlePayload, PathReviewBundleResponseSet,
-    PathReviewBundleRunReport, PathReviewBundleSet, PathReviewBundleTriageReport,
-    PathReviewEvidenceBasis, PathReviewIssueGroup, PathReviewJob, PathReviewTask,
-    PathReviewTaskPage, PathReviewTaskPayload, PathReviewTriageProgress, PathReviewTriageReport,
-    PathReviewTriageResponseSet, Position, QueryProvenance, QueryResponse,
+    InvestigationUnitProvenance, Language, LiteralState, LiteralValue, Location,
+    NativeCallArgument, NativeCallSite, NativeSyntaxAnchor, NativeSyntaxContext,
+    NativeSyntaxResults, ObservationReview, ObservationReviewBasis, OutlineSymbol,
+    PATH_REVIEW_BUNDLE_SCHEMA_VERSION, PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, PathReview,
+    PathReviewBasis, PathReviewBundle, PathReviewBundleCategory, PathReviewBundleIssueGroup,
+    PathReviewBundleManifest, PathReviewBundleManifestEntry, PathReviewBundlePayload,
+    PathReviewBundleResponseSet, PathReviewBundleRunReport, PathReviewBundleSet,
+    PathReviewBundleTriageReport, PathReviewEvidenceBasis, PathReviewIssueGroup, PathReviewJob,
+    PathReviewTask, PathReviewTaskPage, PathReviewTaskPayload, PathReviewTriageProgress,
+    PathReviewTriageReport, PathReviewTriageResponseSet, Position, QueryProvenance, QueryResponse,
     REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, RelationContract, RelationshipFunnel,
     RelationshipFunnelCapability, ReportedFinding, ReportedSeverity, Resolution,
     ResourcePolicyState, ReviewConfidence, ReviewConfidencePolicy, ReviewContextTruncation,
     ReviewDecision, ReviewDecisionFacts, ReviewNeighborhoodFact, ReviewNeighborhoodJob,
     ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet, Rule, RuntimeEnvironment,
-    SCHEMA_VERSION, SecurityPathStepKind, Severity, SeveritySource, SourceSlice, StructuralMatch,
-    TextReference,
+    SCHEMA_VERSION, SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
+    StructuralMatch, TextReference,
 };
 
 use crate::repository::{FileClass, discover, is_sast_excluded_source};
@@ -98,6 +99,8 @@ struct ReviewContextIndex {
     usages: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
 }
 
+type NativeParsedFile = (AstGrep<StrDoc<SupportLang>>, Vec<OutlineSymbol>);
+
 fn is_review_material_path(path: &str) -> bool {
     let normalized = path.replace('\\', "/").to_ascii_lowercase();
     let components = normalized.split('/').collect::<Vec<_>>();
@@ -111,6 +114,52 @@ fn is_review_material_path(path: &str) -> bool {
 
 fn is_nonproduction_review_context_path(path: &str) -> bool {
     is_review_material_path(path) || is_sast_excluded_source(Path::new(path))
+}
+
+/// Native repositories commonly keep release, CI, documentation, and build
+/// helpers in a secondary scripting language. Those helpers remain scan
+/// evidence, but defaulting every ordinary helper API call into the native
+/// application's AI queue obscures the bounded native paths people came to
+/// review. Keep this deliberately narrower than a generic `tools` exclusion:
+/// command-line utilities under `tools` can be shipped products.
+fn is_native_secondary_tooling_review_material(
+    path: &str,
+    language: Option<Language>,
+    repository_has_native_source: bool,
+) -> bool {
+    if !repository_has_native_source
+        || language.is_none()
+        || matches!(language, Some(Language::C | Language::Cpp))
+    {
+        return false;
+    }
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    let components = normalized.split('/').collect::<Vec<_>>();
+    let tooling_directory = components.iter().any(|component| {
+        matches!(
+            *component,
+            ".github"
+                | ".gitlab"
+                | "build-aux"
+                | "build_aux"
+                | "bypy"
+                | "ci"
+                | "cmake"
+                | "doc"
+                | "docs"
+                | "documentation"
+                | "gen"
+                | "packaging"
+                | "scripts"
+                | "support"
+        )
+    });
+    let root_release_script = !normalized.contains('/')
+        && matches!(
+            normalized.as_str(),
+            "publish.py" | "release.py" | "setup.py"
+        );
+    tooling_directory || root_release_script
 }
 
 pub fn get_file_outline(
@@ -473,7 +522,9 @@ fn build_path_review_jobs_internal(
     let mut candidates = all_candidates
         .iter()
         .filter(|candidate| {
-            include_review_material || !is_review_material_path(&candidate.primary_location.path)
+            !is_closed_native_ownership_proof(candidate.capability, candidate.state)
+                && (include_review_material
+                    || !is_review_material_path(&candidate.primary_location.path))
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -485,6 +536,21 @@ fn build_path_review_jobs_internal(
     let used_ids = candidate_evidence_ids(&all_candidates, &scan.evidence, &sources);
     let mut observation_groups =
         observation_groups(&scan.evidence, &used_ids, &all_candidates, &sources);
+    let repository_has_native_source = sources.files.values().any(|file| {
+        matches!(file.language, Some(Language::C | Language::Cpp))
+            && !is_nonproduction_review_context_path(&file.path)
+    });
+    for group in &mut observation_groups {
+        let language = sources
+            .files
+            .get(&group.path)
+            .and_then(|file| file.language);
+        group.review_material |= is_native_secondary_tooling_review_material(
+            &group.path,
+            language,
+            repository_has_native_source,
+        );
+    }
     let all_observation_count = observation_groups.len();
     if !include_review_material {
         observation_groups.retain(|group| !group.review_material);
@@ -863,6 +929,21 @@ fn build_path_review_jobs_internal(
     })
 }
 
+/// Exact native ownership-family matches and standard RAII owners are useful
+/// audit evidence, but have no unresolved invariant for an AI verdict. Keep
+/// them in scan/candidate output while excluding them from review jobs. Their
+/// unknown counterparts (leaks and allocation-family mismatches) remain
+/// reviewable.
+fn is_closed_native_ownership_proof(capability: Capability, state: SecurityPathState) -> bool {
+    state == SecurityPathState::Protected
+        && matches!(
+            capability,
+            Capability::LocalHeapDeallocation
+                | Capability::CppHeapDeallocation
+                | Capability::CppRaiiOwner
+        )
+}
+
 pub fn validate_path_review_triage(
     job: &PathReviewJob,
     responses: &PathReviewTriageResponseSet,
@@ -908,13 +989,17 @@ pub fn path_review_tasks(job: &PathReviewJob) -> PathReviewTaskPage {
         .map(|review| {
             (
                 review.id.clone(),
-                PathReviewTaskPayload::SecurityPath { review },
+                PathReviewTaskPayload::SecurityPath {
+                    review: Box::new(review),
+                },
             )
         })
         .chain(job.observation_reviews.iter().cloned().map(|review| {
             (
                 review.id.clone(),
-                PathReviewTaskPayload::Observation { review },
+                PathReviewTaskPayload::Observation {
+                    review: Box::new(review),
+                },
             )
         }))
         .enumerate()
@@ -1421,11 +1506,12 @@ fn reported_finding(
                     EngineError(format!("bundle is missing review {:?}", result.review_id))
                 })?;
             let candidate = &review.candidate;
-            let title = review
+            let fallback_title = review
                 .review_basis
                 .as_ref()
                 .and_then(|basis| basis.sink.rule_title.clone())
                 .unwrap_or_else(|| candidate.title.clone());
+            let title = human_finding_title(&candidate.sink.rule_id, &fallback_title);
             let mut evidence_ids = vec![candidate.source.id.clone(), candidate.sink.id.clone()];
             evidence_ids.extend(candidate.protections.iter().map(|item| item.id.clone()));
             evidence_ids.extend(
@@ -1469,7 +1555,10 @@ fn reported_finding(
                 }),
                 related_locations,
                 checks: result.checks.clone(),
-                remediation: None,
+                remediation: Some(finding_remediation(
+                    candidate.capability,
+                    &candidate.cwe_candidates,
+                )),
                 provenance: FindingProvenance {
                     review_ids: vec![review.id.clone()],
                     evidence_ids,
@@ -1489,7 +1578,7 @@ fn reported_finding(
                     review.id
                 ))
             })?;
-            let title = review
+            let fallback_title = review
                 .review_basis
                 .as_ref()
                 .and_then(|basis| {
@@ -1500,6 +1589,7 @@ fn reported_finding(
                         .and_then(|item| item.rule_title.clone())
                 })
                 .unwrap_or_else(|| review.title.clone());
+            let title = human_finding_title(&anchor.rule_id, &fallback_title);
             let anchor_ids = review.anchor_evidence_ids.iter().collect::<BTreeSet<_>>();
             let mut related_locations = review
                 .evidence
@@ -1536,7 +1626,10 @@ fn reported_finding(
                 flow: None,
                 related_locations,
                 checks: result.checks.clone(),
-                remediation: None,
+                remediation: Some(finding_remediation(
+                    anchor.capability,
+                    &anchor.cwe_candidates,
+                )),
                 provenance: FindingProvenance {
                     review_ids: vec![review.id.clone()],
                     evidence_ids,
@@ -1550,6 +1643,76 @@ fn default_severity() -> ReportedSeverity {
     ReportedSeverity {
         level: Severity::Medium,
         source: SeveritySource::FallbackDefault,
+    }
+}
+
+fn human_finding_title(rule_id: &str, fallback: &str) -> String {
+    match rule_id {
+        "c-format-string-output" => {
+            "Runtime-controlled format string interpreted by printf".to_string()
+        }
+        "c-process-execution" => "Shell command constructed from runtime values".to_string(),
+        "c-family-image-copy-operation" => {
+            "Image copy dimensions lack destination bounds".to_string()
+        }
+        "native-same-path-filesystem-use" => {
+            "File can change between validation and use".to_string()
+        }
+        "c-family-signed-size-memory-operation" => {
+            "Signed size reaches a memory operation without a runtime guard".to_string()
+        }
+        "c-family-local-heap-deallocation" => {
+            "Allocated memory leaks on an early return".to_string()
+        }
+        "c-family-remaining-input-read" => {
+            "Decoded length can exceed the remaining parser input".to_string()
+        }
+        "cpp-drogon-route-authentication-requirement" => {
+            "Route is accessible without authentication".to_string()
+        }
+        "cpp-drogon-orm-resource-access" => {
+            "Request-selected object is accessed without authorization".to_string()
+        }
+        _ => fallback.to_string(),
+    }
+}
+
+fn finding_remediation(capability: Capability, cwes: &[String]) -> FindingRemediation {
+    let text = match capability {
+        Capability::FormatStringOutput => {
+            "Use a fixed format literal and pass runtime text only as data arguments; if placeholders are configurable, parse and allowlist the complete format before use."
+        }
+        Capability::ProcessExecution => {
+            "Invoke the executable with a structured argument vector and no command shell; otherwise strictly constrain every runtime fragment before shell interpretation."
+        }
+        Capability::CountControlledMemoryOperation => {
+            "Before copying, verify every destination offset and dimension against the authoritative destination region using non-wrapping arithmetic."
+        }
+        Capability::FilesystemWrite if cwes.iter().any(|cwe| cwe == "CWE-367") => {
+            "Open the target atomically with platform-appropriate anti-symlink flags, then validate the opened handle with fstat instead of trusting a prior pathname check."
+        }
+        Capability::SignedSizeMemoryOperation => {
+            "Reject negative values and guard any signed arithmetic for overflow before converting the exact extent to size_t or using it in allocation or memory operations."
+        }
+        Capability::LocalHeapDeallocation => {
+            "Route every post-allocation failure through the shared cleanup path, or free the exact allocation before returning."
+        }
+        Capability::RemainingInputRead => {
+            "First prove the cursor is within the input, then reject any decoded extent greater than total_size - cursor before reading or advancing; do not validate with cursor + extent in a type where it can wrap."
+        }
+        Capability::Authentication => {
+            "Attach the verified authentication filter to the route and enforce it before the handler accesses or mutates application data."
+        }
+        Capability::ResourceAccess => {
+            "Constrain the ORM operation by the authenticated subject's owner, tenant, role, or explicit policy—not only by the request-selected object ID."
+        }
+        _ => {
+            "Add a control for the exact reported operation and invariant, and verify it executes before the security-sensitive behavior."
+        }
+    };
+    FindingRemediation {
+        text: text.to_string(),
+        references: Vec::new(),
     }
 }
 
@@ -1640,7 +1803,7 @@ fn review_run_quality_warnings(
         }
     }
     let mut warnings = Vec::new();
-    if rows.len() > 1 && rows.iter().all(|row| row.1 == rows[0].1) {
+    if rows.len() >= 10 && rows.iter().all(|row| row.1 == rows[0].1) {
         warnings.push("degenerate_decisions: every review received the same decision".to_string());
     }
     if rows.len() >= 10 {
@@ -1660,7 +1823,8 @@ fn review_run_quality_warnings(
             ));
         }
     }
-    if rows.len() > 1 && rows.iter().all(|row| row.2 == rows[0].2) {
+    let review_kinds = rows.iter().map(|row| row.0).collect::<BTreeSet<_>>();
+    if rows.len() > 1 && review_kinds.len() > 1 && rows.iter().all(|row| row.2 == rows[0].2) {
         warnings.push("uniform_confidence: every review received the same confidence".to_string());
     }
     let unique_summaries = rows
@@ -2472,7 +2636,7 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Use issue only when supplied evidence supports dangerous behavior, relevant attacker influence or policy failure, and no demonstrated effective protection."
                 .to_string(),
-            "Use not_issue only for affirmative disproof or a demonstrated effective protection; missing evidence is not disproof."
+            "Use not_issue for affirmative disproof or a demonstrated effective protection. For a non-path observation, not_issue may also mean the supplied context establishes only an ordinary API or syntax boundary and no reportable attacker influence or concrete policy failure; use the configured medium confidence and do not claim the wider code is proven safe."
                 .to_string(),
             "Use only supplied facts; do not invent cross-function, deployment, or runtime behavior."
                 .to_string(),
@@ -2480,7 +2644,7 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Distinguish application-owned controls from proxy, gateway, ingress, platform, framework, and client controls."
                 .to_string(),
-            "Use needs_review only when a named missing fact could change the decision."
+            "Use needs_review only when decision_facts.unresolved names a concrete missing artifact that can change the decision. Generic possibilities about unknown origin, runtime value, or security impact are reviewer confidence factors, not automatic escalation checks."
                 .to_string(),
             "Treat every remaining decision_facts.unresolved entry as decision-critical. Do not use issue or not_issue while one remains unless a supplied established fact explicitly answers that exact entry; otherwise use needs_review and copy the entry into checks."
                 .to_string(),
@@ -2490,7 +2654,7 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "For a deterministic bounded path whose decision_facts.unresolved and decision_facts.effective_controls are both empty, use issue when its rule-specific established behavior describes the named weakness. Use not_issue only when another supplied fact affirmatively disproves that same behavior; do not substitute a different invariant such as resource ownership for plaintext storage, CSRF, validation, or lifecycle review."
                 .to_string(),
-            "Treat an observation as decision-ready when decision_facts.unresolved is empty and an established fact explicitly names a concrete policy failure or affirmative safe purpose. For an application-owned authentication-cookie omission, a merely possible proxy rewrite affects deployment exposure or remediation ownership but does not erase the source defect; absent a supplied effective rewrite, use issue with medium confidence rather than needs_review."
+            "Treat an observation as decision-ready when decision_facts.unresolved is empty. Use reviewer reasoning and the exact confidence policy to distinguish a concrete weakness from an ordinary API or syntax boundary; do not turn open_questions into checks. For an application-owned authentication-cookie omission, a merely possible proxy rewrite affects deployment exposure or remediation ownership but does not erase the source defect; absent a supplied effective rewrite, use issue with medium confidence rather than needs_review."
                 .to_string(),
             "Answer open questions from the supplied facts before requesting more evidence; do not ask to trace a flow or inspect a control that the excerpts already show, and name only the exact unresolved artifact in checks."
                 .to_string(),
@@ -2986,6 +3150,7 @@ fn observation_decision_facts(
     let csharp_policy = csharp_observation_policy(evidence, facts);
     let go_policy = go_observation_policy(evidence, facts);
     let rust_policy = rust_observation_policy(evidence, facts);
+    let rust_dynamic_html_parameter = rust_dynamic_html_parameter(evidence, facts);
     let javascript_policy = javascript_observation_policy(evidence, facts);
     let embedded_signing_key = observation_has_source_embedded_signing_key(evidence, facts);
     let matched_python_jwt_verification = evidence
@@ -3095,6 +3260,11 @@ fn observation_decision_facts(
     if let Some(policy) = &rust_policy {
         established.push(policy.established.clone());
     }
+    if let Some(parameter) = &rust_dynamic_html_parameter {
+        established.push(format!(
+            "The supplied exact Rust function substitutes runtime parameter `{parameter}` into a compile-time HTML resource and passes the resulting value to the reviewed Actix HTML response sink."
+        ));
+    }
     if let Some(policy) = &javascript_policy {
         established.push(policy.established.clone());
     }
@@ -3163,9 +3333,7 @@ fn observation_decision_facts(
                 .control
                 .to_string(),
         ]
-    } else if java_policy.is_some() {
-        Vec::new()
-    } else if embedded_signing_key || matched_python_jwt_verification {
+    } else if java_policy.is_some() || embedded_signing_key || matched_python_jwt_verification {
         Vec::new()
     } else if resource_policy_applies
         && resource_policy.is_some_and(|policy| policy.state == ResourcePolicyState::OwnerScoped)
@@ -3206,19 +3374,38 @@ fn observation_decision_facts(
         || java_policy.is_some()
     {
         Vec::new()
+    } else if let Some(parameter) = rust_dynamic_html_parameter {
+        vec![format!(
+            "Is runtime parameter `{parameter}` bound to attacker-controlled request data by the registered Actix route or extractor for this exact handler?"
+        )]
     } else if direct_request_resource_selector {
         vec![
             "Does this request-selected resource reach a sensitive read, mutation, or response without a later owner or tenant constraint?"
                 .to_string(),
         ]
     } else {
-        unresolved.to_vec()
+        unresolved
+            .iter()
+            .filter(|question| !is_advisory_observation_question(question))
+            .cloned()
+            .collect()
     };
     ReviewDecisionFacts {
         established,
         effective_controls,
         unresolved,
     }
+}
+
+fn is_advisory_observation_question(question: &str) -> bool {
+    matches!(
+        question,
+        "Does the supplied source influence the security-sensitive sink input? The deterministic engine did not admit a path."
+            | "What is the exact origin of the security-sensitive sink input?"
+            | "What is the effective runtime or deployed control value at the authoritative layer?"
+            | "Does the observed sensitive operation establish a concrete weakness in this context?"
+            | "Does this bounded observation establish a concrete security issue?"
+    )
 }
 
 struct JavaObservationPolicy {
@@ -3316,6 +3503,61 @@ fn rust_static_html_binding(source: &str, content: &str) -> bool {
         }
     }
     saw_replacement
+}
+
+/// Identifies only the exact local shape where a runtime parameter is inserted
+/// into an embedded HTML resource before the reviewed Actix response. This
+/// proves the substitution but not framework registration or attacker control,
+/// so the latter remains one concrete review fact rather than a generic origin
+/// question.
+fn rust_dynamic_html_parameter(
+    evidence: &[Evidence],
+    facts: &[ReviewNeighborhoodFact],
+) -> Option<String> {
+    let content = evidence
+        .iter()
+        .find(|item| item.rule_id == "rust-actix-html-output")?
+        .captures
+        .get("content")?
+        .text
+        .trim();
+    if !is_plain_identifier(content) {
+        return None;
+    }
+    for source in facts
+        .iter()
+        .filter(|fact| fact.role == "source_context")
+        .map(|fact| fact.excerpt.as_str())
+    {
+        let declaration = format!("let {content} = ");
+        let Some(start) = source.find(&declaration) else {
+            continue;
+        };
+        let expression = &source[start + declaration.len()..];
+        let Some(end) = expression.find(';') else {
+            continue;
+        };
+        let expression = expression[..end].trim();
+        let Some((root, arguments)) = expression.split_once(".replace(") else {
+            continue;
+        };
+        let root = root.trim();
+        if !is_plain_identifier(root) || !source.contains(&format!("let {root} = include_str!(")) {
+            continue;
+        }
+        let arguments = arguments.strip_suffix(')')?;
+        let Some((placeholder, replacement)) = arguments.split_once(',') else {
+            continue;
+        };
+        if !is_quoted_literal(placeholder.trim()) {
+            continue;
+        }
+        let parameter = replacement.trim().strip_prefix('&')?.trim();
+        if is_plain_identifier(parameter) && source.contains(&format!("{parameter}:")) {
+            return Some(parameter.to_string());
+        }
+    }
+    None
 }
 
 fn rust_literal_replace(line: &str) -> bool {
@@ -4126,13 +4368,18 @@ fn observation_confidence_policy(
                 || fact.contains("explicitly emits an authentication cookie")
                 || fact.contains("explicitly establishes")
         });
+    let affirmative_safe_fact = !decision_facts.effective_controls.is_empty()
+        || decision_facts
+            .established
+            .iter()
+            .any(|fact| fact.contains("affirmatively disproving"));
     ReviewConfidencePolicy {
         issue: if direct_issue_fact && !cookie_omission {
             ReviewConfidence::High
         } else {
             ReviewConfidence::Medium
         },
-        not_issue: if decision_facts.unresolved.is_empty() {
+        not_issue: if decision_facts.unresolved.is_empty() && affirmative_safe_fact {
             ReviewConfidence::High
         } else {
             ReviewConfidence::Medium
@@ -4141,7 +4388,7 @@ fn observation_confidence_policy(
         rationale: if direct_issue_fact && !cookie_omission {
             "A direct application-owned policy fact is established with no unresolved decision fact; an issue may be high confidence."
         } else {
-            "This observation retains a bounded inference or unresolved fact; use medium confidence unless an admitted affirmative safe purpose removes the review job."
+            "An ordinary observation without a concrete decision blocker is adjudicated through reviewer reasoning at medium confidence; direct policy failures or affirmative controls may support high confidence."
         }
         .to_string(),
     }
@@ -4460,7 +4707,7 @@ fn python_source_file_consumer_facts(
                         .then(|| python_quoted_source_path(right))
                         .flatten()
                 })
-                .last()
+                .next_back()
         })
         .flatten()
     });
@@ -5920,6 +6167,9 @@ fn observation_groups(
                     && !is_context_only_uploaded_filename_check(item, &items)
                     && !is_non_actionable_csrf_observation(item, sources)
                     && !is_non_actionable_autoescaped_django_response(item, sources)
+                    && !is_unlinked_native_buffer_write_observation(item, sources)
+                    && !is_unlinked_native_api_inventory_observation(item, sources)
+                    && !is_duplicate_parameter_sink_summary(item, evidence)
                     && matches!(
                         item.kind,
                         EvidenceKind::Sink
@@ -5997,6 +6247,197 @@ fn observation_groups(
             .then_with(|| left.symbol.cmp(&right.symbol))
     });
     groups
+}
+
+/// A raw C/C++ memory-write API is common audit inventory, not a useful
+/// standalone AI verdict. It remains scan evidence and becomes reviewable when
+/// a bounded relationship links it to a source, size invariant, or capacity
+/// path. Managed-language buffer abstractions are left unchanged.
+fn is_unlinked_native_buffer_write_observation(
+    evidence: &Evidence,
+    sources: &RepositorySources,
+) -> bool {
+    let language = sources
+        .files
+        .get(&evidence.location.path)
+        .and_then(|file| file.language);
+    is_native_buffer_write_observation(evidence.capability, evidence.kind, language)
+}
+
+fn is_native_buffer_write_observation(
+    capability: Capability,
+    kind: EvidenceKind,
+    language: Option<Language>,
+) -> bool {
+    capability == Capability::BufferWrite
+        && kind == EvidenceKind::Sink
+        && matches!(language, Some(Language::C | Language::Cpp))
+}
+
+/// Common native API boundaries remain valuable scan inventory, but do not
+/// become standalone vulnerability-verdict work until a bounded relationship
+/// supplies attacker influence, a weak effective algorithm, or runtime format
+/// control. This mirrors raw native buffer-write admission policy.
+fn is_unlinked_native_api_inventory_observation(
+    evidence: &Evidence,
+    sources: &RepositorySources,
+) -> bool {
+    let language = sources
+        .files
+        .get(&evidence.location.path)
+        .and_then(|file| file.language);
+    if !matches!(language, Some(Language::C | Language::Cpp)) {
+        return false;
+    }
+    if evidence.kind == EvidenceKind::Sink
+        && matches!(
+            evidence.capability,
+            Capability::FilesystemRead | Capability::FilesystemWrite
+        )
+    {
+        return true;
+    }
+    if evidence.rule_id == "c-openssl-hash-selection" {
+        return true;
+    }
+    evidence.kind == EvidenceKind::Sink
+        && evidence.capability == Capability::FormatStringOutput
+        && evidence
+            .captures
+            .get("format")
+            .is_some_and(|format| is_compile_time_format_expression(format.text.trim()))
+}
+
+fn is_compile_time_macro_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.bytes().any(|byte| byte.is_ascii_alphabetic())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+fn is_compile_time_format_expression(value: &str) -> bool {
+    if let Some((consequence, alternative)) = conditional_format_branches(value) {
+        return is_compile_time_format_expression(consequence.trim())
+            && is_compile_time_format_expression(alternative.trim());
+    }
+    if is_compile_time_macro_identifier(value) || is_standard_integer_format_macro(value) {
+        return true;
+    }
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    let mut saw_literal = false;
+    while index < bytes.len() {
+        if bytes[index].is_ascii_whitespace() {
+            index += 1;
+            continue;
+        }
+        if bytes[index] == b'"' {
+            saw_literal = true;
+            index += 1;
+            let mut closed = false;
+            while index < bytes.len() {
+                if bytes[index] == b'\\' {
+                    index += 2;
+                    continue;
+                }
+                if bytes[index] == b'"' {
+                    index += 1;
+                    closed = true;
+                    break;
+                }
+                index += 1;
+            }
+            if !closed {
+                return false;
+            }
+            continue;
+        }
+        if bytes[index].is_ascii_alphabetic() || bytes[index] == b'_' {
+            let start = index;
+            index += 1;
+            while index < bytes.len()
+                && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+            {
+                index += 1;
+            }
+            let token = &value[start..index];
+            if !is_compile_time_macro_identifier(token) && !is_standard_integer_format_macro(token)
+            {
+                return false;
+            }
+            continue;
+        }
+        return false;
+    }
+    saw_literal
+}
+
+fn conditional_format_branches(value: &str) -> Option<(&str, &str)> {
+    let bytes = value.as_bytes();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut depth = 0usize;
+    let mut question = None;
+    let mut nested_conditionals = 0usize;
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        if let Some(delimiter) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == delimiter {
+                quote = None;
+            }
+            continue;
+        }
+        match byte {
+            b'\'' | b'"' => quote = Some(byte),
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'?' if question.is_none() => question = Some((index, depth)),
+            b'?' if question.is_some_and(|(_, question_depth)| question_depth == depth) => {
+                nested_conditionals += 1;
+            }
+            b':' if question.is_some_and(|(_, question_depth)| question_depth == depth) => {
+                if nested_conditionals == 0 {
+                    let (question_index, _) = question?;
+                    return Some((&value[question_index + 1..index], &value[index + 1..]));
+                }
+                nested_conditionals -= 1;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn is_standard_integer_format_macro(value: &str) -> bool {
+    (value.starts_with("PRI") || value.starts_with("SCN"))
+        && value.len() > 3
+        && value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+/// Prefer the concrete helper sink and its collected call-site context over a
+/// second file-local summary anchored at the same helper invocation.
+fn is_duplicate_parameter_sink_summary(item: &Evidence, evidence: &[Evidence]) -> bool {
+    if item.rule_id != "python-file-local-parameter-sink-summary" {
+        return false;
+    }
+    let Some(helper) = item
+        .captures
+        .get("helper")
+        .map(|capture| capture.text.as_str())
+    else {
+        return false;
+    };
+    evidence.iter().any(|other| {
+        other.id != item.id
+            && other.kind == EvidenceKind::Sink
+            && other.capability == item.capability
+            && other.enclosing_symbol.as_deref() == Some(helper)
+            && other.rule_id != "python-file-local-parameter-sink-summary"
+    })
 }
 
 fn is_local_observation_context(anchor: &Evidence, item: &Evidence) -> bool {
@@ -6146,6 +6587,11 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
     }
     let literal_role = match item.capability {
         Capability::DatabaseQuery => "query",
+        // A fixed executable or fixed format string remains valuable inventory
+        // but cannot establish command or format-string injection without a
+        // controllable value in that semantic role.
+        Capability::ProcessExecution => "command",
+        Capability::FormatStringOutput => "format",
         // Fixed program text does not become code injection merely because the
         // sandbox data consumed by that program is dynamic. Other operations
         // performed by the fixed program (XML/YAML parsing, for example) keep
@@ -8146,6 +8592,68 @@ fn path_review_questions(
     has_feature_gate: bool,
     has_configuration_gate: bool,
 ) -> Vec<String> {
+    if candidate.sink.rule_id == "native-libarchive-disk-extraction" {
+        return if candidate.cwe_candidates == ["CWE-732"] {
+            vec![
+                "Can archive-controlled owner or permission metadata be restored while the process has authority to assign privileged ownership or modes, and is that metadata constrained by application policy?"
+                    .to_string(),
+            ]
+        } else if candidate.cwe_candidates == ["CWE-59"] {
+            vec![
+                "Does this exact extraction reject on-disk symlink redirection for every archive entry, including intermediate components and concurrent replacement?"
+                    .to_string(),
+            ]
+        } else {
+            vec![
+                "Does this exact extraction reject both '..' path elements and absolute archive-entry paths before any filesystem object is created?"
+                    .to_string(),
+            ]
+        };
+    }
+    if candidate.sink.rule_id == "native-same-path-filesystem-use" {
+        return vec![
+            "Can another actor replace or retarget this exact path between the metadata check and filesystem operation, and can the operation be expressed atomically or against an already-open directory/file descriptor?"
+                .to_string(),
+        ];
+    }
+    if candidate.sink.rule_id == "c-family-image-copy-operation" {
+        return vec![
+            "Do exact pre-write checks or clamps prove that destination offset plus copy extent fits the authoritative destination width and height on both axes, without arithmetic overflow?"
+                .to_string(),
+        ];
+    }
+    if candidate.sink.rule_id == "cpp-drogon-route-authentication-requirement" {
+        return vec![
+            "Does every deployed registration for this exact route require a credential-verifying Drogon filter, and does that filter reject missing or invalid credentials before invoking the filter-chain continuation?"
+                .to_string(),
+        ];
+    }
+    if candidate.sink.rule_id == "cpp-drogon-orm-resource-access"
+        && candidate
+            .sink
+            .context
+            .http_routes
+            .iter()
+            .any(|route| route.access == mehscan_core::HttpRouteAccess::Authenticated)
+    {
+        return vec![
+            "Does a server-owned owner, tenant, role, or policy check authorize the authenticated Drogon principal for this exact selected resource? Token verification establishes identity, not resource authorization."
+                .to_string(),
+        ];
+    }
+    if candidate.sink.rule_id == "native-libxml2-xml-parse" {
+        let mut questions = vec![
+            "Does the linked libxml2 version honor XML_PARSE_NO_XXE for this exact parse operation, and can a custom resource loader or surrounding parser context re-enable external DTD or entity access?"
+                .to_string(),
+        ];
+        if candidate.protections.is_empty() {
+            questions.push(
+                "Can the parsed XML contain attacker-controlled entity or DTD declarations, and is external loading disabled rather than only network access restricted with XML_PARSE_NONET?"
+                    .to_string(),
+            );
+        }
+        return questions;
+    }
     if candidate.sink.rule_id == "python-source-file-content-write" {
         return vec![
             "Does an exact Python import or loader reference the request-overwritten source file, allowing its contents to execute on application startup, reload, or worker restart?"
@@ -8227,7 +8735,15 @@ fn path_review_questions(
         .iter()
         .map(|reason| uncertainty_review_question(reason, candidate.source.capability))
         .collect::<Vec<_>>();
-    if candidate.protections.is_empty() {
+    if candidate.protections.is_empty()
+        && !(candidate.capability == Capability::ArithmeticDivision
+            && candidate
+                .uncertainty_reasons
+                .iter()
+                .any(|reason| reason == "converted_divisor_nonzero_invariant_unproven"))
+        && candidate.capability != Capability::CountControlledMemoryOperation
+        && candidate.capability != Capability::ArithmeticMultiplication
+    {
         questions.push(missing_protection_question(candidate.capability).to_string());
     }
     if has_feature_gate {
@@ -8265,6 +8781,46 @@ fn path_review_questions(
 }
 
 fn uncertainty_review_question(reason: &str, source_capability: Capability) -> String {
+    if reason == "integer_range_before_conversion_not_proven" {
+        return "Can the pre-conversion integer exceed the unsigned 32-bit range, including a value whose low 32 bits are zero, on any supported target architecture?"
+            .to_string();
+    }
+    if reason == "converted_divisor_nonzero_invariant_unproven" {
+        return "Can this exact converted divisor be zero when the division executes, and is a same-value nonzero check guaranteed to dominate the operation?"
+            .to_string();
+    }
+    if reason == "applied_upper_bound_differs_from_derived_domain_limit" {
+        return "Is the state-derived upper bound the authoritative limit for this input quantity, and can the broader applied bound admit values outside that domain?"
+            .to_string();
+    }
+    if reason == "runtime_quantity_may_exceed_domain_limit" {
+        return "Can the admitted quantity exceed the derived limit when it controls this exact memory-operation extent or the state recorded after it?"
+            .to_string();
+    }
+    if reason == "derived_limit_expression_semantics_require_confirmation" {
+        return "Does the derived-limit expression represent the authoritative maximum for this quantity on every branch reaching the memory operation?"
+            .to_string();
+    }
+    if reason == "multiplication_range_not_proven" {
+        return "Can the runtime operand product exceed the accumulator's representable maximum before the exact value handoff into the downstream memory-operation extent?"
+            .to_string();
+    }
+    if reason == "early_exit_bypasses_same_scope_heap_release" {
+        return "Can this early return execute after the local allocation succeeds and before the later exact free, without transferring ownership or releasing the same allocation on that branch?"
+            .to_string();
+    }
+    if reason == "new_and_delete_scalar-array_forms_differ" {
+        return "Does this local use scalar new with delete or array new with delete[], and can the shown pointer still denote that exact allocation at release?"
+            .to_string();
+    }
+    if reason == "unique_owner_family_differs_from_allocated_new_form" {
+        return "Does this standard unique_ptr owner use scalar or array destruction semantics matching the exact new expression transferred into it?"
+            .to_string();
+    }
+    if reason == "accumulator_width_typedef_requires_confirmation" {
+        return "What width does this accumulator typedef have on each supported target, and can any target preserve only the low bits of the multiplication result?"
+            .to_string();
+    }
     if reason == "source_observation_not_high_confidence" {
         return match source_capability {
             Capability::CredentialMaterial => {
@@ -8407,6 +8963,54 @@ fn missing_protection_question(capability: Capability) -> &'static str {
         }
         Capability::RandomGeneration => {
             "Is the value generated by a cryptographically secure random source with sufficient entropy for this security purpose?"
+        }
+        Capability::ArithmeticDivision => {
+            "Does an exact nonzero guard apply to this converted divisor before division on every executable path?"
+        }
+        Capability::BufferWrite => {
+            "Does the shown native copy prove destination capacity and, for bounded string APIs, guarantee an in-bounds terminator before the destination is consumed as a string?"
+        }
+        Capability::SignedSizeMemoryOperation => {
+            "Can the exact signed value be negative before it is converted to size_t and used as this allocation or buffer-operation extent?"
+        }
+        Capability::CountControlledMemoryOperation => {
+            "Does an exact rejection or clamp prove this operation quantity, including any destination offset, fits the authoritative state-derived limit before the memory operation?"
+        }
+        Capability::ArithmeticMultiplication => {
+            "Does an exact zero-safe range check prove that this multiplication fits the accumulator before its result controls the memory-operation extent?"
+        }
+        Capability::AllocationSizeComputation => {
+            "Does the architecture-sized input pass an exact rejecting SIZE_MAX-derived bound before the shown macro arithmetic determines the allocation extent?"
+        }
+        Capability::LocalHeapDeallocation => {
+            "Does every post-allocation early return release this same local heap object before bypassing the function's established free point?"
+        }
+        Capability::CppHeapDeallocation => {
+            "Do the exact new and delete expressions use matching scalar or array forms for this unchanged local pointer?"
+        }
+        Capability::CppRaiiOwner => {
+            "Does the standard unique owner have scalar or array destruction semantics matching the exact allocation transferred into it?"
+        }
+        Capability::PostReturnDereference => {
+            "Does the concrete callback leave the shown owner member pointing at callback-local storage when it returns, before the wrapper dereferences that same member?"
+        }
+        Capability::PostInvalidationUse => {
+            "Does the documented invalid status mean this exact pointer argument may be freed, and does every such status path terminate before this post-call use?"
+        }
+        Capability::SerializedBlobCopy => {
+            "Does the loader-reported blob length exactly match the fixed-layout copy extent before this copy, independently of the separate multiplication-overflow invariant?"
+        }
+        Capability::LoadedMemoryExtent => {
+            "Can the shown serialized scalar and other operands overflow this exact allocation-and-memory-operation extent under their effective C/C++ types, and do the rejecting checks safely cover zero and SIZE_MAX before computation?"
+        }
+        Capability::RemainingInputRead => {
+            "Does the decoded extent fit the authoritative remaining input before this read without offset-plus-length wrapping, using either a proven wider arithmetic domain or the non-wrapping `length > total - cursor` form?"
+        }
+        Capability::StateDependentDereference => {
+            "Can the recoverable exceptional path leave the required object member absent before that same pointer is handed to the indexed dereference, or does a fatal invariant check terminate every such path?"
+        }
+        Capability::OwnershipGatedRelease => {
+            "Does every successful allocation stored in the shown object member register the matching ownership flag before an exceptional exit can transfer control to the gated cleanup path?"
         }
         Capability::LdapQuery => {
             "Is each source-derived LDAP value encoded for its exact filter or distinguished-name context before query construction?"
@@ -8698,13 +9302,12 @@ fn csharp_qualified_helper_is_owned(
     let Some(namespace) = csharp_namespace(&definition.source) else {
         return false;
     };
-    let owned = csharp_namespace(&candidate.source) == Some(namespace)
+    csharp_namespace(&candidate.source) == Some(namespace)
         || candidate
             .source
             .lines()
             .map(|line| line.trim().trim_start_matches('\u{feff}'))
-            .any(|line| line == format!("using {namespace};"));
-    owned
+            .any(|line| line == format!("using {namespace};"))
 }
 
 fn csharp_namespace(source: &str) -> Option<&str> {
@@ -9007,8 +9610,7 @@ fn relative_review_import_paths(
                 .split(|character: char| {
                     !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
                 })
-                .filter(|part| !part.is_empty())
-                .next_back();
+                .rfind(|part| !part.is_empty());
             if (binding_mentions_name
                 || namespace_binding.is_some_and(|binding| {
                     contains_identifier(&candidate.source, &format!("{binding}.{name}"))
@@ -9035,8 +9637,7 @@ fn relative_review_import_paths(
                         left.split(|character: char| {
                             !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
                         })
-                        .filter(|part| !part.is_empty())
-                        .next_back()
+                        .rfind(|part| !part.is_empty())
                     })?
                 });
                 if receiver.is_some_and(|receiver| {
@@ -10192,10 +10793,7 @@ fn browser_storage_write_facts(
         for (line_index, (start, end)) in spans.iter().copied().enumerate() {
             let line = &file.source[start..end];
             let Some(key) = keys.iter().find(|key| {
-                line.contains("Storage.setItem(")
-                    && quoted_values(line)
-                        .iter()
-                        .any(|value| *value == key.as_str())
+                line.contains("Storage.setItem(") && quoted_values(line).contains(&key.as_str())
             }) else {
                 continue;
             };
@@ -10348,8 +10946,7 @@ fn interpolated_member_fields(existing: &[ReviewNeighborhoodFact]) -> BTreeSet<S
             }
             if let Some(field) = expression
                 .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-                .filter(|token| !token.is_empty())
-                .next_back()
+                .rfind(|token| !token.is_empty())
                 .filter(|token| token.len() >= 2 && token.len() <= 80)
             {
                 fields.insert(field.to_string());
@@ -11997,6 +12594,307 @@ pub fn run_structural_query(
     ))
 }
 
+pub fn find_native_call_sites(
+    root: &Path,
+    callee: &str,
+    path: Option<&str>,
+    limit: Option<usize>,
+) -> Result<QueryResponse<NativeSyntaxResults<NativeCallSite>>, EngineError> {
+    require_native_query_name("callee", callee)?;
+    let limit = bounded_limit(limit)?;
+    let sources = RepositorySources::load(root)?;
+    let requested_path = native_requested_path(&sources, path)?;
+    let outlines = OutlineExtractors::build()?;
+    let mut matches = Vec::new();
+    let mut skipped_files = Vec::new();
+    let mut parse_recovered_files = Vec::new();
+    let mut truncated = false;
+
+    'files: for file in native_query_files(&sources, requested_path.as_deref()) {
+        let Some((ast, symbols)) = parsed_native_file(
+            file,
+            &outlines,
+            &mut skipped_files,
+            &mut parse_recovered_files,
+        )?
+        else {
+            continue;
+        };
+        for call in ast
+            .root()
+            .dfs()
+            .filter(|node| node.kind().as_ref() == "call_expression")
+        {
+            let Some(function) = call.field("function") else {
+                continue;
+            };
+            let raw_callee = function.text().trim().to_string();
+            if terminal_native_name(&raw_callee) != Some(callee) {
+                continue;
+            }
+            if matches.len() == limit {
+                truncated = true;
+                break 'files;
+            }
+            let arguments = call
+                .field("arguments")
+                .map(|arguments| {
+                    arguments
+                        .children()
+                        .filter(|argument| argument.is_named())
+                        .enumerate()
+                        .map(|(index, argument)| NativeCallArgument {
+                            index,
+                            text: bounded_match_text(argument.text().as_ref()),
+                            location: location_from_offsets(
+                                &file.path,
+                                &file.source,
+                                argument.range().start,
+                                argument.range().end,
+                            ),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let call_kind = native_call_kind(&function, &raw_callee);
+            let mut ambiguity = vec![
+                "semantic_target_not_resolved".to_string(),
+                "macro_origin_unknown".to_string(),
+            ];
+            if call_kind != "bare_identifier" {
+                ambiguity.push(format!("{call_kind}_dispatch_or_binding"));
+            }
+            matches.push(NativeCallSite {
+                callee: raw_callee,
+                call_kind: call_kind.to_string(),
+                text: bounded_match_text(call.text().as_ref()),
+                arguments,
+                expression: native_expression_context(file, &call),
+                enclosing: enclosing_native_anchor(&symbols, file, &call),
+                ambiguity,
+                location: location_from_offsets(
+                    &file.path,
+                    &file.source,
+                    call.range().start,
+                    call.range().end,
+                ),
+            });
+        }
+    }
+
+    Ok(response(
+        &sources.root,
+        "find_native_call_sites",
+        ast_provenance("tree-sitter c-family syntactic call inventory"),
+        truncated,
+        NativeSyntaxResults {
+            query: BTreeMap::from([
+                ("callee".to_string(), callee.to_string()),
+                (
+                    "path".to_string(),
+                    requested_path.unwrap_or_else(|| "*".to_string()),
+                ),
+                ("limit".to_string(), limit.to_string()),
+            ]),
+            limitations: native_syntax_limitations(),
+            skipped_files,
+            parse_recovered_files,
+            matches,
+        },
+    ))
+}
+
+fn native_syntax_limitations() -> Vec<String> {
+    vec![
+        "syntax inventory only; no type, overload, alias, macro, call-graph, control-flow, or value-flow resolution"
+            .to_string(),
+        "matches do not establish security reachability, attacker influence, or a finding".to_string(),
+    ]
+}
+
+fn require_native_query_name(label: &str, value: &str) -> Result<(), EngineError> {
+    if value.is_empty()
+        || !value
+            .chars()
+            .all(|character| character == '_' || character.is_alphanumeric())
+    {
+        return Err(EngineError(format!(
+            "native {label} must be one exact identifier spelling"
+        )));
+    }
+    Ok(())
+}
+
+fn native_requested_path(
+    sources: &RepositorySources,
+    path: Option<&str>,
+) -> Result<Option<String>, EngineError> {
+    let requested = path.map(normalize_relative);
+    if let Some(path) = &requested {
+        ensure_native_file(sources.file(path)?)?;
+    }
+    Ok(requested)
+}
+
+fn ensure_native_file(file: &SourceFile) -> Result<(), EngineError> {
+    if !matches!(file.language, Some(Language::C | Language::Cpp)) {
+        return Err(EngineError(format!(
+            "native syntax queries only support C/C++ files; {:?} is not C/C++",
+            file.path
+        )));
+    }
+    Ok(())
+}
+
+fn native_query_files<'a>(
+    sources: &'a RepositorySources,
+    requested_path: Option<&str>,
+) -> impl Iterator<Item = &'a SourceFile> {
+    sources.files.values().filter(move |file| {
+        matches!(file.language, Some(Language::C | Language::Cpp))
+            && requested_path.is_none_or(|path| file.path == path)
+    })
+}
+
+fn parsed_native_file(
+    file: &SourceFile,
+    outlines: &OutlineExtractors,
+    skipped_files: &mut Vec<String>,
+    parse_recovered_files: &mut Vec<String>,
+) -> Result<Option<NativeParsedFile>, EngineError> {
+    let language = file.language.expect("native file language");
+    let parser = parser_language(language);
+    let document = match StrDoc::try_new(&file.source, parser) {
+        Ok(document) => document,
+        Err(_) => {
+            skipped_files.push(file.path.clone());
+            return Ok(None);
+        }
+    };
+    let ast = AstGrep::doc(document);
+    let recovered = ast
+        .root()
+        .dfs()
+        .any(|node| node.is_error() || node.is_missing());
+    if recovered {
+        parse_recovered_files.push(file.path.clone());
+    }
+    let symbols = if recovered {
+        Vec::new()
+    } else {
+        outlines.extract(file)?
+    };
+    Ok(Some((ast, symbols)))
+}
+
+fn terminal_native_name(value: &str) -> Option<&str> {
+    let value = value.trim();
+    let value = value
+        .rsplit_once("->")
+        .map(|(_, name)| name)
+        .or_else(|| value.rsplit_once('.').map(|(_, name)| name))
+        .or_else(|| value.rsplit_once("::").map(|(_, name)| name))
+        .unwrap_or(value)
+        .trim();
+    let value = value.split('<').next().unwrap_or(value).trim();
+    (!value.is_empty()
+        && value
+            .chars()
+            .all(|character| character == '_' || character.is_alphanumeric()))
+    .then_some(value)
+}
+
+fn native_call_kind(function: &Node<'_, StrDoc<SupportLang>>, text: &str) -> &'static str {
+    if function.kind().as_ref() == "identifier" {
+        "bare_identifier"
+    } else if text.contains("->") || text.contains('.') {
+        "member_syntax"
+    } else if text.contains("::") {
+        "qualified_syntax"
+    } else if text.contains('<') {
+        "template_syntax"
+    } else {
+        "indirect_or_unknown"
+    }
+}
+
+fn enclosing_native_anchor(
+    symbols: &[OutlineSymbol],
+    file: &SourceFile,
+    node: &Node<'_, StrDoc<SupportLang>>,
+) -> Option<NativeSyntaxAnchor> {
+    let from_outline = symbols
+        .iter()
+        .filter(|symbol| {
+            symbol.location.start.byte_offset <= node.range().start
+                && symbol.location.end.byte_offset >= node.range().end
+        })
+        .min_by_key(|symbol| symbol.location.end.byte_offset - symbol.location.start.byte_offset)
+        .map(|symbol| NativeSyntaxAnchor {
+            name: symbol.name.clone(),
+            location: symbol.location.clone(),
+        });
+    if from_outline.is_some() {
+        return from_outline;
+    }
+    let function = node
+        .ancestors()
+        .find(|ancestor| ancestor.kind().as_ref() == "function_definition")?;
+    let declarator = function.field("declarator")?;
+    let name = native_declarator_name(&declarator)?;
+    Some(NativeSyntaxAnchor {
+        name,
+        location: location_from_offsets(
+            &file.path,
+            &file.source,
+            function.range().start,
+            function.range().end,
+        ),
+    })
+}
+
+fn native_declarator_name(node: &Node<'_, StrDoc<SupportLang>>) -> Option<String> {
+    let mut current = node.clone();
+    while let Some(declarator) = current.field("declarator") {
+        current = declarator;
+    }
+    terminal_native_name(current.text().as_ref())
+        .map(str::to_string)
+        .or_else(|| {
+            current
+                .dfs()
+                .find(|child| child.kind().as_ref() == "identifier")
+                .map(|identifier| identifier.text().trim().to_string())
+        })
+}
+
+fn native_expression_context(
+    file: &SourceFile,
+    node: &Node<'_, StrDoc<SupportLang>>,
+) -> Option<NativeSyntaxContext> {
+    let context = node.ancestors().find(|ancestor| {
+        matches!(
+            ancestor.kind().as_ref(),
+            "binary_expression"
+                | "conditional_expression"
+                | "assignment_expression"
+                | "init_declarator"
+                | "return_statement"
+                | "expression_statement"
+        )
+    })?;
+    Some(NativeSyntaxContext {
+        ast_kind: context.kind().to_string(),
+        text: bounded_match_text(context.text().as_ref()),
+        location: location_from_offsets(
+            &file.path,
+            &file.source,
+            context.range().start,
+            context.range().end,
+        ),
+    })
+}
+
 impl RepositorySources {
     fn load(root: &Path) -> Result<Self, EngineError> {
         let discovery = discover(root)?;
@@ -12005,12 +12903,11 @@ impl RepositorySources {
         for file in discovery.files {
             let (language, source) = match file.class {
                 FileClass::Supported(language) => {
-                    let source = fs::read_to_string(&file.absolute).map_err(|error| {
-                        EngineError(format!(
-                            "could not read {} as UTF-8: {error}",
-                            file.relative
-                        ))
-                    })?;
+                    let Ok(source) = fs::read_to_string(&file.absolute) else {
+                        // Match scanner admission: a supported suffix does not
+                        // make binary or non-UTF-8 content reviewer-visible.
+                        continue;
+                    };
                     (Some(language), source)
                 }
                 FileClass::SecretOnly
@@ -12116,8 +13013,10 @@ impl OutlineExtractors {
     }
 }
 
-fn all_languages() -> [Language; 7] {
+fn all_languages() -> [Language; 9] {
     [
+        Language::C,
+        Language::Cpp,
         Language::Csharp,
         Language::Java,
         Language::Javascript,
@@ -12632,8 +13531,78 @@ fn display_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn ai_review_skips_only_closed_native_ownership_proofs() {
+        for capability in [
+            Capability::LocalHeapDeallocation,
+            Capability::CppHeapDeallocation,
+            Capability::CppRaiiOwner,
+        ] {
+            assert!(is_closed_native_ownership_proof(
+                capability,
+                SecurityPathState::Protected
+            ));
+            assert!(!is_closed_native_ownership_proof(
+                capability,
+                SecurityPathState::Unknown
+            ));
+        }
+        assert!(!is_closed_native_ownership_proof(
+            Capability::SignedSizeMemoryOperation,
+            SecurityPathState::Protected
+        ));
+    }
+
+    #[test]
+    fn ai_review_does_not_promote_raw_native_buffer_writes() {
+        for language in [Language::C, Language::Cpp] {
+            assert!(is_native_buffer_write_observation(
+                Capability::BufferWrite,
+                EvidenceKind::Sink,
+                Some(language)
+            ));
+        }
+        assert!(!is_native_buffer_write_observation(
+            Capability::BufferWrite,
+            EvidenceKind::Source,
+            Some(Language::C)
+        ));
+        assert!(!is_native_buffer_write_observation(
+            Capability::FilesystemWrite,
+            EvidenceKind::Sink,
+            Some(Language::C)
+        ));
+        assert!(!is_native_buffer_write_observation(
+            Capability::BufferWrite,
+            EvidenceKind::Sink,
+            Some(Language::Java)
+        ));
+    }
+
+    #[test]
+    fn repository_review_sources_skip_non_utf8_supported_files() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "mehscan-review-source-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("create fixture");
+        fs::write(root.join("valid.c"), "int valid(void) { return 0; }").expect("write source");
+        fs::write(root.join("binary.c"), [0xff, 0xfe, 0xfd]).expect("write binary source");
+
+        let sources = RepositorySources::load(&root).expect("load review sources");
+        assert!(sources.files.contains_key("valid.c"));
+        assert!(!sources.files.contains_key("binary.c"));
+
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
 
     #[test]
     fn distinguishes_property_mutation_from_equality() {
@@ -12881,6 +13850,45 @@ mod tests {
             explicit_cookie_omission("typescript-auth-cookie-missing-same-site"),
             Some("SameSite")
         );
+    }
+
+    #[test]
+    fn generic_observation_questions_are_advisory_confidence_factors() {
+        for question in [
+            "Does the supplied source influence the security-sensitive sink input? The deterministic engine did not admit a path.",
+            "What is the exact origin of the security-sensitive sink input?",
+            "What is the effective runtime or deployed control value at the authoritative layer?",
+            "Does the observed sensitive operation establish a concrete weakness in this context?",
+            "Does this bounded observation establish a concrete security issue?",
+        ] {
+            assert!(is_advisory_observation_question(question));
+        }
+        assert!(!is_advisory_observation_question(
+            "Does this request-selected resource reach a sensitive read without an owner constraint?"
+        ));
+    }
+
+    #[test]
+    fn native_format_macro_detection_accepts_only_compile_time_expressions() {
+        assert!(is_compile_time_macro_identifier("XMLSEC_SIZE_FMT"));
+        assert!(is_compile_time_macro_identifier("UINT64_FMT"));
+        assert!(!is_compile_time_macro_identifier("format"));
+        assert!(!is_compile_time_macro_identifier("ctx->format"));
+        assert!(!is_compile_time_macro_identifier("\"%zu\""));
+        assert!(is_compile_time_format_expression("\"%\" PRIu8"));
+        assert!(is_compile_time_format_expression("\", 0x%02\" PRIx8"));
+        assert!(is_compile_time_format_expression("XMLSEC_SIZE_FMT"));
+        assert!(is_compile_time_format_expression(
+            "s.Resource.IsMetadata() ? \"### META\" : \" DATA\""
+        ));
+        assert!(is_compile_time_format_expression(
+            "strchr(ip, ':') ? \"[%s]:%d\" : \"%s:%d\""
+        ));
+        assert!(!is_compile_time_format_expression("location"));
+        assert!(!is_compile_time_format_expression("\"%s\" + location"));
+        assert!(!is_compile_time_format_expression(
+            "safe ? \"%s\" : runtime_format"
+        ));
     }
 
     #[test]
@@ -13407,7 +14415,7 @@ mod tests {
             evidence_id: None,
             provenance: textual_provenance("test"),
         };
-        let (writes, _) = stored_write_origin_facts(&sources, &[eval_fact.clone()], 2);
+        let (writes, _) = stored_write_origin_facts(&sources, std::slice::from_ref(&eval_fact), 2);
         assert_eq!(writes.len(), 1);
         assert_eq!(writes[0].symbol, "username");
         assert!(writes[0].excerpt.contains("req.body.username"));
@@ -13419,7 +14427,7 @@ mod tests {
         let precise_fields = BTreeSet::from(["comment".to_string()]);
         let (precise_writes, _) = stored_write_origin_facts_with_fields(
             &sources,
-            &[mixed_context.clone()],
+            std::slice::from_ref(&mixed_context),
             Some(&precise_fields),
             2,
         );
@@ -14221,5 +15229,49 @@ mod tests {
         assert!(review.decision_facts.established.iter().any(|fact| {
             fact == "The bounded path records this rule-specific behavior: model saved without an observed encryption transform."
         }));
+    }
+
+    #[test]
+    fn confirmed_findings_use_human_titles_and_actionable_remediation() {
+        assert_eq!(
+            human_finding_title(
+                "cpp-drogon-orm-resource-access",
+                "Cpp drogon orm resource access"
+            ),
+            "Request-selected object is accessed without authorization"
+        );
+        assert!(
+            !human_finding_title("c-family-signed-size-memory-operation", "CWE-195 path")
+                .contains("CWE")
+        );
+
+        let authorization = finding_remediation(Capability::ResourceAccess, &["CWE-639".into()]);
+        assert!(authorization.text.contains("owner, tenant, role"));
+        let toctou = finding_remediation(Capability::FilesystemWrite, &["CWE-367".into()]);
+        assert!(toctou.text.contains("fstat"));
+        assert_eq!(
+            human_finding_title(
+                "c-family-local-heap-deallocation",
+                "C family local heap deallocation"
+            ),
+            "Allocated memory leaks on an early return"
+        );
+        assert!(
+            finding_remediation(Capability::LocalHeapDeallocation, &["CWE-401".into()])
+                .text
+                .contains("shared cleanup path")
+        );
+        assert_eq!(
+            human_finding_title(
+                "c-family-remaining-input-read",
+                "C family remaining input read"
+            ),
+            "Decoded length can exceed the remaining parser input"
+        );
+        assert!(
+            finding_remediation(Capability::RemainingInputRead, &["CWE-125".into()])
+                .text
+                .contains("total_size - cursor")
+        );
     }
 }

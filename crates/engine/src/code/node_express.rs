@@ -429,9 +429,11 @@ fn object_bindings(text: &str, require_request_fields: bool) -> Vec<(String, Str
                     .collect();
             }
             let binding = binding.split('=').next().unwrap_or(binding).trim();
-            is_identifier(binding)
-                .then(|| vec![(field.to_string(), binding.to_string())])
-                .unwrap_or_default()
+            if is_identifier(binding) {
+                vec![(field.to_string(), binding.to_string())]
+            } else {
+                Vec::new()
+            }
         })
         .collect()
 }

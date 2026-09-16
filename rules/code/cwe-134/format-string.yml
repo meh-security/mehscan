@@ -1,0 +1,70 @@
+- id: c-format-string-output
+  version: 1
+  title: Runtime-controlled printf format string
+  language: c
+  kind: sink
+  capability: format_string_output
+  confidence: high
+  cwe: [CWE-134]
+  match: &c_format_match
+    any:
+      - pattern: printf($FORMAT)
+        context: |
+          void pattern_context() { printf($FORMAT); }
+        selector: call_expression
+        captures: { format: FORMAT }
+      - pattern: printf($FORMAT, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { printf($FORMAT, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { format: FORMAT, arguments: ARGUMENTS }
+      - pattern: fprintf($STREAM, $FORMAT, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { fprintf($STREAM, $FORMAT, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { stream: STREAM, format: FORMAT, arguments: ARGUMENTS }
+      - pattern: sprintf($DESTINATION, $FORMAT, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { sprintf($DESTINATION, $FORMAT, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { destination: DESTINATION, format: FORMAT, arguments: ARGUMENTS }
+      - pattern: snprintf($DESTINATION, $SIZE, $FORMAT, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { snprintf($DESTINATION, $SIZE, $FORMAT, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { destination: DESTINATION, size: SIZE, format: FORMAT, arguments: ARGUMENTS }
+      - pattern: syslog($PRIORITY, $FORMAT, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { syslog($PRIORITY, $FORMAT, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { priority: PRIORITY, format: FORMAT, arguments: ARGUMENTS }
+  tags: [native, format-string, output]
+  ai: &format_guidance
+    investigate:
+      - whether external data can control the format argument rather than only later value arguments
+      - the effective printf-family API after macros and wrappers
+      - whether percent directives can read or write unintended memory or disclose process data
+    verify:
+      - distinguish a constant format with untrusted value arguments from an attacker-controlled format
+      - confirm the captured expression reaches the format parameter at runtime
+    exclude:
+      - do not report printf("%s", value) merely because value is externally controlled
+      - do not infer exploitability from the API observation without a source-to-format relationship
+  provenance: &format_provenance
+    note: Native printf-family format parameters are represented separately from ordinary logging so review can distinguish CWE-134 interpretation from CWE-117 record forging.
+    references:
+      - https://cwe.mitre.org/data/definitions/134.html
+      - https://en.cppreference.com/w/c/io/fprintf
+
+- id: cpp-format-string-output
+  version: 1
+  title: C++ printf-family format interpretation
+  language: cpp
+  kind: sink
+  capability: format_string_output
+  confidence: high
+  cwe: [CWE-134]
+  match: *c_format_match
+  tags: [native, format-string, output, cpp]
+  ai: *format_guidance
+  provenance: *format_provenance

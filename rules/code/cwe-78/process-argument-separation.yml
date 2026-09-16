@@ -183,3 +183,51 @@
     references:
       - https://cwe.mitre.org/data/definitions/78.html
       - https://doc.rust-lang.org/std/process/struct.Command.html
+
+- id: c-process-argument-separation
+  version: 1
+  title: C direct process execution with argument vector
+  language: c
+  kind: sanitizer
+  capability: process_argument_separation
+  confidence: medium
+  cwe: [CWE-78]
+  match: &native_argument_match
+    any:
+      - pattern: execv($COMMAND, $ARGUMENTS)
+        context: |
+          void pattern_context() { execv($COMMAND, $ARGUMENTS); }
+        selector: call_expression
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: execve($COMMAND, $ARGUMENTS, $ENVIRONMENT)
+        context: |
+          void pattern_context() { execve($COMMAND, $ARGUMENTS, $ENVIRONMENT); }
+        selector: call_expression
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+  tags: [command, process, argument-separation, native]
+  ai: &native_argument_guidance
+    investigate:
+      - whether the executable itself is fixed or attacker selectable
+      - how each argument is constructed and interpreted by the child program
+    verify:
+      - confirm execution bypasses a command shell and preserves argument boundaries
+    exclude:
+      - do not treat argument separation as validation of the selected executable or child-program options
+  provenance: &native_argument_provenance
+    note: POSIX exec argument vectors provide contextual shell-separation evidence but do not establish that executable selection or argument values are safe.
+    references:
+      - https://cwe.mitre.org/data/definitions/78.html
+      - https://pubs.opengroup.org/onlinepubs/9799919799/functions/exec.html
+
+- id: cpp-process-argument-separation
+  version: 1
+  title: C++ direct process execution with argument vector
+  language: cpp
+  kind: sanitizer
+  capability: process_argument_separation
+  confidence: medium
+  cwe: [CWE-78]
+  match: *native_argument_match
+  tags: [command, process, argument-separation, native, cpp]
+  ai: *native_argument_guidance
+  provenance: *native_argument_provenance

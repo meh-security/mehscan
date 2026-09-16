@@ -72,9 +72,13 @@ pub(crate) struct ScanDependencies<'a> {
     pub csharp_rpc_context: &'a CsharpRpcProjectContext,
     pub java_project_context: &'a super::java_context::JavaProjectContext,
     pub go_project_context: &'a super::go_context::GoProjectContext,
+    pub drogon_project_context: &'a super::native_drogon::DrogonProjectContext,
+    pub native_invalidation_context:
+        &'a super::native_invalidation::NativeInvalidationProjectContext,
     pub python_project_context: &'a super::python_context::PythonProjectContext,
     pub rust_project_context: &'a super::rust_project::RustProjectContext,
     pub dotnet_project_context: &'a DotnetProjectContext,
+    pub build_symbols: &'a BTreeMap<String, bool>,
 }
 
 pub(crate) fn scan_source(
@@ -111,9 +115,12 @@ pub(crate) fn scan_source(
         csharp_rpc_context,
         java_project_context,
         go_project_context,
+        drogon_project_context,
+        native_invalidation_context,
         python_project_context,
         rust_project_context,
         dotnet_project_context,
+        build_symbols,
     } = dependencies;
     let document = match StrDoc::try_new(source, parser_language) {
         Ok(document) => document,
@@ -146,7 +153,7 @@ pub(crate) fn scan_source(
         .filter(|node| node.is_error() || node.is_missing())
         .map(|node| node.range())
         .collect::<Vec<_>>();
-    let conditional = ConditionalRegions::from_source(language, source, &BTreeMap::new());
+    let conditional = ConditionalRegions::from_source(language, source, build_symbols);
     let literals = LiteralEnvironment::build(&root, language);
     let symbol_environment =
         FileSymbolEnvironment::build(path, &root, language, source, project_symbols);
@@ -283,6 +290,15 @@ pub(crate) fn scan_source(
                             query.text().as_ref(),
                         )
                     })
+                {
+                    continue;
+                }
+                if language == Language::Go
+                    && matches!(
+                        compiled_rule.rule.id.as_str(),
+                        "go-database-query" | "go-sql-parameterization"
+                    )
+                    && super::go_context::is_known_process_exec(matched.get_node())
                 {
                     continue;
                 }
@@ -1093,6 +1109,194 @@ pub(crate) fn scan_source(
         &mut evidence,
     );
     super::rust_context::annotate_rust_build_script(path, language, &mut evidence);
+    let mut native_arithmetic_paths = super::native_arithmetic::add_native_arithmetic_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    let mut native_domain_bound_paths =
+        super::native_domain_bounds::add_native_domain_bound_observations(
+            path,
+            &root,
+            language,
+            &comments,
+            &conditional,
+            &literals,
+            &mut evidence,
+        );
+    let mut native_region_bound_paths =
+        super::native_region_bounds::add_native_region_bound_observations(
+            path,
+            &root,
+            language,
+            &comments,
+            &conditional,
+            &literals,
+            &mut evidence,
+        );
+    let mut native_multiplication_paths =
+        super::native_multiplication::add_native_multiplication_observations(
+            path,
+            &root,
+            language,
+            &comments,
+            &conditional,
+            &literals,
+            &mut evidence,
+        );
+    let mut native_signedness_paths = super::native_signedness::add_native_signedness_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    let mut native_heap_lifetime_paths =
+        super::native_heap_lifetime::add_native_heap_lifetime_observations(
+            path,
+            &root,
+            language,
+            &comments,
+            &conditional,
+            &literals,
+            &mut evidence,
+        );
+    let mut native_cpp_ownership_paths =
+        super::native_cpp_ownership::add_native_cpp_ownership_observations(
+            path,
+            &root,
+            language,
+            &comments,
+            &conditional,
+            &literals,
+            &mut evidence,
+        );
+    let mut native_libxml2_paths = super::native_libxml2::add_native_libxml2_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    let mut native_libarchive_paths = super::native_libarchive::add_native_libarchive_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    let mut native_toctou_paths = super::native_toctou::add_native_toctou_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    let mut native_drogon_paths = drogon_project_context.add_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    let mut native_invalidation_paths = native_invalidation_context.add_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    let mut native_serialized_blob_paths =
+        super::native_serialized_blob::add_native_serialized_blob_observations(
+            path,
+            &root,
+            language,
+            &comments,
+            &conditional,
+            &literals,
+            &mut evidence,
+        );
+    let mut native_loaded_extent_paths =
+        super::native_loaded_extent::add_native_loaded_extent_observations(
+            path,
+            &root,
+            language,
+            &comments,
+            &conditional,
+            &literals,
+            &mut evidence,
+        );
+    let mut native_remaining_input_paths =
+        super::native_remaining_input::add_native_remaining_input_observations(
+            path,
+            &root,
+            language,
+            &comments,
+            &conditional,
+            &literals,
+            &mut evidence,
+        );
+    super::native_allocation::add_native_allocation_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        build_symbols,
+        &mut evidence,
+    );
+    super::native_lifetime::add_native_lifetime_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    super::native_state::add_native_state_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    super::native_ownership::add_native_ownership_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        build_symbols,
+        &mut evidence,
+    );
+    super::native_buffer::annotate_native_buffer_capacity(
+        path,
+        &root,
+        language,
+        &conditional,
+        &mut evidence,
+    );
     node_context.add_request_boundary_observations(
         path,
         &root,
@@ -1107,6 +1311,32 @@ pub(crate) fn scan_source(
     if !parse_issue_ranges.is_empty() {
         evidence.retain(|item| {
             item.kind == EvidenceKind::Secret
+                || item
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "parse-recovery:locally-complete")
+                    && matches!(
+                        item.provenance.engine.as_str(),
+                        "tree-sitter c-family arithmetic relationship"
+                            | "tree-sitter c-family domain-bound relationship"
+                            | "tree-sitter c-family destination-region relationship"
+                            | "tree-sitter c-family multiplication relationship"
+                            | "tree-sitter c-family signed-size relationship"
+                            | "tree-sitter c-family local-heap-lifetime relationship"
+                            | "tree-sitter c-family documented-invalidation relationship"
+                            | "tree-sitter c-family serialized-blob extent relationship"
+                            | "tree-sitter c-family loaded-memory-extent relationship"
+                            | "tree-sitter c-family remaining-input relationship"
+                            | "tree-sitter c++ allocation-ownership relationship"
+                            | "tree-sitter c-family libxml2 parser-options relationship"
+                            | "tree-sitter c-family libarchive extraction-options relationship"
+                            | "tree-sitter c-family same-path check-use relationship"
+                            | "tree-sitter c-family allocation-size relationship"
+                            | "tree-sitter c-family callback-lifetime relationship"
+                            | "tree-sitter c-family exceptional-state relationship"
+                            | "tree-sitter c-family ownership-contract relationship"
+                            | "mehscan bounded-drogon-request-identity 1"
+                    )
                 || !parse_issue_ranges
                     .iter()
                     .any(|range| location_overlaps_range(&item.location, range))
@@ -1121,7 +1351,7 @@ pub(crate) fn scan_source(
     });
     let summaries_microseconds = summaries_started.elapsed().as_micros();
     let paths_started = Instant::now();
-    let security_paths = super::security_paths::build_security_paths(
+    let mut security_paths = super::security_paths::build_security_paths(
         path,
         &root,
         language,
@@ -1129,6 +1359,146 @@ pub(crate) fn scan_source(
         &symbol_environment,
         relations,
     );
+    let retained_evidence_ids = evidence
+        .iter()
+        .map(|item| item.id.as_str())
+        .collect::<BTreeSet<_>>();
+    native_arithmetic_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    native_domain_bound_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    native_region_bound_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    native_multiplication_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    native_signedness_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    native_heap_lifetime_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    native_cpp_ownership_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    native_libxml2_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    native_libarchive_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    native_toctou_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    native_drogon_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    native_invalidation_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    native_serialized_blob_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    native_loaded_extent_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    native_remaining_input_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    security_paths.append(&mut native_arithmetic_paths);
+    security_paths.append(&mut native_domain_bound_paths);
+    security_paths.append(&mut native_region_bound_paths);
+    security_paths.append(&mut native_multiplication_paths);
+    security_paths.append(&mut native_signedness_paths);
+    security_paths.append(&mut native_heap_lifetime_paths);
+    security_paths.append(&mut native_cpp_ownership_paths);
+    security_paths.append(&mut native_libxml2_paths);
+    security_paths.append(&mut native_libarchive_paths);
+    security_paths.append(&mut native_toctou_paths);
+    security_paths.append(&mut native_drogon_paths);
+    security_paths.append(&mut native_invalidation_paths);
+    security_paths.append(&mut native_serialized_blob_paths);
+    security_paths.append(&mut native_loaded_extent_paths);
+    security_paths.append(&mut native_remaining_input_paths);
+    security_paths.sort_by(|left, right| left.id.cmp(&right.id));
     let security_paths_microseconds = paths_started.elapsed().as_micros();
     evidence.extend(secret_evidence);
     evidence.sort_by(|left, right| {

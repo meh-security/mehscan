@@ -137,6 +137,29 @@
   cwe_candidates: [CWE-117]
   strategy: bounded_local_value
 
+- id: cwe-134-external-input-to-format-string
+  version: 1
+  source: { capabilities: [http_request_data, rpc_request_data, external_input] }
+  sink:
+    capability: format_string_output
+    input_roles: [format]
+  cwe_candidates: [CWE-134]
+  strategy: bounded_local_value
+
+- id: cwe-120-external-input-to-native-buffer-write
+  version: 1
+  source: { capabilities: [http_request_data, rpc_request_data, external_input] }
+  sink:
+    capability: buffer_write
+    input_roles: [source, size]
+  protection:
+    capability: buffer_capacity_validation
+    application: related_capture
+    relation_role: size
+    value_roles: [size, capacity]
+  cwe_candidates: [CWE-120, CWE-787, CWE-805]
+  strategy: bounded_local_value
+
 - id: cwe-79-stored-subtitle-to-html-output
   version: 1
   source: { capability: stored_user_content }
@@ -244,8 +267,8 @@
   strategy: bounded_local_value
 
 - id: cwe-918-remote-request-to-outbound-network
-  version: 2
-  source: { capabilities: [http_request_data, rpc_request_data] }
+  version: 3
+  source: { capabilities: [http_request_data, rpc_request_data, external_input] }
   sink:
     capability: outbound_network_request
     input_roles: [endpoint]

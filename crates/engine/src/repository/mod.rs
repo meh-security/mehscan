@@ -1,3 +1,4 @@
+mod build_profile;
 mod classify;
 mod discover;
 

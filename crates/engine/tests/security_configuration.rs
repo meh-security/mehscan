@@ -114,7 +114,8 @@ fn declares_each_new_cwe_for_every_priority_language() {
         .map(|item| (item.cwe.as_str(), item))
         .collect();
     assert_eq!(coverage["CWE-295"].supported_languages.len(), 8);
-    for cwe in ["CWE-327", "CWE-614", "CWE-1004"] {
+    assert_eq!(coverage["CWE-327"].supported_languages.len(), 9);
+    for cwe in ["CWE-614", "CWE-1004"] {
         assert_eq!(coverage[cwe].supported_languages.len(), 7, "{cwe}");
     }
     assert_eq!(coverage["CWE-502"].supported_languages.len(), 8);

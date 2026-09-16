@@ -193,3 +193,46 @@
     references:
       - https://cwe.mitre.org/data/definitions/22.html
       - https://doc.rust-lang.org/std/fs/fn.canonicalize.html
+
+- id: c-path-canonicalization
+  version: 1
+  title: C filesystem path canonicalization
+  language: c
+  kind: sanitizer
+  capability: path_canonicalization
+  confidence: medium
+  cwe: [CWE-22]
+  match: &native_canonicalization_match
+    any:
+      - pattern: realpath($VALUE, $OUTPUT)
+        context: |
+          void pattern_context() { realpath($VALUE, $OUTPUT); }
+        selector: call_expression
+        captures: { value: VALUE, output: OUTPUT }
+  tags: [filesystem, path, canonicalization, native]
+  ai: &native_canonicalization_guidance
+    investigate:
+      - whether the resolved output rather than the original path reaches the filesystem operation
+      - containment enforcement, symlink behavior, and race windows after resolution
+    verify:
+      - confirm realpath succeeds and its result is checked against an allowed root
+    exclude:
+      - do not treat canonicalization alone as proof of containment or authorization
+  provenance: &native_canonicalization_provenance
+    note: POSIX realpath is contextual canonicalization evidence; containment and time-of-check/time-of-use behavior remain separate review questions.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://pubs.opengroup.org/onlinepubs/9799919799/functions/realpath.html
+
+- id: cpp-path-canonicalization
+  version: 1
+  title: C++ filesystem path canonicalization
+  language: cpp
+  kind: sanitizer
+  capability: path_canonicalization
+  confidence: medium
+  cwe: [CWE-22]
+  match: *native_canonicalization_match
+  tags: [filesystem, path, canonicalization, native, cpp]
+  ai: *native_canonicalization_guidance
+  provenance: *native_canonicalization_provenance

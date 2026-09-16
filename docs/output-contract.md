@@ -10,7 +10,7 @@ format:
 
 ```text
 source -> Rust evidence -> review request JSON -> verdict JSON
-       -> canonical finding JSON -> SARIF
+       -> canonical finding JSON -> SARIF + Markdown
 ```
 
 SARIF is an external findings format. It is not the transport between the
@@ -22,12 +22,16 @@ deterministic scanner and the reviewer.
 mehscan scan PATH --format json|candidates|sarif-candidates
 mehscan investigate review-bundles PATH --output RUN_DIR
 mehscan investigate review-bundle-triage --bundle FILE --responses FILE
-mehscan report --run RUN_DIR [--responses DIR] --format json|sarif
+mehscan report --run RUN_DIR [--responses DIR] --format json|sarif|markdown
 ```
 
 `scan --format sarif-candidates` remains candidate SARIF: every result is an
 unconfirmed review lead. The legacy `sarif` spelling remains an alias.
 `report --format sarif` is post-triage SARIF and contains confirmed issues only.
+`report --format markdown` is a human-readable projection. It leads with items
+that still require review and their exact checks, then summarizes confirmed
+issues and dismissed candidates. Pass `--include-dismissed true` to include the
+not-issue decision summaries rather than only their count.
 
 ## Review request
 
@@ -124,6 +128,21 @@ explicit.
 
 `needs_review` and `not_issue` decisions remain in canonical JSON. They are not
 published as vulnerabilities to IDE, CI, or ASPM consumers.
+
+## Markdown projection
+
+`report --format markdown` emits a human-readable handoff from the same
+canonical finding report. It contains scan and reviewer identity, outcome
+counts, review-required items with decisive checks, confirmed issue summaries,
+and not-issue summaries when `--include-dismissed true` is set. Markdown is a
+projection for people, not a replacement for canonical JSON or SARIF.
+
+Confirmed instances are consolidated under one root-cause heading only when
+their rule ID, human title, capability, and remediation text match. A grouped
+heading states its instance count; each instance retains its own location,
+severity, confidence, and description. Summary counts continue to count
+finding instances rather than Markdown headings. This presentation grouping
+does not mutate canonical JSON, SARIF, verdicts, or finding identifiers.
 
 ## Storage defaults
 

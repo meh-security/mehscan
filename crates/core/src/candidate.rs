@@ -244,15 +244,23 @@ fn candidate_evidence(evidence: &Evidence) -> CandidateEvidence {
     }
 }
 
-fn candidate_title(cwes: &[String], capability: Capability, sink_rule_id: &str) -> String {
-    let cwe = if cwes.is_empty() {
-        "security".to_string()
-    } else {
-        cwes.join("/")
+fn candidate_title(_cwes: &[String], capability: Capability, sink_rule_id: &str) -> String {
+    let behavior = match sink_rule_id {
+        "c-family-signed-size-memory-operation" => {
+            "signed length used as memory-operation size".to_string()
+        }
+        _ => semantic_rule_words(sink_rule_id)
+            .unwrap_or_else(|| debug_words(&format!("{capability:?}"))),
     };
-    let behavior = semantic_rule_words(sink_rule_id)
-        .unwrap_or_else(|| debug_words(&format!("{capability:?}")));
-    format!("Review bounded {cwe} path to {behavior}")
+    sentence_case(&behavior)
+}
+
+fn sentence_case(value: &str) -> String {
+    let mut characters = value.chars();
+    let Some(first) = characters.next() else {
+        return String::new();
+    };
+    first.to_uppercase().chain(characters).collect()
 }
 
 fn semantic_rule_words(rule_id: &str) -> Option<String> {
@@ -303,7 +311,7 @@ mod tests {
                 Capability::ResourceAccess,
                 "typescript-plaintext-totp-storage",
             ),
-            "Review bounded CWE-312 path to plaintext totp storage"
+            "Plaintext totp storage"
         );
         assert_eq!(
             candidate_title(
@@ -311,7 +319,23 @@ mod tests {
                 Capability::ResourceAccess,
                 "go-cookie-authenticated-state-change-review",
             ),
-            "Review bounded CWE-352 path to cookie authenticated state change"
+            "Cookie authenticated state change"
+        );
+        assert_eq!(
+            candidate_title(
+                &["CWE-195".to_string(), "CWE-681".to_string()],
+                Capability::SignedSizeMemoryOperation,
+                "c-family-signed-size-memory-operation",
+            ),
+            "Signed length used as memory-operation size"
+        );
+        assert!(
+            !candidate_title(
+                &["CWE-195".to_string()],
+                Capability::SignedSizeMemoryOperation,
+                "c-family-signed-size-memory-operation",
+            )
+            .contains("CWE")
         );
     }
 }

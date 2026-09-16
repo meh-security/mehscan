@@ -883,6 +883,7 @@ fn is_declaration_kind(kind: &str) -> bool {
 
 fn is_callable_scope(kind: &str, language: Language) -> bool {
     match language {
+        Language::C | Language::Cpp => matches!(kind, "function_definition" | "lambda_expression"),
         Language::Csharp => matches!(
             kind,
             "method_declaration"

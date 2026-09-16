@@ -1,10 +1,13 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use ignore::WalkBuilder;
-use mehscan_core::{Diagnostic, DiagnosticLevel};
+use mehscan_core::{Diagnostic, DiagnosticLevel, Language};
+use serde::Deserialize;
 
+use super::build_profile::StaticBuildProfiles;
 use super::classify::{FileClass, classify_path_with_options};
 use crate::EngineError;
 
@@ -14,6 +17,7 @@ pub(crate) struct DiscoveredFile {
     pub relative: String,
     pub class: FileClass,
     pub reason: Option<String>,
+    pub build_symbols: BTreeMap<String, bool>,
 }
 
 #[derive(Debug)]
@@ -22,6 +26,232 @@ pub(crate) struct Discovery {
     pub files: Vec<DiscoveredFile>,
     pub ignored_subtrees: Vec<String>,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Debug, Default)]
+struct CFamilyCompilationContext {
+    directory_languages: BTreeMap<PathBuf, BTreeSet<Language>>,
+    file_build_symbols: BTreeMap<PathBuf, Vec<BTreeMap<String, bool>>>,
+    directory_build_symbols: BTreeMap<PathBuf, Vec<BTreeMap<String, bool>>>,
+    static_profiles: Option<StaticBuildProfiles>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompilationCommand {
+    directory: PathBuf,
+    file: PathBuf,
+    #[serde(default)]
+    arguments: Vec<String>,
+    #[serde(default)]
+    command: String,
+}
+
+impl CFamilyCompilationContext {
+    fn load(root: &Path) -> Result<Option<Self>, String> {
+        let path = root.join("compile_commands.json");
+        if !path.is_file() {
+            return StaticBuildProfiles::load(root).map(|profiles| {
+                profiles.map(|static_profiles| Self {
+                    static_profiles: Some(static_profiles),
+                    ..Self::default()
+                })
+            });
+        }
+        let source = fs::read_to_string(&path)
+            .map_err(|error| format!("compile_commands.json could not be read: {error}"))?;
+        let commands = serde_json::from_str::<Vec<CompilationCommand>>(&source)
+            .map_err(|error| format!("compile_commands.json could not be parsed: {error}"))?;
+        let mut context = Self::default();
+        for command in commands {
+            let directory = if command.directory.is_absolute() {
+                command.directory
+            } else {
+                root.join(command.directory)
+            };
+            let file = if command.file.is_absolute() {
+                command.file
+            } else {
+                directory.join(command.file)
+            };
+            let Some(language) = compilation_language(&file, &command.arguments, &command.command)
+            else {
+                continue;
+            };
+            let file = fs::canonicalize(&file).unwrap_or(file);
+            let source_directory = file.parent().unwrap_or(&directory).to_path_buf();
+            context
+                .directory_languages
+                .entry(source_directory.clone())
+                .or_default()
+                .insert(language);
+            let symbols = compilation_build_symbols(&command.arguments, &command.command);
+            context
+                .file_build_symbols
+                .entry(file)
+                .or_default()
+                .push(symbols.clone());
+            context
+                .directory_build_symbols
+                .entry(source_directory)
+                .or_default()
+                .push(symbols);
+        }
+        Ok(Some(context))
+    }
+
+    fn header_language(&self, header: &Path) -> Option<Language> {
+        let nearest = self
+            .directory_languages
+            .iter()
+            .filter(|(directory, _)| header.starts_with(directory))
+            .max_by_key(|(directory, _)| directory.components().count())
+            .and_then(|(_, languages)| {
+                (languages.len() == 1)
+                    .then(|| languages.iter().next().copied())
+                    .flatten()
+            });
+        nearest.or_else(|| {
+            let languages = self
+                .directory_languages
+                .values()
+                .flatten()
+                .copied()
+                .collect::<BTreeSet<_>>();
+            (languages.len() == 1)
+                .then(|| languages.iter().next().copied())
+                .flatten()
+        })
+    }
+
+    fn build_symbols(&self, path: &Path) -> BTreeMap<String, bool> {
+        if let Some(profiles) = &self.static_profiles {
+            return profiles.symbols_for(path);
+        }
+        let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if let Some(command_symbols) = self.file_build_symbols.get(&path) {
+            return consensus_build_symbols(command_symbols);
+        }
+        self.directory_build_symbols
+            .iter()
+            .filter(|(directory, _)| path.starts_with(directory))
+            .max_by_key(|(directory, _)| directory.components().count())
+            .map_or_else(BTreeMap::new, |(_, command_symbols)| {
+                consensus_build_symbols(command_symbols)
+            })
+    }
+}
+
+fn consensus_build_symbols(command_symbols: &[BTreeMap<String, bool>]) -> BTreeMap<String, bool> {
+    let Some(first) = command_symbols.first() else {
+        return BTreeMap::new();
+    };
+    first
+        .iter()
+        .filter(|(name, value)| {
+            command_symbols
+                .iter()
+                .all(|symbols| symbols.get(*name) == Some(*value))
+        })
+        .map(|(name, value)| (name.clone(), *value))
+        .collect()
+}
+
+fn compilation_language(file: &Path, arguments: &[String], command: &str) -> Option<Language> {
+    let tokens = compilation_tokens(arguments, command);
+    for pair in tokens.windows(2) {
+        if pair[0] != "-x" {
+            continue;
+        }
+        return match pair[1] {
+            "c" | "c-header" => Some(Language::C),
+            "c++" | "c++-header" => Some(Language::Cpp),
+            _ => None,
+        };
+    }
+    match file
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "c" => Some(Language::C),
+        "cc" | "cpp" | "cxx" | "c++" => Some(Language::Cpp),
+        _ => None,
+    }
+}
+
+fn compilation_tokens<'a>(arguments: &'a [String], command: &'a str) -> Vec<&'a str> {
+    if arguments.is_empty() {
+        command.split_whitespace().collect()
+    } else {
+        arguments.iter().map(String::as_str).collect()
+    }
+}
+
+fn compilation_build_symbols(arguments: &[String], command: &str) -> BTreeMap<String, bool> {
+    let tokens = compilation_tokens(arguments, command);
+    let accepts_slash_switches = tokens.first().is_some_and(|compiler| {
+        matches!(
+            compiler
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(compiler)
+                .to_ascii_lowercase()
+                .as_str(),
+            "cl" | "cl.exe" | "clang-cl" | "clang-cl.exe"
+        )
+    });
+    let mut symbols = BTreeMap::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = tokens[index];
+        let slash_switch = accepts_slash_switches && matches!(token, "/D" | "/U");
+        let (value, consumed_next) = if matches!(token, "-D" | "-U") || slash_switch {
+            (tokens.get(index + 1).copied(), true)
+        } else if let Some(value) = token
+            .strip_prefix("-D")
+            .or_else(|| token.strip_prefix("-U"))
+            .or_else(|| {
+                accepts_slash_switches
+                    .then(|| token.strip_prefix("/D"))
+                    .flatten()
+            })
+            .or_else(|| {
+                accepts_slash_switches
+                    .then(|| token.strip_prefix("/U"))
+                    .flatten()
+            })
+        {
+            ((!value.is_empty()).then_some(value), false)
+        } else {
+            (None, false)
+        };
+        if let Some(value) = value {
+            let is_undefine = token == "-U"
+                || token == "/U"
+                || token.starts_with("-U")
+                || token.starts_with("/U");
+            let (name, assigned) = value.split_once('=').unwrap_or((value, "1"));
+            if is_c_identifier(name) {
+                if is_undefine || assigned == "1" {
+                    symbols.insert(name.to_string(), !is_undefine);
+                } else {
+                    symbols.remove(name);
+                }
+            }
+        }
+        index += usize::from(consumed_next) + 1;
+    }
+    symbols
+}
+
+fn is_c_identifier(value: &str) -> bool {
+    let mut characters = value.chars();
+    characters
+        .next()
+        .is_some_and(|character| character == '_' || character.is_ascii_alphabetic())
+        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
 pub(crate) fn discover(requested_root: &Path) -> Result<Discovery, EngineError> {
@@ -46,16 +276,48 @@ pub(crate) fn discover_with_options(
         )));
     }
 
+    let (c_family_context, compilation_diagnostic) = if metadata.is_dir() {
+        match CFamilyCompilationContext::load(&root) {
+            Ok(context) => (context, None),
+            Err(message) => (None, Some(message)),
+        }
+    } else {
+        (None, None)
+    };
     let mut discovery = Discovery {
         root: root.clone(),
         files: Vec::new(),
         ignored_subtrees: Vec::new(),
-        diagnostics: Vec::new(),
+        diagnostics: compilation_diagnostic
+            .into_iter()
+            .map(|message| {
+                let path = message
+                    .starts_with("compile_commands.json")
+                    .then(|| "compile_commands.json".to_string());
+                Diagnostic {
+                    level: DiagnosticLevel::Warning,
+                    message,
+                    path,
+                }
+            })
+            .collect(),
     };
     if metadata.is_file() {
-        push_file(&root, &root, include_nonproduction, &mut discovery);
+        push_file(
+            &root,
+            &root,
+            include_nonproduction,
+            c_family_context.as_ref(),
+            &mut discovery,
+        );
     } else {
-        walk_directory(&root, &root, include_nonproduction, &mut discovery);
+        walk_directory(
+            &root,
+            &root,
+            include_nonproduction,
+            c_family_context.as_ref(),
+            &mut discovery,
+        );
     }
     discovery
         .files
@@ -68,6 +330,7 @@ fn walk_directory(
     root: &Path,
     directory: &Path,
     include_nonproduction: bool,
+    c_family_context: Option<&CFamilyCompilationContext>,
     discovery: &mut Discovery,
 ) {
     let ignored_subtrees = Arc::new(Mutex::new(Vec::new()));
@@ -88,10 +351,8 @@ fn walk_directory(
             let ignored = entry.depth() > 0
                 && entry.file_type().is_some_and(|kind| kind.is_dir())
                 && ignored_directory(entry.path(), &filter_root);
-            if ignored {
-                if let Ok(mut paths) = filter_ignored_subtrees.lock() {
-                    paths.push(format!("{}/", relative_path(&filter_root, entry.path())));
-                }
+            if ignored && let Ok(mut paths) = filter_ignored_subtrees.lock() {
+                paths.push(format!("{}/", relative_path(&filter_root, entry.path())));
             }
             !ignored
         });
@@ -125,9 +386,16 @@ fn walk_directory(
                 relative: relative_path(root, path),
                 class: FileClass::Ignored,
                 reason: Some("symbolic link is not followed".to_string()),
+                build_symbols: BTreeMap::new(),
             });
         } else if entry.file_type().is_some_and(|kind| kind.is_file()) {
-            push_file(root, path, include_nonproduction, discovery);
+            push_file(
+                root,
+                path,
+                include_nonproduction,
+                c_family_context,
+                discovery,
+            );
         }
     }
     if let Ok(mut paths) = ignored_subtrees.lock() {
@@ -135,10 +403,25 @@ fn walk_directory(
     }
 }
 
-fn push_file(root: &Path, path: &Path, include_nonproduction: bool, discovery: &mut Discovery) {
+fn push_file(
+    root: &Path,
+    path: &Path,
+    include_nonproduction: bool,
+    c_family_context: Option<&CFamilyCompilationContext>,
+    discovery: &mut Discovery,
+) {
     let relative = relative_path(root, path);
     let relative_path = Path::new(&relative);
-    let class = classify_path_with_options(relative_path, include_nonproduction);
+    let mut class = classify_path_with_options(relative_path, include_nonproduction);
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("h"))
+        && matches!(class, FileClass::Supported(Language::Cpp))
+        && let Some(language) = c_family_context.and_then(|context| context.header_language(path))
+    {
+        class = FileClass::Supported(language);
+    }
     let reason = match class {
         FileClass::Supported(_)
         | FileClass::EmbeddedJavascriptTemplate
@@ -158,6 +441,9 @@ fn push_file(root: &Path, path: &Path, include_nonproduction: bool, discovery: &
         relative,
         class,
         reason,
+        build_symbols: c_family_context
+            .map(|context| context.build_symbols(path))
+            .unwrap_or_default(),
     });
 }
 
@@ -177,6 +463,14 @@ fn ignored_directory(path: &Path, root: &Path) -> bool {
             | "bower_components"
             | "jspm_packages"
             | "vendor"
+            | "deps"
+            | "third_party"
+            | "third-party"
+            | "thirdparty"
+            | "3rdparty"
+            | "3rd-party"
+            | "singleheader"
+            | "single-header"
             | "pods"
             | ".pnpm-store"
             | ".cache"
@@ -238,11 +532,146 @@ mod tests {
             "repo/src/__pycache__",
             "repo/.gradle",
             "repo/.nuget",
+            "repo/deps",
+            "repo/third_party",
+            "repo/third-party",
+            "repo/thirdparty",
+            "repo/3rdparty",
+            "repo/3rd-party",
+            "repo/singleheader",
+            "repo/single-header",
         ] {
             assert!(ignored_directory(Path::new(directory), root), "{directory}");
         }
         assert!(!ignored_directory(Path::new("repo/src"), root));
         assert!(!ignored_directory(Path::new("repo/packages"), root));
+    }
+
+    #[test]
+    fn compile_commands_disambiguates_c_headers_without_executing_commands() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "mehscan-compile-context-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("src")).expect("create source directory");
+        fs::create_dir_all(root.join("include")).expect("create include directory");
+        fs::write(root.join("src/native.c"), "int native(void) { return 0; }")
+            .expect("write C source");
+        fs::write(root.join("include/native.h"), "int native(void);").expect("write C header");
+        let compilation_database = serde_json::json!([{
+            "directory": root,
+            "file": "src/native.c",
+            "arguments": ["cc", "-c", "src/native.c"]
+        }]);
+        fs::write(
+            root.join("compile_commands.json"),
+            serde_json::to_vec(&compilation_database).expect("serialize compilation database"),
+        )
+        .expect("write compilation database");
+
+        let discovery = discover(&root).expect("discover C fixture");
+        let header = discovery
+            .files
+            .iter()
+            .find(|file| file.relative == "include/native.h")
+            .expect("discover header");
+        assert_eq!(header.class, FileClass::Supported(Language::C));
+
+        fs::remove_dir_all(root).expect("remove temporary fixture");
+    }
+
+    #[test]
+    fn ambiguous_mixed_compile_commands_keeps_cpp_header_fallback() {
+        let mut context = CFamilyCompilationContext::default();
+        context
+            .directory_languages
+            .entry(PathBuf::from("repo/src"))
+            .or_default()
+            .extend([Language::C, Language::Cpp]);
+        assert_eq!(
+            context.header_language(Path::new("repo/src/native.h")),
+            None
+        );
+    }
+
+    #[test]
+    fn compile_commands_exposes_only_consistent_boolean_build_symbols() {
+        let arguments = vec![
+            "cc".to_string(),
+            "-DENABLED".to_string(),
+            "-DZERO=0".to_string(),
+            "-U".to_string(),
+            "DISABLED".to_string(),
+            "/Users/source.c".to_string(),
+        ];
+        assert_eq!(
+            compilation_build_symbols(&arguments, ""),
+            BTreeMap::from([
+                ("DISABLED".to_string(), false),
+                ("ENABLED".to_string(), true),
+            ])
+        );
+
+        let msvc_arguments = vec![
+            "clang-cl.exe".to_string(),
+            "/DWIN_ENABLED=1".to_string(),
+            "/UWIN_DISABLED".to_string(),
+        ];
+        assert_eq!(
+            compilation_build_symbols(&msvc_arguments, ""),
+            BTreeMap::from([
+                ("WIN_DISABLED".to_string(), false),
+                ("WIN_ENABLED".to_string(), true),
+            ])
+        );
+
+        let commands = vec![
+            BTreeMap::from([("PROFILE".to_string(), true)]),
+            BTreeMap::new(),
+        ];
+        assert!(consensus_build_symbols(&commands).is_empty());
+    }
+
+    #[test]
+    fn selected_compilation_database_takes_precedence_over_static_build_files() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "mehscan-build-precedence-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("create precedence fixture");
+        fs::write(root.join("profile.c"), "int profile(void) { return 0; }")
+            .expect("write precedence source");
+        fs::write(
+            root.join("CMakeLists.txt"),
+            "add_compile_definitions(STATIC_ONLY SELECTED_PROFILE)\n",
+        )
+        .expect("write static build profile");
+        fs::write(
+            root.join("compile_commands.json"),
+            r#"[{"directory":".","file":"profile.c","arguments":["cc","-USELECTED_PROFILE","profile.c"]}]"#,
+        )
+        .expect("write selected compilation database");
+
+        let discovery = discover(&root).expect("discover precedence fixture");
+        let source = discovery
+            .files
+            .iter()
+            .find(|file| file.relative == "profile.c")
+            .expect("discover profile source");
+        assert_eq!(
+            source.build_symbols,
+            BTreeMap::from([("SELECTED_PROFILE".to_string(), false)])
+        );
+        assert!(!source.build_symbols.contains_key("STATIC_ONLY"));
+        fs::remove_dir_all(root).expect("remove precedence fixture");
     }
 
     #[test]

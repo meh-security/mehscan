@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mehscan Report Quality"
+  short_description: "Judge whether triaged reports are actionable"
+  default_prompt: "Review this final Mehscan Markdown report for scope, clarity, and actionability."

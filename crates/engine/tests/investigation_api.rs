@@ -14,6 +14,12 @@ fn top_level_fixture_root() -> PathBuf {
         .join("tests/fixtures/investigation")
 }
 
+fn native_investigation_fixture_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/fixtures/native-investigation")
+}
+
 #[test]
 fn supports_bounded_ai_investigation_workflow() {
     let root = fixture_root();
@@ -122,6 +128,58 @@ fn supports_bounded_ai_investigation_workflow() {
     )
     .expect("repeated job should succeed");
     assert_eq!(job, repeated, "job assembly must be deterministic");
+}
+
+#[test]
+fn exposes_bounded_native_call_inventory_without_flow_claims() {
+    let root = top_level_fixture_root();
+
+    let calls = mehscan_engine::investigation::find_native_call_sites(
+        &root,
+        "consume",
+        Some("native.cpp"),
+        None,
+    )
+    .expect("native call inventory should succeed");
+    assert_eq!(calls.results.matches.len(), 1);
+    assert_eq!(calls.results.matches[0].call_kind, "bare_identifier");
+    assert_eq!(calls.results.matches[0].text, "consume(packet.length)");
+    assert_eq!(calls.results.matches[0].arguments[0].text, "packet.length");
+    assert_eq!(
+        calls.results.matches[0]
+            .expression
+            .as_ref()
+            .expect("statement context")
+            .ast_kind,
+        "expression_statement"
+    );
+    assert!(
+        calls.results.matches[0]
+            .ambiguity
+            .contains(&"semantic_target_not_resolved".to_string())
+    );
+}
+
+#[test]
+fn native_syntax_inventory_retains_local_matches_during_parse_recovery() {
+    let calls = mehscan_engine::investigation::find_native_call_sites(
+        &native_investigation_fixture_root(),
+        "consume",
+        Some("recovered.cpp"),
+        None,
+    )
+    .expect("recovered native call inventory should succeed");
+    assert_eq!(calls.results.matches.len(), 1);
+    assert_eq!(
+        calls.results.parse_recovered_files,
+        vec!["recovered.cpp".to_string()]
+    );
+    assert!(calls.results.skipped_files.is_empty());
+    assert!(
+        calls.results.matches[0]
+            .ambiguity
+            .contains(&"macro_origin_unknown".to_string())
+    );
 }
 
 #[test]

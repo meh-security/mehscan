@@ -18,6 +18,8 @@ use crate::code::dotnet_project::DotnetProjectContext;
 use crate::code::go_context::GoProjectContext;
 use crate::code::java_context::JavaProjectContext;
 use crate::code::matcher::{ParseOutcome, ScanDependencies, scan_source};
+use crate::code::native_drogon::DrogonProjectContext;
+use crate::code::native_invalidation::NativeInvalidationProjectContext;
 use crate::code::node_context::NodeProjectContext;
 use crate::code::object_input::ObjectInputProjectContext;
 use crate::code::python_context::PythonProjectContext;
@@ -52,6 +54,8 @@ pub struct ScanProfile {
     pub csharp_rpc_context_microseconds: u128,
     pub java_project_context_microseconds: u128,
     pub go_project_context_microseconds: u128,
+    pub drogon_project_context_microseconds: u128,
+    pub native_invalidation_context_microseconds: u128,
     pub python_project_context_microseconds: u128,
     pub worker_count: usize,
     pub file_analysis: FileAnalysisProfile,
@@ -295,6 +299,7 @@ pub(crate) fn scan_profiled(
                     relative: file.relative,
                     language: Language::Javascript,
                     source,
+                    build_symbols: BTreeMap::new(),
                 });
             }
             FileClass::Razor if !analyze_file => {
@@ -454,6 +459,7 @@ pub(crate) fn scan_profiled(
                     relative: file.relative,
                     language,
                     source,
+                    build_symbols: file.build_symbols,
                 });
             }
         }
@@ -525,6 +531,29 @@ pub(crate) fn scan_profiled(
     );
     let go_project_context_microseconds = go_project_context_started.elapsed().as_micros();
     trace_scan_phase("go_project_context", go_project_context_microseconds);
+    let drogon_project_context_started = Instant::now();
+    let drogon_project_context = DrogonProjectContext::from_sources(
+        prepared
+            .iter()
+            .map(|file| (file.relative.as_str(), file.language, file.source.as_str())),
+    );
+    let drogon_project_context_microseconds = drogon_project_context_started.elapsed().as_micros();
+    trace_scan_phase(
+        "drogon_project_context",
+        drogon_project_context_microseconds,
+    );
+    let native_invalidation_context_started = Instant::now();
+    let native_invalidation_context = NativeInvalidationProjectContext::from_sources(
+        prepared
+            .iter()
+            .map(|file| (file.relative.as_str(), file.language, file.source.as_str())),
+    );
+    let native_invalidation_context_microseconds =
+        native_invalidation_context_started.elapsed().as_micros();
+    trace_scan_phase(
+        "native_invalidation_context",
+        native_invalidation_context_microseconds,
+    );
     let python_project_context_started = Instant::now();
     let python_project_context = PythonProjectContext::from_sources(
         prepared
@@ -586,6 +615,8 @@ pub(crate) fn scan_profiled(
         &csharp_rpc_context,
         &java_project_context,
         &go_project_context,
+        &drogon_project_context,
+        &native_invalidation_context,
         &python_project_context,
         &rust_project_context,
         &dotnet_project_context,
@@ -668,6 +699,16 @@ pub(crate) fn scan_profiled(
     trace_scan_phase("file_analysis", file_analysis.total_microseconds);
 
     let finalization_started = Instant::now();
+    security_paths.extend(super::native_allocation::link_native_allocation_paths(
+        &mut evidence,
+    ));
+    security_paths.extend(super::native_lifetime::link_native_lifetime_paths(
+        &mut evidence,
+    ));
+    security_paths.extend(super::native_state::link_native_state_paths(&mut evidence));
+    security_paths.extend(super::native_ownership::link_native_ownership_paths(
+        &mut evidence,
+    ));
     evidence.sort_by(|left, right| {
         left.location
             .path
@@ -707,6 +748,8 @@ pub(crate) fn scan_profiled(
         csharp_rpc_context_microseconds,
         java_project_context_microseconds,
         go_project_context_microseconds,
+        drogon_project_context_microseconds,
+        native_invalidation_context_microseconds,
         python_project_context_microseconds,
         worker_count,
         file_analysis,
@@ -730,6 +773,8 @@ fn analyze_prepared_files(
     csharp_rpc_context: &CsharpRpcProjectContext,
     java_project_context: &JavaProjectContext,
     go_project_context: &GoProjectContext,
+    drogon_project_context: &DrogonProjectContext,
+    native_invalidation_context: &NativeInvalidationProjectContext,
     python_project_context: &PythonProjectContext,
     rust_project_context: &RustProjectContext,
     dotnet_project_context: &DotnetProjectContext,
@@ -757,6 +802,8 @@ fn analyze_prepared_files(
                     csharp_rpc_context,
                     java_project_context,
                     go_project_context,
+                    drogon_project_context,
+                    native_invalidation_context,
                     python_project_context,
                     rust_project_context,
                     dotnet_project_context,
@@ -795,6 +842,8 @@ fn analyze_prepared_files(
                                 csharp_rpc_context,
                                 java_project_context,
                                 go_project_context,
+                                drogon_project_context,
+                                native_invalidation_context,
                                 python_project_context,
                                 rust_project_context,
                                 dotnet_project_context,
@@ -832,6 +881,8 @@ fn scan_prepared_file(
     csharp_rpc_context: &CsharpRpcProjectContext,
     java_project_context: &JavaProjectContext,
     go_project_context: &GoProjectContext,
+    drogon_project_context: &DrogonProjectContext,
+    native_invalidation_context: &NativeInvalidationProjectContext,
     python_project_context: &PythonProjectContext,
     rust_project_context: &RustProjectContext,
     dotnet_project_context: &DotnetProjectContext,
@@ -859,9 +910,12 @@ fn scan_prepared_file(
             csharp_rpc_context,
             java_project_context,
             go_project_context,
+            drogon_project_context,
+            native_invalidation_context,
             python_project_context,
             rust_project_context,
             dotnet_project_context,
+            build_symbols: &file.build_symbols,
         },
     )
 }
@@ -899,6 +953,7 @@ struct PreparedFile {
     relative: String,
     language: Language,
     source: String,
+    build_symbols: BTreeMap<String, bool>,
 }
 
 pub(crate) fn read_secret_text(path: &Path) -> Result<String, String> {
@@ -1004,6 +1059,57 @@ fn capability_name(capability: Capability) -> &'static str {
         Capability::TokenGeneration => "token_generation",
         Capability::CookieConfiguration => "cookie_configuration",
         Capability::CorsConfiguration => "cors_configuration",
+        Capability::BufferWrite => "buffer_write",
+        Capability::BufferCapacityValidation => "buffer_capacity_validation",
+        Capability::StringTerminationValidation => "string_termination_validation",
+        Capability::SignedSizeConversion => "signed_size_conversion",
+        Capability::SignedSizeMemoryOperation => "signed_size_memory_operation",
+        Capability::NonnegativeSizeValidation => "nonnegative_size_validation",
+        Capability::LocalHeapAllocation => "local_heap_allocation",
+        Capability::LocalHeapDeallocation => "local_heap_deallocation",
+        Capability::EarlyExitDeallocation => "early_exit_deallocation",
+        Capability::CppHeapAllocation => "cpp_heap_allocation",
+        Capability::CppHeapDeallocation => "cpp_heap_deallocation",
+        Capability::CppAllocationFamilyValidation => "cpp_allocation_family_validation",
+        Capability::CppRaiiOwner => "cpp_raii_owner",
+        Capability::CppOwnershipTransfer => "cpp_ownership_transfer",
+        Capability::IntegerNarrowing => "integer_narrowing",
+        Capability::ArithmeticDivision => "arithmetic_division",
+        Capability::NonzeroValidation => "nonzero_validation",
+        Capability::InputQuantity => "input_quantity",
+        Capability::DomainLimitComputation => "domain_limit_computation",
+        Capability::DomainLimitValidation => "domain_limit_validation",
+        Capability::CountControlledMemoryOperation => "count_controlled_memory_operation",
+        Capability::IntegerWidthConstraint => "integer_width_constraint",
+        Capability::ArithmeticMultiplication => "arithmetic_multiplication",
+        Capability::MultiplicationOverflowValidation => "multiplication_overflow_validation",
+        Capability::ArchitectureSizeInput => "architecture_size_input",
+        Capability::AllocationSizeComputation => "allocation_size_computation",
+        Capability::ArchitectureSizeValidation => "architecture_size_validation",
+        Capability::StackAddressEscape => "stack_address_escape",
+        Capability::LifetimeCallbackHandoff => "lifetime_callback_handoff",
+        Capability::PostReturnDereference => "post_return_dereference",
+        Capability::StackLifetimeRestoration => "stack_lifetime_restoration",
+        Capability::InvalidatingReturnContract => "invalidating_return_contract",
+        Capability::PostInvalidationUse => "post_invalidation_use",
+        Capability::InvalidationStatusValidation => "invalidation_status_validation",
+        Capability::SerializedBlobLoad => "serialized_blob_load",
+        Capability::SerializedBlobCopy => "serialized_blob_copy",
+        Capability::SerializedBlobLengthValidation => "serialized_blob_length_validation",
+        Capability::SerializedScalarLoad => "serialized_scalar_load",
+        Capability::LoadedMemoryExtent => "loaded_memory_extent",
+        Capability::MemoryExtentOverflowValidation => "memory_extent_overflow_validation",
+        Capability::DecodedInputExtent => "decoded_input_extent",
+        Capability::RemainingInputRead => "remaining_input_read",
+        Capability::RemainingInputValidation => "remaining_input_validation",
+        Capability::RequiredStateInitialization => "required_state_initialization",
+        Capability::StatePointerHandoff => "state_pointer_handoff",
+        Capability::StateDependentDereference => "state_dependent_dereference",
+        Capability::FatalStateInvariantValidation => "fatal_state_invariant_validation",
+        Capability::OwnedResourceAllocation => "owned_resource_allocation",
+        Capability::OwnershipFlagRegistration => "ownership_flag_registration",
+        Capability::OwnershipGatedRelease => "ownership_gated_release",
+        Capability::FormatStringOutput => "format_string_output",
         Capability::MemorySafetyBoundary => "memory_safety_boundary",
         Capability::NativeInteropBoundary => "native_interop_boundary",
         Capability::TlsConfiguration => "tls_configuration",
@@ -1080,10 +1186,33 @@ fn cwe_coverage(rules: &[Rule]) -> Vec<CweCoverage> {
             .or_default()
             .insert(Language::Go);
     }
+    // C-family semantic relationship passes cover these arithmetic,
+    // lifetime, exceptional-state, and domain-dependent validation surfaces without a
+    // standalone declarative matcher.
+    for cwe in [
+        "CWE-59", "CWE-170", "CWE-190", "CWE-195", "CWE-369", "CWE-401", "CWE-404", "CWE-416",
+        "CWE-476", "CWE-562", "CWE-680", "CWE-681", "CWE-732", "CWE-754", "CWE-755", "CWE-772",
+        "CWE-825", "CWE-1284",
+    ] {
+        by_cwe
+            .entry(cwe.to_string())
+            .or_default()
+            .extend([Language::C, Language::Cpp]);
+    }
     by_cwe
-        .entry("CWE-611".to_string())
+        .entry("CWE-762".to_string())
         .or_default()
-        .extend([Language::Csharp, Language::Java]);
+        .insert(Language::Cpp);
+    by_cwe
+        .entry("CWE-367".to_string())
+        .or_default()
+        .extend([Language::C, Language::Cpp]);
+    by_cwe.entry("CWE-611".to_string()).or_default().extend([
+        Language::C,
+        Language::Cpp,
+        Language::Csharp,
+        Language::Java,
+    ]);
     by_cwe
         .into_iter()
         .map(|(cwe, languages)| CweCoverage {
@@ -1096,8 +1225,10 @@ fn cwe_coverage(rules: &[Rule]) -> Vec<CweCoverage> {
         .collect()
 }
 
-fn all_languages() -> [Language; 8] {
+fn all_languages() -> [Language; 10] {
     [
+        Language::C,
+        Language::Cpp,
         Language::Csharp,
         Language::Java,
         Language::Javascript,

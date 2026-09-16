@@ -941,10 +941,10 @@ fn receiver_types(root: &Node<'_, StrDoc<SupportLang>>) -> BTreeMap<(usize, Stri
                 .children()
                 .filter(|child| child.kind().as_ref() == "variable_declarator")
             {
-                if let Some(name) = variable.field("name") {
-                    if let Some(owner) = enclosing_type_start(&node) {
-                        result.insert((owner, name.text().into_owned()), kind.text().into_owned());
-                    }
+                if let Some(name) = variable.field("name")
+                    && let Some(owner) = enclosing_type_start(&node)
+                {
+                    result.insert((owner, name.text().into_owned()), kind.text().into_owned());
                 }
             }
         }

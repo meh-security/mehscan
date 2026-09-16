@@ -270,3 +270,46 @@
     references:
       - https://cwe.mitre.org/data/definitions/918.html
       - https://docs.rs/reqwest/latest/reqwest/
+
+- id: c-libcurl-outbound-request
+  version: 1
+  title: C libcurl outbound destination
+  language: c
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match: &libcurl_url_match
+    any:
+      - pattern: curl_easy_setopt($HANDLE, CURLOPT_URL, $URL)
+        context: |
+          void pattern_context() { curl_easy_setopt($HANDLE, CURLOPT_URL, $URL); }
+        selector: call_expression
+        captures: { client: HANDLE, endpoint: URL }
+  tags: [http, network, ssrf, libcurl, native]
+  ai: &libcurl_guidance
+    investigate:
+      - origin and normalization of the effective URL
+      - allowed schemes, redirects, proxies, DNS resolution, and private or link-local destinations
+      - libcurl protocol restrictions and deployment network controls
+    verify:
+      - confirm the configured handle performs the request and retains this URL option
+      - distinguish attacker-selected destinations from fixed service endpoints
+    exclude:
+      - do not claim SSRF from a CURLOPT_URL observation without controllable destination evidence
+  provenance: &libcurl_provenance
+    note: libcurl CURLOPT_URL configuration is mapped to the shared outbound-destination evidence surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://curl.se/libcurl/c/CURLOPT_URL.html
+
+- id: cpp-libcurl-outbound-request
+  version: 1
+  title: C++ libcurl outbound destination
+  language: cpp
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match: *libcurl_url_match
+  tags: [http, network, ssrf, libcurl, native, cpp]
+  ai: *libcurl_guidance
+  provenance: *libcurl_provenance

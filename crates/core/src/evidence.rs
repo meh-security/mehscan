@@ -60,6 +60,149 @@ pub enum Capability {
     TokenGeneration,
     CookieConfiguration,
     CorsConfiguration,
+    /// A native memory-writing operation whose safety depends on destination
+    /// capacity, source extent, size arithmetic, or termination semantics.
+    BufferWrite,
+    /// Exact local evidence that a native byte-copy size does not exceed a
+    /// statically declared destination array capacity.
+    BufferCapacityValidation,
+    /// Exact local evidence that a bounded native string copy is followed by
+    /// an in-scope terminator write within the destination capacity.
+    StringTerminationValidation,
+    /// An explicitly signed native value converted to the unsigned size domain
+    /// immediately used by an allocation or buffer operation.
+    SignedSizeConversion,
+    /// A native allocation or buffer operation whose extent contains an exact
+    /// signed-to-size conversion.
+    SignedSizeMemoryOperation,
+    /// Exact local evidence that the signed size value cannot be negative
+    /// before its conversion and memory use.
+    NonnegativeSizeValidation,
+    /// A standard C heap allocation assigned directly to a local pointer whose
+    /// same-function release contract can be established.
+    LocalHeapAllocation,
+    /// An exact `free(local)` that establishes the expected same-function
+    /// release point for a local heap allocation.
+    LocalHeapDeallocation,
+    /// An exact `free(local)` executed in the same block before an early return.
+    EarlyExitDeallocation,
+    /// A C++ scalar or array allocation created by an ordinary `new`
+    /// expression or standard `make_unique` construction.
+    CppHeapAllocation,
+    /// A C++ `delete` or `delete[]` applied directly to the allocated local.
+    CppHeapDeallocation,
+    /// Exact agreement between scalar/array allocation and deallocation forms.
+    CppAllocationFamilyValidation,
+    /// A standard `std::unique_ptr` or `std::make_unique` owner whose type
+    /// establishes scalar versus array destruction semantics.
+    CppRaiiOwner,
+    /// Direct construction of a standard unique owner from a raw local.
+    CppOwnershipTransfer,
+    /// A C-family conversion that may discard higher-order integer bits before
+    /// the converted value reaches a security-relevant arithmetic operation.
+    IntegerNarrowing,
+    /// A C-family division whose divisor is linked to a potentially lossy
+    /// integer conversion and whose nonzero invariant requires review.
+    ArithmeticDivision,
+    /// Exact local evidence that a divisor derived from a narrowing conversion
+    /// is rejected or positively constrained before division.
+    NonzeroValidation,
+    /// A caller-supplied quantity that controls a native operation and is
+    /// subject to a domain-specific limit.
+    InputQuantity,
+    /// A limit computed from local object state rather than a fixed global
+    /// storage maximum.
+    DomainLimitComputation,
+    /// Exact local evidence that an input quantity is rejected when it exceeds
+    /// the computed domain limit.
+    DomainLimitValidation,
+    /// A native memory operation whose extent is derived from an input count.
+    CountControlledMemoryOperation,
+    /// A C-family arithmetic accumulator whose declared fixed width constrains
+    /// a later security-relevant calculation.
+    IntegerWidthConstraint,
+    /// A C-family multiplication linked to a downstream memory-operation
+    /// extent through an exact local value handoff.
+    ArithmeticMultiplication,
+    /// Exact local evidence that multiplication operands are range-checked
+    /// against the accumulator maximum before the operation.
+    MultiplicationOverflowValidation,
+    /// A native input quantity whose safe upper bound depends on the target
+    /// architecture's representable allocation size.
+    ArchitectureSizeInput,
+    /// Arithmetic derived from an architecture-sized input that determines a
+    /// subsequent native allocation extent.
+    AllocationSizeComputation,
+    /// Exact rejecting validation that constrains an input using an
+    /// architecture-size maximum before allocation-size arithmetic.
+    ArchitectureSizeValidation,
+    /// A pointer to a block-scoped native object stored in state that can
+    /// outlive the declaring function.
+    StackAddressEscape,
+    /// A call site that binds a concrete callback and owner object into a
+    /// callback-executing wrapper.
+    LifetimeCallbackHandoff,
+    /// A wrapper dereference of callback-mutated owner state after the
+    /// callback has returned.
+    PostReturnDereference,
+    /// Exact restoration of escaped owner state before the stack object's
+    /// lifetime ends.
+    StackLifetimeRestoration,
+    /// A C-family call whose documented status result reports that a pointer
+    /// argument may no longer be valid after the call returns.
+    InvalidatingReturnContract,
+    /// A use of a pointer argument after a call that may have invalidated it.
+    PostInvalidationUse,
+    /// Exact status handling that terminates the current path before a
+    /// possibly invalidated pointer can be used again.
+    InvalidationStatusValidation,
+    /// A binary or serialized blob returned by a native loader for subsequent
+    /// fixed-layout processing.
+    SerializedBlobLoad,
+    /// A native copy whose extent is derived from the expected fixed layout
+    /// of a loaded serialized blob.
+    SerializedBlobCopy,
+    /// Exact validation that the loaded blob length matches the fixed-layout
+    /// copy extent before the copy occurs.
+    SerializedBlobLengthValidation,
+    /// A scalar count or dimension returned by a native serialized-input
+    /// loader and used in a local memory-extent calculation.
+    SerializedScalarLoad,
+    /// A native allocation/copy extent computed from a serialized scalar and
+    /// additional local multiplicative operands.
+    LoadedMemoryExtent,
+    /// Exact rejecting checks that make a loaded multiplicative memory extent
+    /// representable before it is computed and consumed.
+    MemoryExtentOverflowValidation,
+    /// A decoded native length or extent compared with an authoritative
+    /// remaining-input boundary before buffer consumption.
+    DecodedInputExtent,
+    /// A native buffer-consuming operation whose source position and extent
+    /// are locally related to a remaining-input check.
+    RemainingInputRead,
+    /// A non-wrapping rejecting comparison that proves a decoded extent fits
+    /// the authoritative remaining input before the read.
+    RemainingInputValidation,
+    /// A native object member whose required initialization can be skipped by
+    /// an exceptional input path.
+    RequiredStateInitialization,
+    /// A required object-state pointer passed to a helper that consumes it.
+    StatePointerHandoff,
+    /// An indexed access through a handed-off required-state pointer.
+    StateDependentDereference,
+    /// A fatal rejection that prevents execution from continuing with absent
+    /// required object state.
+    FatalStateInvariantValidation,
+    /// A native allocation stored in persistent object state whose release is
+    /// governed by an independent ownership contract.
+    OwnedResourceAllocation,
+    /// Registration of an ownership bit for a specific allocated state member.
+    OwnershipFlagRegistration,
+    /// Cleanup of an allocated state member gated by its ownership bit.
+    OwnershipGatedRelease,
+    /// A printf-family operation where the format string controls how later
+    /// arguments are interpreted.
+    FormatStringOutput,
     MemorySafetyBoundary,
     NativeInteropBoundary,
     TlsConfiguration,

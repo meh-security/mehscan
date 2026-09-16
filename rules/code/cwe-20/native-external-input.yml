@@ -1,0 +1,65 @@
+- id: c-native-external-input
+  version: 1
+  title: C process, environment, file, or socket input
+  language: c
+  kind: source
+  capability: external_input
+  confidence: medium
+  cwe: [CWE-20]
+  match: &native_input_match
+    any:
+      - pattern: getenv($NAME)
+        context: |
+          void pattern_context() { getenv($NAME); }
+        selector: call_expression
+        captures: { name: NAME }
+      - pattern: read($DESCRIPTOR, $VALUE, $SIZE)
+        context: |
+          void pattern_context() { read($DESCRIPTOR, $VALUE, $SIZE); }
+        selector: call_expression
+        captures: { descriptor: DESCRIPTOR, value: VALUE, size: SIZE }
+      - pattern: recv($SOCKET, $VALUE, $SIZE, $FLAGS)
+        context: |
+          void pattern_context() { recv($SOCKET, $VALUE, $SIZE, $FLAGS); }
+        selector: call_expression
+        captures: { socket: SOCKET, value: VALUE, size: SIZE, flags: FLAGS }
+      - pattern: recvfrom($SOCKET, $VALUE, $SIZE, $FLAGS, $ADDRESS, $ADDRESS_LENGTH)
+        context: |
+          void pattern_context() { recvfrom($SOCKET, $VALUE, $SIZE, $FLAGS, $ADDRESS, $ADDRESS_LENGTH); }
+        selector: call_expression
+        captures: { socket: SOCKET, value: VALUE, size: SIZE, flags: FLAGS }
+      - pattern: fread($VALUE, $ELEMENT_SIZE, $COUNT, $STREAM)
+        context: |
+          void pattern_context() { fread($VALUE, $ELEMENT_SIZE, $COUNT, $STREAM); }
+        selector: call_expression
+        captures: { value: VALUE, size: COUNT, stream: STREAM }
+  tags: [native, external-input, process, socket, file]
+  ai: &native_input_guidance
+    investigate:
+      - who controls the process environment, descriptor, stream, or socket at deployment and runtime
+      - the number of bytes actually produced and whether termination or encoding is guaranteed
+      - validation and downstream security-sensitive uses of the resulting value
+    verify:
+      - distinguish packaged or administrator-only input from attacker-controlled runtime input
+      - confirm the produced buffer or return value reaches the reviewed operation
+    exclude:
+      - do not assume every file descriptor, stream, or environment variable is attacker-controlled
+      - do not treat the input observation alone as a vulnerability
+  provenance: &native_input_provenance
+    note: Native process, descriptor, file, and socket input APIs are represented as external trust-boundary evidence with explicit ownership questions.
+    references:
+      - https://cwe.mitre.org/data/definitions/20.html
+      - https://pubs.opengroup.org/onlinepubs/9799919799/functions/read.html
+
+- id: cpp-native-external-input
+  version: 1
+  title: C++ process, environment, file, or socket input
+  language: cpp
+  kind: source
+  capability: external_input
+  confidence: medium
+  cwe: [CWE-20]
+  match: *native_input_match
+  tags: [native, external-input, process, socket, file, cpp]
+  ai: *native_input_guidance
+  provenance: *native_input_provenance

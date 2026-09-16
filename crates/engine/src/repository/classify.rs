@@ -37,6 +37,13 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
         return FileClass::Ignored;
     };
     let class = match extension.to_ascii_lowercase().as_str() {
+        "c" => FileClass::Supported(Language::C),
+        // C and C++ share the .h suffix. Without compilation metadata the C++
+        // grammar is the safer syntax superset. Keep this documented fallback
+        // until compilation metadata can classify headers by translation unit.
+        "h" | "hh" | "hpp" | "hxx" | "cc" | "cpp" | "cxx" | "c++" => {
+            FileClass::Supported(Language::Cpp)
+        }
         "cs" => FileClass::Supported(Language::Csharp),
         "cshtml" => FileClass::Razor,
         "aspx" | "ascx" => FileClass::WebForms,
@@ -51,8 +58,9 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
         "json" | "json5" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" | "config"
         | "properties" | "xml" | "env" | "tf" | "tfvars" | "hcl" | "md" | "markdown" | "txt"
         | "sql" | "graphql" | "sh" | "bash" | "zsh" | "ps1" => FileClass::SecretOnly,
-        "php" | "kt" | "kts" | "rb" | "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "scala"
-        | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => FileClass::UnsupportedSource,
+        "php" | "kt" | "kts" | "rb" | "scala" | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => {
+            FileClass::UnsupportedSource
+        }
         _ => FileClass::Ignored,
     };
     if !include_nonproduction
@@ -78,6 +86,17 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
             component.as_str(),
             "test"
                 | "tests"
+                | "unit_test"
+                | "unit_tests"
+                | "unit-test"
+                | "unit-tests"
+                | "unittest"
+                | "unittests"
+                | "integration_test"
+                | "integration_tests"
+                | "integration-test"
+                | "integration-tests"
+                | "test_utils"
                 | "test_crates"
                 | "__tests__"
                 | "spec"
@@ -91,9 +110,18 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
                 | "benchmark"
                 | "benchmarks"
                 | "fuzz"
+                | "oss-fuzz"
                 | "__mocks__"
                 | "migrations"
-        )
+        ) || component.starts_with("test_")
+            || component.starts_with("test-")
+            || component.starts_with("test.")
+            || component.ends_with("_test")
+            || component.ends_with("_tests")
+            || component.ends_with("-test")
+            || component.ends_with("-tests")
+            || component.ends_with(".test")
+            || component.ends_with(".tests")
     });
     if in_nonproduction_directory && !is_next_app_route_module(path) {
         return true;
@@ -203,6 +231,18 @@ mod tests {
             FileClass::Supported(Language::Rust)
         );
         assert_eq!(
+            classify_path(Path::new("native.c")),
+            FileClass::Supported(Language::C)
+        );
+        assert_eq!(
+            classify_path(Path::new("native.cpp")),
+            FileClass::Supported(Language::Cpp)
+        );
+        assert_eq!(
+            classify_path(Path::new("native.h")),
+            FileClass::Supported(Language::Cpp)
+        );
+        assert_eq!(
             classify_path(Path::new("launcher.pyw")),
             FileClass::Supported(Language::Python)
         );
@@ -235,7 +275,15 @@ mod tests {
     fn routes_tests_and_generated_sources_to_secret_only_scanning() {
         for path in [
             "tests/unit/login.ts",
+            "apps/unit_tests/xmlsec_unit_tests.c",
+            "apps/unit-tests/xmlsec-unit-tests.cpp",
+            "tests/integration_tests/crypto.c",
+            "tests/integration-tests/crypto.cpp",
+            "test_utils/test_main.c",
             "test_crates/example/src/lib.rs",
+            "kitty_tests/parser.py",
+            "parser_tests/native.c",
+            "test_helpers/process.go",
             "src/login.spec.ts",
             "src/login.test.js",
             "pkg/login_test.go",
@@ -253,6 +301,9 @@ mod tests {
             "types/index.d.cts",
             "public/app.min.js",
             "internal/api/messages.pb.go",
+            "tests/native_test.c",
+            "fuzz/parser.cpp",
+            "apps/oss-fuzz/parser.c",
             "Form.Designer.cs",
             "Generated.g.cs",
             "benches/parser.rs",
@@ -268,6 +319,21 @@ mod tests {
         assert_eq!(
             classify_path(Path::new("src/login.ts")),
             FileClass::Supported(Language::Typescript)
+        );
+        assert_eq!(
+            classify_path(Path::new("apps/unit_testsupport/parser.c")),
+            FileClass::Supported(Language::C),
+            "test-like filename substrings are not directory exclusions"
+        );
+        assert_eq!(
+            classify_path(Path::new("apps/contest/parser.c")),
+            FileClass::Supported(Language::C),
+            "ordinary directory names ending in the letters test remain scanned"
+        );
+        assert_eq!(
+            classify_path(Path::new("apps/unitary/parser.cpp")),
+            FileClass::Supported(Language::Cpp),
+            "ordinary production directory names remain scanned"
         );
         assert_eq!(
             classify_path(Path::new("src/app/api/webhooks/test/route.ts")),
@@ -286,6 +352,10 @@ mod tests {
         assert_eq!(
             classify_path_with_options(Path::new("src/migrations/0001_initial.py"), true),
             FileClass::Supported(Language::Python)
+        );
+        assert_eq!(
+            classify_path_with_options(Path::new("apps/unit_tests/xmlsec_unit_tests.c"), true),
+            FileClass::Supported(Language::C)
         );
     }
 
