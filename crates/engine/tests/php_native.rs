@@ -93,7 +93,7 @@ fn php_native_boundaries_preserve_identity_scope_and_safe_alternatives() {
         "{:?}",
         result.diagnostics
     );
-    assert_eq!(result.coverage.languages[&Language::Php].scanned, 4);
+    assert_eq!(result.coverage.languages[&Language::Php].scanned, 5);
     for symbol in [
         "direct_command",
         "alias_command",
@@ -141,6 +141,8 @@ fn php_native_boundaries_preserve_identity_scope_and_safe_alternatives() {
         "replaced_database",
         "sibling_database",
         "helper_may_replace_receiver",
+        "qualified_global_lookalike",
+        "imported_global_lookalike",
         "prepared_safe",
     ] {
         assert_eq!(

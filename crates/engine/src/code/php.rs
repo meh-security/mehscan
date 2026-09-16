@@ -200,7 +200,8 @@ impl<'a> PhpContext<'a> {
         };
         if observed.starts_with('\\') {
             let canonical = observed.trim_start_matches('\\');
-            return (!canonical.contains('\\')).then(|| canonical.to_string());
+            return (!canonical.contains('\\') && !self.global_shadow(canonical, function))
+                .then(|| canonical.to_string());
         }
         if observed.contains('\\') {
             return None;
@@ -208,15 +209,36 @@ impl<'a> PhpContext<'a> {
         if let Some(import) = self.imports.iter().find(|import| {
             import.function == function && import.alias == observed && import.scope == scope
         }) {
-            return (!import.target.contains('\\')).then(|| import.target.clone());
+            return (!import.target.contains('\\')
+                && !self.global_shadow(&import.target, function))
+            .then(|| import.target.clone());
         }
         // Bare names in a namespace may resolve to another included file's API.
-        let namespaced = self.root.dfs().any(|n| {
+        (!self.namespaced_scope(&scope) && !self.global_shadow(&observed, function))
+            .then_some(observed)
+    }
+
+    fn namespaced_scope(&self, scope: &Range<usize>) -> bool {
+        self.root.dfs().any(|n| {
             n.kind().as_ref() == "namespace_definition"
                 && n.field("name").is_some()
-                && namespace_scope(&n, &self.root) == scope
-        });
-        (!namespaced).then_some(observed)
+                && namespace_scope(&n, &self.root) == *scope
+        })
+    }
+
+    fn global_shadow(&self, canonical: &str, function: bool) -> bool {
+        self.root.dfs().any(|declaration| {
+            declaration.kind().as_ref()
+                == if function {
+                    "function_definition"
+                } else {
+                    "class_declaration"
+                }
+                && declaration
+                    .field("name")
+                    .is_some_and(|n| n.text().eq_ignore_ascii_case(canonical))
+                && !self.namespaced_scope(&namespace_scope(&declaration, &self.root))
+        })
     }
 
     fn pdo_receiver(&self, receiver: &PhpNode<'a>, call: &PhpNode<'a>) -> bool {
