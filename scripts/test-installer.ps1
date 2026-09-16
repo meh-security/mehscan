@@ -19,7 +19,16 @@ $passed = 0
 function Assert-Rejected {
     param([string]$Name, [scriptblock]$Action)
     $rejected = $false
-    try { & $Action | Out-Null } catch { $rejected = $true }
+    # Expected native failures must not become the exit status of the CI step.
+    $previousExitCode = Get-Variable LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
+    $previousExitValue = if ($null -ne $previousExitCode) { $previousExitCode.Value } else { $null }
+    try { & $Action | Out-Null } catch { $rejected = $true } finally {
+        if ($null -ne $previousExitCode) {
+            $global:LASTEXITCODE = $previousExitValue
+        } else {
+            Remove-Variable LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
+        }
+    }
     if (-not $rejected) { throw "FAIL: $Name was accepted" }
     $script:passed++
     Write-Output "PASS: $Name rejected"
@@ -88,7 +97,10 @@ try {
     'malformed checksum' | Set-Content $checksumPath
     Assert-Rejected 'malformed checksum' { Assert-ArchiveChecksum $archivePath $checksumPath $assetName }
     function gh { $global:LASTEXITCODE = 1; 'verification rejected' }
+    $global:LASTEXITCODE = 0
     Assert-Rejected 'verifier failure' { Invoke-GitHubCli @('attestation', 'verify') }
+    if ($LASTEXITCODE -ne 0) { throw 'Expected verifier failure leaked its exit status' }
+    $passed++
     Remove-Item Function:gh
     $policy = @(Get-VerificationArguments a.zip b.jsonl v0.2.0 ('a' * 40))
     foreach ($required in @('--bundle', '--repo', 'meh-security/mehscan', '--signer-workflow', 'meh-security/mehscan/.github/workflows/release.yml', '--source-ref', 'refs/tags/v0.2.0', '--deny-self-hosted-runners', '--source-digest', ('a' * 40))) {
