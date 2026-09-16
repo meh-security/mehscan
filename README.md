@@ -7,8 +7,8 @@ work rather than being presented as a proven vulnerability.
 
 ## Status
 
-The 0.2.0 release candidate is summarized in
-[the 0.2.0 release notes](docs/release-notes-v0.2.0.md).
+The 0.2.1 release is prepared in
+[the 0.2.1 release notes](docs/release-notes-v0.2.1.md).
 
 Mehscan is under active development. Current language coverage includes:
 
@@ -52,7 +52,7 @@ From PowerShell 7, use the installer bundled with the
 [`mehscan-security` skill](skills/mehscan-security/SKILL.md):
 
 ```powershell
-./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.2.0
+./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.2.1 -SourceDigest TRUSTED_RELEASE_COMMIT
 ```
 
 GitHub CLI (`gh`) with `attestation verify` is required, but GitHub login is
@@ -68,8 +68,12 @@ the source tag and build identity but does not guarantee tag immutability.
 Downloads are bounded and verification failures stop installation. GitHub CLI
 manages trust roots; network access is still required. There is no custom
 signature-verifier or checksum-only fallback. If no exact platform asset is
-published, build from source instead. The v0.2.0 release has a Windows x86_64
-asset.
+published, build from source instead. The 0.2.1 release matrix builds Windows
+x86_64, Linux x86_64, macOS x86_64, and macOS aarch64 archives. These assets
+become available only after all release jobs pass and the release is published.
+Replace `TRUSTED_RELEASE_COMMIT` with the full release commit obtained through
+trusted release review. The current skill pin file contains 0.2.0; the 0.2.1
+pin is distributed separately after its merged release commit is known.
 
 ## Build
 
