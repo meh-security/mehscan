@@ -97,10 +97,11 @@ mehscan scan path/to/repository --format candidates
 mehscan scan path/to/repository --format sarif-candidates > mehscan-candidates.sarif
 ```
 
-## Build a Windows preview archive
+## Build a release preview archive
 
-From PowerShell, build the release executable, create the allowlisted archive
-and checksum, and smoke-test the extracted package:
+From PowerShell 7 on Windows, Linux, or macOS, build the host release
+executable, create the allowlisted archive and checksum, and smoke-test the
+extracted package:
 
 ```powershell
 .\scripts\build-preview.ps1
@@ -113,12 +114,11 @@ available for packaging diagnosis, but should not be used for a release gate.
 
 Official release archives are built from version tags by GitHub Actions, not
 uploaded from a developer workstation. The release workflow tests the pinned
-source, builds and smoke-tests the archive, publishes its SHA-256 checksum, and
-records GitHub artifact provenance for the archive. Verify a downloaded archive
-with:
+source and independently builds, smoke-tests, checksums, and attests archives
+for Linux, macOS, and Windows. Verify a downloaded archive with:
 
 ```text
-gh attestation verify mehscan-v0.2.0-windows-x86_64.zip -R meh-security/mehscan
+gh attestation verify mehscan-v0.2.1-linux-x86_64.zip -R meh-security/mehscan
 ```
 
 Code analysis uses available host parallelism by default, capped at 32 workers.
