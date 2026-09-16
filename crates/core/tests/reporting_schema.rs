@@ -118,11 +118,16 @@ fn candidate_and_sarif_contracts_match_versioned_goldens() {
         "/../../tests/expected/candidate-report-v1.0.json"
     )))
     .expect("candidate golden should parse");
-    let sarif_expected: serde_json::Value = serde_json::from_str(include_str!(concat!(
+    let mut sarif_expected: serde_json::Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../tests/expected/sarif-v2.1.0.json"
     )))
     .expect("SARIF golden should parse");
+
+    // The golden pins the reporting schema, not a particular scanner release.
+    // Keep checking the emitted version against this package's release metadata.
+    sarif_expected["runs"][0]["tool"]["driver"]["semanticVersion"] =
+        serde_json::Value::String(env!("CARGO_PKG_VERSION").to_string());
 
     assert_eq!(
         serde_json::to_value(&candidate).expect("candidate should serialize"),
