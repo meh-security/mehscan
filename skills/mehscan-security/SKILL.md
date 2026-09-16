@@ -20,7 +20,8 @@ Resolve the executable in this order:
    `mehscan.exe` on Windows).
 4. If no executable is available, run the bundled
    `scripts/install-mehscan.ps1` from this skill directory. It selects the
-   latest exact OS/architecture release asset, verifies its checksum and GitHub
+   latest exact OS/architecture public release asset without GitHub login,
+   downloads its attestation bundle, verifies its checksum and GitHub
    build provenance, validates archive membership and the release manifest,
    installs into a versioned user-owned location, and returns the executable's
    absolute path. On Linux and macOS it applies executable permissions and
@@ -32,8 +33,23 @@ Resolve the executable in this order:
    current checkout contains Mehscan and building is within scope; otherwise
    report that the scanner is unavailable for this target.
 
-The installer requires an authenticated GitHub CLI and fails closed when the
+The installer requires PowerShell 7 and GitHub CLI with `attestation verify`,
+but no GitHub login. Public HTTPS downloads have byte, redirect, origin, and
+time limits. GitHub CLI verifies the local bundle using its trusted Sigstore
+roots and enforces the repository, signer workflow, source tag, and hosted
+runner policy. Known releases also enforce the source commit pinned in
+`references/release-pins.json`; for another explicitly requested release, pass
+`-SourceDigest` only when an independently trusted exact source commit is
+available. A commit discovered solely from the downloaded bundle is not an
+independent pin. Update the pin file only from trusted release review.
+
+The installer fails closed when the
 target, checksum, provenance, archive, manifest, or version cannot be verified.
+Do not replace GitHub CLI with agent-written signature verification, treat a
+checksum alone as provenance, or fall back to execution after any failed check.
+If GitHub CLI is missing or too old, report the required verifier or use the
+source-build fallback already described above when authorized. Trust-root
+metadata may still require network access even though the bundle is local.
 Do not reproduce its download logic ad hoc or weaken a failed check. Use only
 the official GitHub repository for automatic downloads. Never download
 ast-grep; Mehscan includes the components it uses.

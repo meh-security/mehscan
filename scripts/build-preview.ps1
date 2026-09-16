@@ -78,7 +78,9 @@ try {
         (Join-Path $repositoryRoot 'skills/mehscan-security/SKILL.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/agents/openai.yaml'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/native-c-cpp.md'),
+        (Join-Path $repositoryRoot 'skills/mehscan-security/references/release-pins.json'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.ps1'),
+        (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/public-download.ps1'),
         (Join-Path $repositoryRoot 'skills/mehscan-report-quality/SKILL.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-report-quality/agents/openai.yaml')
     )
@@ -103,7 +105,9 @@ try {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/SKILL.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/agents/openai.yaml') -Destination (Join-Path $stageRoot 'skills/mehscan-security/agents')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/native-c-cpp.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/release-pins.json') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.ps1') -Destination (Join-Path $stageRoot 'skills/mehscan-security/scripts')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/public-download.ps1') -Destination (Join-Path $stageRoot 'skills/mehscan-security/scripts')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-report-quality/SKILL.md') -Destination (Join-Path $stageRoot 'skills/mehscan-report-quality')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-report-quality/agents/openai.yaml') -Destination (Join-Path $stageRoot 'skills/mehscan-report-quality/agents')
 
@@ -116,7 +120,9 @@ try {
         'skills/mehscan-report-quality/SKILL.md',
         'skills/mehscan-security/agents/openai.yaml',
         'skills/mehscan-security/references/native-c-cpp.md',
+        'skills/mehscan-security/references/release-pins.json',
         'skills/mehscan-security/scripts/install-mehscan.ps1',
+        'skills/mehscan-security/scripts/public-download.ps1',
         'skills/mehscan-security/SKILL.md',
         'THIRD_PARTY_NOTICES.md'
     ) | Sort-Object

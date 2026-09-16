@@ -46,6 +46,31 @@ Mehscan is under active development. Current language coverage includes:
 The scanner uses checked-in ast-grep components and Tree-sitter grammars. It
 does not require a separately installed ast-grep executable.
 
+## Install
+
+From PowerShell 7, use the installer bundled with the
+[`mehscan-security` skill](skills/mehscan-security/SKILL.md):
+
+```powershell
+./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.2.0
+```
+
+GitHub CLI (`gh`) with `attestation verify` is required, but GitHub login is
+not. The installer downloads public release assets and an attestation bundle,
+then checks SHA-256, cryptographic provenance, the expected repository and
+release workflow, source tag, hosted runner policy, archive membership,
+release manifest, and executable version before returning an absolute CLI
+path. Known releases also enforce a source commit distributed with the skill;
+`-SourceDigest COMMIT` pins another explicitly requested version using an
+independently trusted commit. Without a commit pin, verification establishes
+the source tag and build identity but does not guarantee tag immutability.
+
+Downloads are bounded and verification failures stop installation. GitHub CLI
+manages trust roots; network access is still required. There is no custom
+signature-verifier or checksum-only fallback. If no exact platform asset is
+published, build from source instead. The v0.2.0 release has a Windows x86_64
+asset.
+
 ## Build
 
 Rust 1.88 or newer is required.
@@ -55,8 +80,7 @@ cargo build
 cargo test --all-targets
 ```
 
-Until prebuilt release archives are published, build the CLI from source and
-use `target/release/mehscan` (`mehscan.exe` on Windows):
+To build the CLI from source, use `target/release/mehscan` (`mehscan.exe` on Windows):
 
 ```text
 cargo build -p mehscan-cli --release
