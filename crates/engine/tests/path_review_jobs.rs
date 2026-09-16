@@ -76,6 +76,12 @@ fn review_issue_grouping_root() -> PathBuf {
         .join("tests/fixtures/review-issue-grouping")
 }
 
+fn native_secondary_tooling_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/fixtures/native-secondary-tooling")
+}
+
 fn juice_shop_root() -> PathBuf {
     std::env::var_os("MEHSCAN_JUICE_SHOP_ROOT")
         .map(PathBuf::from)
@@ -188,7 +194,7 @@ fn preserves_decisive_observation_guidance_across_every_language() {
 
     // Reviewer-visible decision-ready path/observation and review-specific
     // summary instructions are part of the serialized contract and fingerprint.
-    assert_eq!(job.fingerprint, "path-reviewpack-4fe5c7de139f5cc4");
+    assert_eq!(job.fingerprint, "path-reviewpack-abe28445a8bee46d");
     let languages = job
         .observation_reviews
         .iter()
@@ -918,25 +924,24 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
                             .find(|review| review.id == *review_id)
                             .and_then(|review| review.decision_facts.unresolved.first()),
                     };
+                    let needs_review = !path_bundle && unresolved.is_some();
                     PathReviewTriageResult {
                         review_id: review_id.clone(),
                         decision: if path_bundle {
                             ReviewDecision::Issue
-                        } else {
+                        } else if needs_review {
                             ReviewDecision::NeedsReview
+                        } else {
+                            ReviewDecision::NotIssue
                         },
                         confidence: ReviewConfidence::Medium,
                         summary: "The supplied bounded evidence supports this compact decision."
                             .to_string(),
-                        checks: if path_bundle {
-                            Vec::new()
-                        } else {
-                            vec![
-                                unresolved
-                                    .expect("observation needs an unresolved fact")
-                                    .clone(),
-                            ]
-                        },
+                        checks: unresolved
+                            .filter(|_| needs_review)
+                            .cloned()
+                            .into_iter()
+                            .collect(),
                     }
                 })
                 .collect();
@@ -1269,7 +1274,12 @@ fn scopes_python_owner_control_to_resource_access_in_mixed_observations() {
         })
         .expect("mixed process observation should remain reviewable");
     assert!(process.decision_facts.effective_controls.is_empty());
-    assert!(!process.decision_facts.unresolved.is_empty());
+    assert!(process.decision_facts.unresolved.is_empty());
+    assert!(!process.open_questions.is_empty());
+    assert_eq!(
+        process.confidence_policy.not_issue,
+        ReviewConfidence::Medium
+    );
     assert!(process.decision_facts.established.iter().all(|fact| {
         !fact.contains("owner constraint applies to this exact resource selector")
     }));
@@ -1485,6 +1495,35 @@ fn excludes_teaching_source_payloads_from_ai_review_by_default() {
             .iter()
             .any(|review| { review.candidate.primary_location.path.contains("codefixes") })
     );
+}
+
+#[test]
+fn native_repository_secondary_tooling_is_opt_in_review_material() {
+    let production = mehscan_engine::investigation::build_path_review_jobs_page(
+        &native_secondary_tooling_root(),
+        Some(2),
+        Some(100),
+        0,
+        false,
+    )
+    .expect("production review pack should build");
+    let complete = mehscan_engine::investigation::build_path_review_jobs_page(
+        &native_secondary_tooling_root(),
+        Some(2),
+        Some(100),
+        0,
+        true,
+    )
+    .expect("complete review pack should build");
+
+    assert_eq!(production.total_reviews, 0);
+    assert!(production.review_material_excluded > 0);
+    assert!(complete.observation_reviews.iter().any(|review| {
+        review
+            .evidence
+            .iter()
+            .any(|item| item.location.path == "scripts/release.py")
+    }));
 }
 
 #[test]

@@ -137,6 +137,13 @@ counts, review-required items with decisive checks, confirmed issue summaries,
 and not-issue summaries when `--include-dismissed true` is set. Markdown is a
 projection for people, not a replacement for canonical JSON or SARIF.
 
+Confirmed instances are consolidated under one root-cause heading only when
+their rule ID, human title, capability, and remediation text match. A grouped
+heading states its instance count; each instance retains its own location,
+severity, confidence, and description. Summary counts continue to count
+finding instances rather than Markdown headings. This presentation grouping
+does not mutate canonical JSON, SARIF, verdicts, or finding identifiers.
+
 ## Storage defaults
 
 An end-to-end run persists the manifest, compact requests, model responses, and

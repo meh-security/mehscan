@@ -437,6 +437,13 @@ coverage but are excluded from AI jobs as non-deployed source payloads. Use
 items sort after production neighborhoods. `review_material_excluded` records
 how many review items the default policy omitted.
 
+When a repository contains maintained C/C++ source, ordinary observations from
+secondary-language build, CI, documentation, packaging, support, and root
+release scripts use the same review-material boundary. Raw evidence remains in
+scan JSON, deterministic security paths remain admitted, and the explicit flag
+restores the omitted observation jobs. This policy deliberately does not treat
+shipped application directories or a generic `tools` tree as nonproduction.
+
 ## Validation
 
 Evaluate AI-input changes separately from deterministic scanner truth:

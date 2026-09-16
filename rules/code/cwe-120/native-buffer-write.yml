@@ -1,0 +1,70 @@
+- id: c-native-buffer-write
+  version: 1
+  title: C native buffer write
+  language: c
+  kind: sink
+  capability: buffer_write
+  confidence: medium
+  cwe: [CWE-120, CWE-170, CWE-787, CWE-805]
+  match: &native_buffer_match
+    any:
+      - pattern: strcpy($DESTINATION, $SOURCE)
+        context: |
+          void pattern_context() { strcpy($DESTINATION, $SOURCE); }
+        selector: call_expression
+        captures: { destination: DESTINATION, source: SOURCE }
+      - pattern: strcat($DESTINATION, $SOURCE)
+        context: |
+          void pattern_context() { strcat($DESTINATION, $SOURCE); }
+        selector: call_expression
+        captures: { destination: DESTINATION, source: SOURCE }
+      - pattern: memcpy($DESTINATION, $SOURCE, $SIZE)
+        context: |
+          void pattern_context() { memcpy($DESTINATION, $SOURCE, $SIZE); }
+        selector: call_expression
+        captures: { destination: DESTINATION, source: SOURCE, size: SIZE }
+      - pattern: memmove($DESTINATION, $SOURCE, $SIZE)
+        context: |
+          void pattern_context() { memmove($DESTINATION, $SOURCE, $SIZE); }
+        selector: call_expression
+        captures: { destination: DESTINATION, source: SOURCE, size: SIZE }
+      - pattern: strncpy($DESTINATION, $SOURCE, $SIZE)
+        context: |
+          void pattern_context() { strncpy($DESTINATION, $SOURCE, $SIZE); }
+        selector: call_expression
+        captures: { destination: DESTINATION, source: SOURCE, size: SIZE }
+      - pattern: strncat($DESTINATION, $SOURCE, $SIZE)
+        context: |
+          void pattern_context() { strncat($DESTINATION, $SOURCE, $SIZE); }
+        selector: call_expression
+        captures: { destination: DESTINATION, source: SOURCE, size: SIZE }
+  tags: [native, memory, buffer-write]
+  ai: &buffer_guidance
+    investigate:
+      - the allocated or declared capacity of the destination region
+      - source extent, termination requirements, and integer arithmetic used for the copy size
+      - aliases, overlapping regions, and guarantees made by callers or wrappers
+    verify:
+      - prove that the source or size can exceed the destination capacity on a reachable path
+      - account for prior rejecting bounds checks and exact allocation-size relationships
+    exclude:
+      - do not report an API observation alone as an out-of-bounds write
+      - do not treat a bounded copy as safe unless termination and destination capacity are both established
+  provenance: &buffer_provenance
+    note: Native memory-copy and string-copy operations are security evidence; only a bounded source or size relationship creates a candidate for capacity review.
+    references:
+      - https://cwe.mitre.org/data/definitions/120.html
+      - https://cwe.mitre.org/data/definitions/787.html
+
+- id: cpp-native-buffer-write
+  version: 1
+  title: C++ native buffer write
+  language: cpp
+  kind: sink
+  capability: buffer_write
+  confidence: medium
+  cwe: [CWE-120, CWE-170, CWE-787, CWE-805]
+  match: *native_buffer_match
+  tags: [native, memory, buffer-write, cpp]
+  ai: *buffer_guidance
+  provenance: *buffer_provenance

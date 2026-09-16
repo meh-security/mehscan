@@ -1124,10 +1124,10 @@ mod tests {
                 )
             })
             .collect::<BTreeMap<_, _>>();
-        assert_eq!(calls["raw_sql"], true);
-        assert_eq!(calls["client.query"], true);
-        assert_eq!(calls["lookalike::sql_query"], false);
-        assert_eq!(calls["object.query"], false);
+        assert!(calls["raw_sql"]);
+        assert!(calls["client.query"]);
+        assert!(!calls["lookalike::sql_query"]);
+        assert!(!calls["object.query"]);
     }
 
     #[test]

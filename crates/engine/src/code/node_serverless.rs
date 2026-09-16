@@ -1710,6 +1710,9 @@ fn next_relative_redirect_fallback(
         })
 }
 
+// These arguments are the shared scan context plus the function/request pair;
+// keeping them explicit avoids a second context abstraction used by one helper.
+#[allow(clippy::too_many_arguments)]
 fn add_request_member_sources<'tree>(
     path: &str,
     language: Language,

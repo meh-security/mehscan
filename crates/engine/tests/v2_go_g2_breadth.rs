@@ -1,4 +1,6 @@
+use std::fs;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use mehscan_core::{Capability, HttpRouteAccess};
 
@@ -90,4 +92,41 @@ fn adds_httprouter_sql_helper_and_cookie_policy_context() {
         .expect("parameterized SQL observation");
     assert!(parameterized.decision_facts.unresolved.is_empty());
     assert_eq!(parameterized.decision_facts.effective_controls.len(), 1);
+}
+
+#[test]
+fn unix_exec_is_not_reported_as_a_database_query() {
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-go-unix-exec-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).expect("create Go unix.Exec fixture");
+    fs::write(
+        root.join("main.go"),
+        r#"package main
+
+import "golang.org/x/sys/unix"
+
+func replaceProcess(executable string, arguments []string, environment []string) error {
+    return unix.Exec(executable, arguments, environment)
+}
+"#,
+    )
+    .expect("write Go unix.Exec fixture");
+
+    let result = mehscan_engine::scan_path(&root).expect("scan Go unix.Exec fixture");
+    assert!(result.evidence.iter().all(|item| {
+        !matches!(
+            item.rule_id.as_str(),
+            "go-database-query"
+                | "go-sql-parameterization"
+                | "go-sql-parameter-query-summary"
+                | "go-sql-parameterization-summary-control"
+        )
+    }));
+    fs::remove_dir_all(&root).expect("remove Go unix.Exec fixture");
 }

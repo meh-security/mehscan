@@ -41,6 +41,23 @@ const RUST_MVP_SURFACE: [Capability; 22] = [
     Capability::NativeInteropBoundary,
 ];
 
+// C and C++ share portable application-security relationships where native
+// APIs have stable argument roles, then add native-specific evidence that the
+// managed web language contract does not represent.
+const C_FAMILY_MVP_SURFACE: [Capability; 11] = [
+    Capability::ExternalInput,
+    Capability::ProcessExecution,
+    Capability::ProcessArgumentSeparation,
+    Capability::DatabaseQuery,
+    Capability::FilesystemRead,
+    Capability::FilesystemWrite,
+    Capability::PathCanonicalization,
+    Capability::OutboundNetworkRequest,
+    Capability::CryptographicHash,
+    Capability::BufferWrite,
+    Capability::FormatStringOutput,
+];
+
 const COMMON_DECLARATIVE_SURFACE: [Capability; 29] = [
     Capability::HttpRequestData,
     Capability::HttpRequestHandling,
@@ -115,6 +132,26 @@ fn rust_keeps_its_explicit_closed_mvp_surface() {
         missing.is_empty(),
         "Rust lost closed MVP capabilities: {missing:?}"
     );
+}
+
+#[test]
+fn c_and_cpp_keep_their_portable_and_native_mvp_surface() {
+    let rules = mehscan_engine::rules::load_builtin_rules().expect("rule catalog should load");
+    for language in [Language::C, Language::Cpp] {
+        let present = rules
+            .iter()
+            .filter(|rule| rule.language == language)
+            .map(|rule| rule.capability)
+            .collect::<BTreeSet<_>>();
+        let missing = C_FAMILY_MVP_SURFACE
+            .iter()
+            .filter(|capability| !present.contains(capability))
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "{language:?} lost C-family MVP capabilities: {missing:?}"
+        );
+    }
 }
 
 #[test]

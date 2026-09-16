@@ -38,7 +38,8 @@ fn converts_only_security_paths_into_review_candidates() {
         .find(|candidate| candidate.state == SecurityPathState::Protected)
         .expect("fixture should contain a protected candidate");
     assert_eq!(protected.protections.len(), 1);
-    assert!(protected.title.starts_with("Review bounded CWE-89"));
+    assert!(!protected.title.contains("CWE-89"));
+    assert!(protected.title.contains("Database query"));
 
     let mut malformed = result;
     malformed.evidence.clear();

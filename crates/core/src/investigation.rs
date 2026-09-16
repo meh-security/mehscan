@@ -112,6 +112,51 @@ pub struct StructuralMatch {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NativeSyntaxResults<T> {
+    pub query: BTreeMap<String, String>,
+    pub limitations: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parse_recovered_files: Vec<String>,
+    pub matches: Vec<T>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NativeSyntaxAnchor {
+    pub name: String,
+    pub location: Location,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NativeSyntaxContext {
+    pub ast_kind: String,
+    pub text: String,
+    pub location: Location,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NativeCallArgument {
+    pub index: usize,
+    pub text: String,
+    pub location: Location,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NativeCallSite {
+    pub callee: String,
+    pub call_kind: String,
+    pub text: String,
+    pub arguments: Vec<NativeCallArgument>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expression: Option<NativeSyntaxContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enclosing: Option<NativeSyntaxAnchor>,
+    pub ambiguity: Vec<String>,
+    pub location: Location,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct InvestigationAnchor {
     pub location: Location,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -498,8 +543,8 @@ pub struct PathReviewTask {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "review_kind", rename_all = "snake_case")]
 pub enum PathReviewTaskPayload {
-    SecurityPath { review: PathReview },
-    Observation { review: ObservationReview },
+    SecurityPath { review: Box<PathReview> },
+    Observation { review: Box<ObservationReview> },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

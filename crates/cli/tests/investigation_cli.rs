@@ -112,6 +112,46 @@ fn investigation_commands_emit_machine_readable_json() {
 }
 
 #[test]
+fn native_investigation_commands_emit_typed_syntax_facts() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/fixtures/investigation");
+    let root = root.to_str().expect("fixture path should be UTF-8");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "native-call-sites",
+            root,
+            "--callee",
+            "consume",
+            "--path",
+            "native.cpp",
+        ])
+        .output()
+        .expect("CLI should run");
+    assert!(output.status.success(), "CLI failed: {:?}", output.stderr);
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("CLI output should be JSON");
+    assert_eq!(json["provenance"]["resolution"], "ast");
+    assert_eq!(
+        json["results"]["matches"][0]["call_kind"],
+        "bare_identifier"
+    );
+    assert_eq!(
+        json["results"]["matches"][0]["text"],
+        "consume(packet.length)"
+    );
+    assert!(
+        json["results"]["limitations"][0]
+            .as_str()
+            .expect("limitation")
+            .contains("syntax inventory only")
+    );
+    assert_portable_artifact_paths(&json);
+}
+
+#[test]
 fn filters_http_entrypoint_evidence_by_the_v05_capability() {
     let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
         .args([
@@ -468,14 +508,28 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
             let unresolved = review["decision_facts"]["unresolved"]
                 .as_array()
                 .and_then(|questions| questions.first())
-                .and_then(serde_json::Value::as_str)
-                .expect("review should supply one unresolved fact");
+                .and_then(serde_json::Value::as_str);
+            let (decision, confidence, summary, checks) = if let Some(unresolved) = unresolved {
+                (
+                    "needs_review",
+                    review["confidence_policy"]["needs_review"].clone(),
+                    "The supplied evidence leaves one concrete decision fact unresolved.",
+                    vec![unresolved],
+                )
+            } else {
+                (
+                    "not_issue",
+                    review["confidence_policy"]["not_issue"].clone(),
+                    "The bounded observation does not establish a reportable security relationship.",
+                    Vec::new(),
+                )
+            };
             serde_json::json!({
                 "review_id": review_id,
-                "decision": "needs_review",
-                "confidence": review["confidence_policy"]["needs_review"],
-                "summary": "The supplied evidence leaves one decisive runtime fact unresolved.",
-                "checks": [unresolved]
+                "decision": decision,
+                "confidence": confidence,
+                "summary": summary,
+                "checks": checks
             })
         })
         .collect::<Vec<_>>();
@@ -507,7 +561,11 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
     let report: serde_json::Value =
         serde_json::from_slice(&triage.stdout).expect("triage report should be JSON");
     assert_eq!(report["complete"], true);
-    assert_eq!(report["needs_review_count"], first["review_count"]);
+    assert_eq!(
+        report["needs_review_count"].as_u64().unwrap_or(0)
+            + report["not_issue_count"].as_u64().unwrap_or(0),
+        first["review_count"].as_u64().expect("review count")
+    );
 
     for entry in manifest["bundles"]
         .as_array()
@@ -585,7 +643,8 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
     assert_eq!(summary_report["review_count"], manifest["review_count"]);
     assert_eq!(
         summary_report["needs_review_count"].as_u64().unwrap_or(0)
-            + summary_report["issue_count"].as_u64().unwrap_or(0),
+            + summary_report["issue_count"].as_u64().unwrap_or(0)
+            + summary_report["not_issue_count"].as_u64().unwrap_or(0),
         manifest["review_count"].as_u64().expect("review count")
     );
 

@@ -738,6 +738,20 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 mehscan_engine::investigation::find_text_references(&root, &symbol, limit),
             )?)
         }
+        "native-call-sites" => {
+            let callee = parsed.required("--callee")?;
+            let path = parsed.optional("--path");
+            let limit = parsed.optional_usize("--limit")?;
+            parsed.finish()?;
+            print_json(&engine(
+                mehscan_engine::investigation::find_native_call_sites(
+                    &root,
+                    &callee,
+                    path.as_deref(),
+                    limit,
+                ),
+            )?)
+        }
         "structural" => {
             let language = parse_language(&parsed.required("--language")?)?;
             let pattern = parsed.required("--pattern")?;
@@ -1320,59 +1334,8 @@ fn parse_evidence_kind(value: &str) -> Result<EvidenceKind, String> {
 }
 
 fn parse_capability(value: &str) -> Result<Capability, String> {
-    match value {
-        "process_execution" => Ok(Capability::ProcessExecution),
-        "process_argument_separation" => Ok(Capability::ProcessArgumentSeparation),
-        "ldap_query" => Ok(Capability::LdapQuery),
-        "ldap_filter_encoding" => Ok(Capability::LdapFilterEncoding),
-        "ldap_distinguished_name_encoding" => Ok(Capability::LdapDistinguishedNameEncoding),
-        "dynamic_code_execution" => Ok(Capability::DynamicCodeExecution),
-        "dynamic_code_restriction" => Ok(Capability::DynamicCodeRestriction),
-        "database_query" => Ok(Capability::DatabaseQuery),
-        "sql_parameterization" => Ok(Capability::SqlParameterization),
-        "filesystem_read" => Ok(Capability::FilesystemRead),
-        "filesystem_write" => Ok(Capability::FilesystemWrite),
-        "path_canonicalization" => Ok(Capability::PathCanonicalization),
-        "path_containment_check" => Ok(Capability::PathContainmentCheck),
-        "outbound_network_request" => Ok(Capability::OutboundNetworkRequest),
-        "url_parsing" => Ok(Capability::UrlParsing),
-        "url_destination_validation" => Ok(Capability::UrlDestinationValidation),
-        "redirect" => Ok(Capability::Redirect),
-        "redirect_destination_validation" => Ok(Capability::RedirectDestinationValidation),
-        "html_output" => Ok(Capability::HtmlOutput),
-        "html_encoding" => Ok(Capability::HtmlEncoding),
-        "http_header_output" => Ok(Capability::HttpHeaderOutput),
-        "serialization" => Ok(Capability::Serialization),
-        "deserialization" => Ok(Capability::Deserialization),
-        "deserialization_restriction" => Ok(Capability::DeserializationRestriction),
-        "xml_parsing" => Ok(Capability::XmlParsing),
-        "cryptographic_hash" => Ok(Capability::CryptographicHash),
-        "fixed_format_transform" => Ok(Capability::FixedFormatTransform),
-        "cryptographic_encryption" => Ok(Capability::CryptographicEncryption),
-        "random_generation" => Ok(Capability::RandomGeneration),
-        "authentication" => Ok(Capability::Authentication),
-        "authorization" => Ok(Capability::Authorization),
-        "resource_access" => Ok(Capability::ResourceAccess),
-        "logging" => Ok(Capability::Logging),
-        "token_generation" => Ok(Capability::TokenGeneration),
-        "cookie_configuration" => Ok(Capability::CookieConfiguration),
-        "tls_configuration" => Ok(Capability::TlsConfiguration),
-        "file_upload" => Ok(Capability::FileUpload),
-        "uploaded_file_content" => Ok(Capability::UploadedFileContent),
-        "uploaded_file_path" => Ok(Capability::UploadedFilePath),
-        "archive_entry_path" => Ok(Capability::ArchiveEntryPath),
-        "uploaded_filename_validation" => Ok(Capability::UploadedFilenameValidation),
-        "stored_user_content" => Ok(Capability::StoredUserContent),
-        "http_request_handling" => Ok(Capability::HttpRequestHandling),
-        "http_request_data" => Ok(Capability::HttpRequestData),
-        "rpc_request_data" => Ok(Capability::RpcRequestData),
-        "browser_input" => Ok(Capability::BrowserInput),
-        "browser_navigation" => Ok(Capability::BrowserNavigation),
-        "external_input" => Ok(Capability::ExternalInput),
-        "model_tool_input" => Ok(Capability::ModelToolInput),
-        "credential_material" => Ok(Capability::CredentialMaterial),
-        _ => Err(format!("unsupported capability {value:?}")),
-    }
+    serde_json::from_value(serde_json::Value::String(value.to_string()))
+        .map_err(|_| format!("unsupported capability {value:?}"))
 }
 
 fn print_json(value: &impl serde::Serialize) -> Result<(), String> {
@@ -1404,12 +1367,14 @@ fn is_absolute_artifact_path(path: &str) -> bool {
 fn make_json_paths_portable(value: &mut serde_json::Value) -> Result<(), String> {
     match value {
         serde_json::Value::Object(fields) => {
+            let is_http_route = fields.contains_key("method") && fields.contains_key("access");
             for (name, value) in fields {
                 if matches!(name.as_str(), "root" | "scanRoot")
                     && value.as_str().is_some_and(is_absolute_artifact_path)
                 {
                     *value = serde_json::Value::String(".".to_string());
                 } else if matches!(name.as_str(), "path" | "uri")
+                    && !is_http_route
                     && value.as_str().is_some_and(is_absolute_artifact_path)
                 {
                     return Err(format!(
@@ -1596,15 +1561,17 @@ USAGE:
   mehscan investigate symbol [ROOT] --name NAME [--limit N]
   mehscan investigate imports [ROOT] --name NAME [--limit N]
   mehscan investigate references [ROOT] --symbol NAME [--limit N]
+  mehscan investigate native-call-sites [ROOT] --callee NAME [--path FILE] [--limit N]
   mehscan investigate structural [ROOT] --language LANG --pattern PATTERN [--path FILE] [--limit N]
 
-Review jobs package bounded security-path candidates and non-path observation neighborhoods with source excerpts, relevant configuration facts, open questions, a stable fingerprint, and a compact cross-language response contract. Each security path includes compact rule-derived review_basis semantics. Context-only source, guard, sanitizer, validation, literal, and resource observations do not become standalone verdict jobs. review-bundles scans once, groups the complete admitted review set by review kind and capability, retains the CWE union as category metadata, and writes self-contained requests with readable semantic filenames under DIR/requests plus manifest.json; requests default to independent ceilings of 512 KiB and 20 reviews, while --max-reviews accepts 1-100 for controlled experiments or retry tuning. A bundle response is accepted or retried as a whole by review-bundle-triage. review-bundle-summary validates every manifest response and deduplicates issue decisions across path and observation streams by capability, exact sink range, and rule-defined security invariant. review-tasks and review-progress remain available as low-level diagnostics. Complete paths are ordered first, followed by production observation neighborhoods. Teaching/code-fix source payloads are excluded by default and can be admitted explicitly with --include-review-material true. Review pages contain at most 100 items and expose next_offset for stable continuation with --offset. The funnel summarizes linked and unlinked compatible source/sink observations for AI routing. C# neighborhoods collect exact cross-file review facts but are not security paths. Triage commands must repeat the exact page offset and material policy. Query limits default to 200 and cannot exceed 1000. Investigation units default to 25 and cannot exceed 100. Source retrieval is capped at 400 lines and 64 KiB. Structural patterns are ephemeral and are never persisted as rules."#
+Review jobs package bounded security-path candidates and non-path observation neighborhoods with source excerpts, relevant configuration facts, open questions, a stable fingerprint, and a compact cross-language response contract. Each security path includes compact rule-derived review_basis semantics. Context-only source, guard, sanitizer, validation, literal, and resource observations do not become standalone verdict jobs. review-bundles scans once, groups the complete admitted review set by review kind and capability, retains the CWE union as category metadata, and writes self-contained requests with readable semantic filenames under DIR/requests plus manifest.json; requests default to independent ceilings of 512 KiB and 20 reviews, while --max-reviews accepts 1-100 for controlled experiments or retry tuning. A bundle response is accepted or retried as a whole by review-bundle-triage. review-bundle-summary validates every manifest response and deduplicates issue decisions across path and observation streams by capability, exact sink range, and rule-defined security invariant. review-tasks and review-progress remain available as low-level diagnostics. Complete paths are ordered first, followed by production observation neighborhoods. Teaching/code-fix source payloads are excluded by default and can be admitted explicitly with --include-review-material true. Review pages contain at most 100 items and expose next_offset for stable continuation with --offset. The funnel summarizes linked and unlinked compatible source/sink observations for AI routing. C# neighborhoods collect exact cross-file review facts but are not security paths. Triage commands must repeat the exact page offset and material policy. Query limits default to 200 and cannot exceed 1000. Investigation units default to 25 and cannot exceed 100. Source retrieval is capped at 400 lines and 64 KiB. Native call-sites is a C/C++ syntax inventory only: it does not resolve types, overloads, aliases, macros, control flow, call graphs, or value flow and never changes scan evidence or review admission. Structural patterns are ephemeral and are never persisted as rules."#
     );
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{membership_changed_after_bundles, portable_json_value};
+    use super::{membership_changed_after_bundles, parse_capability, portable_json_value};
+    use mehscan_core::Capability;
     use std::collections::{BTreeMap, BTreeSet};
 
     #[test]
@@ -1676,5 +1643,56 @@ mod tests {
                 "absolute path should be rejected: {absolute}"
             );
         }
+    }
+
+    #[test]
+    fn portable_json_keeps_absolute_style_http_route_paths() {
+        let portable = portable_json_value(&serde_json::json!({
+            "context": {
+                "http_routes": [{
+                    "method": "GET",
+                    "path": "/accounts/{1}",
+                    "access": "authenticated"
+                }]
+            }
+        }))
+        .expect("HTTP route paths are not artifact paths");
+        assert_eq!(
+            portable["context"]["http_routes"][0]["path"],
+            "/accounts/{1}"
+        );
+    }
+
+    #[test]
+    fn capability_filters_follow_the_serialized_cross_language_contract() {
+        for (name, expected) in [
+            ("template_evaluation", Capability::TemplateEvaluation),
+            ("browser_message_send", Capability::BrowserMessageSend),
+            ("buffer_write", Capability::BufferWrite),
+            (
+                "signed_size_memory_operation",
+                Capability::SignedSizeMemoryOperation,
+            ),
+            ("local_heap_deallocation", Capability::LocalHeapDeallocation),
+            ("cpp_heap_deallocation", Capability::CppHeapDeallocation),
+            ("cpp_raii_owner", Capability::CppRaiiOwner),
+            ("arithmetic_division", Capability::ArithmeticDivision),
+            (
+                "count_controlled_memory_operation",
+                Capability::CountControlledMemoryOperation,
+            ),
+            (
+                "arithmetic_multiplication",
+                Capability::ArithmeticMultiplication,
+            ),
+            (
+                "allocation_size_computation",
+                Capability::AllocationSizeComputation,
+            ),
+            ("post_return_dereference", Capability::PostReturnDereference),
+        ] {
+            assert_eq!(parse_capability(name), Ok(expected));
+        }
+        assert!(parse_capability("not_a_capability").is_err());
     }
 }

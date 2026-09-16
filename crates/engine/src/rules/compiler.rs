@@ -116,6 +116,8 @@ fn is_syntax_keyword(token: &str) -> bool {
 
 pub(crate) fn parser_language(language: Language) -> SupportLang {
     match language {
+        Language::C => SupportLang::C,
+        Language::Cpp => SupportLang::Cpp,
         Language::Csharp => SupportLang::CSharp,
         Language::Java => SupportLang::Java,
         Language::Javascript => SupportLang::JavaScript,

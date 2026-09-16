@@ -177,7 +177,7 @@ impl FindingReport {
             self.summary.review_required
         ));
         output.push_str(&format!(
-            "| Not issues | {} | Dismissed by affirmative evidence or an effective control |\n",
+            "| Not issues | {} | Supplied evidence did not establish the reviewed weakness |\n",
             self.summary.dismissed
         ));
         output.push_str(&format!(
@@ -204,8 +204,15 @@ impl FindingReport {
         if self.findings.is_empty() {
             output.push_str("No confirmed issues were reported.\n");
         } else {
-            for (index, finding) in self.findings.iter().enumerate() {
-                render_finding(&mut output, index + 1, finding, false);
+            for (index, group) in grouped_confirmed_findings(&self.findings)
+                .into_iter()
+                .enumerate()
+            {
+                if group.len() == 1 {
+                    render_finding(&mut output, index + 1, group[0], false);
+                } else {
+                    render_finding_group(&mut output, index + 1, &group);
+                }
             }
         }
 
@@ -237,6 +244,76 @@ impl FindingReport {
 
         output
     }
+}
+
+fn grouped_confirmed_findings(findings: &[ReportedFinding]) -> Vec<Vec<&ReportedFinding>> {
+    let mut groups: Vec<Vec<&ReportedFinding>> = Vec::new();
+    for finding in findings {
+        let remediation = finding
+            .remediation
+            .as_ref()
+            .map(|value| value.text.as_str());
+        if let Some(group) = groups.iter_mut().find(|group| {
+            let first = group[0];
+            first.rule_id == finding.rule_id
+                && first.title == finding.title
+                && first.category == finding.category
+                && first.remediation.as_ref().map(|value| value.text.as_str()) == remediation
+        }) {
+            group.push(finding);
+        } else {
+            groups.push(vec![finding]);
+        }
+    }
+    groups
+}
+
+fn render_finding_group(output: &mut String, index: usize, findings: &[&ReportedFinding]) {
+    let first = findings[0];
+    let mut cwes = findings
+        .iter()
+        .flat_map(|finding| finding.cwes.iter())
+        .collect::<Vec<_>>();
+    cwes.sort();
+    cwes.dedup();
+    output.push_str(&format!(
+        "### {}. {} ({} instances)\n\n- Category: {}\n- CWE: {}\n",
+        index,
+        markdown_text(&first.title),
+        findings.len(),
+        enum_label(first.category),
+        if cwes.is_empty() {
+            "unspecified".to_string()
+        } else {
+            cwes.into_iter()
+                .map(|cwe| markdown_text(cwe))
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    ));
+    if let Some(remediation) = &first.remediation {
+        output.push_str(&format!(
+            "\nRemediation: {}\n",
+            markdown_text(&remediation.text)
+        ));
+    }
+    for (instance, finding) in findings.iter().enumerate() {
+        output.push_str(&format!(
+            "\n#### Instance {}\n\n- Location: {}\n- Severity: {} ({})\n- Confidence: {}\n\n{}\n",
+            instance + 1,
+            markdown_code_span(&format!(
+                "{}:{}:{}",
+                finding.primary_location.path,
+                finding.primary_location.start.line,
+                finding.primary_location.start.column
+            )),
+            enum_label(finding.severity.level),
+            enum_label(finding.severity.source),
+            enum_label(finding.confidence),
+            markdown_text(&finding.description)
+        ));
+    }
+    output.push('\n');
 }
 
 fn render_finding(
@@ -426,5 +503,55 @@ mod tests {
                     .find("## Confirmed issues")
                     .expect("confirmed section")
         );
+    }
+
+    #[test]
+    fn markdown_groups_same_root_cause_but_keeps_each_location() {
+        let mut first = finding(FindingStatus::Issue, Vec::new());
+        first.title = "Decoded length can exceed the remaining parser input".to_string();
+        first.remediation = Some(FindingRemediation {
+            text: "Compare the decoded length with total_size - cursor before reading.".to_string(),
+            references: Vec::new(),
+        });
+        let mut second = first.clone();
+        second.id = "finding-2".to_string();
+        second.primary_location = location("src/reader.cpp", 71);
+        second.description = "A second decoder performs the same unchecked read.".to_string();
+        let report = FindingReport {
+            schema_version: FINDING_REPORT_SCHEMA_VERSION.to_string(),
+            report_kind: "triaged_findings".to_string(),
+            tool: FindingReportTool {
+                name: "Mehscan".to_string(),
+                version: "test".to_string(),
+            },
+            scan: FindingReportScan {
+                root: ".".to_string(),
+                job_fingerprint: "job-1".to_string(),
+            },
+            triage: FindingReportTriage {
+                response_schema_version: "1.0".to_string(),
+                reviewer: None,
+            },
+            summary: FindingReportSummary {
+                reviewed: 2,
+                issue_decisions: 2,
+                needs_review_decisions: 0,
+                not_issue_decisions: 0,
+                findings: 2,
+                review_required: 0,
+                dismissed: 0,
+            },
+            findings: vec![first, second],
+            review_required: Vec::new(),
+            dismissed: Vec::new(),
+            quality_warnings: Vec::new(),
+        };
+
+        let markdown = report.to_markdown();
+        assert!(markdown.contains("(2 instances)"));
+        assert!(markdown.contains("`routes/search.ts:23:3`"));
+        assert!(markdown.contains("`src/reader.cpp:71:3`"));
+        assert_eq!(markdown.matches("Remediation:").count(), 1);
+        assert_eq!(markdown.matches("### 1.").count(), 1);
     }
 }

@@ -7,8 +7,35 @@ work rather than being presented as a proven vulnerability.
 
 ## Status
 
+The 0.2.0 release candidate is summarized in
+[the 0.2.0 release notes](docs/release-notes-v0.2.0.md).
+
 Mehscan is under active development. Current language coverage includes:
 
+- initial C and C++ native application coverage, including read-only
+  build-profile context from an authoritative `compile_commands.json` or,
+  when it is absent, conservative literal CMake, Meson, and Bazel definitions;
+  build tools are never executed, conflicting targets/build systems and dynamic
+  configuration remain unknown, and exact local
+  buffer-capacity/string-termination, signed-to-size memory use,
+  same-scope heap-release/early-exit contracts, narrowing-to-divisor,
+  derived-domain-limit, and
+  fixed-width-multiplication-to-memory relationships, plus bounded
+  architecture-limit-to-macro-allocation, callback-stack-lifetime, and C++
+  scalar/array allocation-family and standard unique-owner analysis, plus
+  libxml2 external-entity option relationships that distinguish complete
+  `XML_PARSE_NO_XXE` protection from network-only `XML_PARSE_NONET`, exact
+  libarchive entry-to-disk relationships with independent dot-dot,
+  absolute-path, symlink, and privilege-restoration semantics, and bounded
+  same-path native check/use relationships with atomic-create and
+  no-follow controls, a CVE-proven destination-offset plus copy-extent
+  relationship that requires both image-copy axes to fit before the write,
+  loaded dimension products connected to exact allocation/copy extents with
+  pre-computation overflow guards, and decoded parser extents connected to
+  remaining-input-sensitive reads with non-wrapping bounds checks,
+  plus a corpus-proven Drogon C++ boundary that keeps
+  verified route authentication separate from principal-to-resource
+  authorization;
 - C# and ASP.NET Core;
 - Java;
 - JavaScript, TypeScript, and TSX across server, browser, and serverless code;
@@ -91,7 +118,7 @@ records GitHub artifact provenance for the archive. Verify a downloaded archive
 with:
 
 ```text
-gh attestation verify mehscan-v0.1.0-windows-x86_64.zip -R meh-security/mehscan
+gh attestation verify mehscan-v0.2.0-windows-x86_64.zip -R meh-security/mehscan
 ```
 
 Code analysis uses available host parallelism by default, capped at 32 workers.
@@ -99,6 +126,15 @@ Use `--jobs N` for a reproducible override. Dependency, build, generated, cache,
 and minified trees are filtered. Tests and fixtures are excluded from SAST by
 default but may still be considered by non-code scanners; `--include-tests`
 enables full code analysis for those sources.
+
+Conventional `singleheader` and `single-header` trees are treated as generated
+amalgamations, so maintained source is not parsed a second time through a
+distribution artifact. In repositories with maintained C/C++ source, ordinary
+secondary-language build, CI, documentation, packaging, support, and root
+release-script observations remain in raw scan evidence but are omitted from
+the default AI review queue. Pass `--include-review-material true` to review
+those surfaces explicitly. Shipped secondary-language application components
+and `tools` directories are not excluded by this policy.
 
 Directory scans honor repository-local `.gitignore`, nested `.gitignore`,
 `.ignore`, and `.git/info/exclude` rules. Global user Git ignore configuration
@@ -142,6 +178,12 @@ mehscan report --run mehscan-review --responses mehscan-review/responses-reviewe
 The final output contract and field boundaries are documented in
 [Mehscan review and reporting contract](docs/output-contract.md).
 
+The Markdown projection consolidates confirmed instances only when their rule,
+human-readable title, capability, and remediation match. The summary still
+counts individual findings, and every grouped instance retains its own
+location, severity, confidence, and evidence-backed description. Canonical JSON
+and SARIF remain ungrouped machine projections.
+
 Reachability, conditional availability, literal values, request context,
 protection observations, and provenance remain contextual facts. They annotate
 evidence and do not silently erase it.
@@ -152,11 +194,16 @@ The repository includes an installable [`mehscan-security`](skills/mehscan-secur
 skill. It teaches a coding agent how to locate the CLI, select deterministic or
 AI-assisted scan output, review every item in a semantic bundle, validate model
 responses, and report findings without treating raw candidates as confirmed
-vulnerabilities.
+vulnerabilities. Its conditional native reference preserves C/C++-specific
+memory, parser, lifetime, ownership, and protection semantics without implying
+compiler-grade analysis or cross-language rule-count parity.
 
 The skill is optional: the CLI and every output format work without an agent,
 plugin, MCP server, or model provider. Copy or install the
 `skills/mehscan-security` directory into the skill location used by your agent.
+The release archive also includes [`mehscan-report-quality`](skills/mehscan-report-quality/SKILL.md)
+for an independent actionability check of the final Markdown handoff after
+triage; it does not replace source-level security review.
 
 ## AI review contracts
 

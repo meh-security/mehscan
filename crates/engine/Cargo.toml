@@ -1,6 +1,6 @@
 [package]
 name = "mehscan-engine"
-version = "0.1.0"
+version = "0.2.0"
 description = "Deterministic source analysis and bounded security relationships for Mehscan"
 edition.workspace = true
 rust-version.workspace = true
@@ -12,6 +12,8 @@ mehscan-core = { path = "../core" }
 ast-grep-core = { workspace = true, features = ["tree-sitter"] }
 ast-grep-config.workspace = true
 ast-grep-language = { workspace = true, features = [
+  "tree-sitter-c",
+  "tree-sitter-cpp",
   "tree-sitter-c-sharp",
   "tree-sitter-go",
   "tree-sitter-java",

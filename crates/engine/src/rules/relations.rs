@@ -252,6 +252,16 @@ fn capture_roles_by_kind_and_capability(
             entry.extend(symbol.captures.keys().cloned());
         }
     }
+    roles.insert(
+        (
+            EvidenceKind::Validation,
+            Capability::BufferCapacityValidation,
+        ),
+        ["destination", "size", "capacity"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+    );
     roles
 }
 
@@ -294,7 +304,7 @@ fn require_protection_capture_roles(
     }
     if available.is_empty() {
         return Err(EngineError(format!(
-            "relation {} references protection capability {capability:?} without matcher rules",
+            "relation {} references protection capability {capability:?} without matcher or semantic evidence rules",
             relation.id
         )));
     }
@@ -339,7 +349,7 @@ mod tests {
     fn built_in_relations_validate_against_matcher_roles() {
         let rules = super::super::load_builtin_rules().expect("rules should load");
         let relations = load_builtin_relations(&rules).expect("relations should validate");
-        assert_eq!(relations.len(), 49);
+        assert_eq!(relations.len(), 51);
         assert_eq!(
             relations
                 .iter()

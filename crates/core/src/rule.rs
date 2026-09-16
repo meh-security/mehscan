@@ -7,6 +7,8 @@ use crate::{Capability, Confidence, EvidenceKind};
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Language {
+    C,
+    Cpp,
     Csharp,
     Java,
     Javascript,

@@ -269,3 +269,61 @@
     references:
       - https://cwe.mitre.org/data/definitions/78.html
       - https://doc.rust-lang.org/std/process/struct.Command.html
+
+- id: c-process-execution
+  version: 1
+  title: C process or shell execution
+  language: c
+  kind: sink
+  capability: process_execution
+  cwe: [CWE-78]
+  match: &native_process_match
+    any:
+      - pattern: system($COMMAND)
+        context: |
+          void pattern_context() { system($COMMAND); }
+        selector: call_expression
+        captures: { command: COMMAND }
+      - pattern: popen($COMMAND, $MODE)
+        context: |
+          void pattern_context() { popen($COMMAND, $MODE); }
+        selector: call_expression
+        captures: { command: COMMAND, mode: MODE }
+      - pattern: execv($COMMAND, $ARGUMENTS)
+        context: |
+          void pattern_context() { execv($COMMAND, $ARGUMENTS); }
+        selector: call_expression
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: execve($COMMAND, $ARGUMENTS, $ENVIRONMENT)
+        context: |
+          void pattern_context() { execve($COMMAND, $ARGUMENTS, $ENVIRONMENT); }
+        selector: call_expression
+        captures: { command: COMMAND, arguments: ARGUMENTS, environment: ENVIRONMENT }
+  tags: [command, process, native]
+  ai: &native_process_guidance
+    investigate:
+      - whether external input controls the executable, shell program, or arguments
+      - shell interpretation, PATH lookup, environment inheritance, and current working directory
+      - allowlists, authorization, and privilege boundaries around process creation
+    verify:
+      - distinguish direct argument-vector execution from shell command interpretation
+      - confirm attacker influence over the captured command or argument value
+    exclude:
+      - do not report an execution API alone without a controllable security-sensitive value
+  provenance: &native_process_provenance
+    note: Native shell and direct process-launch APIs are mapped to the shared CWE-78 evidence and bounded-relationship surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/78.html
+      - https://pubs.opengroup.org/onlinepubs/9799919799/functions/exec.html
+
+- id: cpp-process-execution
+  version: 1
+  title: C++ process or shell execution
+  language: cpp
+  kind: sink
+  capability: process_execution
+  cwe: [CWE-78]
+  match: *native_process_match
+  tags: [command, process, native, cpp]
+  ai: *native_process_guidance
+  provenance: *native_process_provenance

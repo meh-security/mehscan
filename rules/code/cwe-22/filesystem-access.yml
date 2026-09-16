@@ -490,3 +490,115 @@
   tags: [filesystem, path, rust]
   ai: *filesystem_guidance
   provenance: *rust_filesystem_provenance
+
+- id: c-filesystem-read
+  version: 1
+  title: C filesystem read
+  language: c
+  kind: sink
+  capability: filesystem_read
+  cwe: [CWE-22]
+  match: &native_filesystem_read
+    any:
+      - pattern: fopen($PATH, "r")
+        context: |
+          void pattern_context() { fopen($PATH, "r"); }
+        selector: call_expression
+        captures: { path: PATH }
+      - pattern: fopen($PATH, "rb")
+        context: |
+          void pattern_context() { fopen($PATH, "rb"); }
+        selector: call_expression
+        captures: { path: PATH }
+      - pattern: open($PATH, O_RDONLY)
+        context: |
+          void pattern_context() { open($PATH, O_RDONLY); }
+        selector: call_expression
+        captures: { path: PATH }
+  tags: [filesystem, path, native]
+  ai: &native_filesystem_guidance
+    investigate:
+      - origin, normalization, and encoding of the path
+      - allowed roots, traversal segments, symlinks, races, and platform path behavior
+      - authorization and privilege boundaries for the referenced resource
+    verify:
+      - resolve the effective open mode and the path value reaching the operating system
+    exclude:
+      - do not treat a fixed path or an API observation alone as path traversal
+  provenance: &native_filesystem_provenance
+    note: Exact native open modes and path-taking filesystem APIs are mapped to the shared filesystem evidence surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://pubs.opengroup.org/onlinepubs/9799919799/functions/open.html
+
+- id: c-filesystem-write
+  version: 1
+  title: C filesystem write or removal
+  language: c
+  kind: sink
+  capability: filesystem_write
+  cwe: [CWE-22]
+  match: &native_filesystem_write
+    any:
+      - pattern: fopen($PATH, "w")
+        context: |
+          void pattern_context() { fopen($PATH, "w"); }
+        selector: call_expression
+        captures: { path: PATH }
+      - pattern: fopen($PATH, "wb")
+        context: |
+          void pattern_context() { fopen($PATH, "wb"); }
+        selector: call_expression
+        captures: { path: PATH }
+      - pattern: fopen($PATH, "a")
+        context: |
+          void pattern_context() { fopen($PATH, "a"); }
+        selector: call_expression
+        captures: { path: PATH }
+      - pattern: open($PATH, O_WRONLY)
+        context: |
+          void pattern_context() { open($PATH, O_WRONLY); }
+        selector: call_expression
+        captures: { path: PATH }
+      - pattern: open($PATH, O_RDWR)
+        context: |
+          void pattern_context() { open($PATH, O_RDWR); }
+        selector: call_expression
+        captures: { path: PATH }
+      - pattern: remove($PATH)
+        context: |
+          void pattern_context() { remove($PATH); }
+        selector: call_expression
+        captures: { path: PATH }
+      - pattern: unlink($PATH)
+        context: |
+          void pattern_context() { unlink($PATH); }
+        selector: call_expression
+        captures: { path: PATH }
+  tags: [filesystem, path, native]
+  ai: *native_filesystem_guidance
+  provenance: *native_filesystem_provenance
+
+- id: cpp-filesystem-read
+  version: 1
+  title: C++ filesystem read
+  language: cpp
+  kind: sink
+  capability: filesystem_read
+  cwe: [CWE-22]
+  match: *native_filesystem_read
+  tags: [filesystem, path, native, cpp]
+  ai: *native_filesystem_guidance
+  provenance: *native_filesystem_provenance
+
+- id: cpp-filesystem-write
+  version: 1
+  title: C++ filesystem write or removal
+  language: cpp
+  kind: sink
+  capability: filesystem_write
+  cwe: [CWE-22]
+  match: *native_filesystem_write
+  tags: [filesystem, path, native, cpp]
+  ai: *native_filesystem_guidance
+  provenance: *native_filesystem_provenance

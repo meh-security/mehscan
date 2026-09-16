@@ -147,3 +147,64 @@ fn generated_frontend_content_is_secret_only_unless_explicitly_included() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn exact_unit_test_directories_are_excluded_without_hiding_lookalikes() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-unit-test-policy-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(root.join("apps/unit_tests")).expect("unit-test fixture directory");
+    fs::create_dir_all(root.join("apps/unitary")).expect("production fixture directory");
+    fs::write(
+        root.join("apps/unit_tests/xmlsec_unit_tests.c"),
+        "int unit_test_helper(void) { return 0; }\n",
+    )
+    .expect("unit-test fixture source");
+    fs::write(
+        root.join("apps/unitary/parser.c"),
+        "int production_parser(void) { return 0; }\n",
+    )
+    .expect("production fixture source");
+
+    let default = mehscan_engine::scan_path(&root).expect("default scan should run");
+    assert_eq!(default.coverage.totals.scanned, 1);
+    assert_eq!(default.coverage.totals.ignored, 1);
+    assert_eq!(
+        default
+            .coverage
+            .files
+            .iter()
+            .find(|file| file.path == "apps/unit_tests/xmlsec_unit_tests.c")
+            .expect("unit-test path should be covered")
+            .status,
+        FileStatus::Ignored
+    );
+    assert_eq!(
+        default
+            .coverage
+            .files
+            .iter()
+            .find(|file| file.path == "apps/unitary/parser.c")
+            .expect("production lookalike should be covered")
+            .status,
+        FileStatus::Scanned
+    );
+
+    let complete = mehscan_engine::scan_path_with_options(
+        &root,
+        mehscan_engine::ScanOptions {
+            include_tests: true,
+            jobs: Some(1),
+            scan_secrets: false,
+            impact_scope: None,
+        },
+    )
+    .expect("explicit test scan should run");
+    assert_eq!(complete.coverage.totals.scanned, 2);
+    fs::remove_dir_all(&root).expect("remove unit-test policy fixture");
+}

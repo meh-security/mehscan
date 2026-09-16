@@ -153,3 +153,51 @@
     references:
       - https://cwe.mitre.org/data/definitions/327.html
       - https://pkg.go.dev/crypto/hmac#New
+
+- id: c-openssl-hash-selection
+  version: 1
+  title: C OpenSSL hash algorithm selection
+  language: c
+  kind: security_configuration
+  capability: cryptographic_hash
+  cwe: [CWE-327]
+  match: &openssl_hash_match
+    any:
+      - pattern: EVP_get_digestbyname($ALGORITHM)
+        context: |
+          void pattern_context() { EVP_get_digestbyname($ALGORITHM); }
+        selector: call_expression
+        captures: { algorithm: ALGORITHM }
+      - pattern: EVP_DigestInit_ex($CONTEXT, $ALGORITHM, $ENGINE)
+        context: |
+          void pattern_context() { EVP_DigestInit_ex($CONTEXT, $ALGORITHM, $ENGINE); }
+        selector: call_expression
+        captures: { context: CONTEXT, algorithm: ALGORITHM }
+  tags: [cryptography, hash, openssl, native]
+  ai: &openssl_hash_guidance
+    investigate:
+      - the effective digest and its security purpose
+      - whether collision resistance, password cost, signatures, authentication, or integrity are required
+      - provider configuration and compatibility constraints
+    verify:
+      - resolve the selected EVP digest and the data or security decision it protects
+    exclude:
+      - do not report a weak digest used only as a non-security checksum or compatibility identifier
+      - do not classify dynamic selection without resolving a weak effective digest and sensitive purpose
+  provenance: &openssl_hash_provenance
+    note: OpenSSL EVP digest selection is mapped to contextual CWE-327 review rather than treating every digest operation as insecure.
+    references:
+      - https://cwe.mitre.org/data/definitions/327.html
+      - https://docs.openssl.org/3.0/man3/EVP_DigestInit/
+
+- id: cpp-openssl-hash-selection
+  version: 1
+  title: C++ OpenSSL hash algorithm selection
+  language: cpp
+  kind: security_configuration
+  capability: cryptographic_hash
+  cwe: [CWE-327]
+  match: *openssl_hash_match
+  tags: [cryptography, hash, openssl, native, cpp]
+  ai: *openssl_hash_guidance
+  provenance: *openssl_hash_provenance

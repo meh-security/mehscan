@@ -5,10 +5,10 @@ use ast_grep_core::Node;
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_language::SupportLang;
 use mehscan_core::{
-    Capability, Capture, Confidence, Evidence, EvidenceKind, FixedOutputFormat, Language, Location,
-    Position, ProtectionApplication, ReachabilityState, RelationContract, RelationStrategy,
-    RuntimeEnvironment, SecurityPath, SecurityPathProvenance, SecurityPathState, SecurityPathStep,
-    SecurityPathStepKind,
+    AvailabilityState, Capability, Capture, Confidence, Evidence, EvidenceKind, FixedOutputFormat,
+    Language, Location, Position, ProtectionApplication, ReachabilityState, RelationContract,
+    RelationStrategy, RuntimeEnvironment, SecurityPath, SecurityPathProvenance, SecurityPathState,
+    SecurityPathStep, SecurityPathStepKind,
 };
 
 use super::csharp_handoff::FORWARDED_PARAMETER_RULE_ID;
@@ -284,13 +284,14 @@ fn build_family_paths(
                     matches!(
                         item.kind,
                         EvidenceKind::Sanitizer | EvidenceKind::Validation
-                    ) && (item.capability == protection.capability
-                        || (family.sink.capability == Capability::Redirect
-                            && item.capability == Capability::RedirectDestinationValidation)
-                        || (matches!(
-                            family.sink.capability,
-                            Capability::FilesystemRead | Capability::FilesystemWrite
-                        ) && item.capability == Capability::PathContainmentCheck))
+                    ) && !is_definitely_unreachable(item)
+                        && (item.capability == protection.capability
+                            || (family.sink.capability == Capability::Redirect
+                                && item.capability == Capability::RedirectDestinationValidation)
+                            || (matches!(
+                                family.sink.capability,
+                                Capability::FilesystemRead | Capability::FilesystemWrite
+                            ) && item.capability == Capability::PathContainmentCheck))
                 })
                 .collect::<Vec<_>>()
         })
@@ -1794,6 +1795,7 @@ fn bound_parameter_name(source: &Evidence) -> Option<&str> {
             | super::rust_context::RUST_FORWARDED_PARAMETER_RULE_ID
             | super::rust_project::ACTIX_PARAMETER_RULE_ID
             | super::rust_project::ACTIX_FORWARDED_RULE_ID
+            | super::native_drogon::DROGON_PARAMETER_RULE_ID
     )
     .then(|| source.captures.get("parameter"))
     .flatten()
@@ -1888,6 +1890,8 @@ fn bound_parameter_steps(
 ) -> Option<Vec<SecurityPathStep>> {
     let supported_parameter =
         matches!(language, Language::Csharp | Language::Java | Language::Rust)
+            || (language == Language::Cpp
+                && source.rule_id == super::native_drogon::DROGON_PARAMETER_RULE_ID)
             || (matches!(language, Language::Typescript | Language::Tsx)
                 && matches!(
                     source.rule_id.as_str(),
@@ -2917,9 +2921,12 @@ fn assignment_parts<'tree>(
     let kind = kind.as_ref();
     let (left, right) = if matches!(
         kind,
-        "variable_declarator" | "var_spec" | "const_spec" | "let_declaration"
+        "variable_declarator" | "init_declarator" | "var_spec" | "const_spec" | "let_declaration"
     ) {
-        let left = node.field("name").or_else(|| node.field("pattern"))?;
+        let left = node
+            .field("name")
+            .or_else(|| node.field("pattern"))
+            .or_else(|| node.field("declarator"))?;
         let right = node
             .field("value")
             .or_else(|| node.field("initializer"))
@@ -2959,6 +2966,16 @@ fn assignment_identifier(
 ) -> Option<String> {
     simple_identifier(left.text().trim())
         .map(str::to_string)
+        .or_else(|| {
+            matches!(language, Language::C | Language::Cpp)
+                .then(|| {
+                    left.dfs()
+                        .filter(|node| node.kind().as_ref() == "identifier")
+                        .last()
+                        .and_then(|node| simple_identifier(node.text().trim()).map(str::to_string))
+                })
+                .flatten()
+        })
         .or_else(|| {
             (language == Language::Go && left.kind().as_ref() == "expression_list")
                 .then(|| {
@@ -3208,6 +3225,7 @@ fn protection_belongs_to_sink(
         return false;
     }
     same_range(&protection.location, &sink.location)
+        || protection.related_evidence.contains(&sink.id)
         || (contract.application == ProtectionApplication::ValueTransform
             && family.sink.input_roles.iter().any(|capture| {
                 sink.captures.get(capture).is_some_and(|target| {
@@ -3762,6 +3780,11 @@ fn is_definitely_unreachable(evidence: &Evidence) -> bool {
         .reachability
         .as_ref()
         .is_some_and(|reachability| reachability.state == ReachabilityState::Unreachable)
+        || evidence
+            .context
+            .availability
+            .as_ref()
+            .is_some_and(|availability| availability.state == AvailabilityState::Excluded)
 }
 
 fn is_csharp_crypto_policy(evidence: &Evidence) -> bool {

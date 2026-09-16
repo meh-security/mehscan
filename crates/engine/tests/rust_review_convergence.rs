@@ -41,5 +41,18 @@ fn resolves_only_compile_time_rust_resource_inputs() {
         })
         .expect("dynamic replacement should remain reviewable");
     assert!(!dynamic.decision_facts.unresolved.is_empty());
+    assert_eq!(
+        dynamic.decision_facts.unresolved,
+        vec![
+            "Is runtime parameter `user_input` bound to attacker-controlled request data by the registered Actix route or extractor for this exact handler?"
+        ]
+    );
+    assert!(
+        dynamic
+            .decision_facts
+            .established
+            .iter()
+            .any(|fact| fact.contains("substitutes runtime parameter `user_input`"))
+    );
     assert!(dynamic.decision_facts.effective_controls.is_empty());
 }

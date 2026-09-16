@@ -35,7 +35,7 @@ impl ConditionalRegions {
         source: &str,
         build_symbols: &BTreeMap<String, bool>,
     ) -> Self {
-        if language != Language::Csharp {
+        if !matches!(language, Language::C | Language::Cpp | Language::Csharp) {
             return Self::default();
         }
         let mut regions = Vec::new();
@@ -317,6 +317,23 @@ mod tests {
         assert_eq!(
             regions
                 .availability_for(range_of(source, "debug_call()"))
+                .state,
+            AvailabilityState::Always
+        );
+    }
+
+    #[test]
+    fn honors_c_family_ifdef_and_undefine_facts() {
+        let source = "#ifdef MAGMA_ENABLE_FIXES\nfixed();\n#else\nvulnerable();\n#endif\n";
+        let symbols = BTreeMap::from([("MAGMA_ENABLE_FIXES".to_string(), false)]);
+        let regions = ConditionalRegions::from_source(Language::C, source, &symbols);
+        assert_eq!(
+            regions.availability_for(range_of(source, "fixed()")).state,
+            AvailabilityState::Excluded
+        );
+        assert_eq!(
+            regions
+                .availability_for(range_of(source, "vulnerable()"))
                 .state,
             AvailabilityState::Always
         );

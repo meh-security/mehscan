@@ -209,3 +209,61 @@
     references:
       - https://cwe.mitre.org/data/definitions/89.html
       - https://docs.rs/sqlx/latest/sqlx/fn.query.html
+
+- id: c-sqlite-query
+  version: 1
+  title: C SQLite query execution or preparation
+  language: c
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match: &native_sqlite_match
+    any:
+      - pattern: sqlite3_exec($DATABASE, $QUERY, $CALLBACK, $CONTEXT, $ERROR)
+        context: |
+          void pattern_context() { sqlite3_exec($DATABASE, $QUERY, $CALLBACK, $CONTEXT, $ERROR); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: sqlite3_prepare($DATABASE, $QUERY, $LENGTH, $STATEMENT, $TAIL)
+        context: |
+          void pattern_context() { sqlite3_prepare($DATABASE, $QUERY, $LENGTH, $STATEMENT, $TAIL); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: sqlite3_prepare_v2($DATABASE, $QUERY, $LENGTH, $STATEMENT, $TAIL)
+        context: |
+          void pattern_context() { sqlite3_prepare_v2($DATABASE, $QUERY, $LENGTH, $STATEMENT, $TAIL); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: sqlite3_prepare_v3($DATABASE, $QUERY, $LENGTH, $FLAGS, $STATEMENT, $TAIL)
+        context: |
+          void pattern_context() { sqlite3_prepare_v3($DATABASE, $QUERY, $LENGTH, $FLAGS, $STATEMENT, $TAIL); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+  tags: [database, sql, sqlite, native]
+  ai: &native_sqlite_guidance
+    investigate:
+      - origin and construction of the SQL text
+      - whether values are embedded in SQL or bound to the prepared statement
+      - statement lifetime, error handling, authorization, and tenant constraints
+    verify:
+      - distinguish sqlite3_exec text execution from prepared SQL with correctly bound values
+      - confirm external data influences SQL syntax rather than only a bound value
+    exclude:
+      - do not report a constant query or a prepared statement merely because the API is observed
+  provenance: &native_sqlite_provenance
+    note: SQLite query text entrypoints are mapped to the shared CWE-89 evidence surface while binding remains statement-oriented review context.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://sqlite.org/c3ref/exec.html
+
+- id: cpp-sqlite-query
+  version: 1
+  title: C++ SQLite query execution or preparation
+  language: cpp
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match: *native_sqlite_match
+  tags: [database, sql, sqlite, native, cpp]
+  ai: *native_sqlite_guidance
+  provenance: *native_sqlite_provenance
