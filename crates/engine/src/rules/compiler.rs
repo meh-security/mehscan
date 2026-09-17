@@ -120,6 +120,7 @@ pub(crate) fn parser_language(language: Language) -> SupportLang {
         Language::Cpp => SupportLang::Cpp,
         Language::Csharp => SupportLang::CSharp,
         Language::Java => SupportLang::Java,
+        Language::Kotlin => SupportLang::Kotlin,
         Language::Javascript => SupportLang::JavaScript,
         Language::Typescript => SupportLang::TypeScript,
         Language::Tsx => SupportLang::Tsx,

@@ -147,6 +147,8 @@ pub(crate) fn scan_source(
     };
     let ast = AstGrep::doc(document);
     let root = ast.root();
+    let kotlin_package_shadow =
+        language == Language::Kotlin && super::kotlin::has_package_shadow(&root);
     let comments = CommentRanges::from_root(&root);
     let (secret_evidence, secret_suppressed) =
         scan_secrets_if_enabled(scan_secrets, path, source, &comments, secret_allowlist);
@@ -344,6 +346,9 @@ pub(crate) fn scan_source(
                     continue;
                 }
                 let deduplication_key = (compiled_rule.rule.id.clone(), range.start, range.end);
+                if kotlin_package_shadow {
+                    continue;
+                }
                 if !seen.insert(deduplication_key) {
                     continue;
                 }

@@ -41,6 +41,7 @@ mod java_serialization;
 mod java_sinks;
 mod java_upload;
 mod java_web_policy;
+mod kotlin;
 pub mod literals;
 mod matcher;
 mod native_allocation;

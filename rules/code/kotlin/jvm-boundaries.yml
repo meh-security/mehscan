@@ -1,0 +1,103 @@
+- id: kotlin-runtime-exec
+  version: 1
+  title: Kotlin JVM runtime command execution
+  language: kotlin
+  kind: sink
+  capability: process_execution
+  cwe: [CWE-78]
+  match:
+    any:
+      - pattern: java.lang.Runtime.getRuntime().exec($COMMAND)
+        captures: { command: COMMAND }
+  tags: [kotlin, jvm, command]
+  ai: &guidance
+    investigate:
+      - Verify API identity, input origin, execution context and applicable controls.
+      - This boundary is a review lead and does not establish attacker control.
+    verify:
+      - Confirm the API resolves to the JVM library and the call executes in production.
+      - For digests, verify the selected algorithm and whether the use needs cryptographic strength.
+    exclude:
+      - Exclude local package lookalikes and inert examples.
+      - Exclude strong digest choices and non-security checksums from weak-cryptography findings.
+  provenance:
+    note: Explicit JVM API boundary in Kotlin; no framework or receiver inference.
+    references:
+      - https://cwe.mitre.org/data/definitions/78.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Runtime.html
+
+- id: kotlin-files-read
+  version: 1
+  title: Kotlin JVM filesystem read
+  language: kotlin
+  kind: sink
+  capability: filesystem_read
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: java.nio.file.Files.readAllBytes($PATH)
+        captures: { path: PATH }
+      - pattern: java.nio.file.Files.readString($PATH)
+        captures: { path: PATH }
+  tags: [kotlin, jvm, filesystem]
+  ai: *guidance
+  provenance: &filesystem_provenance
+    note: Explicit JVM filesystem API boundary in Kotlin; no receiver inference.
+    references:
+      - https://cwe.mitre.org/data/definitions/22.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/nio/file/Files.html
+
+- id: kotlin-files-write
+  version: 1
+  title: Kotlin JVM filesystem write
+  language: kotlin
+  kind: sink
+  capability: filesystem_write
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: java.nio.file.Files.write($PATH, $CONTENT)
+        captures: { path: PATH, content: CONTENT }
+      - pattern: java.nio.file.Files.writeString($PATH, $CONTENT)
+        captures: { path: PATH, content: CONTENT }
+  tags: [kotlin, jvm, filesystem]
+  ai: *guidance
+  provenance: *filesystem_provenance
+
+- id: kotlin-message-digest
+  version: 1
+  title: Kotlin JVM digest algorithm selection
+  language: kotlin
+  kind: security_configuration
+  capability: cryptographic_hash
+  cwe: [CWE-327]
+  match:
+    any:
+      - pattern: java.security.MessageDigest.getInstance($ALGORITHM)
+        captures: { algorithm: ALGORITHM }
+  tags: [kotlin, jvm, crypto]
+  ai: *guidance
+  provenance:
+    note: Explicit JVM digest selection in Kotlin; algorithm inventory only.
+    references:
+      - https://cwe.mitre.org/data/definitions/327.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/security/MessageDigest.html
+
+- id: kotlin-uri-parsing
+  version: 1
+  title: Kotlin JVM URI parsing
+  language: kotlin
+  kind: validation
+  capability: url_parsing
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: java.net.URI.create($URL)
+        captures: { url: URL }
+  tags: [kotlin, jvm, url]
+  ai: *guidance
+  provenance:
+    note: Explicit JVM URI parsing in Kotlin; parsing does not validate destination policy.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/net/URI.html

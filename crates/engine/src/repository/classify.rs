@@ -48,6 +48,7 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
         "cshtml" => FileClass::Razor,
         "aspx" | "ascx" => FileClass::WebForms,
         "java" => FileClass::Supported(Language::Java),
+        "kt" | "kts" => FileClass::Supported(Language::Kotlin),
         "js" | "jsx" | "mjs" | "cjs" => FileClass::Supported(Language::Javascript),
         "ts" | "mts" | "cts" => FileClass::Supported(Language::Typescript),
         "tsx" => FileClass::Supported(Language::Tsx),
@@ -59,7 +60,7 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
         "json" | "json5" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" | "config"
         | "properties" | "xml" | "env" | "tf" | "tfvars" | "hcl" | "md" | "markdown" | "txt"
         | "sql" | "graphql" | "sh" | "bash" | "zsh" | "ps1" => FileClass::SecretOnly,
-        "kt" | "kts" | "rb" | "scala" | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => {
+        "rb" | "scala" | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => {
             FileClass::UnsupportedSource
         }
         _ => FileClass::Ignored,
@@ -144,6 +145,9 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
         || (lower.starts_with("test") && lower.ends_with(".java"))
         || name.ends_with("Test.java")
         || name.ends_with("Tests.java")
+        || name.ends_with("Test.kt")
+        || name.ends_with("Tests.kt")
+        || lower.ends_with(".generated.kt")
         || name.ends_with("Test.cs")
         || name.ends_with("Tests.cs")
         || name.ends_with("Test.php")

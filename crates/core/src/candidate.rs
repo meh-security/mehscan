@@ -270,6 +270,7 @@ fn semantic_rule_words(rule_id: &str) -> Option<String> {
         "csharp-",
         "python-",
         "java-",
+        "kotlin-",
         "rust-",
         "tsx-",
         "go-",

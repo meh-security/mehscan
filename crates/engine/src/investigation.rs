@@ -13623,12 +13623,13 @@ impl OutlineExtractors {
     }
 }
 
-fn all_languages() -> [Language; 10] {
+fn all_languages() -> [Language; 11] {
     [
         Language::C,
         Language::Cpp,
         Language::Csharp,
         Language::Java,
+        Language::Kotlin,
         Language::Javascript,
         Language::Typescript,
         Language::Tsx,

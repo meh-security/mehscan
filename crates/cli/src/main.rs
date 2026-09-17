@@ -1333,6 +1333,7 @@ fn parse_language(value: &str) -> Result<Language, String> {
     match value.to_ascii_lowercase().as_str() {
         "csharp" | "c#" | "cs" => Ok(Language::Csharp),
         "java" => Ok(Language::Java),
+        "kotlin" | "kt" | "kts" => Ok(Language::Kotlin),
         "javascript" | "js" => Ok(Language::Javascript),
         "typescript" | "ts" => Ok(Language::Typescript),
         "tsx" => Ok(Language::Tsx),

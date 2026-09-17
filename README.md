@@ -38,6 +38,8 @@ Mehscan is under active development. Current language coverage includes:
   authorization;
 - C# and ASP.NET Core;
 - Java;
+- partial Kotlin JVM API coverage in `.kt` and `.kts` files; see
+  [the Kotlin profile and gap assessment](docs/kotlin-coverage.md);
 - JavaScript, TypeScript, and TSX across server, browser, and serverless code;
 - Python;
 - partial PHP native API coverage for request superglobals and JSON bodies,

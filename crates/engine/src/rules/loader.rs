@@ -11,6 +11,7 @@ macro_rules! builtin_catalogs {
 // Keep each embedded catalog path in exactly one place. The YAML remains the
 // authority for CWE, title, language, capability, guidance, and provenance.
 const BUILTIN_RULE_CATALOGS: &[(&str, &str)] = builtin_catalogs!(
+    "rules/code/kotlin/jvm-boundaries.yml",
     "rules/code/php/native-boundaries.yml",
     "rules/code/cwe-78/process-execution.yml",
     "rules/code/cwe-78/process-argument-separation.yml",

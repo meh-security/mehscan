@@ -1236,12 +1236,13 @@ fn cwe_coverage(rules: &[Rule]) -> Vec<CweCoverage> {
         .collect()
 }
 
-fn all_languages() -> [Language; 11] {
+fn all_languages() -> [Language; 12] {
     [
         Language::C,
         Language::Cpp,
         Language::Csharp,
         Language::Java,
+        Language::Kotlin,
         Language::Javascript,
         Language::Typescript,
         Language::Tsx,

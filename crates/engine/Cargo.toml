@@ -17,6 +17,7 @@ ast-grep-language = { workspace = true, features = [
   "tree-sitter-c-sharp",
   "tree-sitter-go",
   "tree-sitter-java",
+  "tree-sitter-kotlin",
   "tree-sitter-javascript",
   "tree-sitter-python",
   "tree-sitter-php",

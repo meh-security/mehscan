@@ -1418,6 +1418,7 @@ const fn language_id(language: Language) -> &'static str {
         Language::Python => "py",
         Language::Go => "go",
         Language::Rust => "rs",
+        Language::Kotlin => "kt",
         Language::Php => "php",
     }
 }

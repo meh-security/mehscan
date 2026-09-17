@@ -466,6 +466,7 @@ fn is_constant_declarator<D: Doc>(node: &Node<'_, D>, language: Language) -> boo
         // semantics. Until that bounded pass exists, keep values unknown
         // instead of treating ordinary declarations as immutable constants.
         Language::C | Language::Cpp => false,
+        Language::Kotlin => false,
         Language::Javascript | Language::Typescript | Language::Tsx => {
             kind == "variable_declarator"
                 && ancestor_matches(node, 3, |ancestor| {
@@ -499,6 +500,7 @@ fn is_mutable_declaration<D: Doc>(node: &Node<'_, D>, language: Language) -> boo
     let kind = kind.as_ref();
     match language {
         Language::C | Language::Cpp => false,
+        Language::Kotlin => false,
         Language::Javascript | Language::Typescript | Language::Tsx => {
             kind == "variable_declarator" && !is_constant_declarator(node, language)
         }
