@@ -211,6 +211,14 @@ mehscan report --run mehscan-review --responses mehscan-review/responses-reviewe
 The final output contract and field boundaries are documented in
 [Mehscan review and reporting contract](docs/output-contract.md).
 
+For portable handoffs, `review-bundles` and `report` accept `--scope-label TEXT`,
+`--project NAME` and `--revision REF`. Bundle labels persist in the manifest;
+report labels appear in canonical JSON, SARIF run properties and Markdown.
+Identify intentional fixtures and selected-file scans explicitly. Labels are
+caller-provided metadata; source revisions and deployment are not verified by
+the renderer. Aggregated findings retain every distinct explanation for the
+selected verdict, so several affected fields at one sink remain visible.
+
 The Markdown projection consolidates confirmed instances when their behavioral
 title, capability, and remediation match, even across different rule IDs. The
 summary counts instances rather than unique vulnerabilities, and every instance retains its own

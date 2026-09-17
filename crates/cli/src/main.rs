@@ -61,10 +61,11 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let include_dismissed = parsed
         .optional_bool("--include-dismissed")?
         .unwrap_or(false);
+    let scope = parse_report_scope(&mut parsed);
     parsed.finish()?;
 
     let (manifest, bundle_responses) = read_complete_bundle_responses(&run, responses.as_deref())?;
-    let report = engine(
+    let mut report = engine(
         mehscan_engine::investigation::build_finding_report_from_manifest(
             &manifest,
             env!("CARGO_PKG_VERSION"),
@@ -73,6 +74,7 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
             include_dismissed,
         ),
     )?;
+    report.scan.scope.extend(scope);
     match format {
         ReportOutputFormat::Json => write_json(&report, output.as_deref()),
         ReportOutputFormat::Sarif => write_json(
@@ -81,6 +83,22 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
         ),
         ReportOutputFormat::Markdown => write_text(&report.to_markdown(), output.as_deref()),
     }
+}
+
+/// Explicit, portable handoff metadata; it is not a security fact supplied to AI.
+fn parse_report_scope(parsed: &mut ParsedArguments) -> Vec<String> {
+    [
+        ("--scope-label", "Scope label"),
+        ("--project", "Project label"),
+        ("--revision", "Source revision label"),
+    ]
+    .into_iter()
+    .filter_map(|(option, label)| {
+        parsed
+            .optional(option)
+            .map(|value| format!("{label}: {value}"))
+    })
+    .collect()
 }
 
 fn run_evaluation(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
@@ -469,19 +487,21 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let include_review_material = parsed
                 .optional_bool("--include-review-material")?
                 .unwrap_or(false);
+            let scope = parse_report_scope(&mut parsed);
             parsed.finish()?;
             let job = engine(mehscan_engine::investigation::build_all_path_review_jobs(
                 &root,
                 context_lines,
                 include_review_material,
             ))?;
-            let bundle_set = engine(
+            let mut bundle_set = engine(
                 mehscan_engine::investigation::build_path_review_bundles_with_limits(
                     &job,
                     max_bytes,
                     max_reviews,
                 ),
             )?;
+            bundle_set.manifest.scope.extend(scope);
             write_path_review_bundles(&output, &bundle_set)?;
             print_json(&bundle_set.manifest)
         }
@@ -1521,7 +1541,7 @@ fn print_help() {
 
 fn print_report_help() {
     println!(
-        "USAGE:\n  mehscan report --run DIR [--responses DIR] [--format json|sarif|markdown] [--output PATH] [--reviewer NAME] [--include-dismissed true|false]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. Markdown is the human-readable summary and prioritizes unresolved review checks before confirmed and dismissed results; use --include-dismissed true to include not-issue summaries. --responses defaults to DIR/responses."
+        "USAGE:\n  mehscan report --run DIR [--responses DIR] [--format json|sarif|markdown] [--output PATH] [--reviewer NAME] [--include-dismissed true|false] [--scope-label TEXT] [--project NAME] [--revision REF]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. Markdown is the human-readable summary and prioritizes unresolved review checks before confirmed and dismissed results; use --include-dismissed true to include not-issue summaries. --responses defaults to DIR/responses. Scope, project and revision labels are user-supplied handoff metadata, not verified security facts."
     );
 }
 
@@ -1551,7 +1571,7 @@ USAGE:
   mehscan investigate funnel [ROOT]
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate review-tasks [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
-  mehscan investigate review-bundles [ROOT] --output DIR [--context-lines N] [--max-bytes N] [--max-reviews N] [--include-review-material true|false]
+  mehscan investigate review-bundles [ROOT] --output DIR [--context-lines N] [--max-bytes N] [--max-reviews N] [--include-review-material true|false] [--scope-label TEXT] [--project NAME] [--revision REF]
   mehscan investigate review-bundle-diff --before DIR --after DIR
   mehscan investigate review-bundle-triage --bundle PATH --responses PATH
   mehscan investigate review-bundle-summary --run DIR [--responses DIR]

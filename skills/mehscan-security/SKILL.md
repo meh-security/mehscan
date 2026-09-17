@@ -176,6 +176,13 @@ and relevant attacker influence. `SCRIPT_NAME` alone does not establish
 attacker-selected attribute-breaking content. Apply this check to the exact
 value; it does not negate separately shown request input or a policy failure.
 
+Keep verdict summaries specific to the reviewed operation: a nearby success
+response does not describe an exception response, and a variable serialized in
+JSON has no established request origin unless this review supplies its producer.
+For conditional policy failures, state applicability and the shown consequence;
+for example disabled certificate checks affect HTTPS and can undermine trust in
+the returned status, without establishing an attacker-selected URL.
+
 For C/C++ only, the native reference describes a bounded call-syntax inventory
 that may answer an exact existing unresolved syntactic fact. Use the supplied
 review payload first. It never establishes taint, call reachability, runtime
@@ -255,6 +262,14 @@ The reviewer writes only the strict verdict response. Never ask it to construct
 finding JSON or SARIF: the CLI joins deterministic rule, location, flow, and
 provenance fields and publishes only confirmed issues to SARIF. Preserve
 `needs_review` in canonical JSON.
+
+Embed intentional fixture/application scope and the selected-source limitation
+in the report itself, rather than relying on a sidecar. If the CLI help exposes
+`--scope-label`, `--project` and `--revision`, set them during `review-bundles`
+so the manifest carries the same metadata into all projections. They can also
+be supplied to `report` for an existing run; use identical labels for every
+format. Revision labels are supplied provenance, not independently verified
+facts. With older CLIs, retain an explicitly labeled handoff index and sidecar.
 
 ## Validate scanner changes proportionately
 

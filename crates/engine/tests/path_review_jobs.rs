@@ -1546,8 +1546,10 @@ fn consolidates_multiple_sources_at_one_exact_sink_and_invariant() {
                     review_id: review.id.clone(),
                     decision: ReviewDecision::Issue,
                     confidence: review.confidence_policy.issue,
-                    summary: "Both supplied values reach the same unencoded HTML response."
-                        .to_string(),
+                    summary: format!(
+                        "Source {} reaches the same unencoded HTML response.",
+                        review.id
+                    ),
                     checks: Vec::new(),
                 })
                 .collect();
@@ -1590,6 +1592,16 @@ fn consolidates_multiple_sources_at_one_exact_sink_and_invariant() {
     );
     assert!(finding_report.findings[0].flow.is_some());
     assert_eq!(finding_report.findings[0].provenance.review_ids.len(), 2);
+    for (_, response) in &bundle_responses {
+        for result in &response.results {
+            assert!(
+                finding_report.findings[0]
+                    .description
+                    .contains(&result.summary)
+            );
+        }
+    }
+    assert!(finding_report.to_markdown().contains("Source review-"));
 }
 
 #[test]

@@ -32,3 +32,7 @@ the earlier PHP flow overhead. Release readiness still requires platform CI
 and packaging, then selecting a new release version.
 Do not republish an existing version or treat development artifacts as attested
 release binaries.
+- Reporting preserves every contributing explanation when aggregating source
+  relationships at one sink, across languages. Portable scope/project/revision
+  labels can be supplied at bundle creation or report rendering; manifests also
+  identify the scanned source selection and intentional review-material policy.

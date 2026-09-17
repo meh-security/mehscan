@@ -1474,7 +1474,15 @@ fn finding_report_from_run(
             match records.get_mut(&key) {
                 Some(existing) => existing.merge(item, is_path),
                 None => {
-                    records.insert(key, ReportAccumulator { item, is_path });
+                    let descriptions = BTreeSet::from([item.description.clone()]);
+                    records.insert(
+                        key,
+                        ReportAccumulator {
+                            item,
+                            is_path,
+                            descriptions,
+                        },
+                    );
                 }
             }
         }
@@ -1534,6 +1542,7 @@ fn finding_report_from_run(
 struct ReportAccumulator {
     item: ReportedFinding,
     is_path: bool,
+    descriptions: BTreeSet<String>,
 }
 
 impl ReportAccumulator {
@@ -1541,6 +1550,13 @@ impl ReportAccumulator {
         let prefer_other = (self.item.status == FindingStatus::NeedsReview
             && other.status == FindingStatus::Issue)
             || (self.item.status == other.status && !self.is_path && other_is_path);
+        // Keep all explanations for the selected verdict, without turning a
+        // superseded needs-review explanation into part of a confirmed issue.
+        if self.item.status == other.status {
+            self.descriptions.insert(other.description.clone());
+        } else if prefer_other {
+            self.descriptions = BTreeSet::from([other.description.clone()]);
+        }
         let mut review_ids = std::mem::take(&mut self.item.provenance.review_ids);
         review_ids.append(&mut other.provenance.review_ids);
         review_ids.sort();
@@ -1567,6 +1583,12 @@ impl ReportAccumulator {
         self.item.related_locations = related;
         self.item.provenance.review_ids = review_ids;
         self.item.provenance.evidence_ids = evidence_ids;
+        self.item.description = self
+            .descriptions
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n\n");
         if self.item.status == FindingStatus::Issue {
             self.item.checks.clear();
         }
@@ -1785,6 +1807,22 @@ fn review_scope(job: &PathReviewJob) -> Vec<String> {
         },
         job.review_material_excluded,
     )];
+    if job.include_review_material {
+        scope.push("Fixtures, tests, examples and teaching material may be included intentionally; these results do not establish deployed application vulnerabilities.".to_string());
+    }
+    let paths = job
+        .coverage
+        .files
+        .iter()
+        .filter(|file| file.status == mehscan_core::FileStatus::Scanned)
+        .map(|file| file.path.as_str())
+        .collect::<Vec<_>>();
+    if !paths.is_empty() {
+        scope.push(format!(
+            "Scanned source files (results apply to this selection only): {}",
+            paths.join(", ")
+        ));
+    }
     for status in [
         mehscan_core::FileStatus::ParseFailed,
         mehscan_core::FileStatus::Unsupported,

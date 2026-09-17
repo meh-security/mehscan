@@ -164,3 +164,18 @@ final reports. Full scanner JSON is optional diagnostic material. Serialized
 scan roots are `.` and every artifact location is repository-relative; local
 absolute checkout paths are process details and are not written to portable
 artifacts.
+
+## Portable scope and aggregated explanations
+
+`investigate review-bundles` accepts optional `--scope-label TEXT`,
+`--project NAME` and `--revision REF` labels and persists them in manifest scope.
+`report` inherits them and accepts the same options for existing runs. Supply
+identical labels when rendering JSON, SARIF and Markdown. Labels are caller
+metadata, not independently verified security facts. Generated manifests also
+identify scanned source files and warn when review material was included.
+Logical roots remain `.` and locations remain relative for portability.
+
+When several issue decisions share one sink/invariant, the canonical finding
+retains all distinct contributing issue explanations, source locations and
+provenance. A superseded `needs_review` explanation is not appended to a confirmed
+issue. This behavior applies across languages and preserves decision counts.

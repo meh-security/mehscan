@@ -23,6 +23,12 @@ fn empty_review_runs_render_all_formats_and_keep_the_manifest_fingerprint() {
                 directory.to_str().expect("run path"),
                 "--format",
                 format,
+                "--project",
+                "example-app",
+                "--revision",
+                "test-revision",
+                "--scope-label",
+                "Selected source only; not a full application assessment.",
             ])
             .output()
             .expect("render empty report");
@@ -38,15 +44,29 @@ fn empty_review_runs_render_all_formats_and_keep_the_manifest_fingerprint() {
             assert_eq!(report["summary"]["reviewed"], 0);
             assert_eq!(report["findings"], serde_json::json!([]));
             assert_eq!(report["scan"]["coverage"], manifest["coverage"]);
-            assert_eq!(report["scan"]["scope"], manifest["scope"]);
+            let mut expected_scope = manifest["scope"].as_array().unwrap().clone();
+            expected_scope.extend([
+                serde_json::json!(
+                    "Scope label: Selected source only; not a full application assessment."
+                ),
+                serde_json::json!("Project label: example-app"),
+                serde_json::json!("Source revision label: test-revision"),
+            ]);
+            assert_eq!(report["scan"]["scope"], serde_json::json!(expected_scope));
         } else if format == "sarif" {
             let report: serde_json::Value =
                 serde_json::from_slice(&output.stdout).expect("SARIF report");
             assert_eq!(report["runs"][0]["results"], serde_json::json!([]));
+            let scope = report["runs"][0]["properties"]["scope"].to_string();
+            assert!(scope.contains("Project label: example-app"));
+            assert!(scope.contains("Original regression fixtures intentionally included"));
         } else {
             let text = String::from_utf8_lossy(&output.stdout);
             assert!(text.contains("3 discovered, 0 scanned, 2 ignored"));
             assert!(text.contains("Original regression fixtures intentionally included"));
+            assert!(text.contains("Project label: example-app"));
+            assert!(text.contains("Source revision label: test-revision"));
+            assert!(text.contains("Selected source only; not a full application assessment."));
         }
     }
     let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
@@ -77,6 +97,44 @@ fn empty_review_runs_render_all_formats_and_keep_the_manifest_fingerprint() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("review manifest count"));
     std::fs::remove_dir_all(directory).expect("remove temporary run");
+}
+
+#[test]
+fn bundle_manifest_retains_portable_scope_labels_and_scanned_selection() {
+    let directory =
+        std::env::temp_dir().join(format!("mehscan-scope-report-{}", std::process::id()));
+    let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-bundles",
+            fixture_root().to_str().unwrap(),
+            "--output",
+            directory.to_str().unwrap(),
+            "--include-review-material",
+            "true",
+            "--project",
+            "sql-fixture",
+            "--revision",
+            "fixture-revision",
+            "--scope-label",
+            "Regression fixtures; not deployed application code.",
+        ])
+        .output()
+        .expect("generate labeled bundles");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let manifest: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let scope = manifest["scope"].to_string();
+    assert!(scope.contains("Project label: sql-fixture"));
+    assert!(scope.contains("Source revision label: fixture-revision"));
+    assert!(scope.contains("Regression fixtures; not deployed application code."));
+    assert!(scope.contains("Scanned source files (results apply to this selection only):"));
+    assert!(!scope.contains(&fixture_root().display().to_string()));
+    assert_eq!(manifest["root"], ".");
+    std::fs::remove_dir_all(directory).expect("remove temporary bundles");
 }
 
 #[test]

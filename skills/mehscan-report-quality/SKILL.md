@@ -20,6 +20,8 @@ Check these invariants:
 - Default production results do not silently include unit tests, fixtures,
   examples, generated files, or vendored dependencies. If intentionally
   included, label their scope so they cannot be mistaken for deployed code.
+  Portable reports carry that label and their selected-source limitation in
+  the report itself; a scan root of `.` or a separate sidecar is insufficient.
 - A finding title names the behavior in plain language. CWE identifiers belong
   in metadata, never as the title or the words a reader must decode.
 - Every confirmed issue identifies the affected behavior and component, the
@@ -57,6 +59,8 @@ Check these invariants:
   the summary against canonical JSON instance counts, not the number of
   Markdown headings, and require every grouped instance to retain its location
   and decision metadata.
+  When canonical aggregation merges several source relationships at one sink,
+  retain every affected operand in the narrative, not only the first summary.
 
 ## Report the quality result
 
