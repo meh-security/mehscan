@@ -161,6 +161,25 @@ mod tests {
     }
 
     #[test]
+    fn jvm_default_imports_do_not_override_explicit_package_wildcards() {
+        for source in [
+            "fun f(command: String) { Runtime.getRuntime().exec(command) }",
+            "import java.lang.*\nfun f(command: String) { Runtime.getRuntime().exec(command) }",
+            "import custom.*\nimport java.lang.Runtime\nfun f(command: String) { Runtime.getRuntime().exec(command) }",
+            "import custom.*\nimport java.lang.Runtime as JVM\nfun f(command: String) { JVM.getRuntime().exec(command) }",
+            "import custom.*\nfun f(command: String) { java.lang.Runtime.getRuntime().exec(command) }",
+        ] {
+            assert_eq!(count(source, "kotlin-runtime-exec"), 1, "{source}");
+        }
+        for source in [
+            "import custom.*\nfun f(command: String) { Runtime.getRuntime().exec(command) }",
+            "import java.lang.*\nimport custom.*\nfun f(command: String) { Runtime.getRuntime().exec(command) }",
+        ] {
+            assert_eq!(count(source, "kotlin-runtime-exec"), 0, "{source}");
+        }
+    }
+
+    #[test]
     fn persistence_receiver_identity_is_owned_and_not_reassigned() {
         for source in [
             "import jakarta.persistence.EntityManager\nfun f(em: EntityManager, q: String) { em.createQuery(q) }",

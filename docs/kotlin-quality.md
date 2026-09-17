@@ -15,6 +15,8 @@ Full parity remains a release gate, not a claim made by this checkpoint.
 | [Original quality app](../tests/fixtures/kotlin-quality/README.md) | Branch fixture | Runnable vulnerable and safe Spring/JPA/JdbcTemplate endpoints; no third-party source copied. |
 | [Original JDBC controls](../tests/fixtures/kotlin-jdbc/app.kt) | Branch fixture | Statement execution and prepared SQL vulnerable/safe pairs; static source controls, not a running application. |
 | [Original filesystem controls](../tests/fixtures/kotlin-files/README.md) | Branch fixture | Read/write path influence, normalization, allowlist and content/path separation; source-only controls. |
+| [Original receiver controls](../tests/fixtures/kotlin-receivers/README.md) | Branch fixture | Local/member identity and custom fixed-path helper controls; source-only. |
+| [Original import controls](../tests/fixtures/kotlin-imports/README.md) | Branch fixture | Custom wildcard Runtime exclusion and canonical JVM import variants; compiled, custom control alone executed. |
 
 External source stays outside the public repository. Discovery now admits
 Petclinic production packages containing `samples` below `src/main/kotlin`:
@@ -194,12 +196,55 @@ body's byte range. The regenerated packet selects that nested definition,
 not its file-level namesake. The focused unit/native checks pass again after
 this refinement, and all twenty judged bundles retain identical request bytes.
 
+## Import and review-scope precision
+
+Original Runtime controls add three positive labels: fully qualified, explicitly
+imported and aliased JVM execution. A fourth, excluded control imports a custom
+Runtime through a foreign package wildcard and returns fixed text. All four
+files compile with Kotlin 2.4.10/JDK 17; only the custom control was executed.
+Separate compiler probes confirm that built-in integer/String type annotations
+have different resolution behavior from the JVM Runtime default import.
+
+The first import comparison matched its three labels but attributed one finding
+to the adjacent harmless method. Kotlin path-review excerpts now stop at the
+owning function, as observation excerpts already do. Correct verdicts alone do
+not establish correct reports.
+
+A subsequent full fresh thirty-six-case round exposed another precision failure:
+Luna reported request content written to a fixed destination as an integrity
+violation, without evidence of an application policy. Terra dismissed it.
+Luna matched 35/36 labels (one false positive); Terra matched 36/36. The file
+report's independent Luna audit was not ready for handoff. The write rule now
+explicitly separates target-path selection from content and requires supplied
+policy evidence before alleging another integrity/authorization violation.
+The earlier failure remains in evaluation history; no oracle label was changed.
+
+The MD5 report also clarifies that a dynamic algorithm expression can fall back
+to MD5 without every invocation using it. Unknown literal metadata is retained,
+and the report describes the fallback rather than inventing a constant value.
+
+The next full fresh comparison uses all revised request bytes and the predefined
+**36-case oracle**. Both models match every label: seventeen true positives,
+nineteen true negatives, zero false positives and zero false negatives each.
+Agreement is 36/36; selected-case precision and recall are 100%, not
+whole-application metrics. All forty-two responses across twenty-one bundles
+pass mechanical contract validation.
+
+All fourteen independent report audits are ready for handoff: thirteen pass
+and one passes with a minor warning to identify the precise HTTP Digest
+configuration/provider and test artifacts for compatibility verification.
+The earlier fixed-write report failure is corrected without changing its label.
+Fresh repeatability at broader coverage remains a gate despite this passing run.
+
+Thirteen focused Kotlin unit tests, nine native integration tests, two catalog
+capability/provenance checks and the specialized execution-context check pass.
+The CLI builds offline; formatting and patch checks pass. The full workspace
+sweep recorded above predates this import/context refinement; it was not rerun
+for this checkpoint. The existing twenty runtime checks apply to the unchanged
+quality app, not to the external applications or real import-control handlers.
+
 ## Remaining release gates
 
-- Correct default-import identity under explicit wildcard imports. A cached
-  Kotlin compiler probe selects a harmless custom `Runtime` through its package
-  wildcard, while the scanner currently admits it as JVM process execution.
-  The receiver metrics above do not cover this newly identified identity gap.
 - Broader independently adjudicated positive/negative cases across the
   [remaining framework and flow gaps](kotlin-coverage.md#remaining-parity-gaps),
   especially inferred JDBC factory identities and prepared execution/protection

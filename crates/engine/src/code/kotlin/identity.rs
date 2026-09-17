@@ -120,8 +120,9 @@ impl Imports {
         if observed == canonical.rsplit('.').next().unwrap_or(canonical) {
             if let Some((package, _)) = canonical.rsplit_once('.') {
                 return self.wildcards.len() == 1 && self.wildcards.contains(package)
-                    || (matches!(package, "java.lang" | "kotlin")
-                        && !self.aliases.contains_key(observed));
+                    || (package == "kotlin"
+                        || package == "java.lang" && self.wildcards.is_empty())
+                        && !self.aliases.contains_key(observed);
             }
         }
         false

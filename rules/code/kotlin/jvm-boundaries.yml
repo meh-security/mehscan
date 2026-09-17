@@ -72,7 +72,14 @@
       - pattern: $FILES.writeString($PATH, $CONTENT)
         captures: { path: PATH, content: CONTENT }
   tags: [kotlin, jvm, filesystem]
-  ai: *guidance
+  ai:
+    investigate:
+      - Verify canonical Files identity, execution context and the path capture's exact value origin.
+      - This CWE-22 candidate concerns selection of the target path. Track path and content arguments separately; request content does not establish attacker-selected path syntax.
+    verify:
+      - Establish whether the caller can escape the intended target directory through the path argument, accounting for containment and symlink policy.
+    exclude:
+      - Writing request content to a fixed server-owned path alone is ordinary file-output behavior, not path traversal. Do not infer an authorization or integrity policy violation without supplied evidence of that policy.
   provenance: *filesystem_provenance
 
 - id: kotlin-message-digest

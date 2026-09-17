@@ -596,13 +596,32 @@ fn build_path_review_jobs_internal(
         let mut decision_critical_context_truncated = false;
         for (index, step) in candidate.steps.iter().enumerate() {
             let file = sources.file(&step.location.path)?;
-            let start_line = step
+            let mut start_line = step
                 .location
                 .start
                 .line
                 .saturating_sub(context_lines)
                 .max(1);
-            let end_line = step.location.end.line.saturating_add(context_lines);
+            let mut end_line = step.location.end.line.saturating_add(context_lines);
+            if file.language == Some(Language::Kotlin) {
+                if let Some(range) = crate::code::kotlin_function_range(
+                    &file.source,
+                    step.location.start.byte_offset,
+                ) {
+                    let owner_start = file.source[..range.start]
+                        .bytes()
+                        .filter(|b| *b == b'\n')
+                        .count()
+                        + 1;
+                    let owner_end = file.source[..range.end]
+                        .bytes()
+                        .filter(|b| *b == b'\n')
+                        .count()
+                        + 1;
+                    start_line = start_line.max(owner_start);
+                    end_line = end_line.min(owner_end);
+                }
+            }
             let (slice, was_truncated) =
                 review_source_slice(file, start_line, end_line, &step.location)?;
             context_truncated |= was_truncated;
@@ -1841,10 +1860,10 @@ fn kotlin_finding_description(
             "Impact: Crafted input can change the query predicate and manipulate which records are returned. Verification: Keep the query syntax fixed, bind the affected parameter, and confirm that quote-containing input remains data in a regression test."
         }
         "kotlin-runtime-exec" => {
-            "Impact: A caller can select unintended server-side processes or their arguments. Verification: Confirm that the executable is fixed by the server and that unsupported executables and option-like input are rejected in regression tests."
+            "Impact: A caller can select unintended server-side processes or their arguments. Verification: For the named operation, confirm that server-owned allowlisted actions succeed while unsupported executables and option-like request values are rejected in regression tests."
         }
         "kotlin-message-digest" if kotlin_digest_presentation(rule, facts).is_some() => {
-            "Impact: The authentication flow retains a legacy MD5 credential digest, weakening protection against offline credential guessing. Verification: Confirm that the replacement authentication configuration rejects MD5 and that client compatibility is tested. These are source-level consequences; deployment and exploit reproduction are not established."
+            "Impact: The source authentication configuration falls back to a legacy MD5 credential digest, weakening protection against offline credential guessing. The algorithm expression is dynamic: unknown literal metadata does not negate the shown MD5 fallback or prove every invocation uses MD5. Verification: Confirm that the replacement authentication configuration rejects MD5 and that client compatibility is tested. These are source-level consequences; deployment and exploit reproduction are not established."
         }
         _ => return summary.to_string(),
     };

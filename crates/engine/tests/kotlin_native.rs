@@ -270,6 +270,42 @@ fn filesystem_paths_follow_owned_path_values_and_distinguish_content() {
 }
 
 #[test]
+fn runtime_import_controls_preserve_real_calls_and_exclude_custom_wildcard_calls() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-imports");
+    let result = mehscan_engine::scan_path(&fixture).unwrap();
+    assert_eq!(result.coverage.totals.parse_failed, 0);
+    let sinks = result
+        .evidence
+        .iter()
+        .filter(|e| e.rule_id == "kotlin-runtime-exec")
+        .map(|e| e.enclosing_symbol.as_deref().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        sinks,
+        ["qualifiedCall", "aliasedCall", "explicitCall"]
+            .into_iter()
+            .collect()
+    );
+    assert_eq!(result.security_paths.len(), 3);
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
+    let qualified = jobs
+        .reviews
+        .iter()
+        .find(|r| r.candidate.sink.enclosing_symbol.as_deref() == Some("qualifiedCall"))
+        .unwrap();
+    for fact in qualified
+        .facts
+        .iter()
+        .filter(|f| matches!(f.role.as_str(), "source_context" | "sink_context"))
+    {
+        assert!(fact.excerpt.contains("qualifiedCall"));
+        assert!(!fact.excerpt.contains("customCall"));
+    }
+}
+
+#[test]
 fn explicit_member_receivers_preserve_boundary_and_path_ownership() {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-receivers");

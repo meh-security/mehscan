@@ -26,6 +26,10 @@ distinguished from application runtime behavior.
 
 JVM boundaries recognize fully qualified names, exact imports and import
 aliases. Short names from multiple wildcard imports are rejected conservatively.
+A foreign package wildcard can replace the default JVM `Runtime` name, so that
+short name is not admitted without an explicit import. Fully qualified,
+explicitly imported and aliased JVM names remain supported. The compiler-tested
+Kotlin built-in String/integer type behavior is distinct from JVM default imports.
 Use-site ownership checks account for parameter/local/property/type shadows,
 lambda parameters, loop bindings and catch bindings. Unknown or reassigned
 persistence receivers do not inherit a typed field's identity.
