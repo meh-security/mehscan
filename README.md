@@ -57,7 +57,7 @@ From PowerShell 7, use the installer bundled with the
 [`mehscan-security` skill](skills/mehscan-security/SKILL.md):
 
 ```powershell
-./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.3.0 -SourceDigest TRUSTED_RELEASE_COMMIT
+./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.3.0
 ```
 
 GitHub CLI (`gh`) with `attestation verify` is required, but GitHub login is
@@ -76,9 +76,10 @@ signature-verifier or checksum-only fallback. If no exact platform asset is
 published, build from source instead. The 0.3.0 release matrix builds Windows
 x86_64, Linux x86_64, macOS x86_64, and macOS aarch64 archives. These assets
 become available only after all release jobs pass and the release is published.
-Replace `TRUSTED_RELEASE_COMMIT` with the full release commit obtained through
-trusted release review. The current skill pin file contains 0.2.0; the 0.3.0
-pin is distributed separately after its merged release commit is known.
+The independently distributed skill pin file contains reviewed source commits
+for 0.2.0 and 0.3.0. The 0.3.0 archive's convenience snapshot predates its own
+pin; when using that snapshot, pass `-SourceDigest` with the independently
+reviewed full tagged commit. Pins are never learned solely from downloads.
 
 ## Build
 
