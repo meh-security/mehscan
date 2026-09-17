@@ -81,6 +81,11 @@ for 0.2.0 and 0.3.0. The 0.3.0 archive's convenience snapshot predates its own
 pin; when using that snapshot, pass `-SourceDigest` with the independently
 reviewed full tagged commit. Pins are never learned solely from downloads.
 
+The 0.3.0 ZIP convenience snapshot omits the optional structured-response schema
+helper; it remains available in the source skill. Strict CLI response validation
+is included. Subsequent archive builds include that helper without replacing
+the immutable 0.3.0 assets.
+
 ## Build
 
 Rust 1.88 or newer is required.
