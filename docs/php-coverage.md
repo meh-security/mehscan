@@ -1,6 +1,6 @@
 # PHP native coverage
 
-This development profile is not included in published 0.2.1 binaries.
+This profile is included starting with 0.3.0; it is absent from 0.2.1 binaries.
 
 PHP support is partial. The scanner parses PHP and mixed HTML/PHP in `.php`,
 `.phtml`, `.php5`, `.php7`, and `.php8` files without running PHP or Composer.

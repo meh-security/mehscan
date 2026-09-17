@@ -1,6 +1,6 @@
 [package]
 name = "mehscan-cli"
-version = "0.2.1"
+version = "0.3.0"
 description = "Command-line interface for the Mehscan evidence-first source security scanner"
 edition.workspace = true
 rust-version.workspace = true

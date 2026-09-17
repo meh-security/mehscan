@@ -7,8 +7,8 @@ work rather than being presented as a proven vulnerability.
 
 ## Status
 
-The 0.2.1 release is prepared in
-[the 0.2.1 release notes](docs/release-notes-v0.2.1.md).
+The 0.3.0 release adds bounded PHP coverage and improves portable report handoffs;
+see [the 0.3.0 release notes](docs/release-notes-v0.3.0.md).
 
 Mehscan is under active development. Current language coverage includes:
 
@@ -57,7 +57,7 @@ From PowerShell 7, use the installer bundled with the
 [`mehscan-security` skill](skills/mehscan-security/SKILL.md):
 
 ```powershell
-./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.2.1 -SourceDigest TRUSTED_RELEASE_COMMIT
+./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.3.0 -SourceDigest TRUSTED_RELEASE_COMMIT
 ```
 
 GitHub CLI (`gh`) with `attestation verify` is required, but GitHub login is
@@ -73,11 +73,11 @@ the source tag and build identity but does not guarantee tag immutability.
 Downloads are bounded and verification failures stop installation. GitHub CLI
 manages trust roots; network access is still required. There is no custom
 signature-verifier or checksum-only fallback. If no exact platform asset is
-published, build from source instead. The 0.2.1 release matrix builds Windows
+published, build from source instead. The 0.3.0 release matrix builds Windows
 x86_64, Linux x86_64, macOS x86_64, and macOS aarch64 archives. These assets
 become available only after all release jobs pass and the release is published.
 Replace `TRUSTED_RELEASE_COMMIT` with the full release commit obtained through
-trusted release review. The current skill pin file contains 0.2.0; the 0.2.1
+trusted release review. The current skill pin file contains 0.2.0; the 0.3.0
 pin is distributed separately after its merged release commit is known.
 
 ## Build
@@ -151,7 +151,7 @@ source and independently builds, smoke-tests, checksums, and attests archives
 for Linux, macOS, and Windows. Verify a downloaded archive with:
 
 ```text
-gh attestation verify mehscan-v0.2.1-linux-x86_64.zip -R meh-security/mehscan
+gh attestation verify mehscan-v0.3.0-linux-x86_64.zip -R meh-security/mehscan
 ```
 
 Code analysis uses available host parallelism by default, capped at 32 workers.
