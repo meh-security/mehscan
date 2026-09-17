@@ -1,6 +1,6 @@
 [package]
 name = "mehscan-core"
-version = "0.2.0"
+version = "0.2.1"
 description = "Stable evidence, candidate, finding, and report types for Mehscan"
 edition.workspace = true
 rust-version.workspace = true

@@ -1154,6 +1154,8 @@ pub fn build_path_review_bundles_with_limits(
         // Persist a relocatable logical root; review locations are already
         // repository-relative and must not disclose the local checkout path.
         root: ".".to_string(),
+        coverage: Some(job.coverage.totals.clone()),
+        scope: review_scope(job),
         operation: "build_path_review_bundles".to_string(),
         job_fingerprint: job.fingerprint.clone(),
         max_input_bytes,
@@ -1405,9 +1407,15 @@ pub fn build_finding_report(
     dismissed.sort_by(|left, right| left.review_id.cmp(&right.review_id));
     let mut findings = Vec::new();
     let mut review_required = Vec::new();
+    let mut quality_warnings = run.quality_warnings;
     for record in records.into_values() {
         match record.item.status {
-            FindingStatus::Issue => findings.push(record.item),
+            FindingStatus::Issue => {
+                if record.item.remediation.is_none() {
+                    quality_warnings.push(format!("No operation-specific remediation is registered for {} at {}:{}; obtain an invariant-specific repair before handoff.", record.item.rule_id, record.item.primary_location.path, record.item.primary_location.start.line));
+                }
+                findings.push(record.item);
+            }
             FindingStatus::NeedsReview => review_required.push(record.item),
         }
     }
@@ -1424,6 +1432,8 @@ pub fn build_finding_report(
         scan: FindingReportScan {
             root: ".".to_string(),
             job_fingerprint: run.job_fingerprint,
+            coverage: None,
+            scope: Vec::new(),
         },
         triage: FindingReportTriage {
             response_schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
@@ -1441,7 +1451,7 @@ pub fn build_finding_report(
         findings,
         review_required,
         dismissed,
-        quality_warnings: run.quality_warnings,
+        quality_warnings,
     })
 }
 
@@ -1512,6 +1522,20 @@ fn reported_finding(
                 .and_then(|basis| basis.sink.rule_title.clone())
                 .unwrap_or_else(|| candidate.title.clone());
             let title = human_finding_title(&candidate.sink.rule_id, &fallback_title);
+            let presentation = report_presentation(
+                &candidate.sink.rule_id,
+                &candidate.cwe_candidates,
+                review.review_basis.as_ref().map(|basis| &basis.sink),
+                Some(&candidate.source.rule_id),
+            );
+            let title = presentation
+                .as_ref()
+                .map_or(title, |value| value.title.to_string());
+            let remediation = report_remediation(
+                presentation,
+                candidate.capability,
+                &candidate.cwe_candidates,
+            );
             let mut evidence_ids = vec![candidate.source.id.clone(), candidate.sink.id.clone()];
             evidence_ids.extend(candidate.protections.iter().map(|item| item.id.clone()));
             evidence_ids.extend(
@@ -1550,15 +1574,13 @@ fn reported_finding(
                 language: review.language,
                 primary_location: candidate.primary_location.clone(),
                 context: candidate.sink.context.clone(),
+                related_feature_policies: report_policy_associations(&review.facts),
                 flow: Some(FindingFlow {
                     steps: candidate.steps.clone(),
                 }),
                 related_locations,
                 checks: result.checks.clone(),
-                remediation: Some(finding_remediation(
-                    candidate.capability,
-                    &candidate.cwe_candidates,
-                )),
+                remediation,
                 provenance: FindingProvenance {
                     review_ids: vec![review.id.clone()],
                     evidence_ids,
@@ -1590,6 +1612,23 @@ fn reported_finding(
                 })
                 .unwrap_or_else(|| review.title.clone());
             let title = human_finding_title(&anchor.rule_id, &fallback_title);
+            let presentation = report_presentation(
+                &anchor.rule_id,
+                &anchor.cwe_candidates,
+                review.review_basis.as_ref().and_then(|basis| {
+                    basis
+                        .observations
+                        .iter()
+                        .find(|item| item.rule_id == anchor.rule_id)
+                }),
+                observation_has_source_embedded_signing_key(&review.evidence, &review.facts)
+                    .then_some("source-embedded-hardcoded-signing-key"),
+            );
+            let title = presentation
+                .as_ref()
+                .map_or(title, |value| value.title.to_string());
+            let remediation =
+                report_remediation(presentation, anchor.capability, &anchor.cwe_candidates);
             let anchor_ids = review.anchor_evidence_ids.iter().collect::<BTreeSet<_>>();
             let mut related_locations = review
                 .evidence
@@ -1623,13 +1662,11 @@ fn reported_finding(
                 language: review.language,
                 primary_location: anchor.location.clone(),
                 context: anchor.context.clone(),
+                related_feature_policies: report_policy_associations(&review.facts),
                 flow: None,
                 related_locations,
                 checks: result.checks.clone(),
-                remediation: Some(finding_remediation(
-                    anchor.capability,
-                    &anchor.cwe_candidates,
-                )),
+                remediation,
                 provenance: FindingProvenance {
                     review_ids: vec![review.id.clone()],
                     evidence_ids,
@@ -1646,6 +1683,104 @@ fn default_severity() -> ReportedSeverity {
     }
 }
 
+fn review_scope(job: &PathReviewJob) -> Vec<String> {
+    let mut scope = vec![format!(
+        "Review material policy: {}; {} non-deployed review items excluded.",
+        if job.include_review_material {
+            "explicitly included"
+        } else {
+            "default production source"
+        },
+        job.review_material_excluded,
+    )];
+    for status in [
+        mehscan_core::FileStatus::ParseFailed,
+        mehscan_core::FileStatus::Unsupported,
+    ] {
+        let paths = job
+            .coverage
+            .files
+            .iter()
+            .filter(|file| file.status == status)
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>();
+        if !paths.is_empty() {
+            scope.push(format!("{status:?} source files: {}", paths.join(", ")));
+        }
+    }
+    scope
+}
+
+fn report_presentation(
+    rule_id: &str,
+    cwes: &[String],
+    basis: Option<&PathReviewEvidenceBasis>,
+    source_rule: Option<&str>,
+) -> Option<crate::report_policy::Presentation> {
+    if cwes.iter().any(|cwe| cwe == "CWE-367") {
+        return None; // Preserve the atomic-handle repair, not path containment.
+    }
+    // This source rule explicitly names embedded key material. Do not infer
+    // key disclosure from a generic credential source or token generation API.
+    if rule_id.ends_with("jwt-token-generation")
+        && source_rule.is_some_and(|rule| rule.contains("hardcoded") && rule.contains("key"))
+    {
+        return crate::report_policy::presentation(
+            "hardcoded-signing-key",
+            &["CWE-321".into()],
+            "",
+        );
+    }
+    let operation = basis
+        .and_then(|basis| basis.captures.get("operation"))
+        .map_or("", String::as_str);
+    crate::report_policy::presentation(rule_id, cwes, operation)
+}
+
+fn report_remediation(
+    presentation: Option<crate::report_policy::Presentation>,
+    capability: Capability,
+    cwes: &[String],
+) -> Option<FindingRemediation> {
+    if let Some(presentation) = presentation {
+        return Some(FindingRemediation {
+            text: presentation.remediation.to_string(),
+            references: Vec::new(),
+        });
+    }
+    // Existing native-invariant repairs remain valid; broad authentication and
+    // resource categories must not supply an unrelated default repair.
+    if matches!(
+        capability,
+        Capability::FormatStringOutput
+            | Capability::ProcessExecution
+            | Capability::CountControlledMemoryOperation
+            | Capability::SignedSizeMemoryOperation
+            | Capability::LocalHeapDeallocation
+            | Capability::RemainingInputRead
+    ) || (capability == Capability::FilesystemWrite && cwes.iter().any(|cwe| cwe == "CWE-367"))
+    {
+        Some(finding_remediation(capability, cwes))
+    } else {
+        None
+    }
+}
+
+fn report_policy_associations(facts: &[ReviewNeighborhoodFact]) -> Vec<String> {
+    let mut policies = facts
+        .iter()
+        .filter(|fact| fact.role == "feature_gate_context")
+        .map(|fact| {
+            format!(
+                "{} at {}:{}",
+                fact.symbol, fact.location.path, fact.location.start.line
+            )
+        })
+        .collect::<Vec<_>>();
+    policies.sort();
+    policies.dedup();
+    policies
+}
 fn human_finding_title(rule_id: &str, fallback: &str) -> String {
     match rule_id {
         "c-format-string-output" => {
@@ -1673,11 +1808,28 @@ fn human_finding_title(rule_id: &str, fallback: &str) -> String {
         "cpp-drogon-orm-resource-access" => {
             "Request-selected object is accessed without authorization".to_string()
         }
+        _ if fallback.contains("CWE-") || fallback.starts_with("Review non-path") => {
+            let suffix = rule_id
+                .split_once('-')
+                .map_or(rule_id, |(_, suffix)| suffix);
+            format!(
+                "Security controls for {}",
+                suffix.trim_end_matches("-review").replace('-', " ")
+            )
+        }
         _ => fallback.to_string(),
     }
 }
 
 fn finding_remediation(capability: Capability, cwes: &[String]) -> FindingRemediation {
+    if !cwes.iter().any(|cwe| cwe == "CWE-367")
+        && let Some(presentation) = crate::report_policy::presentation("", cwes, "")
+    {
+        return FindingRemediation {
+            text: presentation.remediation.to_string(),
+            references: Vec::new(),
+        };
+    }
     let text = match capability {
         Capability::FormatStringOutput => {
             "Use a fixed format literal and pass runtime text only as data arguments; if placeholders are configurable, parse and allowlist the complete format before use."
@@ -1700,14 +1852,8 @@ fn finding_remediation(capability: Capability, cwes: &[String]) -> FindingRemedi
         Capability::RemainingInputRead => {
             "First prove the cursor is within the input, then reject any decoded extent greater than total_size - cursor before reading or advancing; do not validate with cursor + extent in a type where it can wrap."
         }
-        Capability::Authentication => {
-            "Attach the verified authentication filter to the route and enforce it before the handler accesses or mutates application data."
-        }
-        Capability::ResourceAccess => {
-            "Constrain the ORM operation by the authenticated subject's owner, tenant, role, or explicit policy—not only by the request-selected object ID."
-        }
         _ => {
-            "Add a control for the exact reported operation and invariant, and verify it executes before the security-sensitive behavior."
+            "No operation-specific repair is registered; obtain a repair for the exact invariant before handoff."
         }
     };
     FindingRemediation {
@@ -8733,7 +8879,14 @@ fn path_review_questions(
     let mut questions = candidate
         .uncertainty_reasons
         .iter()
-        .map(|reason| uncertainty_review_question(reason, candidate.source.capability))
+        .map(|reason| {
+            let question = uncertainty_review_question(reason, candidate.source.capability);
+            if candidate.source.capability == Capability::StoredUserContent {
+                format!("{question} Trace the stored value read at {}:{}:{} through its producer/write handler, persistence validator, and retrieval mapping; determine whether executable attacker content is preserved or rejected/encoded before this sink at {}:{}:{}.", candidate.source.location.path, candidate.source.location.start.line, candidate.source.location.start.column, candidate.sink.location.path, candidate.sink.location.start.line, candidate.sink.location.start.column)
+            } else {
+                question
+            }
+        })
         .collect::<Vec<_>>();
     if candidate.protections.is_empty()
         && !(candidate.capability == Capability::ArithmeticDivision
@@ -8827,7 +8980,7 @@ fn uncertainty_review_question(reason: &str, source_capability: Capability) -> S
                 "Do the supplied declarations establish that this exact credential or signing-key material is embedded in the application rather than obtained from an authoritative secret provider?"
             }
             Capability::StoredUserContent => {
-                "Does the supplied producer, persistence, or retrieval context establish that this exact value retains attacker-controlled content?"
+                "Obtain the producer/write handler and persistence validator for this stored field; does their exact value transformation preserve attacker-controlled content into retrieval?"
             }
             Capability::UploadedFileContent
             | Capability::UploadedFilePath
@@ -8879,7 +9032,7 @@ fn uncertainty_review_question(reason: &str, source_capability: Capability) -> S
         || reason.contains("stored_model")
         || reason.contains("rxjs")
     {
-        return "Does the supplied producer, persistence, or retrieval context establish that this exact value retains attacker-controlled content?"
+        return "Obtain the producer/write handler and persistence validator for this stored field; does their exact value transformation preserve attacker-controlled content into retrieval?"
             .to_string();
     }
     if reason.contains("protection") || reason.contains("validation_guard") {
@@ -15277,6 +15430,146 @@ mod tests {
             finding_remediation(Capability::RemainingInputRead, &["CWE-125".into()])
                 .text
                 .contains("total_size - cursor")
+        );
+    }
+
+    #[test]
+    fn report_repairs_follow_the_invariant_instead_of_the_broad_category() {
+        assert!(
+            finding_remediation(Capability::ResourceAccess, &["CWE-312".into()])
+                .text
+                .contains("Encrypt")
+        );
+        assert!(
+            finding_remediation(Capability::Authentication, &["CWE-307".into()])
+                .text
+                .contains("throttling")
+        );
+        assert!(report_remediation(None, Capability::ResourceAccess, &["CWE-20".into()]).is_none());
+        assert!(
+            report_presentation(
+                "native-same-path-filesystem-use",
+                &["CWE-22".into(), "CWE-367".into()],
+                None,
+                None
+            )
+            .is_none()
+        );
+        assert!(
+            report_remediation(
+                None,
+                Capability::FilesystemWrite,
+                &["CWE-22".into(), "CWE-367".into()]
+            )
+            .unwrap()
+            .text
+            .contains("fstat")
+        );
+        for language in [
+            "typescript",
+            "javascript",
+            "python",
+            "java",
+            "csharp",
+            "go",
+            "rust",
+            "cpp",
+        ] {
+            let rule = format!("{language}-jwt-token-generation");
+            let embedded = format!("{language}-hardcoded-jwt-key");
+            assert_eq!(
+                report_presentation(&rule, &["CWE-613".into()], None, Some(&embedded))
+                    .unwrap()
+                    .title,
+                "Embedded signing key permits forged credentials"
+            );
+            let generic = format!("{language}-credential-material");
+            assert_ne!(
+                report_presentation(&rule, &["CWE-613".into()], None, Some(&generic))
+                    .unwrap()
+                    .title,
+                "Embedded signing key permits forged credentials"
+            );
+        }
+    }
+
+    #[test]
+    fn embedded_key_observation_keeps_the_key_disclosure_repair() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/v2-identity-boundary/positive");
+        let job = build_all_path_review_jobs(&root, Some(100), false).expect("identity review job");
+        let bundles = build_path_review_bundles(&job, None).expect("identity bundles");
+        let scan = crate::scan_path(&root).expect("identity evidence");
+        // Exercise the report join with a generic token-generation observation
+        // and its accepted explicit key-origin fact, independently of admission
+        // suppressing observations already covered by the fixture's paths.
+        let mut anchor = scan.evidence.into_iter().next().expect("fixture evidence");
+        anchor.rule_id = "typescript-jwt-token-generation".to_string();
+        anchor.kind = EvidenceKind::SecurityConfiguration;
+        anchor.capability = Capability::TokenGeneration;
+        anchor.cwe_candidates = vec!["CWE-613".into(), "CWE-347".into()];
+        let policy = job
+            .reviews
+            .first()
+            .expect("identity path")
+            .confidence_policy
+            .clone();
+        let fact = ReviewNeighborhoodFact {
+            role: "helper_definition_context".to_string(),
+            symbol: "privateKey".to_string(),
+            location: anchor.location.clone(),
+            excerpt:
+                "The fixture contains a source-embedded private-key literal used by the signer."
+                    .to_string(),
+            evidence_id: None,
+            provenance: textual_provenance("explicit signing-key fact"),
+        };
+        let original_context = anchor.context.clone();
+        let mut policy_fact = fact.clone();
+        policy_fact.role = "feature_gate_context".to_string();
+        policy_fact.symbol = "exampleChallengePolicy".to_string();
+        let review = ObservationReview {
+            id: "key-observation".to_string(),
+            language: Some(Language::Typescript),
+            title: "JWT token generation".to_string(),
+            anchor_evidence_ids: vec![anchor.id.clone()],
+            evidence: vec![anchor],
+            review_basis: None,
+            decision_facts: ReviewDecisionFacts::default(),
+            confidence_policy: policy,
+            facts: vec![fact, policy_fact],
+            open_questions: Vec::new(),
+            context_truncated: false,
+            truncation: ReviewContextTruncation::default(),
+        };
+        let result = mehscan_core::PathReviewTriageResult {
+            review_id: review.id.clone(),
+            decision: ReviewDecision::Issue,
+            confidence: review.confidence_policy.issue,
+            summary: "Source-embedded signing material can be reused to forge credentials."
+                .to_string(),
+            checks: Vec::new(),
+        };
+        let mut bundle = bundles.bundles.into_iter().next().expect("identity bundle");
+        bundle.payload = PathReviewBundlePayload::Observation {
+            reviews: vec![review],
+        };
+        let finding = reported_finding(&bundle, &result).expect("key observation finding");
+        assert_eq!(
+            finding.context, original_context,
+            "policy association must not promote source availability"
+        );
+        assert_eq!(finding.related_feature_policies.len(), 1);
+        assert_eq!(
+            finding.title,
+            "Embedded signing key permits forged credentials"
+        );
+        assert!(
+            finding
+                .remediation
+                .unwrap()
+                .text
+                .contains("rotate the exposed key")
         );
     }
 }
