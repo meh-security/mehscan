@@ -273,7 +273,14 @@ impl FindingReport {
         if !self.quality_warnings.is_empty() {
             output.push_str("\n## Quality warnings\n\n");
             for warning in &self.quality_warnings {
-                output.push_str(&format!("- {}\n", markdown_text(warning)));
+                let warning = if warning.starts_with("review_kind_correlation:") {
+                    format!(
+                        "{warning}; this correlation applies only to this report's reviewed selection and does not establish a model-wide error"
+                    )
+                } else {
+                    warning.clone()
+                };
+                output.push_str(&format!("- {}\n", markdown_text(&warning)));
             }
         }
 
@@ -347,6 +354,7 @@ fn render_finding_group(output: &mut String, index: usize, findings: &[&Reported
             markdown_text(&finding.description)
         ));
         render_availability(output, finding);
+        render_flow(output, finding);
     }
     output.push('\n');
 }
@@ -385,6 +393,7 @@ fn render_finding(
     ));
 
     render_availability(output, finding);
+    render_flow(output, finding);
 
     if include_checks {
         output.push_str("\nRequired checks:\n\n");
@@ -398,6 +407,29 @@ fn render_finding(
         ));
     }
     output.push('\n');
+}
+
+fn render_flow(output: &mut String, finding: &ReportedFinding) {
+    let Some(flow) = &finding.flow else { return };
+    let locations = flow
+        .steps
+        .iter()
+        .filter(|step| {
+            matches!(
+                step.kind,
+                crate::SecurityPathStepKind::Source | crate::SecurityPathStepKind::Sink
+            )
+        })
+        .map(|step| {
+            markdown_code_span(&format!(
+                "{}:{}:{}",
+                step.location.path, step.location.start.line, step.location.start.column
+            ))
+        })
+        .collect::<Vec<_>>();
+    if locations.len() > 1 {
+        output.push_str(&format!("\nFlow: {}\n", locations.join(" → ")));
+    }
 }
 
 fn enum_label(value: impl std::fmt::Debug) -> String {
@@ -506,6 +538,39 @@ mod tests {
                 evidence_ids: vec!["evidence-1".to_string()],
             },
         }
+    }
+
+    #[test]
+    fn markdown_shows_source_and_sink_from_canonical_flow() {
+        let mut item = finding(FindingStatus::Issue, Vec::new());
+        item.flow = Some(FindingFlow {
+            steps: vec![
+                SecurityPathStep {
+                    kind: crate::SecurityPathStepKind::Source,
+                    location: location("routes/input.kt", 10),
+                    evidence_id: None,
+                    symbol: Some("name".into()),
+                },
+                SecurityPathStep {
+                    kind: crate::SecurityPathStepKind::Sink,
+                    location: location("routes/query.kt", 23),
+                    evidence_id: None,
+                    symbol: Some("query".into()),
+                },
+            ],
+        });
+        let mut markdown = String::new();
+        render_finding(&mut markdown, 1, &item, false);
+        assert!(
+            markdown.contains("Flow: `routes/input.kt:10:3` → `routes/query.kt:23:3`"),
+            "{markdown}"
+        );
+        assert_eq!(
+            markdown
+                .matches("Request input reaches the query sink.")
+                .count(),
+            1
+        );
     }
 
     #[test]

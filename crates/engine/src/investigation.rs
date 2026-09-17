@@ -1674,7 +1674,12 @@ fn reported_finding(
                 id: String::new(),
                 rule_id: candidate.sink.rule_id.clone(),
                 title,
-                description: result.summary.clone(),
+                description: kotlin_finding_description(
+                    &candidate.sink.rule_id,
+                    status,
+                    &result.summary,
+                    &review.facts,
+                ),
                 status,
                 severity: default_severity(),
                 confidence: result.confidence,
@@ -1726,18 +1731,24 @@ fn reported_finding(
                 anchor.capability,
                 &anchor.cwe_candidates,
             );
-            let presentation = report_presentation(
-                &anchor.rule_id,
-                &anchor.cwe_candidates,
-                review.review_basis.as_ref().and_then(|basis| {
-                    basis
-                        .observations
-                        .iter()
-                        .find(|item| item.rule_id == anchor.rule_id)
-                }),
-                observation_has_source_embedded_signing_key(&review.evidence, &review.facts)
-                    .then_some("source-embedded-hardcoded-signing-key"),
-            );
+            let presentation =
+                kotlin_digest_presentation(&anchor.rule_id, &review.facts).or_else(|| {
+                    report_presentation(
+                        &anchor.rule_id,
+                        &anchor.cwe_candidates,
+                        review.review_basis.as_ref().and_then(|basis| {
+                            basis
+                                .observations
+                                .iter()
+                                .find(|item| item.rule_id == anchor.rule_id)
+                        }),
+                        observation_has_source_embedded_signing_key(
+                            &review.evidence,
+                            &review.facts,
+                        )
+                        .then_some("source-embedded-hardcoded-signing-key"),
+                    )
+                });
             let title = presentation
                 .as_ref()
                 .map_or(title, |value| value.title.to_string());
@@ -1767,7 +1778,12 @@ fn reported_finding(
                 id: String::new(),
                 rule_id: anchor.rule_id.clone(),
                 title,
-                description: result.summary.clone(),
+                description: kotlin_finding_description(
+                    &anchor.rule_id,
+                    status,
+                    &result.summary,
+                    &review.facts,
+                ),
                 status,
                 severity: default_severity(),
                 confidence: result.confidence,
@@ -1788,6 +1804,42 @@ fn reported_finding(
             })
         }
     }
+}
+
+fn kotlin_digest_presentation(
+    rule: &str,
+    facts: &[ReviewNeighborhoodFact],
+) -> Option<crate::report_policy::Presentation> {
+    (rule == "kotlin-message-digest" && facts.iter().any(|fact| {
+        fact.role == "source_context" && fact.excerpt.contains("digestProvider") && fact.excerpt.contains("\"MD5\"")
+    })).then_some(crate::report_policy::Presentation {
+        title: "HTTP Digest authentication defaults credential hashing to MD5",
+        remediation: "Migrate or disable the MD5-based HTTP Digest authentication flow in favor of a modern authentication mechanism, with a compatibility plan for clients and credentials. Do not substitute a password-storage hash into the Digest wire protocol. Verify that the provider rejects legacy algorithm selections and that clients use the replacement authentication flow.",
+    })
+}
+
+fn kotlin_finding_description(
+    rule: &str,
+    status: FindingStatus,
+    summary: &str,
+    facts: &[ReviewNeighborhoodFact],
+) -> String {
+    if status != FindingStatus::Issue {
+        return summary.to_string();
+    }
+    let detail = match rule {
+        "kotlin-persistence-query" => {
+            "Impact: Crafted input can change the query predicate and manipulate which records are returned. Verification: Keep the query syntax fixed, bind the affected parameter, and confirm that quote-containing input remains data in a regression test."
+        }
+        "kotlin-runtime-exec" => {
+            "Impact: A caller can select unintended server-side processes or their arguments. Verification: Confirm that the executable is fixed by the server and that unsupported executables and option-like input are rejected in regression tests."
+        }
+        "kotlin-message-digest" if kotlin_digest_presentation(rule, facts).is_some() => {
+            "Impact: The authentication flow retains a legacy MD5 credential digest, weakening protection against offline credential guessing. Verification: Confirm that the replacement authentication configuration rejects MD5 and that client compatibility is tested. These are source-level consequences; deployment and exploit reproduction are not established."
+        }
+        _ => return summary.to_string(),
+    };
+    format!("{summary} {detail}")
 }
 
 fn default_severity() -> ReportedSeverity {
@@ -5249,8 +5301,8 @@ fn build_observation_reviews(
             .map(|item| item.location.end.line)
             .max()
             .unwrap_or(first_line);
-        let start_line = first_line.saturating_sub(context_lines).max(1);
-        let end_line = last_line.saturating_add(context_lines);
+        let mut start_line = first_line.saturating_sub(context_lines).max(1);
+        let mut end_line = last_line.saturating_add(context_lines);
         let anchor = group
             .anchor_evidence_ids
             .iter()
@@ -5258,6 +5310,28 @@ fn build_observation_reviews(
             .or_else(|| group.evidence.first())
             .map(|item| &item.location)
             .ok_or_else(|| EngineError("observation review has no anchor evidence".to_string()))?;
+        if group
+            .evidence
+            .iter()
+            .any(|item| item.rule_id.starts_with("kotlin-"))
+        {
+            if let Some(range) =
+                crate::code::kotlin_function_range(&file.source, anchor.start.byte_offset)
+            {
+                let owner_start = file.source[..range.start]
+                    .bytes()
+                    .filter(|b| *b == b'\n')
+                    .count()
+                    + 1;
+                let owner_end = file.source[..range.end]
+                    .bytes()
+                    .filter(|b| *b == b'\n')
+                    .count()
+                    + 1;
+                start_line = start_line.max(owner_start);
+                end_line = end_line.min(owner_end);
+            }
+        }
         let (mut slice, mut context_truncated) =
             review_source_slice(file, start_line, end_line, anchor)?;
         let mut decision_critical_context_truncated = context_truncated;
@@ -5350,6 +5424,28 @@ fn build_observation_reviews(
             exact_java_identity_observation_caller_facts(sources, &group, 4);
         context_truncated |= java_callers_truncated;
         facts.append(&mut java_callers);
+        if file.language == Some(Language::Kotlin) {
+            for item in &group.evidence {
+                if let Some(fact) =
+                    crate::code::kotlin_numeric_query_fact(&group.path, &file.source, item)
+                {
+                    facts.push(fact);
+                }
+            }
+            let kotlin_files = sources
+                .files
+                .values()
+                .filter(|f| f.language == Some(Language::Kotlin))
+                .filter(|f| f.source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES)
+                .map(|f| (f.path.as_str(), f.source.as_str()))
+                .collect::<Vec<_>>();
+            facts.extend(crate::code::kotlin_caller_facts(
+                &kotlin_files,
+                &group.path,
+                anchor.start.byte_offset,
+                4,
+            ));
+        }
         let (mut jwt_verification, jwt_verification_truncated) =
             python_jwt_verification_facts(sources, &group, 4);
         context_truncated |= jwt_verification_truncated;
@@ -6778,7 +6874,7 @@ fn observation_groups(
                 .filter(|item| {
                     item.id == anchor_id
                         || (!anchor_set.contains(item.id.as_str())
-                            && is_local_observation_context(anchor_evidence, item))
+                            && is_local_observation_context(anchor_evidence, item, Some(sources)))
                 })
                 .cloned()
                 .collect();
@@ -6993,7 +7089,11 @@ fn is_duplicate_parameter_sink_summary(item: &Evidence, evidence: &[Evidence]) -
     })
 }
 
-fn is_local_observation_context(anchor: &Evidence, item: &Evidence) -> bool {
+fn is_local_observation_context(
+    anchor: &Evidence,
+    item: &Evidence,
+    sources: Option<&RepositorySources>,
+) -> bool {
     if anchor.location.path != item.location.path {
         return false;
     }
@@ -7001,6 +7101,17 @@ fn is_local_observation_context(anchor: &Evidence, item: &Evidence) -> bool {
         || item.related_evidence.iter().any(|id| id == &anchor.id);
     if explicitly_related {
         return true;
+    }
+    if anchor.rule_id.starts_with("kotlin-") && item.rule_id.starts_with("kotlin-") {
+        if let Some(file) = sources.and_then(|s| s.file(&anchor.location.path).ok()) {
+            let anchor_scope =
+                crate::code::kotlin_callable_range(&file.source, anchor.location.start.byte_offset);
+            let item_scope =
+                crate::code::kotlin_callable_range(&file.source, item.location.start.byte_offset);
+            if item_scope.is_some() && item_scope != anchor_scope {
+                return false;
+            }
+        }
     }
     if !matches!(
         item.kind,
@@ -7096,7 +7207,7 @@ fn is_superseded_csharp_cookie_observation(item: &Evidence, group: &[Evidence]) 
 fn is_source_free_generic_java_log(item: &Evidence, group: &[Evidence]) -> bool {
     item.rule_id == "java-rendered-log-message"
         && !group.iter().any(|other| {
-            other.kind == EvidenceKind::Source && is_local_observation_context(item, other)
+            other.kind == EvidenceKind::Source && is_local_observation_context(item, other, None)
         })
 }
 
@@ -9042,7 +9153,12 @@ fn observation_review_questions(
             "Do the supplied write, persistence, retrieval/view, and raw-output excerpts show a context-appropriate sanitizer or a write invariant that prevents stored attacker HTML from executing?"
                 .to_string(),
         );
-    } else if !has_precise_node_boundary && has_database_caller_context {
+    } else if !has_precise_node_boundary
+        && has_database_caller_context
+        && !evidence
+            .iter()
+            .any(|item| item.rule_id == "kotlin-persistence-query")
+    {
         questions.push(
             "Does request-bound model data copied into the supplied repository argument influence the interpolated command text, and is parameterization or equivalent SQL-safe construction shown?"
                 .to_string(),

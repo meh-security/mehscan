@@ -8,13 +8,13 @@ fn root() -> PathBuf {
 #[test]
 fn kotlin_jvm_boundaries_and_scripts_preserve_captures() {
     let result = mehscan_engine::scan_path(root()).unwrap();
-    assert_eq!(result.coverage.languages[&Language::Kotlin].scanned, 4);
+    assert_eq!(result.coverage.languages[&Language::Kotlin].scanned, 5);
     let native = result
         .evidence
         .iter()
         .filter(|e| e.rule_id.starts_with("kotlin-"))
         .collect::<Vec<_>>();
-    assert_eq!(native.len(), 8);
+    assert_eq!(native.len(), 9);
     let rules = mehscan_engine::rules::load_builtin_rules().unwrap();
     let declared = rules
         .iter()
@@ -29,7 +29,7 @@ fn kotlin_jvm_boundaries_and_scripts_preserve_captures() {
         declared, exercised,
         "Every Kotlin rule needs an executable fixture"
     );
-    for cwe in ["CWE-78", "CWE-22", "CWE-327", "CWE-918"] {
+    for cwe in ["CWE-78", "CWE-22", "CWE-327", "CWE-918", "CWE-89"] {
         assert!(
             result
                 .coverage
@@ -81,5 +81,77 @@ fn kotlin_outline_and_test_policy_are_available() {
         },
     )
     .unwrap();
-    assert_eq!(result.coverage.languages[&Language::Kotlin].scanned, 6);
+    assert_eq!(result.coverage.languages[&Language::Kotlin].scanned, 7);
+}
+
+#[test]
+fn kotlin_quality_app_admits_unsafe_and_safe_operations_without_verdicts() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-quality");
+    let result = mehscan_engine::scan_path(fixture).unwrap();
+    assert_eq!(result.coverage.totals.parse_failed, 0);
+    let observations = result
+        .evidence
+        .iter()
+        .filter(|e| e.rule_id.starts_with("kotlin-") && e.kind == mehscan_core::EvidenceKind::Sink)
+        .collect::<Vec<_>>();
+    let owners = observations
+        .iter()
+        .filter_map(|e| e.enclosing_symbol.as_deref())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        owners,
+        [
+            "rawQuery",
+            "boundQuery",
+            "numericQuery",
+            "rawCommand",
+            "fixedCommand"
+        ]
+        .into_iter()
+        .collect()
+    );
+    assert_eq!(observations.len(), 5);
+    assert_eq!(result.security_paths.len(), 2);
+    let linked = result
+        .security_paths
+        .iter()
+        .map(|p| {
+            result
+                .evidence
+                .iter()
+                .find(|e| e.id == p.sink_evidence_id)
+                .unwrap()
+                .enclosing_symbol
+                .as_deref()
+                .unwrap()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(linked, ["rawCommand", "rawQuery"].into_iter().collect());
+}
+
+#[test]
+fn kotlin_review_constraints_and_sources_stay_with_their_owner() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-quality");
+    let job =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
+    let encoded = serde_json::to_value(job).unwrap();
+    let reviews = encoded["observation_reviews"].as_array().unwrap();
+    let numeric = reviews
+        .iter()
+        .find(|review| review.to_string().contains("numeric_query_operand_context"))
+        .unwrap();
+    let text = numeric.to_string();
+    assert!(text.contains("numericQuery"));
+    assert!(!text.contains("fun rawCommand"));
+    assert!(!text.contains("fun rawQuery"));
+    assert!(!text.contains("kotlin-spring-mvc-parameter-source"));
+    assert!(
+        reviews
+            .iter()
+            .filter(|review| review.to_string().contains("numeric_query_operand_context"))
+            .count()
+            == 1
+    );
 }

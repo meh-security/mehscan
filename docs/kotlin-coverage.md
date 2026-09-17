@@ -1,54 +1,71 @@
 # Kotlin coverage and gaps
 
-Kotlin support is partial. Mehscan parses `.kt` and `.kts` files without running
-Kotlin, Gradle, or application code. Kotlin files use the ordinary repository
-exclusion policy; `*Test.kt`, `*Tests.kt`, and `*.generated.kt` are excluded
-unless `--include-tests` is supplied. The investigation API provides Kotlin
-outlines, and CLI language filters accept `kotlin`, `kt`, and `kts`.
+Kotlin support is a partial JVM profile. Mehscan parses `.kt` and `.kts` without
+running Kotlin, Gradle or application code. Language filters accept `kotlin`,
+`kt` and `kts`; investigation provides Kotlin outlines.
 
-The initial profile inventories explicitly qualified JVM API calls:
+The ordinary source policy applies: tests, generated files and outer example
+directories are excluded unless explicitly included. Under `src/main/kotlin`
+or `src/main/java`, package segments named `samples` or `examples` remain
+production source. Build scripts are parsed but their observations must be
+distinguished from application runtime behavior.
 
-| Surface | APIs | Evidence |
+## Supported surfaces
+
+| Surface | Ownership and APIs | Evidence |
 | --- | --- | --- |
-| Command execution | `java.lang.Runtime.getRuntime().exec(command)` | Process sink; CWE-78 |
-| File read | `java.nio.file.Files.readAllBytes(path)`, `readString(path)` | Read sink; CWE-22 |
-| File write | `java.nio.file.Files.write(path, content)`, `writeString(path, content)` | Write sink; CWE-22 |
-| Digest selection | `java.security.MessageDigest.getInstance(algorithm)` | Algorithm configuration; CWE-327 |
-| URI parsing | `java.net.URI.create(url)` | Parsing fact; CWE-918 |
+| Command execution | Canonical `Runtime.getRuntime().exec(command)`, including the default JVM import | Process sink; CWE-78 |
+| File read | Canonical `Files.readAllBytes(path)` and `readString(path)` | Read sink; CWE-22 |
+| File write | Canonical `Files.write(path, content)` and `writeString(path, content)` | Write sink; CWE-22 |
+| Digest selection | Canonical `MessageDigest.getInstance(algorithm)` | Algorithm configuration; CWE-327 |
+| URI parsing | Canonical `URI.create(url)` | Parsing fact; CWE-918 |
+| Persistence queries | Declared `javax.persistence.EntityManager` or `jakarta.persistence.EntityManager`; `createQuery` and `createNativeQuery` | Query sink; CWE-89 |
+| Spring MVC scalar inputs | Direct mapped methods of canonical `Controller`/`RestController` classes; annotated String request inputs | Request source; CWE-20 |
 
-Captures preserve exact input expressions and source locations. Comments,
-ordinary string contents, and unqualified lookalikes do not produce these
-boundaries. Files declaring a local `java` binding are conservatively excluded
-from JVM API matching, including unrelated scopes. This is structural analysis,
-not compiler-backed symbol resolution; project classes can still conflict with
-JVM package names.
+JVM boundaries recognize fully qualified names, exact imports and import
+aliases. Short names from multiple wildcard imports are rejected conservatively.
+Use-site ownership checks account for parameter/local/property/type shadows,
+lambda parameters, loop bindings and catch bindings. Unknown or reassigned
+persistence receivers do not inherit a typed field's identity.
 
-A matched sink is a review lead, not a vulnerability finding. URI parsing does
-not establish destination authorization. Digest selection is inventory for
-both strong and weak algorithms and does not establish security-sensitive use.
+Bounded same-function Spring scalar paths connect request inputs to command or
+query operands through identifiers, immutable `val` aliases, concatenation and
+ordinary, braced or raw string templates. Propagation stops after eight levels,
+at unknown helper results, mutable bindings, reassignment and callable boundaries.
+Fixed queries with separately bound values and numeric request types do not
+become string-injection paths. Literal excluded branches and statements after
+direct return/throw carry explicit unreachable execution context.
 
-## Gaps and next steps
+Persistence observation reviews can include exact typed caller methods, caller
+binding policies, model declarations and a direct model superclass. Interface
+context requires a unique direct implementation and declared type. This is
+bounded review context, not proof of runtime dispatch or cross-file value flow.
+Spring's default model-attribute binding is subject to binder policy and other
+argument resolvers; the supplied excerpts must establish the relevant property.
 
-- **API identity:** imported short names, import aliases, default JVM imports,
-  typed receivers, constructors, overloads with extra arguments, safe calls,
-  method references, and extension functions need semantic ownership checks.
-- **Value flow:** Kotlin request sources, `val`/`var` bindings, string templates
-  (including raw strings), destructuring, Elvis expressions, smart casts,
-  scope functions (`let`, `run`, `apply`, `also`, `with`), lambdas, and coroutines
-  do not yet have a Kotlin source-to-sink summary. No Kotlin security-path
-  coverage is claimed by this profile.
-- **Server frameworks:** Spring MVC/WebFlux and Ktor routing, request inputs,
-  authentication, authorization, HTML output, redirects, and uploads are absent.
-- **Persistence/network:** JDBC query and prepared-statement ownership, Exposed,
-  JPA, OkHttp, Ktor clients, serialization, XML, TLS and JWT controls are absent.
-- **Android/multiplatform:** intents, WebView, exported components, content
-  providers, Android storage, Kotlin/JS and Kotlin/Native APIs are absent.
-- **Build/project context:** Gradle source sets, generated Kotlin naming beyond
-  the ordinary exclusions, dependency identity, mixed Java/Kotlin cross-file
-  propagation, and compiler version compatibility are not modeled.
+A sink is a review lead, not a finding. URI parsing is not destination
+authorization. Strong and weak digests are inventoried; only a weak choice with
+a security-sensitive consumer establishes the cryptographic concern. A command
+argument vector does not authorize a request-selected executable, and JVM
+`Runtime.exec` does not automatically invoke a shell.
 
-Prioritize imported API identity and regression pairs first, then Spring/Ktor
-sources and bounded local flow. Add fixtures for safe siblings, reassignment,
-shadowing, branch joins, interpolation and scope functions before claiming
-framework or relationship coverage. The checked-in initial fixtures cover
-all five rules, scripts, inert text, package shadowing and repository policy.
+## Remaining parity gaps
+
+- JDBC/JdbcTemplate, prepared-statement ownership, Exposed and additional
+  persistence APIs; complete protection and branch-join summaries.
+- Ktor route inputs, output/redirect/upload policies, application-call ownership
+  and framework-specific value flow; Spring WebFlux, implicit model-property
+  source paths, authentication and authorization policy.
+- ProcessBuilder, File extension APIs, OkHttp/Ktor clients, HTML encoding/output,
+  deserialization, XML, TLS and JWT configuration.
+- Elvis/smart-cast/destructuring propagation, helper effects, scope functions,
+  coroutine/lambda handoffs and mixed Java/Kotlin relationships.
+- Compiler-backed identities, imported superclass/interface resolution beyond
+  the bounded context collector, overloads, safe calls, references, dependency
+  metadata and Gradle source-set classification.
+- Android intents/WebView/components/storage, Kotlin/JS and Kotlin/Native APIs.
+  Parsing multiplatform Kotlin does not establish platform-specific coverage.
+
+See the [quality checkpoint](kotlin-quality.md) for pinned applications, source
+oracles, runtime checks, model comparison and the release gate. A small passing
+native corpus does not establish parity with the broader established profiles.

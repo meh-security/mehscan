@@ -82,8 +82,26 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
 }
 
 pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
-    let in_nonproduction_directory = path.components().any(|component| {
-        let component = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+    let components = path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let jvm_main = components
+        .windows(3)
+        .position(|parts| {
+            parts[0] == "src"
+                && parts[1] == "main"
+                && matches!(parts[2].as_str(), "kotlin" | "java")
+        })
+        .map(|index| index + 2);
+    let in_nonproduction_directory = components.iter().enumerate().any(|(index, component)| {
+        // Below a JVM production source root these names can be namespace
+        // segments. Top-level examples and all test/generated roles still apply.
+        if matches!(component.as_str(), "samples" | "examples")
+            && jvm_main.is_some_and(|root| index > root)
+        {
+            return false;
+        }
         matches!(
             component.as_str(),
             "test"
@@ -396,5 +414,41 @@ mod tests {
             Path::new("wwwroot/Scripts/application.ts"),
             &mapped
         ));
+    }
+
+    #[test]
+    fn jvm_production_namespaces_do_not_hide_sample_packages() {
+        for (path, language) in [
+            (
+                "src/main/kotlin/org/springframework/samples/Owner.kt",
+                Language::Kotlin,
+            ),
+            (
+                "app/src/main/kotlin/io/ktor/examples/App.kt",
+                Language::Kotlin,
+            ),
+            (
+                "src/main/java/org/springframework/samples/Owner.java",
+                Language::Java,
+            ),
+        ] {
+            assert_eq!(
+                classify_path(Path::new(path)),
+                FileClass::Supported(language),
+                "{path}"
+            );
+        }
+        for path in [
+            "samples/app/src/main/kotlin/App.kt",
+            "examples/src/main/java/App.java",
+            "src/test/kotlin/org/samples/Owner.kt",
+            "src/main/kotlin/tests/App.kt",
+        ] {
+            assert_eq!(
+                classify_path(Path::new(path)),
+                FileClass::SecretOnly,
+                "{path}"
+            );
+        }
     }
 }

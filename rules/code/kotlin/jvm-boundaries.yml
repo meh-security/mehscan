@@ -9,11 +9,14 @@
     any:
       - pattern: java.lang.Runtime.getRuntime().exec($COMMAND)
         captures: { command: COMMAND }
+      - pattern: $RUNTIME.getRuntime().exec($COMMAND)
+        captures: { command: COMMAND }
   tags: [kotlin, jvm, command]
   ai: &guidance
     investigate:
       - Verify API identity, input origin, execution context and applicable controls.
       - This boundary is a review lead and does not establish attacker control.
+      - At canonical Spring MVC mappings, a non-simple unannotated handler parameter normally uses model-attribute request binding. Verify the supplied model property and applicable binder policy; binding=false and another argument resolver can disable that binding.
     verify:
       - Confirm the API resolves to the JVM library and the call executes in production.
       - For digests, verify the selected algorithm and whether the use needs cryptographic strength.
@@ -21,7 +24,7 @@
       - Exclude local package lookalikes and inert examples.
       - Exclude strong digest choices and non-security checksums from weak-cryptography findings.
   provenance:
-    note: Explicit JVM API boundary in Kotlin; no framework or receiver inference.
+    note: JVM Runtime identity resolved from fully qualified names, imports, aliases or default imports with lexical shadow guards.
     references:
       - https://cwe.mitre.org/data/definitions/78.html
       - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Runtime.html
@@ -39,10 +42,14 @@
         captures: { path: PATH }
       - pattern: java.nio.file.Files.readString($PATH)
         captures: { path: PATH }
+      - pattern: $FILES.readAllBytes($PATH)
+        captures: { path: PATH }
+      - pattern: $FILES.readString($PATH)
+        captures: { path: PATH }
   tags: [kotlin, jvm, filesystem]
   ai: *guidance
   provenance: &filesystem_provenance
-    note: Explicit JVM filesystem API boundary in Kotlin; no receiver inference.
+    note: JVM Files identity resolved from fully qualified names, imports or aliases with lexical shadow guards.
     references:
       - https://cwe.mitre.org/data/definitions/22.html
       - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/nio/file/Files.html
@@ -60,6 +67,10 @@
         captures: { path: PATH, content: CONTENT }
       - pattern: java.nio.file.Files.writeString($PATH, $CONTENT)
         captures: { path: PATH, content: CONTENT }
+      - pattern: $FILES.write($PATH, $CONTENT)
+        captures: { path: PATH, content: CONTENT }
+      - pattern: $FILES.writeString($PATH, $CONTENT)
+        captures: { path: PATH, content: CONTENT }
   tags: [kotlin, jvm, filesystem]
   ai: *guidance
   provenance: *filesystem_provenance
@@ -74,6 +85,8 @@
   match:
     any:
       - pattern: java.security.MessageDigest.getInstance($ALGORITHM)
+        captures: { algorithm: ALGORITHM }
+      - pattern: $DIGEST.getInstance($ALGORITHM)
         captures: { algorithm: ALGORITHM }
   tags: [kotlin, jvm, crypto]
   ai: *guidance
@@ -94,6 +107,8 @@
     any:
       - pattern: java.net.URI.create($URL)
         captures: { url: URL }
+      - pattern: $URI.create($URL)
+        captures: { url: URL }
   tags: [kotlin, jvm, url]
   ai: *guidance
   provenance:
@@ -101,3 +116,28 @@
     references:
       - https://cwe.mitre.org/data/definitions/918.html
       - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/net/URI.html
+
+- id: kotlin-persistence-query
+  version: 1
+  title: Kotlin persistence query execution
+  language: kotlin
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: $MANAGER.createQuery($QUERY)
+        captures: { query: QUERY }
+      - pattern: $MANAGER.createQuery($QUERY, $TYPE)
+        captures: { query: QUERY }
+      - pattern: $MANAGER.createNativeQuery($QUERY)
+        captures: { query: QUERY }
+      - pattern: $MANAGER.createNativeQuery($QUERY, $TYPE)
+        captures: { query: QUERY }
+  tags: [kotlin, jvm, sql, persistence]
+  ai: *guidance
+  provenance:
+    note: Exact declared javax/jakarta EntityManager receiver; query boundary alone does not establish attacker control or unsafe construction.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://jakarta.ee/specifications/persistence/3.2/apidocs/jakarta.persistence/jakarta/persistence/entitymanager

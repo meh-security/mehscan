@@ -1,0 +1,35 @@
+# Kotlin quality application
+
+Original, intentionally unsafe loopback-only Spring/JPA app for scanner quality
+evaluation. Requires JDK 17 and Gradle compatible with the pinned plugins.
+Run `gradle bootRun`; the server binds `127.0.0.1:8099`. Do not deploy it.
+For the runtime regression on Windows with PowerShell 7, run `gradle bootJar`,
+then `./smoke.ps1 -Java "$env:JAVA_HOME/bin/java.exe"`. It starts the fixture,
+checks unsafe and safe endpoints, saves results under `build`, and stops its
+own process. Port 8099 must be free.
+Plugin versions match the pinned upstream Petclinic reference used by the
+evaluation; no third-party application source is copied here.
+
+Independent source oracle:
+
+| Method | Expected decision | Reason |
+| --- | --- | --- |
+| rawQuery | issue | Request text becomes quoted HQL syntax. |
+| boundQuery | not_issue | Fixed query and separately bound name value. |
+| numericQuery | not_issue | A Long cannot introduce HQL delimiters. |
+| rawCommand | issue | Request text selects the executable and arguments. |
+| fixedCommand | not_issue | Fixed local executable; no request-controlled command. |
+
+Runtime/build verification is a separate gate from static scanner and model
+checks. The app does not contain exploit automation or production credentials.
+
+The evaluation built `bootJar` with Temurin 17.0.20.1 and Gradle 9.7.0 and passed
+eleven loopback checks: raw/bound queries with ordinary and quote-containing
+names, valid/invalid numeric binding, and benign `whoami` execution through the
+raw and fixed command routes. Quote-containing raw query input returns 500;
+the bound query returns 200, and a nonnumeric ID returns 400. The external
+Petclinic and Ktor corpora were not built or executed.
+
+Seeded Alice and Bob records also permit a predicate-change regression: request
+name=' OR '1'='1 at the raw query returns both records; the same name at the
+bound query returns none. This is a loopback fixture check only.

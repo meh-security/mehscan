@@ -9,7 +9,17 @@ pub(crate) struct Presentation {
 
 pub(crate) fn presentation(rule: &str, cwes: &[String], operation: &str) -> Option<Presentation> {
     let has = |cwe: &str| cwes.iter().any(|value| value == cwe);
-    let (title, remediation) = if rule.contains("hardcoded-signing-key") {
+    let (title, remediation) = if rule == "kotlin-runtime-exec" && has("CWE-78") {
+        (
+            "Request values select the executable or process arguments",
+            "Keep the executable server-owned and allowlist permitted operations. Pass validated values as separate arguments, reject option injection, and avoid adding a command shell; an argument vector alone does not authorize a request-selected executable.",
+        )
+    } else if rule == "kotlin-persistence-query" && has("CWE-89") {
+        (
+            "Request values alter persistence query syntax",
+            "Keep HQL, JPQL and SQL syntax fixed and bind each request-derived value with named or positional parameters; do not interpolate values into the query text.",
+        )
+    } else if rule.contains("hardcoded-signing-key") {
         (
             "Embedded signing key permits forged credentials",
             "Provision signing keys from a protected secret provider, remove embedded key material, and rotate the exposed key and affected credentials.",
