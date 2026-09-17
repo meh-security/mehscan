@@ -53,11 +53,37 @@ impl<'tree, D: Doc> LiteralEnvironment<'tree, D> {
         for bindings in constants.values_mut() {
             bindings.sort_by_key(|binding| binding.declaration_start);
         }
-        if language == Language::Python {
+        if matches!(language, Language::Python | Language::Php) {
             ambiguous_names.extend(
                 constants
                     .iter()
-                    .filter(|(_, bindings)| bindings.len() > 1)
+                    .filter(|(_, bindings)| {
+                        if language != Language::Php {
+                            return bindings.len() > 1;
+                        }
+                        // PHP locals with the same spelling in independent
+                        // functions do not make one another's literals mutable.
+                        let owner = |binding: &ConstantBinding<'_, D>| {
+                            binding
+                                .initializer
+                                .ancestors()
+                                .find(|n| {
+                                    matches!(
+                                        n.kind().as_ref(),
+                                        "function_definition"
+                                            | "method_declaration"
+                                            | "anonymous_function"
+                                            | "arrow_function"
+                                    )
+                                })
+                                .map_or_else(|| root.range(), |n| n.range())
+                        };
+                        bindings.iter().enumerate().any(|(index, binding)| {
+                            bindings[index + 1..]
+                                .iter()
+                                .any(|other| owner(binding) == owner(other))
+                        })
+                    })
                     .map(|(name, _)| name.clone()),
             );
         }
@@ -98,6 +124,27 @@ impl<'tree, D: Doc> LiteralEnvironment<'tree, D> {
         }
         if is_null(text) {
             return known(LiteralValue::Null);
+        }
+        if kind == "encapsed_string"
+            && node.dfs().any(|n| {
+                matches!(
+                    n.kind().as_ref(),
+                    "variable_name" | "dynamic_variable_name" | "subscript_expression"
+                )
+            })
+        {
+            // PHP's $name/{$name} interpolation is not the shared brace grammar.
+            // Retain fragments and dynamic references rather than folding it.
+            return partial(
+                node.children()
+                    .filter(|n| n.kind().as_ref() == "string_content")
+                    .map(|n| n.text().into_owned())
+                    .collect(),
+                node.dfs()
+                    .filter(|n| n.kind().as_ref() == "variable_name")
+                    .map(|n| n.text().into_owned())
+                    .collect(),
+            );
         }
         if is_interpolated_string(text, kind) {
             return self.evaluate_interpolation(text, node, depth, visiting);
@@ -443,6 +490,7 @@ fn is_constant_declarator<D: Doc>(node: &Node<'_, D>, language: Language) -> boo
         Language::Go => kind == "const_spec",
         Language::Rust => kind == "const_item",
         Language::Python => kind == "assignment",
+        Language::Php => kind == "assignment_expression",
     }
 }
 
@@ -459,6 +507,7 @@ fn is_mutable_declaration<D: Doc>(node: &Node<'_, D>, language: Language) -> boo
         }
         Language::Go => matches!(kind, "var_spec" | "short_var_declaration"),
         Language::Rust => kind == "let_declaration",
+        Language::Php => kind == "augmented_assignment_expression",
         Language::Python => matches!(kind, "augmented_assignment" | "named_expression"),
     }
 }
@@ -477,7 +526,7 @@ fn declaration_initializer<'tree, D: Doc>(
         .field("value")
         .or_else(|| node.field("initializer"))
         .or_else(|| {
-            (language == Language::Python)
+            matches!(language, Language::Python | Language::Php)
                 .then(|| node.field("right"))
                 .flatten()
         })
@@ -494,7 +543,7 @@ fn declaration_initializer<'tree, D: Doc>(
 }
 
 fn is_parameter_identifier<D: Doc>(node: &Node<'_, D>) -> bool {
-    if node.kind().as_ref() != "identifier" {
+    if !matches!(node.kind().as_ref(), "identifier" | "variable_name") {
         return false;
     }
     node.ancestors().take(2).any(|ancestor| {
@@ -520,6 +569,7 @@ fn declaration_scope<D: Doc>(node: &Node<'_, D>, root: &Node<'_, D>) -> Range<us
             matches!(
                 ancestor.kind().as_ref(),
                 "block"
+                    | "compound_statement"
                     | "statement_block"
                     | "class_body"
                     | "declaration_list"
@@ -567,7 +617,8 @@ fn is_plain_string(text: &str, kind: &str) -> bool {
 }
 
 fn is_interpolated_string(text: &str, kind: &str) -> bool {
-    kind.contains("template")
+    (kind == "encapsed_string" && text.contains('$'))
+        || kind.contains("template")
         || kind.contains("interpolated")
         || (text.starts_with('`') && text.contains("${"))
         || ((text.starts_with("f\"")
@@ -724,7 +775,7 @@ fn append_unique(output: &mut Vec<String>, values: impl IntoIterator<Item = Stri
 }
 
 fn is_identifier(value: &str) -> bool {
-    let mut characters = value.chars();
+    let mut characters = value.strip_prefix('$').unwrap_or(value).chars();
     characters
         .next()
         .is_some_and(|character| character == '_' || character.is_alphabetic())

@@ -77,6 +77,7 @@ pub(crate) struct ScanDependencies<'a> {
         &'a super::native_invalidation::NativeInvalidationProjectContext,
     pub python_project_context: &'a super::python_context::PythonProjectContext,
     pub rust_project_context: &'a super::rust_project::RustProjectContext,
+    pub php_project_context: &'a super::php::PhpProjectContext,
     pub dotnet_project_context: &'a DotnetProjectContext,
     pub build_symbols: &'a BTreeMap<String, bool>,
 }
@@ -119,6 +120,7 @@ pub(crate) fn scan_source(
         native_invalidation_context,
         python_project_context,
         rust_project_context,
+        php_project_context,
         dotnet_project_context,
         build_symbols,
     } = dependencies;
@@ -160,6 +162,8 @@ pub(crate) fn scan_source(
     let parse_context_microseconds = parse_started.elapsed().as_micros();
 
     let mut evidence = Vec::new();
+    let php_context = (language == Language::Php)
+        .then(|| super::php::PhpContext::build(&root).with_project(path, php_project_context));
     let mut seen = BTreeSet::new();
     let declarative_started = Instant::now();
     let mut declarative_patterns_considered = 0;
@@ -167,10 +171,14 @@ pub(crate) fn scan_source(
     for compiled_rule in rules {
         for compiled_pattern in &compiled_rule.patterns {
             declarative_patterns_considered += 1;
-            if compiled_pattern
-                .required_source_text
-                .as_ref()
-                .is_some_and(|required| !source.contains(required))
+            // PHP keywords and function names are case-insensitive. The AST
+            // matcher remains authoritative; a case-sensitive text prefilter
+            // must not discard a valid PHP match.
+            if language != Language::Php
+                && compiled_pattern
+                    .required_source_text
+                    .as_ref()
+                    .is_some_and(|required| !source.contains(required))
             {
                 declarative_patterns_skipped += 1;
                 continue;
@@ -178,6 +186,11 @@ pub(crate) fn scan_source(
             for matched in root.find_all(&compiled_pattern.pattern) {
                 let range = matched.range();
                 if comments.is_in_comment(range.clone()) {
+                    continue;
+                }
+                if php_context.as_ref().is_some_and(|context| {
+                    !context.accepts(&compiled_rule.rule.id, matched.get_node())
+                }) {
                     continue;
                 }
                 if language == Language::Rust
@@ -360,6 +373,13 @@ pub(crate) fn scan_source(
                             },
                         );
                     }
+                }
+                if let Some(context) = &php_context {
+                    captures.extend(context.supplemental_captures(
+                        &compiled_rule.rule.id,
+                        matched.get_node(),
+                        path,
+                    ));
                 }
                 evidence.push(Evidence {
                     id: evidence_id(path, &compiled_rule.rule.id, range.start, range.end),
@@ -2300,7 +2320,7 @@ fn call_site(node: Node<'_, StrDoc<SupportLang>>) -> Option<CallSite<'_>> {
     })
 }
 
-fn location(path: &str, node: &Node<'_, StrDoc<SupportLang>>) -> Location {
+pub(super) fn location(path: &str, node: &Node<'_, StrDoc<SupportLang>>) -> Location {
     let start = node.start_pos();
     let end = node.end_pos();
     Location {

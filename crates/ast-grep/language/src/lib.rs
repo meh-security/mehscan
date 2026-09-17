@@ -225,6 +225,8 @@ impl_lang_expando!(Kotlin, language_kotlin, 'µ');
 impl_lang_expando!(Nix, language_nix, '_');
 // PHP accepts unicode to be used as some name not var name though
 impl_lang_expando!(Php, language_php, 'µ');
+// Keep upstream PHP-only behavior while admitting real PHP/HTML source files.
+impl_lang_expando!(PhpMixed, language_php_mixed, 'µ');
 // we can use any char in unicode range [:XID_Start:]
 // https://docs.python.org/3/reference/lexical_analysis.html#identifiers
 // see also [PEP 3131](https://peps.python.org/pep-3131/) for further details.
@@ -276,6 +278,7 @@ pub enum SupportLang {
   Markdown,
   Nix,
   Php,
+  PhpMixed,
   Python,
   Ruby,
   Rust,
@@ -292,8 +295,8 @@ impl SupportLang {
     use SupportLang::*;
     &[
       Bash, C, Cpp, CSharp, Css, Dart, Elixir, Go, Haskell, Hcl, Html, Java, JavaScript, Json,
-      Kotlin, Lua, Markdown, Nix, Php, Python, Ruby, Rust, Scala, Solidity, Swift, Tsx, TypeScript,
-      Yaml,
+      Kotlin, Lua, Markdown, Nix, Php, PhpMixed, Python, Ruby, Rust, Scala, Solidity, Swift, Tsx,
+      TypeScript, Yaml,
     ]
   }
 
@@ -393,6 +396,7 @@ impl_aliases! {
   Markdown => &["markdown", "md"],
   Nix => &["nix"],
   Php => &["php"],
+  PhpMixed => &["php-mixed", "phpmixed"],
   Python => &["py", "python"],
   Ruby => &["rb", "ruby"],
   Rust => &["rs", "rust"],
@@ -442,6 +446,7 @@ macro_rules! execute_lang_method {
       S::Markdown => Markdown.$method($($pname,)*),
       S::Nix => Nix.$method($($pname,)*),
       S::Php => Php.$method($($pname,)*),
+      S::PhpMixed => PhpMixed.$method($($pname,)*),
       S::Python => Python.$method($($pname,)*),
       S::Ruby => Ruby.$method($($pname,)*),
       S::Rust => Rust.$method($($pname,)*),
@@ -516,6 +521,7 @@ fn extensions(lang: SupportLang) -> &'static [&'static str] {
     Markdown => &["markdown", "md"],
     Nix => &["nix"],
     Php => &["php"],
+    PhpMixed => &["phtml"],
     Python => &["py", "py3", "pyi", "bzl", "bazel"],
     Ruby => &["rb", "rbw", "gemspec"],
     Rust => &["rs"],

@@ -20,6 +20,8 @@ Check these invariants:
 - Default production results do not silently include unit tests, fixtures,
   examples, generated files, or vendored dependencies. If intentionally
   included, label their scope so they cannot be mistaken for deployed code.
+  Portable reports carry that label and their selected-source limitation in
+  the report itself; a scan root of `.` or a separate sidecar is insufficient.
 - A finding title names the behavior in plain language. CWE identifiers belong
   in metadata, never as the title or the words a reader must decode.
 - Every confirmed issue identifies the affected behavior and component, the
@@ -34,6 +36,21 @@ Check these invariants:
   the reviewer cannot prove the whole program safe.
 - Dismissals state the supplied reason for inapplicability or safety. They do
   not make broad claims beyond the reviewed operation.
+- Verdict explanations stay within the evidence supplied for their exact
+  review ID. A neighboring review cannot establish a missing input origin,
+  producer or control. Conditional quoting or encoding does not protect a
+  separate raw branch. When comparing reviewers, agreement alone is not a
+  quality result: both can repeat the same unsupported claim. Record remaining
+  disagreements and shared evidence errors separately; an isolated retry is
+  a targeted audit, not a complete corpus report.
+- Injection explanations identify a compatible producer and consumer operation.
+  Unknown helper effects do not establish either sanitization or survival of the
+  old value; declarations with another callable or owner do not answer that
+  question. Server metadata and session fields need a supplied producer and
+  relevant attacker influence, rather than an assumption based on their names.
+  A dismissal must not require unsafe input on every execution path or require
+  an attacker-controlled condition/selector when a shown branch or selected
+  request-derived value already establishes the weakness.
 - Evidence and candidate counts are not presented as vulnerability totals.
   Markdown counts reconcile with canonical JSON when it is present.
 - Repeated items are consolidated when they express the same root cause and
@@ -42,6 +59,8 @@ Check these invariants:
   the summary against canonical JSON instance counts, not the number of
   Markdown headings, and require every grouped instance to retain its location
   and decision metadata.
+  When canonical aggregation merges several source relationships at one sink,
+  retain every affected operand in the narrative, not only the first summary.
 
 ## Report the quality result
 

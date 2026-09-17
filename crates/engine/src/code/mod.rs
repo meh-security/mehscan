@@ -74,6 +74,7 @@ mod node_randomness;
 mod node_serverless;
 mod object_input;
 mod password_lifecycle;
+mod php;
 mod python_context;
 mod python_flask;
 mod python_identity;

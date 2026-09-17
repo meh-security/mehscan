@@ -128,6 +128,10 @@ pub struct DismissedReview {
     pub review_id: String,
     pub confidence: ReviewConfidence,
     pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_location: Option<Location>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -243,9 +247,23 @@ impl FindingReport {
             ));
         } else {
             for dismissed in &self.dismissed {
+                let location = dismissed
+                    .primary_location
+                    .as_ref()
+                    .map(|location| {
+                        format!(
+                            " at {}",
+                            markdown_code_span(&format!(
+                                "{}:{}:{}",
+                                location.path, location.start.line, location.start.column
+                            ))
+                        )
+                    })
+                    .unwrap_or_default();
                 output.push_str(&format!(
-                    "- {} ({} confidence): {}\n",
+                    "- {}{} ({} confidence): {}\n",
                     markdown_code_span(&dismissed.review_id),
+                    location,
                     enum_label(dismissed.confidence),
                     markdown_text(&dismissed.description)
                 ));
@@ -527,6 +545,8 @@ mod tests {
                 review_id: "review-safe".to_string(),
                 confidence: ReviewConfidence::High,
                 description: "The value is a fixed repository literal.".to_string(),
+                primary_location: Some(finding(FindingStatus::Issue, Vec::new()).primary_location),
+                rule_id: Some("safe-rule".to_string()),
             }],
             quality_warnings: Vec::new(),
         };
@@ -535,8 +555,15 @@ mod tests {
         assert!(markdown.contains("| Confirmed finding instances | 1 |"));
         assert!(markdown.contains("| Review required | 1 |"));
         assert!(markdown.contains("| Not issues | 1 |"));
+        assert!(markdown.contains("`review-safe` at `routes/search.ts:23:3`"));
+        let legacy: DismissedReview = serde_json::from_value(serde_json::json!({
+            "review_id": "old-review", "confidence": "medium", "description": "Fixed literal."
+        }))
+        .expect("legacy dismissed review remains readable");
+        assert!(legacy.primary_location.is_none());
+        assert!(legacy.rule_id.is_none());
         assert!(markdown.contains("Confirm the effective query parameterization."));
-        assert!(markdown.contains("`review-safe` (high confidence)"));
+        assert!(markdown.contains("`review-safe` at `routes/search.ts:23:3` (high confidence)"));
         assert!(
             markdown.find("## Review next").expect("review section")
                 < markdown

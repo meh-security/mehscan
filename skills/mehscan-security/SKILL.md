@@ -137,10 +137,51 @@ CORS, TLS, cookies, or rate limiting may be owned by a gateway or platform and
 normally require an effective-control check.
 
 A scanner relationship label does not override contradictory supplied facts.
+Evidence scope is per review ID. Use only that review's candidate, evidence,
+facts, review basis and decision facts. Another review in the same bundle cannot
+supply a missing origin, producer, control or branch, even in the same file or
+with the same variable name. A directly shown request read, cookie loop or
+request dump reaching HTML can establish an issue without a deterministic path;
+an observation label does not negate its source excerpts. Observed control syntax
+is inventory until the same operand, owner, operation and branch are protected.
 When the captures or excerpts affirmatively show different operands, owners, or
 operations with no supplied bridge, use `not_issue` for that named relationship
 and describe the mismatch. Do not use supplemental syntax lookup to repair a
 decision-ready payload or infer the missing bridge.
+
+Before claiming injection, match the producer's representation to the consumer
+operation. For example, PHP's default object-mode `json_decode` does not make
+array indexing a valid request-to-sink bridge; check the supplied decoder mode
+and property or index access rather than treating every JSON read as equivalent.
+Preserve a directly shown unsafe branch when that branch assigns request input
+and sends it to the sink; the condition need not itself be attacker-controlled.
+Injection does not require unsafe input on every execution path. In code
+equivalent to `if (enabled) value = request.field; sink(value)`, the enabled
+branch establishes a conditional weakness unless supplied facts disprove that
+branch; an uninitialized value or failure in the other branch does not protect it.
+A dynamic selector also need not be attacker-controlled when the selected value
+comes from the shown request object. Distinguish the selector from that value.
+
+An unknown helper is neither a sanitizer nor proof that the old value survives.
+Check argument/reference, alias and mutation semantics, including calls inside
+compound assignment. PHP helpers may accept arguments by reference; mutable
+objects in other languages may also change. A neighboring declaration answers
+this only when its exact callable and owner match. If the supplied relationship
+is not established and `unresolved` is empty, dismiss that bounded relationship
+without claiming that the output is safe. Do not discard a relationship when
+the language semantics or supplied helper body establish that the value survives.
+
+Server metadata, session fields and framework properties need a shown producer
+and relevant attacker influence. `SCRIPT_NAME` alone does not establish
+attacker-selected attribute-breaking content. Apply this check to the exact
+value; it does not negate separately shown request input or a policy failure.
+
+Keep verdict summaries specific to the reviewed operation: a nearby success
+response does not describe an exception response, and a variable serialized in
+JSON has no established request origin unless this review supplies its producer.
+For conditional policy failures, state applicability and the shown consequence;
+for example disabled certificate checks affect HTTPS and can undermine trust in
+the returned status, without establishing an attacker-selected URL.
 
 For C/C++ only, the native reference describes a bounded call-syntax inventory
 that may answer an exact existing unresolved syntactic fact. Use the supplied
@@ -168,11 +209,24 @@ from the supplied unresolved set. Validate each response:
 mehscan investigate review-bundle-triage --bundle REQUEST --responses RESPONSE
 ```
 
+When the review runner supports structured output, generate a request-specific
+schema with `scripts/new-review-response-schema.ps1 -Bundle REQUEST -Output SCHEMA`.
+It constrains the fingerprint, allowed IDs and exact result count; it cannot
+enforce unique IDs or semantic correctness. The CLI validator remains required.
+
 Treat each request file as one independent review invocation. Do not process a
 directory or sequence of bundles in one context: large multi-bundle tasks can
 encourage repeated verdict templates even when individual request files are
 small. The generation default remains 20 reviews per bundle; lower
 `--max-reviews` only for a measured retry or evaluation.
+
+If a fresh complete-bundle retry still borrows facts across review IDs, regenerate
+the same authorized root with `--max-reviews 1` and the same context/material
+policy. Review only the affected IDs as a separately scoped audit before
+escalating. Confirm their review objects are unchanged; the scanner generates
+new bundle fingerprints. Never rebind singleton responses into an older bundle
+or describe this targeted audit as a complete run. Isolation reduces scope
+contamination; it does not supply missing facts or eliminate reasoning errors.
 
 Use the default capable review configuration for the first pass. Route review
 effort by payload completeness and decision quality, not by provider, model
@@ -208,6 +262,14 @@ The reviewer writes only the strict verdict response. Never ask it to construct
 finding JSON or SARIF: the CLI joins deterministic rule, location, flow, and
 provenance fields and publishes only confirmed issues to SARIF. Preserve
 `needs_review` in canonical JSON.
+
+Embed intentional fixture/application scope and the selected-source limitation
+in the report itself, rather than relying on a sidecar. If the CLI help exposes
+`--scope-label`, `--project` and `--revision`, set them during `review-bundles`
+so the manifest carries the same metadata into all projections. They can also
+be supplied to `report` for an existing run; use identical labels for every
+format. Revision labels are supplied provenance, not independently verified
+facts. With older CLIs, retain an explicitly labeled handoff index and sidecar.
 
 ## Validate scanner changes proportionately
 

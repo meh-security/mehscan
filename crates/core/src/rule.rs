@@ -15,6 +15,7 @@ pub enum Language {
     Typescript,
     Tsx,
     Python,
+    Php,
     Go,
     Rust,
 }

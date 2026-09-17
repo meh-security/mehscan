@@ -124,6 +124,7 @@ pub(crate) fn parser_language(language: Language) -> SupportLang {
         Language::Typescript => SupportLang::TypeScript,
         Language::Tsx => SupportLang::Tsx,
         Language::Python => SupportLang::Python,
+        Language::Php => SupportLang::PhpMixed,
         Language::Go => SupportLang::Go,
         Language::Rust => SupportLang::Rust,
     }
