@@ -1,5 +1,6 @@
 mod flow;
 mod identity;
+mod path;
 mod project;
 pub(super) use flow::{paths, sources};
 pub(crate) use project::caller_facts;

@@ -30,8 +30,8 @@ Use-site ownership checks account for parameter/local/property/type shadows,
 lambda parameters, loop bindings and catch bindings. Unknown or reassigned
 persistence receivers do not inherit a typed field's identity.
 
-Bounded same-function Spring scalar paths connect request inputs to command or
-query operands through identifiers, immutable `val` aliases, concatenation and
+Bounded same-function Spring scalar paths connect request inputs to command,
+query and filesystem-path operands through identifiers, immutable `val` aliases, concatenation and
 ordinary, braced or raw string templates. Propagation stops after eight levels,
 at unknown helper results, mutable bindings, reassignment and callable boundaries.
 SQL captures refer to query text, not separately bound JDBC values. Prepared
@@ -41,6 +41,14 @@ are excluded from JdbcTemplate SQL matching. Fixed queries with separately
 bound values and numeric request types do not
 become string-injection paths. Literal excluded branches and statements after
 direct return/throw carry explicit unreachable execution context.
+
+Filesystem paths preserve input through canonical `Path.of`/`Paths.get`
+factories and owned Path `resolve`, `resolveSibling`, `normalize` and
+`toAbsolutePath` operations, including import aliases. Unknown factory/helper
+results and mutable aliases stop propagation. Path normalization is not an
+effective root-containment control. File-write content is a distinct operand
+from the target path and does not create a CWE-22 path by itself.
+See the [JVM Path API](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/nio/file/Path.html).
 
 Persistence observation reviews can include exact typed caller methods, caller
 binding policies, model declarations and a direct model superclass. Interface

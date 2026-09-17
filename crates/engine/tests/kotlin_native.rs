@@ -122,13 +122,16 @@ fn kotlin_quality_app_admits_unsafe_and_safe_operations_without_verdicts() {
             "numericQuery",
             "rawJdbcQuery",
             "rawCommand",
-            "fixedCommand"
+            "fixedCommand",
+            "rawFileRead",
+            "rawFileWrite",
+            "safeFileRead"
         ]
         .into_iter()
         .collect()
     );
-    assert_eq!(observations.len(), 7);
-    assert_eq!(result.security_paths.len(), 3);
+    assert_eq!(observations.len(), 10);
+    assert_eq!(result.security_paths.len(), 5);
     let linked = result
         .security_paths
         .iter()
@@ -145,9 +148,15 @@ fn kotlin_quality_app_admits_unsafe_and_safe_operations_without_verdicts() {
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         linked,
-        ["rawCommand", "rawQuery", "rawJdbcQuery"]
-            .into_iter()
-            .collect()
+        [
+            "rawCommand",
+            "rawQuery",
+            "rawJdbcQuery",
+            "rawFileRead",
+            "rawFileWrite"
+        ]
+        .into_iter()
+        .collect()
     );
 }
 
@@ -216,4 +225,89 @@ fn jdbc_paths_track_sql_text_and_leave_separately_bound_values_as_data() {
             .unwrap()
             .contains("constant_query_operand_context")
     );
+}
+
+#[test]
+fn filesystem_paths_follow_owned_path_values_and_distinguish_content() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-files");
+    let result = mehscan_engine::scan_path(&fixture).unwrap();
+    assert_eq!(result.coverage.totals.parse_failed, 0);
+    let sinks = result
+        .evidence
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.capability,
+                Capability::FilesystemRead | Capability::FilesystemWrite
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(sinks.len(), 6);
+    let owners = result
+        .security_paths
+        .iter()
+        .map(|p| {
+            result
+                .evidence
+                .iter()
+                .find(|e| e.id == p.sink_evidence_id)
+                .unwrap()
+                .enclosing_symbol
+                .as_deref()
+                .unwrap()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        owners,
+        ["rawRead", "rawWrite", "normalizedRead"]
+            .into_iter()
+            .collect()
+    );
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
+    assert_eq!(jobs.total_reviews, 6);
+}
+
+#[test]
+fn incompatible_path_and_text_arguments_do_not_become_deterministic_paths() {
+    // Deliberately incompatible Java argument types: syntax alone is not a
+    // proved invocation. In particular, a Path object is not command/SQL text.
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-kotlin-types-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let source = root.join("app.kt");
+    std::fs::write(
+        &source,
+        r#"
+import java.nio.file.Files
+import java.nio.file.Path
+import java.sql.Statement
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.RestController
+@RestController
+class C(private val statement: Statement) {
+    @GetMapping("/bad/read")
+    fun badRead(@RequestParam name: String) { Files.readString(name) }
+    @GetMapping("/bad/query")
+    fun badQuery(@RequestParam name: String) { statement.executeQuery(Path.of(name)) }
+    @GetMapping("/bad/command")
+    fun badCommand(@RequestParam name: String) { Runtime.getRuntime().exec(Path.of(name)) }
+}
+"#,
+    )
+    .unwrap();
+    let result = mehscan_engine::scan_path(&root);
+    std::fs::remove_file(&source).unwrap();
+    std::fs::remove_dir(&root).unwrap();
+    let result = result.unwrap();
+    assert_eq!(result.coverage.totals.parse_failed, 0);
+    assert!(result.security_paths.is_empty());
 }

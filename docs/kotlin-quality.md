@@ -14,6 +14,7 @@ Full parity remains a release gate, not a claim made by this checkpoint.
 | [Official Ktor samples](https://github.com/ktorio/ktor-samples) | `1c9df7cf102d638eadaf545fcce4c0ec5ccad334` | JVM digest and fixed build-time command controls; deliberately admitted teaching sources, not deployed vulnerabilities. |
 | [Original quality app](../tests/fixtures/kotlin-quality/README.md) | Branch fixture | Runnable vulnerable and safe Spring/JPA/JdbcTemplate endpoints; no third-party source copied. |
 | [Original JDBC controls](../tests/fixtures/kotlin-jdbc/app.kt) | Branch fixture | Statement execution and prepared SQL vulnerable/safe pairs; static source controls, not a running application. |
+| [Original filesystem controls](../tests/fixtures/kotlin-files/README.md) | Branch fixture | Read/write path influence, normalization, allowlist and content/path separation; source-only controls. |
 
 External source stays outside the public repository. Discovery now admits
 Petclinic production packages containing `samples` below `src/main/kotlin`:
@@ -38,8 +39,8 @@ controller and binder excerpts are included for review. This is source context,
 not a native cross-file taint path or verified runtime repository dispatch.
 See [Spring model binding](https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/modelattrib-method-args.html).
 
-The original fixture builds with Temurin 17.0.20.1 and Gradle 9.7.0. Fifteen
-loopback smoke checks pass. A benign injected predicate returns both seeded
+The original fixture builds with Temurin 17.0.20.1 and Gradle 9.7.0. The SQL
+checkpoint verified fifteen loopback checks. A benign injected predicate returns both seeded
 records through the unsafe query; the bound query returns none for the same
 text. A quote breaks the unsafe query but remains data in the bound query.
 The JdbcTemplate pair also proves predicate injection returns two records,
@@ -80,7 +81,7 @@ defect identified. Audit readiness does not certify language-wide coverage.
 
 The full offline workspace test run passes, followed by focused Kotlin tests
 after the final context changes. Formatting and patch checks pass. The original
-app's committed smoke script now reproduces all fifteen runtime checks.
+app's smoke script at the initial JVM checkpoint reproduced eleven runtime checks.
 
 ## JDBC expansion
 
@@ -122,6 +123,36 @@ The expanded app builds and passes fifteen runtime checks. Focused Kotlin unit,
 native integration, capability/provenance and execution-context checks pass,
 as do formatting and patch checks. The earlier full workspace pass predates
 this JDBC expansion; the focused checks cover the changed Kotlin branches.
+
+## Filesystem expansion
+
+The adapter now follows bounded request influence through canonical Path
+factories and owned Path resolve/normalize/absolute-path transformations to
+file read/write path operands. These operations do not establish confinement.
+Unknown path helpers, mutable aliases and callable boundaries stop propagation.
+The request-controlled content of a fixed-target write is not a CWE-22 path.
+
+Nine predefined labels extend the corpus to thirty cases: twelve positive and
+eighteen negative. Six source controls cover unrestricted read/write, normalized
+resolution without containment, fixed read, allowlisted read and fixed-target
+content write. The runnable app adds unrestricted read/write and allowlisted read.
+It builds and passes twenty runtime checks: traversal retrieves a disposable
+sibling file and replaces it through the unsafe routes; the safe route rejects
+the same traversal and accepts its fixed selector. The generated file tree is
+removed after its own process stops, with cleanup-path verification.
+
+Fresh model agreement and report audits use the predefined thirty-case oracle;
+both models match **30/30 labels**: twelve true positives, eighteen true
+negatives, zero false positives and zero false negatives each. All thirty-four
+responses across seventeen bundles pass mechanical validation. All ten report
+audits pass and are ready for engineering handoff. These remain selected-case
+metrics and do not replace the remaining parity gates.
+
+The focused Kotlin, native integration and execution-context checks pass. A
+regression also ensures known incompatible Path/text argument shapes do not
+become deterministic paths. Regenerating the full selected corpus after this
+guard confirms identical review fingerprints and exact request bytes, so the
+validated model responses still apply to the final code.
 
 ## Remaining release gates
 

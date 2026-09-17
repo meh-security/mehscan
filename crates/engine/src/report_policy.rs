@@ -14,6 +14,15 @@ pub(crate) fn presentation(rule: &str, cwes: &[String], operation: &str) -> Opti
             "Request values select the executable or process arguments",
             "Keep the executable server-owned and allowlist permitted operations. Pass validated values as separate arguments, reject option injection, and avoid adding a command shell; an argument vector alone does not authorize a request-selected executable.",
         )
+    } else if matches!(rule, "kotlin-files-read" | "kotlin-files-write") && has("CWE-22") {
+        (
+            if rule == "kotlin-files-read" {
+                "Request values select an unconfined file read path"
+            } else {
+                "Request values select an unconfined file write path"
+            },
+            "Prefer a fixed allowlist of server-owned file targets. Otherwise resolve against a trusted root, enforce component-aware root containment and a deliberate symlink policy before access, and reject absolute or escaping paths. Normalization alone does not confine a path.",
+        )
     } else if matches!(
         rule,
         "kotlin-jdbc-statement-query" | "kotlin-jdbc-prepare-query" | "kotlin-jdbc-template-query"

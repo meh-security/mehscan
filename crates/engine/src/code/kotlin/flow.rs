@@ -219,6 +219,11 @@ fn depends<'a>(root: &KNode<'a>, expression: &KNode<'a>, source: &KNode<'a>, dep
             .children()
             .find(|n| n.is_named())
             .is_some_and(|n| depends(root, &n, source, depth - 1)),
+        "call_expression" => super::path::operands(root, expression, 8).is_some_and(|operands| {
+            operands
+                .iter()
+                .any(|operand| depends(root, operand, source, depth - 1))
+        }),
         _ => false,
     }
 }
@@ -244,6 +249,7 @@ pub(in crate::code) fn paths(
             let role = match sink.capability {
                 Capability::DatabaseQuery => "query",
                 Capability::ProcessExecution => "command",
+                Capability::FilesystemRead | Capability::FilesystemWrite => "path",
                 _ => continue,
             };
             let Some(relation) = relations.iter().find(|r| {
@@ -264,6 +270,16 @@ pub(in crate::code) fn paths(
             }) else {
                 continue;
             };
+            let filesystem = matches!(
+                sink.capability,
+                Capability::FilesystemRead | Capability::FilesystemWrite
+            );
+            let path_value = super::path::known_path(root, &operand, 8);
+            if filesystem != path_value {
+                // Files accepts Path values; SQL and Runtime.exec accept text,
+                // not a Path object. Do not turn a known type mismatch into a path.
+                continue;
+            }
             if !depends(root, &operand, &parameter, 8) {
                 continue;
             }
@@ -376,6 +392,9 @@ mod tests {
             "consume(\"query '${input}'\")",
             "consume(\"\"\"query '$input'\"\"\")",
             "consume(\"query \" + input)",
+            "consume(java.nio.file.Path.of(input))",
+            "consume(java.nio.file.Paths.get(input).normalize())",
+            "val root = java.nio.file.Path.of(\"/fixed\"); consume(root.resolve(input))",
         ] {
             assert!(scalar_flow(body), "{body}");
         }
@@ -385,6 +404,9 @@ mod tests {
             "input = \"fixed\"; consume(input)",
             "val value = helper(input); consume(value)",
             "var value = input; value = \"fixed\"; consume(value)",
+            "consume(fake.Path.of(input))",
+            "consume(java.nio.file.Path.of(\"/fixed\"))",
+            "val path = helper(input); consume(path.normalize())",
         ] {
             assert!(!scalar_flow(body), "{body}");
         }

@@ -1828,6 +1828,12 @@ fn kotlin_finding_description(
         return summary.to_string();
     }
     let detail = match rule {
+        "kotlin-files-read" => {
+            "Impact: A caller can read filesystem data outside the intended directory, subject to process permissions. Verification: Confirm that parent traversal, absolute paths and sibling-prefix paths are rejected while approved files remain readable; include the application's symlink policy in the regression."
+        }
+        "kotlin-files-write" => {
+            "Impact: A caller can create or replace filesystem data outside the intended directory, subject to process permissions. Verification: Use disposable files to confirm that escaping targets are rejected and approved targets still work; verify root containment and the application's symlink policy before each write."
+        }
         "kotlin-persistence-query"
         | "kotlin-jdbc-statement-query"
         | "kotlin-jdbc-prepare-query"
