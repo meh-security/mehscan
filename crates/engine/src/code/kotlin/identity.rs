@@ -11,6 +11,59 @@ pub(in crate::code) struct Imports {
 }
 
 impl Imports {
+    pub(super) fn local_type<'a>(
+        &self,
+        root: &KNode<'a>,
+        use_site: &KNode<'a>,
+        observed: &str,
+    ) -> Option<KNode<'a>> {
+        if self.aliases.contains_key(observed) || !self.wildcards.is_empty() {
+            return None;
+        }
+        // Nested types are visible in primary-constructor signatures even
+        // though those signatures precede the class body's byte range.
+        for enclosing in use_site.ancestors().filter(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "class_declaration" | "object_declaration"
+            )
+        }) {
+            let Some(body) = named_child(&enclosing, "class_body") else {
+                continue;
+            };
+            let mut nested = body.children().filter(|n| {
+                matches!(
+                    n.kind().as_ref(),
+                    "class_declaration" | "object_declaration" | "type_alias"
+                ) && name(n).as_deref() == Some(observed)
+            });
+            if let Some(declaration) = nested.next() {
+                return (nested.next().is_none() && declaration.kind().as_ref() != "type_alias")
+                    .then_some(declaration);
+            }
+        }
+        let mut declarations = root.children().filter(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "class_declaration" | "object_declaration"
+            ) && name(n).as_deref() == Some(observed)
+        });
+        let declaration = declarations.next()?;
+        if declarations.next().is_some()
+            || root.dfs().any(|n| {
+                matches!(
+                    n.kind().as_ref(),
+                    "class_declaration" | "object_declaration" | "type_alias"
+                ) && name(&n).as_deref() == Some(observed)
+                    && n.range() != declaration.range()
+                    && visible(&n, use_site)
+            })
+        {
+            return None;
+        }
+        Some(declaration)
+    }
+
     pub(in crate::code) fn build(root: &KNode<'_>) -> Self {
         let mut result = Self::default();
         for import in root.dfs().filter(|n| n.kind().as_ref() == "import_header") {
@@ -173,25 +226,128 @@ pub(super) fn binding_type<'a>(
         .map(|n| n.text().trim_end_matches('?').to_string())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ast_grep_core::tree_sitter::LanguageExt;
+
+    #[test]
+    fn member_type_context_uses_declaring_scope_and_rejects_import_conflicts() {
+        for (imports, nested, expected) in [
+            ("", "", true),
+            ("import elsewhere.FixedPath\n", "", false),
+            ("import elsewhere.*\n", "", false),
+            ("", "class FixedPath {}\n", true),
+        ] {
+            let source = format!(
+                "{imports}class FixedPath {{}}\nclass C {{\n {nested}val root: FixedPath = FixedPath()\n}}"
+            );
+            let ast = SupportLang::Kotlin.ast_grep(&source);
+            let root = ast.root();
+            assert!(
+                !root.dfs().any(|n| n.is_error() || n.is_missing()),
+                "{source}"
+            );
+            let member = root
+                .dfs()
+                .find(|n| {
+                    n.kind().as_ref() == "variable_declaration"
+                        && name(n).as_deref() == Some("root")
+                })
+                .unwrap();
+            assert_eq!(
+                Imports::build(&root)
+                    .local_type(&root, &member, "FixedPath")
+                    .is_some(),
+                expected,
+                "{source}"
+            );
+            if !nested.is_empty() {
+                let ty = Imports::build(&root)
+                    .local_type(&root, &member, "FixedPath")
+                    .unwrap();
+                assert_eq!(owner(&ty).and_then(|n| name(&n)).as_deref(), Some("C"));
+            }
+        }
+        let source = "class FixedPath {}\nclass C(val root: FixedPath) {\n class FixedPath {}\n}";
+        let ast = SupportLang::Kotlin.ast_grep(source);
+        let root = ast.root();
+        let member = root
+            .dfs()
+            .find(|n| n.kind().as_ref() == "class_parameter")
+            .unwrap();
+        let ty = Imports::build(&root)
+            .local_type(&root, &member, "FixedPath")
+            .unwrap();
+        assert_eq!(owner(&ty).and_then(|n| name(&n)).as_deref(), Some("C"));
+    }
+}
+
 pub(super) fn binding<'a>(
     root: &KNode<'a>,
     use_site: &KNode<'a>,
     symbol: &str,
 ) -> Option<KNode<'a>> {
-    let symbol = symbol
-        .strip_prefix("this.")
-        .unwrap_or(symbol)
-        .trim_end_matches("!!");
-    let mut declarations = root
-        .dfs()
-        .filter(|n| {
-            matches!(
-                n.kind().as_ref(),
-                "variable_declaration" | "parameter" | "class_parameter"
-            ) && name(n).as_deref() == Some(symbol)
-                && visible(n, use_site)
-        })
-        .collect::<Vec<_>>();
+    let symbol = symbol.trim_end_matches("!!");
+    let explicit_this = symbol.starts_with("this.");
+    let symbol = symbol.strip_prefix("this.").unwrap_or(symbol);
+    let member_owner = if explicit_this {
+        let member_owner = owner(use_site)?;
+        // Receiver lambdas and extension functions can change what `this` owns.
+        // Without compiler receiver resolution, do not borrow the enclosing class.
+        for ancestor in use_site.ancestors() {
+            if ancestor.range() == member_owner.range() {
+                break;
+            }
+            if matches!(
+                ancestor.kind().as_ref(),
+                "lambda_literal" | "anonymous_function" | "object_literal"
+            ) {
+                return None;
+            }
+            if named_child(&ancestor, "receiver_type").is_some() {
+                return None;
+            }
+            if matches!(ancestor.kind().as_ref(), "getter" | "setter") {
+                // The grammar represents accessors as siblings of the property.
+                let mut property = ancestor.prev()?;
+                while matches!(property.kind().as_ref(), "getter" | "setter") {
+                    property = property.prev()?;
+                }
+                if property.kind().as_ref() != "property_declaration"
+                    || property
+                        .children()
+                        .any(|n| n.kind().as_ref() == "receiver_type" || n.text().as_ref() == ".")
+                {
+                    return None;
+                }
+            }
+        }
+        Some(member_owner)
+    } else {
+        None
+    };
+    let mut declarations =
+        root.dfs()
+            .filter(|n| {
+                matches!(
+                    n.kind().as_ref(),
+                    "variable_declaration" | "parameter" | "class_parameter"
+                ) && name(n).as_deref() == Some(symbol)
+                    && visible(n, use_site)
+                    && member_owner.as_ref().is_none_or(|member_owner| {
+                        owner(n).is_some_and(|owner| owner.range() == member_owner.range())
+                            && match n.kind().as_ref() {
+                                "class_parameter" => n
+                                    .children()
+                                    .any(|child| matches!(child.text().as_ref(), "val" | "var")),
+                                "variable_declaration" => scope(n)
+                                    .is_some_and(|scope| scope.kind().as_ref() == "class_body"),
+                                _ => false,
+                            }
+                    })
+            })
+            .collect::<Vec<_>>();
     declarations.sort_by_key(|n| {
         (
             scope(n).map_or(usize::MAX, |s| s.range().len()),
@@ -202,18 +358,19 @@ pub(super) fn binding<'a>(
     declarations.first().cloned()
 }
 
-pub(super) fn receiver_unchanged(root: &KNode<'_>, use_site: &KNode<'_>, symbol: &str) -> bool {
-    let symbol = symbol
-        .strip_prefix("this.")
-        .unwrap_or(symbol)
-        .trim_end_matches("!!");
+pub(super) fn receiver_unchanged<'a>(root: &KNode<'a>, use_site: &KNode<'a>, symbol: &str) -> bool {
+    let symbol = symbol.trim_end_matches("!!");
+    let target = binding(root, use_site, symbol).map(|n| n.range());
     !root.dfs().any(|n| {
         n.kind().as_ref() == "assignment"
             && n.range().start < use_site.range().start
             && callable(&n).map(|s| s.range()) == callable(use_site).map(|s| s.range())
-            && n.children()
-                .find(|n| n.is_named())
-                .is_some_and(|n| n.text().trim() == symbol)
+            && n.children().find(|n| n.is_named()).is_some_and(|n| {
+                let assigned = n.text();
+                let assigned = assigned.trim();
+                assigned == symbol
+                    || target.is_some() && binding(root, &n, assigned).map(|n| n.range()) == target
+            })
     })
 }
 

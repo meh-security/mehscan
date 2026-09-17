@@ -29,6 +29,18 @@ aliases. Short names from multiple wildcard imports are rejected conservatively.
 Use-site ownership checks account for parameter/local/property/type shadows,
 lambda parameters, loop bindings and catch bindings. Unknown or reassigned
 persistence receivers do not inherit a typed field's identity.
+Explicit `this.field` receivers resolve only to direct properties of the owning
+class or object; a same-named local cannot supply or hide the member's type.
+Receiver lambdas, anonymous objects, extension functions and extension
+properties do not borrow the enclosing class's
+`this` identity. Qualified `this` labels and inherited member resolution remain
+unmodeled.
+Observation reviews of explicit member receivers include the exact member
+declaration and, where unambiguous, its same-file declared type. Imported,
+wildcard-conflicted and shadowed type definitions are not borrowed. These are
+review excerpts, not inferred helper effects or new deterministic paths.
+Direct nested types also resolve in primary-constructor signatures; their
+qualified ownership is retained in the review context.
 
 Bounded same-function Spring scalar paths connect request inputs to command,
 query and filesystem-path operands through identifiers, immutable `val` aliases, concatenation and
@@ -45,7 +57,8 @@ direct return/throw carry explicit unreachable execution context.
 Filesystem paths preserve input through canonical `Path.of`/`Paths.get`
 factories and owned Path `resolve`, `resolveSibling`, `normalize` and
 `toAbsolutePath` operations, including import aliases. Unknown factory/helper
-results and mutable aliases stop propagation. Path normalization is not an
+results and mutable aliases stop propagation. Direct `this.field` Path receivers
+use the same member ownership checks as SQL boundaries. Path normalization is not an
 effective root-containment control. File-write content is a distinct operand
 from the target path and does not create a CWE-22 path by itself.
 See the [JVM Path API](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/nio/file/Path.html).

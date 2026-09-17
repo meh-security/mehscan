@@ -5435,6 +5435,11 @@ fn build_observation_reviews(
         facts.append(&mut java_callers);
         if file.language == Some(Language::Kotlin) {
             for item in &group.evidence {
+                facts.extend(crate::code::kotlin_member_receiver_facts(
+                    &group.path,
+                    &file.source,
+                    item,
+                ));
                 if let Some(fact) =
                     crate::code::kotlin_constant_query_fact(&group.path, &file.source, item)
                 {

@@ -17,6 +17,93 @@ fn package(root: &KNode<'_>) -> String {
         .unwrap_or_default()
 }
 
+/// Explicit member identity and an exact same-file declared type, when owned.
+/// Source context only: no inferred helper effects or cross-call taint path.
+pub(crate) fn member_receiver_facts(
+    path: &str,
+    source: &str,
+    evidence: &mehscan_core::Evidence,
+) -> Vec<ReviewNeighborhoodFact> {
+    let ast = SupportLang::Kotlin.ast_grep(source);
+    let root = ast.root();
+    if root.dfs().any(|n| n.is_error() || n.is_missing()) {
+        return vec![];
+    }
+    let imports = Imports::build(&root);
+    let mut result = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for receiver in root.dfs().filter(|n| {
+        n.kind().as_ref() == "navigation_expression"
+            && evidence.location.start.byte_offset <= n.range().start
+            && n.range().end <= evidence.location.end.byte_offset
+    }) {
+        let symbol = receiver.text();
+        let Some(member) = symbol
+            .strip_prefix("this.")
+            .filter(|name| !name.contains('.'))
+        else {
+            continue;
+        };
+        let Some(binding) = identity::binding(&root, &receiver, &symbol) else {
+            continue;
+        };
+        if !seen.insert(binding.range().start) || seen.len() > 4 {
+            continue;
+        }
+        let Some(owner) = identity::owner(&binding) else {
+            continue;
+        };
+        let owner_name = identity::name(&owner).unwrap_or_default();
+        let declaration = binding
+            .parent()
+            .filter(|n| n.kind().as_ref() == "property_declaration")
+            .unwrap_or(binding.clone());
+        if declaration.range().len() > 4096 {
+            continue;
+        }
+        result.push(ReviewNeighborhoodFact {
+            role: "member_receiver_binding_context".into(), symbol: format!("{owner_name}.{member}"),
+            location: location(path, &declaration),
+            excerpt: format!("Explicit {symbol} selects this direct member of {owner_name}; a same-named local does not replace its identity.\n{}", declaration.text()),
+            evidence_id: Some(evidence.id.clone()),
+            provenance: QueryProvenance { resolution: Resolution::Ast, engine: "Kotlin exact explicit member declaration; non-flow context 1".into() },
+        });
+        if let Some(ty) = identity::binding_type(&root, &receiver, &symbol)
+            .and_then(|ty| imports.local_type(&root, &binding, &ty))
+            .filter(|ty| ty.range().len() <= 8192)
+        {
+            result.push(ReviewNeighborhoodFact {
+                role: "member_receiver_type_context".into(),
+                symbol: ty
+                    .ancestors()
+                    .filter_map(|n| {
+                        matches!(
+                            n.kind().as_ref(),
+                            "class_declaration" | "object_declaration"
+                        )
+                        .then(|| identity::name(&n))
+                        .flatten()
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .chain(identity::name(&ty))
+                    .collect::<Vec<_>>()
+                    .join("."),
+                location: location(path, &ty),
+                excerpt: ty.text().into_owned(),
+                evidence_id: Some(evidence.id.clone()),
+                provenance: QueryProvenance {
+                    resolution: Resolution::Ast,
+                    engine: "Kotlin exact same-file member type declaration; non-flow context 1"
+                        .into(),
+                },
+            });
+        }
+    }
+    result
+}
+
 fn canonical(package: &str, name: &str) -> String {
     if package.is_empty() {
         name.into()

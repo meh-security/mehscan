@@ -154,8 +154,52 @@ become deterministic paths. Regenerating the full selected corpus after this
 guard confirms identical review fingerprints and exact request bytes, so the
 validated model responses still apply to the final code.
 
+## Explicit receiver precision
+
+Four additional original source controls exercise explicit `this.field` when
+a same-named local has a different type. The native scanner admits the real
+EntityManager query and Path read, excludes the fake query receiver, and does
+not invent a path through a custom method that returns a fixed file path.
+These controls are parsed, not built or executed.
+
+The first fresh model round exposed a shared false positive: both reviewers
+treated the custom member's `resolve(name)` as a JVM Path operation because
+the observation packet omitted its declaration. Agreement was perfect but
+both models matched only two of three admitted labels.
+Report audits accepted those canonical reports with presentation warnings;
+they assess reporting quality and do not replace the vulnerability oracle.
+The corrected packet supplies the exact member declaration and its unambiguous
+same-file type;
+imported or shadowed definitions are not borrowed. This adds review context,
+not native helper-effect inference or a forced verdict.
+
+Fresh reviews of the revised bytes match all three predefined admitted labels
+for both models, and both new report audits pass and are ready for handoff.
+The fourth control is a native exclusion check, not a model-reviewed case.
+All seventeen earlier bundles remain byte-for-byte unchanged, preserving their
+validated thirty-case results. The combined selected oracle is therefore
+**33/33 labels per model**: fourteen positive and nineteen negative, with no
+selected false positives or false negatives. All twelve report audits pass.
+This small corpus still does not establish parity with broader language profiles.
+
+The twelve focused Kotlin unit tests and eight native integration tests pass.
+They cover both directions of local/member type confusion, explicit member
+assignment, unrelated local assignment, ambiguous receivers in extensions,
+lambdas and anonymous objects, ordinary versus extension-property accessors,
+and exclusion of imported or shadowed helper-type context.
+The full workspace/all-targets locked offline sweep passes. A final constructor
+scope refinement follows that sweep: a compiled original probe confirms that
+a direct nested class can supply a constructor field's type before the class
+body's byte range. The regenerated packet selects that nested definition,
+not its file-level namesake. The focused unit/native checks pass again after
+this refinement, and all twenty judged bundles retain identical request bytes.
+
 ## Remaining release gates
 
+- Correct default-import identity under explicit wildcard imports. A cached
+  Kotlin compiler probe selects a harmless custom `Runtime` through its package
+  wildcard, while the scanner currently admits it as JVM process execution.
+  The receiver metrics above do not cover this newly identified identity gap.
 - Broader independently adjudicated positive/negative cases across the
   [remaining framework and flow gaps](kotlin-coverage.md#remaining-parity-gaps),
   especially inferred JDBC factory identities and prepared execution/protection

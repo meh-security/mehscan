@@ -9,7 +9,13 @@ pub(super) fn known_path<'a>(root: &KNode<'a>, expression: &KNode<'a>, depth: us
     if depth == 0 {
         return false;
     }
-    if expression.kind().as_ref() == "simple_identifier" {
+    if expression.kind().as_ref() == "simple_identifier"
+        || expression.kind().as_ref() == "navigation_expression"
+            && expression
+                .text()
+                .strip_prefix("this.")
+                .is_some_and(|name| !name.is_empty() && !name.contains('.') && !name.contains('?'))
+    {
         let symbol = expression.text();
         if !identity::receiver_unchanged(root, expression, &symbol) {
             return false;
@@ -79,4 +85,37 @@ pub(super) fn operands<'a>(
             .chain(call.arguments.into_iter().map(|arg| arg.value))
             .collect()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ast_grep_core::tree_sitter::LanguageExt;
+    use ast_grep_language::SupportLang;
+
+    #[test]
+    fn explicit_member_paths_do_not_borrow_local_receiver_types() {
+        for (member, local, expected) in [("Path", "Other", true), ("Other", "Path", false)] {
+            let source = format!(
+                "import java.nio.file.Path\nclass C(val root: {member}) {{\n fun f(name: String, other: {local}) {{\n val root: {local} = other\n consume(this.root.resolve(name))\n }}\n}}"
+            );
+            let ast = SupportLang::Kotlin.ast_grep(&source);
+            let root = ast.root();
+            assert!(
+                !root.dfs().any(|n| n.kind().as_ref() == "ERROR"),
+                "{source}"
+            );
+            let call = root
+                .dfs()
+                .find_map(|n| {
+                    identity::call(&n).filter(|call| call.callee.text().as_ref() == "consume")
+                })
+                .unwrap();
+            assert_eq!(
+                known_path(&root, &call.arguments[0].value, 8),
+                expected,
+                "{source}"
+            );
+        }
+    }
 }

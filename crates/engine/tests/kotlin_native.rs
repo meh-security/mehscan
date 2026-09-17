@@ -270,6 +270,62 @@ fn filesystem_paths_follow_owned_path_values_and_distinguish_content() {
 }
 
 #[test]
+fn explicit_member_receivers_preserve_boundary_and_path_ownership() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-receivers");
+    let result = mehscan_engine::scan_path(&fixture).unwrap();
+    assert_eq!(result.coverage.totals.parse_failed, 0);
+    let query_owners = result
+        .evidence
+        .iter()
+        .filter(|e| e.rule_id == "kotlin-persistence-query")
+        .map(|e| e.enclosing_symbol.as_deref().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(query_owners, ["memberQuery"]);
+    let path_owners = result
+        .security_paths
+        .iter()
+        .map(|p| {
+            result
+                .evidence
+                .iter()
+                .find(|e| e.id == p.sink_evidence_id)
+                .unwrap()
+                .enclosing_symbol
+                .as_deref()
+                .unwrap()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        path_owners,
+        ["memberQuery", "memberRead"].into_iter().collect()
+    );
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
+    assert_eq!(jobs.observation_reviews.len(), 1);
+    let facts = &jobs.observation_reviews[0].facts;
+    let member = facts
+        .iter()
+        .find(|f| f.role == "member_receiver_binding_context")
+        .unwrap();
+    assert_eq!(member.symbol, "FixedMembers.root");
+    assert!(
+        member
+            .excerpt
+            .contains("private val root: OtherPath = OtherPath()")
+    );
+    let ty = facts
+        .iter()
+        .find(|f| f.role == "member_receiver_type_context")
+        .unwrap();
+    assert_eq!(ty.symbol, "OtherPath");
+    assert!(
+        ty.excerpt
+            .contains("Path.of(\"/fixture/public/readme.txt\")")
+    );
+}
+
+#[test]
 fn incompatible_path_and_text_arguments_do_not_become_deterministic_paths() {
     // Deliberately incompatible Java argument types: syntax alone is not a
     // proved invocation. In particular, a Path object is not command/SQL text.

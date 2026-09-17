@@ -4,6 +4,7 @@ mod path;
 mod project;
 pub(super) use flow::{paths, sources};
 pub(crate) use project::caller_facts;
+pub(crate) use project::member_receiver_facts;
 mod numeric;
 pub(crate) use numeric::constant_query_fact;
 pub(crate) use numeric::query_fact;
@@ -176,6 +177,39 @@ mod tests {
         ] {
             assert_eq!(count(source, "kotlin-persistence-query"), 0, "{source}");
         }
+    }
+
+    #[test]
+    fn explicit_this_uses_member_identity_instead_of_local_types() {
+        for (member, local, expected) in
+            [("EntityManager", "Other", 1), ("Other", "EntityManager", 0)]
+        {
+            let source = format!(
+                "import jakarta.persistence.EntityManager\nclass C(val em: {member}) {{\n fun f(q: String, other: {local}) {{\n val em: {local} = other\n this.em.createQuery(q)\n }}\n}}"
+            );
+            assert_eq!(
+                count(&source, "kotlin-persistence-query"),
+                expected,
+                "{source}"
+            );
+        }
+        for body in [
+            "fun Other.f(q: String) {\n this.em.createQuery(q)\n }",
+            "fun f(q: String) {\n other.apply {\n this.em.createQuery(q)\n }\n }",
+            "fun f(q: String) {\n val other = object : Other() {\n fun g() {\n this.em.createQuery(q)\n }\n }\n }",
+            "val Other.query: Any\n get() = this.em.createQuery(\"fixed\")",
+        ] {
+            let source = format!(
+                "import jakarta.persistence.EntityManager\nclass C(val em: EntityManager) {{\n {body}\n}}"
+            );
+            assert_eq!(count(&source, "kotlin-persistence-query"), 0, "{source}");
+        }
+        let source = "import jakarta.persistence.EntityManager\nclass C(var em: EntityManager) {\n fun f(q: String, other: EntityManager) {\n this.em = other\n this.em.createQuery(q)\n }\n}";
+        assert_eq!(count(source, "kotlin-persistence-query"), 0);
+        let source = "import jakarta.persistence.EntityManager\nclass C(val em: EntityManager) {\n fun f(q: String, other: Other) {\n var em: Other = other\n em = other\n this.em.createQuery(q)\n }\n}";
+        assert_eq!(count(source, "kotlin-persistence-query"), 1);
+        let source = "import jakarta.persistence.EntityManager\nclass C(val em: EntityManager) {\n val query: Any\n get() = this.em.createQuery(\"fixed\")\n}";
+        assert_eq!(count(source, "kotlin-persistence-query"), 1);
     }
 
     #[test]
