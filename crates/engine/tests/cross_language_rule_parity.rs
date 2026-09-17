@@ -90,6 +90,78 @@ const COMMON_DECLARATIVE_SURFACE: [Capability; 29] = [
     Capability::UploadedFilenameValidation,
 ];
 
+// PHP has an explicit partial native contract. Missing policy/control roles
+// must not be silently counted as supported by an unrelated API inventory.
+const PHP_NATIVE_SURFACE: [Capability; 18] = [
+    Capability::HttpRequestData,
+    Capability::DatabaseQuery,
+    Capability::SqlParameterization,
+    Capability::ProcessExecution,
+    Capability::ProcessArgumentSeparation,
+    Capability::DynamicCodeExecution,
+    Capability::FilesystemRead,
+    Capability::FilesystemWrite,
+    Capability::PathCanonicalization,
+    Capability::OutboundNetworkRequest,
+    Capability::UrlParsing,
+    Capability::Redirect,
+    Capability::HtmlOutput,
+    Capability::HtmlEncoding,
+    Capability::Deserialization,
+    Capability::CryptographicHash,
+    Capability::FileUpload,
+    Capability::TlsConfiguration,
+];
+
+const PHP_MISSING_SURFACE: [Capability; 11] = [
+    Capability::HttpRequestHandling,
+    Capability::DynamicCodeRestriction,
+    Capability::PathContainmentCheck,
+    Capability::UrlDestinationValidation,
+    Capability::RedirectDestinationValidation,
+    Capability::Authentication,
+    Capability::Authorization,
+    Capability::CookieConfiguration,
+    Capability::UploadedFileContent,
+    Capability::UploadedFilePath,
+    Capability::UploadedFilenameValidation,
+];
+
+#[test]
+fn php_parity_accounts_for_every_common_role_and_declared_cwe() {
+    let supported = PHP_NATIVE_SURFACE.into_iter().collect::<BTreeSet<_>>();
+    let missing = PHP_MISSING_SURFACE.into_iter().collect::<BTreeSet<_>>();
+    assert!(supported.is_disjoint(&missing));
+    assert_eq!(
+        supported.union(&missing).copied().collect::<BTreeSet<_>>(),
+        COMMON_DECLARATIVE_SURFACE.into_iter().collect()
+    );
+    let rules = mehscan_engine::rules::load_builtin_rules().unwrap();
+    let php = rules
+        .iter()
+        .filter(|r| r.language == Language::Php)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        php.iter().map(|r| r.capability).collect::<BTreeSet<_>>(),
+        supported,
+        "Update PHP's support/gap matrix and semantic tests when adding a capability"
+    );
+    let declared = php
+        .iter()
+        .flat_map(|r| r.cwe.iter().map(String::as_str))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        declared,
+        [
+            "CWE-20", "CWE-22", "CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-98", "CWE-327",
+            "CWE-434", "CWE-502", "CWE-601", "CWE-918", "CWE-295"
+        ]
+        .into_iter()
+        .collect(),
+        "A CWE declaration needs an independent source/safe-case budget, not only a catalog count"
+    );
+}
+
 #[test]
 fn established_web_languages_keep_the_common_declarative_surface() {
     let rules = mehscan_engine::rules::load_builtin_rules().expect("rule catalog should load");

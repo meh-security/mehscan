@@ -81,7 +81,7 @@ fn safety_review_payload_preserves_decision_guidance() {
     let job =
         mehscan_engine::investigation::build_path_review_jobs(&fixture_root(), Some(12), Some(100))
             .expect("review job should build");
-    assert_eq!(job.fingerprint, "path-reviewpack-3cfd377811b12a69");
+    assert_eq!(job.fingerprint, "path-reviewpack-922d133ab60b46d7");
     let review = job
         .observation_reviews
         .iter()

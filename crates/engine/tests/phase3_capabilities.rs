@@ -69,22 +69,16 @@ fn enumerates_first_cwe_capability_set_across_priority_languages() {
         .iter()
         .map(|coverage| (coverage.cwe.as_str(), coverage))
         .collect();
-    assert_eq!(cwe.len(), 67);
+    assert_eq!(cwe.len(), 68);
     for id in ["CWE-20", "CWE-22", "CWE-78", "CWE-89", "CWE-798", "CWE-918"] {
         let coverage = cwe.get(id).expect("CWE coverage should be declared");
         assert_eq!(coverage.level, CweSupportLevel::Partial);
-        assert_eq!(
-            coverage.supported_languages.len(),
-            if id == "CWE-918" { 10 } else { 11 }
-        );
+        assert_eq!(coverage.supported_languages.len(), 11);
     }
     for id in ["CWE-79", "CWE-502", "CWE-601"] {
         let coverage = cwe.get(id).expect("CWE coverage should be declared");
         assert_eq!(coverage.level, CweSupportLevel::Partial);
-        assert_eq!(
-            coverage.supported_languages.len(),
-            if id == "CWE-601" { 8 } else { 9 }
-        );
+        assert_eq!(coverage.supported_languages.len(), 9);
     }
     for id in [
         "CWE-94", "CWE-306", "CWE-434", "CWE-614", "CWE-862", "CWE-1004",
@@ -93,11 +87,15 @@ fn enumerates_first_cwe_capability_set_across_priority_languages() {
         assert_eq!(coverage.level, CweSupportLevel::Partial);
         assert_eq!(
             coverage.supported_languages.len(),
-            if id == "CWE-94" { 8 } else { 7 }
+            if matches!(id, "CWE-94" | "CWE-434") {
+                8
+            } else {
+                7
+            }
         );
     }
-    assert_eq!(cwe["CWE-327"].supported_languages.len(), 9);
-    assert_eq!(cwe["CWE-295"].supported_languages.len(), 8);
+    assert_eq!(cwe["CWE-327"].supported_languages.len(), 10);
+    assert_eq!(cwe["CWE-295"].supported_languages.len(), 9);
     for id in ["CWE-1275", "CWE-345"] {
         let coverage = cwe.get(id).expect("Node CWE coverage should be declared");
         assert_eq!(coverage.level, CweSupportLevel::Partial);
@@ -216,7 +214,7 @@ fn enumerates_first_cwe_capability_set_across_priority_languages() {
 #[test]
 fn built_in_catalog_has_valid_provenance() {
     let rules = mehscan_engine::rules::load_builtin_rules().expect("catalog should validate");
-    assert_eq!(rules.len(), 305);
+    assert_eq!(rules.len(), 317);
     let invalid = rules
         .iter()
         .filter(|rule| {

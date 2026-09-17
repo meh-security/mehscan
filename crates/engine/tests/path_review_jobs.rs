@@ -193,8 +193,9 @@ fn preserves_decisive_observation_guidance_across_every_language() {
     .expect("cross-language guidance fixture should build");
 
     // Reviewer-visible decision-ready path/observation and review-specific
-    // summary instructions are part of the serialized contract and fingerprint.
-    assert_eq!(job.fingerprint, "path-reviewpack-abe28445a8bee46d");
+    // summary and per-review evidence scope instructions are part of the
+    // serialized contract and fingerprint.
+    assert_eq!(job.fingerprint, "path-reviewpack-cc7e0c114efe0dcd");
     let languages = job
         .observation_reviews
         .iter()
@@ -1296,6 +1297,143 @@ fn scopes_python_owner_control_to_resource_access_in_mixed_observations() {
         .expect("resource observation should remain reviewable");
     assert_eq!(resource.decision_facts.effective_controls.len(), 1);
     assert!(resource.decision_facts.unresolved.is_empty());
+}
+
+#[test]
+fn observed_conditional_encoding_and_quoting_are_not_proven_controls() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/fixtures/review-control-observation");
+    let jobs = mehscan_engine::investigation::build_all_path_review_jobs(&root, Some(8), true)
+        .expect("conditional control observations should build");
+    for sink_rule in [
+        "php-command-execution",
+        "php-html-output",
+        "python-html-output",
+    ] {
+        let review = jobs
+            .observation_reviews
+            .iter()
+            .find(|review| review.evidence.iter().any(|item| item.rule_id == sink_rule))
+            .unwrap_or_else(|| panic!("missing conditional sink observation {sink_rule}"));
+        assert!(
+            review.evidence.iter().any(|item| {
+                matches!(
+                    item.kind,
+                    EvidenceKind::Sanitizer | EvidenceKind::Validation
+                )
+            }),
+            "the possible control must remain available to the reviewer: {sink_rule}"
+        );
+        assert!(
+            review.decision_facts.effective_controls.is_empty(),
+            "conditional control syntax must not certify protection: {sink_rule}"
+        );
+        assert_eq!(
+            review.confidence_policy.not_issue,
+            ReviewConfidence::Medium,
+            "unproved protection must not raise dismissal confidence: {sink_rule}"
+        );
+        assert!(
+            review
+                .facts
+                .iter()
+                .any(|fact| { fact.excerpt.contains("else") || fact.excerpt.contains("?") }),
+            "the raw branch must remain visible: {sink_rule}"
+        );
+    }
+}
+
+#[test]
+fn php_request_origin_context_stays_with_unique_unconditional_owner_binding() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/fixtures/php-review-origin");
+    let jobs = mehscan_engine::investigation::build_all_path_review_jobs(&root, Some(8), true)
+        .expect("PHP origin sibling fixture should build");
+    for file in [
+        "positive.php",
+        "reassigned.php",
+        "conditional.php",
+        "shadowed.php",
+        "short-circuit.php",
+    ] {
+        let review = jobs
+            .observation_reviews
+            .iter()
+            .find(|review| {
+                review.evidence.iter().any(|item| {
+                    item.rule_id == "php-command-execution" && item.location.path == file
+                })
+            })
+            .unwrap_or_else(|| panic!("missing sink for {file}"));
+        let origins = review
+            .facts
+            .iter()
+            .filter(|fact| fact.role == "request_binding_context")
+            .collect::<Vec<_>>();
+        if file == "positive.php" {
+            assert_eq!(origins.len(), 1);
+            assert_eq!(origins[0].symbol, "$message");
+            assert!(origins[0].excerpt.contains("$_POST['message']"));
+            assert!(origins[0].provenance.engine.contains("not a flow"));
+            assert!(
+                !review
+                    .facts
+                    .iter()
+                    .filter(|fact| fact.role == "source_context")
+                    .any(|fact| fact.excerpt.contains("$_POST"))
+            );
+        } else {
+            assert!(
+                origins.is_empty(),
+                "unproved origin must not be selected for {file}"
+            );
+        }
+    }
+}
+
+#[test]
+fn php_server_name_output_requires_authoritative_host_configuration() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/fixtures/php-review-origin/server-name.php");
+    let jobs = mehscan_engine::investigation::build_all_path_review_jobs(&root, Some(8), true)
+        .expect("server metadata fixture should build");
+    let review = jobs
+        .observation_reviews
+        .iter()
+        .find(|review| {
+            review
+                .evidence
+                .iter()
+                .any(|item| item.rule_id == "php-html-output")
+        })
+        .expect("raw server-name output");
+    assert_eq!(review.decision_facts.unresolved.len(), 1);
+    let check = &review.decision_facts.unresolved[0];
+    assert!(check.contains("server-name.php:2"));
+    assert!(check.contains("UseCanonicalName and ServerName"));
+    assert!(check.contains("configured host or a client-supplied host"));
+    assert!(review.decision_facts.effective_controls.is_empty());
+}
+
+#[test]
+fn supplemental_php_origin_redacts_sensitive_fallback_literals() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/fixtures/php-review-origin/credential.php");
+    let jobs = mehscan_engine::investigation::build_all_path_review_jobs(&root, Some(8), true)
+        .expect("credential fixture should build");
+    let origin = jobs
+        .observation_reviews
+        .iter()
+        .flat_map(|review| &review.facts)
+        .find(|fact| fact.role == "request_binding_context")
+        .expect("credential origin context");
+    assert!(!origin.excerpt.contains("sensitive-fallback-sentinel"));
+    assert!(origin.excerpt.contains("$_POST"));
+    assert!(origin.excerpt.contains("redacted"));
 }
 
 #[test]

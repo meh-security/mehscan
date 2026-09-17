@@ -184,6 +184,21 @@ pub(crate) fn presentation(rule: &str, cwes: &[String], operation: &str) -> Opti
             "Encoded null bytes bypass file-path validation",
             "Decode the path once before validation, reject null bytes and ambiguous encodings, and enforce containment on the exact path passed to file access.",
         )
+    } else if has("CWE-98") {
+        (
+            "Untrusted file selection reaches executable inclusion",
+            "Choose executable includes from a fixed server-owned mapping. Never pass request-selected paths to inclusion; constrain targets to an authorized root and disable unnecessary remote inclusion wrappers.",
+        )
+    } else if has("CWE-295") {
+        (
+            "TLS peer validation can accept an untrusted server",
+            "Enable certificate-chain and hostname verification for the affected client. Configure trusted CA certificates instead of bypassing validation, and ensure later options or callbacks do not disable either check.",
+        )
+    } else if has("CWE-327") {
+        (
+            "Weak hashing fails the required security property",
+            "Replace weak hashes where the consumer requires a security property. Use an adaptive salted password hash for passwords and a modern vetted digest or authenticated integrity construction for integrity; keep non-security identifiers separate.",
+        )
     } else if has("CWE-22") {
         (
             "Untrusted paths escape the intended directory",

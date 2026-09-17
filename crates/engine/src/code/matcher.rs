@@ -77,6 +77,7 @@ pub(crate) struct ScanDependencies<'a> {
         &'a super::native_invalidation::NativeInvalidationProjectContext,
     pub python_project_context: &'a super::python_context::PythonProjectContext,
     pub rust_project_context: &'a super::rust_project::RustProjectContext,
+    pub php_project_context: &'a super::php::PhpProjectContext,
     pub dotnet_project_context: &'a DotnetProjectContext,
     pub build_symbols: &'a BTreeMap<String, bool>,
 }
@@ -119,6 +120,7 @@ pub(crate) fn scan_source(
         native_invalidation_context,
         python_project_context,
         rust_project_context,
+        php_project_context,
         dotnet_project_context,
         build_symbols,
     } = dependencies;
@@ -160,7 +162,8 @@ pub(crate) fn scan_source(
     let parse_context_microseconds = parse_started.elapsed().as_micros();
 
     let mut evidence = Vec::new();
-    let php_context = (language == Language::Php).then(|| super::php::PhpContext::build(&root));
+    let php_context = (language == Language::Php)
+        .then(|| super::php::PhpContext::build(&root).with_project(path, php_project_context));
     let mut seen = BTreeSet::new();
     let declarative_started = Instant::now();
     let mut declarative_patterns_considered = 0;
@@ -370,6 +373,13 @@ pub(crate) fn scan_source(
                             },
                         );
                     }
+                }
+                if let Some(context) = &php_context {
+                    captures.extend(context.supplemental_captures(
+                        &compiled_rule.rule.id,
+                        matched.get_node(),
+                        path,
+                    ));
                 }
                 evidence.push(Evidence {
                     id: evidence_id(path, &compiled_rule.rule.id, range.start, range.end),
@@ -2310,7 +2320,7 @@ fn call_site(node: Node<'_, StrDoc<SupportLang>>) -> Option<CallSite<'_>> {
     })
 }
 
-fn location(path: &str, node: &Node<'_, StrDoc<SupportLang>>) -> Location {
+pub(super) fn location(path: &str, node: &Node<'_, StrDoc<SupportLang>>) -> Location {
     let start = node.start_pos();
     let end = node.end_pos();
     Location {

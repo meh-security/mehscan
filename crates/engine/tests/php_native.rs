@@ -86,6 +86,249 @@ fn sink_paths(result: &ScanResult, symbol: &str, capability: Capability) -> usiz
 }
 
 #[test]
+fn every_declared_php_role_has_executable_evidence_with_its_semantic_capture() {
+    use mehscan_core::EvidenceKind;
+    let result = scan();
+    let handlers = result
+        .evidence
+        .iter()
+        .filter(|e| {
+            e.rule_id == "php-pdo-query"
+                && e.location.path == "scope.php"
+                && e.enclosing_symbol.as_deref() == Some("handler")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        handlers.len(),
+        1,
+        "Same-named methods must retain distinct receiver owners"
+    );
+    assert_eq!(
+        handlers[0].location.start.line, 16,
+        "Only First.handler has a native PDO parameter"
+    );
+    for (capability, kind, role) in [
+        (Capability::HttpRequestData, EvidenceKind::Source, "field"),
+        (Capability::DatabaseQuery, EvidenceKind::Sink, "query"),
+        (
+            Capability::SqlParameterization,
+            EvidenceKind::Validation,
+            "query",
+        ),
+        (Capability::ProcessExecution, EvidenceKind::Sink, "command"),
+        (
+            Capability::ProcessArgumentSeparation,
+            EvidenceKind::Validation,
+            "value",
+        ),
+        (Capability::DynamicCodeExecution, EvidenceKind::Sink, "code"),
+        (Capability::FilesystemRead, EvidenceKind::Sink, "path"),
+        (Capability::FilesystemWrite, EvidenceKind::Sink, "path"),
+        (
+            Capability::PathCanonicalization,
+            EvidenceKind::Validation,
+            "path",
+        ),
+        (
+            Capability::OutboundNetworkRequest,
+            EvidenceKind::Sink,
+            "endpoint",
+        ),
+        (Capability::UrlParsing, EvidenceKind::Validation, "value"),
+        (Capability::Redirect, EvidenceKind::Sink, "location"),
+        (Capability::HtmlOutput, EvidenceKind::Sink, "content"),
+        (Capability::HtmlEncoding, EvidenceKind::Sanitizer, "value"),
+        (Capability::Deserialization, EvidenceKind::Sink, "payload"),
+        (
+            Capability::CryptographicHash,
+            EvidenceKind::SecurityConfiguration,
+            "algorithm",
+        ),
+        (Capability::FileUpload, EvidenceKind::Sink, "path"),
+        (
+            Capability::TlsConfiguration,
+            EvidenceKind::SecurityConfiguration,
+            "value",
+        ),
+    ] {
+        assert!(
+            result.evidence.iter().any(|e| e.capability == capability
+                && e.kind == kind
+                && e.captures.contains_key(role)),
+            "Missing executable {capability:?}/{kind:?}/{role} evidence"
+        );
+    }
+    let catalog = mehscan_engine::rules::load_builtin_rules().unwrap();
+    let declared = catalog
+        .iter()
+        .filter(|r| r.language == Language::Php)
+        .flat_map(|r| r.cwe.iter())
+        .collect::<std::collections::BTreeSet<_>>();
+    let observed = result
+        .evidence
+        .iter()
+        .filter(|e| e.rule_id.starts_with("php-"))
+        .flat_map(|e| e.cwe_candidates.iter())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        declared, observed,
+        "Every PHP CWE declaration needs an executable fixture anchor"
+    );
+}
+
+#[test]
+fn php_stream_and_hash_parity_preserves_safe_purpose_and_control_limits() {
+    let result = scan();
+    assert_eq!(result.coverage.totals.parse_failed, 0);
+    for symbol in [
+        "stream_request",
+        "stream_alias",
+        "imported_stream",
+        "parsed_is_not_allowed",
+        "unrelated_url_parse",
+    ] {
+        assert!(
+            sink_paths(&result, symbol, Capability::OutboundNetworkRequest) > 0,
+            "{symbol}"
+        );
+    }
+    assert_eq!(
+        sink_paths(
+            &result,
+            "fixed_stream_path",
+            Capability::OutboundNetworkRequest
+        ),
+        0
+    );
+    for (symbol, rule) in [
+        ("local_stream", "php-url-stream-read"),
+        ("local_parse", "php-url-parsing"),
+        ("local_digest", "php-weak-hash-selection"),
+        ("strong_password", "php-weak-hash-selection"),
+    ] {
+        assert!(
+            !result
+                .evidence
+                .iter()
+                .any(|e| e.rule_id == rule && e.enclosing_symbol.as_deref() == Some(symbol)),
+            "{symbol}"
+        );
+    }
+    // Non-security MD5 stays inventory; catalog presence is not a verdict.
+    for symbol in [
+        "weak_password",
+        "weak_sha1",
+        "checksum_only",
+        "imported_digest",
+    ] {
+        let hash = result
+            .evidence
+            .iter()
+            .find(|e| {
+                e.rule_id == "php-weak-hash-selection"
+                    && e.enclosing_symbol.as_deref() == Some(symbol)
+            })
+            .expect(symbol);
+        assert!(hash.captures.contains_key("algorithm"));
+        assert!(hash.captures.contains_key("value"));
+    }
+    for path in &result.security_paths {
+        if path.capability == Capability::OutboundNetworkRequest
+            && result.evidence.iter().any(|e| {
+                e.id == path.sink_evidence_id
+                    && matches!(
+                        e.enclosing_symbol.as_deref(),
+                        Some("parsed_is_not_allowed" | "unrelated_url_parse")
+                    )
+            })
+        {
+            assert_ne!(
+                path.state,
+                SecurityPathState::Protected,
+                "Parsing is not destination authorization"
+            );
+        }
+    }
+}
+
+#[test]
+fn php_stream_review_supplies_wrapper_configuration_without_claiming_protection() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/v2-php-native");
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&root, None, true).unwrap();
+    let review = jobs
+        .reviews
+        .iter()
+        .find(|review| {
+            review.candidate.sink.enclosing_symbol.as_deref() == Some("stream_request")
+                && review.candidate.capability == Capability::OutboundNetworkRequest
+        })
+        .expect("stream request review");
+    assert!(
+        review
+            .facts
+            .iter()
+            .any(|fact| fact.role == "configuration_context"
+                && fact.location.path == "php.ini"
+                && fact.excerpt.contains("allow_url_fopen = On"))
+    );
+    assert_ne!(review.candidate.state, SecurityPathState::Protected);
+    assert!(review.review_basis.is_some());
+    assert_eq!(review.language, Some(Language::Php));
+}
+
+#[test]
+fn php_inclusion_upload_and_redirect_boundaries_keep_argument_roles() {
+    let result = scan();
+    assert_eq!(result.coverage.totals.parse_failed, 0);
+    for (symbol, rule, capture) in [
+        ("unsafe_include", "php-file-inclusion", "path"),
+        ("unsafe_require", "php-file-inclusion", "path"),
+        ("unsafe_upload_move", "php-upload-move", "path"),
+        ("unsafe_redirect", "php-header-redirect", "location"),
+    ] {
+        let evidence = result
+            .evidence
+            .iter()
+            .find(|e| e.rule_id == rule && e.enclosing_symbol.as_deref() == Some(symbol))
+            .expect(symbol);
+        assert!(evidence.captures.contains_key(capture), "{symbol}");
+    }
+    for (symbol, rule) in [
+        ("unrelated_header", "php-header-redirect"),
+        ("misleading_header", "php-header-redirect"),
+        ("redirect_lookalike", "php-header-redirect"),
+        ("upload_lookalike", "php-upload-move"),
+    ] {
+        assert!(
+            !result
+                .evidence
+                .iter()
+                .any(|e| e.rule_id == rule && e.enclosing_symbol.as_deref() == Some(symbol)),
+            "{symbol}"
+        );
+    }
+    assert_eq!(
+        sink_paths(&result, "fixed_include", Capability::FilesystemRead),
+        0
+    );
+    assert_eq!(
+        sink_paths(&result, "fixed_redirect", Capability::Redirect),
+        0
+    );
+    let upload = result
+        .evidence
+        .iter()
+        .find(|e| {
+            e.rule_id == "php-upload-move"
+                && e.enclosing_symbol.as_deref() == Some("unsafe_upload_move")
+        })
+        .unwrap();
+    assert!(upload.captures["path"].text.contains("name"));
+    assert!(!upload.captures["path"].text.contains("tmp_name"));
+}
+
+#[test]
 fn php_native_boundaries_preserve_identity_scope_and_safe_alternatives() {
     let result = scan();
     assert_eq!(
@@ -93,7 +336,7 @@ fn php_native_boundaries_preserve_identity_scope_and_safe_alternatives() {
         "{:?}",
         result.diagnostics
     );
-    assert_eq!(result.coverage.languages[&Language::Php].scanned, 5);
+    assert_eq!(result.coverage.languages[&Language::Php].scanned, 6);
     for symbol in [
         "direct_command",
         "alias_command",
@@ -113,6 +356,9 @@ fn php_native_boundaries_preserve_identity_scope_and_safe_alternatives() {
         "visible_database",
         "imported_database",
         "unsafe_execute_query",
+        "mysqli_method_input",
+        "mysqli_method_constructed",
+        "mysqli_method_imported",
     ] {
         assert!(
             sink_paths(&result, symbol, Capability::DatabaseQuery) > 0,
@@ -144,6 +390,12 @@ fn php_native_boundaries_preserve_identity_scope_and_safe_alternatives() {
         "qualified_global_lookalike",
         "imported_global_lookalike",
         "prepared_safe",
+        "mysqli_method_bound",
+        "mysqli_method_replaced",
+        "mysqli_method_helper",
+        "mysqli_method_conditional",
+        "mysqli_method_unknown",
+        "mysqli_method_lookalike",
     ] {
         assert_eq!(
             sink_paths(&result, symbol, Capability::DatabaseQuery),
@@ -165,17 +417,31 @@ fn php_native_boundaries_preserve_identity_scope_and_safe_alternatives() {
     );
     assert!(sink_paths(&result, "reflected_html", Capability::HtmlOutput) > 0);
     assert!(sink_paths(&result, "uppercase_output", Capability::HtmlOutput) > 0);
-    for path in &result.security_paths {
-        if result.evidence.iter().any(|e| {
-            e.id == path.sink_evidence_id && e.enclosing_symbol.as_deref() == Some("bound_safe")
-        }) {
-            assert_eq!(
-                path.state,
-                SecurityPathState::Protected,
-                "safe bound query: {path:?}"
-            );
-        }
-    }
+    assert_eq!(
+        sink_paths(&result, "bound_safe", Capability::DatabaseQuery),
+        1,
+        "Bound data should retain its explicitly protected relationship"
+    );
+    assert!(
+        result
+            .security_paths
+            .iter()
+            .filter(
+                |path| result.evidence.iter().any(|e| e.id == path.sink_evidence_id
+                    && e.enclosing_symbol.as_deref() == Some("bound_safe"))
+            )
+            .all(|path| path.state == SecurityPathState::Protected)
+    );
+    let binding = result
+        .evidence
+        .iter()
+        .find(|e| {
+            e.rule_id == "php-mysqli-parameterization"
+                && e.enclosing_symbol.as_deref() == Some("bound_safe")
+        })
+        .expect("binding evidence");
+    assert_eq!(binding.context.literals["query"].state, LiteralState::Known);
+    assert!(binding.captures["parameters"].text.contains("$_GET"));
     for (symbol, state) in [
         ("interpolated_sql", LiteralState::Partial),
         ("prepared_safe", LiteralState::Known),

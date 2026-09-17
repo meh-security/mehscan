@@ -588,6 +588,10 @@ fn build_path_review_jobs_internal(
     {
         let mut facts = Vec::new();
         let mut configuration_tokens = BTreeSet::new();
+        collect_php_boundary_configuration_tokens(
+            &candidate.sink.rule_id,
+            &mut configuration_tokens,
+        );
         let mut context_truncated = false;
         let mut decision_critical_context_truncated = false;
         for (index, step) in candidate.steps.iter().enumerate() {
@@ -1278,6 +1282,37 @@ pub fn summarize_path_review_bundle_run(
         ));
     };
     let job_fingerprint = first_bundle.job_fingerprint.clone();
+    summarize_path_review_bundle_run_with_fingerprint(bundle_responses, job_fingerprint)
+}
+
+/// Summarizes a manifest-backed run, including a valid run with no reviews.
+pub fn summarize_path_review_bundle_manifest_run(
+    manifest: &PathReviewBundleManifest,
+    bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
+) -> Result<PathReviewBundleRunReport, EngineError> {
+    if manifest.bundle_count != manifest.bundles.len()
+        || manifest.bundle_count != bundle_responses.len()
+    {
+        return Err(EngineError(
+            "bundle manifest count does not match the run".to_string(),
+        ));
+    }
+    let report = summarize_path_review_bundle_run_with_fingerprint(
+        bundle_responses,
+        manifest.job_fingerprint.clone(),
+    )?;
+    if report.review_count != manifest.review_count {
+        return Err(EngineError(
+            "review manifest count does not match the run".to_string(),
+        ));
+    }
+    Ok(report)
+}
+
+fn summarize_path_review_bundle_run_with_fingerprint(
+    bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
+    job_fingerprint: String,
+) -> Result<PathReviewBundleRunReport, EngineError> {
     let mut seen_bundles = BTreeSet::new();
     let mut seen_reviews = BTreeSet::new();
     let mut results = Vec::new();
@@ -1376,6 +1411,43 @@ pub fn build_finding_report(
     include_dismissed: bool,
 ) -> Result<FindingReport, EngineError> {
     let run = summarize_path_review_bundle_run(bundle_responses)?;
+    finding_report_from_run(
+        tool_version,
+        reviewer,
+        bundle_responses,
+        include_dismissed,
+        run,
+    )
+}
+
+/// Builds canonical output from a validated manifest, retaining empty-run identity.
+pub fn build_finding_report_from_manifest(
+    manifest: &PathReviewBundleManifest,
+    tool_version: impl Into<String>,
+    reviewer: Option<String>,
+    bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
+    include_dismissed: bool,
+) -> Result<FindingReport, EngineError> {
+    let run = summarize_path_review_bundle_manifest_run(manifest, bundle_responses)?;
+    let mut report = finding_report_from_run(
+        tool_version,
+        reviewer,
+        bundle_responses,
+        include_dismissed,
+        run,
+    )?;
+    report.scan.coverage = manifest.coverage.clone();
+    report.scan.scope = manifest.scope.clone();
+    Ok(report)
+}
+
+fn finding_report_from_run(
+    tool_version: impl Into<String>,
+    reviewer: Option<String>,
+    bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
+    include_dismissed: bool,
+    run: PathReviewBundleRunReport,
+) -> Result<FindingReport, EngineError> {
     let mut records = BTreeMap::<String, ReportAccumulator>::new();
     let mut dismissed = Vec::new();
 
@@ -1383,10 +1455,14 @@ pub fn build_finding_report(
         for result in &responses.results {
             if result.decision == ReviewDecision::NotIssue {
                 if include_dismissed {
+                    let (_, _, location, rule_id, _) =
+                        bundle_issue_context(bundle, &result.review_id)?;
                     dismissed.push(DismissedReview {
                         review_id: result.review_id.clone(),
                         confidence: result.confidence,
                         description: result.summary.clone(),
+                        primary_location: Some(location),
+                        rule_id: Some(rule_id),
                     });
                 }
                 continue;
@@ -1516,26 +1592,37 @@ fn reported_finding(
                     EngineError(format!("bundle is missing review {:?}", result.review_id))
                 })?;
             let candidate = &review.candidate;
+            let presentation_cwes = finding_presentation_cwes(
+                candidate.capability,
+                &candidate.cwe_candidates,
+                review
+                    .review_basis
+                    .as_ref()
+                    .map(|basis| basis.sink.cwe_candidates.as_slice())
+                    .unwrap_or_default(),
+            );
             let fallback_title = review
                 .review_basis
                 .as_ref()
                 .and_then(|basis| basis.sink.rule_title.clone())
                 .unwrap_or_else(|| candidate.title.clone());
-            let title = human_finding_title(&candidate.sink.rule_id, &fallback_title);
+            let title = human_boundary_finding_title(
+                &candidate.sink.rule_id,
+                &fallback_title,
+                candidate.capability,
+                &presentation_cwes,
+            );
             let presentation = report_presentation(
                 &candidate.sink.rule_id,
-                &candidate.cwe_candidates,
+                &presentation_cwes,
                 review.review_basis.as_ref().map(|basis| &basis.sink),
                 Some(&candidate.source.rule_id),
             );
             let title = presentation
                 .as_ref()
                 .map_or(title, |value| value.title.to_string());
-            let remediation = report_remediation(
-                presentation,
-                candidate.capability,
-                &candidate.cwe_candidates,
-            );
+            let remediation =
+                report_remediation(presentation, candidate.capability, &presentation_cwes);
             let mut evidence_ids = vec![candidate.source.id.clone(), candidate.sink.id.clone()];
             evidence_ids.extend(candidate.protections.iter().map(|item| item.id.clone()));
             evidence_ids.extend(
@@ -1611,7 +1698,12 @@ fn reported_finding(
                         .and_then(|item| item.rule_title.clone())
                 })
                 .unwrap_or_else(|| review.title.clone());
-            let title = human_finding_title(&anchor.rule_id, &fallback_title);
+            let title = human_boundary_finding_title(
+                &anchor.rule_id,
+                &fallback_title,
+                anchor.capability,
+                &anchor.cwe_candidates,
+            );
             let presentation = report_presentation(
                 &anchor.rule_id,
                 &anchor.cwe_candidates,
@@ -1759,6 +1851,7 @@ fn report_remediation(
             | Capability::LocalHeapDeallocation
             | Capability::RemainingInputRead
     ) || (capability == Capability::FilesystemWrite && cwes.iter().any(|cwe| cwe == "CWE-367"))
+        || (capability == Capability::FileUpload && cwes.iter().any(|cwe| cwe == "CWE-434"))
     {
         Some(finding_remediation(capability, cwes))
     } else {
@@ -1821,6 +1914,74 @@ fn human_finding_title(rule_id: &str, fallback: &str) -> String {
     }
 }
 
+// The path's CWE list describes its named relationship. Preserve that list in
+// canonical metadata, but retain an exact executable-inclusion boundary's
+// operation semantics when choosing its title and remediation.
+fn finding_presentation_cwes(
+    capability: Capability,
+    relationship: &[String],
+    boundary: &[String],
+) -> Vec<String> {
+    let mut cwes = relationship.to_vec();
+    if capability == Capability::FilesystemRead
+        && boundary.iter().any(|cwe| cwe == "CWE-98")
+        && !cwes.iter().any(|cwe| cwe == "CWE-98")
+    {
+        cwes.push("CWE-98".to_string());
+    }
+    cwes
+}
+
+fn human_boundary_finding_title(
+    rule_id: &str,
+    fallback: &str,
+    capability: Capability,
+    cwes: &[String],
+) -> String {
+    let specific = human_finding_title(rule_id, fallback);
+    if specific != fallback {
+        return specific;
+    }
+    let has = |cwe: &str| cwes.iter().any(|item| item == cwe);
+    match capability {
+        Capability::ProcessExecution if has("CWE-78") => {
+            "Runtime values can alter shell command syntax"
+        }
+        Capability::DatabaseQuery if has("CWE-89") => {
+            "Runtime values can alter executable SQL syntax"
+        }
+        Capability::HtmlOutput if has("CWE-79") => "Unencoded response values allow HTML injection",
+        Capability::DynamicCodeExecution if has("CWE-94") => {
+            "Untrusted runtime values can execute as code"
+        }
+        Capability::Deserialization if has("CWE-502") => {
+            "Untrusted serialized input reaches object deserialization"
+        }
+        Capability::FilesystemRead if has("CWE-98") => {
+            "Untrusted file selection reaches executable inclusion"
+        }
+        Capability::FileUpload if has("CWE-434") => "Unrestricted uploads can publish unsafe files",
+        Capability::Redirect if has("CWE-601") => "Untrusted destinations allow external redirects",
+        Capability::OutboundNetworkRequest if has("CWE-918") => {
+            "Unrestricted destinations can reach internal services"
+        }
+        Capability::CryptographicHash if has("CWE-327") => {
+            "Weak hashing fails the required security property"
+        }
+        Capability::TlsConfiguration if has("CWE-295") => {
+            "TLS peer validation can accept an untrusted server"
+        }
+        Capability::FilesystemRead if has("CWE-22") => {
+            "Unrestricted file selection can disclose server files"
+        }
+        Capability::FilesystemWrite if has("CWE-22") => {
+            "Unrestricted destination selection can overwrite files"
+        }
+        _ => return specific,
+    }
+    .to_string()
+}
+
 fn finding_remediation(capability: Capability, cwes: &[String]) -> FindingRemediation {
     if !cwes.iter().any(|cwe| cwe == "CWE-367")
         && let Some(presentation) = crate::report_policy::presentation("", cwes, "")
@@ -1837,11 +1998,47 @@ fn finding_remediation(capability: Capability, cwes: &[String]) -> FindingRemedi
         Capability::ProcessExecution => {
             "Invoke the executable with a structured argument vector and no command shell; otherwise strictly constrain every runtime fragment before shell interpretation."
         }
-        Capability::CountControlledMemoryOperation => {
-            "Before copying, verify every destination offset and dimension against the authoritative destination region using non-wrapping arithmetic."
+        Capability::DatabaseQuery if cwes.iter().any(|cwe| cwe == "CWE-89") => {
+            "Use a fixed query with placeholders and bind each untrusted value separately; allowlist identifiers or query structure that cannot be bound as data."
+        }
+        Capability::HtmlOutput if cwes.iter().any(|cwe| cwe == "CWE-79") => {
+            "Encode the exact emitted value for its browser output context. Use HTML text or quoted-attribute encoding for HTML, and a data serializer for script values; apply the control at every affected output boundary."
+        }
+        Capability::DynamicCodeExecution if cwes.iter().any(|cwe| cwe == "CWE-94") => {
+            "Remove evaluation or compilation of untrusted text. Dispatch fixed authorized operations with validated data instead of constructing executable code."
+        }
+        Capability::Deserialization if cwes.iter().any(|cwe| cwe == "CWE-502") => {
+            "Replace untrusted object deserialization with a data-only format and explicit schema validation. Remove executable deserialization hooks and never instantiate request-selected object types."
+        }
+        Capability::FilesystemRead if cwes.iter().any(|cwe| cwe == "CWE-98") => {
+            "Choose executable includes from a fixed server-owned mapping. Never pass request-selected paths to inclusion; constrain targets to an authorized root and disable unnecessary remote inclusion wrappers."
+        }
+        Capability::FileUpload if cwes.iter().any(|cwe| cwe == "CWE-434") => {
+            "Validate permitted file content and types, assign server-owned filenames, enforce destination containment, and store uploads outside executable web roots. Serve uploaded content through an authorized handler with safe content types."
+        }
+        Capability::Redirect if cwes.iter().any(|cwe| cwe == "CWE-601") => {
+            "Use fixed relative destinations or validate the parsed destination against an explicit same-origin or host allowlist; reject protocol-relative URLs and ambiguous encodings."
+        }
+        Capability::OutboundNetworkRequest if cwes.iter().any(|cwe| cwe == "CWE-918") => {
+            "Allowlist schemes and destinations for the exact requested URL. Reject internal and metadata addresses, validate resolved addresses and redirects, and disable unnecessary network wrappers. URL parsing alone is not destination authorization."
+        }
+        Capability::CryptographicHash if cwes.iter().any(|cwe| cwe == "CWE-327") => {
+            "Replace weak hashes where the consumer requires a security property. Use an adaptive salted password hash for passwords and a modern vetted digest or authenticated integrity construction for integrity; keep non-security identifiers separate."
+        }
+        Capability::TlsConfiguration if cwes.iter().any(|cwe| cwe == "CWE-295") => {
+            "Enable certificate-chain and hostname verification for the affected client. Configure trusted CA certificates instead of bypassing validation, and ensure later options or callbacks do not disable either check."
+        }
+        Capability::FilesystemRead if cwes.iter().any(|cwe| cwe == "CWE-22") => {
+            "Select files through authorized identifiers within a fixed root and enforce containment before reading. For URL-capable read APIs, allowlist schemes and destinations and reject local paths, non-approved stream wrappers, and internal network destinations."
         }
         Capability::FilesystemWrite if cwes.iter().any(|cwe| cwe == "CWE-367") => {
             "Open the target atomically with platform-appropriate anti-symlink flags, then validate the opened handle with fstat instead of trusting a prior pathname check."
+        }
+        Capability::FilesystemWrite if cwes.iter().any(|cwe| cwe == "CWE-22") => {
+            "Select destinations within an authorized fixed root and enforce containment before writing; do not let untrusted path syntax select arbitrary files to create or overwrite."
+        }
+        Capability::CountControlledMemoryOperation => {
+            "Before copying, verify every destination offset and dimension against the authoritative destination region using non-wrapping arithmetic."
         }
         Capability::SignedSizeMemoryOperation => {
             "Reject negative values and guard any signed arithmetic for overflow before converting the exact extent to size_t or using it in allocation or memory operations."
@@ -2786,6 +2983,12 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Use only supplied facts; do not invent cross-function, deployment, or runtime behavior."
                 .to_string(),
+            "Evidence scope is per review ID: use only that review's candidate, evidence, facts, review_basis, and decision_facts. Other reviews in the bundle are independent; even the same filename or variable name does not authorize borrowing their input origins, producers, controls, or branches."
+                .to_string(),
+            "A non-path observation may establish an issue through its own source excerpts: a directly shown request read, cookie loop, or request dump reaching executable HTML does not require a deterministic path. Conversely, a variable name, UI label, or unsafe-looking API alone does not establish attacker influence."
+                .to_string(),
+            "Observed guard, sanitizer, and validation syntax is possible control inventory, not demonstrated protection. Establish the same operand, owner, operation, and branch before applying it; a protected branch cannot protect a separate raw branch."
+                .to_string(),
             "Configuration facts are repository defaults or references, not proof of the effective deployed value."
                 .to_string(),
             "Distinguish application-owned controls from proxy, gateway, ingress, platform, framework, and client controls."
@@ -3489,21 +3692,10 @@ fn observation_decision_facts(
                 .to_string(),
         ]
     } else {
-        evidence
-        .iter()
-        .filter(|item| {
-            matches!(
-                item.kind,
-                EvidenceKind::Guard | EvidenceKind::Sanitizer | EvidenceKind::Validation
-            ) && (item.capability != Capability::ResourceAccess || resource_policy_applies)
-        })
-        .map(|item| {
-            format!(
-                "Observed possible control rule {} at {}:{}; effectiveness is limited to the supplied relationship facts.",
-                item.rule_id, item.location.path, item.location.start.line
-            )
-        })
-        .collect()
+        // Shared observation ownership does not prove same-value, same-branch
+        // protection. The syntax remains in evidence and established facts;
+        // only verified policy cases belong in effective_controls.
+        Vec::new()
     };
     let unresolved = if javascript_policy.is_some()
         || rust_policy.is_some()
@@ -3520,6 +3712,19 @@ fn observation_decision_facts(
         || java_policy.is_some()
     {
         Vec::new()
+    } else if let Some(sink) = evidence.iter().find(|item| {
+        item.rule_id == "php-html-output"
+            && item.captures.get("content").is_some_and(|capture| {
+                matches!(
+                    capture.text.trim(),
+                    "$_SERVER['SERVER_NAME']" | "$_SERVER[\"SERVER_NAME\"]"
+                )
+            })
+    }) {
+        vec![format!(
+            "Which authoritative web-server configuration supplies SERVER_NAME emitted at {}:{}: a configured host or a client-supplied host (for Apache, verify UseCanonicalName and ServerName)?",
+            sink.location.path, sink.location.start.line
+        )]
     } else if let Some(parameter) = rust_dynamic_html_parameter {
         vec![format!(
             "Is runtime parameter `{parameter}` bound to attacker-controlled request data by the registered Actix route or extractor for this exact handler?"
@@ -4982,6 +5187,7 @@ fn build_observation_reviews(
         indexed_references.extend(observation_group_references(group, sources, context_lines)?);
     }
     let review_context = ReviewContextIndex::build(sources, &indexed_references)?;
+    let mut php_contexts = BTreeMap::new();
     let mut reviews = Vec::new();
     for group in groups {
         let file = sources.file(&group.path)?;
@@ -5011,6 +5217,9 @@ fn build_observation_reviews(
         let mut decision_critical_context_truncated = context_truncated;
         redact_secrets_in_slice(&mut slice, &group.evidence);
         let mut configuration_tokens = BTreeSet::new();
+        for item in &group.evidence {
+            collect_php_boundary_configuration_tokens(&item.rule_id, &mut configuration_tokens);
+        }
         collect_configuration_tokens(&slice.text, &mut configuration_tokens);
         let mut facts = vec![ReviewNeighborhoodFact {
             role: "source_context".to_string(),
@@ -5024,6 +5233,27 @@ fn build_observation_reviews(
             captured_definition_facts(sources, group.evidence.iter(), &facts, 3);
         context_truncated |= captured_definitions_truncated;
         facts.append(&mut captured_definitions);
+        let php_context = php_contexts.entry(group.path.clone()).or_insert_with(|| {
+            if file.language != Some(Language::Php)
+                || file.source.len() > MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES
+            {
+                return None;
+            }
+            let document = StrDoc::try_new(&file.source, parser_language(Language::Php)).ok()?;
+            let ast = AstGrep::doc(document);
+            if ast
+                .root()
+                .dfs()
+                .any(|node| node.kind().as_ref() == "ERROR" || node.is_missing())
+            {
+                return None;
+            }
+            Some(ast)
+        });
+        let (mut php_origins, php_origins_truncated) =
+            php_request_binding_review_facts(file, php_context.as_ref(), anchor, &facts, 4);
+        context_truncated |= php_origins_truncated;
+        facts.append(&mut php_origins);
         let references = observation_group_references(&group, sources, context_lines)?;
         let paths = BTreeSet::from([group.path.as_str()]);
         let (mut configuration, configuration_truncated) = configuration_facts(
@@ -5296,6 +5526,137 @@ fn observation_group_references(
         }
     }
     Ok(references)
+}
+
+fn php_request_binding_review_facts(
+    file: &SourceFile,
+    ast: Option<&AstGrep<StrDoc<SupportLang>>>,
+    anchor: &Location,
+    existing: &[ReviewNeighborhoodFact],
+    limit: usize,
+) -> (Vec<ReviewNeighborhoodFact>, bool) {
+    let Some(ast) = ast else {
+        return (Vec::new(), false);
+    };
+    let root = ast.root();
+    let owner = |node: &Node<'_, StrDoc<SupportLang>>| {
+        node.ancestors()
+            .find(|parent| {
+                matches!(
+                    parent.kind().as_ref(),
+                    "function_definition"
+                        | "method_declaration"
+                        | "anonymous_function"
+                        | "arrow_function"
+                        | "namespace_definition"
+                )
+            })
+            .map_or(root.range(), |parent| parent.range())
+    };
+    let Some(anchor_node) = root.dfs().find(|node| {
+        node.range().start == anchor.start.byte_offset && node.range().end == anchor.end.byte_offset
+    }) else {
+        return (Vec::new(), false);
+    };
+    let anchor_owner = owner(&anchor_node);
+    let referenced = root
+        .dfs()
+        .filter(|node| {
+            node.kind().as_ref() == "variable_name"
+                && owner(node) == anchor_owner
+                && existing.iter().any(|fact| {
+                    fact.role == "source_context"
+                        && fact.location.path == file.path
+                        && fact.location.start.byte_offset <= node.range().start
+                        && fact.location.end.byte_offset >= node.range().end
+                })
+        })
+        .map(|node| node.text().to_string())
+        .collect::<BTreeSet<_>>();
+    let mut writes_by_name: BTreeMap<String, Vec<_>> = BTreeMap::new();
+    for node in root.dfs().filter(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "assignment_expression" | "augmented_assignment_expression"
+        )
+    }) {
+        let Some(left) = node.field("left") else {
+            continue;
+        };
+        let name = left.text().to_string();
+        if referenced.contains(&name) && owner(&node) == anchor_owner {
+            writes_by_name.entry(name).or_default().push(node);
+        }
+    }
+    let mut facts = Vec::new();
+    for name in referenced {
+        let Some(writes) = writes_by_name.get(&name) else {
+            continue;
+        };
+        // Only one syntactic binding: do not choose an origin across reassignments.
+        let [binding] = writes.as_slice() else {
+            continue;
+        };
+        if binding.kind().as_ref() != "assignment_expression"
+            || binding
+                .parent()
+                .is_none_or(|parent| parent.kind().as_ref() != "expression_statement")
+            || binding.range().end > anchor.start.byte_offset
+            || binding
+                .ancestors()
+                .take_while(|parent| parent.range() != anchor_owner)
+                .any(|parent| {
+                    matches!(
+                        parent.kind().as_ref(),
+                        "if_statement"
+                            | "else_clause"
+                            | "catch_clause"
+                            | "switch_statement"
+                            | "for_statement"
+                            | "foreach_statement"
+                            | "while_statement"
+                            | "do_statement"
+                    )
+                })
+        {
+            continue;
+        }
+        let Some(right) = binding.field("right") else {
+            continue;
+        };
+        if !right.dfs().any(|node| {
+            node.kind().as_ref() == "variable_name"
+                && matches!(
+                    node.text().as_ref(),
+                    "$_GET" | "$_POST" | "$_REQUEST" | "$_COOKIE" | "$_FILES"
+                )
+        }) {
+            continue;
+        }
+        let location = location_from_offsets(
+            &file.path,
+            &file.source,
+            binding.range().start,
+            binding.range().end,
+        );
+        if facts_cover_location(existing, &location) {
+            continue;
+        }
+        if facts.len() == limit {
+            return (facts, true);
+        }
+        if location.end.line.saturating_sub(location.start.line) > 5 || binding.range().len() > 2048
+        {
+            continue;
+        }
+        let excerpt = redact_helper_definition(&name, binding.text().as_ref());
+        facts.push(ReviewNeighborhoodFact {
+            role: "request_binding_context".to_string(), symbol: name,
+            location, excerpt, evidence_id: None,
+            provenance: textual_provenance("same-file, same-owner unique request binding; lexical context, not a flow or reaching-definition proof 1"),
+        });
+    }
+    (facts, false)
 }
 
 fn observation_helper_definition_facts(
@@ -9197,6 +9558,16 @@ fn control_can_be_owned_outside_application(capability: Capability) -> bool {
             | Capability::HttpHeaderOutput
             | Capability::HttpRequestHandling
     )
+}
+
+fn collect_php_boundary_configuration_tokens(rule: &str, output: &mut BTreeSet<String>) {
+    let token = match rule {
+        "php-url-stream-read" => "allow_url_fopen",
+        "php-file-inclusion" => "allow_url_include",
+        "php-upload-move" => "file_uploads",
+        _ => return,
+    };
+    output.insert(token.to_string());
 }
 
 fn collect_configuration_tokens(source: &str, output: &mut BTreeSet<String>) {
@@ -13694,6 +14065,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn confirmed_tls_findings_describe_behavior_and_validation_fix() {
+        let cwes = vec!["CWE-295".to_string()];
+        for (rule, inventory) in [
+            (
+                "php-curl-tls-validation",
+                "Native PHP cURL TLS verification options",
+            ),
+            ("unknown-client-tls-options", "Client configuration"),
+        ] {
+            assert_eq!(
+                human_boundary_finding_title(rule, inventory, Capability::TlsConfiguration, &cwes),
+                "TLS peer validation can accept an untrusted server"
+            );
+        }
+        let remediation = finding_remediation(Capability::TlsConfiguration, &cwes);
+        assert!(remediation.text.contains("certificate-chain and hostname"));
+        assert!(remediation.text.contains("later options or callbacks"));
+        assert_eq!(
+            human_boundary_finding_title(
+                "unknown-client-tls-options",
+                "Client configuration",
+                Capability::TlsConfiguration,
+                &[]
+            ),
+            "Client configuration"
+        );
+    }
+
+    #[test]
     fn ai_review_skips_only_closed_native_ownership_proofs() {
         for capability in [
             Capability::LocalHeapDeallocation,
@@ -15571,5 +15971,96 @@ mod tests {
                 .text
                 .contains("rotate the exposed key")
         );
+    }
+
+    #[test]
+    fn boundary_metadata_is_language_neutral_and_preserves_specific_native_titles() {
+        let relationship = vec!["CWE-22".to_string()];
+        let presentation = finding_presentation_cwes(
+            Capability::FilesystemRead,
+            &relationship,
+            &["CWE-98".into()],
+        );
+        assert_eq!(relationship, ["CWE-22"]);
+        assert_eq!(
+            human_boundary_finding_title(
+                "any-language-include",
+                "API boundary",
+                Capability::FilesystemRead,
+                &presentation
+            ),
+            "Untrusted file selection reaches executable inclusion"
+        );
+        assert!(
+            finding_remediation(Capability::FilesystemRead, &presentation)
+                .text
+                .contains("executable includes")
+        );
+        assert_eq!(
+            finding_presentation_cwes(
+                Capability::FilesystemWrite,
+                &relationship,
+                &["CWE-98".into()]
+            ),
+            relationship
+        );
+        for rule in [
+            "php-html-output",
+            "python-html-response",
+            "java-response-output",
+        ] {
+            assert_eq!(
+                human_boundary_finding_title(
+                    rule,
+                    "API observation",
+                    Capability::HtmlOutput,
+                    &["CWE-79".into()]
+                ),
+                "Unencoded response values allow HTML injection"
+            );
+        }
+        assert_eq!(
+            human_boundary_finding_title(
+                "unknown-output",
+                "API observation",
+                Capability::HtmlOutput,
+                &["CWE-20".into()]
+            ),
+            "API observation"
+        );
+        assert_eq!(
+            human_boundary_finding_title(
+                "c-process-execution",
+                "API observation",
+                Capability::ProcessExecution,
+                &["CWE-78".into()]
+            ),
+            "Shell command constructed from runtime values"
+        );
+        for (capability, cwe, required) in [
+            (
+                Capability::HtmlOutput,
+                "CWE-79",
+                "context-appropriate output",
+            ),
+            (Capability::DatabaseQuery, "CWE-89", "database parameter"),
+            (Capability::Deserialization, "CWE-502", "schema"),
+            (
+                Capability::DynamicCodeExecution,
+                "CWE-94",
+                "Remove evaluation",
+            ),
+            (Capability::FilesystemRead, "CWE-22", "containment"),
+            (Capability::FilesystemWrite, "CWE-22", "containment"),
+            (Capability::FilesystemRead, "CWE-98", "server-owned mapping"),
+            (Capability::FileUpload, "CWE-434", "executable web roots"),
+            (Capability::Redirect, "CWE-601", "exact trusted origins"),
+        ] {
+            assert!(
+                finding_remediation(capability, &[cwe.into()])
+                    .text
+                    .contains(required)
+            );
+        }
     }
 }

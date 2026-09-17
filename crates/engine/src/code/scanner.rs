@@ -580,6 +580,11 @@ pub(crate) fn scan_profiled(
             .iter()
             .map(|file| (file.relative.as_str(), file.language, file.source.as_str())),
     );
+    let php_project_context = super::php::PhpProjectContext::from_sources(
+        prepared
+            .iter()
+            .map(|file| (file.relative.as_str(), file.language, file.source.as_str())),
+    );
     let mut analysis_prepared = Vec::new();
     for file in prepared {
         if impact_plan.includes(&file.relative) {
@@ -619,6 +624,7 @@ pub(crate) fn scan_profiled(
         &native_invalidation_context,
         &python_project_context,
         &rust_project_context,
+        &php_project_context,
         &dotnet_project_context,
         options.scan_secrets,
         options.include_tests,
@@ -777,6 +783,7 @@ fn analyze_prepared_files(
     native_invalidation_context: &NativeInvalidationProjectContext,
     python_project_context: &PythonProjectContext,
     rust_project_context: &RustProjectContext,
+    php_project_context: &super::php::PhpProjectContext,
     dotnet_project_context: &DotnetProjectContext,
     scan_secrets: bool,
     include_nonproduction: bool,
@@ -806,6 +813,7 @@ fn analyze_prepared_files(
                     native_invalidation_context,
                     python_project_context,
                     rust_project_context,
+                    php_project_context,
                     dotnet_project_context,
                     scan_secrets,
                     include_nonproduction,
@@ -846,6 +854,7 @@ fn analyze_prepared_files(
                                 native_invalidation_context,
                                 python_project_context,
                                 rust_project_context,
+                                php_project_context,
                                 dotnet_project_context,
                                 scan_secrets,
                                 include_nonproduction,
@@ -885,6 +894,7 @@ fn scan_prepared_file(
     native_invalidation_context: &NativeInvalidationProjectContext,
     python_project_context: &PythonProjectContext,
     rust_project_context: &RustProjectContext,
+    php_project_context: &super::php::PhpProjectContext,
     dotnet_project_context: &DotnetProjectContext,
     scan_secrets: bool,
     include_nonproduction: bool,
@@ -914,6 +924,7 @@ fn scan_prepared_file(
             native_invalidation_context,
             python_project_context,
             rust_project_context,
+            php_project_context,
             dotnet_project_context,
             build_symbols: &file.build_symbols,
         },

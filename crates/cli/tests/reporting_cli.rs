@@ -2,6 +2,84 @@ use std::path::PathBuf;
 use std::process::Command;
 
 #[test]
+fn empty_review_runs_render_all_formats_and_keep_the_manifest_fingerprint() {
+    let directory =
+        std::env::temp_dir().join(format!("mehscan-empty-report-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("create empty run");
+    let manifest_path = directory.join("manifest.json");
+    let mut manifest = serde_json::json!({
+        "schema_version": "1.0", "root": ".", "operation": "build_path_review_bundles",
+        "job_fingerprint": "empty-run-fingerprint", "max_input_bytes": 524288,
+        "max_reviews_per_bundle": 20, "review_count": 0, "bundle_count": 0, "bundles": [],
+        "coverage": {"discovered": 3, "scanned": 0, "ignored": 2, "unsupported": 1, "parse_failed": 0},
+        "scope": ["Original regression fixtures intentionally included; not deployed code."]
+    });
+    std::fs::write(&manifest_path, manifest.to_string()).expect("write manifest");
+    for format in ["json", "sarif", "markdown"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args([
+                "report",
+                "--run",
+                directory.to_str().expect("run path"),
+                "--format",
+                format,
+            ])
+            .output()
+            .expect("render empty report");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if format == "json" {
+            let report: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("JSON report");
+            assert_eq!(report["scan"]["job_fingerprint"], "empty-run-fingerprint");
+            assert_eq!(report["summary"]["reviewed"], 0);
+            assert_eq!(report["findings"], serde_json::json!([]));
+            assert_eq!(report["scan"]["coverage"], manifest["coverage"]);
+            assert_eq!(report["scan"]["scope"], manifest["scope"]);
+        } else if format == "sarif" {
+            let report: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("SARIF report");
+            assert_eq!(report["runs"][0]["results"], serde_json::json!([]));
+        } else {
+            let text = String::from_utf8_lossy(&output.stdout);
+            assert!(text.contains("3 discovered, 0 scanned, 2 ignored"));
+            assert!(text.contains("Original regression fixtures intentionally included"));
+        }
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-bundle-summary",
+            "--run",
+            directory.to_str().expect("run path"),
+        ])
+        .output()
+        .expect("summarize empty run");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).expect("summary JSON");
+    assert_eq!(summary["job_fingerprint"], "empty-run-fingerprint");
+    assert_eq!(summary["review_count"], 0);
+
+    // Missing responses must never be disguised as a legitimately empty run.
+    manifest["review_count"] = serde_json::json!(1);
+    std::fs::write(&manifest_path, manifest.to_string()).expect("write inconsistent manifest");
+    let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args(["report", "--run", directory.to_str().expect("run path")])
+        .output()
+        .expect("reject inconsistent empty run");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("review manifest count"));
+    std::fs::remove_dir_all(directory).expect("remove temporary run");
+}
+
+#[test]
 fn reports_the_cli_package_version() {
     for argument in ["--version", "-V", "version"] {
         let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))

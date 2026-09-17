@@ -64,15 +64,15 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     parsed.finish()?;
 
     let (manifest, bundle_responses) = read_complete_bundle_responses(&run, responses.as_deref())?;
-    let mut report = engine(mehscan_engine::investigation::build_finding_report(
-        manifest.root,
-        env!("CARGO_PKG_VERSION"),
-        reviewer,
-        &bundle_responses,
-        include_dismissed,
-    ))?;
-    report.scan.coverage = manifest.coverage;
-    report.scan.scope = manifest.scope;
+    let report = engine(
+        mehscan_engine::investigation::build_finding_report_from_manifest(
+            &manifest,
+            env!("CARGO_PKG_VERSION"),
+            reviewer,
+            &bundle_responses,
+            include_dismissed,
+        ),
+    )?;
     match format {
         ReportOutputFormat::Json => write_json(&report, output.as_deref()),
         ReportOutputFormat::Sarif => write_json(
@@ -531,9 +531,13 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let run = PathBuf::from(parsed.required("--run")?);
             let responses = parsed.optional("--responses").map(PathBuf::from);
             parsed.finish()?;
-            let (_, bundle_responses) = read_complete_bundle_responses(&run, responses.as_deref())?;
+            let (manifest, bundle_responses) =
+                read_complete_bundle_responses(&run, responses.as_deref())?;
             print_json(&engine(
-                mehscan_engine::investigation::summarize_path_review_bundle_run(&bundle_responses),
+                mehscan_engine::investigation::summarize_path_review_bundle_manifest_run(
+                    &manifest,
+                    &bundle_responses,
+                ),
             )?)
         }
         "review-triage" => {

@@ -18,3 +18,15 @@ namespace Other {
     function native_eval() { eval($_POST['code']); }
     function qualified_eval_lookalike() { \eval($_POST['code']); }
 }
+namespace MysqliTenant {
+    use \mysqli as NativeConnection;
+    class mysqli { public function query($value) { return $value; } }
+    function mysqli_method_imported(NativeConnection $db) { $db->query($_GET['sql']); }
+    function mysqli_method_lookalike(mysqli $db) { $db->query($_GET['sql']); }
+}
+namespace HeaderLookalike {
+    function header($value) { return $value; }
+    function redirect_lookalike() { header('Location: ' . $_GET['next']); }
+    function move_uploaded_file($source, $destination) { return false; }
+    function upload_lookalike() { move_uploaded_file($_FILES['file']['tmp_name'], $_GET['path']); }
+}

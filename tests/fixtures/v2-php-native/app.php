@@ -101,3 +101,27 @@ function uppercase_output() {
 // shell_exec($_GET['comment']);
 /* mysqli_query($connection, $_GET['comment']); */
 $inert = 'shell_exec($_GET["string"]);';
+function mysqli_method_input(mysqli $db) { $db->query($_GET['sql']); }
+function mysqli_method_constructed() {
+    $db = new mysqli('localhost', 'user', 'password', 'database');
+    $db->real_query('SELECT name FROM records WHERE id = ' . $_GET['id']);
+}
+function mysqli_method_bound(mysqli $db) {
+    $db->execute_query('SELECT name FROM records WHERE id = ?', [$_GET['id']]);
+}
+function mysqli_method_replaced(mysqli $db) { $db = unknown_database(); $db->query($_GET['sql']); }
+function mysqli_method_helper(mysqli $db) { replace_database($db); $db->query($_GET['sql']); }
+function mysqli_method_conditional() {
+    if ($_GET['mode']) { $db = new mysqli(); }
+    $db->query($_GET['sql']);
+}
+function mysqli_method_unknown($db) { $db->query($_GET['sql']); }
+function unsafe_include() { include $_GET['file']; }
+function unsafe_require() { require_once $_POST['file']; }
+function fixed_include() { include '/srv/templates/header.php'; }
+function unsafe_upload_move() { move_uploaded_file($_FILES['file']['tmp_name'], '/srv/uploads/' . $_FILES['file']['name']); }
+function fixed_upload_move() { move_uploaded_file($_FILES['file']['tmp_name'], '/srv/private/server-owned.bin'); }
+function unsafe_redirect() { header('Location: ' . $_GET['next']); }
+function fixed_redirect() { header('Location: /home'); }
+function unrelated_header() { header('X-Message: ' . $_GET['message']); }
+function misleading_header() { header('X-Message: ' . 'Location: ' . $_GET['next']); }

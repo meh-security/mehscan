@@ -30,6 +30,58 @@
     references:
     - https://www.php.net/manual/en/security.php
     - https://cwe.mitre.org/data/definitions/20.html
+- id: php-http-json-field
+  version: 1
+  title: Native PHP JSON request-body field
+  language: php
+  kind: source
+  capability: http_request_data
+  cwe: [CWE-20]
+  match:
+    any:
+    - pattern: $SOURCE[$KEY]
+      context: <?php $SOURCE[$KEY];
+      selector: subscript_expression
+      captures: {field: KEY}
+  tags: [php, request, json]
+  ai:
+    investigate:
+    - Inspect the exact native associative JSON-body producer and field consumer; decoding is not validation.
+    verify:
+    - Confirm the same owner and value and any operation-specific control.
+    exclude:
+    - Local JSON files, replaced arrays, helper-mutated arrays and unknown callable identities are outside this source contract.
+  provenance:
+    note: Unique same-owner native json_decode(file_get_contents('php://input'), true) producer, without intervening replacement or helper mutation.
+    references:
+    - https://www.php.net/manual/en/wrappers.php.php
+    - https://www.php.net/manual/en/function.json-decode.php
+- id: php-http-json-property
+  version: 1
+  title: Native PHP JSON request-body property
+  language: php
+  kind: source
+  capability: http_request_data
+  cwe: [CWE-20]
+  match:
+    any:
+    - pattern: $SOURCE->$FIELD
+      context: <?php $SOURCE->$FIELD;
+      selector: member_access_expression
+      captures: {field: FIELD}
+  tags: [php, request, json]
+  ai:
+    investigate:
+    - Inspect the native object-mode JSON-body producer and exact static property consumer; decoding is not validation.
+    verify:
+    - Confirm the same owner and value and any operation-specific control.
+    exclude:
+    - Other object identities, associative-array mode, dynamic properties, replaced values and unknown body readers are outside this source contract.
+  provenance:
+    note: Unique same-owner native object-mode json_decode of php://input, directly or through one unmutated raw-body binding; no intervening replacement or helper mutation.
+    references:
+    - https://www.php.net/manual/en/function.json-decode.php
+    - https://www.php.net/manual/en/wrappers.php.php
 - id: php-command-execution
   version: 1
   title: PHP shell command execution
@@ -144,6 +196,45 @@
     references:
     - https://www.php.net/manual/en/security.php
     - https://cwe.mitre.org/data/definitions/89.html
+- id: php-mysqli-method-query
+  version: 1
+  title: mysqli method SQL query or preparation
+  language: php
+  kind: sink
+  capability: database_query
+  cwe:
+  - CWE-89
+  match:
+    any:
+    - pattern: $DATABASE->$METHOD($QUERY)
+      context: <?php $DATABASE->$METHOD($QUERY);
+      selector: member_call_expression
+      captures: &mysqli_method_query
+        query: QUERY
+    - pattern: $DATABASE->$METHOD($QUERY, $$$REST)
+      context: <?php $DATABASE->$METHOD($QUERY, $$$REST);
+      selector: member_call_expression
+      captures: *mysqli_method_query
+  tags:
+  - php
+  - sql
+  - mysqli
+  ai:
+    investigate:
+    - Verify the exact mysqli receiver and SQL construction. Preparing interpolated SQL does not protect
+      it.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven native database identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/security.php
+    - https://cwe.mitre.org/data/definitions/89.html
 - id: php-mysqli-parameterization
   version: 1
   title: mysqli separately bound query values
@@ -181,6 +272,32 @@
     references:
     - https://www.php.net/manual/en/security.php
     - https://cwe.mitre.org/data/definitions/89.html
+- id: php-pdo-statement-parameters
+  version: 1
+  title: Native PDO statement with separately supplied values
+  language: php
+  kind: validation
+  capability: sql_parameterization
+  cwe: [CWE-89]
+  match:
+    any:
+    - pattern: $STATEMENT->$METHOD($PARAMETERS)
+      context: <?php $STATEMENT->$METHOD($PARAMETERS);
+      selector: member_call_expression
+      captures: {parameters: PARAMETERS}
+  tags: [php, pdo, parameters, control]
+  ai:
+    investigate:
+    - Inspect the exact native PDO prepare owner, fixed SQL template and separately supplied execute values.
+    verify:
+    - Protection applies to values in this statement; interpolated SQL, dynamic identifiers and unrelated queries remain separate.
+    exclude:
+    - Unknown or helper-replaced statement identities and dynamic SQL cannot establish parameter protection.
+  provenance:
+    note: One mandatory same-owner statement assignment from verified native PDO prepare with literal SQL; exact template and producer are supplied as captures.
+    references:
+    - https://www.php.net/manual/en/pdostatement.execute.php
+    - https://cwe.mitre.org/data/definitions/89.html
 - id: php-html-output
   version: 1
   title: PHP emitted response content
@@ -194,6 +311,11 @@
     - pattern: echo $CONTENT;
       context: <?php echo $CONTENT;
       selector: echo_statement
+      captures:
+        content: CONTENT
+    - pattern: print $CONTENT;
+      context: <?php print $CONTENT;
+      selector: print_intrinsic
       captures:
         content: CONTENT
   tags:
@@ -477,3 +599,271 @@
     references:
     - https://www.php.net/manual/en/security.php
     - https://cwe.mitre.org/data/definitions/94.html
+- id: php-upload-move
+  version: 1
+  title: PHP uploaded-file move
+  language: php
+  kind: sink
+  capability: file_upload
+  cwe:
+  - CWE-22
+  - CWE-434
+  match:
+    any:
+    - pattern: $FUNCTION($CONTENT, $PATH)
+      context: <?php $FUNCTION($CONTENT, $PATH);
+      selector: function_call_expression
+      captures: &upload_move
+        path: PATH
+        content: CONTENT
+    - pattern: $FUNCTION($CONTENT, $PATH, $$$REST)
+      context: <?php $FUNCTION($CONTENT, $PATH, $$$REST);
+      selector: function_call_expression
+      captures: *upload_move
+  tags:
+  - php
+  - filesystem
+  ai:
+    investigate:
+    - Inspect destination containment, filename/type/content validation, server execution policy, and upload authenticity. A valid uploaded temporary file does not authorize its destination or content.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/function.move-uploaded-file.php
+    - https://cwe.mitre.org/data/definitions/22.html
+- id: php-header-redirect
+  version: 1
+  title: PHP Location header redirect
+  language: php
+  kind: sink
+  capability: redirect
+  cwe:
+  - CWE-601
+  match:
+    any:
+    - pattern: $FUNCTION($URL)
+      context: <?php $FUNCTION($URL);
+      selector: function_call_expression
+      captures: &header_redirect
+        location: URL
+    - pattern: $FUNCTION($URL, $$$REST)
+      context: <?php $FUNCTION($URL, $$$REST);
+      selector: function_call_expression
+      captures: *header_redirect
+  tags:
+  - php
+  - redirect
+  ai:
+    investigate:
+    - Inspect the exact Location value and same-origin or destination allowlist; unrelated response headers are not redirect boundaries.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/function.header.php
+    - https://cwe.mitre.org/data/definitions/601.html
+- id: php-file-inclusion
+  version: 1
+  title: PHP executable file inclusion
+  language: php
+  kind: sink
+  capability: filesystem_read
+  cwe: [CWE-22, CWE-98]
+  match:
+    any:
+    - pattern: include $PATH
+      context: <?php include $PATH;
+      selector: include_expression
+      captures: {path: PATH}
+    - pattern: include_once $PATH
+      context: <?php include_once $PATH;
+      selector: include_once_expression
+      captures: {path: PATH}
+    - pattern: require $PATH
+      context: <?php require $PATH;
+      selector: require_expression
+      captures: {path: PATH}
+    - pattern: require_once $PATH
+      context: <?php require_once $PATH;
+      selector: require_once_expression
+      captures: {path: PATH}
+  tags: [php, filesystem, inclusion]
+  ai:
+    investigate:
+    - Inspect exact path origin, allowlisted server-owned targets, containment and executable or remote stream-wrapper behavior.
+    verify:
+    - Verify the exact inclusion anchor and same-value control; a fixed server-owned inclusion is not an issue.
+    exclude:
+    - Do not infer code execution without an executable included resource or an enabled remote wrapper.
+  provenance:
+    note: Exact PHP inclusion constructs; bounded source review only.
+    references:
+    - https://www.php.net/manual/en/function.include.php
+    - https://cwe.mitre.org/data/definitions/98.html
+- id: php-url-stream-read
+  version: 1
+  title: PHP URL-capable stream read
+  language: php
+  kind: sink
+  capability: outbound_network_request
+  cwe:
+  - CWE-918
+  match:
+    any:
+    - pattern: $FUNCTION($ENDPOINT)
+      context: <?php $FUNCTION($ENDPOINT);
+      selector: function_call_expression
+      captures: &php_url_stream
+        endpoint: ENDPOINT
+    - pattern: $FUNCTION($ENDPOINT, $$$REST)
+      context: <?php $FUNCTION($ENDPOINT, $$$REST);
+      selector: function_call_expression
+      captures: *php_url_stream
+  tags:
+  - php
+  - filesystem
+  ai:
+    investigate:
+    - Establish a URL-capable wrapper and request-controlled destination. Inspect allow_url_fopen, schemes, hosts, redirects and internal destinations. A local path or fixed host is not an SSRF finding.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/function.file-get-contents.php
+    - https://cwe.mitre.org/data/definitions/918.html
+- id: php-url-parsing
+  version: 1
+  title: PHP URL decomposition
+  language: php
+  kind: validation
+  capability: url_parsing
+  cwe:
+  - CWE-918
+  match:
+    any:
+    - pattern: $FUNCTION($VALUE)
+      context: <?php $FUNCTION($VALUE);
+      selector: function_call_expression
+      captures:
+        value: VALUE
+  tags:
+  - php
+  - filesystem
+  - normalization
+  - control
+  ai:
+    investigate:
+    - URL decomposition is not URL validation or a destination allowlist. Require an explicit same-value rejecting scheme, host and address policy before the outbound request.
+    verify:
+    - Verify the exact anchor, applicable control, and effective runtime/output context before choosing
+      a verdict.
+    exclude:
+    - Comments, literals, local API lookalikes, unrelated controls, and nonproduction material are not
+      vulnerability proof.
+  provenance:
+    note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
+      only.
+    references:
+    - https://www.php.net/manual/en/function.parse-url.php
+    - https://cwe.mitre.org/data/definitions/918.html
+- id: php-curl-request
+  version: 1
+  title: Native PHP cURL request
+  language: php
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match:
+    any:
+    - pattern: $FUNCTION($HANDLE)
+      context: <?php $FUNCTION($HANDLE);
+      selector: function_call_expression
+      captures: {handle: HANDLE}
+  tags: [php, curl, http, network]
+  ai:
+    investigate:
+    - Inspect the exact curl_init handle origin and selected URL, including any same-handle URL replacement.
+    verify:
+    - Destination authorization includes resolved addresses and redirects; URL parsing is insufficient.
+    exclude:
+    - Fixed server-owned endpoints and unknown, helper-mutated or conditionally configured handles do not establish request-selected destinations.
+  provenance:
+    note: Native curl_exec with one same-owner curl_init and bounded unconditional curl_setopt history; endpoint capture retains its actual producer location.
+    references:
+    - https://www.php.net/manual/en/function.curl-init.php
+    - https://www.php.net/manual/en/function.curl-setopt.php
+- id: php-curl-tls-validation
+  version: 1
+  title: Native PHP cURL TLS verification options
+  language: php
+  kind: security_configuration
+  capability: tls_configuration
+  cwe: [CWE-295]
+  match:
+    any:
+    - pattern: $FUNCTION($HANDLE, $OPTION, $VALUE)
+      context: <?php $FUNCTION($HANDLE, $OPTION, $VALUE);
+      selector: function_call_expression
+      captures: {handle: HANDLE, option: OPTION, value: VALUE}
+  tags: [php, curl, tls, certificate]
+  ai:
+    investigate:
+    - Inspect the locally established cURL handle, endpoint scheme and exact peer or hostname verification option.
+    verify:
+    - Check subsequent same-handle option changes and execution before reporting disabled HTTPS verification; HTTP-only or unused handles are different behavior.
+    exclude:
+    - Enabled verification, fixed HTTP endpoints and local option lookalikes are not certificate-validation findings.
+  provenance:
+    note: Canonical native curl_setopt with exact SSL verification option and bounded same-owner curl_init identity; observed configuration is not proof that a request executes.
+    references:
+    - https://www.php.net/manual/en/function.curl-setopt.php
+    - https://cwe.mitre.org/data/definitions/295.html
+- id: php-weak-hash-selection
+  version: 1
+  title: PHP MD5 or SHA-1 selection
+  language: php
+  kind: security_configuration
+  capability: cryptographic_hash
+  cwe: [CWE-327]
+  match:
+    any:
+    - pattern: $FUNCTION($VALUE)
+      context: <?php $FUNCTION($VALUE);
+      selector: function_call_expression
+      captures: {algorithm: FUNCTION, value: VALUE}
+    - pattern: $FUNCTION($VALUE, $RAW)
+      context: <?php $FUNCTION($VALUE, $RAW);
+      selector: function_call_expression
+      captures: {algorithm: FUNCTION, value: VALUE}
+  tags: [php, cryptography, hash, algorithm-selection]
+  ai:
+    investigate:
+    - Establish the digest's security-sensitive consumer and required collision, preimage or password-cost property.
+    verify:
+    - Native MD5/SHA-1 identity establishes the selected algorithm, not a vulnerable security purpose. Trace password, signature or integrity use before choosing issue.
+    exclude:
+    - Non-security checksums, cache keys, identifiers and display-only teaching examples are not weak-crypto findings.
+  provenance:
+    note: Canonical native PHP MD5/SHA-1 calls with exact value and algorithm roles; bounded source review only.
+    references:
+    - https://www.php.net/manual/en/function.md5.php
+    - https://cwe.mitre.org/data/definitions/327.html

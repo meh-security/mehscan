@@ -785,6 +785,26 @@ fn build_family_paths(
                     continue;
                 }
                 let lexical_path = angular_direct_steps(source, sink, &target_nodes)
+                    .or_else(|| {
+                        (language == Language::Php
+                            && !source_is_conditional_predicate(&source_node))
+                        .then(|| {
+                            target_nodes.iter().find_map(|(_, target)| {
+                                propagated_steps_with_options(
+                                    path,
+                                    root,
+                                    language,
+                                    &source_node,
+                                    target,
+                                    &sink_scope,
+                                    false,
+                                    true,
+                                    false,
+                                )
+                            })
+                        })
+                        .flatten()
+                    })
                     .or_else(|| dynamic_response_field_steps(source, sink))
                     .or_else(|| duplicate_key_resource_steps(source, sink))
                     .or_else(|| {
@@ -2286,6 +2306,32 @@ fn propagated_steps_with_options(
                     )))
     })?;
     let source_end = source_assignment.node.range().end;
+    let mut php_context = None;
+    if language == Language::Php {
+        if source_assignment.node.kind().as_ref() == "augmented_assignment_expression"
+            && source_assignment
+                .node
+                .field("operator")
+                .is_none_or(|op| op.text() != ".=")
+        {
+            return None;
+        }
+        if source_assignment.right.dfs().any(|call| {
+            matches!(
+                call.kind().as_ref(),
+                "function_call_expression" | "member_call_expression"
+            ) && contains_range(call.range(), source_node.range())
+                && !["htmlspecialchars", "htmlentities", "escapeshellarg"]
+                    .iter()
+                    .any(|name| {
+                        php_context
+                            .get_or_insert_with(|| super::php::PhpContext::build(root))
+                            .exact_function(&call, name)
+                    })
+        }) {
+            return None;
+        }
+    }
     let mut tracked = BTreeMap::from([(
         source_assignment.left.clone(),
         TrackedValue {
@@ -2303,6 +2349,15 @@ fn propagated_steps_with_options(
         assignment.node.range().start >= source_end
             && assignment.node.range().end <= query_node.range().start
     }) {
+        if language == Language::Php
+            && assignment.in_control_flow
+            && !lexical_path_is_prefix_for_language(language, &assignment.node, query_node, scope)
+            && tracked.contains_key(&assignment.left)
+        {
+            // No join solver: a branch write may replace this value before the
+            // sink even when its lexical arm differs. Do not retain stale data.
+            return None;
+        }
         if assignment.in_control_flow
             && allow_lexical_control_flow
             && !allow_controlled_string_extraction
@@ -2330,6 +2385,38 @@ fn propagated_steps_with_options(
                     .min_by_key(|value| (value.depth, value.steps.len()))
                     .cloned(),
                 Some(("value".to_string(), "JavaScript string composition")),
+            )
+        } else if language == Language::Php
+            && assignment.right.kind().as_ref() == "conditional_expression"
+        {
+            let identifiers = [
+                assignment.right.field("body"),
+                assignment.right.field("alternative"),
+            ]
+            .into_iter()
+            .flatten()
+            .filter(|branch| {
+                !branch.dfs().any(|n| {
+                    matches!(
+                        n.kind().as_ref(),
+                        "function_call_expression"
+                            | "member_call_expression"
+                            | "assignment_expression"
+                    )
+                })
+            })
+            .flat_map(|branch| semantic_identifiers(&branch))
+            .collect::<BTreeSet<_>>();
+            (
+                identifiers
+                    .into_iter()
+                    .filter_map(|name| tracked.get(&name))
+                    .min_by_key(|value| (value.depth, value.steps.len()))
+                    .cloned(),
+                Some((
+                    "value".to_string(),
+                    "PHP raw conditional value arm; other-arm controls remain contextual",
+                )),
             )
         } else if language == Language::Php
             && matches!(
@@ -2435,6 +2522,21 @@ fn propagated_steps_with_options(
         } else {
             (None, None)
         };
+        let alias_origin = if language == Language::Php
+            && assignment.node.kind().as_ref() == "augmented_assignment_expression"
+        {
+            if assignment
+                .node
+                .field("operator")
+                .is_some_and(|op| op.text() == ".=")
+            {
+                alias_origin.or_else(|| tracked.get(&assignment.left).cloned())
+            } else {
+                None
+            }
+        } else {
+            alias_origin
+        };
         let overwrite_is_on_source_path = !assignment.in_control_flow
             || (!allow_controlled_string_extraction && !allow_lexical_control_flow)
             || lexical_path_is_prefix_for_language(language, &assignment.node, query_node, scope);
@@ -2471,6 +2573,79 @@ fn propagated_steps_with_options(
         );
     }
 
+    if language == Language::Php
+        && !semantic_identifiers(query_node)
+            .iter()
+            .any(|name| tracked.contains_key(name))
+    {
+        return None;
+    }
+    if language == Language::Php
+        && root.dfs().any(|node| {
+            node.range().start >= source_end
+                && node.range().end <= query_node.range().start
+                && matches!(
+                    node.kind().as_ref(),
+                    "include_expression"
+                        | "include_once_expression"
+                        | "require_expression"
+                        | "require_once_expression"
+                        | "function_call_expression"
+                        | "member_call_expression"
+                        | "reference_assignment_expression"
+                        | "unset_statement"
+                        | "update_expression"
+                )
+                && match node.kind().as_ref() {
+                    "include_expression"
+                    | "include_once_expression"
+                    | "require_expression"
+                    | "require_once_expression" => scope_range(&node, root) == *scope,
+                    "function_call_expression" | "member_call_expression" => {
+                        if node.field("arguments").is_none_or(|args| {
+                            !semantic_identifiers(&args)
+                                .iter()
+                                .any(|name| tracked.contains_key(name))
+                        }) {
+                            return false;
+                        }
+                        if scope_range(&node, root) != *scope {
+                            return false;
+                        }
+                        let context =
+                            php_context.get_or_insert_with(|| super::php::PhpContext::build(root));
+                        ![
+                            "htmlspecialchars",
+                            "htmlentities",
+                            "escapeshellarg",
+                            "escapeshellcmd",
+                            "parse_url",
+                            "mysqli_execute_query",
+                            "empty",
+                            "is_null",
+                            "is_array",
+                            "is_object",
+                            "is_string",
+                        ]
+                        .iter()
+                        .any(|name| context.exact_function(&node, name))
+                            && !(context.exact_function(&node, "preg_match")
+                                && node.field("arguments").is_some_and(|args| {
+                                    args.children().filter(|arg| arg.is_named()).count() == 2
+                                }))
+                    }
+                    "reference_assignment_expression" | "unset_statement" | "update_expression" => {
+                        semantic_identifiers(&node)
+                            .iter()
+                            .any(|name| tracked.contains_key(name))
+                            && scope_range(&node, root) == *scope
+                    }
+                    _ => false,
+                }
+        })
+    {
+        return None;
+    }
     let semantic = semantic_identifiers(query_node)
         .into_iter()
         .filter_map(|identifier| tracked.get(&identifier))
@@ -2942,12 +3117,9 @@ fn assignments_in_scope<'tree>(
 ) -> Vec<Assignment<'tree>> {
     let mut assignments = root
         .dfs()
-        .filter(|node| {
-            scope.start <= node.range().start
-                && node.range().end <= scope.end
-                && scope_range(node, root) == *scope
-        })
+        .filter(|node| scope.start <= node.range().start && node.range().end <= scope.end)
         .filter_map(|node| assignment_parts(node, language, scope))
+        .filter(|assignment| scope_range(&assignment.node, root) == *scope)
         .collect::<Vec<_>>();
     assignments
         .sort_by_key(|assignment| (assignment.node.range().start, assignment.node.range().end));
@@ -2988,11 +3160,15 @@ fn assignment_parts<'tree>(
             | "assignment_statement"
             | "short_var_declaration"
             | "augmented_assignment"
+            | "augmented_assignment_expression"
     ) {
         (node.field("left")?, node.field("right")?)
     } else {
         return None;
     };
+    if language != Language::Php && kind == "augmented_assignment_expression" {
+        return None;
+    }
     let left = assignment_identifier(&left, language)?;
     Some(Assignment {
         in_control_flow: has_control_flow_ancestor(&node, scope),

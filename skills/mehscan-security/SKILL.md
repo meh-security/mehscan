@@ -137,6 +137,13 @@ CORS, TLS, cookies, or rate limiting may be owned by a gateway or platform and
 normally require an effective-control check.
 
 A scanner relationship label does not override contradictory supplied facts.
+Evidence scope is per review ID. Use only that review's candidate, evidence,
+facts, review basis and decision facts. Another review in the same bundle cannot
+supply a missing origin, producer, control or branch, even in the same file or
+with the same variable name. A directly shown request read, cookie loop or
+request dump reaching HTML can establish an issue without a deterministic path;
+an observation label does not negate its source excerpts. Observed control syntax
+is inventory until the same operand, owner, operation and branch are protected.
 When the captures or excerpts affirmatively show different operands, owners, or
 operations with no supplied bridge, use `not_issue` for that named relationship
 and describe the mismatch. Do not use supplemental syntax lookup to repair a
@@ -168,11 +175,24 @@ from the supplied unresolved set. Validate each response:
 mehscan investigate review-bundle-triage --bundle REQUEST --responses RESPONSE
 ```
 
+When the review runner supports structured output, generate a request-specific
+schema with `scripts/new-review-response-schema.ps1 -Bundle REQUEST -Output SCHEMA`.
+It constrains the fingerprint, allowed IDs and exact result count; it cannot
+enforce unique IDs or semantic correctness. The CLI validator remains required.
+
 Treat each request file as one independent review invocation. Do not process a
 directory or sequence of bundles in one context: large multi-bundle tasks can
 encourage repeated verdict templates even when individual request files are
 small. The generation default remains 20 reviews per bundle; lower
 `--max-reviews` only for a measured retry or evaluation.
+
+If a fresh complete-bundle retry still borrows facts across review IDs, regenerate
+the same authorized root with `--max-reviews 1` and the same context/material
+policy. Review only the affected IDs as a separately scoped audit before
+escalating. Confirm their review objects are unchanged; the scanner generates
+new bundle fingerprints. Never rebind singleton responses into an older bundle
+or describe this targeted audit as a complete run. Isolation reduces scope
+contamination; it does not supply missing facts or eliminate reasoning errors.
 
 Use the default capable review configuration for the first pass. Route review
 effort by payload completeness and decision quality, not by provider, model

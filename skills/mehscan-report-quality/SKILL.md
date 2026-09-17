@@ -34,6 +34,13 @@ Check these invariants:
   the reviewer cannot prove the whole program safe.
 - Dismissals state the supplied reason for inapplicability or safety. They do
   not make broad claims beyond the reviewed operation.
+- Verdict explanations stay within the evidence supplied for their exact
+  review ID. A neighboring review cannot establish a missing input origin,
+  producer or control. Conditional quoting or encoding does not protect a
+  separate raw branch. When comparing reviewers, agreement alone is not a
+  quality result: both can repeat the same unsupported claim. Record remaining
+  disagreements and shared evidence errors separately; an isolated retry is
+  a targeted audit, not a complete corpus report.
 - Evidence and candidate counts are not presented as vulnerability totals.
   Markdown counts reconcile with canonical JSON when it is present.
 - Repeated items are consolidated when they express the same root cause and
