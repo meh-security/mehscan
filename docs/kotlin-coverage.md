@@ -50,8 +50,18 @@ Bounded same-function Spring scalar paths connect request inputs to command,
 query and filesystem-path operands through identifiers, immutable `val` aliases, concatenation and
 ordinary, braced or raw string templates. Propagation stops after eight levels,
 at unknown helper results, mutable bindings, reassignment and callable boundaries.
-SQL captures refer to query text, not separately bound JDBC values. Prepared
-SQL construction is a review boundary; verify subsequent execution before
+SQL captures refer to query text, not separately bound JDBC values.
+Statement identities also follow canonical Connection `createStatement`
+factories, including direct chained calls and bounded immutable local aliases.
+Connection identities follow canonical DriverManager `getConnection` and
+declared DataSource `getConnection` factories. Inference includes local `init`
+block values; it stops at unknown helpers, mutable inferred values, field
+initializers and callable handoffs. Factory identity is not a protection or
+proof that a prepared query executes. PreparedStatement's inherited SQL-text
+overloads are not treated as ordinary Statement execution.
+See the [JDBC Connection contract](https://docs.oracle.com/en/java/javase/25/docs/api/java.sql/java/sql/Connection.html).
+
+Prepared SQL construction is a review boundary; verify subsequent execution before
 claiming runtime query effects. Explicitly typed callbacks and direct lambdas
 are excluded from JdbcTemplate SQL matching. Fixed queries with separately
 bound values and numeric request types do not
@@ -82,7 +92,7 @@ argument vector does not authorize a request-selected executable, and JVM
 
 ## Remaining parity gaps
 
-- Inferred JDBC factory receivers, prepared-statement execution/protection ownership,
+- JDBC factory receivers beyond the bounded canonical factories, prepared-statement execution/protection ownership,
   JdbcTemplate overloads beyond the bounded patterns, Exposed and additional
   persistence APIs; complete protection and branch-join summaries.
 - Ktor route inputs, output/redirect/upload policies, application-call ownership

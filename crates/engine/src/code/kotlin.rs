@@ -1,5 +1,6 @@
 mod flow;
 mod identity;
+mod jdbc;
 mod path;
 mod project;
 pub(super) use flow::{paths, sources};
@@ -20,7 +21,10 @@ pub(crate) fn callable_range(source: &str, offset: usize) -> Option<std::ops::Ra
         .filter(|n| {
             matches!(
                 n.kind().as_ref(),
-                "function_declaration" | "lambda_literal" | "secondary_constructor"
+                "function_declaration"
+                    | "lambda_literal"
+                    | "secondary_constructor"
+                    | "anonymous_initializer"
             )
         })
         .map(|n| n.range())
@@ -36,7 +40,7 @@ pub(crate) fn function_range(source: &str, offset: usize) -> Option<std::ops::Ra
         .filter(|n| {
             matches!(
                 n.kind().as_ref(),
-                "function_declaration" | "secondary_constructor"
+                "function_declaration" | "secondary_constructor" | "anonymous_initializer"
             )
         })
         .map(|n| n.range())
@@ -100,9 +104,10 @@ pub(super) fn accept<'a>(
                 "kotlin-jdbc-prepare-query" => "java.sql.Connection",
                 _ => "org.springframework.jdbc.core.JdbcTemplate",
             };
-            receiver_unchanged(root, node, receiver)
-                && binding_type(root, node, receiver)
-                    .is_some_and(|ty| imports.exact(root, node, &ty, canonical))
+            let Some(receiver) = call.callee.children().find(|n| n.is_named()) else {
+                return false;
+            };
+            jdbc::receiver(root, imports, &receiver, canonical, 8)
         }
         "kotlin-persistence-query" => {
             matches!(method, "createQuery" | "createNativeQuery")
@@ -176,6 +181,45 @@ mod tests {
             "import java.lang.*\nimport custom.*\nfun f(command: String) { Runtime.getRuntime().exec(command) }",
         ] {
             assert_eq!(count(source, "kotlin-runtime-exec"), 0, "{source}");
+        }
+    }
+
+    #[test]
+    fn jdbc_factory_identity_is_bounded_and_owned() {
+        let initializer = "import java.sql.Connection\nclass C(val connection: Connection) { init { val s = connection.createStatement(); s.executeUpdate(\"CREATE TABLE t (id INT)\") } }";
+        assert_eq!(count(initializer, "kotlin-jdbc-statement-query"), 1);
+        assert_eq!(
+            count(
+                "import java.sql.Statement\nfun f(s: Statement?, sql: String) { s!!.executeQuery(sql) }",
+                "kotlin-jdbc-statement-query"
+            ),
+            1
+        );
+        for body in [
+            "val s = connection.createStatement(); s.executeQuery(sql)",
+            "connection.createStatement().executeQuery(sql)",
+            "val c = connection; val s = c.createStatement(1, 2); val copy = s; copy.executeQuery(sql)",
+            "val c = source.getConnection(); val s = c.createStatement(); s.executeQuery(sql)",
+            "val c = java.sql.DriverManager.getConnection(url); c.createStatement().executeQuery(sql)",
+        ] {
+            let source = format!(
+                "import java.sql.Connection\nimport javax.sql.DataSource\nfun f(connection: Connection, source: DataSource, sql: String, url: String) {{ {body} }}"
+            );
+            assert_eq!(count(&source, "kotlin-jdbc-statement-query"), 1, "{source}");
+        }
+        for body in [
+            "val s = fake.createStatement(); s.executeQuery(sql)",
+            "var s = connection.createStatement(); s.executeQuery(sql)",
+            "var c: Connection = connection; c = fake; val s = c.createStatement(); s.executeQuery(sql)",
+            "val s = connection.prepareStatement(sql); s.executeQuery(sql)",
+            "val s = connection.createStatement(); run { s.executeQuery(sql) }",
+            "val s = connection.createStatement(); fun other() { s.executeQuery(sql) }",
+            "val c = DriverManager.getConnection(url); c.createStatement().executeQuery(sql)",
+        ] {
+            let source = format!(
+                "import java.sql.Connection\nimport custom.DriverManager\nfun f(connection: Connection, fake: Other, sql: String, url: String) {{ {body} }}"
+            );
+            assert_eq!(count(&source, "kotlin-jdbc-statement-query"), 0, "{source}");
         }
     }
 

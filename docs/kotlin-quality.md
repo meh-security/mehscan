@@ -17,6 +17,7 @@ Full parity remains a release gate, not a claim made by this checkpoint.
 | [Original filesystem controls](../tests/fixtures/kotlin-files/README.md) | Branch fixture | Read/write path influence, normalization, allowlist and content/path separation; source-only controls. |
 | [Original receiver controls](../tests/fixtures/kotlin-receivers/README.md) | Branch fixture | Local/member identity and custom fixed-path helper controls; source-only. |
 | [Original import controls](../tests/fixtures/kotlin-imports/README.md) | Branch fixture | Custom wildcard Runtime exclusion and canonical JVM import variants; compiled, custom control alone executed. |
+| [Original JDBC factory controls](../tests/fixtures/kotlin-jdbc-factories/README.md) | Branch fixture | Inferred Statement/Connection raw, fixed and bound SQL pairs plus a constant lookalike; compiled and directly tested with H2. |
 
 External source stays outside the public repository. Discovery now admits
 Petclinic production packages containing `samples` below `src/main/kotlin`:
@@ -243,11 +244,52 @@ sweep recorded above predates this import/context refinement; it was not rerun
 for this checkpoint. The existing twenty runtime checks apply to the unchanged
 quality app, not to the external applications or real import-control handlers.
 
+## JDBC factory expansion
+
+Canonical Connection `createStatement`, DriverManager `getConnection` and
+declared DataSource `getConnection` factories now establish bounded receiver
+identity. Immutable local aliases and direct chains are supported; unknown
+helpers, mutable inferred values, field initializers and callable handoffs stop
+inference. Declared nullable receivers through `!!` retain their prior support.
+This establishes API identity, not prepared execution or protection ownership.
+
+Four original admitted controls add two positive and two negative labels before
+model evaluation. The separately excluded lookalike performs no JDBC operation.
+All compile with Kotlin 2.4.10/JDK 17. Nine direct H2 checks reproduce benign
+predicate injection in both raw SQL routes, fixed-query and bound-value behavior,
+valid selection, quote handling and the constant lookalike. This verifies test
+methods, not HTTP deployment or the external Ktor application.
+
+The official Ktor PostgreSQL initializer supplies a fifth new, negative label:
+its inferred Statement executes a fixed private companion table-creation SQL
+constant. Its packet includes the exact constant and isolated `init` block.
+These predefined labels expand the selected oracle to forty-one cases: nineteen
+positive and twenty-two negative. A fresh full comparison and report audits
+evaluate the revised requests rather than reusing earlier verdicts.
+
+Both fresh model comparisons match **41/41 predefined labels**: nineteen true
+positives, twenty-two true negatives, zero false positives and zero false
+negatives each. Agreement is 41/41. All forty-six responses across twenty-three
+bundles pass mechanical validation. Selected precision/recall remain 100%; this
+does not measure whole-application recall or establish framework-wide parity.
+
+All sixteen independent report audits are ready for handoff: fourteen pass and
+two pass with minor warnings. The warnings ask for exact HTTP Digest verification
+configuration/test artifacts and explicit method names in the grouped command
+finding's heading or verification instructions. Both factory-control audits pass.
+
+Fourteen focused Kotlin unit tests, ten native integration tests, two catalog
+capability/provenance checks and the specialized execution-context check pass.
+The offline CLI build, formatting and patch checks pass. A final nullable-receiver
+guard leaves all twenty-three request bundles and their manifests byte-identical,
+so the fresh responses apply to the final implementation. The previous full
+workspace sweep predates this expansion; this checkpoint uses focused checks.
+
 ## Remaining release gates
 
 - Broader independently adjudicated positive/negative cases across the
   [remaining framework and flow gaps](kotlin-coverage.md#remaining-parity-gaps),
-  especially inferred JDBC factory identities and prepared execution/protection
+  especially additional JDBC factory identities and prepared execution/protection
   ownership, Ktor request flow, protections and helper effects.
 - Fresh repeatability and precision at the breadth of the established profiles;
   a small successful slice cannot certify comparable language recall.

@@ -143,7 +143,10 @@ pub(super) fn callable<'a>(node: &KNode<'a>) -> Option<KNode<'a>> {
     node.ancestors().find(|n| {
         matches!(
             n.kind().as_ref(),
-            "function_declaration" | "lambda_literal" | "anonymous_function"
+            "function_declaration"
+                | "lambda_literal"
+                | "anonymous_function"
+                | "anonymous_initializer"
         )
     })
 }

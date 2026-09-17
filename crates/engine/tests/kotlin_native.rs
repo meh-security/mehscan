@@ -306,6 +306,54 @@ fn runtime_import_controls_preserve_real_calls_and_exclude_custom_wildcard_calls
 }
 
 #[test]
+fn jdbc_factory_receivers_admit_sql_and_exclude_lookalikes() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/kotlin-jdbc-factories");
+    let result = mehscan_engine::scan_path(&fixture).unwrap();
+    assert_eq!(result.coverage.totals.parse_failed, 0);
+    let owners = result
+        .evidence
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.rule_id.as_str(),
+                "kotlin-jdbc-statement-query" | "kotlin-jdbc-prepare-query"
+            )
+        })
+        .map(|e| e.enclosing_symbol.as_deref().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        owners,
+        [
+            "factoryRaw",
+            "factoryFixed",
+            "factoryPreparedRaw",
+            "factoryPreparedBound"
+        ]
+        .into_iter()
+        .collect()
+    );
+    let path_owners = result
+        .security_paths
+        .iter()
+        .map(|p| {
+            result
+                .evidence
+                .iter()
+                .find(|e| e.id == p.sink_evidence_id)
+                .unwrap()
+                .enclosing_symbol
+                .as_deref()
+                .unwrap()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        path_owners,
+        ["factoryRaw", "factoryPreparedRaw"].into_iter().collect()
+    );
+}
+
+#[test]
 fn explicit_member_receivers_preserve_boundary_and_path_ownership() {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-receivers");

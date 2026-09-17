@@ -169,7 +169,7 @@
   tags: [kotlin, jvm, sql, jdbc]
   ai: *guidance
   provenance:
-    note: Exact declared java.sql.Statement receiver; caller-supplied SQL is distinct from separately bound PreparedStatement values.
+    note: Canonical declared or bounded immutable-local factory java.sql.Statement receiver; caller-supplied SQL is distinct from separately bound PreparedStatement values.
     references:
       - https://cwe.mitre.org/data/definitions/89.html
       - https://docs.oracle.com/en/java/javase/25/docs/api/java.sql/java/sql/Statement.html
@@ -192,7 +192,7 @@
   tags: [kotlin, jvm, sql, jdbc, preparation]
   ai: *guidance
   provenance:
-    note: Exact declared java.sql.Connection receiver; preparation does not sanitize SQL already constructed from request text. Establish subsequent execution before claiming runtime query impact.
+    note: Canonical declared or bounded immutable-local factory java.sql.Connection receiver; preparation does not sanitize SQL already constructed from request text. Establish subsequent execution before claiming runtime query impact.
     references:
       - https://cwe.mitre.org/data/definitions/89.html
       - https://docs.oracle.com/en/java/javase/25/docs/api/java.sql/java/sql/Connection.html
