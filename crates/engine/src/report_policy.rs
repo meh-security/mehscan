@@ -14,6 +14,21 @@ pub(crate) fn presentation(rule: &str, cwes: &[String], operation: &str) -> Opti
             "Request values select the executable or process arguments",
             "Keep the executable server-owned and allowlist permitted operations. Pass validated values as separate arguments, reject option injection, and avoid adding a command shell; an argument vector alone does not authorize a request-selected executable.",
         )
+    } else if matches!(
+        rule,
+        "kotlin-jdbc-statement-query" | "kotlin-jdbc-prepare-query" | "kotlin-jdbc-template-query"
+    ) && has("CWE-89")
+    {
+        (
+            match rule {
+                "kotlin-jdbc-statement-query" => "Request text alters SQL executed by Statement",
+                "kotlin-jdbc-prepare-query" => {
+                    "Request text alters SQL before statement preparation"
+                }
+                _ => "Request text alters SQL executed by JdbcTemplate",
+            },
+            "Keep SQL syntax fixed and bind request values with JDBC placeholders or JdbcTemplate value arguments. Preparing a statement does not make previously interpolated SQL safe; verify the executed query and confirm hostile text remains a bound value.",
+        )
     } else if rule == "kotlin-persistence-query" && has("CWE-89") {
         (
             "Request values alter persistence query syntax",

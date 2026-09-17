@@ -1828,7 +1828,10 @@ fn kotlin_finding_description(
         return summary.to_string();
     }
     let detail = match rule {
-        "kotlin-persistence-query" => {
+        "kotlin-persistence-query"
+        | "kotlin-jdbc-statement-query"
+        | "kotlin-jdbc-prepare-query"
+        | "kotlin-jdbc-template-query" => {
             "Impact: Crafted input can change the query predicate and manipulate which records are returned. Verification: Keep the query syntax fixed, bind the affected parameter, and confirm that quote-containing input remains data in a regression test."
         }
         "kotlin-runtime-exec" => {
@@ -5426,6 +5429,11 @@ fn build_observation_reviews(
         facts.append(&mut java_callers);
         if file.language == Some(Language::Kotlin) {
             for item in &group.evidence {
+                if let Some(fact) =
+                    crate::code::kotlin_constant_query_fact(&group.path, &file.source, item)
+                {
+                    facts.push(fact);
+                }
                 if let Some(fact) =
                     crate::code::kotlin_numeric_query_fact(&group.path, &file.source, item)
                 {
@@ -9155,9 +9163,15 @@ fn observation_review_questions(
         );
     } else if !has_precise_node_boundary
         && has_database_caller_context
-        && !evidence
-            .iter()
-            .any(|item| item.rule_id == "kotlin-persistence-query")
+        && !evidence.iter().any(|item| {
+            matches!(
+                item.rule_id.as_str(),
+                "kotlin-persistence-query"
+                    | "kotlin-jdbc-statement-query"
+                    | "kotlin-jdbc-prepare-query"
+                    | "kotlin-jdbc-template-query"
+            )
+        })
     {
         questions.push(
             "Does request-bound model data copied into the supplied repository argument influence the interpolated command text, and is parameterization or equivalent SQL-safe construction shown?"

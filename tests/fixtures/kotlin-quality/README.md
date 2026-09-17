@@ -15,16 +15,20 @@ Independent source oracle:
 | Method | Expected decision | Reason |
 | --- | --- | --- |
 | rawQuery | issue | Request text becomes quoted HQL syntax. |
+| rawJdbcQuery | issue | Request text becomes quoted JdbcTemplate SQL syntax. |
+| boundJdbcQuery | not_issue | Fixed SQL uses a separately bound positional value. |
 | boundQuery | not_issue | Fixed query and separately bound name value. |
 | numericQuery | not_issue | A Long cannot introduce HQL delimiters. |
 | rawCommand | issue | Request text selects the executable and arguments. |
 | fixedCommand | not_issue | Fixed local executable; no request-controlled command. |
 
 Runtime/build verification is a separate gate from static scanner and model
-checks. The app does not contain exploit automation or production credentials.
+checks. The app contains no production credentials. Its smoke script uses
+benign query predicates and `whoami` against its own loopback process.
 
 The evaluation built `bootJar` with Temurin 17.0.20.1 and Gradle 9.7.0 and passed
-eleven loopback checks: raw/bound queries with ordinary and quote-containing
+fifteen loopback checks: raw/bound JPA and JdbcTemplate queries with ordinary,
+injected predicate and quote-containing
 names, valid/invalid numeric binding, and benign `whoami` execution through the
 raw and fixed command routes. Quote-containing raw query input returns 500;
 the bound query returns 200, and a nonnumeric ID returns 400. The external

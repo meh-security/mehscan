@@ -4,6 +4,7 @@ mod project;
 pub(super) use flow::{paths, sources};
 pub(crate) use project::caller_facts;
 mod numeric;
+pub(crate) use numeric::constant_query_fact;
 pub(crate) use numeric::query_fact;
 
 pub(super) use identity::Imports;
@@ -73,6 +74,34 @@ pub(super) fn accept<'a>(
             imports.exact(root, node, receiver, "java.security.MessageDigest")
         }
         "kotlin-uri-parsing" => imports.exact(root, node, receiver, "java.net.URI"),
+        "kotlin-jdbc-statement-query"
+        | "kotlin-jdbc-prepare-query"
+        | "kotlin-jdbc-template-query" => {
+            let Some(query) = call.arguments.first().map(|arg| &arg.value) else {
+                return false;
+            };
+            if matches!(
+                query.kind().as_ref(),
+                "lambda_literal" | "anonymous_function"
+            ) {
+                return false;
+            }
+            if query.kind().as_ref() == "simple_identifier" {
+                if binding_type(root, query, &query.text())
+                    .is_some_and(|ty| !imports.exact(root, query, &ty, "kotlin.String"))
+                {
+                    return false;
+                }
+            }
+            let canonical = match rule {
+                "kotlin-jdbc-statement-query" => "java.sql.Statement",
+                "kotlin-jdbc-prepare-query" => "java.sql.Connection",
+                _ => "org.springframework.jdbc.core.JdbcTemplate",
+            };
+            receiver_unchanged(root, node, receiver)
+                && binding_type(root, node, receiver)
+                    .is_some_and(|ty| imports.exact(root, node, &ty, canonical))
+        }
         "kotlin-persistence-query" => {
             matches!(method, "createQuery" | "createNativeQuery")
                 && receiver_unchanged(root, node, receiver)
@@ -146,5 +175,59 @@ mod tests {
         ] {
             assert_eq!(count(source, "kotlin-persistence-query"), 0, "{source}");
         }
+    }
+
+    #[test]
+    fn jdbc_ownership_excludes_lookalikes_prepared_values_and_reassigned_receivers() {
+        for (rule, canonical, method) in [
+            (
+                "kotlin-jdbc-statement-query",
+                "java.sql.Statement",
+                "executeQuery",
+            ),
+            (
+                "kotlin-jdbc-prepare-query",
+                "java.sql.Connection",
+                "prepareStatement",
+            ),
+            (
+                "kotlin-jdbc-template-query",
+                "org.springframework.jdbc.core.JdbcTemplate",
+                "queryForList",
+            ),
+        ] {
+            let source = format!(
+                "import {canonical} as SQL\nfun f(db: SQL, query: String) {{ db.{method}(query) }}"
+            );
+            assert_eq!(count(&source, rule), 1);
+            for source in [
+                format!("import fake.SQL\nfun f(db: SQL, query: String) {{ db.{method}(query) }}"),
+                format!(
+                    "import {canonical} as SQL\nfun f(db: SQL, query: String) {{ val db = unknown; db.{method}(query) }}"
+                ),
+                format!(
+                    "import {canonical} as SQL\nfun f(db: SQL, query: String) {{ db = other; db.{method}(query) }}"
+                ),
+                format!(
+                    "import {canonical} as SQL\nfun other(db: SQL) {{}}\nfun f(db: Unknown, query: String) {{ db.{method}(query) }}"
+                ),
+            ] {
+                assert_eq!(count(&source, rule), 0, "{source}");
+            }
+        }
+        assert_eq!(
+            count(
+                "import java.sql.PreparedStatement\nfun f(db: PreparedStatement, value: String) { db.setString(1, value); db.executeQuery() }",
+                "kotlin-jdbc-statement-query"
+            ),
+            0
+        );
+        assert_eq!(
+            count(
+                "import org.springframework.jdbc.core.JdbcTemplate\nimport org.springframework.jdbc.core.PreparedStatementCreator\nfun f(db: JdbcTemplate, callback: PreparedStatementCreator) { db.update(callback) }",
+                "kotlin-jdbc-template-query"
+            ),
+            0
+        );
     }
 }

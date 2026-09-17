@@ -20,6 +20,8 @@ distinguished from application runtime behavior.
 | Digest selection | Canonical `MessageDigest.getInstance(algorithm)` | Algorithm configuration; CWE-327 |
 | URI parsing | Canonical `URI.create(url)` | Parsing fact; CWE-918 |
 | Persistence queries | Declared `javax.persistence.EntityManager` or `jakarta.persistence.EntityManager`; `createQuery` and `createNativeQuery` | Query sink; CWE-89 |
+| JDBC SQL | Declared `java.sql.Statement` execution/batch text and `java.sql.Connection` prepared SQL construction | Query boundary; CWE-89 |
+| Spring JDBC | Declared `org.springframework.jdbc.core.JdbcTemplate`; query, queryForList, queryForObject, update and execute SQL arguments | Query sink; CWE-89 |
 | Spring MVC scalar inputs | Direct mapped methods of canonical `Controller`/`RestController` classes; annotated String request inputs | Request source; CWE-20 |
 
 JVM boundaries recognize fully qualified names, exact imports and import
@@ -32,7 +34,11 @@ Bounded same-function Spring scalar paths connect request inputs to command or
 query operands through identifiers, immutable `val` aliases, concatenation and
 ordinary, braced or raw string templates. Propagation stops after eight levels,
 at unknown helper results, mutable bindings, reassignment and callable boundaries.
-Fixed queries with separately bound values and numeric request types do not
+SQL captures refer to query text, not separately bound JDBC values. Prepared
+SQL construction is a review boundary; verify subsequent execution before
+claiming runtime query effects. Explicitly typed callbacks and direct lambdas
+are excluded from JdbcTemplate SQL matching. Fixed queries with separately
+bound values and numeric request types do not
 become string-injection paths. Literal excluded branches and statements after
 direct return/throw carry explicit unreachable execution context.
 
@@ -51,7 +57,8 @@ argument vector does not authorize a request-selected executable, and JVM
 
 ## Remaining parity gaps
 
-- JDBC/JdbcTemplate, prepared-statement ownership, Exposed and additional
+- Inferred JDBC factory receivers, prepared-statement execution/protection ownership,
+  JdbcTemplate overloads beyond the bounded patterns, Exposed and additional
   persistence APIs; complete protection and branch-join summaries.
 - Ktor route inputs, output/redirect/upload policies, application-call ownership
   and framework-specific value flow; Spring WebFlux, implicit model-property

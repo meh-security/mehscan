@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.jdbc.core.JdbcTemplate
 
 @SpringBootApplication
 class Application
@@ -20,7 +21,15 @@ class Owner(@Id @GeneratedValue var id: Long? = null, var name: String = "")
 
 @RestController
 @Transactional
-class Routes(private val manager: EntityManager) {
+class Routes(private val manager: EntityManager, private val jdbc: JdbcTemplate) {
+    @GetMapping("/jdbc/raw")
+    fun rawJdbcQuery(@RequestParam name: String): List<*> =
+        jdbc.queryForList("SELECT * FROM owner WHERE name = '$name'")
+
+    @GetMapping("/jdbc/bound")
+    fun boundJdbcQuery(@RequestParam name: String): List<*> =
+        jdbc.queryForList("SELECT * FROM owner WHERE name = ?", name)
+
     @GetMapping("/query/raw")
     fun rawQuery(@RequestParam name: String): List<*> =
         manager.createQuery("SELECT o FROM Owner o WHERE o.name = '$name'").resultList

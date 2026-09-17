@@ -141,3 +141,88 @@
     references:
       - https://cwe.mitre.org/data/definitions/89.html
       - https://jakarta.ee/specifications/persistence/3.2/apidocs/jakarta.persistence/jakarta/persistence/entitymanager
+
+- id: kotlin-jdbc-statement-query
+  version: 1
+  title: Kotlin JDBC statement SQL execution
+  language: kotlin
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: $STATEMENT.executeQuery($QUERY)
+        captures: { query: QUERY }
+      - pattern: $STATEMENT.execute($QUERY)
+        captures: { query: QUERY }
+      - pattern: $STATEMENT.executeUpdate($QUERY)
+        captures: { query: QUERY }
+      - pattern: $STATEMENT.addBatch($QUERY)
+        captures: { query: QUERY }
+  tags: [kotlin, jvm, sql, jdbc]
+  ai: *guidance
+  provenance:
+    note: Exact declared java.sql.Statement receiver; caller-supplied SQL is distinct from separately bound PreparedStatement values.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.sql/java/sql/Statement.html
+
+- id: kotlin-jdbc-prepare-query
+  version: 1
+  title: Kotlin JDBC prepared SQL construction
+  language: kotlin
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: $CONNECTION.prepareStatement($QUERY)
+        captures: { query: QUERY }
+      - pattern: $CONNECTION.prepareStatement($QUERY, $OPTION)
+        captures: { query: QUERY }
+      - pattern: $CONNECTION.prepareCall($QUERY)
+        captures: { query: QUERY }
+  tags: [kotlin, jvm, sql, jdbc, preparation]
+  ai: *guidance
+  provenance:
+    note: Exact declared java.sql.Connection receiver; preparation does not sanitize SQL already constructed from request text. Establish subsequent execution before claiming runtime query impact.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.sql/java/sql/Connection.html
+
+- id: kotlin-jdbc-template-query
+  version: 1
+  title: Kotlin Spring JdbcTemplate SQL execution
+  language: kotlin
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: $TEMPLATE.queryForList($QUERY)
+        captures: { query: QUERY }
+      - pattern: $TEMPLATE.queryForList($QUERY, $ARGUMENT)
+        captures: { query: QUERY }
+      - pattern: $TEMPLATE.queryForList($QUERY, $ARGUMENT, $OPTIONS)
+        captures: { query: QUERY }
+      - pattern: $TEMPLATE.queryForObject($QUERY, $ARGUMENT)
+        captures: { query: QUERY }
+      - pattern: $TEMPLATE.queryForObject($QUERY, $ARGUMENT, $OPTIONS)
+        captures: { query: QUERY }
+      - pattern: $TEMPLATE.query($QUERY, $ARGUMENT)
+        captures: { query: QUERY }
+      - pattern: $TEMPLATE.query($QUERY, $ARGUMENT, $OPTIONS)
+        captures: { query: QUERY }
+      - pattern: $TEMPLATE.update($QUERY)
+        captures: { query: QUERY }
+      - pattern: $TEMPLATE.update($QUERY, $ARGUMENT)
+        captures: { query: QUERY }
+      - pattern: $TEMPLATE.execute($QUERY)
+        captures: { query: QUERY }
+  tags: [kotlin, spring, sql, jdbc]
+  ai: *guidance
+  provenance:
+    note: Exact declared org.springframework.jdbc.core.JdbcTemplate receiver; captures the SQL argument, not separately bound values. Explicitly typed non-String callback operands and direct lambdas are excluded; compiler overload resolution remains partial.
+    references:
+      - https://cwe.mitre.org/data/definitions/89.html
+      - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/jdbc/core/JdbcTemplate.html

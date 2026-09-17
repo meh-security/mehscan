@@ -19,12 +19,26 @@ fn kotlin_jvm_boundaries_and_scripts_preserve_captures() {
     let declared = rules
         .iter()
         .filter(|r| r.language == Language::Kotlin)
-        .map(|r| r.id.as_str())
+        .map(|r| r.id.clone())
         .collect::<std::collections::BTreeSet<_>>();
-    let exercised = native
+    let mut exercised = native
         .iter()
-        .map(|e| e.rule_id.as_str())
+        .map(|e| e.rule_id.clone())
         .collect::<std::collections::BTreeSet<_>>();
+    for fixture in ["kotlin-quality", "kotlin-jdbc"] {
+        let scan = mehscan_engine::scan_path(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures")
+                .join(fixture),
+        )
+        .unwrap();
+        exercised.extend(
+            scan.evidence
+                .into_iter()
+                .map(|e| e.rule_id)
+                .filter(|id| declared.contains(id)),
+        );
+    }
     assert_eq!(
         declared, exercised,
         "Every Kotlin rule needs an executable fixture"
@@ -104,15 +118,17 @@ fn kotlin_quality_app_admits_unsafe_and_safe_operations_without_verdicts() {
         [
             "rawQuery",
             "boundQuery",
+            "boundJdbcQuery",
             "numericQuery",
+            "rawJdbcQuery",
             "rawCommand",
             "fixedCommand"
         ]
         .into_iter()
         .collect()
     );
-    assert_eq!(observations.len(), 5);
-    assert_eq!(result.security_paths.len(), 2);
+    assert_eq!(observations.len(), 7);
+    assert_eq!(result.security_paths.len(), 3);
     let linked = result
         .security_paths
         .iter()
@@ -127,7 +143,12 @@ fn kotlin_quality_app_admits_unsafe_and_safe_operations_without_verdicts() {
                 .unwrap()
         })
         .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(linked, ["rawCommand", "rawQuery"].into_iter().collect());
+    assert_eq!(
+        linked,
+        ["rawCommand", "rawQuery", "rawJdbcQuery"]
+            .into_iter()
+            .collect()
+    );
 }
 
 #[test]
@@ -153,5 +174,46 @@ fn kotlin_review_constraints_and_sources_stay_with_their_owner() {
             .filter(|review| review.to_string().contains("numeric_query_operand_context"))
             .count()
             == 1
+    );
+}
+
+#[test]
+fn jdbc_paths_track_sql_text_and_leave_separately_bound_values_as_data() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-jdbc");
+    let result = mehscan_engine::scan_path(&fixture).unwrap();
+    assert_eq!(result.coverage.totals.parse_failed, 0);
+    let sinks = result
+        .evidence
+        .iter()
+        .filter(|e| e.kind == mehscan_core::EvidenceKind::Sink)
+        .collect::<Vec<_>>();
+    assert_eq!(sinks.len(), 4);
+    assert_eq!(result.security_paths.len(), 2);
+    let owners = result
+        .security_paths
+        .iter()
+        .map(|p| {
+            result
+                .evidence
+                .iter()
+                .find(|e| e.id == p.sink_evidence_id)
+                .unwrap()
+                .enclosing_symbol
+                .as_deref()
+                .unwrap()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        owners,
+        ["rawStatement", "rawPrepared"].into_iter().collect()
+    );
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
+    assert_eq!(jobs.total_reviews, 4);
+    assert!(
+        serde_json::to_string(&jobs)
+            .unwrap()
+            .contains("constant_query_operand_context")
     );
 }

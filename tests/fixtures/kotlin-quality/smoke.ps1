@@ -25,6 +25,10 @@ try {
     }
     if (!$ready) { throw 'Fixture did not become ready within 30 seconds.' }
     $cases = @(
+        @{ name='jdbc-raw-normal'; path='/jdbc/raw?name=Alice'; status=200; count=1 },
+        @{ name='jdbc-raw-injection'; path='/jdbc/raw?name=%27%20OR%20%271%27%3D%271'; status=200; count=2 },
+        @{ name='jdbc-bound-injection'; path='/jdbc/bound?name=%27%20OR%20%271%27%3D%271'; status=200; count=0 },
+        @{ name='jdbc-bound-quote'; path='/jdbc/bound?name=O%27Reilly'; status=200; count=0 },
         @{ name='raw-normal'; path='/query/raw?name=Alice'; status=200; count=1 },
         @{ name='raw-injection'; path='/query/raw?name=%27%20OR%20%271%27%3D%271'; status=200; count=2 },
         @{ name='bound-injection'; path='/query/bound?name=%27%20OR%20%271%27%3D%271'; status=200; count=0 },
