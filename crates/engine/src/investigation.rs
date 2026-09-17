@@ -2983,6 +2983,14 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Use only supplied facts; do not invent cross-function, deployment, or runtime behavior."
                 .to_string(),
+            "Before claiming injection, check that the producer's representation matches the consumer operation (for example object properties versus array indexing after JSON decoding). An incompatible access does not establish delivery to the sink."
+                .to_string(),
+            "Injection does not require unsafe input on every execution path. For shown code equivalent to `if (enabled) value = request.field; sink(value)`, the enabled branch establishes a conditional weakness unless supplied facts disprove that branch; an uninitialized value or failure in the other branch does not protect it. The condition need not be attacker-controlled. Likewise, when a shown decoded request object supplies the selected property value, a dynamic property selector need not itself be attacker-controlled; do not confuse the selector's origin with the selected value's origin."
+                .to_string(),
+            "An intervening unknown helper is neither a sanitizer nor proof that the old value survives. Check supplied argument/reference/alias and mutation semantics, including calls inside compound assignment; do not assume pass-by-value in PHP or unchanged mutable objects in other languages. A neighboring helper declaration answers this only when its exact callable and owner match. If the bounded relationship is not established and unresolved is empty, dismiss that relationship without claiming safe output."
+                .to_string(),
+            "Server metadata, session fields and framework properties are not automatically attacker-selected. Establish the producer and the relevant influence from this review's evidence; for example SCRIPT_NAME alone does not establish attacker-selected attribute-breaking content. This does not negate a separately shown request read or concrete policy failure."
+                .to_string(),
             "Evidence scope is per review ID: use only that review's candidate, evidence, facts, review_basis, and decision_facts. Other reviews in the bundle are independent; even the same filename or variable name does not authorize borrowing their input origins, producers, controls, or branches."
                 .to_string(),
             "A non-path observation may establish an issue through its own source excerpts: a directly shown request read, cookie loop, or request dump reaching executable HTML does not require a deterministic path. Conversely, a variable name, UI label, or unsafe-looking API alone does not establish attacker influence."
@@ -11905,6 +11913,7 @@ fn review_reference_tokens(
 
 fn collect_review_reference_tokens(source: &str, output: &mut BTreeSet<String>) {
     let bytes = source.as_bytes();
+    let declaration_offsets = review_declaration_name_offsets(source);
     let mut index = 0;
     while index < bytes.len() {
         if !(bytes[index].is_ascii_alphabetic() || matches!(bytes[index], b'_' | b'$')) {
@@ -11919,6 +11928,9 @@ fn collect_review_reference_tokens(source: &str, output: &mut BTreeSet<String>) 
             index += 1;
         }
         let token = &source[start..index];
+        if declaration_offsets.contains(&start) {
+            continue;
+        }
         let before = source[..start]
             .chars()
             .rev()
@@ -11959,6 +11971,34 @@ fn collect_review_reference_tokens(source: &str, output: &mut BTreeSet<String>) 
     }
 }
 
+// Review enrichment is lexical, not a call graph. Do not turn a neighboring
+// declaration into a helper reference merely because its name precedes `(`.
+// Exclude only the declaration occurrence: same-line calls and recursion remain
+// references, as do explicit callback captures collected by their callers.
+fn review_declaration_name_offsets(source: &str) -> BTreeSet<usize> {
+    let mut offsets = BTreeSet::new();
+    let mut line_offset = 0;
+    for line in source.split_inclusive('\n') {
+        if is_textual_callable_definition(line)
+            && let Some(name) = textual_definition_identifier(line)
+        {
+            let is_identifier =
+                |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$');
+            if let Some((start, _)) = line.match_indices(&name).find(|(start, _)| {
+                (*start == 0 || !is_identifier(line.as_bytes()[start - 1]))
+                    && line
+                        .as_bytes()
+                        .get(start + name.len())
+                        .is_none_or(|byte| !is_identifier(*byte))
+            }) {
+                offsets.insert(line_offset + start);
+            }
+        }
+        line_offset += line.len();
+    }
+    offsets
+}
+
 fn direct_call_reference(source: &str) -> Option<String> {
     let prefix = source.split_once('(')?.0;
     prefix
@@ -11972,6 +12012,7 @@ fn direct_call_reference(source: &str) -> Option<String> {
 fn collect_policy_reference_tokens(source: &str, output: &mut BTreeSet<String>) {
     let mut tokens = BTreeSet::new();
     let bytes = source.as_bytes();
+    let declaration_offsets = review_declaration_name_offsets(source);
     let mut index = 0;
     while index < bytes.len() {
         if !(bytes[index].is_ascii_alphabetic() || matches!(bytes[index], b'_' | b'$')) {
@@ -11986,6 +12027,9 @@ fn collect_policy_reference_tokens(source: &str, output: &mut BTreeSet<String>) 
             index += 1;
         }
         let token = &source[start..index];
+        if declaration_offsets.contains(&start) {
+            continue;
+        }
         let lower = token.to_ascii_lowercase();
         if is_helpful_reference_identifier(token)
             && [
@@ -14328,6 +14372,39 @@ mod tests {
     fn identifier_search_rejects_larger_names() {
         assert!(is_identifier_match("run(value)", 0, 3));
         assert!(!is_identifier_match("runner(value)", 0, 3));
+    }
+
+    #[test]
+    fn review_references_exclude_declarations_but_keep_calls() {
+        for source in [
+            "function validate_neighbor($value) { actual_helper($value); }",
+            "def validate_neighbor(value): actual_helper(value)",
+            "func validate_neighbor(value string) { actual_helper(value) }",
+            "func (r *Receiver) validate_neighbor(value string) { actual_helper(value) }",
+            "public string validate_neighbor(string value) { return actual_helper(value); }",
+            "const validate_neighbor = value => actual_helper(value);",
+        ] {
+            let mut references = BTreeSet::new();
+            collect_review_reference_tokens(source, &mut references);
+            collect_policy_reference_tokens(source, &mut references);
+            assert!(!references.contains("validate_neighbor"), "{source}");
+            assert!(references.contains("actual_helper"), "{source}");
+        }
+        let mut references = BTreeSet::new();
+        collect_review_reference_tokens(
+            "function recursive($value) { return recursive($value); }\nactual_helper();",
+            &mut references,
+        );
+        assert!(references.contains("recursive"));
+        assert!(references.contains("actual_helper"));
+        let mut references = BTreeSet::new();
+        collect_review_reference_tokens("const policy = validate_value(input);", &mut references);
+        assert!(references.contains("validate_value"));
+        collect_policy_reference_tokens(
+            "const redirectAllowlist = ['example.com'];",
+            &mut references,
+        );
+        assert!(references.contains("redirectAllowlist"));
     }
 
     #[test]

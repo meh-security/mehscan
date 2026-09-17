@@ -149,6 +149,33 @@ operations with no supplied bridge, use `not_issue` for that named relationship
 and describe the mismatch. Do not use supplemental syntax lookup to repair a
 decision-ready payload or infer the missing bridge.
 
+Before claiming injection, match the producer's representation to the consumer
+operation. For example, PHP's default object-mode `json_decode` does not make
+array indexing a valid request-to-sink bridge; check the supplied decoder mode
+and property or index access rather than treating every JSON read as equivalent.
+Preserve a directly shown unsafe branch when that branch assigns request input
+and sends it to the sink; the condition need not itself be attacker-controlled.
+Injection does not require unsafe input on every execution path. In code
+equivalent to `if (enabled) value = request.field; sink(value)`, the enabled
+branch establishes a conditional weakness unless supplied facts disprove that
+branch; an uninitialized value or failure in the other branch does not protect it.
+A dynamic selector also need not be attacker-controlled when the selected value
+comes from the shown request object. Distinguish the selector from that value.
+
+An unknown helper is neither a sanitizer nor proof that the old value survives.
+Check argument/reference, alias and mutation semantics, including calls inside
+compound assignment. PHP helpers may accept arguments by reference; mutable
+objects in other languages may also change. A neighboring declaration answers
+this only when its exact callable and owner match. If the supplied relationship
+is not established and `unresolved` is empty, dismiss that bounded relationship
+without claiming that the output is safe. Do not discard a relationship when
+the language semantics or supplied helper body establish that the value survives.
+
+Server metadata, session fields and framework properties need a shown producer
+and relevant attacker influence. `SCRIPT_NAME` alone does not establish
+attacker-selected attribute-breaking content. Apply this check to the exact
+value; it does not negate separately shown request input or a policy failure.
+
 For C/C++ only, the native reference describes a bounded call-syntax inventory
 that may answer an exact existing unresolved syntactic fact. Use the supplied
 review payload first. It never establishes taint, call reachability, runtime

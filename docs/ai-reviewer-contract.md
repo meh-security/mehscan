@@ -54,6 +54,19 @@ to deterministic rule, location, and flow evidence. See
 [`output-contract.md`](output-contract.md); models must not author final finding
 JSON or SARIF directly.
 
+Before confirming injection, establish a compatible producer representation and
+consumer operation, the value's survival through intervening helpers using the
+supplied language/reference/mutation semantics, and the relevant attacker
+influence. An unknown helper proves neither safety nor continued unsafe flow;
+server metadata alone does not establish arbitrary attacker-selected content.
+Apply helper excerpts only to their exact callable and owner. For a decision-ready
+observation lacking that relationship, dismiss the bounded claim without asserting
+whole-component safety. Concrete supplied unresolved facts retain their normal
+`needs_review` contract.
+Preserve directly shown unsafe branches and request-derived container values:
+the branch condition or a dynamic property selector need not itself be attacker
+controlled when the shown branch or selected value establishes the weakness.
+
 The more detailed control-ownership contract below remains available for
 configuration and deployment questions. Its internal `confirmed` and
 `needs_verification` dispositions correspond to final `issue` and

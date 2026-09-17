@@ -41,6 +41,14 @@ Check these invariants:
   quality result: both can repeat the same unsupported claim. Record remaining
   disagreements and shared evidence errors separately; an isolated retry is
   a targeted audit, not a complete corpus report.
+- Injection explanations identify a compatible producer and consumer operation.
+  Unknown helper effects do not establish either sanitization or survival of the
+  old value; declarations with another callable or owner do not answer that
+  question. Server metadata and session fields need a supplied producer and
+  relevant attacker influence, rather than an assumption based on their names.
+  A dismissal must not require unsafe input on every execution path or require
+  an attacker-controlled condition/selector when a shown branch or selected
+  request-derived value already establishes the weakness.
 - Evidence and candidate counts are not presented as vulnerability totals.
   Markdown counts reconcile with canonical JSON when it is present.
 - Repeated items are consolidated when they express the same root cause and

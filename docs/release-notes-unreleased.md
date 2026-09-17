@@ -16,6 +16,11 @@ partial; see [the PHP coverage budget](php-coverage.md).
 - Preserve manifest coverage/scope metadata, canonical response validation,
   dismissed evidence locations and native operation-specific report guidance.
 - Describe confirmed TLS issues with certificate/hostname validation guidance.
+- Exclude recognized neighboring callable declarations from lexical helper
+  references while preserving same-line calls, recursion and policy bindings.
+- Align the shared review contract and both skills on decoder/access
+  compatibility, helper mutation and demonstrated input origins, preserving
+  directly shown unsafe branches and request-derived dynamic property values.
 
 Original positive, safe, mutation and lookalike regressions accompany these
 summaries. Fixture findings and native API observations are not application
