@@ -11,6 +11,7 @@ on:
       - ".github/workflows/release.yml"
       - "scripts/build-preview.ps1"
       - "scripts/test-installer.ps1"
+      - "scripts/test-unix-installer.py"
       - "skills/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -59,6 +60,14 @@ jobs:
       - name: Test public installer contracts
         shell: pwsh
         run: ./scripts/test-installer.ps1
+
+      - name: Test Unix installer contracts
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bash -n skills/mehscan-security/scripts/install-mehscan.sh
+          bash skills/mehscan-security/scripts/install-mehscan.sh --help
+          python3 -B scripts/test-unix-installer.py
 
       - name: Verify the tagged commit belongs to main
         if: github.ref_type == 'tag'

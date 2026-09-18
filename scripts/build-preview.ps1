@@ -79,6 +79,9 @@ try {
         (Join-Path $repositoryRoot 'skills/mehscan-security/agents/openai.yaml'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/native-c-cpp.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/release-pins.json'),
+        (Join-Path $repositoryRoot 'skills/mehscan-security/references/installation.md'),
+        (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.sh'),
+        (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.py'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.ps1'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/public-download.ps1'),
         (Join-Path $repositoryRoot 'skills/mehscan-report-quality/SKILL.md'),
@@ -106,6 +109,9 @@ try {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/agents/openai.yaml') -Destination (Join-Path $stageRoot 'skills/mehscan-security/agents')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/native-c-cpp.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/release-pins.json') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/installation.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.sh') -Destination (Join-Path $stageRoot 'skills/mehscan-security/scripts')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.py') -Destination (Join-Path $stageRoot 'skills/mehscan-security/scripts')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.ps1') -Destination (Join-Path $stageRoot 'skills/mehscan-security/scripts')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/public-download.ps1') -Destination (Join-Path $stageRoot 'skills/mehscan-security/scripts')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/new-review-response-schema.ps1') -Destination (Join-Path $stageRoot 'skills/mehscan-security/scripts')
@@ -122,6 +128,9 @@ try {
         'skills/mehscan-security/agents/openai.yaml',
         'skills/mehscan-security/references/native-c-cpp.md',
         'skills/mehscan-security/references/release-pins.json',
+        'skills/mehscan-security/references/installation.md',
+        'skills/mehscan-security/scripts/install-mehscan.sh',
+        'skills/mehscan-security/scripts/install-mehscan.py',
         'skills/mehscan-security/scripts/install-mehscan.ps1',
         'skills/mehscan-security/scripts/new-review-response-schema.ps1',
         'skills/mehscan-security/scripts/public-download.ps1',

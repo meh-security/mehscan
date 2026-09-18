@@ -15,18 +15,26 @@ Scan candidates require review before they become confirmed findings. The CLI wo
 
 ## Install
 
-The repository includes a release installer for PowerShell 7. It requires GitHub CLI (`gh`) with attestation verification support; GitHub login is not required.
+We recommend GitHub CLI (`gh`) for release installation: its attestation verifier checks that the downloaded archive was built by Mehscan's expected GitHub Actions workflow from the expected source, rather than relying on a checksum alone. Both installers require `gh` with attestation verification support, without GitHub login. Linux/macOS use Bash and Python 3.9+; Windows uses PowerShell 7. These tools are installation dependencies only.
 
-```powershell
-./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.4.0
+Linux/macOS (no PowerShell):
+
+```sh
+bash ./skills/mehscan-security/scripts/install-mehscan.sh --version 0.4.0
 ```
 
-The installer verifies release checksums and provenance, then returns the executable path. See the [installation instructions](skills/mehscan-security/SKILL.md) for supported assets and source commit pinning. Release downloads are also available on the [releases page](https://github.com/meh-security/mehscan/releases).
+Windows:
 
-To build from source, use Rust 1.88 or newer:
+```powershell
+pwsh -NoProfile -File ./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.4.0
+```
+
+The installer verifies release checksums and provenance, then returns the executable path. See the [platform installation instructions](skills/mehscan-security/references/installation.md) for prerequisite setup, Bash/Zsh examples, supported targets, and a source-build alternative without PowerShell. See the [security skill](skills/mehscan-security/SKILL.md) for source commit pinning. Release downloads are also available on the [releases page](https://github.com/meh-security/mehscan/releases).
+
+If `gh` or your platform's installer prerequisites are unavailable or installing them is unsuitable, build from an existing trusted Mehscan source checkout with Rust 1.88 or newer and native C/C++ build tools. The installer does not automatically build or execute an unverified download:
 
 ```text
-cargo build -p mehscan-cli --release
+cargo build -p mehscan-cli --release --locked
 ```
 
 The executable is `target/release/mehscan` (`mehscan.exe` on Windows).
