@@ -62,7 +62,16 @@ overloads are not treated as ordinary Statement execution.
 See the [JDBC Connection contract](https://docs.oracle.com/en/java/javase/25/docs/api/java.sql/java/sql/Connection.html).
 
 Prepared SQL construction is a review boundary; verify subsequent execution before
-claiming runtime query effects. Explicitly typed callbacks and direct lambdas
+claiming runtime query effects.
+
+For admitted preparation calls, reviews include bounded exact same-callable
+binding, reset, close and execution uses of the original receiver and immutable
+local aliases. A different statement's bindings are not borrowed. These facts
+retain source locations and require review of enclosing conditions and resets;
+they are not native execution/protection summaries. Field storage, mutable
+aliases, helper returns and lambda handoffs remain outside this use collector.
+
+Explicitly typed callbacks and direct lambdas
 are excluded from JdbcTemplate SQL matching. Fixed queries with separately
 bound values and numeric request types do not
 become string-injection paths. Literal excluded branches and statements after

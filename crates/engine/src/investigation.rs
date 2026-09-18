@@ -669,6 +669,16 @@ fn build_path_review_jobs_internal(
                 provenance: textual_provenance("mehscan bounded path-review source 1"),
             });
         }
+        if candidate.sink.rule_id == "kotlin-jdbc-prepare-query"
+            && let Some(sink) = evidence_by_id.get(candidate.sink.id.as_str())
+        {
+            let file = sources.file(&candidate.sink.location.path)?;
+            facts.extend(crate::code::kotlin_prepared_facts(
+                &candidate.sink.location.path,
+                &file.source,
+                sink,
+            ));
+        }
         let (mut captured_definitions, captured_definitions_truncated) = captured_definition_facts(
             &sources,
             [&candidate.source.id, &candidate.sink.id]
@@ -5454,6 +5464,11 @@ fn build_observation_reviews(
         facts.append(&mut java_callers);
         if file.language == Some(Language::Kotlin) {
             for item in &group.evidence {
+                facts.extend(crate::code::kotlin_prepared_facts(
+                    &group.path,
+                    &file.source,
+                    item,
+                ));
                 facts.extend(crate::code::kotlin_member_receiver_facts(
                     &group.path,
                     &file.source,

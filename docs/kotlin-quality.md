@@ -18,6 +18,8 @@ Full parity remains a release gate, not a claim made by this checkpoint.
 | [Original receiver controls](../tests/fixtures/kotlin-receivers/README.md) | Branch fixture | Local/member identity and custom fixed-path helper controls; source-only. |
 | [Original import controls](../tests/fixtures/kotlin-imports/README.md) | Branch fixture | Custom wildcard Runtime exclusion and canonical JVM import variants; compiled, custom control alone executed. |
 | [Original JDBC factory controls](../tests/fixtures/kotlin-jdbc-factories/README.md) | Branch fixture | Inferred Statement/Connection raw, fixed and bound SQL pairs plus a constant lookalike; compiled and directly tested with H2. |
+| [Original prepared ownership controls](../tests/fixtures/kotlin-prepared-ownership/README.md) | Branch fixture | Exact alias execution, unrelated binding exclusion, reset/rebind and conditional or preparation-only behavior; compiled and directly tested with H2. |
+| [Seqra mixed Spring demo](https://github.com/seqra/java-spring-demo/tree/66421a37ae573543c0a71e7b7689adf26f44cf38) | `66421a37ae573543c0a71e7b7689adf26f44cf38` | MIT-licensed intentionally vulnerable mixed Java/Kotlin source; coroutine URL-fetch coverage probe, parsed only and not part of the selected model oracle. |
 
 External source stays outside the public repository. Discovery now admits
 Petclinic production packages containing `samples` below `src/main/kotlin`:
@@ -285,7 +287,56 @@ guard leaves all twenty-three request bundles and their manifests byte-identical
 so the fresh responses apply to the final implementation. The previous full
 workspace sweep predates this expansion; this checkpoint uses focused checks.
 
+## Prepared use ownership
+
+Both path and observation review packets now include exact same-callable
+binding, reset, close and execution uses of an admitted preparation and its
+immutable local aliases. Each fact stays attached to its own preparation's
+evidence ID. Bindings on another object or another real statement are not
+borrowed; nested callable handoffs stop collection. Conditional execution
+remains source context, not guaranteed execution or a native protection summary.
+
+Four predefined original labels extend the oracle to forty-five cases: twenty-one
+positive and twenty-four negative. The raw alias-execution case is not protected
+by binding an unrelated object. Fixed placeholder SQL resets and rebinds its own
+value safely. Fixed preparation-only SQL closes without execution. The caller
+can enable the conditional raw route. All four compile with Kotlin 2.4.10/JDK 17;
+eight direct H2 checks exercise injection, bound values after reset, valid values,
+quote handling, both conditional branches and preparation-only closure.
+These are direct test methods, not an HTTP deployment assessment.
+
+Fresh full model comparison and report audits use the revised request bytes
+and all forty-five predefined labels; earlier forty-one-case responses are not
+silently reused for changed packets.
+
+Both fresh models match **45/45 predefined labels**: twenty-one true positives,
+twenty-four true negatives, zero selected false positives and zero false
+negatives each. Agreement is 45/45; all fifty responses across twenty-five
+bundles pass mechanical validation. These remain selected-case metrics.
+
+The fresh report audit run completed eight of eighteen audits before the
+account's model usage limit stopped the remaining jobs. Seven completed audits
+pass and one passes with the previously recorded HTTP Digest verification
+warning; all eight are ready for handoff. The remaining ten, including the new
+prepared ownership reports, are unverified. Earlier audit results are not
+substituted for this round. Completing those audits remains a release gate.
+
+Fifteen focused Kotlin unit tests, twelve native integration tests, two catalog
+capability/provenance checks and the specialized execution-context check pass.
+The offline CLI build, formatting and patch checks pass. Eight direct H2 checks
+pass for the new controls. The earlier full workspace sweep predates this change.
+
 ## Remaining release gates
+
+The additional Seqra source probe scans twenty-four files with no parse failures.
+Its Kotlin controller supplies both a String request parameter and a request-body
+DTO to `UrlFetchService.fetch`. The service passes the URL through
+`URI.create(url).toURL().openConnection()` inside `scope.launch`, connects and
+reads the response, without a destination policy in the supplied source.
+The current probe admits nine other reviews but no outbound-request review for
+that Kotlin fetch. This is a concrete remaining recall gap, not a clean-source
+result. The application was neither built nor executed; the probe is separate
+from the forty-five-case model comparison.
 
 - Broader independently adjudicated positive/negative cases across the
   [remaining framework and flow gaps](kotlin-coverage.md#remaining-parity-gaps),

@@ -47,6 +47,7 @@ pub(crate) use kotlin::caller_facts as kotlin_caller_facts;
 pub(crate) use kotlin::constant_query_fact as kotlin_constant_query_fact;
 pub(crate) use kotlin::function_range as kotlin_function_range;
 pub(crate) use kotlin::member_receiver_facts as kotlin_member_receiver_facts;
+pub(crate) use kotlin::prepared_facts as kotlin_prepared_facts;
 pub(crate) use kotlin::query_fact as kotlin_numeric_query_fact;
 pub mod literals;
 mod matcher;

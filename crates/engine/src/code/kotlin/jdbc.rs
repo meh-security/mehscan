@@ -1,4 +1,178 @@
 use super::identity::{self, Imports, KNode};
+use ast_grep_core::tree_sitter::LanguageExt;
+use ast_grep_language::SupportLang;
+use mehscan_core::{Evidence, QueryProvenance, Resolution, ReviewNeighborhoodFact};
+
+fn prepared_origin<'a>(
+    root: &KNode<'a>,
+    expression: &KNode<'a>,
+    depth: usize,
+) -> Option<KNode<'a>> {
+    if depth == 0 {
+        return None;
+    }
+    if let Some(call) = identity::call(expression) {
+        let text = call.callee.text();
+        if matches!(
+            text.rsplit('.').next(),
+            Some("prepareStatement" | "prepareCall")
+        ) {
+            return Some(expression.clone());
+        }
+        return None;
+    }
+    let symbol = expression.text();
+    if !identity::receiver_unchanged(root, expression, &symbol) {
+        return None;
+    }
+    let binding = identity::binding(root, expression, &symbol)?;
+    if identity::callable(&binding).map(|n| n.range())
+        != identity::callable(expression).map(|n| n.range())
+    {
+        return None;
+    }
+    let property = binding
+        .parent()
+        .filter(|n| n.kind().as_ref() == "property_declaration")?;
+    if !property
+        .children()
+        .any(|n| n.kind().as_ref() == "binding_pattern_kind" && n.text().as_ref() == "val")
+    {
+        return None;
+    }
+    let value = property.children().filter(|n| n.is_named()).last()?;
+    (value.range() != binding.range())
+        .then(|| prepared_origin(root, &value, depth - 1))
+        .flatten()
+}
+
+/// Exact same-callable use context, never an execution or protection summary.
+pub(crate) fn prepared_facts(
+    path: &str,
+    source: &str,
+    sink: &Evidence,
+) -> Vec<ReviewNeighborhoodFact> {
+    if sink.rule_id != "kotlin-jdbc-prepare-query" {
+        return vec![];
+    }
+    let ast = SupportLang::Kotlin.ast_grep(source);
+    let root = ast.root();
+    if root.dfs().any(|n| n.is_error() || n.is_missing()) {
+        return vec![];
+    }
+    let Some(preparation) = root.dfs().find(|n| {
+        n.kind().as_ref() == "call_expression"
+            && n.range().start == sink.location.start.byte_offset
+            && n.range().end == sink.location.end.byte_offset
+    }) else {
+        return vec![];
+    };
+    let Some(scope) = identity::callable(&preparation) else {
+        return vec![];
+    };
+    let imports = Imports::build(&root);
+    let rule = "kotlin-jdbc-prepare-query";
+    if !super::accept(&root, &imports, rule, &preparation) {
+        return vec![];
+    }
+    let mut facts = Vec::new();
+    for node in scope.dfs().filter(|n| {
+        n.kind().as_ref() == "call_expression"
+            && n.range().start >= preparation.range().start
+            && identity::callable(n).is_some_and(|owner| owner.range() == scope.range())
+    }) {
+        let Some(call) = identity::call(&node) else {
+            continue;
+        };
+        if call.arguments.iter().any(|arg| arg.name.is_some()) {
+            continue;
+        }
+        let text = call.callee.text();
+        let Some((_, method)) = text.rsplit_once('.') else {
+            continue;
+        };
+        let role = match method {
+            "execute" | "executeQuery" | "executeUpdate" | "executeLargeUpdate"
+            | "executeBatch" | "executeLargeBatch"
+                if call.arguments.is_empty() =>
+            {
+                "prepared_statement_execution_context"
+            }
+            "setString" | "setInt" | "setLong" | "setObject" | "setBoolean" | "setDouble"
+            | "setFloat" | "setShort" | "setByte" | "setBytes" | "setNull" | "setDate"
+            | "setTimestamp" | "setBigDecimal"
+                if call.arguments.len() >= 2 =>
+            {
+                "prepared_statement_binding_context"
+            }
+            "clearParameters" | "addBatch" | "clearBatch" | "close"
+                if call.arguments.is_empty() =>
+            {
+                "prepared_statement_lifecycle_context"
+            }
+            _ => continue,
+        };
+        let Some(receiver) = call.callee.children().find(|n| n.is_named()) else {
+            continue;
+        };
+        if !prepared_origin(&root, &receiver, 8)
+            .is_some_and(|origin| origin.range() == preparation.range())
+        {
+            continue;
+        }
+        if node.range().len() > 4096 || facts.len() >= 12 {
+            return vec![];
+        }
+        facts.push(ReviewNeighborhoodFact {
+            role: role.into(), symbol: receiver.text().into_owned(),
+            location: crate::code::matcher::location(path, &node), excerpt: format!("Exact use of this preparation's immutable local receiver in the same callable. This is source context; enclosing conditions, binding resets and runtime execution still require review.\n{}", node.text()),
+            evidence_id: Some(sink.id.clone()), provenance: QueryProvenance { resolution: Resolution::Ast, engine: "Kotlin bounded prepared receiver origin and same-callable use 1".into() },
+        });
+    }
+    facts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn origins_distinguish_real_statements_aliases_and_callable_handoffs() {
+        let ast = SupportLang::Kotlin.ast_grep("fun f(c: Connection, q: String) { val first = c.prepareStatement(q); val second = c.prepareStatement(\"SELECT 1\"); val alias = first; second.setString(1, q); alias.executeQuery(); run { first.executeQuery() } }");
+        let root = ast.root();
+        assert!(!root.dfs().any(|n| n.is_error() || n.is_missing()));
+        let mut origins = Vec::new();
+        for node in root.dfs() {
+            let Some(call) = identity::call(&node) else {
+                continue;
+            };
+            if matches!(
+                call.callee.text().as_ref(),
+                "second.setString" | "alias.executeQuery" | "first.executeQuery"
+            ) {
+                let receiver = call.callee.children().find(|n| n.is_named()).unwrap();
+                origins.push((
+                    call.callee.text().into_owned(),
+                    prepared_origin(&root, &receiver, 8).map(|n| n.text().into_owned()),
+                ));
+            }
+        }
+        assert_eq!(
+            origins,
+            vec![
+                (
+                    "second.setString".into(),
+                    Some("c.prepareStatement(\"SELECT 1\")".into())
+                ),
+                (
+                    "alias.executeQuery".into(),
+                    Some("c.prepareStatement(q)".into())
+                ),
+                ("first.executeQuery".into(), None),
+            ]
+        );
+    }
+}
 
 /// Bounded JVM factory identity, independent of whether SQL is safe or executed.
 /// PreparedStatement is deliberately not treated as a text-taking Statement:

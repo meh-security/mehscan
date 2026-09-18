@@ -1,6 +1,7 @@
 mod flow;
 mod identity;
 mod jdbc;
+pub(crate) use jdbc::prepared_facts;
 mod path;
 mod project;
 pub(super) use flow::{paths, sources};

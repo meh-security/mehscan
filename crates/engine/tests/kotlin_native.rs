@@ -354,6 +354,131 @@ fn jdbc_factory_receivers_admit_sql_and_exclude_lookalikes() {
 }
 
 #[test]
+fn prepared_use_facts_keep_binding_and_execution_with_their_origin() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/kotlin-jdbc-factories");
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
+    let raw = jobs
+        .reviews
+        .iter()
+        .find(|r| r.candidate.sink.enclosing_symbol.as_deref() == Some("factoryPreparedRaw"))
+        .unwrap();
+    assert_eq!(
+        raw.facts
+            .iter()
+            .filter(|f| f.role == "prepared_statement_execution_context")
+            .count(),
+        1
+    );
+    assert!(
+        !raw.facts
+            .iter()
+            .any(|f| f.role == "prepared_statement_binding_context")
+    );
+    let bound = jobs
+        .observation_reviews
+        .iter()
+        .find(|r| {
+            r.evidence
+                .iter()
+                .any(|e| e.enclosing_symbol.as_deref() == Some("factoryPreparedBound"))
+        })
+        .unwrap();
+    assert_eq!(
+        bound
+            .facts
+            .iter()
+            .filter(|f| f.role == "prepared_statement_execution_context")
+            .count(),
+        1
+    );
+    assert_eq!(
+        bound
+            .facts
+            .iter()
+            .filter(|f| f.role == "prepared_statement_binding_context")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn prepared_ownership_excludes_unrelated_bindings_and_preserves_resets() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/kotlin-prepared-ownership");
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
+    assert_eq!(jobs.total_reviews, 4);
+    let raw = jobs
+        .reviews
+        .iter()
+        .find(|r| r.candidate.sink.enclosing_symbol.as_deref() == Some("ownedRaw"))
+        .unwrap();
+    assert!(
+        !raw.facts
+            .iter()
+            .any(|f| f.role == "prepared_statement_binding_context")
+    );
+    assert!(
+        raw.facts
+            .iter()
+            .any(|f| f.role == "prepared_statement_execution_context" && f.symbol == "alias")
+    );
+    let bound = jobs
+        .observation_reviews
+        .iter()
+        .find(|r| {
+            r.evidence
+                .iter()
+                .any(|e| e.enclosing_symbol.as_deref() == Some("ownedBound"))
+        })
+        .unwrap();
+    assert_eq!(
+        bound
+            .facts
+            .iter()
+            .filter(|f| f.role == "prepared_statement_binding_context")
+            .count(),
+        2
+    );
+    assert!(
+        bound
+            .facts
+            .iter()
+            .any(|f| f.role == "prepared_statement_lifecycle_context"
+                && f.excerpt.contains("clearParameters"))
+    );
+    let only = jobs
+        .observation_reviews
+        .iter()
+        .find(|r| {
+            r.evidence
+                .iter()
+                .any(|e| e.enclosing_symbol.as_deref() == Some("preparationOnly"))
+        })
+        .unwrap();
+    assert!(
+        !only
+            .facts
+            .iter()
+            .any(|f| f.role == "prepared_statement_execution_context")
+    );
+    let conditional = jobs
+        .reviews
+        .iter()
+        .find(|r| r.candidate.sink.enclosing_symbol.as_deref() == Some("conditionalRaw"))
+        .unwrap();
+    assert!(
+        conditional
+            .facts
+            .iter()
+            .any(|f| f.role == "prepared_statement_execution_context"
+                && f.excerpt.contains("enclosing conditions"))
+    );
+}
+
+#[test]
 fn explicit_member_receivers_preserve_boundary_and_path_ownership() {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-receivers");
