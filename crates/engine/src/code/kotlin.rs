@@ -355,4 +355,26 @@ mod tests {
             0
         );
     }
+
+    #[test]
+    fn generic_parameters_shadow_jvm_imports_only_in_their_owner() {
+        for source in [
+            "import java.sql.Statement\nclass C<Statement : Other>(val db: Statement) { fun f(q: String) { db.executeQuery(q) } }",
+            "import java.sql.Statement\nfun <Statement : Other> f(db: Statement, q: String) { db.executeQuery(q) }",
+            "import java.sql.Statement as SQL\nfun <SQL : Other> f(db: SQL, q: String) { db.executeQuery(q) }",
+        ] {
+            assert_eq!(count(source, "kotlin-jdbc-statement-query"), 0, "{source}");
+        }
+        for source in [
+            "import java.sql.Statement\nfun <Statement : Other> f(db: java.sql.Statement, q: String) { db.executeQuery(q) }",
+            "import java.sql.Statement\nclass C<Statement : Other>(val fake: Statement) {}\nfun f(db: Statement, q: String) { db.executeQuery(q) }",
+        ] {
+            assert_eq!(count(source, "kotlin-jdbc-statement-query"), 1, "{source}");
+        }
+        let source = "import java.net.URL\nfun <URL : Other> f(url: URL) { url.openStream() }";
+        assert_eq!(count(source, "kotlin-url-read"), 0);
+        let fixture = include_str!("../../../../tests/fixtures/kotlin-generics/app.kt");
+        assert_eq!(count(fixture, "kotlin-jdbc-statement-query"), 2);
+        assert_eq!(count(fixture, "kotlin-url-read"), 0);
+    }
 }

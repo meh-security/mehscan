@@ -460,3 +460,20 @@ sequential sweep completes successfully and is the authoritative result.
 The selected JVM model, repeatability and report gates are complete. Broader
 framework/platform coverage and established-language breadth remain the open
 parity gates listed above; Kotlin remains an explicitly partial JVM profile.
+
+Generic shadow precision follow-up: Kotlin 2.4.10/JDK 17 compiles the original
+[generic controls](../tests/fixtures/kotlin-generics/README.md), and four harmless
+runtime checks pass. Before the fix, a generic `Statement` receiver was wrongly
+admitted as JDBC. Type parameters now stop canonical JVM/default scalar and local
+class identity borrowing within their syntactic owner, including constructor
+signatures and import aliases. Two actual JDBC controls remain admitted, and the
+four lookalike operations are excluded. Generic bounds and nested class scope
+still require compiler resolution; this guard deliberately remains conservative.
+
+The follow-up passes 19 focused Kotlin unit tests, all 13 Kotlin integration
+tests, the CLI build, formatting and patch checks. Freshly generated requests
+for all eleven evaluated corpora are **28/28 byte-identical** to the earlier
+53-case evaluation. Its three-model results and independent repeats therefore
+still apply to the unchanged requests; no new AI decisions or report audits are
+claimed for this follow-up. The 965-test workspace sweep above predates this
+guard; the focused checks are the validation of this change.

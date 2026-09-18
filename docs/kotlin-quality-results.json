@@ -119,5 +119,21 @@
     "ignored_policy": "Existing optional external-corpus checks; not counted as passed."
   },
   "full_application_recall_established": false,
-  "full_language_parity_established": false
+  "full_language_parity_established": false,
+  "generic_shadow_follow_up": {
+    "fixture": "../tests/fixtures/kotlin-generics/README.md",
+    "compiler": "Kotlin 2.4.10 / JDK 17",
+    "runtime_checks_passed": 4,
+    "lookalike_operations_excluded": 4,
+    "canonical_jdbc_controls_admitted": 2,
+    "kotlin_unit_tests_passed": 19,
+    "kotlin_integration_tests_passed": 13,
+    "prior_review_requests_byte_identical": 28,
+    "prior_review_requests_total": 28,
+    "prior_selected_cases_unchanged": 53,
+    "new_ai_decisions": 0,
+    "new_report_audits": 0,
+    "full_workspace_rerun": false,
+    "limitations": "Conservative syntactic generic owner guard; not compiler-backed bound, nested class scope or dispatch resolution"
+  }
 }

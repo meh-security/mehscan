@@ -17,7 +17,14 @@ impl Imports {
         use_site: &KNode<'a>,
         observed: &str,
     ) -> Option<KNode<'a>> {
-        if self.aliases.contains_key(observed) || !self.wildcards.is_empty() {
+        if self.aliases.contains_key(observed)
+            || !self.wildcards.is_empty()
+            || root.dfs().any(|n| {
+                n.kind().as_ref() == "type_parameter"
+                    && name(&n).as_deref() == Some(observed)
+                    && visible(&n, use_site)
+            })
+        {
             return None;
         }
         // Nested types are visible in primary-constructor signatures even
@@ -161,6 +168,17 @@ pub(super) fn owner<'a>(node: &KNode<'a>) -> Option<KNode<'a>> {
 }
 
 fn scope<'a>(declaration: &KNode<'a>) -> Option<KNode<'a>> {
+    if declaration.kind().as_ref() == "type_parameter" {
+        return declaration.ancestors().find(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "function_declaration"
+                    | "class_declaration"
+                    | "property_declaration"
+                    | "type_alias"
+            )
+        });
+    }
     if declaration.kind().as_ref() == "catch_block" {
         return Some(declaration.clone());
     }
@@ -211,6 +229,7 @@ pub(super) fn name_shadowed(root: &KNode<'_>, use_site: &KNode<'_>, symbol: &str
                 | "class_declaration"
                 | "object_declaration"
                 | "type_alias"
+                | "type_parameter"
                 | "function_declaration"
                 | "catch_block"
         ) && name(&n).as_deref() == Some(symbol.trim_matches('`'))
@@ -234,6 +253,28 @@ pub(super) fn binding_type<'a>(
 mod tests {
     use super::*;
     use ast_grep_core::tree_sitter::LanguageExt;
+
+    #[test]
+    fn generic_types_do_not_borrow_local_classes_or_default_scalar_identity() {
+        let source = "class FixedPath {}\nclass C<FixedPath, String, Int>(val root: FixedPath) { fun f(text: String, number: Int) {} }\nfun g(text: String) {}";
+        let ast = SupportLang::Kotlin.ast_grep(source);
+        let root = ast.root();
+        let imports = Imports::build(&root);
+        let member = root
+            .dfs()
+            .find(|n| n.kind().as_ref() == "class_parameter")
+            .unwrap();
+        assert!(imports.local_type(&root, &member, "FixedPath").is_none());
+        for parameter in root.dfs().filter(|n| n.kind().as_ref() == "parameter") {
+            let symbol = name(&parameter).unwrap();
+            let observed = if symbol == "number" { "Int" } else { "String" };
+            let expected = callable(&parameter).and_then(|n| name(&n)).as_deref() == Some("g");
+            assert_eq!(
+                imports.exact(&root, &parameter, observed, &format!("kotlin.{observed}")),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn member_type_context_uses_declaring_scope_and_rejects_import_conflicts() {
