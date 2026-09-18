@@ -19,9 +19,9 @@ pub(crate) fn presentation(rule: &str, cwes: &[String], operation: &str) -> Opti
             if rule == "kotlin-url-read" {
                 "Request values select a server-side resource URL"
             } else {
-                "Request values select a URL connection target"
+                "Request values control server-side URL connection access"
             },
-            "Prefer a fixed allowlist of server-owned destinations. Otherwise enforce allowed schemes, exact hosts and ports, resolved-address policy and redirect revalidation before access. URI parsing alone is not approval. For connection construction, verify the actual connect/read consumer before claiming resource access.",
+            "Prefer a fixed allowlist of server-owned destinations. Otherwise enforce allowed schemes, exact hosts and ports, resolved-address policy and redirect revalidation before access. URI parsing alone is not approval. Add regression tests for the affected resource-access consumer and approved and rejected destinations.",
         )
     } else if matches!(rule, "kotlin-files-read" | "kotlin-files-write") && has("CWE-22") {
         (

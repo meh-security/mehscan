@@ -1,0 +1,334 @@
+{
+  "schema_version": "1.0",
+  "scope": "Predefined source-adjudicated labels for selected admitted reviews in original Kotlin fixtures. Labels are independent of model agreement. Not whole-application recall, deployment exposure, or full language parity. Excluded lookalikes are covered separately by native tests.",
+  "cases": [
+    {
+      "fixture": "kotlin-files",
+      "path": "app.kt",
+      "callable": "allowlistedRead",
+      "rule_id": "kotlin-files-read",
+      "expected_decision": "not_issue",
+      "source_reason": "Accepted selector maps to one fixed server-owned path; other values fail."
+    },
+    {
+      "fixture": "kotlin-files",
+      "path": "app.kt",
+      "callable": "fixedRead",
+      "rule_id": "kotlin-files-read",
+      "expected_decision": "not_issue",
+      "source_reason": "File path is fixed and the request parameter is unused."
+    },
+    {
+      "fixture": "kotlin-files",
+      "path": "app.kt",
+      "callable": "fixedWriteContent",
+      "rule_id": "kotlin-files-write",
+      "expected_decision": "not_issue",
+      "source_reason": "Request influences content rather than the fixed file target; no CWE-22 path influence."
+    },
+    {
+      "fixture": "kotlin-files",
+      "path": "app.kt",
+      "callable": "normalizedRead",
+      "rule_id": "kotlin-files-read",
+      "expected_decision": "issue",
+      "source_reason": "Resolving and normalizing request name does not enforce root containment."
+    },
+    {
+      "fixture": "kotlin-files",
+      "path": "app.kt",
+      "callable": "rawRead",
+      "rule_id": "kotlin-files-read",
+      "expected_decision": "issue",
+      "source_reason": "Request String is converted directly to the unrestricted file read path."
+    },
+    {
+      "fixture": "kotlin-files",
+      "path": "app.kt",
+      "callable": "rawWrite",
+      "rule_id": "kotlin-files-write",
+      "expected_decision": "issue",
+      "source_reason": "Request String is converted directly to the unrestricted file write path."
+    },
+    {
+      "fixture": "kotlin-imports",
+      "path": "Aliased.kt",
+      "callable": "aliasedCall",
+      "rule_id": "kotlin-runtime-exec",
+      "expected_decision": "issue",
+      "source_reason": "Explicitly aliased JVM Runtime executes request-selected command."
+    },
+    {
+      "fixture": "kotlin-imports",
+      "path": "Explicit.kt",
+      "callable": "explicitCall",
+      "rule_id": "kotlin-runtime-exec",
+      "expected_decision": "issue",
+      "source_reason": "Explicit JVM import overrides custom wildcard and executes request-selected command."
+    },
+    {
+      "fixture": "kotlin-imports",
+      "path": "Wildcard.kt",
+      "callable": "qualifiedCall",
+      "rule_id": "kotlin-runtime-exec",
+      "expected_decision": "issue",
+      "source_reason": "Fully qualified JVM Runtime executes request-selected command."
+    },
+    {
+      "fixture": "kotlin-jdbc",
+      "path": "app.kt",
+      "callable": "boundPrepared",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "expected_decision": "not_issue",
+      "source_reason": "Fixed prepared SQL keeps a request value in a separately bound setString parameter."
+    },
+    {
+      "fixture": "kotlin-jdbc",
+      "path": "app.kt",
+      "callable": "fixedStatement",
+      "rule_id": "kotlin-jdbc-statement-query",
+      "expected_decision": "not_issue",
+      "source_reason": "Executed SQL is fixed and does not use the request value."
+    },
+    {
+      "fixture": "kotlin-jdbc",
+      "path": "app.kt",
+      "callable": "rawPrepared",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "expected_decision": "issue",
+      "source_reason": "Request String changes SQL before preparation; the prepared statement is subsequently executed."
+    },
+    {
+      "fixture": "kotlin-jdbc",
+      "path": "app.kt",
+      "callable": "rawStatement",
+      "rule_id": "kotlin-jdbc-statement-query",
+      "expected_decision": "issue",
+      "source_reason": "Explicit request String is interpolated into SQL passed to Statement.executeQuery."
+    },
+    {
+      "fixture": "kotlin-jdbc-factories",
+      "path": "app.kt",
+      "callable": "factoryFixed",
+      "rule_id": "kotlin-jdbc-statement-query",
+      "expected_decision": "not_issue",
+      "source_reason": "DataSource factory returns canonical Connection; executed SQL is fixed and request input is unused."
+    },
+    {
+      "fixture": "kotlin-jdbc-factories",
+      "path": "app.kt",
+      "callable": "factoryPreparedBound",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "expected_decision": "not_issue",
+      "source_reason": "DataSource factory returns canonical Connection; fixed placeholder SQL uses separately bound request text."
+    },
+    {
+      "fixture": "kotlin-jdbc-factories",
+      "path": "app.kt",
+      "callable": "factoryPreparedRaw",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "expected_decision": "issue",
+      "source_reason": "DriverManager factory returns canonical Connection; interpolated prepared SQL is subsequently executed; injection reproduced with H2."
+    },
+    {
+      "fixture": "kotlin-jdbc-factories",
+      "path": "app.kt",
+      "callable": "factoryRaw",
+      "rule_id": "kotlin-jdbc-statement-query",
+      "expected_decision": "issue",
+      "source_reason": "Canonical inferred Statement executes request-interpolated SQL; benign predicate injection reproduced with H2."
+    },
+    {
+      "fixture": "kotlin-network",
+      "path": "app.kt",
+      "callable": "allowlistedStream",
+      "rule_id": "kotlin-url-read",
+      "expected_decision": "not_issue",
+      "source_reason": "Only the approved selector maps to the exact server-owned loopback approved endpoint. Other selectors throw before access; direct checks confirm rejection and approved success."
+    },
+    {
+      "fixture": "kotlin-network",
+      "path": "app.kt",
+      "callable": "connectionOnly",
+      "rule_id": "kotlin-url-connection",
+      "expected_decision": "not_issue",
+      "source_reason": "Canonical URL openConnection is lazy. This method returns only the connection class name and supplies no connect/read consumer. The loopback request counter confirms no request for this direct control."
+    },
+    {
+      "fixture": "kotlin-network",
+      "path": "app.kt",
+      "callable": "constructorStream",
+      "rule_id": "kotlin-url-read",
+      "expected_decision": "issue",
+      "source_reason": "The mapped request URL reaches canonical URL construction and resource reading through immutable aliases without a destination policy. Direct loopback execution retrieved the private fixture."
+    },
+    {
+      "fixture": "kotlin-network",
+      "path": "app.kt",
+      "callable": "fetch",
+      "rule_id": "kotlin-url-read",
+      "expected_decision": "issue",
+      "source_reason": "Exact typed coroutineRaw caller context supplies a mapped request URL to fetch. Its coroutine reads the canonical URI/URL resource without a destination policy. Direct loopback execution retrieved the private fixture; no native cross-callable path is claimed."
+    },
+    {
+      "fixture": "kotlin-network",
+      "path": "app.kt",
+      "callable": "fixedStream",
+      "rule_id": "kotlin-url-read",
+      "expected_decision": "not_issue",
+      "source_reason": "The supplied request URL is unused. This original control reads the exact server-owned loopback approved endpoint; the target fixture is trusted and does not redirect."
+    },
+    {
+      "fixture": "kotlin-network",
+      "path": "app.kt",
+      "callable": "rawConnection",
+      "rule_id": "kotlin-url-connection",
+      "expected_decision": "issue",
+      "source_reason": "The mapped request URL selects the canonical URL connection; this method connects and reads the response. Direct loopback execution retrieved the private fixture."
+    },
+    {
+      "fixture": "kotlin-network",
+      "path": "app.kt",
+      "callable": "rawStream",
+      "rule_id": "kotlin-url-read",
+      "expected_decision": "issue",
+      "source_reason": "The mapped request URL reaches canonical URI/URL resource reading without a destination policy. Direct loopback execution retrieved the caller-selected private fixture."
+    },
+    {
+      "fixture": "kotlin-prepared-ownership",
+      "path": "app.kt",
+      "callable": "conditionalRaw",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "expected_decision": "issue",
+      "source_reason": "Caller may enable execution of request-interpolated SQL; true and false branches exercised directly with H2."
+    },
+    {
+      "fixture": "kotlin-prepared-ownership",
+      "path": "app.kt",
+      "callable": "ownedBound",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "expected_decision": "not_issue",
+      "source_reason": "Fixed placeholder SQL resets and then binds its own request value before execution."
+    },
+    {
+      "fixture": "kotlin-prepared-ownership",
+      "path": "app.kt",
+      "callable": "ownedRaw",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "expected_decision": "issue",
+      "source_reason": "Request SQL is executed through an immutable alias; an unrelated object binding cannot protect it; H2 predicate injection reproduced."
+    },
+    {
+      "fixture": "kotlin-prepared-ownership",
+      "path": "app.kt",
+      "callable": "preparationOnly",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "expected_decision": "not_issue",
+      "source_reason": "Fixed SQL is prepared and closed without execution; request input is unused."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "boundJdbcQuery",
+      "rule_id": "kotlin-jdbc-template-query",
+      "expected_decision": "not_issue",
+      "source_reason": "Fixed SQL with a separately bound positional value."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "boundQuery",
+      "rule_id": "kotlin-persistence-query",
+      "expected_decision": "not_issue",
+      "source_reason": "Fixed HQL uses a separately bound named value."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "fixedCommand",
+      "rule_id": "kotlin-runtime-exec",
+      "expected_decision": "not_issue",
+      "source_reason": "The executable is a fixed local literal, with no request-controlled command."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "numericQuery",
+      "rule_id": "kotlin-persistence-query",
+      "expected_decision": "not_issue",
+      "source_reason": "Long binding restricts the interpolated operand to numeric data."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "rawCommand",
+      "rule_id": "kotlin-runtime-exec",
+      "expected_decision": "issue",
+      "source_reason": "The request chooses the executable and arguments passed to Runtime.exec."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "rawFileRead",
+      "rule_id": "kotlin-files-read",
+      "expected_decision": "issue",
+      "source_reason": "Request name is resolved and normalized without root confinement before Files.readString."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "rawFileWrite",
+      "rule_id": "kotlin-files-write",
+      "expected_decision": "issue",
+      "source_reason": "Request name is resolved and normalized without root confinement before Files.writeString."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "rawJdbcQuery",
+      "rule_id": "kotlin-jdbc-template-query",
+      "expected_decision": "issue",
+      "source_reason": "Explicit request String is interpolated into JdbcTemplate SQL text."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "rawQuery",
+      "rule_id": "kotlin-persistence-query",
+      "expected_decision": "issue",
+      "source_reason": "Explicit request String is interpolated into HQL text."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "safeFileRead",
+      "rule_id": "kotlin-files-read",
+      "expected_decision": "not_issue",
+      "source_reason": "Accepted selector maps to the fixed readme filename; other names are rejected."
+    },
+    {
+      "fixture": "kotlin-receivers",
+      "path": "app.kt",
+      "callable": "lookalikeRead",
+      "rule_id": "kotlin-files-read",
+      "expected_decision": "not_issue",
+      "source_reason": "Actual OtherPath member ignores input and returns a fixed target."
+    },
+    {
+      "fixture": "kotlin-receivers",
+      "path": "app.kt",
+      "callable": "memberQuery",
+      "rule_id": "kotlin-persistence-query",
+      "expected_decision": "issue",
+      "source_reason": "Explicit member is the canonical EntityManager; same-named local does not change it."
+    },
+    {
+      "fixture": "kotlin-receivers",
+      "path": "app.kt",
+      "callable": "memberRead",
+      "rule_id": "kotlin-files-read",
+      "expected_decision": "issue",
+      "source_reason": "Explicit member is the canonical Path; request selects the read path."
+    }
+  ]
+}

@@ -1872,15 +1872,43 @@ fn kotlin_finding_description(
         "kotlin-runtime-exec" => {
             "Impact: A caller can select unintended server-side processes or their arguments. Verification: For the named operation, confirm that server-owned allowlisted actions succeed while unsupported executables and option-like request values are rejected in regression tests."
         }
-        "kotlin-url-read" | "kotlin-url-connection" => {
-            "Impact: Where the shown consumer performs I/O, the server can access caller-selected resources using its network reach and process privileges, subject to URL protocol handling. Connection construction alone does not establish a request. Verification: For the affected operation, confirm approved destinations work and disallowed schemes, hosts, ports and resolved addresses are rejected; exercise redirect handling with disposable local targets. Deployment reach and external exploit reproduction are not established."
+        "kotlin-url-read" => {
+            "Impact: Reading the caller-selected URL can expose resources accessible through the server's network reach and process privileges, subject to URL protocol handling. Verification: For the affected read, confirm approved destinations work and disallowed schemes, hosts, ports and resolved addresses are rejected; exercise redirect handling with disposable local targets. Deployment reach and external exploit reproduction are not established."
+        }
+        "kotlin-url-connection" => {
+            "Impact: The reviewed connection consumer can access caller-selected resources using the server's network reach and process privileges, subject to URL protocol handling. Verification: Test the affected connect/read consumer with approved and rejected schemes, hosts, ports and resolved addresses; exercise redirect handling with disposable local targets. Deployment reach and external exploit reproduction are not established."
         }
         "kotlin-message-digest" if kotlin_digest_presentation(rule, facts).is_some() => {
             "Impact: The source authentication configuration falls back to a legacy MD5 credential digest, weakening protection against offline credential guessing. The algorithm expression is dynamic: unknown literal metadata does not negate the shown MD5 fallback or prove every invocation uses MD5. Verification: Confirm that the replacement authentication configuration rejects MD5 and that client compatibility is tested. These are source-level consequences; deployment and exploit reproduction are not established."
         }
         _ => return summary.to_string(),
     };
-    format!("{summary} {detail}")
+    let mut description = format!("{summary} {detail}");
+    if matches!(rule, "kotlin-url-read" | "kotlin-url-connection") {
+        for fact in facts
+            .iter()
+            .filter(|fact| fact.role == "source_context")
+            .take(2)
+        {
+            description.push_str(&format!(
+                " Operation context: {}:{}-{} ({}).",
+                fact.location.path, fact.location.start.line, fact.location.end.line, fact.symbol
+            ));
+        }
+    }
+    if rule.starts_with("kotlin-") {
+        for fact in facts
+            .iter()
+            .filter(|fact| fact.role == "exact_caller_context")
+            .take(4)
+        {
+            description.push_str(&format!(
+                " Supplied caller source: {}:{} ({}) uses the typed source relationship; runtime dispatch is not verified.",
+                fact.location.path, fact.location.start.line, fact.symbol
+            ));
+        }
+    }
+    description
 }
 
 fn default_severity() -> ReportedSeverity {
@@ -14324,6 +14352,51 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn kotlin_url_handoff_preserves_caller_trace_without_promoting_a_flow() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-network");
+        let jobs = build_all_path_review_jobs(&fixture, None, true).unwrap();
+        let fetch = jobs
+            .observation_reviews
+            .iter()
+            .find(|review| {
+                review
+                    .evidence
+                    .iter()
+                    .any(|e| e.enclosing_symbol.as_deref() == Some("fetch"))
+            })
+            .unwrap();
+        let caller = fetch
+            .facts
+            .iter()
+            .find(|fact| fact.role == "exact_caller_context")
+            .unwrap();
+        let description = kotlin_finding_description(
+            "kotlin-url-read",
+            FindingStatus::Issue,
+            "The caller URL is read.",
+            &fetch.facts,
+        );
+        assert!(description.contains(&format!(
+            "{}:{}",
+            caller.location.path, caller.location.start.line
+        )));
+        assert!(description.contains("coroutineRaw"));
+        assert!(description.contains("Operation context: app.kt:"));
+        assert!(description.contains("runtime dispatch is not verified"));
+        assert!(!description.contains("Where the shown consumer"));
+        assert_eq!(
+            kotlin_finding_description(
+                "kotlin-url-connection",
+                FindingStatus::NeedsReview,
+                "The connection consumer is not supplied.",
+                &fetch.facts,
+            ),
+            "The connection consumer is not supplied."
+        );
+    }
 
     #[test]
     fn confirmed_tls_findings_describe_behavior_and_validation_fix() {

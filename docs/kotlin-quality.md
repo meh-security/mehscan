@@ -20,7 +20,7 @@ Full parity remains a release gate, not a claim made by this checkpoint.
 | [Original JDBC factory controls](../tests/fixtures/kotlin-jdbc-factories/README.md) | Branch fixture | Inferred Statement/Connection raw, fixed and bound SQL pairs plus a constant lookalike; compiled and directly tested with H2. |
 | [Original prepared ownership controls](../tests/fixtures/kotlin-prepared-ownership/README.md) | Branch fixture | Exact alias execution, unrelated binding exclusion, reset/rebind and conditional or preparation-only behavior; compiled and directly tested with H2. |
 | [Original JVM URL controls](../tests/fixtures/kotlin-network/README.md) | Branch fixture | URL/URI factories, raw/fixed/allowlisted reads, lazy construction and coroutine I/O; compiled and directly checked against disposable loopback targets. |
-| [Seqra mixed Spring demo](https://github.com/seqra/java-spring-demo/tree/66421a37ae573543c0a71e7b7689adf26f44cf38) | `66421a37ae573543c0a71e7b7689adf26f44cf38` | MIT-licensed intentionally vulnerable mixed Java/Kotlin source; coroutine URL-fetch coverage probe, parsed only and not part of the selected model oracle. |
+| [Seqra mixed Spring demo](https://github.com/seqra/java-spring-demo/tree/66421a37ae573543c0a71e7b7689adf26f44cf38) | `66421a37ae573543c0a71e7b7689adf26f44cf38` | MIT-licensed intentionally vulnerable mixed Java/Kotlin source; three selected original Kotlin files compiled with validation dependencies and two direct loopback method checks; the Kotlin fetch is included in the latest selected oracle. Whole-app build and deployed MVC exposure are unverified. |
 
 External source stays outside the public repository. Discovery now admits
 Petclinic production packages containing `samples` below `src/main/kotlin`:
@@ -377,6 +377,9 @@ ignored by their existing policy; they are not counted as new verification.
 
 ## Remaining release gates
 
+The historical quota-interrupted gates above are superseded by the fresh
+expanded model and report checks below. Broader language parity remains open.
+
 The additional Seqra source probe scans twenty-four files with no parse failures.
 Its Kotlin controller supplies both a String request parameter and a request-body
 DTO to `UrlFetchService.fetch`. The service passes the URL through
@@ -395,3 +398,65 @@ unproven; the probe is separate from the historical model comparison.
   a small successful slice cannot certify comparable language recall.
 - Keep Kotlin explicitly partial until those gaps are covered. Multiplatform
   syntax parsing does not certify Android, Kotlin/JS or Kotlin/Native security.
+
+## Fresh expanded AI and report checkpoint — 2026-09-17
+
+The expanded oracle contains **53 predefined source labels**, with 26 positive
+and 27 negative cases. It includes the previous 45 cases, seven original URL
+controls and the pinned Seqra Kotlin fetch. Seqra's three Kotlin files are an
+explicit source selection; the other mixed-language reviews from the whole
+repository are not silently counted as Kotlin coverage.
+
+Fresh `gpt-5.6-luna`, `gpt-5.6-terra` and `gpt-5.6-sol`, each at medium reasoning,
+all match **53/53 labels**, with zero selected false positives or false negatives.
+Three-model agreement is 53/53. A separate fresh Luna/Terra round also matches
+53/53 labels for each model and agrees on all 53. Neither earlier verdicts nor
+oracle answers are supplied to model prompts. The repeat began with 22 precision
+controls and subsequently covered the remaining 31; its controls are not copies
+of the primary responses.
+
+Selected precision and recall are 100% for all five passes. These are measurements
+of admitted cases, not whole-application recall or comparable framework breadth.
+All 140 model responses over 28 distinct bundles pass exact fingerprint, ID,
+confidence-policy and complete-set validation, covering 265 decision instances.
+The [original fixture oracle](../tests/fixtures/kotlin-review-oracle.json) publishes
+41 source-adjudicated fixture labels independently of the model results.
+
+Report audits exposed actual handoff defects: conditional I/O caveats obscured
+confirmed URL consumers; caller/consumer locations and grouped review IDs were
+missing; overriding scope captions appended conflicting inherited labels; and
+the evaluation caption incorrectly described Spring paths in the Ktor selection.
+The handoff now distinguishes URL reads and connection use, cites bounded
+operation/caller context, retains instance review IDs and replaces inherited
+labels of the same kind. Scope statements distinguish isolated fixture builds
+and checks from production deployment and third-party whole-application builds.
+Source availability is compile/build inclusion, not execution frequency; typed
+caller context is source evidence, not verified runtime dispatch.
+
+All **55 final report sets** pass mechanical count/location reconciliation,
+canonical-decision preservation and Markdown issue-ID checks. Independent audits
+cover all five security passes across eleven nonempty corpora. The first final
+audit round marked 54 ready; the remaining Ktor repeat report had the erroneous
+framework caption. All five Ktor reports were corrected and freshly re-audited,
+and all pass. Combined with the unchanged reports' audits, **55/55 are ready**.
+Earlier failures and warnings remain in the evaluation history; they are not
+substituted for changed artifacts. Earlier Digest follow-up specificity warnings
+remain useful guidance even when a subsequent auditor accepts the handoff.
+
+All **49 isolated runtime checks** pass again: twenty Spring fixture checks,
+nine JDBC factory checks, eight prepared ownership checks, ten URL checks and
+two direct pinned Seqra controller-method checks. No claim is made that the
+third-party applications build in their original full stacks or are exposed in
+production. The [machine-readable results](kotlin-quality-results.json) record
+the response contract checks, report checks and final workspace test outcome.
+
+The final full offline workspace/all-target sweep passes: **965 passed, zero
+failed and 41 ignored**. Ignored checks are existing optional external-corpus
+tests and are not counted as passed. The focused caller-trace and grouped-ID
+regressions, CLI label replacement checks, formatting and patch checks pass.
+An overlapping earlier retry hit a Windows executable linker lock; the final
+sequential sweep completes successfully and is the authoritative result.
+
+The selected JVM model, repeatability and report gates are complete. Broader
+framework/platform coverage and established-language breadth remain the open
+parity gates listed above; Kotlin remains an explicitly partial JVM profile.

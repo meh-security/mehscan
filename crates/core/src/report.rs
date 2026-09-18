@@ -355,6 +355,7 @@ fn render_finding_group(output: &mut String, index: usize, findings: &[&Reported
         ));
         render_availability(output, finding);
         render_flow(output, finding);
+        render_review_ids(output, finding);
     }
     output.push('\n');
 }
@@ -394,6 +395,7 @@ fn render_finding(
 
     render_availability(output, finding);
     render_flow(output, finding);
+    render_review_ids(output, finding);
 
     if include_checks {
         output.push_str("\nRequired checks:\n\n");
@@ -407,6 +409,21 @@ fn render_finding(
         ));
     }
     output.push('\n');
+}
+
+fn render_review_ids(output: &mut String, finding: &ReportedFinding) {
+    if !finding.provenance.review_ids.is_empty() {
+        output.push_str(&format!(
+            "\n- Review IDs: {}\n",
+            finding
+                .provenance
+                .review_ids
+                .iter()
+                .map(|id| markdown_code_span(id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
 }
 
 fn render_flow(output: &mut String, finding: &ReportedFinding) {
@@ -650,6 +667,7 @@ mod tests {
         second.rule_id = "cpp-other-rule-for-same-invariant".to_string();
         second.primary_location = location("src/reader.cpp", 71);
         second.description = "A second decoder performs the same unchecked read.".to_string();
+        second.provenance.review_ids = vec!["review-2".to_string()];
         let report = FindingReport {
             schema_version: FINDING_REPORT_SCHEMA_VERSION.to_string(),
             report_kind: "triaged_findings".to_string(),
@@ -686,6 +704,9 @@ mod tests {
         assert!(markdown.contains("(2 instances)"));
         assert!(markdown.contains("`routes/search.ts:23:3`"));
         assert!(markdown.contains("`src/reader.cpp:71:3`"));
+        assert!(markdown.contains("`review-1`"));
+        assert!(markdown.contains("`review-2`"));
+        assert_eq!(markdown.matches("- Review IDs:").count(), 2);
         assert_eq!(markdown.matches("Remediation:").count(), 1);
         assert_eq!(markdown.matches("### 1.").count(), 1);
     }

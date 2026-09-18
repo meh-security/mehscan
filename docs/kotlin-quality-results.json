@@ -1,0 +1,123 @@
+{
+  "schema_version": "1.0",
+  "date": "2026-09-17",
+  "profile": "partial Kotlin JVM",
+  "scope": "Selected admitted source cases only; independent source oracle, not whole-application or language recall",
+  "selected_cases": 53,
+  "positive_cases": 26,
+  "negative_cases": 27,
+  "corpus_cases": {
+    "factory-controls": 4,
+    "file-controls": 6,
+    "import-controls": 3,
+    "jdbc-controls": 4,
+    "ktor-samples": 9,
+    "network-controls": 7,
+    "petclinic-vulnerable": 2,
+    "prepared-controls": 4,
+    "quality-app": 10,
+    "receiver-controls": 3,
+    "seqra-kotlin": 1
+  },
+  "original_fixture_oracle": "../tests/fixtures/kotlin-review-oracle.json",
+  "reasoning_effort": "medium",
+  "primary": {
+    "luna": {
+      "exact": 53,
+      "total": 53,
+      "true_positives": 26,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "precision": 1.0,
+      "selected_case_recall": 1.0
+    },
+    "terra": {
+      "exact": 53,
+      "total": 53,
+      "true_positives": 26,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "precision": 1.0,
+      "selected_case_recall": 1.0
+    }
+  },
+  "independent_repeat": {
+    "luna": {
+      "exact": 53,
+      "total": 53,
+      "true_positives": 26,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "precision": 1.0,
+      "selected_case_recall": 1.0
+    },
+    "terra": {
+      "exact": 53,
+      "total": 53,
+      "true_positives": 26,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "precision": 1.0,
+      "selected_case_recall": 1.0
+    }
+  },
+  "independent_third_reviewer": {
+    "model": "gpt-5.6-sol",
+    "exact": 53,
+    "total": 53,
+    "true_positives": 26,
+    "false_positives": 0,
+    "false_negatives": 0,
+    "precision": 1.0,
+    "selected_case_recall": 1.0
+  },
+  "three_model_agreement": {
+    "agreed": 53,
+    "total": 53
+  },
+  "repeat_luna_terra_agreement": {
+    "agreed": 53,
+    "total": 53
+  },
+  "response_contract": {
+    "distinct_bundles": 28,
+    "validated_model_responses": 140,
+    "decision_instances": 265,
+    "fingerprints_ids_confidence_and_complete_sets": "pass"
+  },
+  "report_quality": {
+    "final_report_sets": 55,
+    "ready_for_engineer": 55,
+    "verdict_counts": {
+      "pass": 55
+    },
+    "targeted_ktor_caption_reaudits": 5,
+    "prior_audit_failures_and_warnings": "Retained in the chronological quality checkpoint; not substituted for changed artifacts."
+  },
+  "projection_checks": {
+    "report_sets": 55,
+    "counts_and_sarif_locations": "pass",
+    "canonical_decisions_preserved": "pass",
+    "markdown_issue_review_ids": "pass"
+  },
+  "runtime_checks": {
+    "spring_teaching_fixture": 20,
+    "jdbc_factory_fixture": 9,
+    "prepared_ownership_fixture": 8,
+    "url_fixture": 10,
+    "pinned_seqra_direct_methods": 2,
+    "total": 49,
+    "status": "pass",
+    "scope": "Isolated original fixtures and selected pinned methods only; no third-party whole-app build, framework binding, or production deployment claim."
+  },
+  "workspace_tests": {
+    "command": "cargo test --workspace --all-targets --locked --offline -j 4",
+    "status": "pass",
+    "passed": 965,
+    "failed": 0,
+    "ignored": 41,
+    "ignored_policy": "Existing optional external-corpus checks; not counted as passed."
+  },
+  "full_application_recall_established": false,
+  "full_language_parity_established": false
+}
