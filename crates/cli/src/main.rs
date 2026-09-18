@@ -50,6 +50,7 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     }
     let run = PathBuf::from(parsed.required("--run")?);
     let responses = parsed.optional("--responses").map(PathBuf::from);
+    let allow_partial = parsed.optional_bool("--allow-partial")?.unwrap_or(false);
     let format = match parsed.optional("--format").as_deref().unwrap_or("json") {
         "json" => ReportOutputFormat::Json,
         "sarif" => ReportOutputFormat::Sarif,
@@ -64,7 +65,8 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let scope = parse_report_scope(&mut parsed);
     parsed.finish()?;
 
-    let (manifest, bundle_responses) = read_complete_bundle_responses(&run, responses.as_deref())?;
+    let (manifest, bundle_responses) =
+        read_complete_bundle_responses(&run, responses.as_deref(), allow_partial)?;
     let mut report = engine(
         mehscan_engine::investigation::build_finding_report_from_manifest(
             &manifest,
@@ -522,6 +524,44 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             parsed.finish()?;
             print_json(&diff_path_review_bundle_runs(&before, &after)?)
         }
+        "review-response-schema" => {
+            let path = PathBuf::from(parsed.required("--bundle")?);
+            let output = parsed.optional("--output").map(PathBuf::from);
+            parsed.finish()?;
+            let bundle: mehscan_core::PathReviewBundle = serde_json::from_str(
+                &fs::read_to_string(&path)
+                    .map_err(|e| format!("could not read bundle {}: {e}", path.display()))?,
+            )
+            .map_err(|e| format!("invalid bundle: {e}"))?;
+            let ids = &bundle.review_ids;
+            if ids.is_empty()
+                || bundle.bundle_fingerprint.is_empty()
+                || ids.iter().collect::<BTreeSet<_>>().len() != ids.len()
+            {
+                return Err("bundle must contain a fingerprint and distinct review IDs".to_string());
+            }
+            let schema = serde_json::json!({
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object", "additionalProperties": false,
+                "required": ["schema_version", "bundle_fingerprint", "results"],
+                "properties": {
+                    "schema_version": {"type": "string", "const": "1.0"},
+                    "bundle_fingerprint": {"type": "string", "const": bundle.bundle_fingerprint},
+                    "results": {"type": "array", "minItems": ids.len(), "maxItems": ids.len(), "items": {
+                        "type": "object", "additionalProperties": false,
+                        "required": ["review_id", "decision", "confidence", "summary", "checks"],
+                        "properties": {
+                            "review_id": {"type": "string", "enum": ids},
+                            "decision": {"type": "string", "enum": ["issue", "not_issue", "needs_review"]},
+                            "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                            "summary": {"type": "string", "maxLength": 450},
+                            "checks": {"type": "array", "items": {"type": "string"}}
+                        }
+                    }}
+                }
+            });
+            write_json(&schema, output.as_deref())
+        }
         "review-bundle-triage" => {
             let bundle_path = PathBuf::from(parsed.required("--bundle")?);
             let responses_path = PathBuf::from(parsed.required("--responses")?);
@@ -561,15 +601,24 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
         "review-bundle-summary" => {
             let run = PathBuf::from(parsed.required("--run")?);
             let responses = parsed.optional("--responses").map(PathBuf::from);
+            let allow_partial = parsed.optional_bool("--allow-partial")?.unwrap_or(false);
             parsed.finish()?;
             let (manifest, bundle_responses) =
-                read_complete_bundle_responses(&run, responses.as_deref())?;
-            print_json(&engine(
+                read_complete_bundle_responses(&run, responses.as_deref(), allow_partial)?;
+            let mut summary = engine(
                 mehscan_engine::investigation::summarize_path_review_bundle_manifest_run(
                     &manifest,
                     &bundle_responses,
                 ),
-            )?)
+            )?;
+            summary.quality_warnings.extend(
+                manifest
+                    .scope
+                    .iter()
+                    .filter(|s| s.starts_with("Partial triage:"))
+                    .cloned(),
+            );
+            print_json(&summary)
         }
         "review-triage" => {
             let responses = PathBuf::from(parsed.required("--responses")?);
@@ -818,6 +867,7 @@ fn engine<T>(result: Result<T, mehscan_engine::EngineError>) -> Result<T, String
 fn read_complete_bundle_responses(
     run: &Path,
     responses: Option<&Path>,
+    allow_partial: bool,
 ) -> Result<
     (
         mehscan_core::PathReviewBundleManifest,
@@ -835,17 +885,28 @@ fn read_complete_bundle_responses(
             manifest_path.display()
         )
     })?;
-    let manifest: mehscan_core::PathReviewBundleManifest = serde_json::from_str(&manifest_source)
-        .map_err(|error| {
-        format!(
-            "path-review bundle manifest {} is invalid: {error}",
-            manifest_path.display()
-        )
-    })?;
+    let mut manifest: mehscan_core::PathReviewBundleManifest =
+        serde_json::from_str(&manifest_source).map_err(|error| {
+            format!(
+                "path-review bundle manifest {} is invalid: {error}",
+                manifest_path.display()
+            )
+        })?;
     let response_directory = responses
         .map(Path::to_path_buf)
         .unwrap_or_else(|| run.join("responses"));
+    if manifest.bundle_count != manifest.bundles.len()
+        || manifest.review_count
+            != manifest
+                .bundles
+                .iter()
+                .map(|e| e.review_count)
+                .sum::<usize>()
+    {
+        return Err("review manifest count does not match the run".to_string());
+    }
     let mut bundle_responses = Vec::new();
+    let mut selected = Vec::new();
     for entry in &manifest.bundles {
         let request_path = run.join("requests").join(&entry.filename);
         let response_path = response_directory.join(&entry.filename);
@@ -862,18 +923,31 @@ fn read_complete_bundle_responses(
                     request_path.display()
                 )
             })?;
+        if bundle.job_fingerprint != manifest.job_fingerprint
+            || bundle.review_ids != entry.review_ids
+            || bundle.review_ids.len() != entry.review_count
+        {
+            return Err(format!(
+                "path-review bundle {} does not match its manifest identity or review count",
+                request_path.display()
+            ));
+        }
         if bundle.bundle_fingerprint != entry.bundle_fingerprint {
             return Err(format!(
                 "path-review bundle {} does not match its manifest fingerprint",
                 request_path.display()
             ));
         }
-        let response_source = fs::read_to_string(&response_path).map_err(|error| {
-            format!(
-                "could not read complete path-review bundle response {}: {error}",
-                response_path.display()
-            )
-        })?;
+        let response_source = match fs::read_to_string(&response_path) {
+            Ok(source) => source,
+            Err(error) if allow_partial && error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "could not read complete path-review bundle response {}: {error}",
+                    response_path.display()
+                ));
+            }
+        };
         let response_set: mehscan_core::PathReviewBundleResponseSet =
             serde_json::from_str(&response_source).map_err(|error| {
                 format!(
@@ -881,7 +955,14 @@ fn read_complete_bundle_responses(
                     response_path.display()
                 )
             })?;
+        selected.push(entry.clone());
         bundle_responses.push((bundle, response_set));
+    }
+    if selected.len() != manifest.bundle_count {
+        manifest.scope.push(format!("Partial triage: {}/{} bundles and {}/{} reviews completed; unreviewed bundles are excluded, not dismissed.", selected.len(), manifest.bundle_count, selected.iter().map(|e| e.review_count).sum::<usize>(), manifest.review_count));
+        manifest.bundle_count = selected.len();
+        manifest.review_count = selected.iter().map(|e| e.review_count).sum();
+        manifest.bundles = selected;
     }
     Ok((manifest, bundle_responses))
 }
@@ -1547,13 +1628,13 @@ fn print_benchmark_summary(report: &mehscan_engine::benchmark::BenchmarkReport) 
 
 fn print_help() {
     println!(
-        "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact]\n  mehscan report --run DIR [--responses DIR] [--format json|sarif|markdown] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n\nRun a command with --help for details."
+        "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact]\n  mehscan report --run DIR [--responses DIR] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n\nRun a command with --help for details."
     );
 }
 
 fn print_report_help() {
     println!(
-        "USAGE:\n  mehscan report --run DIR [--responses DIR] [--format json|sarif|markdown] [--output PATH] [--reviewer NAME] [--include-dismissed true|false] [--scope-label TEXT] [--project NAME] [--revision REF]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. Markdown is the human-readable summary and prioritizes unresolved review checks before confirmed and dismissed results; use --include-dismissed true to include not-issue summaries. --responses defaults to DIR/responses. Scope, project and revision labels are user-supplied handoff metadata, not verified security facts."
+        "USAGE:\n  mehscan report --run DIR [--responses DIR] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH] [--reviewer NAME] [--include-dismissed true|false] [--scope-label TEXT] [--project NAME] [--revision REF]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. Markdown is the human-readable summary and prioritizes unresolved review checks before confirmed and dismissed results; use --include-dismissed true to include not-issue summaries. --responses defaults to DIR/responses. --allow-partial true skips missing response files only and labels completed versus total review coverage; present responses must still validate as complete bundles. Scope, project and revision labels are user-supplied handoff metadata, not verified security facts."
     );
 }
 
@@ -1585,8 +1666,9 @@ USAGE:
   mehscan investigate review-tasks [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate review-bundles [ROOT] --output DIR [--context-lines N] [--max-bytes N] [--max-reviews N] [--include-review-material true|false] [--scope-label TEXT] [--project NAME] [--revision REF]
   mehscan investigate review-bundle-diff --before DIR --after DIR
+  mehscan investigate review-response-schema --bundle PATH [--output PATH]
   mehscan investigate review-bundle-triage --bundle PATH --responses PATH
-  mehscan investigate review-bundle-summary --run DIR [--responses DIR]
+  mehscan investigate review-bundle-summary --run DIR [--responses DIR] [--allow-partial true|false]
   mehscan investigate review-triage [ROOT] --responses PATH [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate review-progress [ROOT] --responses PATH [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate neighborhoods [ROOT] --language csharp [--limit N]
@@ -1602,7 +1684,7 @@ USAGE:
   mehscan investigate native-call-sites [ROOT] --callee NAME [--path FILE] [--limit N]
   mehscan investigate structural [ROOT] --language LANG --pattern PATTERN [--path FILE] [--limit N]
 
-Review jobs package bounded security-path candidates and non-path observation neighborhoods with source excerpts, relevant configuration facts, open questions, a stable fingerprint, and a compact cross-language response contract. Each security path includes compact rule-derived review_basis semantics. Context-only source, guard, sanitizer, validation, literal, and resource observations do not become standalone verdict jobs. review-bundles scans once, groups the complete admitted review set by review kind and capability, retains the CWE union as category metadata, and writes self-contained requests with readable semantic filenames under DIR/requests plus manifest.json; requests default to independent ceilings of 512 KiB and 20 reviews, while --max-reviews accepts 1-100 for controlled experiments or retry tuning. A bundle response is accepted or retried as a whole by review-bundle-triage. review-bundle-summary validates every manifest response and deduplicates issue decisions across path and observation streams by capability, exact sink range, and rule-defined security invariant. review-tasks and review-progress remain available as low-level diagnostics. Complete paths are ordered first, followed by production observation neighborhoods. Teaching/code-fix source payloads are excluded by default and can be admitted explicitly with --include-review-material true. Review pages contain at most 100 items and expose next_offset for stable continuation with --offset. The funnel summarizes linked and unlinked compatible source/sink observations for AI routing. C# neighborhoods collect exact cross-file review facts but are not security paths. Triage commands must repeat the exact page offset and material policy. Query limits default to 200 and cannot exceed 1000. Investigation units default to 25 and cannot exceed 100. Source retrieval is capped at 400 lines and 64 KiB. Native call-sites is a C/C++ syntax inventory only: it does not resolve types, overloads, aliases, macros, control flow, call graphs, or value flow and never changes scan evidence or review admission. Structural patterns are ephemeral and are never persisted as rules."#
+Review jobs package bounded security-path candidates and non-path observation neighborhoods with source excerpts, relevant configuration facts, open questions, a stable fingerprint, and a compact cross-language response contract. Each security path includes compact rule-derived review_basis semantics. Context-only source, guard, sanitizer, validation, literal, and resource observations do not become standalone verdict jobs. review-bundles scans once, groups the complete admitted review set by review kind and capability, retains the CWE union as category metadata, and writes self-contained requests with readable semantic filenames under DIR/requests plus manifest.json; requests default to independent ceilings of 512 KiB and 20 reviews, while --max-reviews accepts 1-100 for controlled experiments or retry tuning. A bundle response is accepted or retried as a whole by review-bundle-triage. review-bundle-summary validates every manifest response by default; --allow-partial true summarizes available complete responses and reports incomplete triage coverage. It deduplicates issue decisions across path and observation streams by capability, exact sink range, and rule-defined security invariant. review-tasks and review-progress remain available as low-level diagnostics. Complete paths are ordered first, followed by production observation neighborhoods. Teaching/code-fix source payloads are excluded by default and can be admitted explicitly with --include-review-material true. Review pages contain at most 100 items and expose next_offset for stable continuation with --offset. The funnel summarizes linked and unlinked compatible source/sink observations for AI routing. C# neighborhoods collect exact cross-file review facts but are not security paths. Triage commands must repeat the exact page offset and material policy. Query limits default to 200 and cannot exceed 1000. Investigation units default to 25 and cannot exceed 100. Source retrieval is capped at 400 lines and 64 KiB. Native call-sites is a C/C++ syntax inventory only: it does not resolve types, overloads, aliases, macros, control flow, call graphs, or value flow and never changes scan evidence or review admission. Structural patterns are ephemeral and are never persisted as rules."#
     );
 }
 

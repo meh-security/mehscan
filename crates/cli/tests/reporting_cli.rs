@@ -252,3 +252,132 @@ fn timings_are_machine_readable_and_do_not_change_stdout() {
             .is_some_and(|count| count > 0)
     );
 }
+
+#[test]
+fn partial_triage_reports_coverage_and_rejects_invalid_present_responses() {
+    let directory =
+        std::env::temp_dir().join(format!("mehscan-partial-report-{}", std::process::id()));
+    let invoke = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let generated = invoke(&[
+        "investigate",
+        "review-bundles",
+        fixture_root().to_str().unwrap(),
+        "--output",
+        directory.to_str().unwrap(),
+        "--max-reviews",
+        "1",
+        "--include-review-material",
+        "true",
+    ]);
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let manifest: serde_json::Value = serde_json::from_slice(&generated.stdout).unwrap();
+    assert!(manifest["bundle_count"].as_u64().unwrap() > 1);
+    let name = manifest["bundles"][0]["filename"].as_str().unwrap();
+    let request_path = directory.join("requests").join(name);
+    let response_path = directory.join("responses").join(name);
+    let request: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&request_path).unwrap()).unwrap();
+    let schema = invoke(&[
+        "investigate",
+        "review-response-schema",
+        "--bundle",
+        request_path.to_str().unwrap(),
+    ]);
+    assert!(
+        schema.status.success(),
+        "{}",
+        String::from_utf8_lossy(&schema.stderr)
+    );
+    let schema: serde_json::Value = serde_json::from_slice(&schema.stdout).unwrap();
+    assert_eq!(
+        schema["properties"]["bundle_fingerprint"]["const"],
+        request["bundle_fingerprint"]
+    );
+    assert_eq!(schema["properties"]["results"]["minItems"], 1);
+    assert_eq!(
+        schema["properties"]["results"]["items"]["properties"]["review_id"]["enum"],
+        request["review_ids"]
+    );
+    let review = &request["reviews"][0];
+    let unresolved = review["decision_facts"]["unresolved"]
+        .as_array()
+        .and_then(|v| v.first());
+    let decision = if unresolved.is_some() {
+        "needs_review"
+    } else {
+        "not_issue"
+    };
+    let response = serde_json::json!({"schema_version":"1.0", "bundle_fingerprint":request["bundle_fingerprint"], "results":[{
+        "review_id":request["review_ids"][0], "decision":decision, "confidence":review["confidence_policy"][decision],
+        "summary":"The supplied bounded evidence was reviewed for this selected source operation.",
+        "checks": unresolved.into_iter().collect::<Vec<_>>()
+    }]});
+    std::fs::write(&response_path, response.to_string()).unwrap();
+    for operation in ["report", "summary"] {
+        let mut args = if operation == "report" {
+            vec!["report"]
+        } else {
+            vec!["investigate", "review-bundle-summary"]
+        };
+        args.extend(["--run", directory.to_str().unwrap()]);
+        assert!(
+            !invoke(&args).status.success(),
+            "default mode must require all responses"
+        );
+        args.extend(["--allow-partial", "true"]);
+        let output = invoke(&args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(value.to_string().contains("Partial triage: 1/"));
+        if operation == "summary" {
+            assert_eq!(value["review_count"], 1);
+        }
+    }
+    for format in ["markdown", "sarif"] {
+        let output = invoke(&[
+            "report",
+            "--run",
+            directory.to_str().unwrap(),
+            "--allow-partial",
+            "true",
+            "--format",
+            format,
+        ]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("Partial triage: 1/"));
+    }
+    for invalid in ["not json".to_string(), serde_json::json!({"schema_version":"1.0", "bundle_fingerprint":request["bundle_fingerprint"], "results":[]}).to_string()] {
+        std::fs::write(&response_path, invalid).unwrap();
+        let output = invoke(&["report", "--run", directory.to_str().unwrap(), "--allow-partial", "true"]);
+        assert!(!output.status.success(), "partial mode must reject malformed or incomplete submitted responses");
+    }
+    std::fs::remove_file(response_path).unwrap();
+    let output = invoke(&[
+        "investigate",
+        "review-bundle-summary",
+        "--run",
+        directory.to_str().unwrap(),
+        "--allow-partial",
+        "true",
+    ]);
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Partial triage: 0/"));
+    std::fs::remove_dir_all(directory).unwrap();
+}

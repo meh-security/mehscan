@@ -213,6 +213,8 @@
         captures: { query: QUERY }
       - pattern: $STATEMENT.executeUpdate($QUERY)
         captures: { query: QUERY }
+      - pattern: $STATEMENT.executeLargeUpdate($QUERY)
+        captures: { query: QUERY }
       - pattern: $STATEMENT.addBatch($QUERY)
         captures: { query: QUERY }
   tags: [kotlin, jvm, sql, jdbc]

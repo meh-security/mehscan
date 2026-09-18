@@ -553,7 +553,18 @@ fn receiver_type_event(
 fn is_database_command_type(observed: &str) -> bool {
     matches!(
         observed.trim().trim_end_matches('?').rsplit('.').next(),
-        Some("SqlCommand" | "DbCommand" | "IDbCommand")
+        Some(
+            "SqlCommand"
+                | "DbCommand"
+                | "IDbCommand"
+                | "NpgsqlCommand"
+                | "MySqlCommand"
+                | "SqliteCommand"
+                | "SQLiteCommand"
+                | "OracleCommand"
+                | "OleDbCommand"
+                | "OdbcCommand"
+        )
     )
 }
 

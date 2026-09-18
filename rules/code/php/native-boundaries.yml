@@ -192,7 +192,7 @@
       vulnerability proof.
   provenance:
     note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
-      only.
+      only. A unique unconditional constructor assignment identifies exact same-class database properties.
     references:
     - https://www.php.net/manual/en/security.php
     - https://cwe.mitre.org/data/definitions/89.html
@@ -231,7 +231,7 @@
       vulnerability proof.
   provenance:
     note: Native PHP syntax with canonical callable or locally proven native database identity; bounded source review
-      only.
+      only. A unique unconditional constructor assignment identifies exact same-class database properties.
     references:
     - https://www.php.net/manual/en/security.php
     - https://cwe.mitre.org/data/definitions/89.html

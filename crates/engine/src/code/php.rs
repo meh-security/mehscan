@@ -417,6 +417,27 @@ impl<'a> PhpContext<'a> {
         if matches!(rule, "php-pdo-query" | "php-mysqli-method-query")
             && let Some(receiver) = node.field("object")
         {
+            if receiver.kind().as_ref() == "member_access_expression"
+                && let Some(class) = node
+                    .ancestors()
+                    .find(|n| n.kind().as_ref() == "class_declaration")
+                && let Some(binding) = class.dfs().find(|n| {
+                    n.kind().as_ref() == "assignment_expression"
+                        && n.field("left")
+                            .is_some_and(|left| left.text() == receiver.text())
+                        && n.ancestors()
+                            .find(|n| n.kind().as_ref() == "class_declaration")
+                            .is_some_and(|n| n.range() == class.range())
+                })
+            {
+                captures.insert(
+                    "database_receiver_origin".to_string(),
+                    Capture {
+                        text: binding.text().into_owned(),
+                        location: super::matcher::location(path, &binding),
+                    },
+                );
+            }
             let owner = function_scope(node, &self.root);
             for (range, _, exports) in &self.included {
                 if range.end <= node.range().start
@@ -1077,6 +1098,9 @@ impl<'a> PhpContext<'a> {
         call: &PhpNode<'a>,
         class: &str,
     ) -> bool {
+        if receiver.kind().as_ref() == "member_access_expression" {
+            return self.native_database_property(receiver, call, class);
+        }
         if receiver.kind().as_ref() != "variable_name" {
             return false;
         };
@@ -1220,6 +1244,75 @@ impl<'a> PhpContext<'a> {
                         .is_some_and(|canonical| canonical == class)
                 })
         })
+    }
+
+    // A single constructor assignment in the exact lexical class is a bounded
+    // receiver identity fact, not cross-method value-flow inference.
+    fn native_database_property(
+        &self,
+        receiver: &PhpNode<'a>,
+        call: &PhpNode<'a>,
+        class: &str,
+    ) -> bool {
+        if receiver.field("object").is_none_or(|n| n.text() != "$this")
+            || receiver
+                .field("name")
+                .is_none_or(|n| n.kind().as_ref() != "name")
+        {
+            return false;
+        }
+        let Some(owner) = call
+            .ancestors()
+            .find(|n| n.kind().as_ref() == "class_declaration")
+        else {
+            return false;
+        };
+        let writes: Vec<_> = owner
+            .dfs()
+            .filter(|n| {
+                matches!(
+                    n.kind().as_ref(),
+                    "assignment_expression"
+                        | "augmented_assignment_expression"
+                        | "reference_assignment_expression"
+                ) && n
+                    .ancestors()
+                    .find(|n| n.kind().as_ref() == "class_declaration")
+                    .is_some_and(|n| n.range() == owner.range())
+                    && n.field("left").is_some_and(|n| n.text() == receiver.text())
+            })
+            .collect();
+        let [binding] = writes.as_slice() else {
+            return false;
+        };
+        let Some(constructor) = binding
+            .ancestors()
+            .find(|n| n.kind().as_ref() == "method_declaration")
+        else {
+            return false;
+        };
+        constructor
+            .field("name")
+            .is_some_and(|n| n.text().eq_ignore_ascii_case("__construct"))
+            && binding
+                .ancestors()
+                .take_while(|n| n.range() != constructor.range())
+                .all(|n| {
+                    !matches!(
+                        n.kind().as_ref(),
+                        "if_statement"
+                            | "else_clause"
+                            | "for_statement"
+                            | "foreach_statement"
+                            | "while_statement"
+                            | "do_statement"
+                            | "switch_statement"
+                            | "try_statement"
+                            | "anonymous_function"
+                            | "arrow_function"
+                    )
+                })
+            && self.creation_is_native_database(binding, class)
     }
 
     fn creation_is_native_database(&self, assignment: &PhpNode<'a>, class: &str) -> bool {

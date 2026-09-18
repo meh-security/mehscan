@@ -209,6 +209,32 @@ pub(crate) fn scan_source(
                 {
                     continue;
                 }
+                if matches!(
+                    compiled_rule.rule.id.as_str(),
+                    "javascript-database-query"
+                        | "typescript-database-query"
+                        | "tsx-database-query"
+                        | "python-database-query"
+                ) {
+                    let receiver = matched.get_env().get_match("DATABASE");
+                    if receiver.is_some_and(|receiver| {
+                        !super::database_receiver::accepts(&root, receiver, language)
+                    }) {
+                        continue;
+                    }
+                }
+                if language == Language::Java
+                    && compiled_rule.rule.id == "java-database-query"
+                    && matched.get_node().field("name").is_some_and(|n| {
+                        matches!(
+                            n.text().as_ref(),
+                            "execute" | "executeLargeUpdate" | "addBatch"
+                        )
+                    })
+                    && !super::java_persistence::jdbc_statement_receiver(&root, matched.get_node())
+                {
+                    continue;
+                }
                 if language == Language::Rust
                     && compiled_rule.rule.id == "rust-database-query"
                     && !super::rust_context::is_exact_database_query(&root, matched.get_node())

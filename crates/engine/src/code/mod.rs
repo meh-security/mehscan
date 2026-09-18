@@ -17,6 +17,7 @@ mod csharp_rpc;
 mod csharp_sinks;
 mod csharp_standalone;
 mod csharp_streaming_upload;
+mod database_receiver;
 mod dotnet_project;
 mod embedded_javascript;
 mod file_roles;

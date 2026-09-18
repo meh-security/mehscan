@@ -59,6 +59,10 @@ The optional [security skill](skills/mehscan-security/SKILL.md) guides the agent
 
 ```text
 mehscan report --run mehscan-review --responses mehscan-review/responses-reviewer --format markdown --output mehscan-report.md --reviewer reviewer-id
+# For deliberately scoped triage; output includes completed/total review coverage:
+mehscan report --run mehscan-review --allow-partial true --format markdown --output mehscan-partial-report.md
+# Generate the exact response contract without a PowerShell helper:
+mehscan investigate review-response-schema --bundle REQUEST.json --output response-schema.json
 ```
 
 A complete review requires a validated response for every request in the manifest. Selected or sampled reviews cover only the reviewed scope. The [report quality skill](skills/mehscan-report-quality/SKILL.md) checks the final handoff for clarity and actionability.

@@ -4411,6 +4411,25 @@ fn add_mysql_query_observations<'tree>(
         }) else {
             continue;
         };
+        if !query_call
+            .node
+            .field("function")
+            .and_then(|f| f.field("object"))
+            .is_some_and(|receiver| super::database_receiver::proven(root, &receiver, language))
+        {
+            continue;
+        }
+        evidence.retain(|item| {
+            !(item.capability == Capability::DatabaseQuery
+                && matches!(
+                    item.rule_id.as_str(),
+                    "javascript-database-query"
+                        | "typescript-database-query"
+                        | "tsx-database-query"
+                )
+                && item.location.path == path
+                && item.location.start.byte_offset == query_call.node.range().start)
+        });
         let Some(query) = query_call.arguments.first() else {
             continue;
         };
@@ -4560,6 +4579,17 @@ fn add_postgres_query_observations<'tree>(
         else {
             continue;
         };
+        evidence.retain(|item| {
+            !(item.capability == Capability::DatabaseQuery
+                && matches!(
+                    item.rule_id.as_str(),
+                    "javascript-database-query"
+                        | "typescript-database-query"
+                        | "tsx-database-query"
+                )
+                && item.location.path == path
+                && item.location.start.byte_offset == query_call.node.range().start)
+        });
         let Some(query) = query_call.arguments.first() else {
             continue;
         };

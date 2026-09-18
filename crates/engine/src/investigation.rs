@@ -308,6 +308,7 @@ pub fn relationship_funnel(root: &Path) -> Result<QueryResponse<RelationshipFunn
     let sources = RepositorySources::load(root)?;
     let outlines = OutlineExtractors::build()?;
     let mut outline_cache: BTreeMap<String, Vec<OutlineSymbol>> = BTreeMap::new();
+    let mut outline_failures = BTreeMap::new();
     for path in source_observations
         .iter()
         .map(|item| item.location.path.as_str())
@@ -316,7 +317,14 @@ pub fn relationship_funnel(root: &Path) -> Result<QueryResponse<RelationshipFunn
     {
         let file = sources.file(path)?;
         if file.language.is_some() {
-            outline_cache.insert(path.to_string(), outlines.extract(file)?);
+            match outlines.extract(file) {
+                Ok(symbols) => {
+                    outline_cache.insert(path.to_string(), symbols);
+                }
+                Err(error) => {
+                    outline_failures.insert(path.to_string(), error.to_string());
+                }
+            }
         }
     }
     let mut sources_by_symbol: BTreeMap<
@@ -362,7 +370,9 @@ pub fn relationship_funnel(root: &Path) -> Result<QueryResponse<RelationshipFunn
             stats.unlinked_sinks_with_compatible_source_in_symbol += 1;
         }
     }
-    let result = RelationshipFunnel {
+    let mut result = RelationshipFunnel {
+        parse_failed_files: scan.coverage.totals.parse_failed,
+        outline_failures: outline_failures.clone(),
         relation_source_observations: source_observations.len(),
         remote_source_observations: source_observations
             .iter()
@@ -387,6 +397,10 @@ pub fn relationship_funnel(root: &Path) -> Result<QueryResponse<RelationshipFunn
             "Security-path count can exceed linked sink count when multiple source observations reach one sink.".to_string(),
         ],
     };
+    if !outline_failures.is_empty() {
+        result.interpretation.push(format!("Outline extraction failed for {} files; same-symbol compatibility is unavailable for those files. Scan evidence and linked paths are retained.", outline_failures.len()));
+        result.interpretation.extend(outline_failures.into_values());
+    }
     Ok(response(
         &scan.root,
         "relationship_funnel",
