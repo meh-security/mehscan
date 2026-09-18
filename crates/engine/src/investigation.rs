@@ -1872,6 +1872,9 @@ fn kotlin_finding_description(
         "kotlin-runtime-exec" => {
             "Impact: A caller can select unintended server-side processes or their arguments. Verification: For the named operation, confirm that server-owned allowlisted actions succeed while unsupported executables and option-like request values are rejected in regression tests."
         }
+        "kotlin-url-read" | "kotlin-url-connection" => {
+            "Impact: Where the shown consumer performs I/O, the server can access caller-selected resources using its network reach and process privileges, subject to URL protocol handling. Connection construction alone does not establish a request. Verification: For the affected operation, confirm approved destinations work and disallowed schemes, hosts, ports and resolved addresses are rejected; exercise redirect handling with disposable local targets. Deployment reach and external exploit reproduction are not established."
+        }
         "kotlin-message-digest" if kotlin_digest_presentation(rule, facts).is_some() => {
             "Impact: The source authentication configuration falls back to a legacy MD5 credential digest, weakening protection against offline credential guessing. The algorithm expression is dynamic: unknown literal metadata does not negate the shown MD5 fallback or prove every invocation uses MD5. Verification: Confirm that the replacement authentication configuration rejects MD5 and that client compatibility is tested. These are source-level consequences; deployment and exploit reproduction are not established."
         }

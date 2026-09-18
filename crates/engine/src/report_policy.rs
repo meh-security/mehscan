@@ -14,6 +14,15 @@ pub(crate) fn presentation(rule: &str, cwes: &[String], operation: &str) -> Opti
             "Request values select the executable or process arguments",
             "Keep the executable server-owned and allowlist permitted operations. Pass validated values as separate arguments, reject option injection, and avoid adding a command shell; an argument vector alone does not authorize a request-selected executable.",
         )
+    } else if matches!(rule, "kotlin-url-read" | "kotlin-url-connection") && has("CWE-918") {
+        (
+            if rule == "kotlin-url-read" {
+                "Request values select a server-side resource URL"
+            } else {
+                "Request values select a URL connection target"
+            },
+            "Prefer a fixed allowlist of server-owned destinations. Otherwise enforce allowed schemes, exact hosts and ports, resolved-address policy and redirect revalidation before access. URI parsing alone is not approval. For connection construction, verify the actual connect/read consumer before claiming resource access.",
+        )
     } else if matches!(rule, "kotlin-files-read" | "kotlin-files-write") && has("CWE-22") {
         (
             if rule == "kotlin-files-read" {

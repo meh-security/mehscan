@@ -153,7 +153,13 @@ pub(in crate::code) fn sources<'a>(
     }
 }
 
-fn depends<'a>(root: &KNode<'a>, expression: &KNode<'a>, source: &KNode<'a>, depth: usize) -> bool {
+fn depends<'a>(
+    root: &KNode<'a>,
+    expression: &KNode<'a>,
+    source: &KNode<'a>,
+    depth: usize,
+    network: bool,
+) -> bool {
     if depth == 0
         || identity::callable(expression).map(|n| n.range())
             != identity::callable(source).map(|n| n.range())
@@ -192,14 +198,15 @@ fn depends<'a>(root: &KNode<'a>, expression: &KNode<'a>, source: &KNode<'a>, dep
                 .filter(|n| n.is_named())
                 .last()
                 .is_some_and(|value| {
-                    value.range() != binding.range() && depends(root, &value, source, depth - 1)
+                    value.range() != binding.range()
+                        && depends(root, &value, source, depth - 1, network)
                 })
         }
         "string_literal" => expression.children().filter(|n| n.is_named()).any(|n| {
             matches!(
                 n.kind().as_ref(),
                 "interpolated_identifier" | "interpolated_expression"
-            ) && depends(root, &n, source, depth - 1)
+            ) && depends(root, &n, source, depth - 1, network)
         }),
         "additive_expression" => {
             expression
@@ -209,21 +216,27 @@ fn depends<'a>(root: &KNode<'a>, expression: &KNode<'a>, source: &KNode<'a>, dep
                 && expression
                     .children()
                     .filter(|n| n.is_named())
-                    .any(|n| depends(root, &n, source, depth - 1))
+                    .any(|n| depends(root, &n, source, depth - 1, network))
         }
         "parenthesized_expression" | "interpolated_expression" => expression
             .children()
             .filter(|n| n.is_named())
-            .any(|n| depends(root, &n, source, depth - 1)),
+            .any(|n| depends(root, &n, source, depth - 1, network)),
         "postfix_expression" if expression.text().trim_end().ends_with("!!") => expression
             .children()
             .find(|n| n.is_named())
-            .is_some_and(|n| depends(root, &n, source, depth - 1)),
-        "call_expression" => super::path::operands(root, expression, 8).is_some_and(|operands| {
-            operands
-                .iter()
-                .any(|operand| depends(root, operand, source, depth - 1))
-        }),
+            .is_some_and(|n| depends(root, &n, source, depth - 1, network)),
+        "call_expression" => super::path::operands(root, expression, 8)
+            .or_else(|| {
+                network
+                    .then(|| super::network::operands(root, expression, 8))
+                    .flatten()
+            })
+            .is_some_and(|operands| {
+                operands
+                    .iter()
+                    .any(|operand| depends(root, operand, source, depth - 1, network))
+            }),
         _ => false,
     }
 }
@@ -250,6 +263,7 @@ pub(in crate::code) fn paths(
                 Capability::DatabaseQuery => "query",
                 Capability::ProcessExecution => "command",
                 Capability::FilesystemRead | Capability::FilesystemWrite => "path",
+                Capability::OutboundNetworkRequest => "endpoint",
                 _ => continue,
             };
             let Some(relation) = relations.iter().find(|r| {
@@ -280,7 +294,13 @@ pub(in crate::code) fn paths(
                 // not a Path object. Do not turn a known type mismatch into a path.
                 continue;
             }
-            if !depends(root, &operand, &parameter, 8) {
+            if !depends(
+                root,
+                &operand,
+                &parameter,
+                8,
+                sink.capability == Capability::OutboundNetworkRequest,
+            ) {
                 continue;
             }
             result.push(SecurityPath {
@@ -380,7 +400,7 @@ mod tests {
             .dfs()
             .find_map(|n| identity::call(&n).filter(|c| c.callee.text().as_ref() == "consume"))
             .unwrap();
-        depends(&root, &sink.arguments[0].value, &source, 8)
+        depends(&root, &sink.arguments[0].value, &source, 8, false)
     }
 
     #[test]

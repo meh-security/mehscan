@@ -19,6 +19,8 @@ distinguished from application runtime behavior.
 | File write | Canonical `Files.write(path, content)` and `writeString(path, content)` | Write sink; CWE-22 |
 | Digest selection | Canonical `MessageDigest.getInstance(algorithm)` | Algorithm configuration; CWE-327 |
 | URI parsing | Canonical `URI.create(url)` | Parsing fact; CWE-918 |
+| URL resource read | Canonical declared URL, one-String URL constructor or URI factory/constructor followed by `toURL`; `openStream()` and zero-argument `getContent()` | Resource sink; CWE-918 |
+| URL connection construction | Same canonical URL identities; zero-argument `openConnection()` | Lazy construction lead; CWE-918, requires connect/read consumer |
 | Persistence queries | Declared `javax.persistence.EntityManager` or `jakarta.persistence.EntityManager`; `createQuery` and `createNativeQuery` | Query sink; CWE-89 |
 | JDBC SQL | Declared `java.sql.Statement` execution/batch text and `java.sql.Connection` prepared SQL construction | Query boundary; CWE-89 |
 | Spring JDBC | Declared `org.springframework.jdbc.core.JdbcTemplate`; query, queryForList, queryForObject, update and execute SQL arguments | Query sink; CWE-89 |
@@ -94,7 +96,17 @@ Spring's default model-attribute binding is subject to binder policy and other
 argument resolvers; the supplied excerpts must establish the relevant property.
 
 A sink is a review lead, not a finding. URI parsing is not destination
-authorization. Strong and weak digests are inventoried; only a weak choice with
+approval. URL/URI factories preserve bounded same-function input through
+immutable local aliases to URL operands. Known incompatible Path/URI/URL values
+do not become one-String constructor arguments, and URL factory propagation
+does not turn URL objects into command or SQL text. Typed callback handoffs,
+unknown helpers, mutable inferred values and field initialization stop inference.
+URL resource reads perform I/O; `openConnection()` only constructs a connection
+object, so its review must establish a connect/read consumer. Scheme, resolved
+address, port and redirect policy require separate review.
+See the [JVM URL contract](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/net/URL.html).
+
+Strong and weak digests are inventoried; only a weak choice with
 a security-sensitive consumer establishes the cryptographic concern. A command
 argument vector does not authorize a request-selected executable, and JVM
 `Runtime.exec` does not automatically invoke a shell.
@@ -107,7 +119,9 @@ argument vector does not authorize a request-selected executable, and JVM
 - Ktor route inputs, output/redirect/upload policies, application-call ownership
   and framework-specific value flow; Spring WebFlux, implicit model-property
   source paths, authentication and authorization policy.
-- ProcessBuilder, File extension APIs, OkHttp/Ktor clients, HTML encoding/output,
+- ProcessBuilder, File extension APIs, HttpClient/OkHttp/Ktor clients, URL proxy,
+  context/custom-handler constructor overloads and URLConnection identities,
+  HTML encoding/output,
   deserialization, XML, TLS and JWT configuration.
 - Elvis/smart-cast/destructuring propagation, helper effects, scope functions,
   coroutine/lambda handoffs and mixed Java/Kotlin relationships.

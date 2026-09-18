@@ -124,6 +124,54 @@
       - https://cwe.mitre.org/data/definitions/918.html
       - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/net/URI.html
 
+- id: kotlin-url-read
+  version: 1
+  title: Kotlin JVM URL resource read
+  language: kotlin
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: $ENDPOINT.openStream()
+        captures: { endpoint: ENDPOINT }
+      - pattern: $ENDPOINT.getContent()
+        captures: { endpoint: ENDPOINT }
+  tags: [kotlin, jvm, url, network]
+  ai: &network_guidance
+    investigate:
+      - Verify canonical URL identity, request origin, reachable resource consumer and destination policy. URI parsing alone is not destination approval.
+      - Distinguish server-owned fixed destinations from caller-selected resource URLs. Do not invent cross-callable or deployment behavior.
+    verify:
+      - Check allowed schemes, exact destinations and ports, resolved-address policy and redirect handling for the named operation.
+      - URL openConnection constructs a connection object without connecting. Establish connect or a resource-reading consumer before reporting actual resource access.
+    exclude:
+      - Exclude lookalikes, effective fixed destination selection and unused connection construction from verified resource-access findings.
+  provenance:
+    note: Canonical declared URL or bounded immutable-local URL/URI factory identity; resource access still depends on protocol and policy.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/net/URL.html
+
+- id: kotlin-url-connection
+  version: 1
+  title: Kotlin JVM URL connection construction
+  language: kotlin
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: $ENDPOINT.openConnection()
+        captures: { endpoint: ENDPOINT }
+  tags: [kotlin, jvm, url, connection]
+  ai: *network_guidance
+  provenance:
+    note: Canonical URL connection construction is lazy; verify a subsequent connect/read consumer before claiming actual resource access.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/net/URL.html
+
 - id: kotlin-persistence-query
   version: 1
   title: Kotlin persistence query execution

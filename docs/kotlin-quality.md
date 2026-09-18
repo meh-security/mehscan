@@ -19,6 +19,7 @@ Full parity remains a release gate, not a claim made by this checkpoint.
 | [Original import controls](../tests/fixtures/kotlin-imports/README.md) | Branch fixture | Custom wildcard Runtime exclusion and canonical JVM import variants; compiled, custom control alone executed. |
 | [Original JDBC factory controls](../tests/fixtures/kotlin-jdbc-factories/README.md) | Branch fixture | Inferred Statement/Connection raw, fixed and bound SQL pairs plus a constant lookalike; compiled and directly tested with H2. |
 | [Original prepared ownership controls](../tests/fixtures/kotlin-prepared-ownership/README.md) | Branch fixture | Exact alias execution, unrelated binding exclusion, reset/rebind and conditional or preparation-only behavior; compiled and directly tested with H2. |
+| [Original JVM URL controls](../tests/fixtures/kotlin-network/README.md) | Branch fixture | URL/URI factories, raw/fixed/allowlisted reads, lazy construction and coroutine I/O; compiled and directly checked against disposable loopback targets. |
 | [Seqra mixed Spring demo](https://github.com/seqra/java-spring-demo/tree/66421a37ae573543c0a71e7b7689adf26f44cf38) | `66421a37ae573543c0a71e7b7689adf26f44cf38` | MIT-licensed intentionally vulnerable mixed Java/Kotlin source; coroutine URL-fetch coverage probe, parsed only and not part of the selected model oracle. |
 
 External source stays outside the public repository. Discovery now admits
@@ -326,6 +327,54 @@ capability/provenance checks and the specialized execution-context check pass.
 The offline CLI build, formatting and patch checks pass. Eight direct H2 checks
 pass for the new controls. The earlier full workspace sweep predates this change.
 
+## JVM URL expansion
+
+The profile now has eleven rules, including canonical JVM URL resource reads
+and lazy connection construction. Bounded same-function request influence
+passes through one-String URL/URI constructors, `URI.create`, `toURL` and
+immutable local aliases. URL objects do not become command/SQL string paths,
+and known incompatible constructor arguments are rejected. Unknown helpers,
+mutable inferred values, field initialization and callable handoffs stop inference.
+
+Seven admitted original cases are source-adjudicated before model comparison:
+four positive resource-access cases and three negative controls. The raw URI
+read, legacy URL constructor read, connecting/reading route and coroutine
+fetch accept the request URL. The fixed and allowlisted routes keep the target
+server-owned. The construction-only route returns a class name without I/O.
+The excluded lookalike returns constant text. All compile with Kotlin 2.4.10/JDK
+17; ten direct loopback checks confirm those behaviors, including a request
+counter proving that construction alone sends no request. Native source-to-sink
+paths stop at the coroutine boundary; its review receives exact caller context.
+
+The pinned Seqra fetch now produces an outbound-request observation. Its packet
+contains both the request-body caller and the query-parameter caller with an
+omitted trailing default, plus the exact request DTO. Unique typed caller context
+allows omitted trailing defaults, while ambiguous overloads and unsupported named
+calls remain excluded. The three original Kotlin production files compile against
+cached Kotlin 2.4.10, Spring 7.0.9, coroutines 1.10.2 and JDK 17; two direct
+controller-method checks retrieve a disposable loopback response through the
+coroutine service. These validation dependencies differ from the repository's
+declared full stack. This does not establish that the full mixed application builds
+or that MVC binding/deployment works.
+
+Seven manually source-adjudicated fixture decisions render successfully in JSON,
+SARIF and Markdown: four issue instances and three dismissals, reconciled against
+canonical counts; SARIF contains the four issue results. Reviewer metadata explicitly
+identifies manual source adjudication with loopback controls, not model evaluation.
+No fresh Luna/Terra comparison or independent report audit was available under the
+account usage limit. Historical 45-case agreement remains a prior checkpoint,
+not a measurement of the expanded profile. Fresh evaluation and audit of the new
+network cases remain release gates.
+
+Seventeen focused Kotlin unit tests, thirteen native integration tests, two
+catalog capability/provenance checks and the specialized execution-context check
+pass. The catalog contains 328 validated rules. CLI build, formatting and patch
+checks pass. The earlier full workspace sweep predates this expansion.
+
+Candidate reporting, declarative cross-language surface checks and review-job
+contract tests also pass. Four optional external-corpus review-job tests remain
+ignored by their existing policy; they are not counted as new verification.
+
 ## Remaining release gates
 
 The additional Seqra source probe scans twenty-four files with no parse failures.
@@ -333,10 +382,10 @@ Its Kotlin controller supplies both a String request parameter and a request-bod
 DTO to `UrlFetchService.fetch`. The service passes the URL through
 `URI.create(url).toURL().openConnection()` inside `scope.launch`, connects and
 reads the response, without a destination policy in the supplied source.
-The current probe admits nine other reviews but no outbound-request review for
-that Kotlin fetch. This is a concrete remaining recall gap, not a clean-source
-result. The application was neither built nor executed; the probe is separate
-from the forty-five-case model comparison.
+The initial probe admitted nine other reviews but no outbound-request review for
+that Kotlin fetch. The JVM URL expansion above adds that observation and exact
+caller context. Full cross-file/coroutine flow and deployment coverage remain
+unproven; the probe is separate from the historical model comparison.
 
 - Broader independently adjudicated positive/negative cases across the
   [remaining framework and flow gaps](kotlin-coverage.md#remaining-parity-gaps),

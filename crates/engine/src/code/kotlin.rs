@@ -1,6 +1,7 @@
 mod flow;
 mod identity;
 mod jdbc;
+mod network;
 pub(crate) use jdbc::prepared_facts;
 mod path;
 mod project;
@@ -81,6 +82,11 @@ pub(super) fn accept<'a>(
             imports.exact(root, node, receiver, "java.security.MessageDigest")
         }
         "kotlin-uri-parsing" => imports.exact(root, node, receiver, "java.net.URI"),
+        "kotlin-url-read" | "kotlin-url-connection" => call
+            .callee
+            .children()
+            .find(|n| n.is_named())
+            .is_some_and(|receiver| network::known(root, &receiver, "java.net.URL", 8)),
         "kotlin-jdbc-statement-query"
         | "kotlin-jdbc-prepare-query"
         | "kotlin-jdbc-template-query" => {
@@ -221,6 +227,26 @@ mod tests {
                 "import java.sql.Connection\nimport custom.DriverManager\nfun f(connection: Connection, fake: Other, sql: String, url: String) {{ {body} }}"
             );
             assert_eq!(count(&source, "kotlin-jdbc-statement-query"), 0, "{source}");
+        }
+    }
+
+    #[test]
+    fn url_identity_rejects_lookalikes_mutation_and_unknown_helpers() {
+        for source in [
+            "import java.net.URI\nfun f(url: String) { URI.create(url).toURL().openStream() }",
+            "import java.net.URL as Address\nfun f(url: String) { val a = Address(url); val b = a; b.openStream() }",
+            "fun f(a: java.net.URL) { a.openStream() }",
+        ] {
+            assert_eq!(count(source, "kotlin-url-read"), 1, "{source}");
+        }
+        for source in [
+            "import custom.URI\nfun f(url: String) { URI.create(url).toURL().openStream() }",
+            "import java.net.URI\nfun f(URI: Other, url: String) { URI.create(url).toURL().openStream() }",
+            "import java.net.URL\nfun f(url: String) { var a = URL(url); a.openStream() }",
+            "fun f(url: String) { val a = unknown(url); a.openStream() }",
+            "import java.net.URL\nfun f(url: String) { val a = URL(url); run { a.openStream() } }",
+        ] {
+            assert_eq!(count(source, "kotlin-url-read"), 0, "{source}");
         }
     }
 

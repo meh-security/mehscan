@@ -158,11 +158,21 @@ pub(crate) fn caller_facts(
     let Some(owner_name) = identity::name(&owner) else {
         return vec![];
     };
-    let method_arity = identity::named_child(&method, "function_value_parameters").map_or(0, |n| {
-        n.children()
-            .filter(|n| n.kind().as_ref() == "parameter")
-            .count()
-    });
+    let parameters =
+        identity::named_child(&method, "function_value_parameters").map_or(vec![], |n| {
+            n.children()
+                .filter(|n| n.kind().as_ref() == "parameter")
+                .collect::<Vec<_>>()
+        });
+    let method_arity = parameters.len();
+    let required_arity = parameters
+        .iter()
+        .rposition(|parameter| {
+            parameter
+                .next()
+                .is_none_or(|next| next.text().as_ref() != "=")
+        })
+        .map_or(0, |index| index + 1);
     if owner
         .children()
         .filter(|n| n.kind().as_ref() == "class_body")
@@ -251,7 +261,7 @@ pub(crate) fn caller_facts(
                 continue;
             };
             if name != method_name
-                || call.arguments.len() != method_arity
+                || !(required_arity..=method_arity).contains(&call.arguments.len())
                 || call.arguments.iter().any(|a| a.name.is_some())
                 || !identity::receiver_unchanged(&root, &node, receiver)
             {
@@ -449,6 +459,38 @@ pub(crate) fn caller_facts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_callers_admit_only_omitted_trailing_defaults() {
+        for (signature, expected) in [
+            (
+                "url: String, headers: Map<String, String> = emptyMap()",
+                vec!["short", "full"],
+            ),
+            ("url: String, headers: Map<String, String>", vec!["full"]),
+            (
+                "url: String = \"fixed\", headers: Map<String, String>",
+                vec!["full"],
+            ),
+        ] {
+            let target = format!(
+                "package app\nclass Service {{ fun fetch({signature}) {{ consume(url) }} }}"
+            );
+            let caller = "package app\nclass Routes(val service: Service) {\n fun short(url: String) { service.fetch(url) }\n fun full(url: String) { service.fetch(url, emptyMap()) }\n fun missing() { service.fetch() }\n fun named(url: String) { service.fetch(url = url) }\n}";
+            let facts = caller_facts(
+                &[("service.kt", &target), ("routes.kt", caller)],
+                "service.kt",
+                target.find("consume").unwrap(),
+                4,
+            );
+            let owners = facts
+                .iter()
+                .filter(|f| f.role == "exact_caller_context")
+                .map(|f| f.symbol.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(owners, expected, "{signature}");
+        }
+    }
 
     #[test]
     fn implicit_model_binding_context_requires_canonical_mapping_and_owned_model() {

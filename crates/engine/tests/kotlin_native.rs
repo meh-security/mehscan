@@ -25,7 +25,7 @@ fn kotlin_jvm_boundaries_and_scripts_preserve_captures() {
         .iter()
         .map(|e| e.rule_id.clone())
         .collect::<std::collections::BTreeSet<_>>();
-    for fixture in ["kotlin-quality", "kotlin-jdbc"] {
+    for fixture in ["kotlin-quality", "kotlin-jdbc", "kotlin-network"] {
         let scan = mehscan_engine::scan_path(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../tests/fixtures")
@@ -74,6 +74,84 @@ fn kotlin_jvm_boundaries_and_scripts_preserve_captures() {
                 && !e.location.path.ends_with("shadow.kt"))
     );
     assert!(result.security_paths.is_empty());
+}
+
+#[test]
+fn url_boundaries_preserve_endpoint_flow_and_lazy_construction() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-network");
+    let result = mehscan_engine::scan_path(&fixture).unwrap();
+    assert_eq!(result.coverage.totals.parse_failed, 0);
+    let sinks = result
+        .evidence
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.rule_id.as_str(),
+                "kotlin-url-read" | "kotlin-url-connection"
+            )
+        })
+        .map(|e| e.enclosing_symbol.as_deref().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        sinks,
+        [
+            "rawStream",
+            "constructorStream",
+            "rawConnection",
+            "fixedStream",
+            "allowlistedStream",
+            "connectionOnly",
+            "fetch"
+        ]
+        .into_iter()
+        .collect()
+    );
+    let path_owners = result
+        .security_paths
+        .iter()
+        .map(|p| {
+            result
+                .evidence
+                .iter()
+                .find(|e| e.id == p.sink_evidence_id)
+                .unwrap()
+                .enclosing_symbol
+                .as_deref()
+                .unwrap()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        path_owners,
+        [
+            "rawStream",
+            "constructorStream",
+            "rawConnection",
+            "connectionOnly"
+        ]
+        .into_iter()
+        .collect()
+    );
+    // Construction-only remains a review lead, never a native finding or proof
+    // of a request. Coroutine handoff is observation context, not a native path.
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
+    assert_eq!(jobs.total_reviews, 7);
+    let fetch = jobs
+        .observation_reviews
+        .iter()
+        .find(|r| {
+            r.evidence
+                .iter()
+                .any(|e| e.enclosing_symbol.as_deref() == Some("fetch"))
+        })
+        .unwrap();
+    assert!(
+        fetch
+            .facts
+            .iter()
+            .any(|f| f.role == "exact_caller_context" && f.symbol == "coroutineRaw")
+    );
 }
 
 #[test]
@@ -553,6 +631,8 @@ fn incompatible_path_and_text_arguments_do_not_become_deterministic_paths() {
         r#"
 import java.nio.file.Files
 import java.nio.file.Path
+import java.net.URI
+import java.net.URL
 import java.sql.Statement
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestParam
@@ -565,6 +645,12 @@ class C(private val statement: Statement) {
     fun badQuery(@RequestParam name: String) { statement.executeQuery(Path.of(name)) }
     @GetMapping("/bad/command")
     fun badCommand(@RequestParam name: String) { Runtime.getRuntime().exec(Path.of(name)) }
+    @GetMapping("/bad/url-query")
+    fun badUrlQuery(@RequestParam name: String) { statement.executeQuery(URI.create(name).toURL()) }
+    @GetMapping("/bad/url-command")
+    fun badUrlCommand(@RequestParam name: String) { Runtime.getRuntime().exec(URI.create(name).toURL()) }
+    @GetMapping("/bad/url-path")
+    fun badUrlPath(@RequestParam name: String) { URL(Path.of(name)).openStream() }
 }
 "#,
     )
