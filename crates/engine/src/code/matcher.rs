@@ -393,6 +393,32 @@ pub(crate) fn scan_source(
                         path,
                     ));
                 }
+                if language == Language::Kotlin
+                    && compiled_rule.rule.id == "kotlin-process-builder"
+                    && let Some(command) = super::kotlin::process_command(&root, matched.get_node())
+                {
+                    literal_values.insert("command".into(), literals.evaluate(&command));
+                    captures.insert(
+                        "command".into(),
+                        Capture {
+                            text: command.text().into_owned(),
+                            location: location(path, &command),
+                        },
+                    );
+                }
+                if language == Language::Kotlin
+                    && compiled_rule.rule.id == "kotlin-file-write"
+                    && let Some(content) = super::kotlin::file_content(matched.get_node())
+                {
+                    literal_values.insert("content".into(), literals.evaluate(&content));
+                    captures.insert(
+                        "content".into(),
+                        Capture {
+                            text: content.text().into_owned(),
+                            location: location(path, &content),
+                        },
+                    );
+                }
                 evidence.push(Evidence {
                     id: evidence_id(path, &compiled_rule.rule.id, range.start, range.end),
                     kind: compiled_rule.rule.kind,

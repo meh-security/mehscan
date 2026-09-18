@@ -1,0 +1,81 @@
+- id: kotlin-auth0-jwt-decode
+  version: 1
+  title: Kotlin Auth0 JWT claim decoding
+  language: kotlin
+  kind: sensitive_operation
+  capability: authentication
+  cwe: [CWE-347]
+  match:
+    any:
+      - pattern: $JWT.decode($TOKEN)
+        captures: { token: TOKEN }
+      - pattern: $JWT.decodeJwt($TOKEN)
+        captures: { token: TOKEN }
+  tags: [kotlin, jvm, jwt]
+  ai:
+    investigate:
+      - Auth0 decode and decodeJwt only parse the token; they do not verify its signature. Establish whether unverified claims from this exact token control credential acceptance or a protected operation.
+    verify:
+      - Inspect verification of the same token before claims are trusted, the configured algorithm and server-owned key, required issuer/audience and failure propagation. Verification of another token does not authenticate this one.
+    exclude:
+      - Exclude display/logging of explicitly untrusted metadata and same-token verification that gates acceptance. Parsing syntax alone is not authentication bypass; do not infer a deployed route or unseen upstream protection.
+  provenance:
+    note: Exact static JWT ownership or canonical declared/constructor JWT instance with bounded immutable aliases and containing-function context; no native authentication-flow inference.
+    references:
+      - https://github.com/auth0/java-jwt/blob/4.6.1/lib/src/main/java/com/auth0/jwt/JWT.java
+      - https://cwe.mitre.org/data/definitions/347.html
+
+- id: kotlin-auth0-jwt-verify
+  version: 1
+  title: Kotlin Auth0 JWT verification policy
+  language: kotlin
+  kind: sensitive_operation
+  capability: authentication
+  cwe: [CWE-347]
+  match:
+    any:
+      - pattern: $VERIFIER.verify($TOKEN)
+        captures: { token: TOKEN }
+  tags: [kotlin, jvm, jwt]
+  ai:
+    investigate:
+      - Resolve the effective algorithm, key and claim requirements at this verifier. Algorithm.none does not authenticate a signature; an operational server-owned algorithm and key can preserve authentication.
+    verify:
+      - Establish whether this exact token's verification gates credential acceptance. Inspect ignored results, swallowed verification exceptions and acceptance of a different decoded token.
+      - Check issuer/audience/expiry requirements for the shown trust domain, without assuming absent optional requirements necessarily cause a signature bypass. Avoid exposing key bytes.
+    exclude:
+      - Exclude preserved verification and rejection paths. Unknown injected verifier policy requires its precise provider artifact, not a claim that SDK verify always authenticates or always fails.
+      - "Keep cryptographic authentication distinct from credential lifetime: a missing lifetime bound with preserved signature checks belongs to the lifecycle review, not a fabricated CWE-347 signature bypass at this verifier."
+  provenance:
+    note: Canonical concrete/interface JWTVerifier or enumerated JWT.require and Verification.build/fluent methods, bounded immutable aliases and function context; no compiler dispatch or deployed credential proof.
+    references:
+      - https://github.com/auth0/java-jwt/blob/4.6.1/lib/src/main/java/com/auth0/jwt/interfaces/Verification.java
+      - https://cwe.mitre.org/data/definitions/347.html
+
+- id: kotlin-auth0-jwt-token-generation
+  version: 1
+  title: Kotlin Auth0 JWT credential issuance
+  language: kotlin
+  kind: security_configuration
+  capability: token_generation
+  cwe: [CWE-613]
+  match:
+    any:
+      - pattern: $BUILDER.sign($ALGORITHM)
+        captures: { algorithm: ALGORITHM }
+  tags: [kotlin, jvm, jwt, token-lifecycle]
+  ai:
+    investigate:
+      - Establish the emitted token's security-credential use and required lifetime. Signing does not automatically add exp; signature validation alone does not establish a maximum age.
+      - An explicit source-declared credential lifetime is concrete policy evidence. When the shown issuance and credential consumer violate that requirement, a deployed endpoint or external compromise is unnecessary to report the bounded lifetime defect. Do not invent a lifetime contract where none is supplied.
+      - Inspect effective claims on this exact signed builder, including later expiry replacement, null values, withPayload merges and settings on different builders. An earlier withExpiresAt call is not sufficient when later operations replace exp.
+    verify:
+      - Check the actual credential consumer for expiry presence, maximum age, revocation or another authoritative lifetime bound. Absence of exp alone does not prove a lifecycle flaw for metadata or independently bounded credentials.
+      - Keep signature authentication distinct from this lifetime invariant. A signing-algorithm defect alone does not establish missing credential-lifetime enforcement.
+    exclude:
+      - Exclude bounded credential lifetimes, independently enforced maximum age or revocation, metadata-only tokens and foreign sign methods. Unknown helper or consumer policy requires its precise artifact rather than blanket safety or a vulnerability claim.
+  provenance:
+    note: Canonical JWTCreator.Builder or enumerated JWT.create and builder fluent methods with immutable-local aliases; bounded containing-function context without native builder-lifecycle or deployed credential inference.
+    references:
+      - https://github.com/auth0/java-jwt/blob/4.6.1/lib/src/main/java/com/auth0/jwt/JWTCreator.java
+      - https://cwe.mitre.org/data/definitions/613.html

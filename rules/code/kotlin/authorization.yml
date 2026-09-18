@@ -1,0 +1,28 @@
+- id: kotlin-method-authorization
+  version: 1
+  title: Kotlin Spring method authorization guard
+  language: kotlin
+  kind: guard
+  capability: authorization
+  cwe: [CWE-862]
+  match:
+    any:
+      - pattern: '@$ANNOTATION($$$POLICIES)'
+        context: |
+          @$ANNOTATION($$$POLICIES) fun patternContext() {}
+        selector: annotation
+        captures: { policy: POLICIES }
+  tags: [kotlin, jvm, http, authorization, spring-security, policy]
+  ai:
+    investigate:
+      - Establish the subject, role, resource and exact sensitive operation covered by the method annotation.
+      - Inspect method-security activation, bean/proxy invocation and bypass paths before treating this annotation as an effective control. Secured annotations require securedEnabled activation.
+    verify:
+      - Annotation presence is control inventory, not proof that authorization runs or sanitizes unrelated SQL, command, path or HTML inputs.
+    exclude:
+      - Foreign and shadowed annotations do not establish Spring authorization. Do not infer application-wide protection from a single method policy.
+  provenance:
+    note: Exact Spring PreAuthorize/Secured imports, aliases and qualified names; contextual guard inventory without native proxy or deployment activation inference.
+    references:
+      - https://docs.spring.io/spring-security/reference/servlet/authorization/method-security.html
+      - https://cwe.mitre.org/data/definitions/862.html

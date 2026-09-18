@@ -144,6 +144,7 @@
       - Distinguish server-owned fixed destinations from caller-selected resource URLs. Do not invent cross-callable or deployment behavior.
     verify:
       - Check allowed schemes, exact destinations and ports, resolved-address policy and redirect handling for the named operation.
+      - Inspect URL authority syntax after interpolation. An unvalidated String inserted after a literal host and colon is not necessarily only a numeric port; user-info separators such as @ can change the parsed host. Do not infer a fixed host from a source prefix without validation.
       - URL openConnection constructs a connection object without connecting. Establish connect or a resource-reading consumer before reporting actual resource access.
     exclude:
       - Exclude lookalikes, effective fixed destination selection and unused connection construction from verified resource-access findings.
@@ -235,10 +236,25 @@
         captures: { query: QUERY }
       - pattern: $CONNECTION.prepareStatement($QUERY, $OPTION)
         captures: { query: QUERY }
+      - pattern: $CONNECTION.prepareStatement($QUERY, $TYPE, $CONCURRENCY)
+        captures: { query: QUERY }
+      - pattern: $CONNECTION.prepareStatement($QUERY, $TYPE, $CONCURRENCY, $HOLDABILITY)
+        captures: { query: QUERY }
       - pattern: $CONNECTION.prepareCall($QUERY)
         captures: { query: QUERY }
+      - pattern: $CONNECTION.prepareCall($QUERY, $TYPE, $CONCURRENCY)
+        captures: { query: QUERY }
+      - pattern: $CONNECTION.prepareCall($QUERY, $TYPE, $CONCURRENCY, $HOLDABILITY)
+        captures: { query: QUERY }
   tags: [kotlin, jvm, sql, jdbc, preparation]
-  ai: *guidance
+  ai:
+    investigate:
+      - Request-interpolated SQL construction is a lead; preparation does not sanitize it. For this review's SQL-injection invariant, establish execution of that same prepared statement before claiming query impact.
+      - Judge same-statement binding, execution, resets, closure and branches from the supplied containing callable and exact receiver-use facts. Neighboring preparations cannot supply execution or protection.
+    verify:
+      - Fixed SQL syntax with separately bound request values is data handling. Dynamic SQL followed by same-statement execution is not repaired by a prepareStatement or prepareCall overload.
+    exclude:
+      - An immediately closed preparation with no supplied execution consumer does not establish executed SQL injection. Dismiss that bounded relationship without recommending dynamic SQL construction or certifying future consumers.
   provenance:
     note: Canonical declared or bounded immutable-local factory java.sql.Connection receiver; preparation does not sanitize SQL already constructed from request text. Establish subsequent execution before claiming runtime query impact.
     references:
@@ -274,10 +290,18 @@
         captures: { query: QUERY }
       - pattern: $TEMPLATE.execute($QUERY)
         captures: { query: QUERY }
+      - pattern: $TEMPLATE.execute($QUERY, $CALLBACK)
+        captures: { query: QUERY }
+      - pattern: $TEMPLATE.execute($QUERY, $PARAMETERS, $CALLBACK)
+        captures: { query: QUERY }
+      - pattern: $TEMPLATE.execute($QUERY) { $$$BODY }
+        captures: { query: QUERY }
+      - pattern: $TEMPLATE.execute($QUERY, $PARAMETERS) { $$$BODY }
+        captures: { query: QUERY }
   tags: [kotlin, spring, sql, jdbc]
   ai: *guidance
   provenance:
-    note: Exact declared org.springframework.jdbc.core.JdbcTemplate receiver; captures the SQL argument, not separately bound values. Explicitly typed non-String callback operands and direct lambdas are excluded; compiler overload resolution remains partial.
+    note: Exact declared Spring JdbcTemplate/JdbcOperations or NamedParameterJdbcTemplate/NamedParameterJdbcOperations, or bounded canonical template construction; captures SQL rather than separately bound values. Explicitly typed non-String callback operands and direct lambdas are excluded; compiler overload resolution remains partial.
     references:
       - https://cwe.mitre.org/data/definitions/89.html
       - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/jdbc/core/JdbcTemplate.html
@@ -323,6 +347,10 @@
     any:
       - pattern: "$FILE.readText()"
         captures: {"path": "FILE"}
+      - pattern: "$FILE.readText($CHARSET)"
+        captures: { path: FILE }
+      - pattern: "$FILE.readText(charset = $CHARSET)"
+        captures: { path: FILE }
       - pattern: "$FILE.readBytes()"
         captures: {"path": "FILE"}
       - pattern: "$FILE.inputStream()"
@@ -351,6 +379,22 @@
     any:
       - pattern: "$FILE.writeText($CONTENT)"
         captures: {"path": "FILE", "content": "CONTENT"}
+      - pattern: "$FILE.writeText($CONTENT, $CHARSET)"
+        captures: { path: FILE, content: CONTENT }
+      - pattern: "$FILE.writeText(text = $CONTENT, charset = $CHARSET)"
+        captures: { path: FILE, content: CONTENT }
+      - pattern: "$FILE.writeText(charset = $CHARSET, text = $CONTENT)"
+        captures: { path: FILE, content: CONTENT }
+      - pattern: "$FILE.appendText($CONTENT)"
+        captures: { path: FILE, content: CONTENT }
+      - pattern: "$FILE.appendText($CONTENT, $CHARSET)"
+        captures: { path: FILE, content: CONTENT }
+      - pattern: "$FILE.appendText(text = $CONTENT, charset = $CHARSET)"
+        captures: { path: FILE, content: CONTENT }
+      - pattern: "$FILE.appendText(charset = $CHARSET, text = $CONTENT)"
+        captures: { path: FILE, content: CONTENT }
+      - pattern: "$FILE.appendBytes($CONTENT)"
+        captures: { path: FILE, content: CONTENT }
       - pattern: "$FILE.writeBytes($CONTENT)"
         captures: {"path": "FILE", "content": "CONTENT"}
       - pattern: "$FILE.outputStream()"
@@ -483,6 +527,10 @@
     any:
       - pattern: "$CONNECTION.setHostnameVerifier($VERIFIER)"
         captures: {"callback": "VERIFIER"}
+      - pattern: "$CONNECTION.setHostnameVerifier { $HOST, $SESSION -> $$$BODY }"
+        captures: { callback: BODY }
+      - pattern: "$CONNECTION.setHostnameVerifier() { $HOST, $SESSION -> $$$BODY }"
+        captures: { callback: BODY }
   tags: [kotlin, jvm]
   ai:
     investigate:
@@ -712,6 +760,40 @@
   cwe: [CWE-918]
   match:
     any:
+      - pattern: "$CLIENT.get { $$$BODY }"
+        captures: { builder: BODY }
+      - pattern: "$CLIENT.get($URL) { $$$BODY }"
+        captures: { endpoint: URL, builder: BODY }
+      - pattern: "$CLIENT.post { $$$BODY }"
+        captures: { builder: BODY }
+      - pattern: "$CLIENT.post($URL) { $$$BODY }"
+        captures: { endpoint: URL, builder: BODY }
+      - pattern: "$CLIENT.request { $$$BODY }"
+        captures: { builder: BODY }
+      - pattern: "$CLIENT.request($URL) { $$$BODY }"
+        captures: { endpoint: URL, builder: BODY }
+      - pattern: "$CLIENT.put { $$$BODY }"
+        captures: { builder: BODY }
+      - pattern: "$CLIENT.put($URL) { $$$BODY }"
+        captures: { endpoint: URL, builder: BODY }
+      - pattern: "$CLIENT.delete { $$$BODY }"
+        captures: { builder: BODY }
+      - pattern: "$CLIENT.delete($URL) { $$$BODY }"
+        captures: { endpoint: URL, builder: BODY }
+      - pattern: "$CLIENT.patch { $$$BODY }"
+        captures: { builder: BODY }
+      - pattern: "$CLIENT.patch($URL) { $$$BODY }"
+        captures: { endpoint: URL, builder: BODY }
+      - pattern: "$CLIENT.head { $$$BODY }"
+        captures: { builder: BODY }
+      - pattern: "$CLIENT.head($URL) { $$$BODY }"
+        captures: { endpoint: URL, builder: BODY }
+      - pattern: "$CLIENT.options { $$$BODY }"
+        captures: { builder: BODY }
+      - pattern: "$CLIENT.options($URL) { $$$BODY }"
+        captures: { endpoint: URL, builder: BODY }
+      - pattern: "$CLIENT.options($URL)"
+        captures: { endpoint: URL }
       - pattern: "$CLIENT.get(urlString = $URL)"
         captures: { endpoint: URL }
       - pattern: "$CLIENT.get($URL)"
@@ -744,6 +826,7 @@
     verify:
       - For HTML establish browser interpretation and context-appropriate encoding; plain text is excluded. Judge the matched content capture at this exact response call. A fixed error response does not render the decoded payload sent by another response on a successful branch.
       - For redirects and client requests distinguish server-owned approved destinations from caller-selected URLs.
+      - A request-builder block can replace the initial URL. Establish the effective URL and any later destination mutation; the initial string alone is not the final destination.
     exclude:
       - Exclude lookalikes, fixed or approved destinations and evidence requiring unavailable runtime dispatch or deployment assumptions.
   provenance:
@@ -805,3 +888,28 @@
     references:
       - https://cwe.mitre.org/data/definitions/918.html
       - https://square.github.io/okhttp/recipes/
+
+- id: kotlin-html-encoding
+  version: 1
+  title: Kotlin OWASP HTML encoding
+  language: kotlin
+  kind: sanitizer
+  capability: html_encoding
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: $ENCODER.forHtml($VALUE)
+        captures: { value: VALUE }
+      - pattern: $ENCODER.forHtmlContent($VALUE)
+        captures: { value: VALUE }
+  tags: [kotlin, jvm, html, encoding]
+  ai:
+    investigate:
+      - Match the encoded operand, consumed return value and actual output context. HTML content encoding does not authorize JavaScript, URL or CSS interpolation.
+    exclude:
+      - Only the same encoded value in its supported HTML context is protected. Discarded encoder results, another operand and foreign lookalikes do not protect output.
+  provenance:
+    note: Canonical org.owasp.encoder.Encode static HTML encoding APIs with import aliases and lexical shadow rejection; contextual protection inventory, not compiler propagation.
+    references:
+      - https://owasp.org/www-project-java-encoder/
+      - https://cwe.mitre.org/data/definitions/79.html

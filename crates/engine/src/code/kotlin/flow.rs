@@ -293,6 +293,12 @@ pub(in crate::code) fn paths(
             .iter()
             .filter(|e| e.rule_id.starts_with("kotlin-") && e.kind == EvidenceKind::Sink)
         {
+            if sink.rule_id == "kotlin-ktor-client-request" && sink.captures.contains_key("builder")
+            {
+                // The request block may replace the initial string destination.
+                // Keep it as a source-review lead until builder effects are proved.
+                continue;
+            }
             let role = match sink.capability {
                 Capability::DatabaseQuery => "query",
                 Capability::ProcessExecution => "command",

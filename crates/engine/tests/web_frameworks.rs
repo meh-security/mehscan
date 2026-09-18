@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use mehscan_core::{
-    AvailabilityState, Capability, Confidence, EvidenceKind, LiteralState, LiteralValue,
+    AvailabilityState, Capability, Confidence, EvidenceKind, Language, LiteralState, LiteralValue,
     ReachabilityState,
 };
 
@@ -100,7 +100,11 @@ fn exposes_authentication_and_authorization_cwe_coverage() {
         .iter()
         .map(|item| (item.cwe.as_str(), item))
         .collect();
-    for cwe in ["CWE-306", "CWE-862"] {
-        assert_eq!(coverage[cwe].supported_languages.len(), 7, "{cwe}");
-    }
+    assert_eq!(coverage["CWE-306"].supported_languages.len(), 7);
+    assert_eq!(coverage["CWE-862"].supported_languages.len(), 8);
+    assert!(
+        coverage["CWE-862"]
+            .supported_languages
+            .contains(&Language::Kotlin)
+    );
 }

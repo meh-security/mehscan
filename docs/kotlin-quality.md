@@ -5,6 +5,121 @@ implemented boundaries; they do not establish whole-application recall or
 parity with the established Java, Python, JavaScript, Go and C# profiles.
 Full parity remains a release gate, not a claim made by this checkpoint.
 
+## Unpushed gap-closure work
+
+Auth0 JWT policy now has eight review boundaries in six original helpers.
+Twenty-four owned-token assertions cover valid, forged-signature and unsigned
+credentials, metadata-only display, same-token verification, swallowed failures,
+issuer, audience and expiry. Luna, Terra and Sol independently match all eight
+predefined source labels. All three initial quality audits are engineer-ready,
+and all three projection checks pass. The accepted payloads remain byte-identical
+after correcting an argument filter to preserve opaque String aliases while
+excluding known incompatible types. Source-helper labels and shared impact text
+are refined from the quality warnings without changing canonical decisions.
+The final regenerated handoffs are engineer-ready in all three fresh quality
+audits (two passes and one nonblocking ignored-file-labeling warning), and all
+three final projection checks pass. Earlier wording audits are retained.
+The affected engine suite passes 169 unit tests, focused JWT/Kotlin/catalog
+checks and strict lint. JWT issuance/lifecycle, Nimbus/JJWT and wider resolver
+effects remain separate open obligations.
+
+Global hostname defaults now have four original helpers and thirteen review
+boundaries. Runtime checks distinguish new inheritance, restoration before
+construction, existing instances and instance overrides, with chain validation
+retained. Two failed AI runs borrow an earlier permissive setter for a later
+restoration anchor; the quality skill also catches that error. Both are retained.
+Exact call-node lookup and a separate matched-policy fact fix the supplied
+boundary. The third complete run matches 13/13 labels across all three models.
+Regenerated, explicitly labeled fixture handoffs pass all three fresh quality
+audits and all three projection checks. SDK-method wording is selected from the
+exact AST range, not neighboring calls or argument names; sample distribution
+warnings no longer imply model error.
+
+Four additional factory/default-context helpers have sixteen review boundaries.
+Eight connection assertions, sixteen global-restoration assertions and two peer
+counters pass against two owned HTTPS services with distinct localhost
+certificates. New inherited factories and explicitly consumed defaults can accept
+the untrusted certificate; existing connections and captured validating factories
+reject it. All three fresh models match 16/16 labels. A regenerated report audit
+requires an explicit helper-to-runtime-outcome mapping; that blocked handoff is
+retained. The mapped replacement is engineer-ready across all three fresh quality
+audits (two passes and one nonblocking grouping/consumer-wording warning), and
+all three projection checks pass. Canonical decisions are unchanged.
+Implicit cache behavior, concurrency, wider client uptake and JWT remain open.
+
+The TLS trust follow-up reviews ten SSLContext initialization boundaries in
+eight original functions. Sixteen isolated connection assertions and two peer
+counters distinguish permissive server checks, provider defaults, actual
+validation, unused contexts, reinitialization, first-manager selection and
+swallowed certificate errors. Hostname verification stays enabled. The initial
+Luna run incorrectly dismissed first-manager selection; Terra and Sol matched
+all ten source labels. That failed run is retained. After adding the documented
+JDK17 selection contract, a fresh complete repeat matches 10/10 labels for each
+model. All three quality audits are engineer-ready (one pass, two nonblocking
+warning results), and all three projection checks pass. Warnings concern
+instance labels, remediation specificity and repeated dismissal bullets.
+This bounded trust result does not close global defaults, JWT, wider client
+bindings, complete-corpus agreement or final workspace release gates.
+
+Further changes remain local under the [release-gate checklist](kotlin-release-gates.md).
+The current follow-up validates original object/TLS policy controls, client
+factories and ProcessBuilder mutation chains, Ktor client builders, lexical
+scope-function context and Kotlin File charset/append overloads. Each selected
+corpus has fresh independent security reviews and report-quality audits.
+Failing captures, disagreements and rejected handoffs remain recorded; a passing
+selected corpus does not close the broader coverage categories. Final complete
+corpus agreement and the workspace release checks await implementation closure.
+
+Additional local persistence controls cover pooled/XA factories, Exposed v1,
+named-parameter Spring JDBC and three/four-argument callable preparation.
+The release checklist records bounded runtime evidence, independent model
+agreement, retained narrative repairs and regenerated report-quality audits.
+Markdown code identifiers now preserve underscores without prose escaping;
+this renderer correction leaves canonical decisions unchanged.
+
+The WebFlux follow-up inventories canonical functional request sources and
+supplies bounded Optional/Mono consumer context. Its thirteen owned-loopback
+runtime assertions include user-info syntax changing the parsed host of an
+interpolated URL authority. Initial reports agreed on all five decisions, but
+the source-oracle rationale and quality-review scope incorrectly narrowed that
+case to port selection. Those artifacts remain historical. Corrected fresh
+reviews match five of five labels across all three models, and all three
+regenerated report sets are engineer-ready with reconciled projections.
+One quality audit passes; two retain nonblocking warnings about shared titles
+and per-instance follow-up specificity. The remediation explicitly covers
+numeric-port parsing, permitted ports, authority delimiters and component-based
+URL construction. This does not close broader WebFlux,
+compiler or platform coverage.
+
+The subsequent [WebClient fixture](../tests/fixtures/kotlin-webclient/README.md)
+adds ten URI-spec review boundaries, including URI builders, client factories,
+encoded path variables, unused publishers, same-spec replacement and an explicit
+non-network exchange helper. Twenty-one direct SDK assertions pass, including
+four actual owned-loopback HTTP exchanges. Fresh Luna, Terra and Sol reviews
+each match all ten predefined labels. All three regenerated report sets are
+engineer-ready and reconcile canonical decisions, counts and SARIF locations;
+two retain nonblocking warnings about instance labels and narrative duplication.
+Generic scope wording now distinguishes isolated checks from deployed activation
+and external exploitation. Broader default-request, filter and URI-factory effects
+remain open under the full release checklist.
+
+The [WebClient policy fixture](../tests/fixtures/kotlin-webclient-policies/README.md)
+adds nine source boundaries for default-request timing, ordered/removed filters
+and overload-specific URI factory effects. Twenty-one assertions pass through
+eighteen HTTP exchanges to two owned loopback marker services; nine additional
+builder assertions use eight instrumented exchanges without network I/O.
+Retained failures include a nullable override signature, a missing version
+inserter, two Luna SDK reasoning misses and a stopped stale-binary export.
+
+The final export is verified to contain exact overload and exchange-argument
+facts. Fresh models each match all nine predefined labels; all three quality
+audits are engineer-ready and their projections reconcile. Canonical metadata
+distinguishes the initial URI argument from candidate request mutations and
+their forwarding locations. Two audits retain nonblocking warnings about
+grouped instance subtitles and repeated guidance. Engine checks now pass 165
+unit tests, affected Kotlin integrations, catalog validation and strict lint;
+the complete workspace release sweep remains pending implementation closure.
+
 ## XML policy follow-up
 
 The new [XML fixture](../tests/fixtures/kotlin-xml-policies/README.md) pairs an
@@ -586,3 +701,197 @@ for all eleven evaluated corpora are **28/28 byte-identical** to the earlier
 still apply to the unchanged requests; no new AI decisions or report audits are
 claimed for this follow-up. The 965-test workspace sweep above predates this
 guard; the focused checks are the validation of this change.
+
+## Current local release verification
+
+The current selected JVM corpus has **242 predefined labels** (108
+issue controls and 134 non-issue controls), across original fixtures
+and pinned source. Both primary reviewers, Luna and Terra at medium reasoning,
+match all 242 labels. Exact-byte-identical accepted requests retain their validated
+responses; all changed payloads receive fresh independent review. This is neither
+whole-application recall nor full Kotlin/platform coverage. The public oracle now
+contains 219 original-fixture labels, exact anchor locations and the known fixed
+command review exclusion.
+
+The first final comparison agrees on all 221 main-corpus decisions but both
+models miss rawAdmin. Its intended untrusted bearer-credential contract was absent
+from the function excerpt. The contract is now explicit inside each acceptance
+helper, including operational server-key ownership; executable method bodies are
+unchanged. A complete fresh eight-review Luna/Terra/Sol repeat matches all labels,
+and all three quality audits are ready. The earlier shared false negative remains
+archived rather than being overwritten. The separate lifetime repeat also matches
+all 14 labels for all three models with three ready quality audits.
+
+The final quality skill covers **65 current report sets**: 56 main-corpus reports
+excluding the superseded JWT handoffs, six XML/object/hostname reports, and three
+fresh JWT handoffs. All are engineer-ready. All 65 canonical JSON, SARIF and
+Markdown projection checks reconcile counts, source locations and canonical
+verdicts. A first combined audit misread an ambiguous wrapper instruction as
+requiring a corpus prefix on each relative path; that failure is retained, the
+wrapper now distinguishes independent labelled roots, and both repeat audits pass.
+
+The final targeted engine suite passes 169 unit tests, both JWT integrations and
+catalog validation; strict core/engine lint and the rebuilt CLI pass. The CLI
+acceptance test passes (synthetic verdicts test transport/reporting, not AI quality).
+A workspace linker attempt exhausted memory; its failed log is retained and the
+full retry uses two build jobs. Workspace completion, final affected-fixture check
+and the broader release-gate audit are still pending. All changes remain local.
+
+## Servlet cookie counterpart
+
+Canonical javax/jakarta Servlet Cookie setters and qualified Kotlin synthetic
+secure/isHttpOnly assignments now have exact owned-cookie context. Six original
+helpers produce 16 anchors (four issue, twelve non-issue): weak authentication
+flags, enabled flags, later overrides, a different cookie's flags, public display
+preferences and an unconsumed object. Twenty-three SDK assertions pass against
+Tomcat 11.0.24's Servlet API on Kotlin2.4.10/JDK17. The owned response spy confirms
+emitted object values and flags; this is not a real servlet container, browser,
+deployed header, proxy or plaintext-interception test.
+
+The first integration catches missing assignment targets. A focused regression
+identifies Kotlin's directly_assignable_expression wrapper; the predicate and
+assignment selector now account for it while rejecting foreign cookie types.
+Failed integration, diagnostic and temporary Rust borrow-error logs are retained.
+The corrected ownership regression, all 16 integration anchors, catalog validation,
+strict core/engine lint and rebuilt CLI pass. The catalog now has 41 Kotlin rules
+and 358 built-in rules. All 16 exact cookie facts are checked before model calls;
+predefined labels are frozen before fresh medium Luna/Terra/Sol review. A single
+bounded bundle preserves independent per-ID evidence and avoids sixteen separate
+calls. Every model matches 16/16, all three quality audits are ready (one pass,
+two nonblocking warnings), and all three report projection checks pass.
+
+The pre-cookie workspace test checkpoint passes 1008 tests with 41 optional
+corpus checks ignored. Its following lint phase encountered the temporary cookie
+borrow error and is not a clean current-source workspace check. Corrected affected
+lint passes. The public oracle contains 235 original-fixture labels. Broader
+baseline-input equivalence and final workspace verification await the remaining
+peer gaps. No push has occurred.
+
+### Multipart, script and authorization counterparts
+
+Canonical Servlet multipart access, submitted filenames and input streams now
+have bounded ownership checks, including getPart factories and immutable aliases.
+File-write observations include the exact containing function when that function
+contains an owned multipart producer. The context supports same-part destination
+review; it does not create compiler taint or prove deployment/serving policy.
+Canonical ScriptEngine receivers and ScriptEngineManager factories expose eval
+boundaries. Selected providers, bindings and host-access policy remain explicit.
+Spring PreAuthorize/Secured annotations are guard inventory; activation and proxy
+execution are not inferred, and authentication does not parameterize SQL.
+
+The authorization query control matches all three independent models; all three
+quality audits are engineer-ready and projection checks pass. Six multipart/script
+controls match all three independent models. Eleven isolated runtime assertions
+verify caller filename traversal, fixed-name persistence and eval dispatch/rejection
+using Servlet interface proxies and a recording ScriptEngine. No actual provider
+code execution or servlet deployment is claimed. The initial report handoff fails
+one readiness check because of an incorrect wrapper heading and missing script
+impact/verification text; that failure is retained. Corrected handoff QA is pending.
+Current catalog: 46 Kotlin rules, 363 total. Public original-fixture oracle: 242
+labels; the 23 pinned source cases remain separate. Broad release gates and final
+current-source workspace/equivalence checks are still open. Nothing has been pushed.
+
+### HTML-encoding audit correction
+
+The final peer review also identified missing explicit OWASP encoder inventory.
+Canonical Encode.forHtml/forHtmlContent calls now produce contextual sanitizer
+inventory with alias support and foreign/shadow rejection. Four original Ktor
+controls cover the consumed return, discarded return, wrong operand and JavaScript
+output context. Five direct OWASP encoder 1.3.1 SDK assertions pass; these are Java
+API character-transformation checks, not Kotlin application or browser execution.
+Affected integration tests and fresh independent model review are queued behind
+the workspace build. Current catalog: 47 Kotlin rules, 364 total. The earlier
+statement that only two counterpart gaps remained omitted this control surface;
+that assessment is superseded. No additional platform coverage is claimed.
+
+### Current oracle reconciliation
+
+The current accepted 265-review inventory includes the earlier 242 boundaries
+plus 16 cookie, one authorization-query and six multipart/script controls. Both
+primary models match all 265 predefined labels and agree on all 265 decisions.
+Re-exported requests are byte-identical across all 35 included corpora. All 242
+public original-fixture labels reconcile by absolute source path, exact rule,
+line and column; the 23 pinned cases remain separate. This check does not include
+the newly added encoder controls, whose fresh review is queued, and is not a new
+security adjudication of unchanged inputs. Final report readiness and current
+workspace checks remain pending; the broad gate table remains authoritative.
+
+### Encoder precision and report closure
+
+The first encoder export had zero HTML review jobs because the fixture used an
+unsupported wildcard response import; explicit canonical imports now expose all
+four controls. A regression requires four output boundaries and four actual
+review jobs, rather than counting encoder syntax alone. Its corrected run passes.
+The first independent repeat flags the safe encoded result in Luna and fails all
+three report audits for JavaScript-context remediation/grouping. Exact canonical
+SDK operation facts resolve the aliased encoder without asserting compiler flow.
+The next fresh repeat matches all four labels in all three models. Two report
+reviews pass with warnings, while Luna still rejects generic title/remediation
+routing. The generator now routes the exact script-element operation to its own
+JavaScript-context title and repair. Regeneration preserves the same validated
+security decisions; all three fresh quality audits mark that final handoff ready
+(two passes, one nonblocking warning), and all three projection checks pass.
+This is a new text-quality audit, not a fresh security repeat. Earlier failures
+remain retained. The public original-fixture oracle now has 246 labels. Final
+primary refresh covers 269 selected reviews including 23 pinned cases; it is still
+running. Current-source workspace checks and the broader scope gate remain open.
+
+### Frozen current implementation checkpoint
+
+The complete primary refresh now matches all 269 predefined labels for Luna and
+Terra, with 269/269 agreement. Exact input reuse is tracked separately; 15 changed
+Ktor bundle inputs received fresh independent review. The regenerated 72 primary
+JSON/SARIF/Markdown report sets pass projection reconciliation. All 246 public
+original-fixture labels reconcile by rule and exact source location against the
+current primary results; 23 pinned cases remain separate. Complete report-quality
+batch audits and the locked CI test/lint/e2e pipeline are still running. The first
+workspace run stopped on an outdated seven-language cookie coverage assertion;
+its correction explicitly verifies Kotlin membership and the affected test passes.
+The first format check caught formatting of that new assertion; the formatted
+check passes. Both failures are retained. No push or release-gate completion is
+claimed while final checks and the scope decision remain open.
+
+### Complete quality audit and final CI retry
+
+Sixteen independent quality-skill batches assess all 72 regenerated primary
+report sets. Fifteen batches are engineer-ready; Luna's Exposed batch rejects
+impact wording that mentions modifying records when the selected operations are
+SELECT queries. The generator now limits that impact to query predicates and
+returned results. Canonical security decisions are unchanged. Regeneration and
+fresh targeted quality/projection checks remain pending; the rejected batch is
+retained. The locked CI pipeline is still compiling the frozen implementation.
+A separate narrative-only correction is tracked after that freeze and will be
+verified through the rebuilt report generator and targeted handoff checks. No
+push is permitted while those checks or the requested scope clarification remain
+open. The gate table does not claim compiler or non-JVM platform completion.
+
+### Remaining coverage assertion audit
+
+An audit of every engine supported-language-count assertion found two additional
+stale expectations: web_surfaces still counted eight upload languages and
+web_frameworks counted seven authorization languages. Expectations now count
+nine upload languages and eight authorization languages and explicitly require
+Kotlin membership; authentication-only CWE-306 remains seven. Scanner behavior
+and source oracles are unchanged. The running CI job has reached test execution
+but may still use binaries compiled before these test-only corrections. Their
+current-source checks remain pending. GitHub connector verification confirms PR
+9 is open/draft at the existing branch head 56e3e56; no new push has occurred.
+
+The corrected Exposed SELECT handoff is rebuilt from the same validated source
+responses. Luna and Terra both mark the regenerated reports engineer-ready
+(one pass and one nonblocking warning). Both JSON/SARIF/Markdown projection
+checks pass and preserve the original decisions. The original rejected impact
+overstatement remains in the complete audit history; this targeted text-quality
+repeat does not constitute a fresh source-security run. Six corrected catalog
+and web coverage tests pass. Current-worktree CI tests, strict lint and CLI
+acceptance remain running/pending; the broad release scope gate remains open.
+
+
+## Release decision
+
+On 2026-09-18 the user approved releasing the current partial Kotlin JVM profile
+as-is. Remaining coverage is documented as future improvements. Final current
+workspace checks pass: 1,013 tests, 41 optional ignored, formatting, strict lint
+and CLI acceptance. Selected source and report-quality evidence above remains
+scoped; earlier pending-gate notes are historical. See
+[release readiness](kotlin-release-gates.md) for the final gate decision.

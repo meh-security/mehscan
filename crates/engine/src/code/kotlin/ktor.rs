@@ -82,34 +82,6 @@ fn application_call<'a>(root: &KNode<'a>, expression: &KNode<'a>) -> bool {
     false
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ast_grep_core::tree_sitter::LanguageExt;
-    use ast_grep_language::SupportLang;
-
-    #[test]
-    fn implicit_call_stops_at_unknown_receivers_and_local_bindings() {
-        for body in [
-            "fun Application.routes() { routing { get(\"/\") { other.apply { call.request.queryParameters[\"x\"] } } } }",
-            "fun Application.routes() { routing { get(\"/\") { val call = other; call.request.queryParameters[\"x\"] } } }",
-            "fun Other.routes() { routing { get(\"/\") { call.request.queryParameters[\"x\"] } } }",
-        ] {
-            let source = format!(
-                "import io.ktor.server.application.Application\nimport io.ktor.server.routing.routing\nimport io.ktor.server.routing.get\n{body}"
-            );
-            let ast = SupportLang::Kotlin.ast_grep(&source);
-            let root = ast.root();
-            assert!(
-                !root
-                    .dfs()
-                    .any(|n| accepts(&root, "kotlin-ktor-query-source", &n)),
-                "{source}"
-            );
-        }
-    }
-}
-
 pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> bool {
     let imports = Imports::build(root);
     if matches!(rule, "kotlin-ktor-query-source" | "kotlin-ktor-path-source") {
@@ -145,11 +117,19 @@ pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> boo
         "kotlin-ktor-redirect" => &["url", "permanent"],
         "kotlin-ktor-html-output" if method == "respondBytes" => &["bytes", "contentType"],
         "kotlin-ktor-html-output" => &["text", "contentType"],
-        "kotlin-ktor-client-request" => &["urlString"],
+        "kotlin-ktor-client-request" => &["urlString", "block"],
         _ => return false,
     };
     let mut positions = std::collections::BTreeSet::new();
     for (index, argument) in call.arguments.iter().enumerate() {
+        if rule == "kotlin-ktor-client-request"
+            && argument.value.kind().as_ref() == "lambda_literal"
+        {
+            if index + 1 != call.arguments.len() || !positions.insert(1) {
+                return false;
+            }
+            continue;
+        }
         let position = match &argument.name {
             Some(name) => parameter_names.iter().position(|p| *p == name),
             None => (index < parameter_names.len()).then_some(index),
@@ -215,7 +195,10 @@ pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> boo
             )
         }
         "kotlin-ktor-client-request"
-            if matches!(method, "get" | "post" | "put" | "delete" | "patch" | "head") =>
+            if matches!(
+                method,
+                "get" | "post" | "put" | "delete" | "patch" | "head" | "options" | "request"
+            ) =>
         {
             (
                 "io.ktor.client.HttpClient",
@@ -225,6 +208,8 @@ pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> boo
                     "put" => "io.ktor.client.request.put",
                     "delete" => "io.ktor.client.request.delete",
                     "patch" => "io.ktor.client.request.patch",
+                    "options" => "io.ktor.client.request.options",
+                    "request" => "io.ktor.client.request.request",
                     _ => "io.ktor.client.request.head",
                 },
             )
@@ -237,4 +222,32 @@ pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> boo
         } else {
             super::jvm::owned(root, &receiver, canonical, 8)
         }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ast_grep_core::tree_sitter::LanguageExt;
+    use ast_grep_language::SupportLang;
+
+    #[test]
+    fn implicit_call_stops_at_unknown_receivers_and_local_bindings() {
+        for body in [
+            "fun Application.routes() { routing { get(\"/\") { other.apply { call.request.queryParameters[\"x\"] } } } }",
+            "fun Application.routes() { routing { get(\"/\") { val call = other; call.request.queryParameters[\"x\"] } } }",
+            "fun Other.routes() { routing { get(\"/\") { call.request.queryParameters[\"x\"] } } }",
+        ] {
+            let source = format!(
+                "import io.ktor.server.application.Application\nimport io.ktor.server.routing.routing\nimport io.ktor.server.routing.get\n{body}"
+            );
+            let ast = SupportLang::Kotlin.ast_grep(&source);
+            let root = ast.root();
+            assert!(
+                !root
+                    .dfs()
+                    .any(|n| accepts(&root, "kotlin-ktor-query-source", &n)),
+                "{source}"
+            );
+        }
+    }
 }

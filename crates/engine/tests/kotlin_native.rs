@@ -6,6 +6,202 @@ fn root() -> PathBuf {
 }
 
 #[test]
+fn ktor_client_factories_keep_builder_leads_without_claiming_initial_url_survives() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-ktor-builders");
+    let scan = mehscan_engine::scan_path(&fixture).unwrap();
+    assert_eq!(scan.coverage.totals.parse_failed, 0);
+    assert_eq!(
+        scan.evidence
+            .iter()
+            .filter(|e| e.rule_id == "kotlin-ktor-client-request")
+            .count(),
+        4
+    );
+    let source_owners = scan
+        .security_paths
+        .iter()
+        .map(|p| {
+            scan.evidence
+                .iter()
+                .find(|e| e.id == p.sink_evidence_id)
+                .unwrap()
+                .enclosing_symbol
+                .as_deref()
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(source_owners, ["rawFactory"]);
+}
+
+#[test]
+fn jvm_client_factories_and_process_mutator_chains_keep_owned_boundaries() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/kotlin-client-factories");
+    let scan = mehscan_engine::scan_path(&fixture).unwrap();
+    assert_eq!(scan.coverage.totals.parse_failed, 0);
+    assert_eq!(
+        scan.evidence
+            .iter()
+            .filter(|e| e.rule_id == "kotlin-http-client-request")
+            .count(),
+        3
+    );
+    assert_eq!(
+        scan.evidence
+            .iter()
+            .filter(|e| e.rule_id == "kotlin-okhttp-request")
+            .count(),
+        3
+    );
+    assert_eq!(
+        scan.evidence
+            .iter()
+            .filter(|e| e.rule_id == "kotlin-process-builder")
+            .count(),
+        3
+    );
+    assert!(
+        !scan
+            .evidence
+            .iter()
+            .any(|e| e.enclosing_symbol.as_deref() == Some("lookalike"))
+    );
+    let chained = scan
+        .evidence
+        .iter()
+        .find(|e| {
+            e.rule_id == "kotlin-process-builder"
+                && e.enclosing_symbol.as_deref() == Some("chainedCommand")
+        })
+        .unwrap();
+    assert_eq!(chained.captures["command"].text, "executable");
+    let fixed = scan
+        .evidence
+        .iter()
+        .find(|e| {
+            e.rule_id == "kotlin-process-builder"
+                && e.enclosing_symbol.as_deref() == Some("fixedCommand")
+        })
+        .unwrap();
+    assert_eq!(fixed.captures["command"].text, "\"whoami\"");
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
+    for owner in ["rawOkhttp", "rawOkhttpBuilder", "lazyOkhttp"] {
+        let review = jobs
+            .observation_reviews
+            .iter()
+            .find(|r| {
+                r.evidence.iter().any(|e| {
+                    e.rule_id == "kotlin-okhttp-request"
+                        && e.enclosing_symbol.as_deref() == Some(owner)
+                        && r.anchor_evidence_ids.contains(&e.id)
+                })
+            })
+            .unwrap();
+        let consumers = review
+            .facts
+            .iter()
+            .filter(|f| f.role == "okhttp_call_execution_context")
+            .collect::<Vec<_>>();
+        assert_eq!(consumers.len(), usize::from(owner != "lazyOkhttp"));
+        assert!(consumers.iter().all(|f| f.excerpt.ends_with(".execute()")));
+    }
+}
+
+#[test]
+fn hostname_verifier_trailing_lambdas_remain_owned_configuration_anchors() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-tls-policies");
+    let scan = mehscan_engine::scan_path(&fixture).unwrap();
+    assert_eq!(scan.coverage.totals.parse_failed, 0);
+    let setters = scan
+        .evidence
+        .iter()
+        .filter(|e| e.rule_id == "kotlin-tls-hostname-verifier")
+        .collect::<Vec<_>>();
+    assert_eq!(setters.len(), 4);
+    assert_eq!(
+        setters
+            .iter()
+            .filter(|e| e.captures.get("callback").is_some_and(|c| c.text == "true"))
+            .count(),
+        2
+    );
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
+    for review in jobs.observation_reviews.iter().filter(|r| {
+        r.evidence.iter().any(|e| {
+            e.rule_id == "kotlin-tls-hostname-verifier" && r.anchor_evidence_ids.contains(&e.id)
+        })
+    }) {
+        let exact = review
+            .facts
+            .iter()
+            .filter(|f| f.role == "matched_tls_operation")
+            .collect::<Vec<_>>();
+        assert_eq!(exact.len(), 1);
+        assert!(
+            exact[0]
+                .evidence_id
+                .as_ref()
+                .is_some_and(|id| review.anchor_evidence_ids.contains(id))
+        );
+    }
+    for review in jobs.observation_reviews.iter().filter(|r| {
+        r.evidence.iter().any(|e| {
+            e.rule_id == "kotlin-url-connection-consumer" && r.anchor_evidence_ids.contains(&e.id)
+        })
+    }) {
+        assert!(
+            review
+                .review_basis
+                .as_ref()
+                .unwrap()
+                .observations
+                .iter()
+                .all(|b| b.rule_id == "kotlin-url-connection-consumer")
+        );
+        assert!(review.decision_facts.established.iter().any(|f| f.contains(
+            "hostname-verification failure does not establish caller-controlled URL selection"
+        )));
+    }
+}
+
+#[test]
+fn object_filter_review_context_does_not_replace_the_read_stream_anchor() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/kotlin-object-policies");
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
+    assert_eq!(jobs.observation_reviews.len(), 3);
+    let wrong = jobs
+        .observation_reviews
+        .iter()
+        .find(|r| {
+            r.evidence.iter().any(|e| {
+                e.enclosing_symbol.as_deref() == Some("wrongStream")
+                    && r.anchor_evidence_ids.contains(&e.id)
+            })
+        })
+        .unwrap();
+    let exact = wrong
+        .facts
+        .iter()
+        .filter(|f| f.role == "matched_object_operation")
+        .collect::<Vec<_>>();
+    assert_eq!(exact.len(), 1);
+    assert_eq!(exact[0].excerpt, "exposed.readObject()");
+    assert!(
+        wrong
+            .facts
+            .iter()
+            .any(|f| f.excerpt.contains("guarded.setObjectInputFilter")
+                && f.excerpt.contains("exposed.readObject()"))
+    );
+}
+
+#[test]
 fn xml_policy_reviews_keep_distinct_factory_settings_in_source_context() {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-xml-policies");
@@ -259,6 +455,18 @@ fn kotlin_jvm_boundaries_and_scripts_preserve_captures() {
         "kotlin-network",
         "kotlin-jvm-breadth",
         "kotlin-ktor",
+        "kotlin-exposed",
+        "kotlin-webflux",
+        "kotlin-webclient",
+        "kotlin-tls-trust",
+        "kotlin-tls-defaults",
+        "kotlin-tls-factory-defaults",
+        "kotlin-jwt",
+        "kotlin-jwt-lifetime",
+        "kotlin-cookies",
+        "kotlin-authorization",
+        "kotlin-uploads",
+        "kotlin-html-encoding",
     ] {
         let scan = mehscan_engine::scan_path(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -886,6 +1094,7 @@ class C(private val statement: Statement) {
     @GetMapping("/bad/url-path")
     fun badUrlPath(@RequestParam name: String) { URL(Path.of(name)).openStream() }
 }
+
 "#,
     )
     .unwrap();
@@ -895,4 +1104,56 @@ class C(private val statement: Statement) {
     let result = result.unwrap();
     assert_eq!(result.coverage.totals.parse_failed, 0);
     assert!(result.security_paths.is_empty());
+}
+
+#[test]
+fn scope_lambda_context_keeps_member_shadowing_and_flow_limits_explicit() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-scopes");
+    let scan = mehscan_engine::scan_path(&fixture).unwrap();
+    assert_eq!(scan.coverage.totals.parse_failed, 0);
+    assert!(scan.security_paths.is_empty());
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
+    let mut owners = std::collections::BTreeSet::new();
+    for review in &jobs.observation_reviews {
+        let anchor = scan
+            .evidence
+            .iter()
+            .find(|e| review.anchor_evidence_ids.contains(&e.id))
+            .unwrap();
+        let owner = anchor.enclosing_symbol.as_deref().unwrap();
+        let scopes = review
+            .facts
+            .iter()
+            .filter(|f| f.role == "stdlib_scope_call_context")
+            .collect::<Vec<_>>();
+        if owner == "lookalike" {
+            assert!(
+                scopes.is_empty(),
+                "application member must not become kotlin.let"
+            );
+        } else {
+            assert!(
+                !scopes.is_empty(),
+                "missing scope source context for {owner}"
+            );
+            for fact in scopes {
+                assert!(fact.excerpt.contains("not compiler-resolved identity"));
+                assert!(
+                    fact.evidence_id
+                        .as_ref()
+                        .is_some_and(|id| review.anchor_evidence_ids.contains(id))
+                );
+            }
+            owners.insert(owner.to_owned());
+        }
+    }
+    assert_eq!(
+        owners,
+        ["rawLet", "rawImplicit", "rawAlias", "fixedLet"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    );
 }

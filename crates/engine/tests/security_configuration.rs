@@ -119,7 +119,12 @@ fn declares_each_new_cwe_for_every_priority_language() {
         assert!(coverage[cwe].supported_languages.contains(&Language::Php));
     }
     for cwe in ["CWE-614", "CWE-1004"] {
-        assert_eq!(coverage[cwe].supported_languages.len(), 7, "{cwe}");
+        assert_eq!(coverage[cwe].supported_languages.len(), 8, "{cwe}");
+        assert!(
+            coverage[cwe]
+                .supported_languages
+                .contains(&Language::Kotlin)
+        );
     }
     assert_eq!(coverage["CWE-502"].supported_languages.len(), 10);
 }

@@ -199,7 +199,7 @@ impl FindingReport {
             self.summary.not_issue_decisions
         ));
 
-        output.push_str("\n## Scope and limitations\n\nStatic source review; runtime activation and exploit reproduction are not established. Ignored and unsupported material is outside coverage. Severity defaults are not a validated impact ranking.\n\n");
+        output.push_str("\n## Scope and limitations\n\nStatic source conclusions do not establish deployed activation or external exploitation. Any isolated execution checks apply only to the controls identified in the scope label. Ignored and unsupported material is outside coverage. Severity defaults are not a validated impact ranking.\n\n");
         if let Some(coverage) = &self.scan.coverage {
             output.push_str(&format!("Files: {} discovered, {} scanned, {} ignored, {} parse-failed, {} unsupported. Parse-failed files may retain partial evidence outside invalid syntax.\n\n", coverage.discovered, coverage.scanned, coverage.ignored, coverage.parse_failed, coverage.unsupported));
         } else {
@@ -265,7 +265,7 @@ impl FindingReport {
                     markdown_code_span(&dismissed.review_id),
                     location,
                     enum_label(dismissed.confidence),
-                    markdown_text(&dismissed.description)
+                    markdown_description(&dismissed.description)
                 ));
             }
         }
@@ -351,7 +351,7 @@ fn render_finding_group(output: &mut String, index: usize, findings: &[&Reported
             enum_label(finding.severity.level),
             enum_label(finding.severity.source),
             enum_label(finding.confidence),
-            markdown_text(&finding.description)
+            markdown_description(&finding.description)
         ));
         render_availability(output, finding);
         render_flow(output, finding);
@@ -391,7 +391,7 @@ fn render_finding(
         enum_label(finding.severity.level),
         enum_label(finding.severity.source),
         enum_label(finding.confidence),
-        markdown_text(&finding.description)
+        markdown_description(&finding.description)
     ));
 
     render_availability(output, finding);
@@ -514,15 +514,59 @@ fn markdown_text(value: &str) -> String {
         .replace('>', "&gt;")
 }
 
+fn markdown_description(value: &str) -> String {
+    let mut output = String::new();
+    let mut cursor = 0;
+    while let Some(relative) = value[cursor..].find('`') {
+        let start = cursor + relative;
+        let fence_len = value[start..].bytes().take_while(|b| *b == b'`').count();
+        let content_start = start + fence_len;
+        let mut search = content_start;
+        let mut closing = None;
+        while let Some(relative) = value[search..].find('`') {
+            let candidate = search + relative;
+            let run = value[candidate..]
+                .bytes()
+                .take_while(|b| *b == b'`')
+                .count();
+            if run == fence_len {
+                closing = Some(candidate);
+                break;
+            }
+            search = candidate + run;
+        }
+        let Some(end) = closing else { break };
+        output.push_str(&markdown_text(&value[cursor..start]).replace('`', "\\`"));
+        let content = value[content_start..end]
+            .replace("\r\n", " ")
+            .replace(['\r', '\n'], " ");
+        let content = if content.starts_with(' ')
+            && content.ends_with(' ')
+            && content.chars().any(|c| c != ' ')
+        {
+            &content[1..content.len() - 1]
+        } else {
+            &content
+        };
+        output.push_str(&markdown_code_span(content));
+        cursor = end + fence_len;
+    }
+    output.push_str(&markdown_text(&value[cursor..]).replace('`', "\\`"));
+    output
+}
+
 fn markdown_code_span(value: &str) -> String {
-    let value = value.replace(['\r', '\n'], " ");
+    let value = value.replace("\r\n", " ").replace(['\r', '\n'], " ");
     let longest_run = value
         .split(|character| character != '`')
         .map(str::len)
         .max()
         .unwrap_or(0);
     let fence = "`".repeat(longest_run + 1);
-    let padding = if value.starts_with('`') || value.ends_with('`') {
+    let padding = if value.starts_with('`')
+        || value.ends_with('`')
+        || value.starts_with(' ') && value.ends_with(' ') && value.chars().any(|c| c != ' ')
+    {
         " "
     } else {
         ""
@@ -533,6 +577,24 @@ fn markdown_code_span(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn descriptions_preserve_code_identifiers_while_escaping_prose() {
+        assert_eq!(
+            markdown_description("Use `fixture_people` and `<em>own</em>`; prose <b>_x_</b>."),
+            "Use `fixture_people` and `<em>own</em>`; prose &lt;b&gt;\\_x\\_&lt;/b&gt;."
+        );
+        assert_eq!(
+            markdown_description("Use `` `quoted` ``."),
+            "Use `` `quoted` ``."
+        );
+        assert_eq!(markdown_description("Use `one\r\ntwo`."), "Use `one two`.");
+        assert_eq!(
+            markdown_description("Unclosed `fixture_people"),
+            "Unclosed \\`fixture\\_people"
+        );
+        assert_eq!(markdown_code_span(" name "), "`  name  `");
+    }
     use crate::Position;
 
     fn location(path: &str, line: usize) -> Location {

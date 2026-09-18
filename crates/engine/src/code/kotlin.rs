@@ -1,21 +1,107 @@
+mod cookie;
+mod upload;
+pub(crate) use cookie::facts as cookie_facts;
+pub(crate) use upload::facts as upload_facts;
+mod exposed;
+mod jwt;
+pub(crate) use jwt::facts as jwt_facts;
+mod tls;
+mod webclient;
+pub(crate) use tls::facts as tls_facts;
+mod webflux;
+pub(crate) use webclient::facts as webclient_facts;
+pub(crate) use webflux::facts as webflux_facts;
 mod flow;
+pub(crate) use exposed::facts as exposed_facts;
 mod identity;
 mod jdbc;
 mod jvm;
+pub(super) use jvm::file_content;
+pub(crate) use jvm::okhttp_facts;
+pub(super) use jvm::process_command;
 mod ktor;
 mod network;
 pub(crate) use jdbc::prepared_facts;
 mod path;
 mod project;
+mod scope;
 pub(super) use flow::{paths, sources};
 pub(crate) use project::caller_facts;
 pub(crate) use project::member_receiver_facts;
+pub(crate) use scope::facts as scope_facts;
 mod numeric;
 pub(crate) use numeric::constant_query_fact;
 pub(crate) use numeric::query_fact;
 
 pub(super) use identity::Imports;
 use identity::{KNode, binding_type, receiver_unchanged};
+
+pub(crate) fn html_encoder_facts(
+    path: &str,
+    source: &str,
+    anchor: &mehscan_core::Evidence,
+) -> Vec<mehscan_core::ReviewNeighborhoodFact> {
+    use ast_grep_core::tree_sitter::LanguageExt;
+    use mehscan_core::{QueryProvenance, Resolution, ReviewNeighborhoodFact};
+    if anchor.rule_id != "kotlin-ktor-html-output" {
+        return vec![];
+    }
+    let ast = ast_grep_language::SupportLang::Kotlin.ast_grep(source);
+    let root = ast.root();
+    if root.dfs().any(|n| n.is_error() || n.is_missing()) {
+        return vec![];
+    }
+    let Some(node) = root.dfs().find(|n| {
+        n.range() == (anchor.location.start.byte_offset..anchor.location.end.byte_offset)
+            && ktor::accepts(&root, &anchor.rule_id, n)
+    }) else {
+        return vec![];
+    };
+    let Some(function) = node
+        .ancestors()
+        .find(|n| n.kind().as_ref() == "function_declaration")
+    else {
+        return vec![];
+    };
+    if function.range().len() > 16384 {
+        return vec![];
+    }
+    let imports = Imports::build(&root);
+    let mut facts = vec![ReviewNeighborhoodFact {
+        role: "html_output_operation_context".into(),
+        symbol: identity::name(&function).unwrap_or_default(),
+        location: crate::code::matcher::location(path, &node),
+        excerpt: node.text().into_owned(),
+        evidence_id: Some(anchor.id.clone()),
+        provenance: QueryProvenance {
+            resolution: Resolution::Ast,
+            engine: "Kotlin exact owned HTML output operation 1".into(),
+        },
+    }];
+    for encoder in function
+        .dfs()
+        .filter(|n| accept(&root, &imports, "kotlin-html-encoding", n))
+        .take(16)
+    {
+        let Some(call) = identity::call(&encoder) else {
+            continue;
+        };
+        let method = call
+            .callee
+            .text()
+            .rsplit('.')
+            .next()
+            .unwrap_or("")
+            .to_owned();
+        facts.push(ReviewNeighborhoodFact {
+            role: "html_encoder_sdk_operation".into(), symbol: format!("org.owasp.encoder.Encode.{method}"),
+            location: crate::code::matcher::location(path, &encoder),
+            excerpt: format!("Canonical SDK identity: org.owasp.encoder.Encode.{method}; exact syntax: {}. forHtmlContent encodes HTML text markup characters but preserves apostrophes; forHtml supports HTML content/quoted attributes. Neither method is a JavaScript-string encoder. Only the same consumed return value in its supported output context is protected; a discarded result or different operand is not protection. This is owned SDK operation inventory, not compiler value-flow proof.", encoder.text()),
+            evidence_id: Some(anchor.id.clone()), provenance: QueryProvenance { resolution: Resolution::Ast, engine: "Kotlin canonical OWASP HTML encoder contract 1".into() },
+        });
+    }
+    facts
+}
 
 pub(crate) fn fixed_response_content(source: &str, range: std::ops::Range<usize>) -> bool {
     use ast_grep_core::tree_sitter::LanguageExt;
@@ -74,12 +160,71 @@ pub(super) fn accept<'a>(
     rule: &str,
     node: &KNode<'a>,
 ) -> bool {
+    if rule == "kotlin-html-encoding" {
+        let Some(call) = identity::call(node) else {
+            return false;
+        };
+        let text = call.callee.text();
+        let Some((receiver, method)) = text.rsplit_once('.') else {
+            return false;
+        };
+        return matches!(method, "forHtml" | "forHtmlContent")
+            && call.arguments.len() == 1
+            && call.arguments[0].name.is_none()
+            && imports.exact(root, node, receiver, "org.owasp.encoder.Encode");
+    }
+    if rule.starts_with("kotlin-upload-") || rule == "kotlin-script-eval" {
+        return upload::accepts(root, rule, node);
+    }
+    if rule == "kotlin-method-authorization" {
+        if node.kind().as_ref() != "annotation" {
+            return false;
+        }
+        let text = node.text();
+        let observed = text
+            .trim_start_matches('@')
+            .split('(')
+            .next()
+            .unwrap_or("")
+            .trim();
+        return [
+            "org.springframework.security.access.prepost.PreAuthorize",
+            "org.springframework.security.access.annotation.Secured",
+        ]
+        .iter()
+        .any(|canonical| imports.exact(root, node, observed, canonical));
+    }
+    if rule.starts_with("kotlin-cookie-") {
+        return cookie::accepts(root, rule, node);
+    }
+    if rule.starts_with("kotlin-auth0-jwt-") {
+        return jwt::accepts(root, rule, node);
+    }
+    if rule.starts_with("kotlin-webflux-") {
+        return webflux::accepts(root, rule, node);
+    }
+    if rule == "kotlin-webclient-uri" {
+        return webclient::accepts(root, node);
+    }
+    if rule == "kotlin-tls-default-policy" {
+        return tls::accepts_default(root, node);
+    }
+    if rule == "kotlin-tls-trust-context" {
+        return tls::accepts(root, node);
+    }
+    if rule == "kotlin-exposed-sql-exec" {
+        return exposed::accepts(root, node);
+    }
     if ktor::accepts(root, rule, node) {
         return true;
     }
     let Some(call) = identity::call(node) else {
         return false;
     };
+    // Kotlin File extensions support named arguments; Java methods do not.
+    if matches!(rule, "kotlin-file-read" | "kotlin-file-write") {
+        return jvm::accepts(root, rule, node);
+    }
     if call
         .arguments
         .iter()
@@ -122,12 +267,11 @@ pub(super) fn accept<'a>(
             ) {
                 return false;
             }
-            if query.kind().as_ref() == "simple_identifier" {
-                if binding_type(root, query, &query.text())
+            if query.kind().as_ref() == "simple_identifier"
+                && binding_type(root, query, &query.text())
                     .is_some_and(|ty| !imports.exact(root, query, &ty, "kotlin.String"))
-                {
-                    return false;
-                }
+            {
+                return false;
             }
             let canonical = match rule {
                 "kotlin-jdbc-statement-query" => "java.sql.Statement",
@@ -137,6 +281,16 @@ pub(super) fn accept<'a>(
             let Some(receiver) = call.callee.children().find(|n| n.is_named()) else {
                 return false;
             };
+            if rule == "kotlin-jdbc-template-query" {
+                return [
+                    canonical,
+                    "org.springframework.jdbc.core.JdbcOperations",
+                    "org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate",
+                    "org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations",
+                ]
+                .iter()
+                .any(|ty| jdbc::receiver(root, imports, &receiver, ty, 8));
+            }
             jdbc::receiver(root, imports, &receiver, canonical, 8)
         }
         "kotlin-persistence-query" => {

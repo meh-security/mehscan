@@ -138,13 +138,12 @@ impl Imports {
                     .iter()
                     .any(|path| format!("{path}{}", &observed[head.len()..]) == canonical);
         }
-        if observed == canonical.rsplit('.').next().unwrap_or(canonical) {
-            if let Some((package, _)) = canonical.rsplit_once('.') {
-                return self.wildcards.len() == 1 && self.wildcards.contains(package)
-                    || (package == "kotlin"
-                        || package == "java.lang" && self.wildcards.is_empty())
-                        && !self.aliases.contains_key(observed);
-            }
+        if observed == canonical.rsplit('.').next().unwrap_or(canonical)
+            && let Some((package, _)) = canonical.rsplit_once('.')
+        {
+            return self.wildcards.len() == 1 && self.wildcards.contains(package)
+                || (package == "kotlin" || package == "java.lang" && self.wildcards.is_empty())
+                    && !self.aliases.contains_key(observed);
         }
         false
     }
@@ -263,85 +262,6 @@ pub(super) fn binding_type<'a>(
         .map(|n| n.text().trim_end_matches('?').to_string())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ast_grep_core::tree_sitter::LanguageExt;
-
-    #[test]
-    fn generic_types_do_not_borrow_local_classes_or_default_scalar_identity() {
-        let source = "class FixedPath {}\nclass C<FixedPath, String, Int>(val root: FixedPath) { fun f(text: String, number: Int) {} }\nfun g(text: String) {}";
-        let ast = SupportLang::Kotlin.ast_grep(source);
-        let root = ast.root();
-        let imports = Imports::build(&root);
-        let member = root
-            .dfs()
-            .find(|n| n.kind().as_ref() == "class_parameter")
-            .unwrap();
-        assert!(imports.local_type(&root, &member, "FixedPath").is_none());
-        for parameter in root.dfs().filter(|n| n.kind().as_ref() == "parameter") {
-            let symbol = name(&parameter).unwrap();
-            let observed = if symbol == "number" { "Int" } else { "String" };
-            let expected = callable(&parameter).and_then(|n| name(&n)).as_deref() == Some("g");
-            assert_eq!(
-                imports.exact(&root, &parameter, observed, &format!("kotlin.{observed}")),
-                expected
-            );
-        }
-    }
-
-    #[test]
-    fn member_type_context_uses_declaring_scope_and_rejects_import_conflicts() {
-        for (imports, nested, expected) in [
-            ("", "", true),
-            ("import elsewhere.FixedPath\n", "", false),
-            ("import elsewhere.*\n", "", false),
-            ("", "class FixedPath {}\n", true),
-        ] {
-            let source = format!(
-                "{imports}class FixedPath {{}}\nclass C {{\n {nested}val root: FixedPath = FixedPath()\n}}"
-            );
-            let ast = SupportLang::Kotlin.ast_grep(&source);
-            let root = ast.root();
-            assert!(
-                !root.dfs().any(|n| n.is_error() || n.is_missing()),
-                "{source}"
-            );
-            let member = root
-                .dfs()
-                .find(|n| {
-                    n.kind().as_ref() == "variable_declaration"
-                        && name(n).as_deref() == Some("root")
-                })
-                .unwrap();
-            assert_eq!(
-                Imports::build(&root)
-                    .local_type(&root, &member, "FixedPath")
-                    .is_some(),
-                expected,
-                "{source}"
-            );
-            if !nested.is_empty() {
-                let ty = Imports::build(&root)
-                    .local_type(&root, &member, "FixedPath")
-                    .unwrap();
-                assert_eq!(owner(&ty).and_then(|n| name(&n)).as_deref(), Some("C"));
-            }
-        }
-        let source = "class FixedPath {}\nclass C(val root: FixedPath) {\n class FixedPath {}\n}";
-        let ast = SupportLang::Kotlin.ast_grep(source);
-        let root = ast.root();
-        let member = root
-            .dfs()
-            .find(|n| n.kind().as_ref() == "class_parameter")
-            .unwrap();
-        let ty = Imports::build(&root)
-            .local_type(&root, &member, "FixedPath")
-            .unwrap();
-        assert_eq!(owner(&ty).and_then(|n| name(&n)).as_deref(), Some("C"));
-    }
-}
-
 pub(super) fn binding<'a>(
     root: &KNode<'a>,
     use_site: &KNode<'a>,
@@ -450,10 +370,10 @@ pub(super) fn call<'a>(node: &KNode<'a>) -> Option<Call<'a>> {
         .children()
         .find(|n| n.is_named() && n.kind().as_ref() != "call_suffix")?;
     let suffix = named_child(node, "call_suffix")?;
-    let arguments = named_child(&suffix, "value_arguments")?;
     let mut values = Vec::new();
-    for argument in arguments
-        .children()
+    for argument in named_child(&suffix, "value_arguments")
+        .into_iter()
+        .flat_map(|arguments| arguments.children().collect::<Vec<_>>())
         .filter(|n| n.kind().as_ref() == "value_argument")
     {
         if argument.text().trim_start().starts_with('*') {
@@ -469,6 +389,17 @@ pub(super) fn call<'a>(node: &KNode<'a>) -> Option<Call<'a>> {
             name: named.then(|| children[0].text().into_owned()),
             value,
         });
+    }
+    if let Some(lambda) = named_child(&suffix, "annotated_lambda")
+        .and_then(|lambda| named_child(&lambda, "lambda_literal"))
+        .or_else(|| named_child(&suffix, "lambda_literal"))
+    {
+        values.push(Argument {
+            name: None,
+            value: lambda,
+        });
+    } else if named_child(&suffix, "value_arguments").is_none() {
+        return None;
     }
     Some(Call {
         callee,
@@ -500,4 +431,83 @@ pub(super) fn annotation(
                 .trim();
             imports.exact(root, &a, observed, canonical)
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ast_grep_core::tree_sitter::LanguageExt;
+
+    #[test]
+    fn generic_types_do_not_borrow_local_classes_or_default_scalar_identity() {
+        let source = "class FixedPath {}\nclass C<FixedPath, String, Int>(val root: FixedPath) { fun f(text: String, number: Int) {} }\nfun g(text: String) {}";
+        let ast = SupportLang::Kotlin.ast_grep(source);
+        let root = ast.root();
+        let imports = Imports::build(&root);
+        let member = root
+            .dfs()
+            .find(|n| n.kind().as_ref() == "class_parameter")
+            .unwrap();
+        assert!(imports.local_type(&root, &member, "FixedPath").is_none());
+        for parameter in root.dfs().filter(|n| n.kind().as_ref() == "parameter") {
+            let symbol = name(&parameter).unwrap();
+            let observed = if symbol == "number" { "Int" } else { "String" };
+            let expected = callable(&parameter).and_then(|n| name(&n)).as_deref() == Some("g");
+            assert_eq!(
+                imports.exact(&root, &parameter, observed, &format!("kotlin.{observed}")),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn member_type_context_uses_declaring_scope_and_rejects_import_conflicts() {
+        for (imports, nested, expected) in [
+            ("", "", true),
+            ("import elsewhere.FixedPath\n", "", false),
+            ("import elsewhere.*\n", "", false),
+            ("", "class FixedPath {}\n", true),
+        ] {
+            let source = format!(
+                "{imports}class FixedPath {{}}\nclass C {{\n {nested}val root: FixedPath = FixedPath()\n}}"
+            );
+            let ast = SupportLang::Kotlin.ast_grep(&source);
+            let root = ast.root();
+            assert!(
+                !root.dfs().any(|n| n.is_error() || n.is_missing()),
+                "{source}"
+            );
+            let member = root
+                .dfs()
+                .find(|n| {
+                    n.kind().as_ref() == "variable_declaration"
+                        && name(n).as_deref() == Some("root")
+                })
+                .unwrap();
+            assert_eq!(
+                Imports::build(&root)
+                    .local_type(&root, &member, "FixedPath")
+                    .is_some(),
+                expected,
+                "{source}"
+            );
+            if !nested.is_empty() {
+                let ty = Imports::build(&root)
+                    .local_type(&root, &member, "FixedPath")
+                    .unwrap();
+                assert_eq!(owner(&ty).and_then(|n| name(&n)).as_deref(), Some("C"));
+            }
+        }
+        let source = "class FixedPath {}\nclass C(val root: FixedPath) {\n class FixedPath {}\n}";
+        let ast = SupportLang::Kotlin.ast_grep(source);
+        let root = ast.root();
+        let member = root
+            .dfs()
+            .find(|n| n.kind().as_ref() == "class_parameter")
+            .unwrap();
+        let ty = Imports::build(&root)
+            .local_type(&root, &member, "FixedPath")
+            .unwrap();
+        assert_eq!(owner(&ty).and_then(|n| name(&n)).as_deref(), Some("C"));
+    }
 }
