@@ -62,7 +62,7 @@ fn recognizes_nested_sequelize_receiver_without_claiming_flow() {
     assert!(
         sinks
             .iter()
-            .all(|item| item.captures["database"].text == "models")
+            .all(|item| item.captures["database"].text == "models.sequelize")
     );
     assert!(sinks.iter().all(|item| item.related_evidence.is_empty()));
 }

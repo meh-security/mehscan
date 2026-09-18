@@ -154,7 +154,7 @@ fn php_parity_accounts_for_every_common_role_and_declared_cwe() {
         declared,
         [
             "CWE-20", "CWE-22", "CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-98", "CWE-327",
-            "CWE-434", "CWE-502", "CWE-601", "CWE-918", "CWE-295"
+            "CWE-434", "CWE-502", "CWE-601", "CWE-918", "CWE-295", "CWE-943"
         ]
         .into_iter()
         .collect(),

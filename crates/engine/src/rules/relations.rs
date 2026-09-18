@@ -43,7 +43,7 @@ fn validate_relations(relations: &[RelationContract], rules: &[Rule]) -> Result<
     capture_roles
         .entry((EvidenceKind::Sink, Capability::DatabaseQuery))
         .or_default()
-        .insert("nosql_query".to_string());
+        .extend(["nosql_query".to_string(), "nosql_expression".to_string()]);
     capture_roles
         .entry((EvidenceKind::Sink, Capability::ResourceAccess))
         .or_default()

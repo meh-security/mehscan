@@ -532,17 +532,25 @@ pub(super) fn jdbc_statement_receiver(
 ) -> bool {
     invocation
         .field("object")
-        .is_some_and(|receiver| jdbc_receiver(root, &receiver, "Statement", 8))
+        .is_some_and(|receiver| typed_database_receiver(root, &receiver, "java.sql.Statement", 8))
 }
 
-fn jdbc_receiver(
+pub(super) fn typed_database_receiver(
     root: &Node<'_, StrDoc<SupportLang>>,
     expression: &Node<'_, StrDoc<SupportLang>>,
-    short: &str,
+    canonical: &str,
     depth: usize,
 ) -> bool {
     if depth == 0 {
         return false;
+    }
+    let short = canonical.rsplit('.').next().unwrap_or(canonical);
+    if expression.kind().as_ref() == "object_creation_expression" {
+        return expression.field("type").is_some_and(|ty| {
+            ty.text() == canonical
+                || ty.text() == short
+                    && imported_exact(&imports(root), &declared_types(root), canonical, short)
+        });
     }
     if expression.kind().as_ref() == "method_invocation" {
         let Some(object) = expression.field("object") else {
@@ -551,7 +559,7 @@ fn jdbc_receiver(
         let operation = expression.field("name").map(|n| n.text().to_string());
         return short == "Statement"
             && operation.as_deref() == Some("createStatement")
-            && jdbc_receiver(root, &object, "Connection", depth - 1);
+            && typed_database_receiver(root, &object, "java.sql.Connection", depth - 1);
     }
     let name = expression.text();
     let explicit_this = name.starts_with("this.");
@@ -629,8 +637,8 @@ fn jdbc_receiver(
     let Some((binding, ty)) = binding else {
         return false;
     };
-    let canonical = format!("java.sql.{short}");
-    if ty == &canonical {
+    let ty = ty.split('<').next().unwrap_or(ty);
+    if ty == canonical {
         return true;
     }
     let generic_shadow = root.dfs().any(|n| {
@@ -654,14 +662,14 @@ fn jdbc_receiver(
     });
     if ty == short
         && !generic_shadow
-        && imported_exact(&imports(root), &declared_types(root), &canonical, short)
+        && imported_exact(&imports(root), &declared_types(root), canonical, short)
     {
         return true;
     }
     ty == "var"
         && binding
             .field("value")
-            .is_some_and(|value| jdbc_receiver(root, &value, short, depth - 1))
+            .is_some_and(|value| typed_database_receiver(root, &value, canonical, depth - 1))
 }
 
 fn receiver_types(root: &Node<'_, StrDoc<SupportLang>>) -> BTreeMap<String, String> {

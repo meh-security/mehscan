@@ -20,6 +20,7 @@ mod csharp_streaming_upload;
 mod database_receiver;
 mod dotnet_project;
 mod embedded_javascript;
+mod extended_database;
 mod file_roles;
 mod go_context;
 mod go_filesystem;

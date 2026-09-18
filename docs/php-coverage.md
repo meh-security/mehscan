@@ -6,6 +6,11 @@ PHP support is partial. The scanner parses PHP and mixed HTML/PHP in `.php`,
 `.phtml`, `.php5`, `.php7`, and `.php8` files without running PHP or Composer.
 The ordinary test, generated-file, and vendor exclusion policy applies.
 
+The [extended database rules](extended-database-coverage.md) also cover bounded
+constructor connection properties, PostgreSQL query text, Laravel/Doctrine raw
+query entrypoints and MongoDB Driver query construction. Unknown property and
+wrapper identities remain gaps.
+
 The profile recognizes reads from `$_GET`, `$_POST`, `$_REQUEST`,
 `$_COOKIE`, and `$_FILES`, and exact native command, mysqli query, HTML output,
 filesystem, deserialization, and dynamic-code APIs. PDO methods require a

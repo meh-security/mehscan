@@ -461,15 +461,59 @@ impl<'a> PhpContext<'a> {
     }
 
     pub(super) fn accepts(&self, rule: &str, node: &PhpNode<'a>) -> bool {
-        // Named/reordered arguments and unpacking need a separate argument-role
-        // summary; positional wildcard matching must not invent those roles.
-        if node.field("arguments").is_some_and(|arguments| {
-            arguments
-                .dfs()
-                .any(|child| matches!(child.kind().as_ref(), ":" | "..."))
-        }) {
+        // Positional matches must not invent roles for named/reordered or
+        // unpacked arguments, including the extended driver entrypoints.
+        if node
+            .field("arguments")
+            .or_else(|| node.children().find(|n| n.kind().as_ref() == "arguments"))
+            .is_some_and(|arguments| {
+                arguments
+                    .dfs()
+                    .any(|child| matches!(child.kind().as_ref(), ":" | "..."))
+            })
+        {
             return false;
-        };
+        }
+        if rule == "php-extended-nosql-query" {
+            return node.kind().as_ref() == "object_creation_expression"
+                && node
+                    .children()
+                    .find(|n| n.is_named() && n.kind().as_ref() != "arguments")
+                    .is_some_and(|name| self.sdk_class_exact(&name, "mongodb\\driver\\query"));
+        }
+        if rule == "php-extended-sql-facade" {
+            return node.field("scope").is_some_and(|name| {
+                self.sdk_class_exact(&name, "illuminate\\support\\facades\\db")
+            });
+        }
+        if rule == "php-extended-sql-builder" {
+            return node.field("object").is_some_and(|receiver| {
+                self.sdk_receiver(
+                    &receiver,
+                    node,
+                    &[
+                        "doctrine\\dbal\\connection",
+                        "doctrine\\dbal\\query\\querybuilder",
+                        "doctrine\\orm\\querybuilder",
+                        "doctrine\\orm\\entitymanagerinterface",
+                        "illuminate\\database\\query\\builder",
+                    ],
+                    8,
+                )
+            });
+        }
+        if rule == "php-extended-pgsql-query" {
+            return [
+                "pg_query",
+                "pg_query_params",
+                "pg_send_query",
+                "pg_send_query_params",
+                "pg_prepare",
+                "pg_send_prepare",
+            ]
+            .iter()
+            .any(|name| self.exact_function(node, name));
+        }
         if rule == "php-http-request-data" {
             let Some(base) = node.children().find(|n| n.is_named()) else {
                 return false;
@@ -637,6 +681,128 @@ impl<'a> PhpContext<'a> {
             "php-deserialization" => canonical == "unserialize",
             _ => false,
         }
+    }
+
+    fn sdk_class_exact(&self, name: &PhpNode<'a>, canonical: &str) -> bool {
+        let observed = name.text().trim().to_ascii_lowercase();
+        let scope = namespace_scope(name, &self.root);
+        if self.declarations.iter().any(|(declared, function, owner)| {
+            !function && *owner == scope && *declared == observed
+        }) {
+            return false;
+        }
+        if observed.starts_with('\\') {
+            return observed.trim_start_matches('\\') == canonical;
+        }
+        let candidates: Vec<_> = self
+            .imports
+            .iter()
+            .filter(|import| !import.function && import.alias == observed && import.scope == scope)
+            .collect();
+        if let [import] = candidates.as_slice() {
+            return import.target == canonical;
+        }
+        !self.namespaced_scope(&scope) && observed == canonical
+    }
+
+    fn sdk_receiver(
+        &self,
+        receiver: &PhpNode<'a>,
+        call: &PhpNode<'a>,
+        types: &[&str],
+        depth: usize,
+    ) -> bool {
+        if depth == 0 {
+            return false;
+        }
+        if receiver.kind().as_ref() == "scoped_call_expression" {
+            return receiver.field("scope").is_some_and(|scope| {
+                self.sdk_class_exact(&scope, "illuminate\\support\\facades\\db")
+            }) && receiver
+                .field("name")
+                .is_some_and(|name| matches!(name.text().as_ref(), "table" | "query"));
+        }
+        if receiver.kind().as_ref() == "member_call_expression" {
+            return receiver.field("name").is_some_and(|name| {
+                matches!(
+                    name.text().as_ref(),
+                    "createQueryBuilder" | "where" | "select" | "from" | "table"
+                )
+            }) && receiver
+                .field("object")
+                .is_some_and(|object| self.sdk_receiver(&object, call, types, depth - 1));
+        }
+        if receiver.kind().as_ref() != "variable_name" {
+            return false;
+        }
+        let scope = function_scope(call, &self.root);
+        if self.root.dfs().any(|n| {
+            n.range().start < call.range().start
+                && function_scope(&n, &self.root) == scope
+                && matches!(
+                    n.kind().as_ref(),
+                    "include_expression"
+                        | "include_once_expression"
+                        | "require_expression"
+                        | "require_once_expression"
+                )
+        }) {
+            return false;
+        }
+        let writes: Vec<_> = self
+            .root
+            .dfs()
+            .filter(|n| {
+                function_scope(n, &self.root) == scope
+                    && matches!(
+                        n.kind().as_ref(),
+                        "assignment_expression"
+                            | "augmented_assignment_expression"
+                            | "reference_assignment_expression"
+                    )
+                    && n.field("left")
+                        .is_some_and(|left| left.text() == receiver.text())
+            })
+            .collect();
+        if let [write] = writes.as_slice() {
+            return write.range().start < call.range().start
+                && write
+                    .field("right")
+                    .is_some_and(|value| self.sdk_receiver(&value, call, types, depth - 1));
+        }
+        if !writes.is_empty() {
+            return false;
+        }
+        if self.root.dfs().any(|n| {
+            n.range().start < call.range().start
+                && function_scope(&n, &self.root) == scope
+                && matches!(
+                    n.kind().as_ref(),
+                    "function_call_expression" | "member_call_expression"
+                )
+                && n.field("arguments").is_some_and(|args| {
+                    args.dfs().any(|arg| {
+                        arg.kind().as_ref() == "variable_name" && arg.text() == receiver.text()
+                    })
+                })
+        }) {
+            return false;
+        }
+        self.root
+            .dfs()
+            .filter(|n| {
+                n.kind().as_ref() == "simple_parameter" && function_scope(n, &self.root) == scope
+            })
+            .any(|param| {
+                param
+                    .field("name")
+                    .is_some_and(|name| name.text() == receiver.text())
+                    && param.field("type").is_some_and(|ty| {
+                        types
+                            .iter()
+                            .any(|canonical| self.sdk_class_exact(&ty, canonical))
+                    })
+            })
     }
 
     fn resolve(&self, name: &PhpNode<'a>, function: bool) -> Option<String> {

@@ -190,6 +190,20 @@ pub(crate) fn scan_source(
                 if comments.is_in_comment(range.clone()) {
                     continue;
                 }
+                if super::extended_database::is_rule(&compiled_rule.rule.id)
+                    && language != Language::Kotlin
+                    && language != Language::Php
+                    && !super::extended_database::accepts(
+                        &root,
+                        matched.get_node(),
+                        &compiled_rule.rule.id,
+                        language,
+                        matched.get_env().get_match("DATABASE"),
+                        matched.get_env().get_match("TYPE"),
+                    )
+                {
+                    continue;
+                }
                 if php_context.as_ref().is_some_and(|context| {
                     !context.accepts(&compiled_rule.rule.id, matched.get_node())
                 }) {
@@ -343,6 +357,17 @@ pub(crate) fn scan_source(
                 {
                     continue;
                 }
+                if language == Language::Go
+                    && matches!(
+                        compiled_rule.rule.id.as_str(),
+                        "go-database-query" | "go-sql-parameterization"
+                    )
+                    && matched.get_env().get_match("DB").is_some_and(|receiver| {
+                        super::extended_database::pgx_receiver(&root, matched.get_node(), receiver)
+                    })
+                {
+                    continue;
+                }
                 if language == Language::Csharp
                     && !compiled_rule.rule.symbols.is_empty()
                     && !call_site(matched.get_node().clone()).is_some_and(|call| {
@@ -418,6 +443,30 @@ pub(crate) fn scan_source(
                         matched.get_node(),
                         path,
                     ));
+                }
+                if (compiled_rule.rule.id.ends_with("extended-nosql-command")
+                    || compiled_rule.rule.id.ends_with("extended-nosql-request"))
+                    && let Some(query) = matched.get_env().get_match("QUERY")
+                {
+                    let operands = super::extended_database::dynamodb_operands(query);
+                    if operands.is_empty() {
+                        continue;
+                    }
+                    captures.remove("nosql_query");
+                    literal_values.remove("nosql_query");
+                    for (role, operand) in ["nosql_query", "nosql_expression"]
+                        .into_iter()
+                        .zip(operands)
+                    {
+                        captures.insert(
+                            role.into(),
+                            Capture {
+                                text: operand.text().into_owned(),
+                                location: location(path, &operand),
+                            },
+                        );
+                        literal_values.insert(role.into(), literals.evaluate(&operand));
+                    }
                 }
                 if language == Language::Kotlin
                     && compiled_rule.rule.id == "kotlin-process-builder"
@@ -1056,6 +1105,103 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    // Prefer an existing specialized selector/predicate over its whole-filter
+    // extension, and an exact extended SDK query over the old syntax fallback.
+    if matches!(
+        language,
+        Language::Javascript | Language::Typescript | Language::Tsx
+    ) {
+        let request_objects: Vec<_> = evidence
+            .iter()
+            .filter(|e| {
+                super::extended_database::is_rule(&e.rule_id)
+                    && e.cwe_candidates.iter().any(|c| c == "CWE-943")
+            })
+            .filter_map(|e| {
+                root.dfs().find(|n| {
+                    n.range().start == e.location.start.byte_offset
+                        && n.range().end == e.location.end.byte_offset
+                })
+            })
+            .flat_map(|sink| super::extended_database::request_objects(&root, &sink))
+            .collect();
+        for request in request_objects {
+            let prefix = match language {
+                Language::Javascript => "javascript",
+                Language::Typescript => "typescript",
+                _ => "tsx",
+            };
+            let rule_id = format!("{prefix}-extended-nosql-request-object-source");
+            let id = evidence_id(path, &rule_id, request.range().start, request.range().end);
+            if evidence.iter().any(|e| e.id == id) {
+                continue;
+            }
+            evidence.push(Evidence {
+                id,
+                kind: EvidenceKind::Source,
+                capability: Capability::HttpRequestData,
+                location: location(path, &request),
+                enclosing_symbol: enclosing_symbol(&request),
+                captures: BTreeMap::from([(
+                    "field".into(),
+                    Capture {
+                        text: request.text().into_owned(),
+                        location: location(path, &request),
+                    },
+                )]),
+                cwe_candidates: vec!["CWE-20".into()],
+                tags: vec!["request-object".into(), "nosql".into()],
+                confidence: Confidence::Medium,
+                provenance: Provenance {
+                    resolution: Resolution::Ast,
+                    engine: "ast-grep 0.45.1 + bounded-nosql-request-object".into(),
+                    rule_version: 1,
+                },
+                context: evidence_context(
+                    &request,
+                    &comments,
+                    &conditional,
+                    &literals,
+                    BTreeMap::new(),
+                ),
+                symbol_resolution: None,
+                rule_id,
+                related_evidence: vec![],
+            });
+        }
+    }
+    let specialized: BTreeSet<_> = evidence
+        .iter()
+        .filter(|e| {
+            e.capability == Capability::DatabaseQuery
+                && !super::extended_database::is_rule(&e.rule_id)
+                && e.cwe_candidates.iter().any(|c| c == "CWE-943")
+        })
+        .map(|e| (e.location.start.byte_offset, e.location.end.byte_offset))
+        .collect();
+    evidence.retain(|e| {
+        !(super::extended_database::is_rule(&e.rule_id)
+            && e.cwe_candidates.iter().any(|c| c == "CWE-943")
+            && specialized.contains(&(e.location.start.byte_offset, e.location.end.byte_offset)))
+    });
+    let extended: BTreeSet<_> = evidence
+        .iter()
+        .filter(|e| {
+            super::extended_database::is_rule(&e.rule_id)
+                && e.capability == Capability::DatabaseQuery
+        })
+        .map(|e| (e.location.start.byte_offset, e.location.end.byte_offset))
+        .collect();
+    evidence.retain(|e| {
+        !(matches!(
+            e.rule_id.as_str(),
+            "go-dynamic-sql-prepare"
+                | "java-database-query"
+                | "javascript-database-query"
+                | "typescript-database-query"
+                | "tsx-database-query"
+        ) && extended.contains(&(e.location.start.byte_offset, e.location.end.byte_offset)))
+    });
     node_context.add_parameter_return_sources(
         path,
         &root,

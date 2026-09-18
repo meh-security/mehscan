@@ -335,7 +335,7 @@
   source: { capability: http_request_data }
   sink:
     capability: database_query
-    input_roles: [nosql_query]
+    input_roles: [nosql_query, nosql_expression]
   cwe_candidates: [CWE-943]
   strategy: bounded_local_value
 

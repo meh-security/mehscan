@@ -4,6 +4,10 @@ Kotlin support is a partial JVM profile. Mehscan parses `.kt` and `.kts` without
 running Kotlin, Gradle or application code. Language filters accept `kotlin`,
 `kt` and `kts`; investigation provides Kotlin outlines.
 
+The [extended database rules](extended-database-coverage.md) add bounded JVM ORM
+query receivers and MongoDB filter/document construction. Receiver inference
+and query consumption remain subject to the limits in that profile.
+
 The ordinary source policy applies: tests, generated files and outer example
 directories are excluded unless explicitly included. Under `src/main/kotlin`
 or `src/main/java`, package segments named `samples` or `examples` remain

@@ -191,11 +191,10 @@ fn enumerates_first_cwe_capability_set_across_priority_languages() {
         cwe["CWE-762"].supported_languages,
         [mehscan_core::Language::Cpp]
     );
-    for id in [
-        "CWE-312", "CWE-400", "CWE-489", "CWE-598", "CWE-693", "CWE-943",
-    ] {
+    for id in ["CWE-312", "CWE-400", "CWE-489", "CWE-598", "CWE-693"] {
         assert_eq!(cwe[id].supported_languages, [mehscan_core::Language::Go]);
     }
+    assert_eq!(cwe["CWE-943"].supported_languages.len(), 12);
     for id in ["CWE-59", "CWE-732"] {
         assert_eq!(
             cwe[id].supported_languages,
@@ -227,7 +226,7 @@ fn enumerates_first_cwe_capability_set_across_priority_languages() {
 #[test]
 fn built_in_catalog_has_valid_provenance() {
     let rules = mehscan_engine::rules::load_builtin_rules().expect("catalog should validate");
-    assert_eq!(rules.len(), 366);
+    assert_eq!(rules.len(), 402);
     let invalid = rules
         .iter()
         .filter(|rule| {

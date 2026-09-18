@@ -4,6 +4,8 @@ Mehscan is a source security scanner built for developers and AI coding agents. 
 
 Mehscan is under active development. It supports C, C++, C#, Java, JavaScript, TypeScript/TSX, Python, Go, and Rust, with partial PHP and Kotlin JVM coverage. Coverage varies by language and framework; see the [PHP](docs/php-coverage.md) and [Kotlin](docs/kotlin-coverage.md) profiles for their limitations.
 
+See [extended SQL and NoSQL coverage](docs/extended-database-coverage.md) for database query mechanics and remaining language-specific gaps.
+
 ## What it does
 
 - Scans source code locally without executing build tools or application code.

@@ -17,6 +17,22 @@
         captures: { query: QUERY }
       - pattern: new SQLiteCommand($QUERY, $$$ARGUMENTS)
         captures: { query: QUERY }
+      - pattern: new NpgsqlCommand($QUERY)
+        captures: { query: QUERY }
+      - pattern: new MySqlCommand($QUERY)
+        captures: { query: QUERY }
+      - pattern: new SqliteCommand($QUERY)
+        captures: { query: QUERY }
+      - pattern: new SqliteCommand($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: new SQLiteCommand($QUERY)
+        captures: { query: QUERY }
+      - pattern: new OracleCommand($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: new OdbcCommand($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: new OleDbCommand($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
       - pattern: $DATABASE.ExecuteSqlRawAsync($QUERY)
         captures: { query: QUERY }
       - pattern: $DATABASE.ExecuteSqlRawAsync($QUERY, $$$ARGUMENTS)
@@ -226,6 +242,8 @@
     any:
       - pattern: $QUERY_FUNCTION($QUERY)
         captures: { query: QUERY }
+      - pattern: $QUERY_FUNCTION($QUERY, $PARAMETERS)
+        captures: { query: QUERY, parameters: PARAMETERS }
       - pattern: $DATABASE.query($QUERY, $PARAMETERS)
         captures: { database: DATABASE, query: QUERY, parameters: PARAMETERS }
       - pattern: $DATABASE.simple_query($QUERY)

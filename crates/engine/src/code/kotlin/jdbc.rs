@@ -162,9 +162,13 @@ pub(super) fn receiver<'a>(
             return false;
         }
         if let Some(ty) = identity::binding_type(root, expression, &symbol) {
-            return imports.exact(root, expression, &ty, canonical)
-                || canonical == "javax.sql.PooledConnection"
-                    && imports.exact(root, expression, &ty, "javax.sql.XAConnection");
+            return imports.exact(
+                root,
+                expression,
+                ty.split('<').next().unwrap_or(&ty),
+                canonical,
+            ) || canonical == "javax.sql.PooledConnection"
+                && imports.exact(root, expression, &ty, "javax.sql.XAConnection");
         }
         let Some(binding) = identity::binding(root, expression, &symbol) else {
             return false;
