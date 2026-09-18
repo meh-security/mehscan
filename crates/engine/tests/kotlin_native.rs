@@ -6,6 +6,144 @@ fn root() -> PathBuf {
 }
 
 #[test]
+fn jvm_breadth_keeps_paths_separate_from_content_and_lookalikes() {
+    let scan = mehscan_engine::scan_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-jvm-breadth"),
+    )
+    .unwrap();
+    assert_eq!(scan.coverage.totals.parse_failed, 0);
+    let boundaries = scan
+        .evidence
+        .iter()
+        .filter(|e| {
+            e.kind == mehscan_core::EvidenceKind::Sink
+                || e.kind == mehscan_core::EvidenceKind::SecurityConfiguration
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(boundaries.len(), 14);
+    assert!(
+        !boundaries
+            .iter()
+            .any(|e| e.enclosing_symbol.as_deref() == Some("lookalikes"))
+    );
+    let owners = scan
+        .security_paths
+        .iter()
+        .map(|p| {
+            scan.evidence
+                .iter()
+                .find(|e| e.id == p.sink_evidence_id)
+                .unwrap()
+                .enclosing_symbol
+                .as_deref()
+                .unwrap()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        owners,
+        std::collections::BTreeSet::from(["rawProcess", "rawRead"])
+    );
+}
+
+#[test]
+fn typed_ktor_inputs_track_effective_sinks_and_exclude_plain_text() {
+    let scan = mehscan_engine::scan_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-ktor"),
+    )
+    .unwrap();
+    assert_eq!(scan.coverage.totals.parse_failed, 0);
+    let sources = scan
+        .evidence
+        .iter()
+        .filter(|e| {
+            e.rule_id.starts_with("kotlin-ktor-") && e.kind == mehscan_core::EvidenceKind::Source
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(sources.len(), 9);
+    assert!(
+        !scan
+            .evidence
+            .iter()
+            .any(|e| e.rule_id == "kotlin-ktor-html-output"
+                && e.enclosing_symbol.as_deref() == Some("plainText"))
+    );
+    assert!(
+        !scan
+            .evidence
+            .iter()
+            .any(|e| e.rule_id.starts_with("kotlin-ktor-")
+                && e.enclosing_symbol.as_deref() == Some("lookalike"))
+    );
+    let owners = scan
+        .security_paths
+        .iter()
+        .map(|p| {
+            scan.evidence
+                .iter()
+                .find(|e| e.id == p.sink_evidence_id)
+                .unwrap()
+                .enclosing_symbol
+                .as_deref()
+                .unwrap()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        owners,
+        std::collections::BTreeSet::from([
+            "dslCommands",
+            "queryCommand",
+            "pathCommand",
+            "bodyCommand",
+            "rawRedirect",
+            "rawHtml",
+            "rawClient"
+        ])
+    );
+}
+
+#[test]
+fn ktor_html_decisions_keep_success_and_fixed_error_responses_separate() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-ktor");
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
+    let responses = jobs
+        .observation_reviews
+        .iter()
+        .filter(|review| {
+            review.evidence.iter().any(|e| {
+                e.enclosing_symbol.as_deref() == Some("rawBytes")
+                    && e.rule_id == "kotlin-ktor-html-output"
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(responses.len(), 2);
+    for review in responses {
+        let anchor = review
+            .evidence
+            .iter()
+            .find(|e| review.anchor_evidence_ids.contains(&e.id))
+            .unwrap();
+        let content = &anchor.captures["content"].text;
+        assert!(
+            review
+                .decision_facts
+                .established
+                .iter()
+                .any(|fact| fact.contains("matched HTML response") && fact.contains(content))
+        );
+        assert_eq!(
+            review
+                .decision_facts
+                .established
+                .iter()
+                .any(|fact| fact.contains("known fixed string")),
+            content == "\"Invalid Base64\""
+        );
+    }
+}
+
+#[test]
 fn kotlin_jvm_boundaries_and_scripts_preserve_captures() {
     let result = mehscan_engine::scan_path(root()).unwrap();
     assert_eq!(result.coverage.languages[&Language::Kotlin].scanned, 5);
@@ -25,7 +163,13 @@ fn kotlin_jvm_boundaries_and_scripts_preserve_captures() {
         .iter()
         .map(|e| e.rule_id.clone())
         .collect::<std::collections::BTreeSet<_>>();
-    for fixture in ["kotlin-quality", "kotlin-jdbc", "kotlin-network"] {
+    for fixture in [
+        "kotlin-quality",
+        "kotlin-jdbc",
+        "kotlin-network",
+        "kotlin-jvm-breadth",
+        "kotlin-ktor",
+    ] {
         let scan = mehscan_engine::scan_path(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../tests/fixtures")

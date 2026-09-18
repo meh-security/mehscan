@@ -1,101 +1,274 @@
 {
   "schema_version": "1.0",
-  "date": "2026-09-17",
+  "date": "2026-09-18",
   "profile": "partial Kotlin JVM",
-  "scope": "Selected admitted source cases only; independent source oracle, not whole-application or language recall",
-  "selected_cases": 53,
-  "positive_cases": 26,
-  "negative_cases": 27,
+  "scope": "Predefined source-adjudicated selected cases, including ordinary observations dismissed without clean-app claims; not whole-app recall, deployment exposure or language parity. Established before v17 model decisions.",
+  "selected_cases": 88,
+  "positive_cases": 39,
+  "negative_cases": 49,
   "corpus_cases": {
     "factory-controls": 4,
     "file-controls": 6,
     "import-controls": 3,
     "jdbc-controls": 4,
-    "ktor-samples": 9,
+    "jvm-breadth": 14,
+    "ktor-controls": 12,
+    "ktor-samples": 16,
     "network-controls": 7,
     "petclinic-vulnerable": 2,
     "prepared-controls": 4,
     "quality-app": 10,
     "receiver-controls": 3,
-    "seqra-kotlin": 1
+    "seqra-kotlin": 3
   },
   "original_fixture_oracle": "../tests/fixtures/kotlin-review-oracle.json",
+  "original_fixture_oracle_cases": 67,
+  "kotlin_rules": 29,
   "reasoning_effort": "medium",
   "primary": {
     "luna": {
-      "exact": 53,
-      "total": 53,
-      "true_positives": 26,
+      "exact": 88,
+      "total": 88,
+      "true_positives": 39,
       "false_positives": 0,
       "false_negatives": 0,
       "precision": 1.0,
       "selected_case_recall": 1.0
     },
     "terra": {
-      "exact": 53,
-      "total": 53,
-      "true_positives": 26,
+      "exact": 88,
+      "total": 88,
+      "true_positives": 39,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "precision": 1.0,
+      "selected_case_recall": 1.0
+    },
+    "sol": {
+      "exact": 88,
+      "total": 88,
+      "true_positives": 39,
       "false_positives": 0,
       "false_negatives": 0,
       "precision": 1.0,
       "selected_case_recall": 1.0
     }
+  },
+  "three_model_agreement": {
+    "agreed": 88,
+    "total": 88
   },
   "independent_repeat": {
     "luna": {
-      "exact": 53,
-      "total": 53,
-      "true_positives": 26,
+      "exact": 45,
+      "total": 45,
       "false_positives": 0,
-      "false_negatives": 0,
-      "precision": 1.0,
-      "selected_case_recall": 1.0
+      "false_negatives": 0
     },
     "terra": {
-      "exact": 53,
-      "total": 53,
-      "true_positives": 26,
+      "exact": 45,
+      "total": 45,
       "false_positives": 0,
-      "false_negatives": 0,
-      "precision": 1.0,
-      "selected_case_recall": 1.0
+      "false_negatives": 0
     }
   },
-  "independent_third_reviewer": {
-    "model": "gpt-5.6-sol",
-    "exact": 53,
-    "total": 53,
-    "true_positives": 26,
-    "false_positives": 0,
-    "false_negatives": 0,
-    "precision": 1.0,
-    "selected_case_recall": 1.0
-  },
-  "three_model_agreement": {
-    "agreed": 53,
-    "total": 53
-  },
+  "repeat_scope": "Independent fresh repeat of 45 selected expanded/pinned cases; not a repeat of all 88 cases and not full language parity.",
   "repeat_luna_terra_agreement": {
-    "agreed": 53,
-    "total": 53
+    "agreed": 45,
+    "total": 45
   },
   "response_contract": {
-    "distinct_bundles": 28,
-    "validated_model_responses": 140,
-    "decision_instances": 265,
-    "fingerprints_ids_confidence_and_complete_sets": "pass"
+    "distinct_bundles": 49,
+    "validated_model_responses": 197,
+    "decision_instances": 354,
+    "fingerprints_ids_confidence_and_complete_sets": "pass",
+    "execution_attempts": 198,
+    "rejected_attempts": 1,
+    "retry_reason": "One Luna Ktor HTML attempt invented a needs_review check absent from the supplied unresolved set; the fresh contract-corrected whole-bundle attempt passed. No oracle feedback was supplied."
   },
   "report_quality": {
-    "final_report_sets": 55,
-    "ready_for_engineer": 55,
+    "final_report_sets": 39,
+    "ready_for_engineer": 39,
     "verdict_counts": {
-      "pass": 55
+      "pass": 29,
+      "pass_with_warnings": 10
     },
-    "targeted_ktor_caption_reaudits": 5,
-    "prior_audit_failures_and_warnings": "Retained in the chronological quality checkpoint; not substituted for changed artifacts."
+    "warnings": [
+      {
+        "corpus": "factory-controls",
+        "model": "terra",
+        "audit_reused_for_byte_identical_artifacts": true,
+        "verdict": "pass_with_warnings",
+        "ready_for_engineer": true,
+        "summary": "Ready to hand to an engineer. Counts, scope labels, canonical decisions, locations, titles, impact, and remediation guidance reconcile; one Markdown evidence rendering should be corrected.",
+        "findings": [
+          {
+            "layer": "Markdown presentation",
+            "location": "Confirmed issues \u2014 matched-operation snippets",
+            "problem": "The inline SQL snippets render `SELECT \\*`, while canonical JSON records `SELECT *`. Inside Markdown code spans, the backslash is literal, so the report misstates the reviewed operation.",
+            "fix": "Render the literal asterisk as `*` in both matched-operation snippets (or safely encode it outside a code span); regenerate the Markdown projection from canonical data."
+          }
+        ]
+      },
+      {
+        "corpus": "jdbc-controls",
+        "model": "luna",
+        "audit_reused_for_byte_identical_artifacts": true,
+        "verdict": "pass_with_warnings",
+        "ready_for_engineer": true,
+        "summary": "Counts, scope, canonical decisions, evidence, titles, impacts, remediations, and follow-up checks reconcile. One minor Markdown presentation defect should be corrected before handoff.",
+        "findings": [
+          {
+            "layer": "Markdown presentation",
+            "location": "Confirmed issues: Matched operation lines",
+            "problem": "The rendered code spans show `\\*` instead of the literal SQL wildcard `*`, which does not exactly match the canonical evidence or described query behavior.",
+            "fix": "Regenerate the Markdown projection so literal asterisks inside code spans render as `*` without the backslash."
+          }
+        ]
+      },
+      {
+        "corpus": "jdbc-controls",
+        "model": "terra",
+        "audit_reused_for_byte_identical_artifacts": true,
+        "verdict": "pass_with_warnings",
+        "ready_for_engineer": true,
+        "summary": "Ready to hand to an engineer. Scope, canonical counts, decisions, evidence, impacts, remediations, dismissals, and qualified correlation warning are consistent with the bounded teaching-source evaluation.",
+        "findings": [
+          {
+            "layer": "Markdown presentation",
+            "location": "Confirmed issues \u2014 matched-operation snippets",
+            "problem": "The rendered inline-code SQL snippets escape `*` as `\\*`, while the canonical evidence contains `*`. In code spans, this presents a literal backslash and makes the displayed source evidence inaccurate.",
+            "fix": "Regenerate the Markdown projection so code-span SQL uses the canonical literal `*` without a backslash."
+          }
+        ]
+      },
+      {
+        "corpus": "ktor-controls",
+        "model": "terra",
+        "audit_reused_for_byte_identical_artifacts": true,
+        "verdict": "pass_with_warnings",
+        "ready_for_engineer": true,
+        "summary": "Ready to hand to an engineer. Counts, scope labels, canonical decisions, grouped-instance metadata, evidence, impact, remediation, and follow-up checks are consistent. One Markdown rendering defect should be corrected.",
+        "findings": [
+          {
+            "layer": "Markdown presentation",
+            "location": "Confirmed issues \u2192 \u201cRequest-derived markup reaches an HTML response\u201d \u2192 Instance 1",
+            "problem": "The matched operation is in a code span but encodes `<p>` and `</p>` as `&lt;p&gt;` and `&lt;/p&gt;`. Code spans render entities literally, so the displayed operation no longer matches the canonical source expression.",
+            "fix": "Regenerate this code span from canonical data using literal `<p>$name</p>` (without HTML entity encoding inside the backticks). Keep entity encoding only in ordinary Markdown prose where needed."
+          },
+          {
+            "layer": "Markdown presentation",
+            "location": "Confirmed issues \u2192 \u201cRequest-derived markup reaches an HTML response\u201d \u2192 Instance 2",
+            "problem": "The code-span operation renders `Charsets.UTF\\_8`; the backslash is literal in a code span and differs from the canonical identifier `Charsets.UTF_8`.",
+            "fix": "Regenerate the code span as `Charsets.UTF_8` without Markdown escaping inside the backticks."
+          }
+        ]
+      },
+      {
+        "corpus": "ktor-samples",
+        "model": "luna",
+        "audit_reused_for_byte_identical_artifacts": true,
+        "verdict": "pass_with_warnings",
+        "ready_for_engineer": true,
+        "summary": "Counts, canonical decisions, scope limitations, locations, evidence, remediations, and follow-up checks reconcile. One title could more precisely distinguish HTTP Digest protocol hashing from password-storage hashing.",
+        "findings": [
+          {
+            "layer": "Markdown presentation",
+            "location": "Confirmed issue 2: \u201cHTTP Digest authentication defaults credential hashing to MD5\u201d",
+            "problem": "\u201cCredential hashing\u201d may be read as password-storage hashing, although the finding concerns the HTTP Digest protocol and the remediation correctly distinguishes them.",
+            "fix": "Rename the title to \u201cHTTP Digest authentication defaults its credential digest to MD5\u201d or equivalent."
+          }
+        ]
+      },
+      {
+        "corpus": "network-controls",
+        "model": "luna",
+        "verdict": "pass_with_warnings",
+        "ready_for_engineer": true,
+        "summary": "The report is internally consistent, scope-bounded, and actionable. Counts, grouped instances, canonical decisions, locations, remediations, and follow-up checks reconcile. Minor presentation improvements would make the handoff clearer.",
+        "findings": [
+          {
+            "layer": "Markdown presentation",
+            "location": "Confirmed issues, grouped finding 1",
+            "problem": "The heading groups three operations under one title, while the report has distinct rawStream, constructorStream, and fetch behaviors. The instances disambiguate them, but the grouped title is less operation-specific than the separate finding title.",
+            "fix": "Use a title that names the shared behavior and affected operations, or include the operation names in the heading while retaining the grouped structure."
+          },
+          {
+            "layer": "Markdown presentation",
+            "location": "Scope and limitations",
+            "problem": "The report says fixtures, tests, examples, and teaching material may be included, but does not explicitly identify whether app.kt is one of those categories.",
+            "fix": "State directly that app.kt is selected teaching/pinned evaluation material, so readers do not need to infer its admission category."
+          }
+        ]
+      },
+      {
+        "corpus": "prepared-controls",
+        "model": "luna",
+        "audit_reused_for_byte_identical_artifacts": true,
+        "verdict": "pass_with_warnings",
+        "ready_for_engineer": true,
+        "summary": "The report is scoped clearly, reconciles with canonical counts and decisions, and provides actionable operation-specific findings. One Markdown projection issue affects exact query evidence.",
+        "findings": [
+          {
+            "layer": "Markdown presentation",
+            "location": "Confirmed issues, both finding instances, Matched operation",
+            "problem": "The Markdown renders the SQL wildcard as `\\*` inside code spans, while canonical JSON records `*`. This can make the displayed query differ from the supplied source evidence.",
+            "fix": "Regenerate the Markdown projection so the code span contains `*` without the backslash."
+          }
+        ]
+      },
+      {
+        "corpus": "prepared-controls",
+        "model": "terra",
+        "audit_reused_for_byte_identical_artifacts": true,
+        "verdict": "pass_with_warnings",
+        "ready_for_engineer": true,
+        "summary": "Counts, decisions, scope, evidence, impacts, remediation, and review metadata reconcile with canonical JSON. One rendered-code evidence mismatch should be corrected.",
+        "findings": [
+          {
+            "layer": "Markdown presentation",
+            "location": "Confirmed issues \u2192 both \u201cMatched operation\u201d fields",
+            "problem": "The inline code samples render `SELECT \\* ...`, while canonical JSON records `SELECT * ...`. Backslash escaping is literal inside Markdown code spans, so the displayed operation no longer matches the source evidence.",
+            "fix": "Remove the backslash before `*` in both inline code samples. Keep any HTML entities outside code spans unchanged; they safely render literal characters without altering described behavior."
+          }
+        ]
+      },
+      {
+        "corpus": "quality-app",
+        "model": "luna",
+        "audit_reused_for_byte_identical_artifacts": true,
+        "verdict": "pass_with_warnings",
+        "ready_for_engineer": true,
+        "summary": "Counts, scope labels, canonical decisions, evidence, titles, impacts, remediations, and follow-up checks are consistent. One Markdown presentation defect should be corrected.",
+        "findings": [
+          {
+            "layer": "Markdown presentation",
+            "location": "Confirmed issue 1, matched operation",
+            "problem": "The rendered code span shows `SELECT \\* FROM...`, while canonical JSON and source semantics use `SELECT * FROM...`. The backslash can misrepresent the executed SQL text.",
+            "fix": "Remove the backslash before `*` in the Markdown projection; preserve literal `<` safely with HTML entities only when needed outside code spans."
+          }
+        ]
+      },
+      {
+        "corpus": "quality-app",
+        "model": "terra",
+        "audit_reused_for_byte_identical_artifacts": true,
+        "verdict": "pass_with_warnings",
+        "ready_for_engineer": true,
+        "summary": "Counts, canonical decisions, scope limits, evidence, impacts, remediations, and follow-up checks reconcile. One Markdown rendering defect should be corrected.",
+        "findings": [
+          {
+            "layer": "Markdown presentation",
+            "location": "Confirmed issue 1 \u2014 Matched operation",
+            "problem": "The inline code span renders `SELECT \\*` because Markdown code spans preserve the backslash, while canonical evidence is `SELECT *`. This makes the displayed evidence snippet inaccurate.",
+            "fix": "Remove the backslash before `*` inside the inline code span."
+          }
+        ]
+      }
+    ]
   },
   "projection_checks": {
-    "report_sets": 55,
+    "report_sets": 39,
     "counts_and_sarif_locations": "pass",
     "canonical_decisions_preserved": "pass",
     "markdown_issue_review_ids": "pass"
@@ -106,34 +279,128 @@
     "prepared_ownership_fixture": 8,
     "url_fixture": 10,
     "pinned_seqra_direct_methods": 2,
-    "total": 49,
+    "generic_shadow_fixture": 4,
+    "jvm_breadth_fixture": 3,
+    "ktor_http_pipeline_fixture": 9,
+    "total": 65,
     "status": "pass",
-    "scope": "Isolated original fixtures and selected pinned methods only; no third-party whole-app build, framework binding, or production deployment claim."
+    "scope": "Isolated original fixtures and selected pinned methods only; no third-party whole-app build, production deployment or reproduced SSRF claim."
   },
   "workspace_tests": {
-    "command": "cargo test --workspace --all-targets --locked --offline -j 4",
+    "command": "cargo test --workspace --all-targets --offline --locked -j4",
     "status": "pass",
-    "passed": 965,
+    "passed": 974,
     "failed": 0,
     "ignored": 41,
     "ignored_policy": "Existing optional external-corpus checks; not counted as passed."
   },
+  "final_handoff_checks": {
+    "targeted_core_and_engine_tests": "pass",
+    "focused_tests_passed": 57,
+    "focused_tests_failed": 0,
+    "prior_security_requests_byte_identical": 49,
+    "fresh_report_audits": 39,
+    "structured_caller_follow_up_audits": 9,
+    "caller_follow_up_engine_tests_passed": 25,
+    "unchanged_report_sets_byte_identical": 30,
+    "note": "The full workspace sweep covers all Kotlin source-analysis changes; final report projections were subsequently covered by 57 focused core/engine tests, 25 repeated Kotlin unit tests after structured caller retention, and fresh audits of changed reports."
+  },
   "full_application_recall_established": false,
   "full_language_parity_established": false,
-  "generic_shadow_follow_up": {
-    "fixture": "../tests/fixtures/kotlin-generics/README.md",
-    "compiler": "Kotlin 2.4.10 / JDK 17",
-    "runtime_checks_passed": 4,
-    "lookalike_operations_excluded": 4,
-    "canonical_jdbc_controls_admitted": 2,
-    "kotlin_unit_tests_passed": 19,
-    "kotlin_integration_tests_passed": 13,
-    "prior_review_requests_byte_identical": 28,
-    "prior_review_requests_total": 28,
-    "prior_selected_cases_unchanged": 53,
-    "new_ai_decisions": 0,
-    "new_report_audits": 0,
-    "full_workspace_rerun": false,
-    "limitations": "Conservative syntactic generic owner guard; not compiler-backed bound, nested class scope or dispatch resolution"
+  "previous_expansion_checkpoint": {
+    "cases": 85,
+    "primary": {
+      "luna": {
+        "exact": 84,
+        "total": 85,
+        "true_positives": 37,
+        "false_positives": 1,
+        "false_negatives": 0,
+        "precision": 0.9736842105263158,
+        "selected_case_recall": 1.0
+      },
+      "terra": {
+        "exact": 84,
+        "total": 85,
+        "true_positives": 37,
+        "false_positives": 1,
+        "false_negatives": 0,
+        "precision": 0.9736842105263158,
+        "selected_case_recall": 1.0
+      },
+      "sol": {
+        "exact": 84,
+        "total": 85,
+        "true_positives": 37,
+        "false_positives": 1,
+        "false_negatives": 0,
+        "precision": 0.9736842105263158,
+        "selected_case_recall": 1.0
+      }
+    },
+    "repeat": {
+      "luna": {
+        "exact": 41,
+        "total": 42,
+        "false_positives": 1,
+        "false_negatives": 0
+      },
+      "terra": {
+        "exact": 41,
+        "total": 42,
+        "false_positives": 1,
+        "false_negatives": 0
+      }
+    },
+    "report_sets_ready": 37,
+    "report_sets": 39,
+    "shared_false_positive": "All three primary models and both repeat models borrowed successful decoded HTML from another response when reviewing the fixed invalid-Base64 error response. Negative oracle label was retained; exact-anchor facts and AST fixed-literal proof fixed the precision gap.",
+    "workspace_failure": "Stale language-count assertions in security_configuration; web_surfaces expectations also updated. Final full sweep is recorded above."
+  },
+  "evidence_artifacts": {
+    "source-oracle-v17.json": {
+      "sha256": "09a3ac56b3c5b5ed3ec2cd351154aeab93a712ee3ec4ebbd6a093e5f6b260c24",
+      "availability": "Local evaluation evidence; third-party source and raw reviewer transcripts are not published."
+    },
+    "oracle-results-v17.json": {
+      "sha256": "b90692f27f7c085cc7bb1bef58baf8c73ec9cf75379da690c75c65c17ed5af6c",
+      "availability": "Local evaluation evidence; third-party source and raw reviewer transcripts are not published."
+    },
+    "oracle-repeat-v17.json": {
+      "sha256": "636b59e1edca62fa9b48e9ff7361c91c406190e8b3caaf35e92480bbe908a67f",
+      "availability": "Local evaluation evidence; third-party source and raw reviewer transcripts are not published."
+    },
+    "report-quality-v17-final3.json": {
+      "sha256": "85347d793389c5095e1af93b25de22d7737c2298daab6a49fadb294bc6be474e",
+      "availability": "Local evaluation evidence; third-party source and raw reviewer transcripts are not published."
+    },
+    "runs-v17/projection-checks-final3.json": {
+      "sha256": "092af6fb3ce1ee83e2e19ee1a8dea4e91bf1869a3ad1b5fd6ad61c4cff67451d",
+      "availability": "Local evaluation evidence; third-party source and raw reviewer transcripts are not published."
+    },
+    "handoff-packet-check-v17.json": {
+      "sha256": "ea5681c6b9e7cf0bf2f95dd8aa7d38e2b079ea0ff8529ca448f62b6ed86ac02c",
+      "availability": "Local evaluation evidence; third-party source and raw reviewer transcripts are not published."
+    },
+    "v17-handoff2-focused.log": {
+      "sha256": "545b43d07f8204c6de2dac9e6d6b74fc9f22eed9e293571bb29fcf62e92b9219",
+      "availability": "Local evaluation evidence; third-party source and raw reviewer transcripts are not published."
+    },
+    "v17-caller-final.log": {
+      "sha256": "6371e20724b95c133a33aead0880fe93576bd14c9c7695fed8d0cb691d5d7752",
+      "availability": "Local evaluation evidence; third-party source and raw reviewer transcripts are not published."
+    },
+    "workspace-final-v17.log": {
+      "sha256": "3435b26ba29796737fab851355811b0ad4ea3951389d55e6b55fb1451a67eb0b",
+      "availability": "Local evaluation evidence; third-party source and raw reviewer transcripts are not published."
+    },
+    "breadth-runtime-v17.log": {
+      "sha256": "e331b7d8798ed2509e14c8afa51c92d21b6fa541549640f229da4256883622ad",
+      "availability": "Local evaluation evidence; third-party source and raw reviewer transcripts are not published."
+    },
+    "ktor-runtime-v17.log": {
+      "sha256": "598f810ad0ce64be102342229a91b00d01988e0f8832d64509e6af5e019fc032",
+      "availability": "Local evaluation evidence; third-party source and raw reviewer transcripts are not published."
+    }
   }
 }

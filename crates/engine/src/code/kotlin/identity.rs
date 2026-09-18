@@ -11,6 +11,20 @@ pub(in crate::code) struct Imports {
 }
 
 impl Imports {
+    pub(super) fn default_extension(
+        &self,
+        root: &KNode<'_>,
+        use_site: &KNode<'_>,
+        observed: &str,
+        canonical: &str,
+    ) -> bool {
+        self.exact(root, use_site, observed, canonical)
+            || observed == canonical.rsplit('.').next().unwrap_or(canonical)
+                && !self.aliases.contains_key(observed)
+                && (self.wildcards.is_empty()
+                    || self.wildcards.len() == 1 && self.wildcards.contains("kotlin.io"))
+                && !name_shadowed(root, use_site, observed)
+    }
     pub(super) fn local_type<'a>(
         &self,
         root: &KNode<'a>,

@@ -38,7 +38,7 @@ Mehscan is under active development. Current language coverage includes:
   authorization;
 - C# and ASP.NET Core;
 - Java;
-- partial Kotlin JVM API, typed JPA query and bounded Spring scalar-input coverage
+- partial Kotlin JVM API, typed persistence/JDBC query and bounded Spring/Ktor input coverage
   in `.kt` and `.kts` files; see
   [the Kotlin profile and gap assessment](docs/kotlin-coverage.md);
 - JavaScript, TypeScript, and TSX across server, browser, and serverless code;

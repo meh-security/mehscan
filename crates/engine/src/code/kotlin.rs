@@ -1,6 +1,8 @@
 mod flow;
 mod identity;
 mod jdbc;
+mod jvm;
+mod ktor;
 mod network;
 pub(crate) use jdbc::prepared_facts;
 mod path;
@@ -14,6 +16,21 @@ pub(crate) use numeric::query_fact;
 
 pub(super) use identity::Imports;
 use identity::{KNode, binding_type, receiver_unchanged};
+
+pub(crate) fn fixed_response_content(source: &str, range: std::ops::Range<usize>) -> bool {
+    use ast_grep_core::tree_sitter::LanguageExt;
+    let ast = ast_grep_language::SupportLang::Kotlin.ast_grep(source);
+    ast.root().dfs().any(|node| {
+        node.kind().as_ref() == "string_literal"
+            && node.range() == range
+            && !node.dfs().any(|child| {
+                matches!(
+                    child.kind().as_ref(),
+                    "interpolated_identifier" | "interpolated_expression"
+                )
+            })
+    })
+}
 
 pub(crate) fn callable_range(source: &str, offset: usize) -> Option<std::ops::Range<usize>> {
     use ast_grep_core::tree_sitter::LanguageExt;
@@ -57,6 +74,9 @@ pub(super) fn accept<'a>(
     rule: &str,
     node: &KNode<'a>,
 ) -> bool {
+    if ktor::accepts(root, rule, node) {
+        return true;
+    }
     let Some(call) = identity::call(node) else {
         return false;
     };
@@ -68,6 +88,9 @@ pub(super) fn accept<'a>(
         return false;
     }
     let observed = call.callee.text();
+    if jvm::accepts(root, rule, node) {
+        return true;
+    }
     let Some((receiver, method)) = observed.rsplit_once('.') else {
         return false;
     };
@@ -145,6 +168,35 @@ mod tests {
         root.dfs()
             .filter(|n| accept(&root, &imports, rule, n))
             .count()
+    }
+
+    #[test]
+    fn fixed_response_facts_require_a_literal_without_interpolation() {
+        for (value, expected) in [
+            ("\"fixed\"", true),
+            ("\"\"\"fixed\"\"\"", true),
+            ("\"\\$input\"", true),
+            ("\"$input\"", false),
+            ("\"${input}\"", false),
+            ("\"prefix\" + input + \"suffix\"", false),
+            ("input", false),
+        ] {
+            let source = format!("fun f(input: String) {{ consume({value}) }}");
+            let ast = SupportLang::Kotlin.ast_grep(&source);
+            let root = ast.root();
+            let argument = root
+                .dfs()
+                .find_map(|n| identity::call(&n).filter(|c| c.callee.text().as_ref() == "consume"))
+                .unwrap()
+                .arguments
+                .remove(0)
+                .value;
+            assert_eq!(
+                fixed_response_content(&source, argument.range()),
+                expected,
+                "{source}"
+            );
+        }
     }
 
     #[test]

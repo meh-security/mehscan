@@ -113,7 +113,7 @@ fn declares_each_new_cwe_for_every_priority_language() {
         .iter()
         .map(|item| (item.cwe.as_str(), item))
         .collect();
-    assert_eq!(coverage["CWE-295"].supported_languages.len(), 9);
+    assert_eq!(coverage["CWE-295"].supported_languages.len(), 10);
     assert_eq!(coverage["CWE-327"].supported_languages.len(), 11);
     for cwe in ["CWE-295", "CWE-327", "CWE-502"] {
         assert!(coverage[cwe].supported_languages.contains(&Language::Php));
@@ -121,5 +121,5 @@ fn declares_each_new_cwe_for_every_priority_language() {
     for cwe in ["CWE-614", "CWE-1004"] {
         assert_eq!(coverage[cwe].supported_languages.len(), 7, "{cwe}");
     }
-    assert_eq!(coverage["CWE-502"].supported_languages.len(), 9);
+    assert_eq!(coverage["CWE-502"].supported_languages.len(), 10);
 }

@@ -9,12 +9,21 @@ pub(crate) struct Presentation {
 
 pub(crate) fn presentation(rule: &str, cwes: &[String], operation: &str) -> Option<Presentation> {
     let has = |cwe: &str| cwes.iter().any(|value| value == cwe);
-    let (title, remediation) = if rule == "kotlin-runtime-exec" && has("CWE-78") {
+    let (title, remediation) = if rule == "kotlin-process-builder" && has("CWE-78") {
+        (
+            "Unapproved request values reach a ProcessBuilder launch",
+            "Keep the executable server-owned and choose permitted commands from an allowlist. Approve the exact request-influenced command values before start; ProcessBuilder construction alone does not authorize process behavior.",
+        )
+    } else if rule == "kotlin-runtime-exec" && has("CWE-78") {
         (
             "Request values select the executable or process arguments",
             "Keep the executable server-owned and allowlist permitted operations. Pass validated values as separate arguments, reject option injection, and avoid adding a command shell; an argument vector alone does not authorize a request-selected executable.",
         )
-    } else if matches!(rule, "kotlin-url-read" | "kotlin-url-connection") && has("CWE-918") {
+    } else if matches!(
+        rule,
+        "kotlin-url-read" | "kotlin-url-connection" | "kotlin-url-connection-consumer"
+    ) && has("CWE-918")
+    {
         (
             if rule == "kotlin-url-read" {
                 "Request values select a server-side resource URL"
@@ -23,9 +32,28 @@ pub(crate) fn presentation(rule: &str, cwes: &[String], operation: &str) -> Opti
             },
             "Prefer a fixed allowlist of server-owned destinations. Otherwise enforce allowed schemes, exact hosts and ports, resolved-address policy and redirect revalidation before access. URI parsing alone is not approval. Add regression tests for the affected resource-access consumer and approved and rejected destinations.",
         )
-    } else if matches!(rule, "kotlin-files-read" | "kotlin-files-write") && has("CWE-22") {
+    } else if rule == "kotlin-ktor-client-request" && has("CWE-918") {
         (
-            if rule == "kotlin-files-read" {
+            "Request values select a server-side HTTP destination",
+            "Allowlist server-owned destinations; enforce allowed schemes, exact hosts and ports, resolved-address policy and redirect revalidation before each request.",
+        )
+    } else if rule == "kotlin-ktor-redirect" && has("CWE-601") {
+        (
+            "Request values select an unrestricted redirect destination",
+            "Parse the exact redirect target and allow only approved origins or relative application paths; reject unsupported destinations before responding.",
+        )
+    } else if rule == "kotlin-ktor-html-output" && has("CWE-79") {
+        (
+            "Request-derived markup reaches an HTML response",
+            "Encode the exact response content for its HTML context. If rich HTML is intended, apply a maintained allowlist sanitizer to that value before responding, including decoded byte responses.",
+        )
+    } else if matches!(
+        rule,
+        "kotlin-files-read" | "kotlin-files-write" | "kotlin-file-read" | "kotlin-file-write"
+    ) && has("CWE-22")
+    {
+        (
+            if matches!(rule, "kotlin-files-read" | "kotlin-file-read") {
                 "Request values select an unconfined file read path"
             } else {
                 "Request values select an unconfined file write path"

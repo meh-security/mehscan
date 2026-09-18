@@ -25,6 +25,15 @@ distinguished from application runtime behavior.
 | JDBC SQL | Declared `java.sql.Statement` execution/batch text and `java.sql.Connection` prepared SQL construction | Query boundary; CWE-89 |
 | Spring JDBC | Declared `org.springframework.jdbc.core.JdbcTemplate`; query, queryForList, queryForObject, update and execute SQL arguments | Query sink; CWE-89 |
 | Spring MVC scalar inputs | Direct mapped methods of canonical `Controller`/`RestController` classes; annotated String request inputs | Request source; CWE-20 |
+| ProcessBuilder | Canonical constructor/direct start or declared/immutable-local builder `start` | Process execution lead; CWE-78, construction alone is inert |
+| File access | Canonical declared/immutable-local `java.io.File`, unambiguous standard `readText`, `readBytes`, `inputStream`, `writeText`, `writeBytes`, `outputStream` | Read/write lead; CWE-22, content and target remain distinct |
+| Object decoding | Canonical ObjectInputStream `readObject`/`readUnshared`, declared Jackson 2/3 ObjectMapper `readValue` | CWE-502 lead, requires controlled object materialization/policy |
+| XML | Declared or bounded JAXP factory-created DocumentBuilder/SAXParser `parse`, factory feature/access configuration | CWE-611 lead, requires effective unsafe entity/access policy |
+| TLS | Declared HttpsURLConnection `setHostnameVerifier` | CWE-295 configuration lead, requires bypass behavior and effective use |
+| Servlet redirect | Declared javax/jakarta HttpServletResponse `sendRedirect` | CWE-601 lead, requires unsafe destination influence |
+| Network consumers/clients | Declared/factory URLConnection `connect`/`getInputStream`/`getContent`; declared Java HttpClient `send`/`sendAsync`, OkHttpClient `newCall` | CWE-918 lead; lazy OkHttp calls require execution |
+| Ktor inputs | Declared ApplicationCall or exact imported routing DSL in canonical Application/Route extensions; query/path indexing and `receiveText` | Request source; CWE-20 |
+| Ktor responses/client | Owned call `respondRedirect`, explicit `respondText`/`respondBytes` with canonical ContentType.Text.Html (including canonical `withCharset`); declared HttpClient string-URL requests | CWE-601/CWE-79/CWE-918 leads; named arguments supported and plain text excluded |
 
 JVM boundaries recognize fully qualified names, exact imports and import
 aliases. Short names from multiple wildcard imports are rejected conservatively.
@@ -50,8 +59,10 @@ qualified ownership is retained in the review context.
 
 Bounded same-function Spring scalar paths connect request inputs to command,
 query and filesystem-path operands through identifiers, immutable `val` aliases, concatenation and
-ordinary, braced or raw string templates. Propagation stops after eight levels,
-at unknown helper results, mutable bindings, reassignment and callable boundaries.
+ordinary, braced or raw string templates. Elvis alternatives retain possible
+value influence, except a literal non-null left operand excludes its fallback;
+literal null uses only its fallback. Propagation stops after eight levels, at
+unknown helper results, mutable bindings, reassignment and callable boundaries.
 SQL captures refer to query text, not separately bound JDBC values.
 Statement identities also follow canonical Connection `createStatement`
 factories, including direct chained calls and bounded immutable local aliases.
@@ -116,14 +127,17 @@ argument vector does not authorize a request-selected executable, and JVM
 - JDBC factory receivers beyond the bounded canonical factories, prepared-statement execution/protection ownership,
   JdbcTemplate overloads beyond the bounded patterns, Exposed and additional
   persistence APIs; complete protection and branch-join summaries.
-- Ktor route inputs, output/redirect/upload policies, application-call ownership
-  and framework-specific value flow; Spring WebFlux, implicit model-property
+- Ktor routing/argument-resolver families beyond bounded exact DSL ownership,
+  upload and authentication/authorization policies, HTML encoders/output APIs beyond respondText/respondBytes
+  and client request-builder effects; Spring WebFlux, implicit model-property
   source paths, authentication and authorization policy.
-- ProcessBuilder, File extension APIs, HttpClient/OkHttp/Ktor clients, URL proxy,
+- ProcessBuilder mutation/argument-list effects and File extension overloads,
+  client factories/builders beyond declared client receivers, URL proxy,
   context/custom-handler constructor overloads and URLConnection identities,
-  HTML encoding/output,
-  deserialization, XML, TLS and JWT configuration.
-- Elvis/smart-cast/destructuring propagation, helper effects, scope functions,
+  HTML encoding and additional output APIs,
+  deserialization type/filter policies, XML configuration effects, TLS trust
+  managers/global defaults and JWT configuration.
+- Compiler smart-cast/destructuring propagation, helper effects, scope functions,
   coroutine/lambda handoffs and mixed Java/Kotlin relationships.
 - Compiler-backed identities, imported superclass/interface resolution beyond
   the bounded context collector, overloads, safe calls, references, dependency

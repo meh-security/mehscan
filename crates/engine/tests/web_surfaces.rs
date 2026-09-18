@@ -104,8 +104,8 @@ fn exposes_three_new_web_cwe_families_for_every_language() {
         .iter()
         .map(|item| (item.cwe.as_str(), item))
         .collect();
-    assert_eq!(coverage["CWE-79"].supported_languages.len(), 9);
-    assert_eq!(coverage["CWE-601"].supported_languages.len(), 9);
+    assert_eq!(coverage["CWE-79"].supported_languages.len(), 10);
+    assert_eq!(coverage["CWE-601"].supported_languages.len(), 10);
     assert_eq!(coverage["CWE-434"].supported_languages.len(), 8);
     for cwe in ["CWE-79", "CWE-601", "CWE-434"] {
         assert!(

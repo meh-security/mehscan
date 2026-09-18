@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "scope": "Predefined source-adjudicated labels for selected admitted reviews in original Kotlin fixtures. Labels are independent of model agreement. Not whole-application recall, deployment exposure, or full language parity. Excluded lookalikes are covered separately by native tests.",
+  "scope": "Predefined source-adjudicated labels for selected admitted reviews in original Kotlin fixtures, including ordinary observations with no established weakness. Observation dismissals do not certify unspecified inputs, callbacks or configuration. Not whole-application recall, deployment exposure, or full language parity. Excluded lookalikes are covered separately by native tests.",
   "cases": [
     {
       "fixture": "kotlin-files",
@@ -329,6 +329,216 @@
       "rule_id": "kotlin-files-read",
       "expected_decision": "issue",
       "source_reason": "Explicit member is the canonical Path; request selects the read path."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "jsonRead",
+      "rule_id": "kotlin-jackson-deserialization",
+      "expected_decision": "not_issue",
+      "source_reason": "Decoding targets final String type; no attacker-controlled polymorphic object construction or unsafe custom codec is established."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "objectRead",
+      "rule_id": "kotlin-object-deserialization",
+      "expected_decision": "not_issue",
+      "source_reason": "Ordinary object read on supplied stream: no controlled payload origin, unsafe filter policy or gadget effects established. This observation dismissal does not certify stream safety."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "fixedRead",
+      "rule_id": "kotlin-file-read",
+      "expected_decision": "not_issue",
+      "source_reason": "Server-owned fixed read path does not use supplied request value."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "fixedWrite",
+      "rule_id": "kotlin-file-write",
+      "expected_decision": "not_issue",
+      "source_reason": "Only written content is requested; File target is fixed, so no CWE-22 path influence is shown."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "connectionRead",
+      "rule_id": "kotlin-url-connection-consumer",
+      "expected_decision": "not_issue",
+      "source_reason": "Resource consumer is inventoried, but target origin and unsafe destination policy are not shown."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "httpRequest",
+      "rule_id": "kotlin-http-client-request",
+      "expected_decision": "not_issue",
+      "source_reason": "Typed client sends a supplied request; destination origin and policy violation are not established."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "okhttpRequest",
+      "rule_id": "kotlin-okhttp-request",
+      "expected_decision": "not_issue",
+      "source_reason": "Typed lazy call is executed, but supplied request URL origin and unsafe destination policy are not established."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "fixedProcess",
+      "rule_id": "kotlin-process-builder",
+      "expected_decision": "not_issue",
+      "source_reason": "Executed command is fixed whoami; supplied request input is unused."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "redirect",
+      "rule_id": "kotlin-servlet-redirect",
+      "expected_decision": "not_issue",
+      "source_reason": "Servlet redirects supplied location; no remote input origin or destination-policy violation established."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "tlsConfiguration",
+      "rule_id": "kotlin-tls-hostname-verifier",
+      "expected_decision": "not_issue",
+      "source_reason": "Attaches an unspecified verifier; no callback bypass behavior or effective insecure production configuration established."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "xmlConfiguration",
+      "rule_id": "kotlin-xml-configuration",
+      "expected_decision": "not_issue",
+      "source_reason": "Sets disallow-doctype-decl true; no unsafe parser policy shown."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "xmlRead",
+      "rule_id": "kotlin-xml-parse",
+      "expected_decision": "not_issue",
+      "source_reason": "Ordinary parse with supplied factory and input; no unsafe entity/access settings or controlled XML origin established."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "rawRead",
+      "rule_id": "kotlin-file-read",
+      "expected_decision": "issue",
+      "source_reason": "Mapped request chooses the complete File path without confinement before reading; isolated temporary file read corroborates behavior."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "rawProcess",
+      "rule_id": "kotlin-process-builder",
+      "expected_decision": "issue",
+      "source_reason": "Mapped request selects executable passed to canonical ProcessBuilder and start; harmless whoami execution corroborates process launch, not arbitrary deployment exposure."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "fixedHtml",
+      "rule_id": "kotlin-ktor-html-output",
+      "expected_decision": "not_issue",
+      "source_reason": "HTML body is fixed server-owned text."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "fixedClient",
+      "rule_id": "kotlin-ktor-client-request",
+      "expected_decision": "not_issue",
+      "source_reason": "Client destination is fixed server-owned URL; not executed in runtime checks."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "fixedRedirect",
+      "rule_id": "kotlin-ktor-redirect",
+      "expected_decision": "not_issue",
+      "source_reason": "Redirect Location is fixed local /home; caller destination is unused."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "rawHtml",
+      "rule_id": "kotlin-ktor-html-output",
+      "expected_decision": "issue",
+      "source_reason": "HTTP query value is interpolated without encoding into explicit text/html response; isolated pipeline returns supplied markup in HTML body."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "rawClient",
+      "rule_id": "kotlin-ktor-client-request",
+      "expected_decision": "issue",
+      "source_reason": "HTTP query selects client get destination without approval; source-only request behavior, no runtime SSRF reproduction claimed."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "dslCommands",
+      "rule_id": "kotlin-runtime-exec",
+      "expected_decision": "issue",
+      "source_reason": "Canonical Application routing/get DSL request query input, including Elvis fallback, selects Runtime executable without an allowlist; isolated HTTP request executes harmless whoami."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "queryCommand",
+      "rule_id": "kotlin-runtime-exec",
+      "expected_decision": "issue",
+      "source_reason": "Typed ApplicationCall query value reaches executable selection without policy; helper source case, not proof of deployed registration."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "pathCommand",
+      "rule_id": "kotlin-runtime-exec",
+      "expected_decision": "issue",
+      "source_reason": "Typed ApplicationCall path value reaches executable selection without policy; helper source case, not proof of deployed registration."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "bodyCommand",
+      "rule_id": "kotlin-runtime-exec",
+      "expected_decision": "issue",
+      "source_reason": "Typed ApplicationCall receiveText input reaches executable selection without policy; helper source case, not proof of deployed registration."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "rawRedirect",
+      "rule_id": "kotlin-ktor-redirect",
+      "expected_decision": "issue",
+      "source_reason": "HTTP query input supplies respondRedirect URL without local-destination policy; isolated HTTP response preserves supplied external Location without following it."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "rawBytes",
+      "rule_id": "kotlin-ktor-html-output",
+      "anchor_line": 55,
+      "expected_decision": "issue",
+      "source_reason": "Request-selected Base64 is decoded and returned as explicit HTML bytes without encoding; isolated HTTP pipeline proves reflected markup."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "rawBytes",
+      "rule_id": "kotlin-ktor-html-output",
+      "anchor_line": 57,
+      "expected_decision": "not_issue",
+      "source_reason": "The anchored error respondText writes fixed Invalid Base64 text; the dangerous bytes belong to a different successful response operation."
     }
   ]
 }

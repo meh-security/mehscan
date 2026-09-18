@@ -355,6 +355,7 @@ fn render_finding_group(output: &mut String, index: usize, findings: &[&Reported
         ));
         render_availability(output, finding);
         render_flow(output, finding);
+        render_related_locations(output, finding);
         render_review_ids(output, finding);
     }
     output.push('\n');
@@ -395,6 +396,7 @@ fn render_finding(
 
     render_availability(output, finding);
     render_flow(output, finding);
+    render_related_locations(output, finding);
     render_review_ids(output, finding);
 
     if include_checks {
@@ -409,6 +411,27 @@ fn render_finding(
         ));
     }
     output.push('\n');
+}
+
+fn render_related_locations(output: &mut String, finding: &ReportedFinding) {
+    if finding.related_locations.is_empty() {
+        return;
+    }
+    output.push_str(if finding.flow.is_some() {
+        "\nRelated evidence locations:\n\n"
+    } else {
+        "\nRelated evidence locations (inventory/context; no native flow asserted):\n\n"
+    });
+    for related in &finding.related_locations {
+        output.push_str(&format!(
+            "- {}: {}\n",
+            enum_label(related.role),
+            markdown_code_span(&format!(
+                "{}:{}:{}",
+                related.location.path, related.location.start.line, related.location.start.column
+            ))
+        ));
+    }
 }
 
 fn render_review_ids(output: &mut String, finding: &ReportedFinding) {
@@ -555,6 +578,27 @@ mod tests {
                 evidence_ids: vec!["evidence-1".to_string()],
             },
         }
+    }
+
+    #[test]
+    fn markdown_keeps_observation_sources_without_inventing_a_native_flow() {
+        let mut item = finding(FindingStatus::Issue, Vec::new());
+        item.related_locations.push(FindingRelatedLocation {
+            role: EvidenceKind::Source,
+            location: location("routes/input.kt", 10),
+            evidence_id: Some("query-input".into()),
+            rule_id: Some("kotlin-ktor-query-source".into()),
+        });
+        let mut standalone = String::new();
+        render_finding(&mut standalone, 1, &item, false);
+        let mut grouped = String::new();
+        render_finding_group(&mut grouped, 1, &[&item, &item]);
+        for markdown in [&standalone, &grouped] {
+            assert!(markdown.contains("source: `routes/input.kt:10:3`"));
+            assert!(markdown.contains("no native flow asserted"));
+            assert!(!markdown.contains("Flow:"));
+        }
+        assert_eq!(grouped.matches("source: `routes/input.kt:10:3`").count(), 2);
     }
 
     #[test]

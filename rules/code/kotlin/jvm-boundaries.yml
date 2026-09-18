@@ -281,3 +281,527 @@
     references:
       - https://cwe.mitre.org/data/definitions/89.html
       - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/jdbc/core/JdbcTemplate.html
+
+- id: kotlin-process-builder
+  version: 1
+  title: Kotlin JVM ProcessBuilder execution
+  language: kotlin
+  kind: sink
+  capability: process_execution
+  cwe: [CWE-78]
+  match:
+    any:
+      - pattern: "ProcessBuilder($COMMAND).start()"
+        captures: {"command": "COMMAND"}
+      - pattern: "$BUILDER($COMMAND).start()"
+        captures: {"command": "COMMAND"}
+      - pattern: "$BUILDER($COMMAND, $$$ARGS).start()"
+        captures: {"command": "COMMAND", "arguments": "ARGS"}
+      - pattern: "$BUILDER.start()"
+        captures: {"command": "BUILDER"}
+  tags: [kotlin, jvm]
+  ai:
+    investigate:
+      - "Construction alone does not launch a process. Establish start, effective executable/arguments and policy. Direct argument vectors do not invoke a shell automatically."
+    verify:
+      - Verify exact API ownership, effective execution and supplied source controls.
+    exclude:
+      - Exclude lookalikes and claims requiring unavailable caller, configuration or deployment evidence.
+  provenance:
+    note: Exact declared receiver or enumerated immutable-local JVM factory identity; no compiler overload or helper-effect inference.
+    references:
+      - https://docs.oracle.com/en/java/javase/25/docs/api/index.html
+      - https://cwe.mitre.org/data/definitions/78.html
+- id: kotlin-file-read
+  version: 1
+  title: Kotlin JVM File resource read
+  language: kotlin
+  kind: sink
+  capability: filesystem_read
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: "$FILE.readText()"
+        captures: {"path": "FILE"}
+      - pattern: "$FILE.readBytes()"
+        captures: {"path": "FILE"}
+      - pattern: "$FILE.inputStream()"
+        captures: {"path": "FILE"}
+  tags: [kotlin, jvm]
+  ai:
+    investigate:
+      - "Canonical java.io.File receiver; inspect construction, input origin, containment and symlink policy. Kotlin extension resolution must be unambiguous."
+    verify:
+      - Verify exact API ownership, effective execution and supplied source controls.
+    exclude:
+      - Exclude lookalikes and claims requiring unavailable caller, configuration or deployment evidence.
+  provenance:
+    note: Exact declared receiver or enumerated immutable-local JVM factory identity; no compiler overload or helper-effect inference.
+    references:
+      - https://docs.oracle.com/en/java/javase/25/docs/api/index.html
+      - https://cwe.mitre.org/data/definitions/22.html
+- id: kotlin-file-write
+  version: 1
+  title: Kotlin JVM File resource write
+  language: kotlin
+  kind: sink
+  capability: filesystem_write
+  cwe: [CWE-22]
+  match:
+    any:
+      - pattern: "$FILE.writeText($CONTENT)"
+        captures: {"path": "FILE", "content": "CONTENT"}
+      - pattern: "$FILE.writeBytes($CONTENT)"
+        captures: {"path": "FILE", "content": "CONTENT"}
+      - pattern: "$FILE.outputStream()"
+        captures: {"path": "FILE"}
+  tags: [kotlin, jvm]
+  ai:
+    investigate:
+      - "Path selection and written content are distinct. Request content written to a fixed server-owned path does not alone establish traversal."
+    verify:
+      - Verify exact API ownership, effective execution and supplied source controls.
+    exclude:
+      - Exclude lookalikes and claims requiring unavailable caller, configuration or deployment evidence.
+  provenance:
+    note: Exact declared receiver or enumerated immutable-local JVM factory identity; no compiler overload or helper-effect inference.
+    references:
+      - https://docs.oracle.com/en/java/javase/25/docs/api/index.html
+      - https://cwe.mitre.org/data/definitions/22.html
+- id: kotlin-object-deserialization
+  version: 1
+  title: Kotlin JVM ObjectInputStream object read
+  language: kotlin
+  kind: sink
+  capability: deserialization
+  cwe: [CWE-502]
+  match:
+    any:
+      - pattern: "$STREAM.readObject()"
+        captures: {"payload": "STREAM"}
+      - pattern: "$STREAM.readUnshared()"
+        captures: {"payload": "STREAM"}
+  tags: [kotlin, jvm]
+  ai:
+    investigate:
+      - "Resolve the stream input and effective object filter before claiming unsafe object materialization. A read alone does not prove attacker-controlled gadgets."
+    verify:
+      - Verify exact API ownership, effective execution and supplied source controls.
+    exclude:
+      - Exclude lookalikes and claims requiring unavailable caller, configuration or deployment evidence.
+  provenance:
+    note: Exact declared receiver or enumerated immutable-local JVM factory identity; no compiler overload or helper-effect inference.
+    references:
+      - https://docs.oracle.com/en/java/javase/25/docs/api/index.html
+      - https://cwe.mitre.org/data/definitions/502.html
+- id: kotlin-jackson-deserialization
+  version: 1
+  title: Kotlin JVM Jackson object decoding
+  language: kotlin
+  kind: sink
+  capability: deserialization
+  cwe: [CWE-502]
+  match:
+    any:
+      - pattern: "$MAPPER.readValue($PAYLOAD, $TYPE)"
+        captures: {"payload": "PAYLOAD", "type": "TYPE"}
+  tags: [kotlin, jvm]
+  ai:
+    investigate:
+      - "Ordinary DTO decoding is not unsafe polymorphic deserialization. Establish enabled polymorphic typing, admitted types and gadget effects from supplied source."
+    verify:
+      - Verify exact API ownership, effective execution and supplied source controls.
+    exclude:
+      - Exclude lookalikes and claims requiring unavailable caller, configuration or deployment evidence.
+  provenance:
+    note: Exact declared receiver or enumerated immutable-local JVM factory identity; no compiler overload or helper-effect inference.
+    references:
+      - https://docs.oracle.com/en/java/javase/25/docs/api/index.html
+      - https://cwe.mitre.org/data/definitions/502.html
+- id: kotlin-xml-parse
+  version: 1
+  title: Kotlin JVM JAXP XML parsing
+  language: kotlin
+  kind: sink
+  capability: xml_parsing
+  cwe: [CWE-611]
+  match:
+    any:
+      - pattern: "$PARSER.parse($PAYLOAD)"
+        captures: {"payload": "PAYLOAD"}
+      - pattern: "$PARSER.parse($PAYLOAD, $HANDLER)"
+        captures: {"payload": "PAYLOAD", "handler": "HANDLER"}
+  tags: [kotlin, jvm]
+  ai:
+    investigate:
+      - "Review factory/parser configuration, external entities, DTDs, effective access restrictions and input origin. Parsing alone does not prove XXE."
+    verify:
+      - Verify exact API ownership, effective execution and supplied source controls.
+    exclude:
+      - Exclude lookalikes and claims requiring unavailable caller, configuration or deployment evidence.
+  provenance:
+    note: Exact declared receiver or enumerated immutable-local JVM factory identity; no compiler overload or helper-effect inference.
+    references:
+      - https://docs.oracle.com/en/java/javase/25/docs/api/index.html
+      - https://cwe.mitre.org/data/definitions/611.html
+- id: kotlin-xml-configuration
+  version: 1
+  title: Kotlin JVM JAXP parser configuration
+  language: kotlin
+  kind: security_configuration
+  capability: xml_parsing
+  cwe: [CWE-611]
+  match:
+    any:
+      - pattern: "$FACTORY.setFeature($FEATURE, $VALUE)"
+        captures: {"feature": "FEATURE", "value": "VALUE"}
+      - pattern: "$FACTORY.setAttribute($FEATURE, $VALUE)"
+        captures: {"feature": "FEATURE", "value": "VALUE"}
+      - pattern: "$FACTORY.setExpandEntityReferences($VALUE)"
+        captures: {"value": "VALUE"}
+  tags: [kotlin, jvm]
+  ai:
+    investigate:
+      - "Configuration is context rather than an automatic finding. Verify the exact factory creates a parser that processes controlled XML, and all effective feature/access settings."
+    verify:
+      - Verify exact API ownership, effective execution and supplied source controls.
+    exclude:
+      - Exclude lookalikes and claims requiring unavailable caller, configuration or deployment evidence.
+  provenance:
+    note: Exact declared receiver or enumerated immutable-local JVM factory identity; no compiler overload or helper-effect inference.
+    references:
+      - https://docs.oracle.com/en/java/javase/25/docs/api/index.html
+      - https://cwe.mitre.org/data/definitions/611.html
+- id: kotlin-tls-hostname-verifier
+  version: 1
+  title: Kotlin JVM HTTPS hostname verifier configuration
+  language: kotlin
+  kind: security_configuration
+  capability: tls_configuration
+  cwe: [CWE-295]
+  match:
+    any:
+      - pattern: "$CONNECTION.setHostnameVerifier($VERIFIER)"
+        captures: {"callback": "VERIFIER"}
+  tags: [kotlin, jvm]
+  ai:
+    investigate:
+      - "Establish callback behavior, effective production connection use and whether rejected hostnames are accepted. Configuration syntax alone is insufficient."
+    verify:
+      - Verify exact API ownership, effective execution and supplied source controls.
+    exclude:
+      - Exclude lookalikes and claims requiring unavailable caller, configuration or deployment evidence.
+  provenance:
+    note: Exact declared receiver or enumerated immutable-local JVM factory identity; no compiler overload or helper-effect inference.
+    references:
+      - https://docs.oracle.com/en/java/javase/25/docs/api/index.html
+      - https://cwe.mitre.org/data/definitions/295.html
+- id: kotlin-servlet-redirect
+  version: 1
+  title: Kotlin JVM Servlet redirect response
+  language: kotlin
+  kind: sink
+  capability: redirect
+  cwe: [CWE-601]
+  match:
+    any:
+      - pattern: "$RESPONSE.sendRedirect($LOCATION)"
+        captures: {"location": "LOCATION"}
+  tags: [kotlin, jvm]
+  ai:
+    investigate:
+      - "Verify canonical servlet response, location origin and effective local-destination policy. Fixed local destinations are not open redirects."
+    verify:
+      - Verify exact API ownership, effective execution and supplied source controls.
+    exclude:
+      - Exclude lookalikes and claims requiring unavailable caller, configuration or deployment evidence.
+  provenance:
+    note: Exact declared receiver or enumerated immutable-local JVM factory identity; no compiler overload or helper-effect inference.
+    references:
+      - https://docs.oracle.com/en/java/javase/25/docs/api/index.html
+      - https://cwe.mitre.org/data/definitions/601.html
+- id: kotlin-url-connection-consumer
+  version: 1
+  title: Kotlin JVM URLConnection resource consumer
+  language: kotlin
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: "$CONNECTION.connect()"
+        captures: {"endpoint": "CONNECTION"}
+      - pattern: "$CONNECTION.getInputStream()"
+        captures: {"endpoint": "CONNECTION"}
+      - pattern: "$CONNECTION.getContent()"
+        captures: {"endpoint": "CONNECTION"}
+  tags: [kotlin, jvm]
+  ai:
+    investigate:
+      - "This consumer may perform I/O. Resolve the original destination and protocol, scheme/address/port/redirect policy. Do not assume connection identity proves request-controlled URLs."
+    verify:
+      - Verify exact API ownership, effective execution and supplied source controls.
+    exclude:
+      - Exclude lookalikes and claims requiring unavailable caller, configuration or deployment evidence.
+  provenance:
+    note: Exact declared receiver or enumerated immutable-local JVM factory identity; no compiler overload or helper-effect inference.
+    references:
+      - https://docs.oracle.com/en/java/javase/25/docs/api/index.html
+      - https://cwe.mitre.org/data/definitions/918.html
+
+- id: kotlin-ktor-query-source
+  version: 1
+  title: Ktor query parameter input
+  language: kotlin
+  kind: source
+  capability: http_request_data
+  cwe: [CWE-20]
+  match:
+    any:
+      - pattern: "$CALL.request.queryParameters[$KEY]"
+        captures: {"value": "CALL", "key": "KEY"}
+  tags: [kotlin, ktor]
+  ai:
+    investigate:
+      - Verify exact typed ApplicationCall or HttpClient ownership and canonical extension import.
+      - Request input alone is not a vulnerability. Confirm value origin, effective sink behavior and destination or output policy.
+    verify:
+      - For HTML establish browser interpretation and context-appropriate encoding; plain text is excluded. Judge the matched content capture at this exact response call. A fixed error response does not render the decoded payload sent by another response on a successful branch.
+      - For redirects and client requests distinguish server-owned approved destinations from caller-selected URLs.
+    exclude:
+      - Exclude lookalikes, fixed or approved destinations and evidence requiring unavailable runtime dispatch or deployment assumptions.
+  provenance:
+    note: Canonical typed Ktor receiver or bounded exact imported routing DSL rooted in canonical Application/Route extension; unknown receiver scopes and helper dispatch are not inferred.
+    references:
+      - https://ktor.io/docs/server-requests.html
+      - https://ktor.io/docs/server-responses.html
+- id: kotlin-ktor-path-source
+  version: 1
+  title: Ktor path parameter input
+  language: kotlin
+  kind: source
+  capability: http_request_data
+  cwe: [CWE-20]
+  match:
+    any:
+      - pattern: "$CALL.parameters[$KEY]"
+        captures: {"value": "CALL", "key": "KEY"}
+  tags: [kotlin, ktor]
+  ai:
+    investigate:
+      - Verify exact typed ApplicationCall or HttpClient ownership and canonical extension import.
+      - Request input alone is not a vulnerability. Confirm value origin, effective sink behavior and destination or output policy.
+    verify:
+      - For HTML establish browser interpretation and context-appropriate encoding; plain text is excluded. Judge the matched content capture at this exact response call. A fixed error response does not render the decoded payload sent by another response on a successful branch.
+      - For redirects and client requests distinguish server-owned approved destinations from caller-selected URLs.
+    exclude:
+      - Exclude lookalikes, fixed or approved destinations and evidence requiring unavailable runtime dispatch or deployment assumptions.
+  provenance:
+    note: Canonical typed Ktor receiver or bounded exact imported routing DSL rooted in canonical Application/Route extension; unknown receiver scopes and helper dispatch are not inferred.
+    references:
+      - https://ktor.io/docs/server-requests.html
+      - https://ktor.io/docs/server-responses.html
+- id: kotlin-ktor-body-source
+  version: 1
+  title: Ktor text body input
+  language: kotlin
+  kind: source
+  capability: http_request_data
+  cwe: [CWE-20]
+  match:
+    any:
+      - pattern: "$CALL.receiveText()"
+        captures: {"value": "CALL"}
+  tags: [kotlin, ktor]
+  ai:
+    investigate:
+      - Verify exact typed ApplicationCall or HttpClient ownership and canonical extension import.
+      - Request input alone is not a vulnerability. Confirm value origin, effective sink behavior and destination or output policy.
+    verify:
+      - For HTML establish browser interpretation and context-appropriate encoding; plain text is excluded. Judge the matched content capture at this exact response call. A fixed error response does not render the decoded payload sent by another response on a successful branch.
+      - For redirects and client requests distinguish server-owned approved destinations from caller-selected URLs.
+    exclude:
+      - Exclude lookalikes, fixed or approved destinations and evidence requiring unavailable runtime dispatch or deployment assumptions.
+  provenance:
+    note: Canonical typed Ktor receiver or bounded exact imported routing DSL rooted in canonical Application/Route extension; unknown receiver scopes and helper dispatch are not inferred.
+    references:
+      - https://ktor.io/docs/server-requests.html
+      - https://ktor.io/docs/server-responses.html
+- id: kotlin-ktor-redirect
+  version: 1
+  title: Ktor redirect response
+  language: kotlin
+  kind: sink
+  capability: redirect
+  cwe: [CWE-601]
+  match:
+    any:
+      - pattern: "$CALL.respondRedirect(url = $LOCATION)"
+        captures: { location: LOCATION }
+      - pattern: "$CALL.respondRedirect(url = $LOCATION, permanent = $PERMANENT)"
+        captures: { location: LOCATION }
+      - pattern: "$CALL.respondRedirect(permanent = $PERMANENT, url = $LOCATION)"
+        captures: { location: LOCATION }
+      - pattern: "$CALL.respondRedirect($LOCATION, permanent = $PERMANENT)"
+        captures: { location: LOCATION }
+      - pattern: "$CALL.respondRedirect($LOCATION)"
+        captures: {"location": "LOCATION"}
+      - pattern: "$CALL.respondRedirect($LOCATION, $PERMANENT)"
+        captures: {"location": "LOCATION"}
+  tags: [kotlin, ktor]
+  ai:
+    investigate:
+      - Verify exact typed ApplicationCall or HttpClient ownership and canonical extension import.
+      - Request input alone is not a vulnerability. Confirm value origin, effective sink behavior and destination or output policy.
+    verify:
+      - For HTML establish browser interpretation and context-appropriate encoding; plain text is excluded. Judge the matched content capture at this exact response call. A fixed error response does not render the decoded payload sent by another response on a successful branch.
+      - For redirects and client requests distinguish server-owned approved destinations from caller-selected URLs.
+    exclude:
+      - Exclude lookalikes, fixed or approved destinations and evidence requiring unavailable runtime dispatch or deployment assumptions.
+  provenance:
+    note: Canonical typed Ktor receiver or bounded exact imported routing DSL rooted in canonical Application/Route extension; unknown receiver scopes and helper dispatch are not inferred.
+    references:
+      - https://ktor.io/docs/server-requests.html
+      - https://ktor.io/docs/server-responses.html
+- id: kotlin-ktor-html-output
+  version: 1
+  title: Ktor explicit HTML output
+  language: kotlin
+  kind: sink
+  capability: html_output
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: "$CALL.respondBytes($CONTENT, $TYPE)"
+        captures: { content: CONTENT, type: TYPE }
+      - pattern: "$CALL.respondBytes($CONTENT, contentType = $TYPE)"
+        captures: { content: CONTENT, type: TYPE }
+      - pattern: "$CALL.respondBytes(bytes = $CONTENT, contentType = $TYPE)"
+        captures: { content: CONTENT, type: TYPE }
+      - pattern: "$CALL.respondBytes(contentType = $TYPE, bytes = $CONTENT)"
+        captures: { content: CONTENT, type: TYPE }
+      - pattern: "$CALL.respondText(text = $CONTENT, contentType = $TYPE)"
+        captures: { content: CONTENT, type: TYPE }
+      - pattern: "$CALL.respondText(contentType = $TYPE, text = $CONTENT)"
+        captures: { content: CONTENT, type: TYPE }
+      - pattern: "$CALL.respondText($CONTENT, contentType = $TYPE)"
+        captures: { content: CONTENT, type: TYPE }
+      - pattern: "$CALL.respondText($CONTENT, $TYPE)"
+        captures: {"content": "CONTENT", "type": "TYPE"}
+  tags: [kotlin, ktor]
+  ai:
+    investigate:
+      - Verify exact typed ApplicationCall or HttpClient ownership and canonical extension import.
+      - Request input alone is not a vulnerability. Confirm value origin, effective sink behavior and destination or output policy.
+    verify:
+      - For HTML establish browser interpretation and context-appropriate encoding; plain text is excluded. Judge the matched content capture at this exact response call. A fixed error response does not render the decoded payload sent by another response on a successful branch.
+      - For redirects and client requests distinguish server-owned approved destinations from caller-selected URLs.
+    exclude:
+      - Exclude lookalikes, fixed or approved destinations and evidence requiring unavailable runtime dispatch or deployment assumptions.
+  provenance:
+    note: Canonical typed Ktor receiver or bounded exact imported routing DSL rooted in canonical Application/Route extension; unknown receiver scopes and helper dispatch are not inferred.
+    references:
+      - https://ktor.io/docs/server-requests.html
+      - https://ktor.io/docs/server-responses.html
+- id: kotlin-ktor-client-request
+  version: 1
+  title: Ktor client request
+  language: kotlin
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: "$CLIENT.get(urlString = $URL)"
+        captures: { endpoint: URL }
+      - pattern: "$CLIENT.get($URL)"
+        captures: {"endpoint": "URL"}
+      - pattern: "$CLIENT.post(urlString = $URL)"
+        captures: { endpoint: URL }
+      - pattern: "$CLIENT.post($URL)"
+        captures: {"endpoint": "URL"}
+      - pattern: "$CLIENT.put(urlString = $URL)"
+        captures: { endpoint: URL }
+      - pattern: "$CLIENT.put($URL)"
+        captures: {"endpoint": "URL"}
+      - pattern: "$CLIENT.delete(urlString = $URL)"
+        captures: { endpoint: URL }
+      - pattern: "$CLIENT.delete($URL)"
+        captures: {"endpoint": "URL"}
+      - pattern: "$CLIENT.patch(urlString = $URL)"
+        captures: { endpoint: URL }
+      - pattern: "$CLIENT.patch($URL)"
+        captures: {"endpoint": "URL"}
+      - pattern: "$CLIENT.head(urlString = $URL)"
+        captures: { endpoint: URL }
+      - pattern: "$CLIENT.head($URL)"
+        captures: {"endpoint": "URL"}
+  tags: [kotlin, ktor]
+  ai:
+    investigate:
+      - Verify exact typed ApplicationCall or HttpClient ownership and canonical extension import.
+      - Request input alone is not a vulnerability. Confirm value origin, effective sink behavior and destination or output policy.
+    verify:
+      - For HTML establish browser interpretation and context-appropriate encoding; plain text is excluded. Judge the matched content capture at this exact response call. A fixed error response does not render the decoded payload sent by another response on a successful branch.
+      - For redirects and client requests distinguish server-owned approved destinations from caller-selected URLs.
+    exclude:
+      - Exclude lookalikes, fixed or approved destinations and evidence requiring unavailable runtime dispatch or deployment assumptions.
+  provenance:
+    note: Canonical typed Ktor receiver or bounded exact imported routing DSL rooted in canonical Application/Route extension; unknown receiver scopes and helper dispatch are not inferred.
+    references:
+      - https://ktor.io/docs/server-requests.html
+      - https://ktor.io/docs/server-responses.html
+
+- id: kotlin-http-client-request
+  version: 1
+  title: Kotlin HTTP client request boundary
+  language: kotlin
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: $CLIENT.send($REQUEST, $HANDLER)
+        captures: { endpoint: REQUEST }
+      - pattern: $CLIENT.sendAsync($REQUEST, $HANDLER)
+        captures: { endpoint: REQUEST }
+  tags: [kotlin, jvm, network]
+  ai:
+    investigate:
+      - Resolve the request URL, canonical client identity, effective execution and destination policy from supplied source.
+    verify:
+      - Java HttpClient send performs I/O; OkHttp newCall constructs a lazy call. Require execute or enqueue before claiming resource access.
+      - Verify schemes, exact destinations, ports, resolved addresses and redirect revalidation.
+    exclude:
+      - Exclude fixed approved destinations, unused lazy calls and unavailable input or consumer evidence.
+  provenance:
+    note: Exact declared client receiver; request construction and consumer behavior require source review.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.net.http/java/net/http/HttpClient.html
+
+- id: kotlin-okhttp-request
+  version: 1
+  title: Kotlin HTTP client request boundary
+  language: kotlin
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: $CLIENT.newCall($REQUEST)
+        captures: { endpoint: REQUEST }
+  tags: [kotlin, jvm, network]
+  ai:
+    investigate:
+      - Resolve the request URL, canonical client identity, effective execution and destination policy from supplied source.
+    verify:
+      - Java HttpClient send performs I/O; OkHttp newCall constructs a lazy call. Require execute or enqueue before claiming resource access.
+      - Verify schemes, exact destinations, ports, resolved addresses and redirect revalidation.
+    exclude:
+      - Exclude fixed approved destinations, unused lazy calls and unavailable input or consumer evidence.
+  provenance:
+    note: Exact declared client receiver; request construction and consumer behavior require source review.
+    references:
+      - https://cwe.mitre.org/data/definitions/918.html
+      - https://square.github.io/okhttp/recipes/

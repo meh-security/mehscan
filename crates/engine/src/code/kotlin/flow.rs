@@ -159,12 +159,16 @@ fn depends<'a>(
     source: &KNode<'a>,
     depth: usize,
     network: bool,
+    file: bool,
 ) -> bool {
     if depth == 0
         || identity::callable(expression).map(|n| n.range())
             != identity::callable(source).map(|n| n.range())
     {
         return false;
+    }
+    if expression.range() == source.range() {
+        return true;
     }
     match expression.kind().as_ref() {
         "simple_identifier" | "interpolated_identifier" => {
@@ -199,14 +203,14 @@ fn depends<'a>(
                 .last()
                 .is_some_and(|value| {
                     value.range() != binding.range()
-                        && depends(root, &value, source, depth - 1, network)
+                        && depends(root, &value, source, depth - 1, network, file)
                 })
         }
         "string_literal" => expression.children().filter(|n| n.is_named()).any(|n| {
             matches!(
                 n.kind().as_ref(),
                 "interpolated_identifier" | "interpolated_expression"
-            ) && depends(root, &n, source, depth - 1, network)
+            ) && depends(root, &n, source, depth - 1, network, file)
         }),
         "additive_expression" => {
             expression
@@ -216,17 +220,44 @@ fn depends<'a>(
                 && expression
                     .children()
                     .filter(|n| n.is_named())
-                    .any(|n| depends(root, &n, source, depth - 1, network))
+                    .any(|n| depends(root, &n, source, depth - 1, network, file))
+        }
+        "elvis_expression" => {
+            let values = expression
+                .children()
+                .filter(|n| n.is_named())
+                .collect::<Vec<_>>();
+            let Some(left) = values.first() else {
+                return false;
+            };
+            if matches!(
+                left.kind().as_ref(),
+                "string_literal" | "integer_literal" | "real_literal" | "boolean_literal"
+            ) {
+                depends(root, left, source, depth - 1, network, file)
+            } else if left.kind().as_ref() == "null_literal" {
+                values
+                    .get(1)
+                    .is_some_and(|right| depends(root, right, source, depth - 1, network, file))
+            } else {
+                values
+                    .iter()
+                    .any(|value| depends(root, value, source, depth - 1, network, file))
+            }
         }
         "parenthesized_expression" | "interpolated_expression" => expression
             .children()
             .filter(|n| n.is_named())
-            .any(|n| depends(root, &n, source, depth - 1, network)),
+            .any(|n| depends(root, &n, source, depth - 1, network, file)),
         "postfix_expression" if expression.text().trim_end().ends_with("!!") => expression
             .children()
             .find(|n| n.is_named())
-            .is_some_and(|n| depends(root, &n, source, depth - 1, network)),
+            .is_some_and(|n| depends(root, &n, source, depth - 1, network, file)),
         "call_expression" => super::path::operands(root, expression, 8)
+            .or_else(|| {
+                file.then(|| super::jvm::file_operands(root, expression))
+                    .flatten()
+            })
             .or_else(|| {
                 network
                     .then(|| super::network::operands(root, expression, 8))
@@ -235,7 +266,7 @@ fn depends<'a>(
             .is_some_and(|operands| {
                 operands
                     .iter()
-                    .any(|operand| depends(root, operand, source, depth - 1, network))
+                    .any(|operand| depends(root, operand, source, depth - 1, network, file))
             }),
         _ => false,
     }
@@ -247,11 +278,14 @@ pub(in crate::code) fn paths(
     relations: &[mehscan_core::RelationContract],
 ) -> Vec<SecurityPath> {
     let mut result = vec![];
-    for source in evidence.iter().filter(|e| e.rule_id == SOURCE) {
+    for source in evidence
+        .iter()
+        .filter(|e| e.rule_id == SOURCE || super::ktor::SOURCES.contains(&e.rule_id.as_str()))
+    {
         let Some(parameter) = root.dfs().find(|n| {
             n.range().start == source.location.start.byte_offset
                 && n.range().end == source.location.end.byte_offset
-                && n.kind().as_ref() == "parameter"
+                && (source.rule_id != SOURCE || n.kind().as_ref() == "parameter")
         }) else {
             continue;
         };
@@ -264,6 +298,8 @@ pub(in crate::code) fn paths(
                 Capability::ProcessExecution => "command",
                 Capability::FilesystemRead | Capability::FilesystemWrite => "path",
                 Capability::OutboundNetworkRequest => "endpoint",
+                Capability::Redirect => "location",
+                Capability::HtmlOutput => "content",
                 _ => continue,
             };
             let Some(relation) = relations.iter().find(|r| {
@@ -288,8 +324,17 @@ pub(in crate::code) fn paths(
                 sink.capability,
                 Capability::FilesystemRead | Capability::FilesystemWrite
             );
-            let path_value = super::path::known_path(root, &operand, 8);
-            if filesystem != path_value {
+            let file_boundary = matches!(
+                sink.rule_id.as_str(),
+                "kotlin-file-read" | "kotlin-file-write"
+            );
+            let file_value = super::jvm::owned(root, &operand, "java.io.File", 8);
+            let path_value = if file_boundary {
+                file_value
+            } else {
+                super::path::known_path(root, &operand, 8)
+            };
+            if filesystem != path_value || !filesystem && file_value {
                 // Files accepts Path values; SQL and Runtime.exec accept text,
                 // not a Path object. Do not turn a known type mismatch into a path.
                 continue;
@@ -300,6 +345,7 @@ pub(in crate::code) fn paths(
                 &parameter,
                 8,
                 sink.capability == Capability::OutboundNetworkRequest,
+                file_boundary,
             ) {
                 continue;
             }
@@ -400,7 +446,7 @@ mod tests {
             .dfs()
             .find_map(|n| identity::call(&n).filter(|c| c.callee.text().as_ref() == "consume"))
             .unwrap();
-        depends(&root, &sink.arguments[0].value, &source, 8, false)
+        depends(&root, &sink.arguments[0].value, &source, 8, false, false)
     }
 
     #[test]
@@ -408,6 +454,9 @@ mod tests {
         for body in [
             "consume(input)",
             "val value = input; consume(value)",
+            "val value = input ?: \"fixed\"; consume(value)",
+            "consume(null ?: input)",
+            "val value = input ?: throw IllegalArgumentException(); consume(value)",
             "consume(\"query '$input'\")",
             "consume(\"query '${input}'\")",
             "consume(\"\"\"query '$input'\"\"\")",
@@ -420,6 +469,8 @@ mod tests {
         }
         for body in [
             "consume(\"fixed\")",
+            "val value = \"fixed\" ?: helper(input); consume(value)",
+            "consume(\"fixed\" ?: input)",
             "val input = \"fixed\"; consume(input)",
             "input = \"fixed\"; consume(input)",
             "val value = helper(input); consume(value)",

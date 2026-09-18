@@ -5,13 +5,88 @@ implemented boundaries; they do not establish whole-application recall or
 parity with the established Java, Python, JavaScript, Go and C# profiles.
 Full parity remains a release gate, not a claim made by this checkpoint.
 
+## Latest expanded JVM checkpoint
+
+This checkpoint supersedes the earlier 53-case totals below. Kotlin now has
+**29 rules**, including bounded ProcessBuilder/File, deserialization, XML, TLS,
+servlet, JVM HTTP client and Ktor request/response/client boundaries. Kotlin remains
+a partial JVM profile; the [remaining coverage gaps](kotlin-coverage.md#remaining-parity-gaps)
+still prevent a claim of full language parity.
+
+The predefined oracle contains **88 selected cases: 39 positive and 49 negative**
+across thirteen corpora. The [published original-fixture oracle](../tests/fixtures/kotlin-review-oracle.json)
+contains 67 labels, with exact anchor lines distinguishing the two responses in
+`rawBytes`. Ordinary inventory dismissals establish no shown weakness, not safety
+of unspecified input, callback or parser policies. New original JVM and Ktor
+controls compile with Kotlin 2.4.10/JDK 17; Ktor uses 3.6.0.
+
+Fresh Luna, Terra and Sol 5.6 reviews at medium reasoning each match **88/88**
+labels, with zero selected false positives or false negatives and **88/88**
+three-model agreement. An independent fresh Luna/Terra repeat covers **45 cases**
+from JVM breadth, original Ktor, official Ktor samples and Seqra; both match
+45/45. The repeat does not cover all 88. No prior verdicts or oracle answers are
+supplied to reviewers. All **197 fresh response files** pass the
+fingerprint, review-ID, confidence-policy and complete-set contract, covering
+**354 decision instances** over **49 distinct bundles**.
+One initial Luna response invented a needs_review check outside the supplied
+unresolved set and was rejected by contract validation; a fresh whole-bundle
+retry passed without oracle feedback. Its failed attempt remains in the history.
+These selected-case results do not measure whole-application recall.
+
+The preceding 85-case expansion exposed a shared false positive: all three
+models, and both repeated models, borrowed a successful decoded-byte HTML
+response when reviewing a separate fixed invalid-Base64 error response. Agreement
+therefore concealed a classification error. The negative source label was retained.
+Response facts now identify the exact content operation; AST proof of a fixed,
+non-interpolated string applies only to that anchor. Explicit HTML `respondBytes`
+and canonical charset modifiers are inventoried too, so the actual unsafe binary
+response remains positive. Native regression tests separate both responses.
+
+Report audits also found missing impact statements for Ktor findings and an
+internal-network title that exceeded supplied evidence. Ktor handoffs now include
+bounded impact and operation-specific verification, with precise titles; pinned
+Seqra metadata says selected source files rather than implying deployment.
+Markdown now retains related source-evidence locations even for observation-only
+findings, explicitly without asserting a native flow; matched call text locates
+the concrete consumer, including aliased URL reads. Typed caller source citations
+are retained as structured related evidence,
+with dispatch and native flow limitations unchanged. Related URL construction and
+connect/read instances share one root-cause group while preserving every ID.
+All **39 report sets** pass canonical JSON/Markdown/SARIF count and location
+reconciliation, decision preservation and Markdown issue-ID checks. Fresh report
+quality audits mark **39/39 ready for an engineer**. Nonblocking auditor warnings
+appear in the [machine-readable results](kotlin-quality-results.json).
+Nine affected report sets were freshly re-audited after retaining structured
+caller locations; the other thirty are byte-identical to their audited versions.
+Earlier failed decisions and report audits are retained as evaluation history.
+
+All **65 isolated runtime checks** pass: the earlier 49 controls, four generic
+shadow checks, three command/file checks and nine real Ktor HTTP-pipeline checks.
+The Ktor checks include an Elvis default, redirect locations, reflected/fixed
+HTML, plain text, decoded HTML bytes and the distinct fixed error response.
+No external targets are contacted by the new Ktor checks; no deployed third-party
+application or runtime SSRF reproduction is claimed.
+
+The final full offline workspace/all-target sweep passes: **974 passed,
+0 failed and 41 existing optional checks ignored**. The prior expansion
+sweep failed on stale language-count expectations; those expectations and the
+web-surface counts are corrected. This final sweep includes the generic shadow,
+JVM/Ktor ownership and exact-response regressions. Final report-only wording
+changes subsequently pass **57 focused core/Kotlin/catalog/handoff tests** and fresh
+report audits. After retaining structured caller locations, all **25 focused Kotlin
+unit tests** pass again. All 49 security requests are byte-identical, retaining the
+model evidence. Local evidence artifact hashes are recorded in the machine-readable results; third-party source and raw reviewer
+transcripts remain outside the public repository.
+
 ## Applications
 
 | Application | Pinned revision | Purpose |
 | --- | --- | --- |
 | [Vulnerable Petclinic](https://github.com/secure-software-engineering/spring-petclinic-kotlin) | `3206fed5d8d827ffa85eb73d5e31a5136cf18519` | Quoted HQL String injection and an Int interpolation control; source-reviewed, not built or executed. |
 | [Upstream Petclinic](https://github.com/spring-petclinic/spring-petclinic-kotlin) | `da08609c277f95c37dd91187867f74dbad1090f8` | Production-package discovery and parsing reference; zero admitted boundary reviews is not a clean-app certificate. |
-| [Official Ktor samples](https://github.com/ktorio/ktor-samples) | `1c9df7cf102d638eadaf545fcce4c0ec5ccad334` | JVM digest and fixed build-time command controls; deliberately admitted teaching sources, not deployed vulnerabilities. |
+| [Official Ktor samples](https://github.com/ktorio/ktor-samples) | `1c9df7cf102d638eadaf545fcce4c0ec5ccad334` | JVM digest, fixed build-time commands, typed File controls, Ktor redirects and distinct fixed/decoded HTML responses; admitted teaching sources, not deployed vulnerabilities. |
+| [Original JVM breadth controls](../tests/fixtures/kotlin-jvm-breadth/README.md) | Branch fixture | Canonical JVM boundary ownership and ordinary-operation negative controls; compiled with three harmless direct checks. |
+| [Original Ktor controls](../tests/fixtures/kotlin-ktor/README.md) | Branch fixture | Query/path/body command flows, redirects, HTML text/bytes and typed client URLs; compiled with nine isolated HTTP checks. |
 | [Original quality app](../tests/fixtures/kotlin-quality/README.md) | Branch fixture | Runnable vulnerable and safe Spring/JPA/JdbcTemplate endpoints; no third-party source copied. |
 | [Original JDBC controls](../tests/fixtures/kotlin-jdbc/app.kt) | Branch fixture | Statement execution and prepared SQL vulnerable/safe pairs; static source controls, not a running application. |
 | [Original filesystem controls](../tests/fixtures/kotlin-files/README.md) | Branch fixture | Read/write path influence, normalization, allowlist and content/path separation; source-only controls. |
@@ -399,7 +474,7 @@ unproven; the probe is separate from the historical model comparison.
 - Keep Kotlin explicitly partial until those gaps are covered. Multiplatform
   syntax parsing does not certify Android, Kotlin/JS or Kotlin/Native security.
 
-## Fresh expanded AI and report checkpoint — 2026-09-17
+## Fresh expanded AI and report checkpoint â€” 2026-09-17
 
 The expanded oracle contains **53 predefined source labels**, with 26 positive
 and 27 negative cases. It includes the previous 45 cases, seven original URL
