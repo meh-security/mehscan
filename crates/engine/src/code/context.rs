@@ -17,7 +17,18 @@ pub(crate) fn enclosing_symbol<D: Doc>(node: &Node<'_, D>) -> Option<String> {
         if !SYMBOL_KINDS.contains(&ancestor.kind().as_ref()) {
             return None;
         }
-        ancestor.field("name").map(|name| name.text().into_owned())
+        ancestor
+            .field("name")
+            .or_else(|| {
+                (ancestor.kind().as_ref() == "function_declaration")
+                    .then(|| {
+                        ancestor
+                            .children()
+                            .find(|child| child.kind().as_ref() == "simple_identifier")
+                    })
+                    .flatten()
+            })
+            .map(|name| name.text().into_owned())
     })
 }
 

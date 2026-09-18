@@ -750,6 +750,8 @@ fn language_for_path(path: &str) -> Option<Language> {
         Some(Language::Csharp)
     } else if path.ends_with(".java") {
         Some(Language::Java)
+    } else if path.ends_with(".kt") || path.ends_with(".kts") {
+        Some(Language::Kotlin)
     } else if path.ends_with(".tsx") {
         Some(Language::Tsx)
     } else if path.ends_with(".ts") {

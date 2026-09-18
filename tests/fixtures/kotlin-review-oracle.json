@@ -1,0 +1,2476 @@
+{
+  "schema_version": "1.0",
+  "scope": "Predefined source-adjudicated labels for all selected current original Kotlin fixtures. Source locations distinguish multiple anchors in one callable. Labels are frozen before changed-input model review; ordinary observation dismissals do not certify unspecified inputs, callbacks or configuration. No whole-application recall, deployment exposure, compiler completeness or all-platform Kotlin parity claim. Fixed-command review exclusions and foreign lookalikes are tested separately.",
+  "cases": [
+    {
+      "fixture": "kotlin-client-factories",
+      "path": "app.kt",
+      "callable": "rawJdk",
+      "rule_id": "kotlin-http-client-request",
+      "start_line": 20,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Mapped request selects complete request destination without approval; canonical factory-owned client actually sends/executes it. Runtime reproduces only the probe own loopback target, not sensitive-resource access."
+    },
+    {
+      "fixture": "kotlin-client-factories",
+      "path": "app.kt",
+      "callable": "rawJdkBuilder",
+      "rule_id": "kotlin-http-client-request",
+      "start_line": 28,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Mapped request selects complete request destination without approval; canonical factory-owned client actually sends/executes it. Runtime reproduces only the probe own loopback target, not sensitive-resource access."
+    },
+    {
+      "fixture": "kotlin-client-factories",
+      "path": "app.kt",
+      "callable": "rawOkhttp",
+      "rule_id": "kotlin-okhttp-request",
+      "start_line": 35,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Mapped request selects complete request destination without approval; canonical factory-owned client actually sends/executes it. Runtime reproduces only the probe own loopback target, not sensitive-resource access."
+    },
+    {
+      "fixture": "kotlin-client-factories",
+      "path": "app.kt",
+      "callable": "rawOkhttpBuilder",
+      "rule_id": "kotlin-okhttp-request",
+      "start_line": 42,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Mapped request selects complete request destination without approval; canonical factory-owned client actually sends/executes it. Runtime reproduces only the probe own loopback target, not sensitive-resource access."
+    },
+    {
+      "fixture": "kotlin-client-factories",
+      "path": "app.kt",
+      "callable": "fixedJdk",
+      "rule_id": "kotlin-http-client-request",
+      "start_line": 49,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "Request input is unused; destination or effective executable is server-owned fixed syntax. The fixed JDK destination is compiled/source-reviewed only, not called at runtime."
+    },
+    {
+      "fixture": "kotlin-client-factories",
+      "path": "app.kt",
+      "callable": "lazyOkhttp",
+      "rule_id": "kotlin-okhttp-request",
+      "start_line": 56,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "Canonical newCall is lazy; this exact call is returned without execute or enqueue. Probe verifies isExecuted is false; no network access is asserted."
+    },
+    {
+      "fixture": "kotlin-client-factories",
+      "path": "app.kt",
+      "callable": "changedCommand",
+      "rule_id": "kotlin-process-builder",
+      "start_line": 63,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Mapped request replaces the initial builder command before start without approval; fixed construction does not approve the effective executable. Runtime executes only harmless whoami."
+    },
+    {
+      "fixture": "kotlin-client-factories",
+      "path": "app.kt",
+      "callable": "chainedCommand",
+      "rule_id": "kotlin-process-builder",
+      "start_line": 68,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Mapped request replaces the initial builder command before start without approval; fixed construction does not approve the effective executable. Runtime executes only harmless whoami."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "weakSession",
+      "rule_id": "kotlin-cookie-secure-flag",
+      "start_line": 9,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "An emitted authentication cookie has both required flags disabled."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "weakSession",
+      "rule_id": "kotlin-cookie-httponly-flag",
+      "start_line": 10,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "An emitted authentication cookie has both required flags disabled."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "secureSession",
+      "rule_id": "kotlin-cookie-secure-flag",
+      "start_line": 17,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "The emitted authentication cookie has both required flags enabled."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "secureSession",
+      "rule_id": "kotlin-cookie-httponly-flag",
+      "start_line": 18,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "The emitted authentication cookie has both required flags enabled."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "resetSession",
+      "rule_id": "kotlin-cookie-secure-flag",
+      "start_line": 25,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "Both flags on the same emitted cookie are enabled after earlier false setters."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "resetSession",
+      "rule_id": "kotlin-cookie-httponly-flag",
+      "start_line": 26,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "Both flags on the same emitted cookie are enabled after earlier false setters."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "resetSession",
+      "rule_id": "kotlin-cookie-secure-flag",
+      "start_line": 27,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "Both flags on the same emitted cookie are enabled after earlier false setters."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "resetSession",
+      "rule_id": "kotlin-cookie-httponly-flag",
+      "start_line": 28,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "Both flags on the same emitted cookie are enabled after earlier false setters."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "wrongCookie",
+      "rule_id": "kotlin-cookie-secure-flag",
+      "start_line": 36,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "The emitted authentication cookie has both required flags disabled; another unused cookie does not protect it."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "wrongCookie",
+      "rule_id": "kotlin-cookie-httponly-flag",
+      "start_line": 37,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "The emitted authentication cookie has both required flags disabled; another unused cookie does not protect it."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "wrongCookie",
+      "rule_id": "kotlin-cookie-secure-flag",
+      "start_line": 38,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "The reviewed flags are enabled on the unused other cookie; its policy does not protect the separately emitted weak cookie."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "wrongCookie",
+      "rule_id": "kotlin-cookie-httponly-flag",
+      "start_line": 39,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "The reviewed flags are enabled on the unused other cookie; its policy does not protect the separately emitted weak cookie."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "preference",
+      "rule_id": "kotlin-cookie-secure-flag",
+      "start_line": 46,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "This emitted public display preference is nonsensitive and intentionally script-readable."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "preference",
+      "rule_id": "kotlin-cookie-httponly-flag",
+      "start_line": 47,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "This emitted public display preference is nonsensitive and intentionally script-readable."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "unconsumed",
+      "rule_id": "kotlin-cookie-secure-flag",
+      "start_line": 53,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "The configured cookie is never emitted or returned."
+    },
+    {
+      "fixture": "kotlin-cookies",
+      "path": "app.kt",
+      "callable": "unconsumed",
+      "rule_id": "kotlin-cookie-httponly-flag",
+      "start_line": 54,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "The configured cookie is never emitted or returned."
+    },
+    {
+      "fixture": "kotlin-exposed",
+      "path": "app.kt",
+      "callable": "rawTransaction",
+      "rule_id": "kotlin-exposed-sql-exec",
+      "start_line": 17,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Exact imported Exposed transaction executes request-interpolated raw SQL without binding."
+    },
+    {
+      "fixture": "kotlin-exposed",
+      "path": "app.kt",
+      "callable": "boundTransaction",
+      "rule_id": "kotlin-exposed-sql-exec",
+      "start_line": 26,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "Exposed SQL syntax is fixed and typed arguments bind the request value as data."
+    },
+    {
+      "fixture": "kotlin-exposed",
+      "path": "app.kt",
+      "callable": "rawCurrent",
+      "rule_id": "kotlin-exposed-sql-exec",
+      "start_line": 37,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Canonical current-transaction factory and immutable aliases execute request-interpolated SQL without binding."
+    },
+    {
+      "fixture": "kotlin-exposed",
+      "path": "app.kt",
+      "callable": "rawAlias",
+      "rule_id": "kotlin-exposed-sql-exec",
+      "start_line": 46,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Imported Exposed transaction alias owns the raw SQL consumer; request input changes executed syntax."
+    },
+    {
+      "fixture": "kotlin-exposed",
+      "path": "app.kt",
+      "callable": "fixedSql",
+      "rule_id": "kotlin-exposed-sql-exec",
+      "start_line": 55,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "Request input is unused in the fixed server-owned query syntax."
+    },
+    {
+      "fixture": "kotlin-exposed",
+      "path": "app.kt",
+      "callable": "typedExec",
+      "rule_id": "kotlin-exposed-sql-exec",
+      "start_line": 64,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Declared canonical JdbcTransaction directly executes SQL interpolated from the supplied scalar request parameter."
+    },
+    {
+      "fixture": "kotlin-file-overloads",
+      "path": "app.kt",
+      "callable": "rawRead",
+      "rule_id": "kotlin-file-read",
+      "start_line": 12,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Request-selected filename reaches a canonical File read with a charset; no containment controls are supplied."
+    },
+    {
+      "fixture": "kotlin-file-overloads",
+      "path": "app.kt",
+      "callable": "rawWrite",
+      "rule_id": "kotlin-file-write",
+      "start_line": 16,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Request-selected filename chooses the canonical File overwritten by writeText; content and path are separate parameters."
+    },
+    {
+      "fixture": "kotlin-file-overloads",
+      "path": "app.kt",
+      "callable": "rawAppend",
+      "rule_id": "kotlin-file-write",
+      "start_line": 21,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Request-selected filename chooses the canonical File appended by appendText without containment."
+    },
+    {
+      "fixture": "kotlin-file-overloads",
+      "path": "app.kt",
+      "callable": "rawBytes",
+      "rule_id": "kotlin-file-write",
+      "start_line": 26,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Request-selected filename chooses the canonical File appended by appendBytes without containment."
+    },
+    {
+      "fixture": "kotlin-file-overloads",
+      "path": "app.kt",
+      "callable": "fixedWrite",
+      "rule_id": "kotlin-file-write",
+      "start_line": 31,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "Only content is request-controlled; the written filename is fixed server-owned syntax."
+    },
+    {
+      "fixture": "kotlin-file-overloads",
+      "path": "app.kt",
+      "callable": "approvedRead",
+      "rule_id": "kotlin-file-read",
+      "start_line": 37,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "Exact literal allowlist precedes a fixed-name read. No supplied externally controlled path is consumed."
+    },
+    {
+      "fixture": "kotlin-files",
+      "path": "app.kt",
+      "callable": "rawRead",
+      "rule_id": "kotlin-files-read",
+      "start_line": 14,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Request String is converted directly to the unrestricted file read path."
+    },
+    {
+      "fixture": "kotlin-files",
+      "path": "app.kt",
+      "callable": "rawWrite",
+      "rule_id": "kotlin-files-write",
+      "start_line": 18,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Request String is converted directly to the unrestricted file write path."
+    },
+    {
+      "fixture": "kotlin-files",
+      "path": "app.kt",
+      "callable": "normalizedRead",
+      "rule_id": "kotlin-files-read",
+      "start_line": 25,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Resolving and normalizing request name does not enforce root containment."
+    },
+    {
+      "fixture": "kotlin-files",
+      "path": "app.kt",
+      "callable": "fixedRead",
+      "rule_id": "kotlin-files-read",
+      "start_line": 30,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "File path is fixed and the request parameter is unused."
+    },
+    {
+      "fixture": "kotlin-files",
+      "path": "app.kt",
+      "callable": "allowlistedRead",
+      "rule_id": "kotlin-files-read",
+      "start_line": 38,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "Accepted selector maps to one fixed server-owned path; other values fail."
+    },
+    {
+      "fixture": "kotlin-files",
+      "path": "app.kt",
+      "callable": "fixedWriteContent",
+      "rule_id": "kotlin-files-write",
+      "start_line": 43,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "Request influences content rather than the fixed file target; no CWE-22 path influence."
+    },
+    {
+      "fixture": "kotlin-imports",
+      "path": "Aliased.kt",
+      "callable": "aliasedCall",
+      "rule_id": "kotlin-runtime-exec",
+      "start_line": 10,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Explicitly aliased JVM Runtime executes request-selected command."
+    },
+    {
+      "fixture": "kotlin-imports",
+      "path": "Explicit.kt",
+      "callable": "explicitCall",
+      "rule_id": "kotlin-runtime-exec",
+      "start_line": 10,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Explicit JVM import overrides custom wildcard and executes request-selected command."
+    },
+    {
+      "fixture": "kotlin-imports",
+      "path": "Wildcard.kt",
+      "callable": "qualifiedCall",
+      "rule_id": "kotlin-runtime-exec",
+      "start_line": 13,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Fully qualified JVM Runtime executes request-selected command."
+    },
+    {
+      "fixture": "kotlin-jdbc",
+      "path": "app.kt",
+      "callable": "rawStatement",
+      "rule_id": "kotlin-jdbc-statement-query",
+      "start_line": 17,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Explicit request String is interpolated into SQL passed to Statement.executeQuery."
+    },
+    {
+      "fixture": "kotlin-jdbc",
+      "path": "app.kt",
+      "callable": "fixedStatement",
+      "rule_id": "kotlin-jdbc-statement-query",
+      "start_line": 22,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "Executed SQL is fixed and does not use the request value."
+    },
+    {
+      "fixture": "kotlin-jdbc",
+      "path": "app.kt",
+      "callable": "rawPrepared",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 27,
+      "start_column": 24,
+      "expected_decision": "issue",
+      "source_reason": "Request String changes SQL before preparation; the prepared statement is subsequently executed."
+    },
+    {
+      "fixture": "kotlin-jdbc",
+      "path": "app.kt",
+      "callable": "boundPrepared",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 33,
+      "start_column": 24,
+      "expected_decision": "not_issue",
+      "source_reason": "Fixed prepared SQL keeps a request value in a separately bound setString parameter."
+    },
+    {
+      "fixture": "kotlin-jdbc-callables",
+      "path": "app.kt",
+      "callable": "rawCall3",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 13,
+      "start_column": 24,
+      "expected_decision": "issue",
+      "source_reason": "Three-argument prepareCall receives request-interpolated SQL and the same callable statement is executed."
+    },
+    {
+      "fixture": "kotlin-jdbc-callables",
+      "path": "app.kt",
+      "callable": "rawCall4",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 25,
+      "start_column": 24,
+      "expected_decision": "issue",
+      "source_reason": "Four-argument prepareCall receives request-interpolated SQL and that same statement is executed; result-set settings do not bind input."
+    },
+    {
+      "fixture": "kotlin-jdbc-callables",
+      "path": "app.kt",
+      "callable": "boundCall3",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 37,
+      "start_column": 24,
+      "expected_decision": "not_issue",
+      "source_reason": "Callable SQL syntax is fixed and setString binds request input before same-statement execution."
+    },
+    {
+      "fixture": "kotlin-jdbc-callables",
+      "path": "app.kt",
+      "callable": "lazyCall4",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 50,
+      "start_column": 24,
+      "expected_decision": "not_issue",
+      "source_reason": "Dynamic callable SQL is immediately closed without execution. This does not recommend dynamic SQL or certify future consumers."
+    },
+    {
+      "fixture": "kotlin-jdbc-factories",
+      "path": "app.kt",
+      "callable": "factoryRaw",
+      "rule_id": "kotlin-jdbc-statement-query",
+      "start_line": 17,
+      "start_column": 20,
+      "expected_decision": "issue",
+      "source_reason": "Canonical inferred Statement executes request-interpolated SQL; benign predicate injection reproduced with H2."
+    },
+    {
+      "fixture": "kotlin-jdbc-factories",
+      "path": "app.kt",
+      "callable": "factoryFixed",
+      "rule_id": "kotlin-jdbc-statement-query",
+      "start_line": 27,
+      "start_column": 20,
+      "expected_decision": "not_issue",
+      "source_reason": "DataSource factory returns canonical Connection; executed SQL is fixed and request input is unused."
+    },
+    {
+      "fixture": "kotlin-jdbc-factories",
+      "path": "app.kt",
+      "callable": "factoryPreparedRaw",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 36,
+      "start_column": 25,
+      "expected_decision": "issue",
+      "source_reason": "DriverManager factory returns canonical Connection; interpolated prepared SQL is subsequently executed; injection reproduced with H2."
+    },
+    {
+      "fixture": "kotlin-jdbc-factories",
+      "path": "app.kt",
+      "callable": "factoryPreparedBound",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 46,
+      "start_column": 25,
+      "expected_decision": "not_issue",
+      "source_reason": "DataSource factory returns canonical Connection; fixed placeholder SQL uses separately bound request text."
+    },
+    {
+      "fixture": "kotlin-jdbc-policy-factories",
+      "path": "app.kt",
+      "callable": "rawTemplate",
+      "rule_id": "kotlin-jdbc-template-query",
+      "start_line": 22,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Request text is interpolated into executed JdbcTemplate SQL created through its canonical constructor."
+    },
+    {
+      "fixture": "kotlin-jdbc-policy-factories",
+      "path": "app.kt",
+      "callable": "boundTemplate",
+      "rule_id": "kotlin-jdbc-template-query",
+      "start_line": 28,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "JdbcTemplate query syntax is fixed and the request value is supplied as a bound parameter."
+    },
+    {
+      "fixture": "kotlin-jdbc-policy-factories",
+      "path": "app.kt",
+      "callable": "rawPooled",
+      "rule_id": "kotlin-jdbc-statement-query",
+      "start_line": 37,
+      "start_column": 24,
+      "expected_decision": "issue",
+      "source_reason": "Canonical pooled-connection factory and Statement execute SQL interpolated from request input without parameter binding."
+    },
+    {
+      "fixture": "kotlin-jdbc-policy-factories",
+      "path": "app.kt",
+      "callable": "rawXa",
+      "rule_id": "kotlin-jdbc-statement-query",
+      "start_line": 51,
+      "start_column": 24,
+      "expected_decision": "issue",
+      "source_reason": "Canonical XA factory returns a connection and its Statement executes request-interpolated SQL without binding."
+    },
+    {
+      "fixture": "kotlin-jdbc-policy-factories",
+      "path": "app.kt",
+      "callable": "rawPrepared3",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 61,
+      "start_column": 24,
+      "expected_decision": "issue",
+      "source_reason": "Three-argument preparation receives dynamic SQL and that same prepared statement is executed. Preparation does not sanitize interpolated syntax."
+    },
+    {
+      "fixture": "kotlin-jdbc-policy-factories",
+      "path": "app.kt",
+      "callable": "rawPrepared4",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 73,
+      "start_column": 24,
+      "expected_decision": "issue",
+      "source_reason": "Four-argument preparation receives request-interpolated SQL and the same statement is executed; result-set options do not bind input."
+    },
+    {
+      "fixture": "kotlin-jdbc-policy-factories",
+      "path": "app.kt",
+      "callable": "boundPrepared",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 85,
+      "start_column": 24,
+      "expected_decision": "not_issue",
+      "source_reason": "Three-argument preparation has fixed SQL syntax and request data is bound by setString before same-statement execution."
+    },
+    {
+      "fixture": "kotlin-jdbc-policy-factories",
+      "path": "app.kt",
+      "callable": "lazyPrepared",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 98,
+      "start_column": 24,
+      "expected_decision": "not_issue",
+      "source_reason": "Dynamic SQL is prepared and immediately closed with no execution consumer supplied. This dismissal does not recommend dynamic SQL construction or certify other consumers."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "rawProcess",
+      "rule_id": "kotlin-process-builder",
+      "start_line": 16,
+      "start_column": 56,
+      "expected_decision": "issue",
+      "source_reason": "Mapped request selects executable passed to canonical ProcessBuilder and start; harmless whoami execution corroborates process launch, not arbitrary deployment exposure."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "rawRead",
+      "rule_id": "kotlin-file-read",
+      "start_line": 22,
+      "start_column": 47,
+      "expected_decision": "issue",
+      "source_reason": "Mapped request chooses the complete File path without confinement before reading; isolated temporary file read corroborates behavior."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "fixedRead",
+      "rule_id": "kotlin-file-read",
+      "start_line": 25,
+      "start_column": 52,
+      "expected_decision": "not_issue",
+      "source_reason": "Server-owned fixed read path does not use supplied request value."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "fixedWrite",
+      "rule_id": "kotlin-file-write",
+      "start_line": 28,
+      "start_column": 53,
+      "expected_decision": "not_issue",
+      "source_reason": "Only written content is requested; File target is fixed, so no CWE-22 path influence is shown."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "objectRead",
+      "rule_id": "kotlin-object-deserialization",
+      "start_line": 31,
+      "start_column": 44,
+      "expected_decision": "not_issue",
+      "source_reason": "Ordinary object read on supplied stream: no controlled payload origin, unsafe filter policy or gadget effects established. This observation dismissal does not certify stream safety."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "xmlRead",
+      "rule_id": "kotlin-xml-parse",
+      "start_line": 32,
+      "start_column": 76,
+      "expected_decision": "not_issue",
+      "source_reason": "Ordinary parse with supplied factory and input; no unsafe entity/access settings or controlled XML origin established."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "xmlConfiguration",
+      "rule_id": "kotlin-xml-configuration",
+      "start_line": 33,
+      "start_column": 57,
+      "expected_decision": "not_issue",
+      "source_reason": "Sets disallow-doctype-decl true; no unsafe parser policy shown."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "tlsConfiguration",
+      "rule_id": "kotlin-tls-hostname-verifier",
+      "start_line": 34,
+      "start_column": 84,
+      "expected_decision": "not_issue",
+      "source_reason": "Attaches an unspecified verifier; no callback bypass behavior or effective insecure production configuration established."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "connectionRead",
+      "rule_id": "kotlin-url-connection-consumer",
+      "start_line": 35,
+      "start_column": 49,
+      "expected_decision": "not_issue",
+      "source_reason": "Resource consumer is inventoried, but target origin and unsafe destination policy are not shown."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "redirect",
+      "rule_id": "kotlin-servlet-redirect",
+      "start_line": 36,
+      "start_column": 86,
+      "expected_decision": "not_issue",
+      "source_reason": "Servlet redirects supplied location; no remote input origin or destination-policy violation established."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "jsonRead",
+      "rule_id": "kotlin-jackson-deserialization",
+      "start_line": 37,
+      "start_column": 78,
+      "expected_decision": "not_issue",
+      "source_reason": "Decoding targets final String type; no attacker-controlled polymorphic object construction or unsafe custom codec is established."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "httpRequest",
+      "rule_id": "kotlin-http-client-request",
+      "start_line": 38,
+      "start_column": 89,
+      "expected_decision": "not_issue",
+      "source_reason": "Typed client sends a supplied request; destination origin and policy violation are not established."
+    },
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "okhttpRequest",
+      "rule_id": "kotlin-okhttp-request",
+      "start_line": 39,
+      "start_column": 77,
+      "expected_decision": "not_issue",
+      "source_reason": "Typed lazy call is executed, but supplied request URL origin and unsafe destination policy are not established."
+    },
+    {
+      "fixture": "kotlin-jwt",
+      "path": "app.kt",
+      "callable": "rawAdmin",
+      "rule_id": "kotlin-auth0-jwt-decode",
+      "start_line": 9,
+      "start_column": 18,
+      "expected_decision": "issue",
+      "source_reason": "Unverified claims gate protected admin data; an owned forged-signature or unsigned admin claim is accepted."
+    },
+    {
+      "fixture": "kotlin-jwt",
+      "path": "app.kt",
+      "callable": "displayMetadata",
+      "rule_id": "kotlin-auth0-jwt-decode",
+      "start_line": 14,
+      "start_column": 46,
+      "expected_decision": "not_issue",
+      "source_reason": "Decoded subject is displayed as metadata, without any credential-acceptance or protected-data branch."
+    },
+    {
+      "fixture": "kotlin-jwt",
+      "path": "app.kt",
+      "callable": "verifiedAdmin",
+      "rule_id": "kotlin-auth0-jwt-verify",
+      "start_line": 20,
+      "start_column": 18,
+      "expected_decision": "not_issue",
+      "source_reason": "A server-owned HMAC key, issuer and audience verifier gates the same token before admin claims are used; failures stop acceptance."
+    },
+    {
+      "fixture": "kotlin-jwt",
+      "path": "app.kt",
+      "callable": "unsignedAdmin",
+      "rule_id": "kotlin-auth0-jwt-verify",
+      "start_line": 27,
+      "start_column": 18,
+      "expected_decision": "issue",
+      "source_reason": "Algorithm.none accepts an unsigned security credential whose admin claim grants protected data."
+    },
+    {
+      "fixture": "kotlin-jwt",
+      "path": "app.kt",
+      "callable": "ignoredFailure",
+      "rule_id": "kotlin-auth0-jwt-verify",
+      "start_line": 36,
+      "start_column": 11,
+      "expected_decision": "issue",
+      "source_reason": "Verification exceptions are suppressed and the same token is decoded and accepted as an admin credential despite a forged signature or unsigned algorithm."
+    },
+    {
+      "fixture": "kotlin-jwt",
+      "path": "app.kt",
+      "callable": "ignoredFailure",
+      "rule_id": "kotlin-auth0-jwt-decode",
+      "start_line": 37,
+      "start_column": 18,
+      "expected_decision": "issue",
+      "source_reason": "Verification exceptions are suppressed and the same token is decoded and accepted as an admin credential despite a forged signature or unsigned algorithm."
+    },
+    {
+      "fixture": "kotlin-jwt",
+      "path": "app.kt",
+      "callable": "verifiedBeforeDecode",
+      "rule_id": "kotlin-auth0-jwt-verify",
+      "start_line": 45,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "The same token is verified under server-owned HMAC, issuer and audience policy before decoding; exceptions propagate before protected acceptance."
+    },
+    {
+      "fixture": "kotlin-jwt",
+      "path": "app.kt",
+      "callable": "verifiedBeforeDecode",
+      "rule_id": "kotlin-auth0-jwt-decode",
+      "start_line": 46,
+      "start_column": 18,
+      "expected_decision": "not_issue",
+      "source_reason": "The same token is verified under server-owned HMAC, issuer and audience policy before decoding; exceptions propagate before protected acceptance."
+    },
+    {
+      "fixture": "kotlin-jwt-lifetime",
+      "path": "app.kt",
+      "callable": "withoutExpiry",
+      "rule_id": "kotlin-auth0-jwt-token-generation",
+      "start_line": 13,
+      "start_column": 22,
+      "expected_decision": "issue",
+      "source_reason": "The issued credential has no expiry or independent age bound despite the required five-minute lifetime."
+    },
+    {
+      "fixture": "kotlin-jwt-lifetime",
+      "path": "app.kt",
+      "callable": "withoutExpiry",
+      "rule_id": "kotlin-auth0-jwt-verify",
+      "start_line": 14,
+      "start_column": 20,
+      "expected_decision": "not_issue",
+      "source_reason": "Same-token HMAC and issuer verification preserves signature authentication; lifetime defects are independently reviewed under issuance/CWE613."
+    },
+    {
+      "fixture": "kotlin-jwt-lifetime",
+      "path": "app.kt",
+      "callable": "boundedExpiry",
+      "rule_id": "kotlin-auth0-jwt-token-generation",
+      "start_line": 22,
+      "start_column": 22,
+      "expected_decision": "not_issue",
+      "source_reason": "The effective signed builder has an expiry at the required five-minute bound."
+    },
+    {
+      "fixture": "kotlin-jwt-lifetime",
+      "path": "app.kt",
+      "callable": "boundedExpiry",
+      "rule_id": "kotlin-auth0-jwt-verify",
+      "start_line": 23,
+      "start_column": 20,
+      "expected_decision": "not_issue",
+      "source_reason": "Same-token HMAC and issuer verification preserves signature authentication; lifetime defects are independently reviewed under issuance/CWE613."
+    },
+    {
+      "fixture": "kotlin-jwt-lifetime",
+      "path": "app.kt",
+      "callable": "clearedExpiry",
+      "rule_id": "kotlin-auth0-jwt-token-generation",
+      "start_line": 32,
+      "start_column": 22,
+      "expected_decision": "issue",
+      "source_reason": "The effective signed builder clears its previously bounded expiry."
+    },
+    {
+      "fixture": "kotlin-jwt-lifetime",
+      "path": "app.kt",
+      "callable": "clearedExpiry",
+      "rule_id": "kotlin-auth0-jwt-verify",
+      "start_line": 33,
+      "start_column": 20,
+      "expected_decision": "not_issue",
+      "source_reason": "Same-token HMAC and issuer verification preserves signature authentication; lifetime defects are independently reviewed under issuance/CWE613."
+    },
+    {
+      "fixture": "kotlin-jwt-lifetime",
+      "path": "app.kt",
+      "callable": "wrongBuilder",
+      "rule_id": "kotlin-auth0-jwt-token-generation",
+      "start_line": 42,
+      "start_column": 22,
+      "expected_decision": "issue",
+      "source_reason": "The expiring builder is unused; the actual signed builder lacks the required lifetime bound."
+    },
+    {
+      "fixture": "kotlin-jwt-lifetime",
+      "path": "app.kt",
+      "callable": "wrongBuilder",
+      "rule_id": "kotlin-auth0-jwt-verify",
+      "start_line": 43,
+      "start_column": 20,
+      "expected_decision": "not_issue",
+      "source_reason": "Same-token HMAC and issuer verification preserves signature authentication; lifetime defects are independently reviewed under issuance/CWE613."
+    },
+    {
+      "fixture": "kotlin-jwt-lifetime",
+      "path": "app.kt",
+      "callable": "payloadOverride",
+      "rule_id": "kotlin-auth0-jwt-token-generation",
+      "start_line": 52,
+      "start_column": 22,
+      "expected_decision": "issue",
+      "source_reason": "The later payload replaces exp with null on the signed builder."
+    },
+    {
+      "fixture": "kotlin-jwt-lifetime",
+      "path": "app.kt",
+      "callable": "payloadOverride",
+      "rule_id": "kotlin-auth0-jwt-verify",
+      "start_line": 53,
+      "start_column": 20,
+      "expected_decision": "not_issue",
+      "source_reason": "Same-token HMAC and issuer verification preserves signature authentication; lifetime defects are independently reviewed under issuance/CWE613."
+    },
+    {
+      "fixture": "kotlin-jwt-lifetime",
+      "path": "app.kt",
+      "callable": "restoredExpiry",
+      "rule_id": "kotlin-auth0-jwt-token-generation",
+      "start_line": 63,
+      "start_column": 22,
+      "expected_decision": "not_issue",
+      "source_reason": "The last update restores the required expiry after payload replacement."
+    },
+    {
+      "fixture": "kotlin-jwt-lifetime",
+      "path": "app.kt",
+      "callable": "restoredExpiry",
+      "rule_id": "kotlin-auth0-jwt-verify",
+      "start_line": 64,
+      "start_column": 20,
+      "expected_decision": "not_issue",
+      "source_reason": "Same-token HMAC and issuer verification preserves signature authentication; lifetime defects are independently reviewed under issuance/CWE613."
+    },
+    {
+      "fixture": "kotlin-jwt-lifetime",
+      "path": "app.kt",
+      "callable": "independentMaximumAge",
+      "rule_id": "kotlin-auth0-jwt-token-generation",
+      "start_line": 72,
+      "start_column": 22,
+      "expected_decision": "not_issue",
+      "source_reason": "The returned consumer verifies the owned HMAC/issuer and rejects credentials after the required maximum age even without exp."
+    },
+    {
+      "fixture": "kotlin-jwt-lifetime",
+      "path": "app.kt",
+      "callable": "independentMaximumAge",
+      "rule_id": "kotlin-auth0-jwt-verify",
+      "start_line": 74,
+      "start_column": 22,
+      "expected_decision": "not_issue",
+      "source_reason": "Same-token HMAC and issuer verification preserves signature authentication; lifetime defects are independently reviewed under issuance/CWE613."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "dslCommands",
+      "rule_id": "kotlin-runtime-exec",
+      "start_line": 20,
+      "start_column": 26,
+      "expected_decision": "issue",
+      "source_reason": "Canonical Application routing/get DSL request query input, including Elvis fallback, selects Runtime executable without an allowlist; isolated HTTP request executes harmless whoami."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "queryCommand",
+      "rule_id": "kotlin-runtime-exec",
+      "start_line": 28,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "Typed ApplicationCall query value reaches executable selection without policy; helper source case, not proof of deployed registration."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "pathCommand",
+      "rule_id": "kotlin-runtime-exec",
+      "start_line": 32,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "Typed ApplicationCall path value reaches executable selection without policy; helper source case, not proof of deployed registration."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "bodyCommand",
+      "rule_id": "kotlin-runtime-exec",
+      "start_line": 36,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "Typed ApplicationCall receiveText input reaches executable selection without policy; helper source case, not proof of deployed registration."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "rawRedirect",
+      "rule_id": "kotlin-ktor-redirect",
+      "start_line": 40,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "HTTP query input supplies respondRedirect URL without local-destination policy; isolated HTTP response preserves supplied external Location without following it."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "fixedRedirect",
+      "rule_id": "kotlin-ktor-redirect",
+      "start_line": 42,
+      "start_column": 52,
+      "expected_decision": "not_issue",
+      "source_reason": "Redirect Location is fixed local /home; caller destination is unused."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "rawHtml",
+      "rule_id": "kotlin-ktor-html-output",
+      "start_line": 45,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "HTTP query value is interpolated without encoding into explicit text/html response; isolated pipeline returns supplied markup in HTML body."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "rawBytes",
+      "rule_id": "kotlin-ktor-html-output",
+      "start_line": 55,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Request-selected Base64 is decoded and returned as explicit HTML bytes without encoding; isolated HTTP pipeline proves reflected markup."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "rawBytes",
+      "rule_id": "kotlin-ktor-html-output",
+      "start_line": 57,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "The anchored error respondText writes fixed Invalid Base64 text; the dangerous bytes belong to a different successful response operation."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "fixedHtml",
+      "rule_id": "kotlin-ktor-html-output",
+      "start_line": 60,
+      "start_column": 48,
+      "expected_decision": "not_issue",
+      "source_reason": "HTML body is fixed server-owned text."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "rawClient",
+      "rule_id": "kotlin-ktor-client-request",
+      "start_line": 63,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "HTTP query selects client get destination without approval; source-only request behavior, no runtime SSRF reproduction claimed."
+    },
+    {
+      "fixture": "kotlin-ktor",
+      "path": "app.kt",
+      "callable": "fixedClient",
+      "rule_id": "kotlin-ktor-client-request",
+      "start_line": 65,
+      "start_column": 47,
+      "expected_decision": "not_issue",
+      "source_reason": "Client destination is fixed server-owned URL; not executed in runtime checks."
+    },
+    {
+      "fixture": "kotlin-ktor-builders",
+      "path": "app.kt",
+      "callable": "rawFactory",
+      "rule_id": "kotlin-ktor-client-request",
+      "start_line": 15,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Typed ApplicationCall query input selects a complete canonical factory-owned client destination without approval before get."
+    },
+    {
+      "fixture": "kotlin-ktor-builders",
+      "path": "app.kt",
+      "callable": "rawBuilder",
+      "rule_id": "kotlin-ktor-client-request",
+      "start_line": 25,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Typed ApplicationCall query input is installed as the builder URL before get without destination approval."
+    },
+    {
+      "fixture": "kotlin-ktor-builders",
+      "path": "app.kt",
+      "callable": "replacedBuilder",
+      "rule_id": "kotlin-ktor-client-request",
+      "start_line": 35,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "The initial request URL is replaced by a separate parameter inside the canonical builder. No unsafe producer for that replacement is established; this dismissal does not certify arbitrary replacement values."
+    },
+    {
+      "fixture": "kotlin-ktor-builders",
+      "path": "app.kt",
+      "callable": "fixedBuilder",
+      "rule_id": "kotlin-ktor-client-request",
+      "start_line": 45,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "Builder URL is fixed server-owned syntax and does not use the query input. The fixed target is compiled/source-reviewed only."
+    },
+    {
+      "fixture": "kotlin-named-jdbc",
+      "path": "app.kt",
+      "callable": "rawNamed",
+      "rule_id": "kotlin-jdbc-template-query",
+      "start_line": 17,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Canonical NamedParameterJdbcTemplate construction executes request-interpolated SQL; an empty parameter map does not bind interpolated text."
+    },
+    {
+      "fixture": "kotlin-named-jdbc",
+      "path": "app.kt",
+      "callable": "rawJdbc",
+      "rule_id": "kotlin-jdbc-template-query",
+      "start_line": 23,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "NamedParameterJdbcTemplate constructed from JdbcTemplate executes raw request-interpolated SQL without binding."
+    },
+    {
+      "fixture": "kotlin-named-jdbc",
+      "path": "app.kt",
+      "callable": "rawDeclared",
+      "rule_id": "kotlin-jdbc-template-query",
+      "start_line": 28,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Declared canonical NamedParameterJdbcOperations executes request-interpolated SQL without parameter binding."
+    },
+    {
+      "fixture": "kotlin-named-jdbc",
+      "path": "app.kt",
+      "callable": "boundMap",
+      "rule_id": "kotlin-jdbc-template-query",
+      "start_line": 33,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "The SQL template is fixed and a parameter map binds the request value as data."
+    },
+    {
+      "fixture": "kotlin-named-jdbc",
+      "path": "app.kt",
+      "callable": "boundSource",
+      "rule_id": "kotlin-jdbc-template-query",
+      "start_line": 39,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "Fixed SQL uses a named placeholder and a MapSqlParameterSource binds the request value as data."
+    },
+    {
+      "fixture": "kotlin-named-jdbc",
+      "path": "app.kt",
+      "callable": "rawCallback",
+      "rule_id": "kotlin-jdbc-template-query",
+      "start_line": 45,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Request input changes SQL supplied to the canonical named template and its same prepared callback executes the query; callback preparation does not sanitize interpolation."
+    },
+    {
+      "fixture": "kotlin-network",
+      "path": "app.kt",
+      "callable": "rawStream",
+      "rule_id": "kotlin-url-read",
+      "start_line": 16,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "The mapped request URL reaches canonical URI/URL resource reading without a destination policy. Direct loopback execution retrieved the caller-selected private fixture."
+    },
+    {
+      "fixture": "kotlin-network",
+      "path": "app.kt",
+      "callable": "constructorStream",
+      "rule_id": "kotlin-url-read",
+      "start_line": 22,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "The mapped request URL reaches canonical URL construction and resource reading through immutable aliases without a destination policy. Direct loopback execution retrieved the private fixture."
+    },
+    {
+      "fixture": "kotlin-network",
+      "path": "app.kt",
+      "callable": "rawConnection",
+      "rule_id": "kotlin-url-connection",
+      "start_line": 28,
+      "start_column": 26,
+      "expected_decision": "issue",
+      "source_reason": "The mapped request URL selects the canonical URL connection; this method connects and reads the response. Direct loopback execution retrieved the private fixture."
+    },
+    {
+      "fixture": "kotlin-network",
+      "path": "app.kt",
+      "callable": "fixedStream",
+      "rule_id": "kotlin-url-read",
+      "start_line": 35,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "The supplied request URL is unused. This original control reads the exact server-owned loopback approved endpoint; the target fixture is trusted and does not redirect."
+    },
+    {
+      "fixture": "kotlin-network",
+      "path": "app.kt",
+      "callable": "allowlistedStream",
+      "rule_id": "kotlin-url-read",
+      "start_line": 43,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "Only the approved selector maps to the exact server-owned loopback approved endpoint. Other selectors throw before access; direct checks confirm rejection and approved success."
+    },
+    {
+      "fixture": "kotlin-network",
+      "path": "app.kt",
+      "callable": "connectionOnly",
+      "rule_id": "kotlin-url-connection",
+      "start_line": 48,
+      "start_column": 26,
+      "expected_decision": "not_issue",
+      "source_reason": "Canonical URL openConnection is lazy. This method returns only the connection class name and supplies no connect/read consumer. The loopback request counter confirms no request for this direct control."
+    },
+    {
+      "fixture": "kotlin-network",
+      "path": "app.kt",
+      "callable": "fetch",
+      "rule_id": "kotlin-url-read",
+      "start_line": 65,
+      "start_column": 13,
+      "expected_decision": "issue",
+      "source_reason": "Exact typed coroutineRaw caller context supplies a mapped request URL to fetch. Its coroutine reads the canonical URI/URL resource without a destination policy. Direct loopback execution retrieved the private fixture; no native cross-callable path is claimed."
+    },
+    {
+      "fixture": "kotlin-object-policies",
+      "path": "app.kt",
+      "callable": "rawObject",
+      "rule_id": "kotlin-object-deserialization",
+      "start_line": 26,
+      "start_column": 17,
+      "expected_decision": "issue",
+      "source_reason": "Mapped request selects Java serialized bytes materialized without a filter on the read stream. A post-read cast does not prevent materialization; a filter on another stream is ineffective. Direct harmless callback checks corroborate stream ownership, not arbitrary code execution."
+    },
+    {
+      "fixture": "kotlin-object-policies",
+      "path": "app.kt",
+      "callable": "safeObject",
+      "rule_id": "kotlin-object-deserialization",
+      "start_line": 39,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "The exact stream has a restrictive class filter before reading, encoded-input size bound and a String-only postcondition."
+    },
+    {
+      "fixture": "kotlin-object-policies",
+      "path": "app.kt",
+      "callable": "wrongStream",
+      "rule_id": "kotlin-object-deserialization",
+      "start_line": 48,
+      "start_column": 17,
+      "expected_decision": "issue",
+      "source_reason": "Mapped request selects Java serialized bytes materialized without a filter on the read stream. A post-read cast does not prevent materialization; a filter on another stream is ineffective. Direct harmless callback checks corroborate stream ownership, not arbitrary code execution."
+    },
+    {
+      "fixture": "kotlin-prepared-ownership",
+      "path": "app.kt",
+      "callable": "ownedRaw",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 16,
+      "start_column": 24,
+      "expected_decision": "issue",
+      "source_reason": "Request SQL is executed through an immutable alias; an unrelated object binding cannot protect it; H2 predicate injection reproduced."
+    },
+    {
+      "fixture": "kotlin-prepared-ownership",
+      "path": "app.kt",
+      "callable": "ownedBound",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 28,
+      "start_column": 24,
+      "expected_decision": "not_issue",
+      "source_reason": "Fixed placeholder SQL resets and then binds its own request value before execution."
+    },
+    {
+      "fixture": "kotlin-prepared-ownership",
+      "path": "app.kt",
+      "callable": "preparationOnly",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 41,
+      "start_column": 24,
+      "expected_decision": "not_issue",
+      "source_reason": "Fixed SQL is prepared and closed without execution; request input is unused."
+    },
+    {
+      "fixture": "kotlin-prepared-ownership",
+      "path": "app.kt",
+      "callable": "conditionalRaw",
+      "rule_id": "kotlin-jdbc-prepare-query",
+      "start_line": 47,
+      "start_column": 24,
+      "expected_decision": "issue",
+      "source_reason": "Caller may enable execution of request-interpolated SQL; true and false branches exercised directly with H2."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "rawJdbcQuery",
+      "rule_id": "kotlin-jdbc-template-query",
+      "start_line": 31,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Explicit request String is interpolated into JdbcTemplate SQL text."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "boundJdbcQuery",
+      "rule_id": "kotlin-jdbc-template-query",
+      "start_line": 35,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "Fixed SQL with a separately bound positional value."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "rawQuery",
+      "rule_id": "kotlin-persistence-query",
+      "start_line": 39,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Explicit request String is interpolated into HQL text."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "boundQuery",
+      "rule_id": "kotlin-persistence-query",
+      "start_line": 43,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "Fixed HQL uses a separately bound named value."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "numericQuery",
+      "rule_id": "kotlin-persistence-query",
+      "start_line": 48,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "Long binding restricts the interpolated operand to numeric data."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "rawCommand",
+      "rule_id": "kotlin-runtime-exec",
+      "start_line": 52,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "The request chooses the executable and arguments passed to Runtime.exec."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "fixedCommand",
+      "rule_id": "kotlin-runtime-exec",
+      "start_line": 56,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "The executable is a fixed local literal, with no request-controlled command."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "rawFileRead",
+      "rule_id": "kotlin-files-read",
+      "start_line": 65,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Request name is resolved and normalized without root confinement before Files.readString."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "rawFileWrite",
+      "rule_id": "kotlin-files-write",
+      "start_line": 69,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Request name is resolved and normalized without root confinement before Files.writeString."
+    },
+    {
+      "fixture": "kotlin-quality",
+      "path": "src/main/kotlin/quality/Application.kt",
+      "callable": "safeFileRead",
+      "rule_id": "kotlin-files-read",
+      "start_line": 78,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "Accepted selector maps to the fixed readme filename; other names are rejected."
+    },
+    {
+      "fixture": "kotlin-receivers",
+      "path": "app.kt",
+      "callable": "memberQuery",
+      "rule_id": "kotlin-persistence-query",
+      "start_line": 23,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Explicit member is the canonical EntityManager; same-named local does not change it."
+    },
+    {
+      "fixture": "kotlin-receivers",
+      "path": "app.kt",
+      "callable": "memberRead",
+      "rule_id": "kotlin-files-read",
+      "start_line": 29,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Explicit member is the canonical Path; request selects the read path."
+    },
+    {
+      "fixture": "kotlin-receivers",
+      "path": "app.kt",
+      "callable": "lookalikeRead",
+      "rule_id": "kotlin-files-read",
+      "start_line": 47,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "Actual OtherPath member ignores input and returns a fixed target."
+    },
+    {
+      "fixture": "kotlin-scopes",
+      "path": "app.kt",
+      "callable": "rawLet",
+      "rule_id": "kotlin-runtime-exec",
+      "start_line": 10,
+      "start_column": 31,
+      "expected_decision": "issue",
+      "source_reason": "Typed request query command passes unchanged through an explicit standard-scope lambda parameter to Runtime.exec."
+    },
+    {
+      "fixture": "kotlin-scopes",
+      "path": "app.kt",
+      "callable": "rawImplicit",
+      "rule_id": "kotlin-runtime-exec",
+      "start_line": 15,
+      "start_column": 20,
+      "expected_decision": "issue",
+      "source_reason": "Typed request query command reaches Runtime.exec via the implicit also lambda parameter."
+    },
+    {
+      "fixture": "kotlin-scopes",
+      "path": "app.kt",
+      "callable": "rawAlias",
+      "rule_id": "kotlin-runtime-exec",
+      "start_line": 20,
+      "start_column": 32,
+      "expected_decision": "issue",
+      "source_reason": "Imported kotlin.let alias binds typed request query command to Runtime.exec."
+    },
+    {
+      "fixture": "kotlin-scopes",
+      "path": "app.kt",
+      "callable": "fixedLet",
+      "rule_id": "kotlin-runtime-exec",
+      "start_line": 25,
+      "start_column": 45,
+      "expected_decision": "not_issue",
+      "source_reason": "The first let returns a fixed server-owned executable string; the consumed second lambda parameter is not the query value."
+    },
+    {
+      "fixture": "kotlin-scopes",
+      "path": "app.kt",
+      "callable": "lookalike",
+      "rule_id": "kotlin-runtime-exec",
+      "start_line": 31,
+      "start_column": 43,
+      "expected_decision": "not_issue",
+      "source_reason": "No external producer is established for the application-owned member lambda parameter; member let is not compiler-resolved kotlin.let."
+    },
+    {
+      "fixture": "kotlin-tls-defaults",
+      "path": "app.kt",
+      "callable": "globalHostname",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 10,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "The accept-all default verifier is inherited by the subsequently created consumed connection and accepts the trusted certificate with a mismatched numeric-loopback hostname."
+    },
+    {
+      "fixture": "kotlin-tls-defaults",
+      "path": "app.kt",
+      "callable": "globalHostname",
+      "rule_id": "kotlin-url-connection",
+      "start_line": 12,
+      "start_column": 26,
+      "expected_decision": "not_issue",
+      "source_reason": "The URL uses two finite owned-loopback hosts and an integer fixture port, with no mapped request-input producer; lazy construction does not establish an unapproved request-selected destination."
+    },
+    {
+      "fixture": "kotlin-tls-defaults",
+      "path": "app.kt",
+      "callable": "globalHostname",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 14,
+      "start_column": 17,
+      "expected_decision": "not_issue",
+      "source_reason": "The finally setter restores the saved prior verifier after the consumed connection; this anchor does not install the accept-all callback."
+    },
+    {
+      "fixture": "kotlin-tls-defaults",
+      "path": "app.kt",
+      "callable": "restoredBeforeOpen",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 20,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "The permissive default is replaced by a rejecting mismatch verifier before construction; restoration setters do not weaken the shown consumed connection."
+    },
+    {
+      "fixture": "kotlin-tls-defaults",
+      "path": "app.kt",
+      "callable": "restoredBeforeOpen",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 21,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "The permissive default is replaced by a rejecting mismatch verifier before construction; restoration setters do not weaken the shown consumed connection."
+    },
+    {
+      "fixture": "kotlin-tls-defaults",
+      "path": "app.kt",
+      "callable": "restoredBeforeOpen",
+      "rule_id": "kotlin-url-connection",
+      "start_line": 23,
+      "start_column": 26,
+      "expected_decision": "not_issue",
+      "source_reason": "The URL uses two finite owned-loopback hosts and an integer fixture port, with no mapped request-input producer; lazy construction does not establish an unapproved request-selected destination."
+    },
+    {
+      "fixture": "kotlin-tls-defaults",
+      "path": "app.kt",
+      "callable": "restoredBeforeOpen",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 25,
+      "start_column": 17,
+      "expected_decision": "not_issue",
+      "source_reason": "The permissive default is replaced by a rejecting mismatch verifier before construction; restoration setters do not weaken the shown consumed connection."
+    },
+    {
+      "fixture": "kotlin-tls-defaults",
+      "path": "app.kt",
+      "callable": "existingConnection",
+      "rule_id": "kotlin-url-connection",
+      "start_line": 31,
+      "start_column": 22,
+      "expected_decision": "not_issue",
+      "source_reason": "The URL uses two finite owned-loopback hosts and an integer fixture port, with no mapped request-input producer; lazy construction does not establish an unapproved request-selected destination."
+    },
+    {
+      "fixture": "kotlin-tls-defaults",
+      "path": "app.kt",
+      "callable": "existingConnection",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 34,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "The consumed connection is created and given a rejecting mismatch verifier before the global change; it does not inherit that later default. The prior default is restored on exit."
+    },
+    {
+      "fixture": "kotlin-tls-defaults",
+      "path": "app.kt",
+      "callable": "existingConnection",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 36,
+      "start_column": 17,
+      "expected_decision": "not_issue",
+      "source_reason": "The consumed connection is created and given a rejecting mismatch verifier before the global change; it does not inherit that later default. The prior default is restored on exit."
+    },
+    {
+      "fixture": "kotlin-tls-defaults",
+      "path": "app.kt",
+      "callable": "instanceOverride",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 42,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "The new connection receives an instance rejecting mismatch verifier before consumption, replacing the permissive inherited default. The prior default is restored on exit."
+    },
+    {
+      "fixture": "kotlin-tls-defaults",
+      "path": "app.kt",
+      "callable": "instanceOverride",
+      "rule_id": "kotlin-url-connection",
+      "start_line": 44,
+      "start_column": 26,
+      "expected_decision": "not_issue",
+      "source_reason": "The URL uses two finite owned-loopback hosts and an integer fixture port, with no mapped request-input producer; lazy construction does not establish an unapproved request-selected destination."
+    },
+    {
+      "fixture": "kotlin-tls-defaults",
+      "path": "app.kt",
+      "callable": "instanceOverride",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 47,
+      "start_column": 17,
+      "expected_decision": "not_issue",
+      "source_reason": "The new connection receives an instance rejecting mismatch verifier before consumption, replacing the permissive inherited default. The prior default is restored on exit."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "globalFactory",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 17,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "The new consumed connection inherits the global socket factory from the context whose server trust check is empty, and accepts the separate owned untrusted certificate."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "globalFactory",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 19,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "The new consumed connection inherits the global socket factory from the context whose server trust check is empty, and accepts the separate owned untrusted certificate."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "globalFactory",
+      "rule_id": "kotlin-url-connection",
+      "start_line": 20,
+      "start_column": 26,
+      "expected_decision": "not_issue",
+      "source_reason": "The fixed localhost URL uses an integer owned-service fixture port, without a mapped request-input producer; construction does not establish an unapproved request-controlled destination."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "globalFactory",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 22,
+      "start_column": 17,
+      "expected_decision": "not_issue",
+      "source_reason": "The exact setter restores the captured prior global setting after consumption; this anchor does not install the permissive context or factory."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "existingFactory",
+      "rule_id": "kotlin-url-connection",
+      "start_line": 27,
+      "start_column": 22,
+      "expected_decision": "not_issue",
+      "source_reason": "The fixed localhost URL uses an integer owned-service fixture port, without a mapped request-input producer; construction does not establish an unapproved request-controlled destination."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "existingFactory",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 35,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "The consumed connection is created and bound to the prior factory before the global replacement; it does not acquire the new context trust policy."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "existingFactory",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 37,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "The consumed connection is created and bound to the prior factory before the global replacement; it does not acquire the new context trust policy."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "existingFactory",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 39,
+      "start_column": 17,
+      "expected_decision": "not_issue",
+      "source_reason": "The exact setter restores the captured prior global setting after consumption; this anchor does not install the permissive context or factory."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "defaultContextConsumed",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 50,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "The consumed connection explicitly receives the new SSLContext.getDefault socket factory with an empty server trust check and accepts the separate owned untrusted certificate."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "defaultContextConsumed",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 52,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "The consumed connection explicitly receives the new SSLContext.getDefault socket factory with an empty server trust check and accepts the separate owned untrusted certificate."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "defaultContextConsumed",
+      "rule_id": "kotlin-url-connection",
+      "start_line": 53,
+      "start_column": 26,
+      "expected_decision": "not_issue",
+      "source_reason": "The fixed localhost URL uses an integer owned-service fixture port, without a mapped request-input producer; construction does not establish an unapproved request-controlled destination."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "defaultContextConsumed",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 56,
+      "start_column": 17,
+      "expected_decision": "not_issue",
+      "source_reason": "The exact setter restores the captured prior global setting after consumption; this anchor does not install the permissive context or factory."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "capturedFactory",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 68,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "The consumed connection is explicitly bound to the factory captured before SSLContext.setDefault; no consumed getDefault context or replacement factory is shown."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "capturedFactory",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 70,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "The consumed connection is explicitly bound to the factory captured before SSLContext.setDefault; no consumed getDefault context or replacement factory is shown."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "capturedFactory",
+      "rule_id": "kotlin-url-connection",
+      "start_line": 71,
+      "start_column": 26,
+      "expected_decision": "not_issue",
+      "source_reason": "The fixed localhost URL uses an integer owned-service fixture port, without a mapped request-input producer; construction does not establish an unapproved request-controlled destination."
+    },
+    {
+      "fixture": "kotlin-tls-factory-defaults",
+      "path": "app.kt",
+      "callable": "capturedFactory",
+      "rule_id": "kotlin-tls-default-policy",
+      "start_line": 74,
+      "start_column": 17,
+      "expected_decision": "not_issue",
+      "source_reason": "The exact setter restores the captured prior global setting after consumption; this anchor does not install the permissive context or factory."
+    },
+    {
+      "fixture": "kotlin-tls-policies",
+      "path": "Probe.kt",
+      "callable": "main",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 23,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "The owned loopback server context uses its KeyManagerFactory keys and provider-default trust; no permissive X509 manager or client certificate-bypass policy is installed."
+    },
+    {
+      "fixture": "kotlin-tls-policies",
+      "path": "Probe.kt",
+      "callable": "main",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 31,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "The client context installs validating TrustManagerFactory managers from a store containing only the owned fixture certificate; hostname policy is a separately reviewed invariant."
+    },
+    {
+      "fixture": "kotlin-tls-policies",
+      "path": "Probe.kt",
+      "callable": "connection",
+      "rule_id": "kotlin-url-connection",
+      "start_line": 42,
+      "start_column": 17,
+      "expected_decision": "not_issue",
+      "source_reason": "No request-controlled destination or unsafe resource selection is established for this CWE-918 operation. A separate TLS hostname-verifier issue does not supply a URL-origin relationship."
+    },
+    {
+      "fixture": "kotlin-tls-policies",
+      "path": "app.kt",
+      "callable": "rawTls",
+      "rule_id": "kotlin-tls-hostname-verifier",
+      "start_line": 6,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "This exact connection receives an always-accept hostname callback and is then read. Trusted own-certificate loopback checks reproduce acceptance of a hostname mismatch while chain checks remain enabled."
+    },
+    {
+      "fixture": "kotlin-tls-policies",
+      "path": "app.kt",
+      "callable": "rawTls",
+      "rule_id": "kotlin-url-connection-consumer",
+      "start_line": 7,
+      "start_column": 12,
+      "expected_decision": "not_issue",
+      "source_reason": "No request-controlled destination or unsafe resource selection is established for this CWE-918 operation. A separate TLS hostname-verifier issue does not supply a URL-origin relationship."
+    },
+    {
+      "fixture": "kotlin-tls-policies",
+      "path": "app.kt",
+      "callable": "safeTls",
+      "rule_id": "kotlin-tls-hostname-verifier",
+      "start_line": 11,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "This anchored setter restores the default verifier; bypass on a different connection does not make this setter an unsafe policy. No broader global-default safety is certified."
+    },
+    {
+      "fixture": "kotlin-tls-policies",
+      "path": "app.kt",
+      "callable": "safeTls",
+      "rule_id": "kotlin-url-connection-consumer",
+      "start_line": 12,
+      "start_column": 12,
+      "expected_decision": "not_issue",
+      "source_reason": "No request-controlled destination or unsafe resource selection is established for this CWE-918 operation. A separate TLS hostname-verifier issue does not supply a URL-origin relationship."
+    },
+    {
+      "fixture": "kotlin-tls-policies",
+      "path": "app.kt",
+      "callable": "wrongConnection",
+      "rule_id": "kotlin-tls-hostname-verifier",
+      "start_line": 16,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "This anchored setter restores the default verifier; bypass on a different connection does not make this setter an unsafe policy. No broader global-default safety is certified."
+    },
+    {
+      "fixture": "kotlin-tls-policies",
+      "path": "app.kt",
+      "callable": "wrongConnection",
+      "rule_id": "kotlin-tls-hostname-verifier",
+      "start_line": 17,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "This exact connection receives an always-accept hostname callback and is then read. Trusted own-certificate loopback checks reproduce acceptance of a hostname mismatch while chain checks remain enabled."
+    },
+    {
+      "fixture": "kotlin-tls-policies",
+      "path": "app.kt",
+      "callable": "wrongConnection",
+      "rule_id": "kotlin-url-connection-consumer",
+      "start_line": 18,
+      "start_column": 12,
+      "expected_decision": "not_issue",
+      "source_reason": "No request-controlled destination or unsafe resource selection is established for this CWE-918 operation. A separate TLS hostname-verifier issue does not supply a URL-origin relationship."
+    },
+    {
+      "fixture": "kotlin-tls-trust",
+      "path": "app.kt",
+      "callable": "trustAll",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 18,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "The consumed context uses an empty server certificate check and accepts the separate untrusted owned certificate."
+    },
+    {
+      "fixture": "kotlin-tls-trust",
+      "path": "app.kt",
+      "callable": "providerDefaults",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 25,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "Null trust managers select provider defaults and reject the untrusted certificate."
+    },
+    {
+      "fixture": "kotlin-tls-trust",
+      "path": "app.kt",
+      "callable": "providerValidated",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 34,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "The consumed provider trust managers validate against the owned trusted store and reject the separate certificate."
+    },
+    {
+      "fixture": "kotlin-tls-trust",
+      "path": "app.kt",
+      "callable": "wrongContext",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 46,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "Only the provider-default context supplies the consumed socket factory; the permissive context is unused."
+    },
+    {
+      "fixture": "kotlin-tls-trust",
+      "path": "app.kt",
+      "callable": "wrongContext",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 48,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "Only the provider-default context supplies the consumed socket factory; the permissive context is unused."
+    },
+    {
+      "fixture": "kotlin-tls-trust",
+      "path": "app.kt",
+      "callable": "resetContext",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 60,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "Provider-default reinitialization replaces the permissive trust policy before the socket factory is consumed."
+    },
+    {
+      "fixture": "kotlin-tls-trust",
+      "path": "app.kt",
+      "callable": "resetContext",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 61,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "Provider-default reinitialization replaces the permissive trust policy before the socket factory is consumed."
+    },
+    {
+      "fixture": "kotlin-tls-trust",
+      "path": "app.kt",
+      "callable": "firstPermissive",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 76,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "The first X509 trust manager is permissive; the consumed JDK context accepts the separate untrusted certificate."
+    },
+    {
+      "fixture": "kotlin-tls-trust",
+      "path": "app.kt",
+      "callable": "firstValidating",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 91,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "The selected first X509 manager validates against the trusted store and rejects the separate certificate."
+    },
+    {
+      "fixture": "kotlin-tls-trust",
+      "path": "app.kt",
+      "callable": "swallowedValidation",
+      "rule_id": "kotlin-tls-trust-context",
+      "start_line": 108,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "The server callback swallows the actual validator certificate exception and permits the consumed connection to an untrusted certificate."
+    },
+    {
+      "fixture": "kotlin-webclient",
+      "path": "app.kt",
+      "callable": "rawString",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 14,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "Canonical WebClient URI spec receives a mapped request String as its destination and the same fluent request is subscribed with block without destination approval."
+    },
+    {
+      "fixture": "kotlin-webclient",
+      "path": "app.kt",
+      "callable": "rawUri",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 18,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "URI.create parses mapped request text without destination approval before the same WebClient request is subscribed."
+    },
+    {
+      "fixture": "kotlin-webclient",
+      "path": "app.kt",
+      "callable": "rawBuilder",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 22,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "The URI builder callback returns URI.create of mapped request text and the same request is subscribed without destination approval."
+    },
+    {
+      "fixture": "kotlin-webclient",
+      "path": "app.kt",
+      "callable": "rawFactory",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 28,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Canonical WebClient.create constructs a real client that subscribes a request-controlled destination without approval."
+    },
+    {
+      "fixture": "kotlin-webclient",
+      "path": "app.kt",
+      "callable": "rawBuilt",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 35,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Canonical WebClient builder uses the JDK HTTP connector and subscribes a request-controlled destination without approval."
+    },
+    {
+      "fixture": "kotlin-webclient",
+      "path": "app.kt",
+      "callable": "nonNetworkFactory",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 41,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "The supplied same-file ExchangeFunction helper only returns the planned request URI as response text and never performs resource access. Subscription alone does not turn this explicit non-network exchange into SSRF."
+    },
+    {
+      "fixture": "kotlin-webclient",
+      "path": "app.kt",
+      "callable": "pathVariable",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 46,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "The fixed URI template has a literal loopback authority and the separate map value is confined to an encoded path segment. No request-derived authority influence is shown; fixed values are fixture configuration, not general destination safety certification."
+    },
+    {
+      "fixture": "kotlin-webclient",
+      "path": "app.kt",
+      "callable": "lazyRequest",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 51,
+      "start_column": 22,
+      "expected_decision": "not_issue",
+      "source_reason": "The constructed publisher is unused and no exchange subscription is shown before a fixed response is returned."
+    },
+    {
+      "fixture": "kotlin-webclient",
+      "path": "app.kt",
+      "callable": "replaced",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 58,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "The same immutable-local URI spec has its initial URI replaced by the separate fixed server value before retrieve and block. Neither the replaced initial destination nor the fixed replacement establishes request-controlled network access."
+    },
+    {
+      "fixture": "kotlin-webclient",
+      "path": "app.kt",
+      "callable": "replaced",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 59,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "The same immutable-local URI spec has its initial URI replaced by the separate fixed server value before retrieve and block. Neither the replaced initial destination nor the fixed replacement establishes request-controlled network access."
+    },
+    {
+      "fixture": "kotlin-webclient-policies",
+      "path": "app.kt",
+      "callable": "defaultBeforeUri",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 22,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "The default-request callback sets an initial URI when the spec is created, but the subsequent explicit URI setter installs mapped request text before subscription."
+    },
+    {
+      "fixture": "kotlin-webclient-policies",
+      "path": "app.kt",
+      "callable": "pinnedFilter",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 31,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "The effective ClientRequest forwarded to exchange has its URI replaced by the separate server-owned fixed value; no request-derived destination remains in the shown exchange."
+    },
+    {
+      "fixture": "kotlin-webclient-policies",
+      "path": "app.kt",
+      "callable": "wrongFilterRequest",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 41,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "An approved replacement is constructed but unused; the original request-controlled ClientRequest is forwarded to the actual exchange."
+    },
+    {
+      "fixture": "kotlin-webclient-policies",
+      "path": "app.kt",
+      "callable": "rewriteAfterApproval",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 53,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "An earlier filter approves the initial fixed URI, then a later filter rewrites the forwarded destination from mapped request text without reapproval."
+    },
+    {
+      "fixture": "kotlin-webclient-policies",
+      "path": "app.kt",
+      "callable": "removedFilter",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 63,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "The pinning filter is removed before client construction; the subscribed request-controlled destination has no effective policy."
+    },
+    {
+      "fixture": "kotlin-webclient-policies",
+      "path": "app.kt",
+      "callable": "absoluteFactory",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 71,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "A default URI factory base does not constrain the absolute request URI supplied to the subscribed String overload."
+    },
+    {
+      "fixture": "kotlin-webclient-policies",
+      "path": "app.kt",
+      "callable": "pinnedStringFactory",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 82,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "The shown factory overrides the String overload entry point uriString and supplies a builder from a separate fixed value; the request template is ignored before exchange."
+    },
+    {
+      "fixture": "kotlin-webclient-policies",
+      "path": "app.kt",
+      "callable": "wrongExpandOverride",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 94,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Only expand is overridden, while the subscribed String overload uses delegated uriString/build and preserves the request-controlled absolute destination."
+    },
+    {
+      "fixture": "kotlin-webclient-policies",
+      "path": "app.kt",
+      "callable": "absoluteUriBypass",
+      "rule_id": "kotlin-webclient-uri",
+      "start_line": 105,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "The URI-valued overload accepts the request-derived absolute URI directly; its shown uriString override is not invoked and does not protect this exchange."
+    },
+    {
+      "fixture": "kotlin-webflux",
+      "path": "app.kt",
+      "callable": "rawQuery",
+      "rule_id": "kotlin-url-read",
+      "start_line": 12,
+      "start_column": 20,
+      "expected_decision": "issue",
+      "source_reason": "Canonical ServerRequest query Optional is unwrapped and controls the outbound URL with no destination policy."
+    },
+    {
+      "fixture": "kotlin-webflux",
+      "path": "app.kt",
+      "callable": "approvedQuery",
+      "rule_id": "kotlin-url-read",
+      "start_line": 19,
+      "start_column": 20,
+      "expected_decision": "not_issue",
+      "source_reason": "Only the fixture choice is accepted and the outbound URL uses a separate fixed server value; no request-derived destination is shown."
+    },
+    {
+      "fixture": "kotlin-webflux",
+      "path": "app.kt",
+      "callable": "rawBody",
+      "rule_id": "kotlin-url-read",
+      "start_line": 25,
+      "start_column": 24,
+      "expected_decision": "issue",
+      "source_reason": "Canonical String body Mono binds target through flatMap to an outbound URL without destination approval."
+    },
+    {
+      "fixture": "kotlin-webflux",
+      "path": "app.kt",
+      "callable": "ignoredBody",
+      "rule_id": "kotlin-url-read",
+      "start_line": 31,
+      "start_column": 24,
+      "expected_decision": "not_issue",
+      "source_reason": "The decoded String body is ignored and the outbound URL uses a separate server value; no request-derived destination is shown."
+    },
+    {
+      "fixture": "kotlin-webflux",
+      "path": "app.kt",
+      "callable": "rawPath",
+      "rule_id": "kotlin-url-read",
+      "start_line": 37,
+      "start_column": 20,
+      "expected_decision": "issue",
+      "source_reason": "Unvalidated request path String is interpolated into URL authority syntax and read; no numeric-port or destination validation constrains its parsed authority. Owned-loopback user-info controls demonstrate parsed-host change; external exploit reproduction is not established."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "Probe.kt",
+      "callable": "main",
+      "rule_id": "kotlin-files-write",
+      "start_line": 10,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "The runtime probe writes fixed content to its own newly created temporary file; no request-selected path."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "app.kt",
+      "callable": "rawXml",
+      "rule_id": "kotlin-xml-configuration",
+      "start_line": 15,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "This setter allows DOCTYPE on the factory used to parse request XML without other external-access restrictions."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "app.kt",
+      "callable": "rawXml",
+      "rule_id": "kotlin-xml-parse",
+      "start_line": 16,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Mapped request XML is parsed by a factory explicitly allowing DOCTYPE without external-access restrictions; direct own-file entity expansion was reproduced. A different factory guard does not protect this parser."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "app.kt",
+      "callable": "safeXml",
+      "rule_id": "kotlin-xml-configuration",
+      "start_line": 22,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "This exact setter rejects DOCTYPE; unsafe parsing through a different factory does not make the anchored protective setter unsafe."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "app.kt",
+      "callable": "safeXml",
+      "rule_id": "kotlin-xml-parse",
+      "start_line": 23,
+      "start_column": 16,
+      "expected_decision": "not_issue",
+      "source_reason": "This exact parser comes from a factory rejecting DOCTYPE before request XML is parsed."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "app.kt",
+      "callable": "wrongFactory",
+      "rule_id": "kotlin-xml-configuration",
+      "start_line": 29,
+      "start_column": 9,
+      "expected_decision": "not_issue",
+      "source_reason": "This exact setter rejects DOCTYPE; unsafe parsing through a different factory does not make the anchored protective setter unsafe."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "app.kt",
+      "callable": "wrongFactory",
+      "rule_id": "kotlin-xml-configuration",
+      "start_line": 31,
+      "start_column": 9,
+      "expected_decision": "issue",
+      "source_reason": "This setter allows DOCTYPE on the factory used to parse request XML without other external-access restrictions."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "app.kt",
+      "callable": "wrongFactory",
+      "rule_id": "kotlin-xml-parse",
+      "start_line": 32,
+      "start_column": 16,
+      "expected_decision": "issue",
+      "source_reason": "Mapped request XML is parsed by a factory explicitly allowing DOCTYPE without external-access restrictions; direct own-file entity expansion was reproduced. A different factory guard does not protect this parser."
+    },
+    {
+      "fixture": "kotlin-authorization",
+      "path": "app.kt",
+      "callable": "query",
+      "rule_id": "kotlin-jdbc-template-query",
+      "start_line": 31,
+      "start_column": 49,
+      "expected_decision": "issue",
+      "source_reason": "A mapped String request parameter is used directly as JDBC SQL syntax. Authentication controls access, not SQL syntax or parameter binding."
+    },
+    {
+      "fixture": "kotlin-uploads",
+      "path": "app.kt",
+      "callable": "allowlistedScript",
+      "rule_id": "kotlin-script-eval",
+      "start_line": 34,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "require rejects every input except the exact trusted script before evaluation."
+    },
+    {
+      "fixture": "kotlin-uploads",
+      "path": "app.kt",
+      "callable": "factoryScript",
+      "rule_id": "kotlin-script-eval",
+      "start_line": 39,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "Fixed trusted literal and no caller code; provider availability is unestablished."
+    },
+    {
+      "fixture": "kotlin-uploads",
+      "path": "app.kt",
+      "callable": "fixedScript",
+      "rule_id": "kotlin-script-eval",
+      "start_line": 28,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "Only a fixed trusted application script is evaluated."
+    },
+    {
+      "fixture": "kotlin-uploads",
+      "path": "app.kt",
+      "callable": "unsafeScript",
+      "rule_id": "kotlin-script-eval",
+      "start_line": 24,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "An operational injected provider evaluates untrusted caller request code without restriction."
+    },
+    {
+      "fixture": "kotlin-uploads",
+      "path": "app.kt",
+      "callable": "safeUpload",
+      "rule_id": "kotlin-file-write",
+      "start_line": 16,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "Fixed server-owned pending.bin outside public/executable serving; no caller-selected destination or shown executable content relationship."
+    },
+    {
+      "fixture": "kotlin-uploads",
+      "path": "app.kt",
+      "callable": "unsafeUpload",
+      "rule_id": "kotlin-file-write",
+      "start_line": 11,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "The caller multipart submitted filename selects File(root,name) without containment or rejection, then caller bytes are persisted."
+    },
+    {
+      "fixture": "kotlin-html-encoding",
+      "path": "app.kt",
+      "callable": "encodedHtml",
+      "rule_id": "kotlin-ktor-html-output",
+      "start_line": 11,
+      "start_column": 5,
+      "expected_decision": "not_issue",
+      "source_reason": "The exact returned OWASP forHtmlContent value is consumed in HTML text content."
+    },
+    {
+      "fixture": "kotlin-html-encoding",
+      "path": "app.kt",
+      "callable": "wrongContext",
+      "rule_id": "kotlin-ktor-html-output",
+      "start_line": 29,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "HTML content encoding is used inside a JavaScript single-quoted string and preserves an injection-breaking apostrophe."
+    },
+    {
+      "fixture": "kotlin-html-encoding",
+      "path": "app.kt",
+      "callable": "wrongValue",
+      "rule_id": "kotlin-ktor-html-output",
+      "start_line": 23,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "Only a fixed independent string is encoded; raw caller query value is also emitted in HTML."
+    },
+    {
+      "fixture": "kotlin-html-encoding",
+      "path": "app.kt",
+      "callable": "discardedEncoding",
+      "rule_id": "kotlin-ktor-html-output",
+      "start_line": 17,
+      "start_column": 5,
+      "expected_decision": "issue",
+      "source_reason": "Encoder return is discarded; raw caller query value is emitted in HTML text."
+    }
+  ],
+  "deterministic_exclusions": [
+    {
+      "fixture": "kotlin-jvm-breadth",
+      "path": "app.kt",
+      "callable": "fixedProcess",
+      "rule_id": "kotlin-process-builder",
+      "expected_decision": "not_issue",
+      "source_reason": "The executed whoami command is fixed and captured explicitly; unused request input provides no command influence. Fixed-command policy omits the AI review."
+    }
+  ]
+}

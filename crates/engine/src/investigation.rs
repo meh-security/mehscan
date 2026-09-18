@@ -596,13 +596,40 @@ fn build_path_review_jobs_internal(
         let mut decision_critical_context_truncated = false;
         for (index, step) in candidate.steps.iter().enumerate() {
             let file = sources.file(&step.location.path)?;
-            let start_line = step
+            let mut start_line = step
                 .location
                 .start
                 .line
                 .saturating_sub(context_lines)
                 .max(1);
-            let end_line = step.location.end.line.saturating_add(context_lines);
+            let mut end_line = step.location.end.line.saturating_add(context_lines);
+            if file.language == Some(Language::Kotlin) {
+                let range = if candidate.source.rule_id.starts_with("kotlin-ktor-") {
+                    crate::code::kotlin_callable_range(
+                        &file.source,
+                        step.location.start.byte_offset,
+                    )
+                } else {
+                    crate::code::kotlin_function_range(
+                        &file.source,
+                        step.location.start.byte_offset,
+                    )
+                };
+                if let Some(range) = range {
+                    let owner_start = file.source[..range.start]
+                        .bytes()
+                        .filter(|b| *b == b'\n')
+                        .count()
+                        + 1;
+                    let owner_end = file.source[..range.end]
+                        .bytes()
+                        .filter(|b| *b == b'\n')
+                        .count()
+                        + 1;
+                    start_line = start_line.max(owner_start);
+                    end_line = end_line.min(owner_end);
+                }
+            }
             let (slice, was_truncated) =
                 review_source_slice(file, start_line, end_line, &step.location)?;
             context_truncated |= was_truncated;
@@ -649,6 +676,16 @@ fn build_path_review_jobs_internal(
                 evidence_id,
                 provenance: textual_provenance("mehscan bounded path-review source 1"),
             });
+        }
+        if candidate.sink.rule_id == "kotlin-jdbc-prepare-query"
+            && let Some(sink) = evidence_by_id.get(candidate.sink.id.as_str())
+        {
+            let file = sources.file(&candidate.sink.location.path)?;
+            facts.extend(crate::code::kotlin_prepared_facts(
+                &candidate.sink.location.path,
+                &file.source,
+                sink,
+            ));
         }
         let (mut captured_definitions, captured_definitions_truncated) = captured_definition_facts(
             &sources,
@@ -1457,10 +1494,22 @@ fn finding_report_from_run(
                 if include_dismissed {
                     let (_, _, location, rule_id, _) =
                         bundle_issue_context(bundle, &result.review_id)?;
+                    let description = if rule_id.starts_with("kotlin-auth0-jwt-")
+                        && let PathReviewBundlePayload::Observation { reviews } = &bundle.payload
+                        && let Some(owner) = reviews
+                            .iter()
+                            .find(|review| review.id == result.review_id)
+                            .and_then(observation_actionable_anchor)
+                            .and_then(|anchor| anchor.enclosing_symbol.as_deref())
+                    {
+                        format!("Reviewed operation in {owner}: {}", result.summary)
+                    } else {
+                        result.summary.clone()
+                    };
                     dismissed.push(DismissedReview {
                         review_id: result.review_id.clone(),
                         confidence: result.confidence,
-                        description: result.summary.clone(),
+                        description,
                         primary_location: Some(location),
                         rule_id: Some(rule_id),
                     });
@@ -1674,7 +1723,14 @@ fn reported_finding(
                 id: String::new(),
                 rule_id: candidate.sink.rule_id.clone(),
                 title,
-                description: result.summary.clone(),
+                description: kotlin_finding_description(
+                    &candidate.sink.rule_id,
+                    status,
+                    &result.summary,
+                    &review.facts,
+                    candidate.sink.enclosing_symbol.as_deref(),
+                    Some(&candidate.sink.location),
+                ),
                 status,
                 severity: default_severity(),
                 confidence: result.confidence,
@@ -1682,7 +1738,10 @@ fn reported_finding(
                 cwes: candidate.cwe_candidates.clone(),
                 language: review.language,
                 primary_location: candidate.primary_location.clone(),
-                context: candidate.sink.context.clone(),
+                context: reported_operation_context(
+                    &candidate.sink.rule_id,
+                    &candidate.sink.context,
+                ),
                 related_feature_policies: report_policy_associations(&review.facts),
                 flow: Some(FindingFlow {
                     steps: candidate.steps.clone(),
@@ -1726,18 +1785,29 @@ fn reported_finding(
                 anchor.capability,
                 &anchor.cwe_candidates,
             );
-            let presentation = report_presentation(
+            let presentation = kotlin_tls_default_presentation(
                 &anchor.rule_id,
-                &anchor.cwe_candidates,
-                review.review_basis.as_ref().and_then(|basis| {
-                    basis
-                        .observations
-                        .iter()
-                        .find(|item| item.rule_id == anchor.rule_id)
-                }),
-                observation_has_source_embedded_signing_key(&review.evidence, &review.facts)
-                    .then_some("source-embedded-hardcoded-signing-key"),
-            );
+                &review.facts,
+                Some(&anchor.location),
+            )
+            .or_else(|| {
+                kotlin_html_output_presentation(&anchor.rule_id, &review.facts, &anchor.location)
+            })
+            .or_else(|| kotlin_digest_presentation(&anchor.rule_id, &review.facts))
+            .or_else(|| {
+                report_presentation(
+                    &anchor.rule_id,
+                    &anchor.cwe_candidates,
+                    review.review_basis.as_ref().and_then(|basis| {
+                        basis
+                            .observations
+                            .iter()
+                            .find(|item| item.rule_id == anchor.rule_id)
+                    }),
+                    observation_has_source_embedded_signing_key(&review.evidence, &review.facts)
+                        .then_some("source-embedded-hardcoded-signing-key"),
+                )
+            });
             let title = presentation
                 .as_ref()
                 .map_or(title, |value| value.title.to_string());
@@ -1755,6 +1825,7 @@ fn reported_finding(
                     rule_id: Some(evidence.rule_id.clone()),
                 })
                 .collect::<Vec<_>>();
+            related_locations.extend(kotlin_caller_locations(&anchor.rule_id, &review.facts));
             deduplicate_related_locations(&mut related_locations);
             let mut evidence_ids = review
                 .evidence
@@ -1767,7 +1838,14 @@ fn reported_finding(
                 id: String::new(),
                 rule_id: anchor.rule_id.clone(),
                 title,
-                description: result.summary.clone(),
+                description: kotlin_finding_description(
+                    &anchor.rule_id,
+                    status,
+                    &result.summary,
+                    &review.facts,
+                    anchor.enclosing_symbol.as_deref(),
+                    Some(&anchor.location),
+                ),
                 status,
                 severity: default_severity(),
                 confidence: result.confidence,
@@ -1775,7 +1853,7 @@ fn reported_finding(
                 cwes: anchor.cwe_candidates.clone(),
                 language: review.language,
                 primary_location: anchor.location.clone(),
-                context: anchor.context.clone(),
+                context: reported_operation_context(&anchor.rule_id, &anchor.context),
                 related_feature_policies: report_policy_associations(&review.facts),
                 flow: None,
                 related_locations,
@@ -1788,6 +1866,323 @@ fn reported_finding(
             })
         }
     }
+}
+
+fn reported_operation_context(
+    rule: &str,
+    context: &mehscan_core::EvidenceContext,
+) -> mehscan_core::EvidenceContext {
+    let mut context = context.clone();
+    if rule == "kotlin-webclient-uri"
+        && let Some(argument) = context.literals.remove("url")
+    {
+        context
+            .literals
+            .insert("initial_uri_argument".into(), argument);
+    }
+    context
+}
+
+fn kotlin_caller_locations(
+    rule: &str,
+    facts: &[ReviewNeighborhoodFact],
+) -> Vec<FindingRelatedLocation> {
+    if !rule.starts_with("kotlin-") {
+        return Vec::new();
+    }
+    facts
+        .iter()
+        .filter(|fact| {
+            matches!(
+                fact.role.as_str(),
+                "exact_caller_context"
+                    | "okhttp_call_execution_context"
+                    | "webclient_request_mutation_context"
+                    | "webclient_direct_exchange_argument_context"
+            )
+        })
+        .map(|fact| FindingRelatedLocation {
+            role: if fact.role == "okhttp_call_execution_context" {
+                EvidenceKind::Sink
+            } else {
+                EvidenceKind::Source
+            },
+            location: fact.location.clone(),
+            evidence_id: (fact.role == "exact_caller_context")
+                .then(|| fact.evidence_id.clone())
+                .flatten(),
+            rule_id: None,
+        })
+        .collect()
+}
+
+fn kotlin_html_output_presentation(
+    rule: &str,
+    facts: &[ReviewNeighborhoodFact],
+    location: &Location,
+) -> Option<crate::report_policy::Presentation> {
+    if rule != "kotlin-ktor-html-output" {
+        return None;
+    }
+    let operation = facts
+        .iter()
+        .find(|f| f.role == "html_output_operation_context" && f.location == *location)?;
+    if !operation.excerpt.to_ascii_lowercase().contains("<script>") {
+        return None;
+    }
+    crate::report_policy::presentation(rule, &["CWE-79".into()], &operation.excerpt)
+}
+
+fn kotlin_digest_presentation(
+    rule: &str,
+    facts: &[ReviewNeighborhoodFact],
+) -> Option<crate::report_policy::Presentation> {
+    (rule == "kotlin-message-digest" && facts.iter().any(|fact| {
+        fact.role == "source_context" && fact.excerpt.contains("digestProvider") && fact.excerpt.contains("\"MD5\"")
+    })).then_some(crate::report_policy::Presentation {
+        title: "HTTP Digest authentication defaults credential hashing to MD5",
+        remediation: "Migrate or disable the MD5-based HTTP Digest authentication flow in favor of a modern authentication mechanism, with a compatibility plan for clients and credentials. Do not substitute a password-storage hash into the Digest wire protocol. Verify that the provider rejects legacy algorithm selections and that clients use the replacement authentication flow.",
+    })
+}
+
+fn kotlin_operation_method(
+    facts: &[ReviewNeighborhoodFact],
+    location: Option<&Location>,
+) -> Option<String> {
+    use ast_grep_core::tree_sitter::LanguageExt;
+    let location = location?;
+    for fact in facts
+        .iter()
+        .filter(|f| matches!(f.role.as_str(), "source_context" | "sink_context"))
+    {
+        if fact.location.path != location.path
+            || fact.location.start.byte_offset > location.start.byte_offset
+            || fact.location.end.byte_offset < location.end.byte_offset
+            || fact.excerpt.len() != fact.location.end.byte_offset - fact.location.start.byte_offset
+        {
+            continue;
+        }
+        let start = location.start.byte_offset - fact.location.start.byte_offset;
+        let end = location.end.byte_offset - fact.location.start.byte_offset;
+        let Some(operation) = fact.excerpt.get(start..end) else {
+            continue;
+        };
+        let prefix = "fun context() { ";
+        let ast = SupportLang::Kotlin.ast_grep(format!("{prefix}{operation} }}"));
+        let root = ast.root();
+        if root.dfs().any(|n| n.is_error() || n.is_missing()) {
+            continue;
+        }
+        if let Some(call) = root.dfs().find(|n| {
+            n.kind().as_ref() == "call_expression"
+                && n.range() == (prefix.len()..prefix.len() + operation.len())
+        }) {
+            return call
+                .children()
+                .find(|n| n.is_named() && n.kind().as_ref() != "call_suffix")
+                .and_then(|callee| callee.text().rsplit('.').next().map(str::to_owned));
+        }
+    }
+    None
+}
+
+fn kotlin_append_operation(facts: &[ReviewNeighborhoodFact], location: Option<&Location>) -> bool {
+    matches!(
+        kotlin_operation_method(facts, location).as_deref(),
+        Some("appendText" | "appendBytes")
+    )
+}
+
+fn kotlin_tls_default_presentation(
+    rule: &str,
+    facts: &[ReviewNeighborhoodFact],
+    location: Option<&Location>,
+) -> Option<crate::report_policy::Presentation> {
+    if rule != "kotlin-tls-default-policy" {
+        return None;
+    }
+    let method = kotlin_operation_method(facts, location)?;
+    crate::report_policy::presentation(rule, &["CWE-295".into()], &format!("SDK.{method}"))
+}
+
+fn kotlin_finding_description(
+    rule: &str,
+    status: FindingStatus,
+    summary: &str,
+    facts: &[ReviewNeighborhoodFact],
+    owner: Option<&str>,
+    location: Option<&Location>,
+) -> String {
+    if status != FindingStatus::Issue {
+        return summary.to_string();
+    }
+    let detail = match rule {
+        "kotlin-script-eval" => {
+            "Impact: Caller-selected code can run under the operational script provider's permissions; available host objects and sandbox policy determine the reachable resources. No deployed provider or external compromise is established here. Verification: Use a recording provider to confirm arbitrary request code never reaches eval after remediation, while intended structured data or exact approved scripts remain accepted."
+        }
+        "kotlin-files-read" | "kotlin-file-read" => {
+            "Impact: A caller can read filesystem data outside the intended directory, subject to process permissions. Verification: Confirm that parent traversal, absolute paths and sibling-prefix paths are rejected while approved files remain readable; include the application's symlink policy in the regression."
+        }
+        "kotlin-file-write" if kotlin_append_operation(facts, location) => {
+            "Impact: A caller can create files or append attacker-selected content outside the intended directory, subject to process permissions. This operation adds content rather than replacing existing contents. Verification: Use disposable files to confirm escaping append targets are rejected and approved appends still work; verify root containment and the application's symlink policy before each append."
+        }
+        "kotlin-files-write" | "kotlin-file-write" => {
+            "Impact: A caller can create or modify filesystem data outside the intended directory, subject to process permissions; a text overwrite can replace existing contents. Verification: Use disposable files to confirm escaping targets are rejected and approved writes still work; verify root containment, overwrite/append options and the application's symlink policy before each write."
+        }
+        "kotlin-exposed-sql-exec" => {
+            "Impact: Request-controlled SQL syntax can alter query predicates and returned results, subject to the database account's permissions. Verification: Keep the affected SQL template fixed, bind values using typed arguments or parameterized DSL predicates, and confirm quote-containing inputs remain data in a regression on an isolated database."
+        }
+        "kotlin-webclient-uri" => {
+            "Impact: A subscribed request whose effective destination is influenced by unapproved request input can access services within the client's network reach and privileges. The URI setter is a lazy boundary; the shown same-request consumer and effective destination determine this impact. A non-network ExchangeFunction or an unused publisher does not demonstrate network access. Verification: Exercise approved and rejected effective destinations at the exchange consumer, including absolute-URI overrides of a base URL, URI-builder changes and redirects. Check that encoded path-only values preserve the approved authority; do not infer host control from path expansion alone. Deployment reach and external exploit reproduction are not established."
+        }
+        "kotlin-persistence-query"
+        | "kotlin-jdbc-statement-query"
+        | "kotlin-jdbc-prepare-query"
+        | "kotlin-jdbc-template-query" => {
+            "Impact: Crafted input can change the query predicate and manipulate which records are returned. Verification: Keep the query syntax fixed, bind the affected parameter, and confirm that quote-containing input remains data in a regression test."
+        }
+        "kotlin-process-builder" => {
+            "Impact: Request-influenced command values can launch unapproved server-side processes, subject to process privileges. Verification: For this operation, confirm approved server-owned commands work and unauthorized executable selection or unsupported command values are rejected before start."
+        }
+        "kotlin-runtime-exec" => {
+            "Impact: A caller can select unintended server-side processes or their arguments. Verification: For the named operation, confirm that server-owned allowlisted actions succeed while unsupported executables and option-like request values are rejected in regression tests."
+        }
+        "kotlin-url-read" => {
+            "Impact: Reading a URL with request-influenced destination syntax can expose resources accessible through the server's network reach and process privileges, subject to URL protocol handling. Control may concern the complete URL or only an interpolated component; inspect the exact shown construction rather than assuming every component is caller-selected. Verification: For the affected read, confirm approved destinations work and disallowed schemes, hosts, ports and resolved addresses are rejected; exercise redirect handling with disposable local targets. Deployment reach and external exploit reproduction are not established."
+        }
+        "kotlin-url-connection" | "kotlin-url-connection-consumer" => {
+            "Impact: The reviewed connection consumer can access caller-selected resources using the server's network reach and process privileges, subject to URL protocol handling. Verification: Test the affected connect/read consumer with approved and rejected schemes, hosts, ports and resolved addresses; exercise redirect handling with disposable local targets. Deployment reach and external exploit reproduction are not established."
+        }
+        "kotlin-ktor-client-request" | "kotlin-http-client-request" | "kotlin-okhttp-request" => {
+            "Impact: Caller-selected destinations can expose resources accessible through the server's network reach; access to any particular internal service is not established. Verification: Exercise the named client operation with approved destinations and rejected schemes, hosts, ports and resolved addresses, including redirect revalidation against disposable local targets."
+        }
+        "kotlin-ktor-redirect" => {
+            "Impact: A caller can send users to an unapproved destination, enabling phishing through an application redirect. Verification: For the named response operation, confirm approved relative paths or exact origins work and external, scheme-relative and malformed destinations are rejected."
+        }
+        "kotlin-ktor-html-output" => {
+            if facts.iter().any(|f| {
+                f.role == "html_output_operation_context"
+                    && location.is_some_and(|l| f.location == *l)
+                    && f.excerpt.to_ascii_lowercase().contains("<script>")
+            }) {
+                "Impact: Caller-controlled JavaScript string delimiters can alter code within the returned script element. HTML content encoding does not protect this JavaScript context. Verification: Confirm apostrophes, backslashes and script-element termination cannot become executable syntax; prefer passing the value as data without inline JavaScript interpolation. No deployed browser execution is established."
+            } else {
+                "Impact: Caller-derived markup can execute script or alter the returned page in the application's browser origin. Verification: Confirm the exact consumed response value is encoded for its actual output context. Exercise markup and script payloads against this response operation, retaining intended text behavior. Isolated source controls do not establish deployed browser execution."
+            }
+        }
+        "kotlin-xml-parse" | "kotlin-xml-configuration" => {
+            "Impact: External entity resolution can read local resources or make outbound requests with the parser process's permissions and network reach; access to any particular sensitive resource or deployed endpoint is not established. Verification: Harden the same factory that creates the affected parser before parser creation, then use an isolated marker file to confirm DTD-bearing input cannot resolve external entities while ordinary XML still works. A guard on another factory does not protect this operation."
+        }
+        "kotlin-object-deserialization" => {
+            "Impact: Unrestricted object materialization can instantiate available serialized classes and invoke their callbacks with the application's privileges; an arbitrary-code-execution gadget or deployed endpoint is not established. Verification: Prefer a data-only format. If Java serialization is required, apply a restrictive class and resource-limit filter to this exact stream before reading; test rejection of a harmless callback-bearing fixture before its callback and acceptance of approved data. Casting the result after reading and filtering a different stream do not protect this operation."
+        }
+        "kotlin-tls-default-policy"
+            if kotlin_operation_method(facts, location).as_deref()
+                == Some("setDefaultHostnameVerifier") =>
+        {
+            "Impact: The consumed connection can accept a trusted certificate with a mismatched hostname because it inherited a permissive verifier. This does not establish certificate-chain bypass. Regression verification: With certificate-chain validation retained, check a trusted matching hostname is accepted and a trusted mismatched hostname is rejected after the fix. These are validation checks for the established weakness, not an unresolved verdict requirement."
+        }
+        "kotlin-tls-default-policy" => {
+            "Impact: An inherited permissive global TLS policy can undermine peer authentication on the connection actually consumed. Hostname mismatch acceptance and certificate-chain trust are separate effects; establish the exact setter, inherited policy and consumer rather than claiming both. Verification: Test isolated matching and mismatched hostnames for verifier changes, or trusted and untrusted certificates for trust changes. Inspect construction order, instance overrides and restoration; existing consumers do not automatically inherit later defaults."
+        }
+        "kotlin-auth0-jwt-token-generation" => {
+            "Impact: A credential accepted beyond its required lifetime extends access after that credential should expire. The operation-specific verdict identifies the missing or overwritten lifetime bound. Regression verification: Check the final emitted claims and the credential consumer for acceptance at issuance and rejection at or beyond the required lifetime. These source conclusions do not establish deployed credential compromise."
+        }
+        "kotlin-auth0-jwt-decode" | "kotlin-auth0-jwt-verify" => {
+            "Impact: Unauthenticated credential claims can grant the protected operation. The operation-specific verdict summary identifies the missing authentication gate. Regression verification after remediation: A credential signed under the permitted server-owned policy must succeed, while forged-signature and unsigned credentials must fail before claims grant access. Metadata-only display is a separate use. No deployed endpoint or external credential compromise is established by this source review."
+        }
+        "kotlin-tls-trust-context" => {
+            "Impact: A consumed socket factory that skips certificate-chain validation can accept an untrusted peer certificate when hostname and network conditions otherwise permit the connection. This does not establish hostname-verification bypass. Verification: Check the effective trust manager and configuration order on the context actually consumed, then test isolated trusted and untrusted certificates. Null trust-manager input uses provider defaults; unused or overwritten permissive initialization alone does not establish an active weakness."
+        }
+        "kotlin-tls-hostname-verifier" => {
+            "Impact: Accepting a hostname mismatch undermines TLS peer identity and can expose data or responses to an unintended peer when the surrounding trust and network conditions permit it. Certificate-chain bypass and an attacker-selected destination are not established by this callback. Verification: On the connection actually consumed, use loopback certificates to check that a trusted chain with the wrong hostname is rejected and a matching hostname works; retain certificate-chain validation. A verifier on a different connection does not protect this consumer."
+        }
+        "kotlin-message-digest" if kotlin_digest_presentation(rule, facts).is_some() => {
+            "Impact: The source authentication configuration falls back to a legacy MD5 credential digest, weakening protection against offline credential guessing. The algorithm expression is dynamic: unknown literal metadata does not negate the shown MD5 fallback or prove every invocation uses MD5. Verification: Confirm that the replacement authentication configuration rejects MD5 and that client compatibility is tested. These are source-level consequences; deployment and exploit reproduction are not established."
+        }
+        _ => return summary.to_string(),
+    };
+    let mut description = format!("{summary} {detail}");
+    if let Some(owner) = owner.filter(|_| rule.starts_with("kotlin-")) {
+        description = format!("Operation: {owner}. {description}");
+    }
+    if rule.starts_with("kotlin-")
+        && let Some(operation) = location.and_then(|location| {
+            facts.iter().find_map(|fact| {
+                if !matches!(fact.role.as_str(), "source_context" | "sink_context")
+                    || fact.location.path != location.path
+                    || fact
+                        .location
+                        .end
+                        .byte_offset
+                        .checked_sub(fact.location.start.byte_offset)
+                        != Some(fact.excerpt.len())
+                {
+                    return None;
+                }
+                let start = location
+                    .start
+                    .byte_offset
+                    .checked_sub(fact.location.start.byte_offset)?;
+                let end = location
+                    .end
+                    .byte_offset
+                    .checked_sub(fact.location.start.byte_offset)?;
+                fact.excerpt
+                    .get(start..end)
+                    .filter(|text| !text.is_empty() && text.len() <= 240)
+                    .map(str::to_owned)
+            })
+        })
+    {
+        if rule == "kotlin-webclient-uri" {
+            description.push_str(&format!(" Matched URI setter (initial syntax; initial_uri_argument metadata does not describe the final exchanged destination): {operation}."));
+        } else {
+            description.push_str(&format!(" Matched operation: {operation}."));
+        }
+    }
+    if matches!(
+        rule,
+        "kotlin-url-read" | "kotlin-url-connection" | "kotlin-url-connection-consumer"
+    ) {
+        for fact in facts
+            .iter()
+            .filter(|fact| fact.role == "source_context")
+            .take(2)
+        {
+            description.push_str(&format!(
+                " Operation context: {}:{}-{} ({}).",
+                fact.location.path, fact.location.start.line, fact.location.end.line, fact.symbol
+            ));
+        }
+    }
+    if rule.starts_with("kotlin-") {
+        for fact in facts
+            .iter()
+            .filter(|f| f.role == "webclient_request_mutation_context")
+            .take(4)
+        {
+            description.push_str(&format!(" Candidate request mutation: {}:{}: {}. Inspect the forwarded request and filter order; an unused replacement is not an effective destination change.", fact.location.path, fact.location.start.line, fact.excerpt.lines().last().unwrap_or(&fact.excerpt)));
+        }
+        for fact in facts
+            .iter()
+            .filter(|f| f.role == "okhttp_call_execution_context")
+            .take(8)
+        {
+            description.push_str(&format!(" Supplied call consumer: {}:{}: {}. This is bounded same-callable source context, not verified runtime dispatch.", fact.location.path, fact.location.start.line, fact.excerpt));
+        }
+        for fact in facts
+            .iter()
+            .filter(|fact| fact.role == "exact_caller_context")
+            .take(4)
+        {
+            description.push_str(&format!(
+                " Supplied caller source: {}:{} ({}) uses the typed source relationship; runtime dispatch is not verified.",
+                fact.location.path, fact.location.start.line, fact.symbol
+            ));
+        }
+    }
+    description
 }
 
 fn default_severity() -> ReportedSeverity {
@@ -2198,7 +2593,7 @@ fn review_run_quality_warnings(
             .filter(|(_, count)| *count * 10 >= rows.len() * 9)
         {
             warnings.push(format!(
-                "dominant_decision: {:?} accounts for {count} of {} reviews",
+                "dominant_decision: {:?} accounts for {count} of {} reviews in this selected sample. This distribution alone does not establish model error or require re-triage.",
                 decision,
                 rows.len()
             ));
@@ -3599,6 +3994,61 @@ fn observation_decision_facts(
             )
         })
         .collect::<Vec<_>>();
+    for item in evidence
+        .iter()
+        .filter(|item| item.rule_id == "kotlin-ktor-html-output")
+    {
+        if let Some(content) = item.captures.get("content") {
+            established.push(format!(
+                "The matched HTML response at {}:{} writes this captured content expression: {}. Judge that response operation; a different response call or branch cannot supply dangerous content to this anchor.",
+                item.location.path, item.location.start.line, content.text
+            ));
+            if facts.iter().any(|fact| {
+                fact.role == "fixed_response_content"
+                    && fact.evidence_id.as_deref() == Some(item.id.as_str())
+            }) {
+                established.push(format!(
+                    "This matched response's content is a known fixed string literal {}; it does not render request-selected markup written by another operation. This fact concerns only the matched content, not safety of the whole handler.", content.text
+                ));
+            }
+        }
+    }
+    for item in evidence.iter().filter(|item| {
+        item.rule_id == "kotlin-xml-configuration"
+            && facts.iter().any(|f| {
+                f.role == "matched_xml_operation"
+                    && f.evidence_id.as_deref() == Some(item.id.as_str())
+            })
+    }) {
+        if let (Some(feature), Some(value)) =
+            (item.captures.get("feature"), item.captures.get("value"))
+        {
+            established.push(format!(
+                "The exact matched XML configuration at {}:{} sets captured feature {} to captured value {}. Judge this setter and its receiver: another factory's configuration or parse cannot make this anchored setter unsafe or protective for that other factory. A protective setter is not an issue merely because another operation in the callable is unsafe; assess the other operation separately.",
+                item.location.path, item.location.start.line, feature.text, value.text
+            ));
+        }
+    }
+    for fact in facts
+        .iter()
+        .filter(|fact| fact.role == "matched_xml_operation")
+    {
+        established.push(format!(
+            "This review's exact XML anchor at {}:{} is {}. Related XML setters and parses in supplied context are separate operations; judge the named anchor, associating policy only with the factory creating its parser.",
+            fact.location.path, fact.location.start.line, fact.excerpt
+        ));
+    }
+    for fact in facts.iter().filter(|fact| {
+        matches!(
+            fact.role.as_str(),
+            "matched_object_operation" | "matched_tls_operation"
+        )
+    }) {
+        established.push(format!(
+            "This review's exact policy operation at {}:{} is {}. Judge only this anchor. A filter protects only the stream to which it is attached before object reading; a hostname verifier protects only its own connection when consumed. A cast after object reading does not prevent earlier materialization. Related setters and consumers remain separate operations, and an unsafe neighboring operation does not make a protective anchored setter unsafe.",
+            fact.location.path, fact.location.start.line, fact.excerpt
+        ));
+    }
     if embedded_signing_key {
         established.push(
             "The supplied redacted definition fact establishes that this token-signing operation uses source-embedded private-key material; explicit expiry and algorithm settings do not mitigate repository disclosure of the signing key."
@@ -5249,8 +5699,8 @@ fn build_observation_reviews(
             .map(|item| item.location.end.line)
             .max()
             .unwrap_or(first_line);
-        let start_line = first_line.saturating_sub(context_lines).max(1);
-        let end_line = last_line.saturating_add(context_lines);
+        let mut start_line = first_line.saturating_sub(context_lines).max(1);
+        let mut end_line = last_line.saturating_add(context_lines);
         let anchor = group
             .anchor_evidence_ids
             .iter()
@@ -5258,6 +5708,35 @@ fn build_observation_reviews(
             .or_else(|| group.evidence.first())
             .map(|item| &item.location)
             .ok_or_else(|| EngineError("observation review has no anchor evidence".to_string()))?;
+        if group
+            .evidence
+            .iter()
+            .any(|item| item.rule_id.starts_with("kotlin-"))
+        {
+            let range = if group
+                .evidence
+                .iter()
+                .any(|item| item.rule_id.starts_with("kotlin-ktor-"))
+            {
+                crate::code::kotlin_callable_range(&file.source, anchor.start.byte_offset)
+            } else {
+                crate::code::kotlin_function_range(&file.source, anchor.start.byte_offset)
+            };
+            if let Some(range) = range {
+                let owner_start = file.source[..range.start]
+                    .bytes()
+                    .filter(|b| *b == b'\n')
+                    .count()
+                    + 1;
+                let owner_end = file.source[..range.end]
+                    .bytes()
+                    .filter(|b| *b == b'\n')
+                    .count()
+                    + 1;
+                start_line = start_line.max(owner_start);
+                end_line = end_line.min(owner_end);
+            }
+        }
         let (mut slice, mut context_truncated) =
             review_source_slice(file, start_line, end_line, anchor)?;
         let mut decision_critical_context_truncated = context_truncated;
@@ -5350,6 +5829,158 @@ fn build_observation_reviews(
             exact_java_identity_observation_caller_facts(sources, &group, 4);
         context_truncated |= java_callers_truncated;
         facts.append(&mut java_callers);
+        if file.language == Some(Language::Kotlin) {
+            for item in &group.evidence {
+                if group.anchor_evidence_ids.contains(&item.id) {
+                    facts.extend(crate::code::kotlin_html_encoder_facts(
+                        &group.path,
+                        &file.source,
+                        item,
+                    ));
+                    facts.extend(crate::code::kotlin_upload_facts(
+                        &group.path,
+                        &file.source,
+                        item,
+                    ));
+                    facts.extend(crate::code::kotlin_cookie_facts(
+                        &group.path,
+                        &file.source,
+                        item,
+                    ));
+                    facts.extend(crate::code::kotlin_jwt_facts(
+                        &group.path,
+                        &file.source,
+                        item,
+                    ));
+                    facts.extend(crate::code::kotlin_tls_facts(
+                        &group.path,
+                        &file.source,
+                        item,
+                    ));
+                    facts.extend(crate::code::kotlin_webclient_facts(
+                        &group.path,
+                        &file.source,
+                        item,
+                    ));
+                    facts.extend(crate::code::kotlin_webflux_facts(
+                        &group.path,
+                        &file.source,
+                        item,
+                    ));
+                    facts.extend(crate::code::kotlin_exposed_facts(
+                        &group.path,
+                        &file.source,
+                        item,
+                    ));
+                    facts.extend(crate::code::kotlin_scope_facts(
+                        &group.path,
+                        &file.source,
+                        item,
+                    ));
+                    facts.extend(crate::code::kotlin_okhttp_facts(
+                        &group.path,
+                        &file.source,
+                        item,
+                    ));
+                }
+                if matches!(
+                    item.rule_id.as_str(),
+                    "kotlin-object-deserialization" | "kotlin-tls-hostname-verifier"
+                ) && group.anchor_evidence_ids.contains(&item.id)
+                    && let Some(operation) = file
+                        .source
+                        .get(item.location.start.byte_offset..item.location.end.byte_offset)
+                {
+                    facts.push(ReviewNeighborhoodFact {
+                        role: if item.rule_id == "kotlin-object-deserialization" {
+                            "matched_object_operation"
+                        } else {
+                            "matched_tls_operation"
+                        }
+                        .into(),
+                        symbol: group.symbol.clone(),
+                        location: item.location.clone(),
+                        excerpt: operation.to_string(),
+                        evidence_id: Some(item.id.clone()),
+                        provenance: QueryProvenance {
+                            resolution: Resolution::Ast,
+                            engine: "Kotlin exact stream or TLS operation; non-flow context 1"
+                                .into(),
+                        },
+                    });
+                }
+                if matches!(
+                    item.rule_id.as_str(),
+                    "kotlin-xml-configuration" | "kotlin-xml-parse"
+                ) && group.anchor_evidence_ids.contains(&item.id)
+                    && let Some(operation) = file
+                        .source
+                        .get(item.location.start.byte_offset..item.location.end.byte_offset)
+                {
+                    facts.push(ReviewNeighborhoodFact {
+                        role: "matched_xml_operation".into(),
+                        symbol: group.symbol.clone(),
+                        location: item.location.clone(),
+                        excerpt: operation.to_string(),
+                        evidence_id: Some(item.id.clone()),
+                        provenance: QueryProvenance {
+                            resolution: Resolution::Ast,
+                            engine: "Kotlin exact XML configuration operation 1".into(),
+                        },
+                    });
+                }
+                if item.rule_id == "kotlin-ktor-html-output"
+                    && let Some(content) = item.captures.get("content").filter(|content| {
+                        crate::code::kotlin_fixed_response_content(
+                            &file.source,
+                            content.location.start.byte_offset..content.location.end.byte_offset,
+                        )
+                    })
+                {
+                    facts.push(ReviewNeighborhoodFact {
+                            role: "fixed_response_content".into(),
+                            symbol: group.symbol.clone(),
+                            location: content.location.clone(),
+                            excerpt: format!("Matched response content is the Kotlin string literal {} with no interpolated values; it is fixed at this operation. Other response calls are separate operations.", content.text),
+                            evidence_id: Some(item.id.clone()),
+                            provenance: QueryProvenance { resolution: Resolution::Ast, engine: "Kotlin exact response content literal node 1".into() },
+                        });
+                }
+                facts.extend(crate::code::kotlin_prepared_facts(
+                    &group.path,
+                    &file.source,
+                    item,
+                ));
+                facts.extend(crate::code::kotlin_member_receiver_facts(
+                    &group.path,
+                    &file.source,
+                    item,
+                ));
+                if let Some(fact) =
+                    crate::code::kotlin_constant_query_fact(&group.path, &file.source, item)
+                {
+                    facts.push(fact);
+                }
+                if let Some(fact) =
+                    crate::code::kotlin_numeric_query_fact(&group.path, &file.source, item)
+                {
+                    facts.push(fact);
+                }
+            }
+            let kotlin_files = sources
+                .files
+                .values()
+                .filter(|f| f.language == Some(Language::Kotlin))
+                .filter(|f| f.source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES)
+                .map(|f| (f.path.as_str(), f.source.as_str()))
+                .collect::<Vec<_>>();
+            facts.extend(crate::code::kotlin_caller_facts(
+                &kotlin_files,
+                &group.path,
+                anchor.start.byte_offset,
+                4,
+            ));
+        }
         let (mut jwt_verification, jwt_verification_truncated) =
             python_jwt_verification_facts(sources, &group, 4);
         context_truncated |= jwt_verification_truncated;
@@ -5411,11 +6042,29 @@ fn build_observation_reviews(
                 MAX_UNIT_EVIDENCE,
             );
         decision_critical_context_truncated |= anchors_truncated;
-        let title = observation_review_title(&selected_evidence);
+        let matched_kotlin_evidence = (file.language == Some(Language::Kotlin)).then(|| {
+            selected_evidence
+                .iter()
+                .filter(|e| selected_anchor_ids.contains(&e.id))
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        let basis_evidence = matched_kotlin_evidence
+            .as_deref()
+            .unwrap_or(&selected_evidence);
+        let title = observation_review_title(basis_evidence);
         let open_questions = observation_review_questions(&selected_evidence, &facts);
-        let review_basis = observation_review_basis(&selected_evidence, rules_by_id);
-        let decision_facts =
+        let review_basis = observation_review_basis(basis_evidence, rules_by_id);
+        let mut decision_facts =
             observation_decision_facts(&selected_evidence, &facts, &open_questions);
+        if let Some(matched) = matched_kotlin_evidence.as_ref() {
+            for item in matched {
+                decision_facts.established.push(format!(
+                    "The matched review invariant is rule {} with CWE candidates {} for {:?}. Related evidence supports source and control reasoning only; a different weakness in that context does not establish this invariant. In particular, hostname-verification failure does not establish caller-controlled URL selection, and written content does not establish path control.",
+                    item.rule_id, item.cwe_candidates.join(", "), item.capability
+                ));
+            }
+        }
         let truncation = review_truncation(context_truncated, decision_critical_context_truncated);
         let confidence_policy =
             observation_confidence_policy(&selected_evidence, &decision_facts, &truncation);
@@ -6778,7 +7427,7 @@ fn observation_groups(
                 .filter(|item| {
                     item.id == anchor_id
                         || (!anchor_set.contains(item.id.as_str())
-                            && is_local_observation_context(anchor_evidence, item))
+                            && is_local_observation_context(anchor_evidence, item, Some(sources)))
                 })
                 .cloned()
                 .collect();
@@ -6993,7 +7642,11 @@ fn is_duplicate_parameter_sink_summary(item: &Evidence, evidence: &[Evidence]) -
     })
 }
 
-fn is_local_observation_context(anchor: &Evidence, item: &Evidence) -> bool {
+fn is_local_observation_context(
+    anchor: &Evidence,
+    item: &Evidence,
+    sources: Option<&RepositorySources>,
+) -> bool {
     if anchor.location.path != item.location.path {
         return false;
     }
@@ -7001,6 +7654,18 @@ fn is_local_observation_context(anchor: &Evidence, item: &Evidence) -> bool {
         || item.related_evidence.iter().any(|id| id == &anchor.id);
     if explicitly_related {
         return true;
+    }
+    if anchor.rule_id.starts_with("kotlin-")
+        && item.rule_id.starts_with("kotlin-")
+        && let Some(file) = sources.and_then(|s| s.file(&anchor.location.path).ok())
+    {
+        let anchor_scope =
+            crate::code::kotlin_callable_range(&file.source, anchor.location.start.byte_offset);
+        let item_scope =
+            crate::code::kotlin_callable_range(&file.source, item.location.start.byte_offset);
+        if item_scope.is_some() && item_scope != anchor_scope {
+            return false;
+        }
     }
     if !matches!(
         item.kind,
@@ -7096,7 +7761,7 @@ fn is_superseded_csharp_cookie_observation(item: &Evidence, group: &[Evidence]) 
 fn is_source_free_generic_java_log(item: &Evidence, group: &[Evidence]) -> bool {
     item.rule_id == "java-rendered-log-message"
         && !group.iter().any(|other| {
-            other.kind == EvidenceKind::Source && is_local_observation_context(item, other)
+            other.kind == EvidenceKind::Source && is_local_observation_context(item, other, None)
         })
 }
 
@@ -9042,7 +9707,18 @@ fn observation_review_questions(
             "Do the supplied write, persistence, retrieval/view, and raw-output excerpts show a context-appropriate sanitizer or a write invariant that prevents stored attacker HTML from executing?"
                 .to_string(),
         );
-    } else if !has_precise_node_boundary && has_database_caller_context {
+    } else if !has_precise_node_boundary
+        && has_database_caller_context
+        && !evidence.iter().any(|item| {
+            matches!(
+                item.rule_id.as_str(),
+                "kotlin-persistence-query"
+                    | "kotlin-jdbc-statement-query"
+                    | "kotlin-jdbc-prepare-query"
+                    | "kotlin-jdbc-template-query"
+            )
+        })
+    {
         questions.push(
             "Does request-bound model data copied into the supplied repository argument influence the interpolated command text, and is parameterization or equivalent SQL-safe construction shown?"
                 .to_string(),
@@ -13623,12 +14299,13 @@ impl OutlineExtractors {
     }
 }
 
-fn all_languages() -> [Language; 10] {
+fn all_languages() -> [Language; 11] {
     [
         Language::C,
         Language::Cpp,
         Language::Csharp,
         Language::Java,
+        Language::Kotlin,
         Language::Javascript,
         Language::Typescript,
         Language::Tsx,
@@ -14145,6 +14822,163 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn webclient_report_keeps_initial_argument_metadata_distinct_from_filter_effects() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/kotlin-webclient-policies");
+        let scan = crate::scan_path(&root).unwrap();
+        let anchor = scan
+            .evidence
+            .iter()
+            .find(|e| {
+                e.rule_id == "kotlin-webclient-uri"
+                    && e.enclosing_symbol.as_deref() == Some("rewriteAfterApproval")
+            })
+            .unwrap();
+        let reported = reported_operation_context(&anchor.rule_id, &anchor.context);
+        assert_eq!(
+            reported.literals["initial_uri_argument"],
+            anchor.context.literals["url"]
+        );
+        assert!(!reported.literals.contains_key("url"));
+        assert!(
+            anchor.context.literals.contains_key("url"),
+            "raw matched syntax remains unchanged"
+        );
+        assert_eq!(
+            reported_operation_context("kotlin-url-read", &anchor.context),
+            anchor.context
+        );
+    }
+
+    #[test]
+    fn kotlin_url_handoff_preserves_caller_trace_without_promoting_a_flow() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-network");
+        let jobs = build_all_path_review_jobs(&fixture, None, true).unwrap();
+        let fetch = jobs
+            .observation_reviews
+            .iter()
+            .find(|review| {
+                review
+                    .evidence
+                    .iter()
+                    .any(|e| e.enclosing_symbol.as_deref() == Some("fetch"))
+            })
+            .unwrap();
+        let caller = fetch
+            .facts
+            .iter()
+            .find(|fact| fact.role == "exact_caller_context")
+            .unwrap();
+        let description = kotlin_finding_description(
+            "kotlin-url-read",
+            FindingStatus::Issue,
+            "The caller URL is read.",
+            &fetch.facts,
+            None,
+            None,
+        );
+        assert!(description.contains(&format!(
+            "{}:{}",
+            caller.location.path, caller.location.start.line
+        )));
+        assert!(description.contains("coroutineRaw"));
+        assert!(description.contains("Operation context: app.kt:"));
+        assert!(description.contains("runtime dispatch is not verified"));
+        let related = kotlin_caller_locations("kotlin-url-read", &fetch.facts);
+        assert!(
+            related.iter().any(|item| {
+                item.role == EvidenceKind::Source && item.location == caller.location
+            })
+        );
+        assert!(!description.contains("Where the shown consumer"));
+        assert_eq!(
+            kotlin_finding_description(
+                "kotlin-url-connection",
+                FindingStatus::NeedsReview,
+                "The connection consumer is not supplied.",
+                &fetch.facts,
+                None,
+                None,
+            ),
+            "The connection consumer is not supplied."
+        );
+    }
+
+    #[test]
+    fn append_impact_uses_only_the_exact_matched_operation() {
+        let source =
+            "fun f() { file.writeText(\"literal.appendText(x)\"); file.appendText(\"actual\") }";
+        let location = |start: usize, end: usize| -> Location {
+            serde_json::from_value(serde_json::json!({"path":"app.kt",
+                "start":{"line":1,"column":start+1,"byte_offset":start},
+                "end":{"line":1,"column":end+1,"byte_offset":end}}))
+            .unwrap()
+        };
+        let fact = ReviewNeighborhoodFact {
+            role: "source_context".into(),
+            symbol: "f".into(),
+            location: location(0, source.len()),
+            excerpt: source.into(),
+            evidence_id: None,
+            provenance: QueryProvenance {
+                resolution: Resolution::Ast,
+                engine: "test".into(),
+            },
+        };
+        let write = "file.writeText(\"literal.appendText(x)\")";
+        let append = "file.appendText(\"actual\")";
+        let write_start = source.find(write).unwrap();
+        let append_start = source.find(append).unwrap();
+        assert!(!kotlin_append_operation(
+            std::slice::from_ref(&fact),
+            Some(&location(write_start, write_start + write.len()))
+        ));
+        assert!(kotlin_append_operation(
+            std::slice::from_ref(&fact),
+            Some(&location(append_start, append_start + append.len()))
+        ));
+    }
+
+    #[test]
+    fn tls_default_presentation_uses_the_exact_sdk_method() {
+        let source = "fun f() { H.setDefaultSSLSocketFactory(setDefaultHostnameVerifier); H.setDefaultHostnameVerifier { _, _ -> true } }";
+        let location = |start: usize, end: usize| -> Location {
+            serde_json::from_value(serde_json::json!({"path":"app.kt",
+                "start":{"line":1,"column":start+1,"byte_offset":start},
+                "end":{"line":1,"column":end+1,"byte_offset":end}}))
+            .unwrap()
+        };
+        let fact = ReviewNeighborhoodFact {
+            role: "source_context".into(),
+            symbol: "f".into(),
+            location: location(0, source.len()),
+            excerpt: source.into(),
+            evidence_id: None,
+            provenance: QueryProvenance {
+                resolution: Resolution::Ast,
+                engine: "test".into(),
+            },
+        };
+        for (operation, hostname) in [
+            (
+                "H.setDefaultSSLSocketFactory(setDefaultHostnameVerifier)",
+                false,
+            ),
+            ("H.setDefaultHostnameVerifier { _, _ -> true }", true),
+        ] {
+            let start = source.find(operation).unwrap();
+            let presentation = kotlin_tls_default_presentation(
+                "kotlin-tls-default-policy",
+                std::slice::from_ref(&fact),
+                Some(&location(start, start + operation.len())),
+            )
+            .unwrap();
+            assert_eq!(presentation.title.contains("hostname verifier"), hostname);
+        }
+    }
 
     #[test]
     fn confirmed_tls_findings_describe_behavior_and_validation_fix() {

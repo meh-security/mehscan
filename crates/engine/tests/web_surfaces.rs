@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use mehscan_core::{
-    AvailabilityState, Capability, Confidence, EvidenceKind, LiteralState, LiteralValue,
+    AvailabilityState, Capability, Confidence, EvidenceKind, Language, LiteralState, LiteralValue,
     ReachabilityState,
 };
 
@@ -104,9 +104,14 @@ fn exposes_three_new_web_cwe_families_for_every_language() {
         .iter()
         .map(|item| (item.cwe.as_str(), item))
         .collect();
-    assert_eq!(coverage["CWE-79"].supported_languages.len(), 9);
-    assert_eq!(coverage["CWE-601"].supported_languages.len(), 9);
-    assert_eq!(coverage["CWE-434"].supported_languages.len(), 8);
+    assert_eq!(coverage["CWE-79"].supported_languages.len(), 10);
+    assert_eq!(coverage["CWE-601"].supported_languages.len(), 10);
+    assert_eq!(coverage["CWE-434"].supported_languages.len(), 9);
+    assert!(
+        coverage["CWE-434"]
+            .supported_languages
+            .contains(&Language::Kotlin)
+    );
     for cwe in ["CWE-79", "CWE-601", "CWE-434"] {
         assert!(
             coverage[cwe]

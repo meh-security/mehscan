@@ -1,0 +1,80 @@
+- id: kotlin-upload-part
+  version: 1
+  title: Kotlin Servlet multipart access
+  language: kotlin
+  kind: source
+  capability: file_upload
+  cwe: [CWE-434]
+  match:
+    any:
+      - pattern: $REQUEST.getPart($FIELD)
+        captures: { field: FIELD }
+      - pattern: $REQUEST.getParts()
+  tags: [kotlin, jvm, upload]
+  ai: &upload_guidance
+    investigate:
+      - Inspect the same part's filename, bytes, storage destination, validation and rejecting branches.
+      - A client content type or extension alone does not prove safe content. Establish public serving or execution from supplied source before claiming it.
+    exclude:
+      - Exclude unconsumed data and safe application-generated destinations with relevant same-value validation; do not borrow another part's controls.
+  provenance: &upload_provenance
+    note: Canonical javax/jakarta Servlet request and Part ownership, including getPart factories and immutable aliases; source context only.
+    references:
+      - https://jakarta.ee/specifications/platform/10/apidocs/jakarta/servlet/http/part
+      - https://cwe.mitre.org/data/definitions/434.html
+
+- id: kotlin-upload-filename
+  version: 1
+  title: Kotlin Servlet submitted filename
+  language: kotlin
+  kind: source
+  capability: uploaded_file_path
+  cwe: [CWE-434, CWE-22]
+  match:
+    any:
+      - pattern: $PART.getSubmittedFileName()
+      - pattern: $PART.submittedFileName
+  tags: [kotlin, jvm, upload, path]
+  ai: *upload_guidance
+  provenance: *upload_provenance
+
+- id: kotlin-upload-content
+  version: 1
+  title: Kotlin Servlet uploaded content
+  language: kotlin
+  kind: source
+  capability: uploaded_file_content
+  cwe: [CWE-434]
+  match:
+    any:
+      - pattern: $PART.getInputStream()
+      - pattern: $PART.inputStream
+  tags: [kotlin, jvm, upload]
+  ai: *upload_guidance
+  provenance: *upload_provenance
+
+- id: kotlin-script-eval
+  version: 1
+  title: Kotlin script evaluation
+  language: kotlin
+  kind: sink
+  capability: dynamic_code_execution
+  cwe: [CWE-94]
+  match:
+    any:
+      - pattern: $ENGINE.eval($CODE)
+        captures: { code: CODE }
+      - pattern: $ENGINE.eval($CODE, $CONTEXT)
+        captures: { code: CODE }
+  tags: [kotlin, jvm, code]
+  ai:
+    investigate:
+      - Establish whether untrusted input is interpreted as code by this exact engine, the source contract and any rejecting allowlist.
+      - Provider selection and bindings are not automatically a sandbox. Do not assume a provider exists from getEngineByName alone.
+    exclude:
+      - Exclude fixed trusted scripts, unconsumed source and branches restricted to exact trusted script values.
+  provenance:
+    note: Canonical javax.script.ScriptEngine receiver and ScriptEngineManager factories with immutable aliases; provider execution is not inferred.
+    references:
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.scripting/javax/script/ScriptEngine.html
+      - https://cwe.mitre.org/data/definitions/94.html

@@ -147,6 +147,8 @@ pub(crate) fn scan_source(
     };
     let ast = AstGrep::doc(document);
     let root = ast.root();
+    let kotlin_imports =
+        (language == Language::Kotlin).then(|| super::kotlin::Imports::build(&root));
     let comments = CommentRanges::from_root(&root);
     let (secret_evidence, secret_suppressed) =
         scan_secrets_if_enabled(scan_secrets, path, source, &comments, secret_allowlist);
@@ -344,6 +346,16 @@ pub(crate) fn scan_source(
                     continue;
                 }
                 let deduplication_key = (compiled_rule.rule.id.clone(), range.start, range.end);
+                if kotlin_imports.as_ref().is_some_and(|imports| {
+                    !super::kotlin::accept(
+                        &root,
+                        imports,
+                        &compiled_rule.rule.id,
+                        matched.get_node(),
+                    )
+                }) {
+                    continue;
+                }
                 if !seen.insert(deduplication_key) {
                     continue;
                 }
@@ -380,6 +392,32 @@ pub(crate) fn scan_source(
                         matched.get_node(),
                         path,
                     ));
+                }
+                if language == Language::Kotlin
+                    && compiled_rule.rule.id == "kotlin-process-builder"
+                    && let Some(command) = super::kotlin::process_command(&root, matched.get_node())
+                {
+                    literal_values.insert("command".into(), literals.evaluate(&command));
+                    captures.insert(
+                        "command".into(),
+                        Capture {
+                            text: command.text().into_owned(),
+                            location: location(path, &command),
+                        },
+                    );
+                }
+                if language == Language::Kotlin
+                    && compiled_rule.rule.id == "kotlin-file-write"
+                    && let Some(content) = super::kotlin::file_content(matched.get_node())
+                {
+                    literal_values.insert("content".into(), literals.evaluate(&content));
+                    captures.insert(
+                        "content".into(),
+                        Capture {
+                            text: content.text().into_owned(),
+                            location: location(path, &content),
+                        },
+                    );
                 }
                 evidence.push(Evidence {
                     id: evidence_id(path, &compiled_rule.rule.id, range.start, range.end),
@@ -500,6 +538,17 @@ pub(crate) fn scan_source(
     }
     let symbol_rules_microseconds = symbol_started.elapsed().as_micros();
     let summaries_started = Instant::now();
+    if let Some(imports) = kotlin_imports.as_ref() {
+        super::kotlin::sources(
+            path,
+            &root,
+            imports,
+            &comments,
+            &conditional,
+            &literals,
+            &mut evidence,
+        );
+    }
     super::node_express::add_typed_express_sources(
         path,
         &root,
@@ -1379,6 +1428,9 @@ pub(crate) fn scan_source(
         &symbol_environment,
         relations,
     );
+    if language == Language::Kotlin {
+        security_paths.extend(super::kotlin::paths(&root, &evidence, relations));
+    }
     let retained_evidence_ids = evidence
         .iter()
         .map(|item| item.id.as_str())
@@ -2338,7 +2390,7 @@ pub(super) fn location(path: &str, node: &Node<'_, StrDoc<SupportLang>>) -> Loca
     }
 }
 
-fn evidence_id(path: &str, rule_id: &str, start: usize, end: usize) -> String {
+pub(super) fn evidence_id(path: &str, rule_id: &str, start: usize, end: usize) -> String {
     // Stable FNV-1a is sufficient for identity/deduplication and avoids a UUID dependency.
     let input = format!("{path}\0{rule_id}\0{start}\0{end}");
     let mut hash = 0xcbf29ce484222325_u64;

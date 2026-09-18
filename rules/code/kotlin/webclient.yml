@@ -1,0 +1,36 @@
+- id: kotlin-webclient-uri
+  version: 1
+  title: Kotlin Spring WebClient request destination
+  language: kotlin
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: $SPEC.uri($TARGET)
+        captures: { url: TARGET }
+      - pattern: $SPEC.uri($TARGET, $$$ARGS)
+        captures: { url: TARGET }
+      - pattern: $SPEC.uri { $$$BODY }
+        captures: { url: BODY }
+      - pattern: $SPEC.uri($TARGET) { $$$BODY }
+        captures: { url: TARGET }
+  tags: [kotlin, spring, webclient]
+  ai:
+    investigate:
+      - Verify the canonical WebClient URI-spec receiver and applicable overload; inventory admission does not establish compiler dispatch. Distinguish String templates, separately expanded variables, absolute URI values and URI-builder functions.
+      - Inspect effective URI after baseUrl, uriBuilderFactory, defaultRequest, filters and same-spec URI replacements. A client base URL does not by itself constrain an absolute request URI.
+      - Establish when a shown defaultRequest callback runs relative to the explicit URI setter. In the verified default implementation it customizes the newly created request spec, so a later uri call can replace an initial default destination.
+      - Match factory controls to the enumerated overload implementation. String uri construction uses uriString and its builder; uri(URI) accepts that URI directly. Do not assume a custom expand override protects a different factory entry point.
+      - Follow the actual ClientRequest passed to next.exchange through the ordered filter chain. Constructing an approved replacement is ineffective if the original request is forwarded; removed filters and rewrites after approval can invalidate earlier policy.
+    verify:
+      - Establish request origin, exact same-request destination and applicable destination policy. Inspect the shown publisher consumer or subscription; uri and retrieve construction alone do not establish an executed outbound request.
+      - A request URI template variable confined to an encoded path is not automatically host control. Inspect the actual URI component and expansion policy before claiming an unsafe destination.
+    exclude:
+      - Exclude foreign URI members, ignored or replaced destinations and unused lazy publishers without an execution consumer. Do not invent deployed routing, compiler overload binding, helper effects, filter effects or native reactive propagation.
+  provenance:
+    note: Enumerated canonical declared URI-spec identities, WebClient factories/builders and immutable-local request-method aliases; bounded source context without native reactive effects or compiler overload dispatch.
+    references:
+      - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/reactive/function/client/WebClient.UriSpec.html
+      - https://docs.spring.io/spring-framework/reference/web/webflux-webclient/client-retrieve.html
+      - https://raw.githubusercontent.com/spring-projects/spring-framework/v7.0.9/spring-webflux/src/main/java/org/springframework/web/reactive/function/client/DefaultWebClient.java

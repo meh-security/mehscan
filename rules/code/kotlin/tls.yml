@@ -1,0 +1,62 @@
+- id: kotlin-tls-trust-context
+  version: 1
+  title: Kotlin TLS certificate trust configuration
+  language: kotlin
+  kind: security_configuration
+  capability: tls_configuration
+  cwe: [CWE-295]
+  match:
+    any:
+      - pattern: $CONTEXT.init($KEYS, $TRUST, $RANDOM)
+        captures: { trust_managers: TRUST }
+  tags: [kotlin, jvm, tls]
+  ai:
+    investigate:
+      - Apply the documented first-manager selection contract rather than assuming composition or validator fallback. Standard JDK17 SunJSSE selects the first X509TrustManager, including X509ExtendedTrustManager subtypes; a later manager is not automatically consulted. Different supplied providers require their own contract.
+      - Verify canonical SSLContext identity and the selected server-certificate trust manager. Null manager arrays request provider defaults, not an accept-all policy; empty arrays and callback selection require their actual implementation semantics.
+      - Inspect the exact array ordering, checkServerTrusted body and preserved validation. An empty server check or suppressed validation error can accept an untrusted chain; getAcceptedIssuers alone does not establish chain validation.
+    verify:
+      - Establish which context factory is installed on the consumed connection or client and when it is initialized. An unused context, different context or initialization replaced before use does not prove an effective bypass.
+      - Distinguish certificate-chain trust from hostname verification. A correct hostname does not repair skipped chain validation, and chain validation does not approve a wrong hostname.
+    exclude:
+      - Exclude foreign init calls, default or preserved provider validation, unused contexts and claims requiring unseen policy or consumer effects. This is a configuration review boundary, not native lifecycle or runtime dispatch proof.
+  provenance:
+    note: Canonical declared SSLContext and enumerated getInstance factories with immutable-local aliases; bounded containing function context without compiler or native trust-manager lifecycle inference.
+    references:
+      - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/javax/net/ssl/SSLContext.html
+      - https://cwe.mitre.org/data/definitions/295.html
+      - https://github.com/openjdk/jdk17u/blob/master/src/java.base/share/classes/sun/security/ssl/SSLContextImpl.java
+
+- id: kotlin-tls-default-policy
+  version: 1
+  title: Kotlin global TLS peer policy
+  language: kotlin
+  kind: security_configuration
+  capability: tls_configuration
+  cwe: [CWE-295]
+  match:
+    any:
+      - pattern: $CLASS.setDefault($POLICY)
+        captures: { policy: POLICY }
+      - pattern: $CLASS.setDefaultSSLSocketFactory($POLICY)
+        captures: { policy: POLICY }
+      - pattern: $CLASS.setDefaultHostnameVerifier($POLICY)
+        captures: { policy: POLICY }
+      - pattern: $CLASS.setDefaultHostnameVerifier { $HOST, $SESSION -> $$$BODY }
+        captures: { policy: BODY }
+  tags: [kotlin, jvm, tls]
+  ai:
+    investigate:
+      - Establish the exact canonical static setter, policy behavior and consumer. Global certificate trust and global hostname verification are separate controls.
+      - Decide the exact matched setter, not every setter in the containing function. An earlier unsafe installation does not make a later restoration call unsafe; require evidence that this anchor's installed policy reaches a subsequent consumer.
+      - HttpsURLConnection copies its default verifier and socket factory at instance construction. A later global setter does not change an existing connection; inspect instance overrides and restoration before construction or consumption.
+      - SSLContext.setDefault controls subsequent getDefault calls; a preexisting context or cached client factory does not automatically acquire the replacement. Inspect explicit getDefault consumers and actual factory selection.
+    verify:
+      - Confirm whether the supplied permissive policy reaches a consumed connection. Do not assume arbitrary other global consumers, concurrency, application activation or interception without evidence.
+    exclude:
+      - Exclude foreign setters, preserved validation, restoration, overwritten defaults and consumer instances unaffected by this setter. Unknown policy or consumer effects require a precise unresolved fact rather than an accept-all claim.
+  provenance:
+    note: Exact canonical static setter ownership and bounded function context; no native process-wide lifecycle or concurrency inference.
+    references:
+      - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/javax/net/ssl/HttpsURLConnection.html
+      - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/javax/net/ssl/SSLContext.html

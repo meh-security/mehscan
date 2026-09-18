@@ -1,0 +1,40 @@
+- id: kotlin-exposed-sql-exec
+  version: 1
+  title: Kotlin Exposed raw SQL execution
+  language: kotlin
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: exec($QUERY)
+        captures: { query: QUERY }
+      - pattern: exec($QUERY) { $$$BODY }
+        captures: { query: QUERY }
+      - pattern: exec($QUERY, $$$ARGS)
+        captures: { query: QUERY }
+      - pattern: exec($QUERY, $$$ARGS) { $$$BODY }
+        captures: { query: QUERY }
+      - pattern: $TRANSACTION.exec($QUERY)
+        captures: { query: QUERY }
+      - pattern: $TRANSACTION.exec($QUERY) { $$$BODY }
+        captures: { query: QUERY }
+      - pattern: $TRANSACTION.exec($QUERY, $$$ARGS)
+        captures: { query: QUERY }
+      - pattern: $TRANSACTION.exec($QUERY, $$$ARGS) { $$$BODY }
+        captures: { query: QUERY }
+  tags: [kotlin, exposed, jdbc, sql]
+  ai:
+    investigate:
+      - Verify canonical Exposed v1 JdbcTransaction ownership or exact imported transaction entry. Review supplied containing-function context without assuming native cross-lambda propagation.
+      - Distinguish request-interpolated SQL syntax from fixed SQL with separately bound typed arguments. The BlockingExecutable overload is not a SQL-string boundary.
+    verify:
+      - Identify the exact executed SQL and its producer. Transaction entry does not sanitize interpolation; bound values do not become SQL syntax.
+    exclude:
+      - Exclude foreign exec members, unknown receiver scopes, fixed SQL and bound-only request values. Do not certify whole transactions or deployed endpoint dispatch from this source boundary.
+  provenance:
+    note: Exact declared Exposed v1 JdbcTransaction, canonical TransactionManager.current factory or direct imported transaction lambda; bounded source context, no compiler dispatch or native lambda-effect inference.
+    references:
+      - https://www.jetbrains.com/help/exposed/working-with-sql-strings.html
+      - https://www.jetbrains.com/help/exposed/transactions.html
+      - https://cwe.mitre.org/data/definitions/89.html

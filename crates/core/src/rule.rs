@@ -11,6 +11,7 @@ pub enum Language {
     Cpp,
     Csharp,
     Java,
+    Kotlin,
     Javascript,
     Typescript,
     Tsx,

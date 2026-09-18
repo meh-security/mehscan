@@ -1154,6 +1154,11 @@ fn cwe_coverage(rules: &[Rule]) -> Vec<CweCoverage> {
         .entry("CWE-798".to_string())
         .or_default()
         .extend(all_languages());
+    // Kotlin's native MVC adapter inventories scalar request bindings.
+    by_cwe
+        .entry("CWE-20".to_string())
+        .or_default()
+        .insert(Language::Kotlin);
     for cwe in [
         "CWE-307", "CWE-321", "CWE-330", "CWE-345", "CWE-352", "CWE-640", "CWE-942", "CWE-1004",
         "CWE-1275",
@@ -1236,12 +1241,13 @@ fn cwe_coverage(rules: &[Rule]) -> Vec<CweCoverage> {
         .collect()
 }
 
-fn all_languages() -> [Language; 11] {
+fn all_languages() -> [Language; 12] {
     [
         Language::C,
         Language::Cpp,
         Language::Csharp,
         Language::Java,
+        Language::Kotlin,
         Language::Javascript,
         Language::Typescript,
         Language::Tsx,

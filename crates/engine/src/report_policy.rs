@@ -9,7 +9,150 @@ pub(crate) struct Presentation {
 
 pub(crate) fn presentation(rule: &str, cwes: &[String], operation: &str) -> Option<Presentation> {
     let has = |cwe: &str| cwes.iter().any(|value| value == cwe);
-    let (title, remediation) = if rule.contains("hardcoded-signing-key") {
+    let (title, remediation) = if rule == "kotlin-process-builder" && has("CWE-78") {
+        (
+            "Unapproved request values reach a ProcessBuilder launch",
+            "Keep the executable server-owned and choose permitted commands from an allowlist. Approve the exact request-influenced command values before start; ProcessBuilder construction alone does not authorize process behavior.",
+        )
+    } else if rule == "kotlin-runtime-exec" && has("CWE-78") {
+        (
+            "Request values select the executable or process arguments",
+            "Keep the executable server-owned and allowlist permitted operations. Pass validated values as separate arguments, reject option injection, and avoid adding a command shell; an argument vector alone does not authorize a request-selected executable.",
+        )
+    } else if rule == "kotlin-auth0-jwt-token-generation" && has("CWE-613") {
+        (
+            "JWT credentials outlive their required lifetime",
+            "Enforce the required lifetime on the emitted credential and its consumer. Preserve expiry on the signed builder after all claim/payload changes, or apply an authoritative maximum-age or revocation policy. Test acceptance at issuance and rejection at or beyond the required lifetime.",
+        )
+    } else if matches!(rule, "kotlin-auth0-jwt-decode" | "kotlin-auth0-jwt-verify")
+        && has("CWE-347")
+    {
+        (
+            "Unauthenticated JWT claims authorize a protected operation",
+            "Authenticate the same token with a server-owned permitted algorithm and key before trusting its claims. Reject unsigned algorithms for security credentials and propagate verification failures so acceptance stops. Apply the issuer, audience and lifetime requirements of the trust domain. Test forged signatures and unsigned tokens as rejected controls alongside a valid credential; metadata-only decoding is a separate use.",
+        )
+    } else if rule == "kotlin-webclient-uri" && has("CWE-918") {
+        (
+            "Request values control an unapproved WebClient destination",
+            "Approve the effective URI of the subscribed request using server-owned destination choices or explicit scheme, host, port and resolved-address policy. A base URL is not an allowlist for absolute request URIs. Validate URI-builder and template components, inspect default-request and filter changes, and revalidate redirects. Test approved and rejected destinations at the actual exchange consumer; separately bound path values do not automatically control the host.",
+        )
+    } else if matches!(
+        rule,
+        "kotlin-url-read" | "kotlin-url-connection" | "kotlin-url-connection-consumer"
+    ) && has("CWE-918")
+    {
+        (
+            if rule == "kotlin-url-read" {
+                "Request values influence a server-side resource destination"
+            } else {
+                "Request values control server-side URL connection access"
+            },
+            "Prefer a fixed allowlist of server-owned destinations. Otherwise enforce allowed schemes, exact hosts and ports, resolved-address policy and redirect revalidation before access. Validate request-derived components against their expected grammar: parse port input as a number in the permitted-port set, reject authority delimiters such as @ in port input, and construct URLs from validated components. URI parsing alone is not approval. Add regression tests for the affected consumer, approved and rejected destinations, and nonnumeric, disallowed or delimiter-bearing port input where applicable.",
+        )
+    } else if matches!(rule, "kotlin-xml-parse" | "kotlin-xml-configuration") && has("CWE-611") {
+        (
+            "Request XML reaches a parser permitting external entities",
+            "On the same factory that creates the affected parser, reject DOCTYPE declarations and disable external DTD/schema resource access before parser creation. If DTDs are required, use a restricted resolver and explicit resource allowlist instead. Verify with isolated external-entity controls and ordinary XML; settings on a different factory do not protect this parser.",
+        )
+    } else if rule == "kotlin-object-deserialization" && has("CWE-502") {
+        (
+            "Request payload materializes unrestricted serialized objects",
+            "Prefer a data-only format with schema validation. If Java serialization is required, install a restrictive class and resource-limit filter on the exact stream before reading; post-read casts and filters on another stream are insufficient.",
+        )
+    } else if rule == "kotlin-tls-default-policy"
+        && has("CWE-295")
+        && operation
+            .split(['(', '{'])
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .ends_with(".setDefaultHostnameVerifier")
+    {
+        (
+            "A consumed HTTPS connection inherits an accept-all hostname verifier",
+            "Retain hostname verification on the affected connection before consumption; replace the permissive default and inspect construction-time inheritance and instance overrides. As a regression check, use a trusted localhost certificate to confirm that matching hostnames work and mismatches are rejected. Preserve the separately established certificate-chain validation.",
+        )
+    } else if rule == "kotlin-tls-default-policy" && has("CWE-295") {
+        (
+            "Global TLS defaults weaken a consumed connection's peer validation",
+            "Preserve certificate-chain and hostname validation in the global policy inherited by the affected consumer. Prefer an explicitly validating client policy, inspect connection construction order and instance overrides, and restore scoped defaults before unrelated use. Test trusted matching, trusted mismatched and untrusted peers as appropriate; changing a global default does not repair a preexisting consumer instance.",
+        )
+    } else if rule == "kotlin-tls-trust-context" && has("CWE-295") {
+        (
+            "Consumed TLS connections skip certificate-chain validation",
+            "Use provider certificate-chain validation on the SSLContext whose socket factory is actually consumed. Propagate checkServerTrusted failures, inspect effective trust-manager selection and later reinitialization, and preserve hostname verification. Test a trusted certificate and a separate untrusted certificate against isolated peers; unused context configuration does not establish a connection weakness.",
+        )
+    } else if rule == "kotlin-tls-hostname-verifier" && has("CWE-295") {
+        (
+            "Consumed HTTPS connection accepts a hostname mismatch",
+            "Restore hostname verification on the connection actually used, retain certificate-chain validation, and test trusted certificates with matching and mismatched hostnames using isolated loopback peers.",
+        )
+    } else if matches!(
+        rule,
+        "kotlin-ktor-client-request" | "kotlin-http-client-request" | "kotlin-okhttp-request"
+    ) && has("CWE-918")
+    {
+        (
+            "Request values select a server-side HTTP destination",
+            "Allowlist server-owned destinations; enforce allowed schemes, exact hosts and ports, resolved-address policy and redirect revalidation before each request.",
+        )
+    } else if rule == "kotlin-ktor-redirect" && has("CWE-601") {
+        (
+            "Request values select an unrestricted redirect destination",
+            "Parse the exact redirect target and allow only approved origins or relative application paths; reject unsupported destinations before responding.",
+        )
+    } else if rule == "kotlin-ktor-html-output"
+        && has("CWE-79")
+        && operation.to_ascii_lowercase().contains("<script>")
+    {
+        (
+            "Request data breaks a JavaScript string in an HTML script element",
+            "Avoid inline JavaScript interpolation; pass validated data through a structured data channel. If embedding is required, protect both the JavaScript string and HTML script-element context, including script termination. HTML content encoding alone is insufficient. Test apostrophes, backslashes and script termination while preserving intended text values.",
+        )
+    } else if rule == "kotlin-ktor-html-output" && has("CWE-79") {
+        (
+            "Request-derived markup reaches an HTML response",
+            "Encode the exact response content for its HTML context. If rich HTML is intended, apply a maintained allowlist sanitizer to that value before responding, including decoded byte responses.",
+        )
+    } else if matches!(
+        rule,
+        "kotlin-files-read" | "kotlin-files-write" | "kotlin-file-read" | "kotlin-file-write"
+    ) && has("CWE-22")
+    {
+        (
+            if matches!(rule, "kotlin-files-read" | "kotlin-file-read") {
+                "Request values select an unconfined file read path"
+            } else {
+                "Request values select an unconfined file write path"
+            },
+            "Prefer a fixed allowlist of server-owned file targets. Otherwise resolve against a trusted root, enforce component-aware root containment and a deliberate symlink policy before access, and reject absolute or escaping paths. Normalization alone does not confine a path.",
+        )
+    } else if rule == "kotlin-exposed-sql-exec" && has("CWE-89") {
+        (
+            "Request text alters SQL executed by Exposed",
+            "Keep SQL syntax fixed and bind request values through Exposed's typed exec arguments or parameterized DSL predicates. Choose identifiers from server-owned mappings; transaction entry does not sanitize interpolated SQL. Verify quote-containing values remain data and approved queries still work.",
+        )
+    } else if matches!(
+        rule,
+        "kotlin-jdbc-statement-query" | "kotlin-jdbc-prepare-query" | "kotlin-jdbc-template-query"
+    ) && has("CWE-89")
+    {
+        (
+            match rule {
+                "kotlin-jdbc-statement-query" => "Request text alters SQL executed by Statement",
+                "kotlin-jdbc-prepare-query" => {
+                    "Request text alters SQL before statement preparation"
+                }
+                _ => "Request text alters SQL executed by a Spring JDBC template",
+            },
+            "Keep SQL syntax fixed and bind request values with JDBC placeholders or JdbcTemplate value arguments. Preparing a statement does not make previously interpolated SQL safe; verify the executed query and confirm hostile text remains a bound value.",
+        )
+    } else if rule == "kotlin-persistence-query" && has("CWE-89") {
+        (
+            "Request values alter persistence query syntax",
+            "Keep HQL, JPQL and SQL syntax fixed and bind each request-derived value with named or positional parameters; do not interpolate values into the query text.",
+        )
+    } else if rule.contains("hardcoded-signing-key") {
         (
             "Embedded signing key permits forged credentials",
             "Provision signing keys from a protected secret provider, remove embedded key material, and rotate the exposed key and affected credentials.",

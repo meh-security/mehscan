@@ -64,6 +64,20 @@ fn termination_reason<'tree, D: Doc>(
 ) -> Option<ReachabilityReason> {
     match node.kind().as_ref() {
         "return_statement" => Some(ReachabilityReason::AfterReturn),
+        "jump_expression"
+            if node
+                .children()
+                .any(|child| !child.is_named() && child.text().as_ref() == "return") =>
+        {
+            Some(ReachabilityReason::AfterReturn)
+        }
+        "jump_expression"
+            if node
+                .children()
+                .any(|child| !child.is_named() && child.text().as_ref() == "throw") =>
+        {
+            Some(ReachabilityReason::AfterThrow)
+        }
         "throw_statement" => Some(ReachabilityReason::AfterThrow),
         "raise_statement" => Some(ReachabilityReason::AfterRaise),
         "break_statement" => Some(ReachabilityReason::AfterBreak),
@@ -110,6 +124,24 @@ fn excluded_literal_branch<'tree, D: Doc>(
     parent: &Node<'tree, D>,
     literals: &LiteralEnvironment<'tree, D>,
 ) -> Option<ReachabilityReason> {
+    if parent.kind().as_ref() == "if_expression" {
+        let condition = parent
+            .children()
+            .find(|node| node.is_named() && node.kind().as_ref() != "control_structure_body")?;
+        let value = literals.known_bool(&condition)?;
+        let bodies = parent
+            .children()
+            .filter(|node| node.kind().as_ref() == "control_structure_body")
+            .collect::<Vec<_>>();
+        let branch = bodies
+            .iter()
+            .position(|body| contains(body, &child.range()))?;
+        return match (value, branch) {
+            (false, 0) => Some(ReachabilityReason::ConditionAlwaysFalse),
+            (true, 1) => Some(ReachabilityReason::ConditionAlwaysTrue),
+            _ => None,
+        };
+    }
     if !matches!(parent.kind().as_ref(), "if_statement" | "elif_clause") {
         return None;
     }
@@ -139,6 +171,7 @@ fn is_sequential_container(kind: &str) -> bool {
     matches!(
         kind,
         "block"
+            | "statements"
             | "statement_block"
             | "program"
             | "module"
@@ -165,6 +198,8 @@ fn is_function_boundary(kind: &str) -> bool {
             | "arrow_function"
             | "lambda"
             | "lambda_expression"
+            | "lambda_literal"
+            | "anonymous_function"
     )
 }
 
@@ -234,6 +269,46 @@ mod tests {
             "danger()",
         );
         assert_eq!(nested.state, ReachabilityState::Reachable);
+    }
+
+    #[test]
+    fn kotlin_literal_branches_and_jumps_have_bounded_execution_context() {
+        use ast_grep_language::SupportLang;
+        for (source, expected) in [
+            (
+                "fun f() { if (false) { danger() } }",
+                ReachabilityState::Unreachable,
+            ),
+            (
+                "fun f() { if (true) {} else { danger() } }",
+                ReachabilityState::Unreachable,
+            ),
+            (
+                "fun f() { return; danger() }",
+                ReachabilityState::Unreachable,
+            ),
+            (
+                "fun f() { throw Error(); danger() }",
+                ReachabilityState::Unreachable,
+            ),
+            (
+                "fun f() { if (flag) { danger() } }",
+                ReachabilityState::Reachable,
+            ),
+            (
+                "fun f() { return; fun inner() { danger() } }",
+                ReachabilityState::Reachable,
+            ),
+        ] {
+            let ast = SupportLang::Kotlin.ast_grep(source);
+            let root = ast.root();
+            let call = root
+                .dfs()
+                .find(|n| n.kind().as_ref() == "call_expression" && n.text().as_ref() == "danger()")
+                .unwrap();
+            let literals = LiteralEnvironment::build(&root, mehscan_core::Language::Kotlin);
+            assert_eq!(classify(&call, &literals).state, expected, "{source}");
+        }
     }
 
     #[test]

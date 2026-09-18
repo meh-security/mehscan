@@ -1,0 +1,61 @@
+- id: kotlin-cookie-secure-flag
+  version: 1
+  title: Kotlin Servlet cookie secure policy
+  language: kotlin
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-614]
+  match:
+    any:
+      - pattern: $COOKIE.setSecure($VALUE)
+        captures: { secure: VALUE }
+      - pattern: $COOKIE.secure = $VALUE
+        context: |
+          fun patternContext() { $COOKIE.secure = $VALUE }
+        selector: assignment
+        captures: { secure: VALUE }
+  tags: [kotlin, jvm, cookie, configuration]
+  ai:
+    investigate:
+      - Establish whether this cookie carries a security credential or sensitive state, the exact flag value and the same cookie's response emission.
+      - Inspect later flag replacement, different cookie instances and independent response-layer controls. Do not borrow another cookie's policy.
+    verify:
+      - Determine the emitted Secure/HttpOnly policy relevant to this exact rule, not an unrelated cookie attribute. The source contract can establish a bounded application policy failure without deployed compromise.
+    exclude:
+      - Exclude enabled effective flags, unconsumed cookie objects and nonsensitive preferences. A deliberately script-readable nonsensitive value does not establish an authentication-cookie flaw.
+  provenance:
+    note: Canonical javax/jakarta Servlet Cookie receivers and two-argument constructors with bounded immutable aliases; qualified Java setters and Kotlin synthetic properties only.
+    references:
+      - https://jakarta.ee/specifications/platform/10/apidocs/jakarta/servlet/http/cookie
+      - https://cwe.mitre.org/data/definitions/614.html
+
+- id: kotlin-cookie-httponly-flag
+  version: 1
+  title: Kotlin Servlet cookie httponly policy
+  language: kotlin
+  kind: security_configuration
+  capability: cookie_configuration
+  cwe: [CWE-1004]
+  match:
+    any:
+      - pattern: $COOKIE.setHttpOnly($VALUE)
+        captures: { http_only: VALUE }
+      - pattern: $COOKIE.isHttpOnly = $VALUE
+        context: |
+          fun patternContext() { $COOKIE.isHttpOnly = $VALUE }
+        selector: assignment
+        captures: { http_only: VALUE }
+  tags: [kotlin, jvm, cookie, configuration]
+  ai:
+    investigate:
+      - Establish whether this cookie carries a security credential or sensitive state, the exact flag value and the same cookie's response emission.
+      - Inspect later flag replacement, different cookie instances and independent response-layer controls. Do not borrow another cookie's policy.
+    verify:
+      - Determine the emitted Secure/HttpOnly policy relevant to this exact rule, not an unrelated cookie attribute. The source contract can establish a bounded application policy failure without deployed compromise.
+    exclude:
+      - Exclude enabled effective flags, unconsumed cookie objects and nonsensitive preferences. A deliberately script-readable nonsensitive value does not establish an authentication-cookie flaw.
+  provenance:
+    note: Canonical javax/jakarta Servlet Cookie receivers and two-argument constructors with bounded immutable aliases; qualified Java setters and Kotlin synthetic properties only.
+    references:
+      - https://jakarta.ee/specifications/platform/10/apidocs/jakarta/servlet/http/cookie
+      - https://cwe.mitre.org/data/definitions/1004.html

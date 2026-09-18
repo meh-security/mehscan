@@ -48,6 +48,7 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
         "cshtml" => FileClass::Razor,
         "aspx" | "ascx" => FileClass::WebForms,
         "java" => FileClass::Supported(Language::Java),
+        "kt" | "kts" => FileClass::Supported(Language::Kotlin),
         "js" | "jsx" | "mjs" | "cjs" => FileClass::Supported(Language::Javascript),
         "ts" | "mts" | "cts" => FileClass::Supported(Language::Typescript),
         "tsx" => FileClass::Supported(Language::Tsx),
@@ -59,7 +60,7 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
         "json" | "json5" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" | "config"
         | "properties" | "xml" | "env" | "tf" | "tfvars" | "hcl" | "md" | "markdown" | "txt"
         | "sql" | "graphql" | "sh" | "bash" | "zsh" | "ps1" => FileClass::SecretOnly,
-        "kt" | "kts" | "rb" | "scala" | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => {
+        "rb" | "scala" | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => {
             FileClass::UnsupportedSource
         }
         _ => FileClass::Ignored,
@@ -81,8 +82,72 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
 }
 
 pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
-    let in_nonproduction_directory = path.components().any(|component| {
-        let component = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+    let components = path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let kotlin_source = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "kt" | "kts"));
+    let conventional_kotlin_set = |name: &str, suffix: &str| {
+        name.strip_suffix(suffix).is_some_and(|prefix| {
+            matches!(
+                prefix,
+                "common"
+                    | "jvm"
+                    | "android"
+                    | "ios"
+                    | "iosarm64"
+                    | "iosx64"
+                    | "iossimulatorarm64"
+                    | "js"
+                    | "wasmjs"
+                    | "wasmwasi"
+                    | "native"
+                    | "apple"
+                    | "linux"
+                    | "linuxx64"
+                    | "linuxarm64"
+                    | "macos"
+                    | "macosx64"
+                    | "macosarm64"
+                    | "mingwx64"
+                    | "watchos"
+                    | "tvos"
+            )
+        })
+    };
+    if kotlin_source
+        && components.windows(3).any(|parts| {
+            parts[0] == "src"
+                && parts[2] == "kotlin"
+                && (conventional_kotlin_set(&parts[1], "test")
+                    || matches!(
+                        parts[1].as_str(),
+                        "androidunittest" | "androidinstrumentedtest"
+                    ))
+        })
+    {
+        return true;
+    }
+    let jvm_main = components
+        .windows(3)
+        .position(|parts| {
+            parts[0] == "src"
+                && (parts[1] == "main"
+                    || kotlin_source && conventional_kotlin_set(&parts[1], "main"))
+                && matches!(parts[2].as_str(), "kotlin" | "java")
+        })
+        .map(|index| index + 2);
+    let in_nonproduction_directory = components.iter().enumerate().any(|(index, component)| {
+        // Below a JVM production source root these names can be namespace
+        // segments. Top-level examples and all test/generated roles still apply.
+        if matches!(component.as_str(), "samples" | "examples")
+            && jvm_main.is_some_and(|root| index > root)
+        {
+            return false;
+        }
         matches!(
             component.as_str(),
             "test"
@@ -144,6 +209,9 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
         || (lower.starts_with("test") && lower.ends_with(".java"))
         || name.ends_with("Test.java")
         || name.ends_with("Tests.java")
+        || name.ends_with("Test.kt")
+        || name.ends_with("Tests.kt")
+        || lower.ends_with(".generated.kt")
         || name.ends_with("Test.cs")
         || name.ends_with("Tests.cs")
         || name.ends_with("Test.php")
@@ -392,5 +460,93 @@ mod tests {
             Path::new("wwwroot/Scripts/application.ts"),
             &mapped
         ));
+    }
+
+    #[test]
+    fn jvm_production_namespaces_do_not_hide_sample_packages() {
+        for (path, language) in [
+            (
+                "src/main/kotlin/org/springframework/samples/Owner.kt",
+                Language::Kotlin,
+            ),
+            (
+                "app/src/main/kotlin/io/ktor/examples/App.kt",
+                Language::Kotlin,
+            ),
+            (
+                "src/main/java/org/springframework/samples/Owner.java",
+                Language::Java,
+            ),
+        ] {
+            assert_eq!(
+                classify_path(Path::new(path)),
+                FileClass::Supported(language),
+                "{path}"
+            );
+        }
+        for path in [
+            "samples/app/src/main/kotlin/App.kt",
+            "examples/src/main/java/App.java",
+            "src/test/kotlin/org/samples/Owner.kt",
+            "src/main/kotlin/tests/App.kt",
+        ] {
+            assert_eq!(
+                classify_path(Path::new(path)),
+                FileClass::SecretOnly,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn conventional_kotlin_multiplatform_sets_keep_test_and_namespace_roles() {
+        for set in [
+            "commonMain",
+            "jvmMain",
+            "androidMain",
+            "iosArm64Main",
+            "iosSimulatorArm64Main",
+            "jsMain",
+            "nativeMain",
+            "wasmJsMain",
+        ] {
+            let source = format!("app/src/{set}/kotlin/org/examples/App.kt");
+            assert_eq!(
+                classify_path(Path::new(&source)),
+                FileClass::Supported(Language::Kotlin)
+            );
+            let outer = format!("examples/app/src/{set}/kotlin/App.kt");
+            assert_eq!(classify_path(Path::new(&outer)), FileClass::SecretOnly);
+        }
+        for set in [
+            "commonTest",
+            "jvmTest",
+            "androidTest",
+            "androidUnitTest",
+            "androidInstrumentedTest",
+            "iosArm64Test",
+            "jsTest",
+            "nativeTest",
+            "wasmJsTest",
+        ] {
+            let source = format!("app/src/{set}/kotlin/org/App.kt");
+            assert_eq!(classify_path(Path::new(&source)), FileClass::SecretOnly);
+            assert_eq!(
+                classify_path_with_options(Path::new(&source), true),
+                FileClass::Supported(Language::Kotlin)
+            );
+        }
+        assert_eq!(
+            classify_path(Path::new("src/latest/kotlin/App.kt")),
+            FileClass::Supported(Language::Kotlin)
+        );
+        assert_eq!(
+            classify_path(Path::new("src/domain/kotlin/examples/App.kt")),
+            FileClass::SecretOnly
+        );
+        assert_eq!(
+            classify_path(Path::new("src/commonMain/js/examples/App.js")),
+            FileClass::SecretOnly
+        );
     }
 }

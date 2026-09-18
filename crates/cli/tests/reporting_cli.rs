@@ -12,7 +12,7 @@ fn empty_review_runs_render_all_formats_and_keep_the_manifest_fingerprint() {
         "job_fingerprint": "empty-run-fingerprint", "max_input_bytes": 524288,
         "max_reviews_per_bundle": 20, "review_count": 0, "bundle_count": 0, "bundles": [],
         "coverage": {"discovered": 3, "scanned": 0, "ignored": 2, "unsupported": 1, "parse_failed": 0},
-        "scope": ["Original regression fixtures intentionally included; not deployed code."]
+        "scope": ["Original regression fixtures intentionally included; not deployed code.", "Scope label: Inherited old caption", "Project label: inherited-project"]
     });
     std::fs::write(&manifest_path, manifest.to_string()).expect("write manifest");
     for format in ["json", "sarif", "markdown"] {
@@ -45,6 +45,10 @@ fn empty_review_runs_render_all_formats_and_keep_the_manifest_fingerprint() {
             assert_eq!(report["findings"], serde_json::json!([]));
             assert_eq!(report["scan"]["coverage"], manifest["coverage"]);
             let mut expected_scope = manifest["scope"].as_array().unwrap().clone();
+            expected_scope.retain(|entry| {
+                !entry.as_str().unwrap().starts_with("Scope label: ")
+                    && !entry.as_str().unwrap().starts_with("Project label: ")
+            });
             expected_scope.extend([
                 serde_json::json!(
                     "Scope label: Selected source only; not a full application assessment."
@@ -60,6 +64,8 @@ fn empty_review_runs_render_all_formats_and_keep_the_manifest_fingerprint() {
             let scope = report["runs"][0]["properties"]["scope"].to_string();
             assert!(scope.contains("Project label: example-app"));
             assert!(scope.contains("Original regression fixtures intentionally included"));
+            assert!(!scope.contains("Inherited old caption"));
+            assert!(!scope.contains("inherited-project"));
         } else {
             let text = String::from_utf8_lossy(&output.stdout);
             assert!(text.contains("3 discovered, 0 scanned, 2 ignored"));
@@ -67,6 +73,8 @@ fn empty_review_runs_render_all_formats_and_keep_the_manifest_fingerprint() {
             assert!(text.contains("Project label: example-app"));
             assert!(text.contains("Source revision label: test-revision"));
             assert!(text.contains("Selected source only; not a full application assessment."));
+            assert!(!text.contains("Inherited old caption"));
+            assert!(!text.contains("inherited-project"));
         }
     }
     let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))

@@ -199,7 +199,7 @@ impl FindingReport {
             self.summary.not_issue_decisions
         ));
 
-        output.push_str("\n## Scope and limitations\n\nStatic source review; runtime activation and exploit reproduction are not established. Ignored and unsupported material is outside coverage. Severity defaults are not a validated impact ranking.\n\n");
+        output.push_str("\n## Scope and limitations\n\nStatic source conclusions do not establish deployed activation or external exploitation. Any isolated execution checks apply only to the controls identified in the scope label. Ignored and unsupported material is outside coverage. Severity defaults are not a validated impact ranking.\n\n");
         if let Some(coverage) = &self.scan.coverage {
             output.push_str(&format!("Files: {} discovered, {} scanned, {} ignored, {} parse-failed, {} unsupported. Parse-failed files may retain partial evidence outside invalid syntax.\n\n", coverage.discovered, coverage.scanned, coverage.ignored, coverage.parse_failed, coverage.unsupported));
         } else {
@@ -265,7 +265,7 @@ impl FindingReport {
                     markdown_code_span(&dismissed.review_id),
                     location,
                     enum_label(dismissed.confidence),
-                    markdown_text(&dismissed.description)
+                    markdown_description(&dismissed.description)
                 ));
             }
         }
@@ -273,7 +273,14 @@ impl FindingReport {
         if !self.quality_warnings.is_empty() {
             output.push_str("\n## Quality warnings\n\n");
             for warning in &self.quality_warnings {
-                output.push_str(&format!("- {}\n", markdown_text(warning)));
+                let warning = if warning.starts_with("review_kind_correlation:") {
+                    format!(
+                        "{warning}; this correlation applies only to this report's reviewed selection and does not establish a model-wide error"
+                    )
+                } else {
+                    warning.clone()
+                };
+                output.push_str(&format!("- {}\n", markdown_text(&warning)));
             }
         }
 
@@ -344,9 +351,12 @@ fn render_finding_group(output: &mut String, index: usize, findings: &[&Reported
             enum_label(finding.severity.level),
             enum_label(finding.severity.source),
             enum_label(finding.confidence),
-            markdown_text(&finding.description)
+            markdown_description(&finding.description)
         ));
         render_availability(output, finding);
+        render_flow(output, finding);
+        render_related_locations(output, finding);
+        render_review_ids(output, finding);
     }
     output.push('\n');
 }
@@ -381,10 +391,13 @@ fn render_finding(
         enum_label(finding.severity.level),
         enum_label(finding.severity.source),
         enum_label(finding.confidence),
-        markdown_text(&finding.description)
+        markdown_description(&finding.description)
     ));
 
     render_availability(output, finding);
+    render_flow(output, finding);
+    render_related_locations(output, finding);
+    render_review_ids(output, finding);
 
     if include_checks {
         output.push_str("\nRequired checks:\n\n");
@@ -398,6 +411,65 @@ fn render_finding(
         ));
     }
     output.push('\n');
+}
+
+fn render_related_locations(output: &mut String, finding: &ReportedFinding) {
+    if finding.related_locations.is_empty() {
+        return;
+    }
+    output.push_str(if finding.flow.is_some() {
+        "\nRelated evidence locations:\n\n"
+    } else {
+        "\nRelated evidence locations (inventory/context; no native flow asserted):\n\n"
+    });
+    for related in &finding.related_locations {
+        output.push_str(&format!(
+            "- {}: {}\n",
+            enum_label(related.role),
+            markdown_code_span(&format!(
+                "{}:{}:{}",
+                related.location.path, related.location.start.line, related.location.start.column
+            ))
+        ));
+    }
+}
+
+fn render_review_ids(output: &mut String, finding: &ReportedFinding) {
+    if !finding.provenance.review_ids.is_empty() {
+        output.push_str(&format!(
+            "\n- Review IDs: {}\n",
+            finding
+                .provenance
+                .review_ids
+                .iter()
+                .map(|id| markdown_code_span(id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+}
+
+fn render_flow(output: &mut String, finding: &ReportedFinding) {
+    let Some(flow) = &finding.flow else { return };
+    let locations = flow
+        .steps
+        .iter()
+        .filter(|step| {
+            matches!(
+                step.kind,
+                crate::SecurityPathStepKind::Source | crate::SecurityPathStepKind::Sink
+            )
+        })
+        .map(|step| {
+            markdown_code_span(&format!(
+                "{}:{}:{}",
+                step.location.path, step.location.start.line, step.location.start.column
+            ))
+        })
+        .collect::<Vec<_>>();
+    if locations.len() > 1 {
+        output.push_str(&format!("\nFlow: {}\n", locations.join(" → ")));
+    }
 }
 
 fn enum_label(value: impl std::fmt::Debug) -> String {
@@ -442,15 +514,59 @@ fn markdown_text(value: &str) -> String {
         .replace('>', "&gt;")
 }
 
+fn markdown_description(value: &str) -> String {
+    let mut output = String::new();
+    let mut cursor = 0;
+    while let Some(relative) = value[cursor..].find('`') {
+        let start = cursor + relative;
+        let fence_len = value[start..].bytes().take_while(|b| *b == b'`').count();
+        let content_start = start + fence_len;
+        let mut search = content_start;
+        let mut closing = None;
+        while let Some(relative) = value[search..].find('`') {
+            let candidate = search + relative;
+            let run = value[candidate..]
+                .bytes()
+                .take_while(|b| *b == b'`')
+                .count();
+            if run == fence_len {
+                closing = Some(candidate);
+                break;
+            }
+            search = candidate + run;
+        }
+        let Some(end) = closing else { break };
+        output.push_str(&markdown_text(&value[cursor..start]).replace('`', "\\`"));
+        let content = value[content_start..end]
+            .replace("\r\n", " ")
+            .replace(['\r', '\n'], " ");
+        let content = if content.starts_with(' ')
+            && content.ends_with(' ')
+            && content.chars().any(|c| c != ' ')
+        {
+            &content[1..content.len() - 1]
+        } else {
+            &content
+        };
+        output.push_str(&markdown_code_span(content));
+        cursor = end + fence_len;
+    }
+    output.push_str(&markdown_text(&value[cursor..]).replace('`', "\\`"));
+    output
+}
+
 fn markdown_code_span(value: &str) -> String {
-    let value = value.replace(['\r', '\n'], " ");
+    let value = value.replace("\r\n", " ").replace(['\r', '\n'], " ");
     let longest_run = value
         .split(|character| character != '`')
         .map(str::len)
         .max()
         .unwrap_or(0);
     let fence = "`".repeat(longest_run + 1);
-    let padding = if value.starts_with('`') || value.ends_with('`') {
+    let padding = if value.starts_with('`')
+        || value.ends_with('`')
+        || value.starts_with(' ') && value.ends_with(' ') && value.chars().any(|c| c != ' ')
+    {
         " "
     } else {
         ""
@@ -461,6 +577,24 @@ fn markdown_code_span(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn descriptions_preserve_code_identifiers_while_escaping_prose() {
+        assert_eq!(
+            markdown_description("Use `fixture_people` and `<em>own</em>`; prose <b>_x_</b>."),
+            "Use `fixture_people` and `<em>own</em>`; prose &lt;b&gt;\\_x\\_&lt;/b&gt;."
+        );
+        assert_eq!(
+            markdown_description("Use `` `quoted` ``."),
+            "Use `` `quoted` ``."
+        );
+        assert_eq!(markdown_description("Use `one\r\ntwo`."), "Use `one two`.");
+        assert_eq!(
+            markdown_description("Unclosed `fixture_people"),
+            "Unclosed \\`fixture\\_people"
+        );
+        assert_eq!(markdown_code_span(" name "), "`  name  `");
+    }
     use crate::Position;
 
     fn location(path: &str, line: usize) -> Location {
@@ -506,6 +640,60 @@ mod tests {
                 evidence_ids: vec!["evidence-1".to_string()],
             },
         }
+    }
+
+    #[test]
+    fn markdown_keeps_observation_sources_without_inventing_a_native_flow() {
+        let mut item = finding(FindingStatus::Issue, Vec::new());
+        item.related_locations.push(FindingRelatedLocation {
+            role: EvidenceKind::Source,
+            location: location("routes/input.kt", 10),
+            evidence_id: Some("query-input".into()),
+            rule_id: Some("kotlin-ktor-query-source".into()),
+        });
+        let mut standalone = String::new();
+        render_finding(&mut standalone, 1, &item, false);
+        let mut grouped = String::new();
+        render_finding_group(&mut grouped, 1, &[&item, &item]);
+        for markdown in [&standalone, &grouped] {
+            assert!(markdown.contains("source: `routes/input.kt:10:3`"));
+            assert!(markdown.contains("no native flow asserted"));
+            assert!(!markdown.contains("Flow:"));
+        }
+        assert_eq!(grouped.matches("source: `routes/input.kt:10:3`").count(), 2);
+    }
+
+    #[test]
+    fn markdown_shows_source_and_sink_from_canonical_flow() {
+        let mut item = finding(FindingStatus::Issue, Vec::new());
+        item.flow = Some(FindingFlow {
+            steps: vec![
+                SecurityPathStep {
+                    kind: crate::SecurityPathStepKind::Source,
+                    location: location("routes/input.kt", 10),
+                    evidence_id: None,
+                    symbol: Some("name".into()),
+                },
+                SecurityPathStep {
+                    kind: crate::SecurityPathStepKind::Sink,
+                    location: location("routes/query.kt", 23),
+                    evidence_id: None,
+                    symbol: Some("query".into()),
+                },
+            ],
+        });
+        let mut markdown = String::new();
+        render_finding(&mut markdown, 1, &item, false);
+        assert!(
+            markdown.contains("Flow: `routes/input.kt:10:3` → `routes/query.kt:23:3`"),
+            "{markdown}"
+        );
+        assert_eq!(
+            markdown
+                .matches("Request input reaches the query sink.")
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -585,6 +773,7 @@ mod tests {
         second.rule_id = "cpp-other-rule-for-same-invariant".to_string();
         second.primary_location = location("src/reader.cpp", 71);
         second.description = "A second decoder performs the same unchecked read.".to_string();
+        second.provenance.review_ids = vec!["review-2".to_string()];
         let report = FindingReport {
             schema_version: FINDING_REPORT_SCHEMA_VERSION.to_string(),
             report_kind: "triaged_findings".to_string(),
@@ -621,6 +810,9 @@ mod tests {
         assert!(markdown.contains("(2 instances)"));
         assert!(markdown.contains("`routes/search.ts:23:3`"));
         assert!(markdown.contains("`src/reader.cpp:71:3`"));
+        assert!(markdown.contains("`review-1`"));
+        assert!(markdown.contains("`review-2`"));
+        assert_eq!(markdown.matches("- Review IDs:").count(), 2);
         assert_eq!(markdown.matches("Remediation:").count(), 1);
         assert_eq!(markdown.matches("### 1.").count(), 1);
     }

@@ -74,7 +74,18 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
             include_dismissed,
         ),
     )?;
-    report.scan.scope.extend(scope);
+    for label in scope {
+        // Explicit handoff labels replace inherited labels of the same kind;
+        // selection and coverage limitations remain intact.
+        if let Some((kind, _)) = label.split_once(": ") {
+            let prefix = format!("{kind}: ");
+            report
+                .scan
+                .scope
+                .retain(|entry| !entry.starts_with(&prefix));
+        }
+        report.scan.scope.push(label);
+    }
     match format {
         ReportOutputFormat::Json => write_json(&report, output.as_deref()),
         ReportOutputFormat::Sarif => write_json(
@@ -1333,6 +1344,7 @@ fn parse_language(value: &str) -> Result<Language, String> {
     match value.to_ascii_lowercase().as_str() {
         "csharp" | "c#" | "cs" => Ok(Language::Csharp),
         "java" => Ok(Language::Java),
+        "kotlin" | "kt" | "kts" => Ok(Language::Kotlin),
         "javascript" | "js" => Ok(Language::Javascript),
         "typescript" | "ts" => Ok(Language::Typescript),
         "tsx" => Ok(Language::Tsx),

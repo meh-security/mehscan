@@ -1,0 +1,54 @@
+- id: kotlin-webflux-query-source
+  version: 1
+  title: Kotlin WebFlux query parameter input
+  language: kotlin
+  kind: source
+  capability: http_request_data
+  cwe: [CWE-20]
+  match:
+    any:
+      - pattern: $REQUEST.queryParam($KEY)
+        captures: { value: REQUEST, key: KEY }
+  tags: [kotlin, spring, webflux]
+  ai: &webflux-guidance
+    investigate:
+      - Verify canonical ServerRequest ownership. queryParam returns Optional String, pathVariable returns String, and the enumerated text bodyToMono returns Mono String; distinguish inventory from a shown scalar unwrap or subscription.
+    verify:
+      - Establish the exact producer, reactive operator binding and effective sink from the supplied containing function. Request access by itself is not a vulnerability.
+    exclude:
+      - Exclude foreign request lookalikes and claims requiring unseen routing, DTO properties, helper effects or subscription. Do not certify whole reactive handlers from one source boundary.
+  provenance: &webflux-provenance
+    note: Canonical declared ServerRequest identity; source inventory with explicit Optional/String/Mono representation, no native reactive-effect or routing inference.
+    references:
+      - https://docs.spring.io/spring-framework/reference/web/webflux-functional.html
+      - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/reactive/function/server/ServerRequest.html
+- id: kotlin-webflux-path-source
+  version: 1
+  title: Kotlin WebFlux path variable input
+  language: kotlin
+  kind: source
+  capability: http_request_data
+  cwe: [CWE-20]
+  match:
+    any:
+      - pattern: $REQUEST.pathVariable($KEY)
+        captures: { value: REQUEST, key: KEY }
+  tags: [kotlin, spring, webflux]
+  ai: *webflux-guidance
+  provenance: *webflux-provenance
+- id: kotlin-webflux-text-body-source
+  version: 1
+  title: Kotlin WebFlux reactive text body input
+  language: kotlin
+  kind: source
+  capability: http_request_data
+  cwe: [CWE-20]
+  match:
+    any:
+      - pattern: $REQUEST.bodyToMono(String::class.java)
+        captures: { value: REQUEST }
+      - pattern: $REQUEST.bodyToMono(kotlin.String::class.java)
+        captures: { value: REQUEST }
+  tags: [kotlin, spring, webflux]
+  ai: *webflux-guidance
+  provenance: *webflux-provenance

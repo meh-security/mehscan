@@ -911,6 +911,10 @@ fn is_callable_scope(kind: &str, language: Language) -> bool {
             "function_declaration" | "method_declaration" | "func_literal"
         ),
         Language::Rust => false,
+        Language::Kotlin => matches!(
+            kind,
+            "function_declaration" | "secondary_constructor" | "lambda_literal"
+        ),
         Language::Php => matches!(
             kind,
             "function_definition" | "method_declaration" | "anonymous_function" | "arrow_function"

@@ -53,6 +53,12 @@ Check these invariants:
   request-derived value already establishes the weakness.
 - Evidence and candidate counts are not presented as vulnerability totals.
   Markdown counts reconcile with canonical JSON when it is present.
+- Source availability describes conditional compilation/build inclusion, not
+  runtime execution frequency. `availability.state: always` can coexist with
+  a runtime `if` branch; it does not say that the operation executes on every
+  invocation. Supplied typed caller context can support a bounded source
+  explanation without a native cross-callable flow. Do not confuse either
+  with verified runtime dispatch or deployed endpoint exposure.
 - Repeated items are consolidated when they express the same root cause and
   remediation, while materially different call sites remain distinguishable.
   A grouped heading can represent several confirmed finding instances: verify
