@@ -6,6 +6,96 @@ fn root() -> PathBuf {
 }
 
 #[test]
+fn xml_policy_reviews_keep_distinct_factory_settings_in_source_context() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-xml-policies");
+    let scan = mehscan_engine::scan_path(&fixture).unwrap();
+    assert_eq!(scan.coverage.totals.parse_failed, 0);
+    assert_eq!(
+        scan.evidence
+            .iter()
+            .filter(|e| e.rule_id == "kotlin-xml-parse")
+            .count(),
+        3
+    );
+    assert_eq!(
+        scan.evidence
+            .iter()
+            .filter(|e| e.rule_id == "kotlin-xml-configuration")
+            .count(),
+        4
+    );
+    // Policy association is source review context, not native XML propagation.
+    assert!(scan.security_paths.is_empty());
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
+    let wrong = jobs
+        .observation_reviews
+        .iter()
+        .find(|r| {
+            r.evidence.iter().any(|e| {
+                e.rule_id == "kotlin-xml-parse"
+                    && e.enclosing_symbol.as_deref() == Some("wrongFactory")
+                    && r.anchor_evidence_ids.contains(&e.id)
+            })
+        })
+        .unwrap();
+    assert!(
+        wrong
+            .facts
+            .iter()
+            .any(|f| f.excerpt.contains("guarded.setFeature")
+                && f.excerpt.contains("exposed.setFeature")
+                && f.excerpt.contains("exposed.newDocumentBuilder().parse"))
+    );
+    let guarded = jobs
+        .observation_reviews
+        .iter()
+        .find(|r| {
+            r.evidence.iter().any(|e| {
+                e.rule_id == "kotlin-xml-configuration"
+                    && e.location.start.line == 29
+                    && r.anchor_evidence_ids.contains(&e.id)
+            })
+        })
+        .unwrap();
+    assert!(
+        guarded
+            .facts
+            .iter()
+            .any(|f| f.role == "matched_xml_operation"
+                && f.excerpt.starts_with("guarded.setFeature(")
+                && f.excerpt.ends_with("true)"))
+    );
+    assert!(
+        guarded
+            .decision_facts
+            .established
+            .iter()
+            .any(|f| f.contains("captured value true")
+                && f.contains("Judge this setter and its receiver"))
+    );
+    let parse_anchors = wrong
+        .facts
+        .iter()
+        .filter(|f| f.role == "matched_xml_operation")
+        .collect::<Vec<_>>();
+    assert_eq!(parse_anchors.len(), 1);
+    assert!(
+        parse_anchors[0]
+            .excerpt
+            .starts_with("exposed.newDocumentBuilder().parse(")
+    );
+    assert!(
+        !wrong
+            .decision_facts
+            .established
+            .iter()
+            .any(|f| f.contains("Judge this setter and its receiver"))
+    );
+}
+
+#[test]
 fn jvm_breadth_keeps_paths_separate_from_content_and_lookalikes() {
     let scan = mehscan_engine::scan_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/kotlin-jvm-breadth"),

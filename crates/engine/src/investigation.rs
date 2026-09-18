@@ -1924,6 +1924,9 @@ fn kotlin_finding_description(
         "kotlin-ktor-html-output" => {
             "Impact: Caller-derived markup can execute script or alter the returned page in the application's browser origin. Verification: Test the exact response operation with markup and script payloads, including decoded content; confirm encoding or sanitization applies to that response while fixed error responses remain unchanged."
         }
+        "kotlin-xml-parse" | "kotlin-xml-configuration" => {
+            "Impact: External entity resolution can read local resources or make outbound requests with the parser process's permissions and network reach; access to any particular sensitive resource or deployed endpoint is not established. Verification: Harden the same factory that creates the affected parser before parser creation, then use an isolated marker file to confirm DTD-bearing input cannot resolve external entities while ordinary XML still works. A guard on another factory does not protect this operation."
+        }
         "kotlin-message-digest" if kotlin_digest_presentation(rule, facts).is_some() => {
             "Impact: The source authentication configuration falls back to a legacy MD5 credential digest, weakening protection against offline credential guessing. The algorithm expression is dynamic: unknown literal metadata does not negate the shown MD5 fallback or prove every invocation uses MD5. Verification: Confirm that the replacement authentication configuration rejects MD5 and that client compatibility is tested. These are source-level consequences; deployment and exploit reproduction are not established."
         }
@@ -3822,6 +3825,31 @@ fn observation_decision_facts(
             }
         }
     }
+    for item in evidence.iter().filter(|item| {
+        item.rule_id == "kotlin-xml-configuration"
+            && facts.iter().any(|f| {
+                f.role == "matched_xml_operation"
+                    && f.evidence_id.as_deref() == Some(item.id.as_str())
+            })
+    }) {
+        if let (Some(feature), Some(value)) =
+            (item.captures.get("feature"), item.captures.get("value"))
+        {
+            established.push(format!(
+                "The exact matched XML configuration at {}:{} sets captured feature {} to captured value {}. Judge this setter and its receiver: another factory's configuration or parse cannot make this anchored setter unsafe or protective for that other factory. A protective setter is not an issue merely because another operation in the callable is unsafe; assess the other operation separately.",
+                item.location.path, item.location.start.line, feature.text, value.text
+            ));
+        }
+    }
+    for fact in facts
+        .iter()
+        .filter(|fact| fact.role == "matched_xml_operation")
+    {
+        established.push(format!(
+            "This review's exact XML anchor at {}:{} is {}. Related XML setters and parses in supplied context are separate operations; judge the named anchor, associating policy only with the factory creating its parser.",
+            fact.location.path, fact.location.start.line, fact.excerpt
+        ));
+    }
     if embedded_signing_key {
         established.push(
             "The supplied redacted definition fact establishes that this token-signing operation uses source-embedded private-key material; explicit expiry and algorithm settings do not mitigate repository disclosure of the signing key."
@@ -5604,6 +5632,26 @@ fn build_observation_reviews(
         facts.append(&mut java_callers);
         if file.language == Some(Language::Kotlin) {
             for item in &group.evidence {
+                if matches!(
+                    item.rule_id.as_str(),
+                    "kotlin-xml-configuration" | "kotlin-xml-parse"
+                ) && group.anchor_evidence_ids.contains(&item.id)
+                    && let Some(operation) = file
+                        .source
+                        .get(item.location.start.byte_offset..item.location.end.byte_offset)
+                {
+                    facts.push(ReviewNeighborhoodFact {
+                        role: "matched_xml_operation".into(),
+                        symbol: group.symbol.clone(),
+                        location: item.location.clone(),
+                        excerpt: operation.to_string(),
+                        evidence_id: Some(item.id.clone()),
+                        provenance: QueryProvenance {
+                            resolution: Resolution::Ast,
+                            engine: "Kotlin exact XML configuration operation 1".into(),
+                        },
+                    });
+                }
                 if item.rule_id == "kotlin-ktor-html-output" {
                     if let Some(content) = item.captures.get("content").filter(|content| {
                         crate::code::kotlin_fixed_response_content(

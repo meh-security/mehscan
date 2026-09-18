@@ -5,7 +5,41 @@ implemented boundaries; they do not establish whole-application recall or
 parity with the established Java, Python, JavaScript, Go and C# profiles.
 Full parity remains a release gate, not a claim made by this checkpoint.
 
-## Latest expanded JVM checkpoint
+## XML policy follow-up
+
+The new [XML fixture](../tests/fixtures/kotlin-xml-policies/README.md) pairs an
+exposed parser with DOCTYPE rejection and a guard on the wrong factory. Kotlin
+2.4.10/JDK 17 compilation and **six direct checks** pass: two unsafe parsers read
+only the probe's own temporary marker file, the protected parser rejects that
+DOCTYPE, and all three accept ordinary XML. There are no network requests or
+deployed Spring endpoint claims. Cumulative isolated checks now total **71**.
+
+The source oracle was recorded before model decisions. Fresh Luna, Terra and
+Sol 5.6 medium reviews each match **22/22** labels: eight new XML/probe operations
+and fourteen existing JVM breadth controls (six positives, sixteen negatives).
+An independent fresh Luna/Terra repeat also matches **22/22** each. This does
+not rerun all earlier 88 cases. The published original-fixture oracle now has
+**75 labels**. All six report sets preserve decisions and reconcile canonical
+JSON, Markdown and SARIF; all six quality audits are engineer-ready, with
+nonblocking warnings retained in the machine-readable results.
+
+Earlier failures remain recorded: Luna first blamed a protective setter for a
+different factory's unsafe parse, then dismissed that parse using the related
+setter. Exact XML operation facts now apply only to declared anchor IDs.
+Terra also produced an intermittent fixed-path content-write false positive in
+the intermediate JVM run; its label was retained and both fresh final passes
+classify it correctly. A passing repeat does not establish model determinism.
+XML handoffs now state bounded impact and require policy on the factory actually
+creating the parser. These are bounded source-review improvements, not native
+XML policy-effect propagation.
+
+The final Kotlin integration suite passes **17 tests**, report-policy checks
+pass **2**, and the CLI rebuild, formatting and diff checks pass. The broader
+974-test sweep below predates this follow-up; it was not rerun here. The final
+engine unit suite separately passes **157 tests**. Kotlin
+remains a partial JVM profile and full language parity remains a release gate.
+
+## Preceding expanded JVM checkpoint
 
 This checkpoint supersedes the earlier 53-case totals below. Kotlin now has
 **29 rules**, including bounded ProcessBuilder/File, deserialization, XML, TLS,
@@ -15,7 +49,7 @@ still prevent a claim of full language parity.
 
 The predefined oracle contains **88 selected cases: 39 positive and 49 negative**
 across thirteen corpora. The [published original-fixture oracle](../tests/fixtures/kotlin-review-oracle.json)
-contains 67 labels, with exact anchor lines distinguishing the two responses in
+contained 67 labels at that checkpoint, with exact anchor lines distinguishing the two responses in
 `rawBytes`. Ordinary inventory dismissals establish no shown weakness, not safety
 of unspecified input, callback or parser policies. New original JVM and Ktor
 controls compile with Kotlin 2.4.10/JDK 17; Ktor uses 3.6.0.

@@ -32,6 +32,11 @@ pub(crate) fn presentation(rule: &str, cwes: &[String], operation: &str) -> Opti
             },
             "Prefer a fixed allowlist of server-owned destinations. Otherwise enforce allowed schemes, exact hosts and ports, resolved-address policy and redirect revalidation before access. URI parsing alone is not approval. Add regression tests for the affected resource-access consumer and approved and rejected destinations.",
         )
+    } else if matches!(rule, "kotlin-xml-parse" | "kotlin-xml-configuration") && has("CWE-611") {
+        (
+            "Request XML reaches a parser permitting external entities",
+            "On the same factory that creates the affected parser, reject DOCTYPE declarations and disable external DTD/schema resource access before parser creation. If DTDs are required, use a restricted resolver and explicit resource allowlist instead. Verify with isolated external-entity controls and ordinary XML; settings on a different factory do not protect this parser.",
+        )
     } else if rule == "kotlin-ktor-client-request" && has("CWE-918") {
         (
             "Request values select a server-side HTTP destination",

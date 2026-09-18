@@ -22,7 +22,7 @@
     "seqra-kotlin": 3
   },
   "original_fixture_oracle": "../tests/fixtures/kotlin-review-oracle.json",
-  "original_fixture_oracle_cases": 67,
+  "original_fixture_oracle_cases": 75,
   "kotlin_rules": 29,
   "reasoning_effort": "medium",
   "primary": {
@@ -402,5 +402,235 @@
       "sha256": "598f810ad0ce64be102342229a91b00d01988e0f8832d64509e6af5e019fc032",
       "availability": "Local evaluation evidence; third-party source and raw reviewer transcripts are not published."
     }
+  },
+  "xml_policy_followup": {
+    "date": "2026-09-18",
+    "scope": "Eight new XML operation cases plus fourteen existing JVM regression cases. Fresh primary and independent repeat; not a fresh rerun of all earlier 88 labels, and no whole-language parity claim.",
+    "new_cases": 8,
+    "selected_cases": 22,
+    "positive_cases": 6,
+    "negative_cases": 16,
+    "primary": {
+      "luna": {
+        "exact": 22,
+        "total": 22,
+        "false_positives": 0,
+        "false_negatives": 0
+      },
+      "terra": {
+        "exact": 22,
+        "total": 22,
+        "false_positives": 0,
+        "false_negatives": 0
+      },
+      "sol": {
+        "exact": 22,
+        "total": 22,
+        "false_positives": 0,
+        "false_negatives": 0
+      }
+    },
+    "three_model_agreement": 22,
+    "repeat": {
+      "luna": {
+        "exact": 22,
+        "total": 22
+      },
+      "terra": {
+        "exact": 22,
+        "total": 22
+      }
+    },
+    "runtime": {
+      "new_direct_checks": 6,
+      "cumulative_isolated_checks": 71,
+      "kotlin": "2.4.10",
+      "jdk": "17",
+      "scope": "Own temporary marker file and ordinary XML, no network requests or deployed Spring endpoints."
+    },
+    "native_integration_tests": 17,
+    "report_policy_tests": 2,
+    "report_sets": 6,
+    "engineer_ready": 6,
+    "quality_audits": [
+      {
+        "corpus": "xml-policies",
+        "model": "luna",
+        "verdict": "pass_with_warnings",
+        "ready_for_engineer": true,
+        "summary": "Counts, canonical decisions, scope limits, operation locations, impact, remediation, and isolated verification checks are consistent. The report is engineer-ready with minor presentation and consolidation warnings.",
+        "findings": [
+          {
+            "layer": "Markdown presentation",
+            "location": "Confirmed issues: grouped heading and instances 1\u20134",
+            "problem": "All four instances share one generic title, so the distinct rawXml and wrongFactory operations are less visible in headings.",
+            "fix": "Use operation-qualified instance or subgroup titles, such as \u201crawXml permits external entities\u201d and \u201cwrongFactory permits external entities,\u201d while preserving the four canonical instances."
+          },
+          {
+            "layer": "Markdown presentation",
+            "location": "Scope and limitations; Review next",
+            "problem": "The report says no findings require additional review but does not explicitly repeat that the listed verification checks are isolated follow-up checks rather than deployment or whole-application validation.",
+            "fix": "Add one sentence stating that remediation verification is limited to the supplied files and isolated parser checks, and does not certify deployment exposure or whole-application safety."
+          }
+        ]
+      },
+      {
+        "corpus": "xml-policies",
+        "model": "terra",
+        "verdict": "pass",
+        "ready_for_engineer": true,
+        "summary": "The report reconciles exactly with the canonical JSON, clearly bounds the intentionally included teaching/sample source, and provides actionable grouped XML findings without changing canonical decisions.",
+        "findings": []
+      },
+      {
+        "corpus": "xml-policies",
+        "model": "sol",
+        "verdict": "pass",
+        "ready_for_engineer": true,
+        "summary": "Counts and metadata reconcile with canonical JSON: four confirmed instances, four dismissals, and no review-required decisions. The report clearly bounds teaching/sample source coverage and isolated checks, preserves operation-specific evidence and decisions, and provides actionable impact, remediation, and verification guidance. Grouping retains all four instance locations and decision metadata without presenting them as unique vulnerabilities.",
+        "findings": []
+      },
+      {
+        "corpus": "jvm-breadth",
+        "model": "luna",
+        "verdict": "pass",
+        "ready_for_engineer": true,
+        "summary": "The Markdown report and canonical JSON are consistent, scoped to selected teaching material, and provide actionable operation-specific findings, impacts, evidence, remediations, and follow-up checks. Canonical decisions and counts are preserved.",
+        "findings": []
+      },
+      {
+        "corpus": "jvm-breadth",
+        "model": "terra",
+        "verdict": "pass",
+        "ready_for_engineer": true,
+        "summary": "The report is scope-clear, reconciles with canonical JSON, and provides actionable, operation-specific handoff details.",
+        "findings": []
+      },
+      {
+        "corpus": "jvm-breadth",
+        "model": "sol",
+        "verdict": "pass",
+        "ready_for_engineer": true,
+        "summary": "Counts, locations, review IDs and decision metadata reconcile with canonical JSON: 2 confirmed instances, 0 requiring review and 12 dismissals. Titles, impacts, remediations and follow-up checks are operation-specific and actionable. The report clearly bounds conclusions to selected teaching source with partial coverage; isolated checks do not imply deployed exposure. Dismissals remain bounded, the correlation warning is sample-specific, and no duplication requires consolidation. Canonical decisions are preserved.",
+        "findings": []
+      }
+    ],
+    "projection_checks": [
+      {
+        "corpus": "jvm-breadth",
+        "model": "luna",
+        "report": "report-luna-medium-release",
+        "reviewed": 14,
+        "findings": 2,
+        "dismissed": 12,
+        "review_required": 0,
+        "counts_and_sarif_locations": "pass",
+        "canonical_decisions_preserved": "pass",
+        "markdown_issue_review_ids": "pass"
+      },
+      {
+        "corpus": "jvm-breadth",
+        "model": "sol",
+        "report": "report-sol-medium-release",
+        "reviewed": 14,
+        "findings": 2,
+        "dismissed": 12,
+        "review_required": 0,
+        "counts_and_sarif_locations": "pass",
+        "canonical_decisions_preserved": "pass",
+        "markdown_issue_review_ids": "pass"
+      },
+      {
+        "corpus": "jvm-breadth",
+        "model": "terra",
+        "report": "report-terra-medium-release",
+        "reviewed": 14,
+        "findings": 2,
+        "dismissed": 12,
+        "review_required": 0,
+        "counts_and_sarif_locations": "pass",
+        "canonical_decisions_preserved": "pass",
+        "markdown_issue_review_ids": "pass"
+      },
+      {
+        "corpus": "xml-policies",
+        "model": "luna",
+        "report": "report-luna-medium-release",
+        "reviewed": 8,
+        "findings": 4,
+        "dismissed": 4,
+        "review_required": 0,
+        "counts_and_sarif_locations": "pass",
+        "canonical_decisions_preserved": "pass",
+        "markdown_issue_review_ids": "pass"
+      },
+      {
+        "corpus": "xml-policies",
+        "model": "sol",
+        "report": "report-sol-medium-release",
+        "reviewed": 8,
+        "findings": 4,
+        "dismissed": 4,
+        "review_required": 0,
+        "counts_and_sarif_locations": "pass",
+        "canonical_decisions_preserved": "pass",
+        "markdown_issue_review_ids": "pass"
+      },
+      {
+        "corpus": "xml-policies",
+        "model": "terra",
+        "report": "report-terra-medium-release",
+        "reviewed": 8,
+        "findings": 4,
+        "dismissed": 4,
+        "review_required": 0,
+        "counts_and_sarif_locations": "pass",
+        "canonical_decisions_preserved": "pass",
+        "markdown_issue_review_ids": "pass"
+      }
+    ],
+    "history": [
+      {
+        "checkpoint": "v18",
+        "xml_exact": {
+          "luna": 7,
+          "terra": 8,
+          "sol": 8
+        },
+        "error": "Luna borrowed exposed factory behavior when judging guarded protective setter."
+      },
+      {
+        "checkpoint": "v19",
+        "xml_exact": {
+          "luna": 7,
+          "terra": 8,
+          "sol": 8
+        },
+        "jvm_exact": {
+          "luna": 14,
+          "terra": 13,
+          "sol": 14
+        },
+        "errors": [
+          "Luna borrowed a related setter when judging the unsafe parse; exact-operation facts were not restricted to anchor IDs.",
+          "Terra flagged fixed-path text content overwrite despite no shown path-control or sensitive-content consumer. Retained as an intermittent false positive, not corrected by relabeling."
+        ]
+      }
+    ],
+    "local_artifact_sha256": {
+      "source-oracle-v20.json": "f9e4458791439235cf5e4e35b26485f1511a0a3bffc5bcea953da7d0c752b9cd",
+      "oracle-results-v18.json": "b6f3ade153031fdb2afa9c67506d2541cf28fc6825f65d42f175d5d5d15cd10e",
+      "oracle-results-v19.json": "e14c4f11d37431b7173fb7a236759092dbeb7bc919850dc16590980df5d4c29d",
+      "oracle-regression-v19.json": "749b46f39d46fcdac5d8ffb34fec1a7eb6c9fe6e42a02bc512b63c186dba7cf6",
+      "oracle-results-v20.json": "ff6d914b502da34945a2bea50b8dd7079f4e69d874704fa1b341f3b50806620b",
+      "oracle-regression-v20.json": "2c456ead9da04dda2cd2a3566dd442bbc106258a11d0bbbb076d2c908991a8d6",
+      "oracle-repeat-v20.json": "9237efcade3c41b058743c1b9ade6b7eeae1702384d9d4d785ce401bbb4714df",
+      "report-quality-v20.json": "fb96a6654d078f3de835dffe7ad66571d23d33dd2bca492be4365a1b6fd5eaea",
+      "report-quality-regression-v20.json": "4332e96656f24cfe42d91f0713c3922461486aae9796b320da8e55768b0994d4",
+      "xml-policy-native-tests-final2.log": "b9688c48a2db9ea8042cd9896c3a343a90ea642db07419672a88f70820d23448",
+      "xml-policy-report-tests-final.log": "6c5b9b0a91ff8f6eb4f91b9abf5c36c6d77b9b4c4f4635d7faaf833933b65dc5",
+      "xml-policy-engine-unit-final.log": "9fab9c3e7d2bb48057ac77c0f94782a51fa5e5a3f5d18738248752169a0363fa"
+    },
+    "engine_unit_tests": 157
   }
 }

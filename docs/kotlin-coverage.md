@@ -124,6 +124,12 @@ argument vector does not authorize a request-selected executable, and JVM
 
 ## Remaining parity gaps
 
+The XML policy follow-up validates DOCTYPE rejection and distinct factory
+ownership through bounded source review and isolated direct-call controls.
+Exact operation facts name only declared XML anchors; related configuration
+evidence is context. This does not add native policy-effect propagation or
+prove safety of other XML features, resolvers or configuration lifecycles.
+
 - JDBC factory receivers beyond the bounded canonical factories, prepared-statement execution/protection ownership,
   JdbcTemplate overloads beyond the bounded patterns, Exposed and additional
   persistence APIs; complete protection and branch-join summaries.

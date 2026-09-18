@@ -539,6 +539,78 @@
       "anchor_line": 57,
       "expected_decision": "not_issue",
       "source_reason": "The anchored error respondText writes fixed Invalid Base64 text; the dangerous bytes belong to a different successful response operation."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "Probe.kt",
+      "callable": "main",
+      "rule_id": "kotlin-files-write",
+      "anchor_line": 10,
+      "expected_decision": "not_issue",
+      "source_reason": "The runtime probe writes fixed content to its own newly created temporary file; no request-selected path."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "app.kt",
+      "callable": "rawXml",
+      "rule_id": "kotlin-xml-parse",
+      "anchor_line": 16,
+      "expected_decision": "issue",
+      "source_reason": "Mapped request XML is parsed by a factory explicitly allowing DOCTYPE without external-access restrictions; direct own-file entity expansion was reproduced. A different factory guard does not protect this parser."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "app.kt",
+      "callable": "safeXml",
+      "rule_id": "kotlin-xml-parse",
+      "anchor_line": 23,
+      "expected_decision": "not_issue",
+      "source_reason": "This exact parser comes from a factory rejecting DOCTYPE before request XML is parsed."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "app.kt",
+      "callable": "wrongFactory",
+      "rule_id": "kotlin-xml-parse",
+      "anchor_line": 32,
+      "expected_decision": "issue",
+      "source_reason": "Mapped request XML is parsed by a factory explicitly allowing DOCTYPE without external-access restrictions; direct own-file entity expansion was reproduced. A different factory guard does not protect this parser."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "app.kt",
+      "callable": "rawXml",
+      "rule_id": "kotlin-xml-configuration",
+      "anchor_line": 15,
+      "expected_decision": "issue",
+      "source_reason": "This setter allows DOCTYPE on the factory used to parse request XML without other external-access restrictions."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "app.kt",
+      "callable": "safeXml",
+      "rule_id": "kotlin-xml-configuration",
+      "anchor_line": 22,
+      "expected_decision": "not_issue",
+      "source_reason": "This exact setter rejects DOCTYPE; unsafe parsing through a different factory does not make the anchored protective setter unsafe."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "app.kt",
+      "callable": "wrongFactory",
+      "rule_id": "kotlin-xml-configuration",
+      "anchor_line": 29,
+      "expected_decision": "not_issue",
+      "source_reason": "This exact setter rejects DOCTYPE; unsafe parsing through a different factory does not make the anchored protective setter unsafe."
+    },
+    {
+      "fixture": "kotlin-xml-policies",
+      "path": "app.kt",
+      "callable": "wrongFactory",
+      "rule_id": "kotlin-xml-configuration",
+      "anchor_line": 31,
+      "expected_decision": "issue",
+      "source_reason": "This setter allows DOCTYPE on the factory used to parse request XML without other external-access restrictions."
     }
   ]
 }
