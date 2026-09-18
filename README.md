@@ -18,7 +18,7 @@ Scan candidates require review before they become confirmed findings. The CLI wo
 The repository includes a release installer for PowerShell 7. It requires GitHub CLI (`gh`) with attestation verification support; GitHub login is not required.
 
 ```powershell
-./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.3.0
+./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.4.0
 ```
 
 The installer verifies release checksums and provenance, then returns the executable path. See the [installation instructions](skills/mehscan-security/SKILL.md) for supported assets and source commit pinning. Release downloads are also available on the [releases page](https://github.com/meh-security/mehscan/releases).
@@ -68,7 +68,7 @@ A complete review requires a validated response for every request in the manifes
 - [Review and reporting formats](docs/output-contract.md)
 - [AI reviewer contract](docs/ai-reviewer-contract.md)
 - [AI triage contract](docs/ai-triage-contract.md)
-- [Latest release notes](docs/release-notes-v0.3.0.md)
+- [Latest release notes](docs/release-notes-v0.4.0.md)
 
 ## License
 
