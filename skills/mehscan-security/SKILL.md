@@ -15,7 +15,10 @@ Resolve the executable in this order:
 
 1. Honor a user-supplied executable.
 2. Check for `mehscan` on `PATH` using the host's command lookup. Do not infer
-   availability from a previous task or a filename elsewhere on disk.
+   availability from a previous task or a filename elsewhere on disk. If present,
+   check its version and use its absolute path; do not install Mehscan or setup
+   tools. If an explicitly requested version differs, or a source digest cannot
+   be established, report the mismatch instead of implicitly replacing it.
 3. In a Mehscan source checkout, check `target/release/mehscan` (or
    `mehscan.exe` on Windows).
 4. If no executable is available, read

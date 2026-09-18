@@ -56,6 +56,15 @@ Use a source build on a compatible toolchain when a release binary cannot run.
 
 ## Prerequisites
 
+On every platform, first look up `mehscan` on `PATH` and check `--version`.
+If available, reuse its absolute path and skip all installation prerequisites.
+An explicit version mismatch, failed version check, or source-provenance request
+that cannot be satisfied stops with an explanation; it does not trigger an
+implicit installation. Only explicitly requested reinstallation uses
+`--force-download` (Windows: `-ForceDownload`). The Bash entry point performs
+this lookup before requiring Python, and neither installer needs `gh` to reuse
+an existing executable. The PowerShell installer accepts Windows only.
+
 GitHub CLI officially supports Linux, macOS, and Windows. macOS installation
 uses `brew install gh`; Linux offers official apt and RPM repositories.
 GitHub also provides [precompiled binaries](https://github.com/cli/cli/releases)
@@ -142,7 +151,8 @@ Omitting `--version` (PowerShell: `-Version`) selects the latest release when
 installation is necessary. Append `--version 0.4.0` only when that release was
 requested; append `--install-directory PATH` for a requested destination
 (PowerShell: `-InstallDirectory PATH`). Use `--force-download` to bypass reuse
-of a suitable binary on `PATH` (PowerShell: `-ForceDownload`).
+of an existing binary on `PATH` only for explicitly requested reinstallation
+(PowerShell: `-ForceDownload`).
 `--source-digest COMMIT` requires an exact version and an independently trusted
 source commit (PowerShell: `-SourceDigest COMMIT`). Source commit pinning and
 failure handling remain as specified in [the skill](../SKILL.md).

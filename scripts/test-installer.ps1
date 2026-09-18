@@ -9,7 +9,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($installerPath, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'Installer syntax errors' }
 # Load selected production functions without executing the installer's entry point.
-foreach ($name in @('Normalize-VersionTag', 'Invoke-GitHubCli')) {
+foreach ($name in @('Normalize-VersionTag', 'Invoke-GitHubCli', 'Resolve-InstalledMehscan')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }
@@ -37,6 +37,25 @@ $temporaryBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $testRoot = Join-Path $temporaryBase "mehscan-installer-tests-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 try {
+    $script:existingPath = Join-Path $testRoot 'mehscan.exe'
+    $script:existingVersion = '0.2.0'
+    function Get-Command { [pscustomobject]@{ Source = $script:existingPath } }
+    function Read-MehscanVersion { $script:existingVersion }
+    try {
+        foreach ($tag in @('', 'v0.2.0')) {
+            if ((Resolve-InstalledMehscan -RequestedTag $tag) -cne $existingPath) { throw 'PATH reuse failed' }
+            $passed++
+        }
+        Assert-Rejected 'PATH version mismatch without installation' { Resolve-InstalledMehscan -RequestedTag 'v9.9.9' }
+        Assert-Rejected 'PATH source constraint without installation' { Resolve-InstalledMehscan -RequestedTag 'v0.2.0' -SourceDigest ('a' * 40) }
+        $script:existingVersion = $null
+        Assert-Rejected 'broken PATH version without installation' { Resolve-InstalledMehscan }
+        if ($null -ne (Resolve-InstalledMehscan -ForceDownload)) { throw 'Explicit force did not bypass PATH' }
+        $passed++
+    } finally {
+        Remove-Item Function:Get-Command
+        Remove-Item Function:Read-MehscanVersion
+    }
     Assert-Rejected 'invalid version argument' { & $installerPath -Version '../../main' }
     Assert-Rejected 'source pin without version' { & $installerPath -SourceDigest ('a' * 40) }
     Assert-Rejected 'invalid source commit argument' { & $installerPath -Version 0.2.0 -SourceDigest 'not-a-commit' }

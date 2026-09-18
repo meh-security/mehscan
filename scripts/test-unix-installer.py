@@ -175,6 +175,37 @@ class InstallerTests(unittest.TestCase):
             transport.assert_not_called()
             execution.assert_not_called()
 
+    def test_path_precedes_platform_verifier_and_download(self):
+        for host in ('Linux', 'Darwin'):
+            for version in (None, TAG, '0.2.0'):
+                options = argparse.Namespace(version=version, source_digest=None,
+                                             force_download=False, install_directory=None)
+                with patch.object(installer.platform, 'system', return_value=host), \
+                     patch.object(installer.shutil, 'which', return_value='/existing/mehscan') as lookup, \
+                     patch.object(installer, 'binary_version', return_value='mehscan 0.2.0'), \
+                     patch.object(installer, 'target') as detection, \
+                     patch.object(installer, 'run_verifier') as verifier, \
+                     patch.object(installer, 'download') as transport:
+                    self.assertEqual(installer.install(options), Path('/existing/mehscan').resolve())
+                    lookup.assert_called_once_with('mehscan')
+                    detection.assert_not_called()
+                    verifier.assert_not_called()
+                    transport.assert_not_called()
+
+    def test_existing_path_constraints_never_trigger_install(self):
+        for version, pin, failure in (('9.9.9', None, None), (TAG, 'a' * 40, None),
+                                     (TAG, None, ValueError('invalid executable version'))):
+            options = argparse.Namespace(version=version, source_digest=pin,
+                                         force_download=False, install_directory=None)
+            with patch.object(installer.shutil, 'which', return_value='/existing/mehscan'), \
+                 patch.object(installer, 'binary_version', return_value='mehscan 0.2.0', side_effect=failure), \
+                 patch.object(installer, 'download') as transport, \
+                 patch.object(installer, 'run_verifier') as verifier:
+                with self.assertRaises(ValueError):
+                    installer.install(options)
+                transport.assert_not_called()
+                verifier.assert_not_called()
+
     def test_install_flow_and_failed_verification_never_executes(self):
         payload = archive_bytes()
         digest = hashlib.sha256(payload).hexdigest()
@@ -214,6 +245,29 @@ class InstallerTests(unittest.TestCase):
                         installer.install(options)
                     execution.assert_not_called()
                 self.assertFalse(any(destination.glob('.mehscan.*')))
+
+    @unittest.skipUnless(os.name == 'posix', 'Unix filesystem contract')
+    def test_bash_path_reuse_without_python_or_gh(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            binary = directory / 'mehscan'
+            binary.write_text('#!/bin/sh\nprintf "mehscan 0.2.0\\n"\n')
+            binary.chmod(0o755)
+            (directory / 'dirname').symlink_to(installer.shutil.which('dirname'))
+            bash = installer.shutil.which('bash')
+            script = ROOT / 'skills/mehscan-security/scripts/install-mehscan.sh'
+            environment = dict(os.environ, PATH=str(directory))
+            for args in ([], ['--version', '0.2.0'], ['--version=v0.2.0']):
+                result = subprocess.run([bash, str(script)] + args, env=environment,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), str(binary))
+            for args in (['--version', '9.9.9'], ['--version', '0.2.0', '--source-digest', 'a' * 40]):
+                result = subprocess.run([bash, str(script)] + args, env=environment,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('No installation attempted', result.stderr)
+                self.assertNotIn('Python', result.stderr)
 
     @unittest.skipUnless(os.name == 'posix', 'Unix filesystem contract')
     def test_preserves_unrelated_path_entries(self):

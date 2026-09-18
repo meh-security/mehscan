@@ -15,6 +15,11 @@ Scan candidates require review before they become confirmed findings. The CLI wo
 
 ## Install
 
+First check for `mehscan` on `PATH` and run `mehscan --version`. Reuse an
+available executable; setup tools and downloads are needed only when it is
+absent. An explicit version mismatch is reported without installing another
+copy. The PowerShell installer is Windows-only.
+
 We recommend GitHub CLI (`gh`) for release installation: its attestation verifier checks that the downloaded archive was built by Mehscan's expected GitHub Actions workflow from the expected source, rather than relying on a checksum alone. Both installers require `gh` with attestation verification support, without GitHub login. Linux/macOS use Bash and Python 3.9+; Windows uses PowerShell 7. These tools are installation dependencies only.
 
 Linux/macOS (no PowerShell):

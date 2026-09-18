@@ -215,16 +215,17 @@ def install(options):
     require(not options.source_digest or (requested and
             re.fullmatch(r'[0-9a-f]{40}', options.source_digest)),
             'Source digest requires exact version and lowercase 40-character commit')
-    host, architecture = target()
-    if not options.force_download and not options.source_digest:
+    if not options.force_download:
         existing = shutil.which('mehscan')
         if existing:
-            try:
-                version = binary_version(existing)
-                if not requested or version == 'mehscan ' + requested[1:]:
-                    return Path(existing).resolve()
-            except (OSError, ValueError, subprocess.SubprocessError):
-                pass
+            version = binary_version(existing)
+            require(not requested or version == 'mehscan ' + requested[1:],
+                    'Mehscan is on PATH but its version differs from the request. No installation attempted.')
+            require(not options.source_digest,
+                    'Mehscan is on PATH; version cannot establish source provenance. No installation '
+                    'attempted. Explicit verified reinstallation requires --force-download.')
+            return Path(existing).resolve()
+    host, architecture = target()
     require(shutil.which('gh'), 'Recommend installing GitHub CLI for provenance verification; '
             'otherwise build from trusted source with Cargo. No unverified download fallback.')
     run_verifier(['gh', 'attestation', 'verify', '--help'])
