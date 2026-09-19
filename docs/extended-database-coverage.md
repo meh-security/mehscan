@@ -14,15 +14,15 @@ equality selectors and fixed documents are not injection proof.
 
 | Language | Existing SQL / NoSQL mechanics | Gaps addressed by extended rules | Remaining identity / mechanic limits |
 | --- | --- | --- | --- |
-| C | SQLite execution and preparation; no embedded MongoDB client filter rule | PostgreSQL libpq and MySQL query-text positions; MongoDB C client read, delete, update and aggregate filter positions | Client wrappers, function pointers, ODBC and wide-character SQL APIs; no compiler/linker identity resolution |
-| C++ | SQLite; no typed MongoDB collection filter rule | PostgreSQL/MySQL native APIs, MongoDB C APIs and declared `mongocxx::collection` filters | Qt/ODBC database adapters, inferred collection factories and cross-file aliases |
-| C# | SqlCommand, typed CommandText assignments, EF/EF Core raw SQL and typed Dapper calls | Dynamic SQL composition facts for command constructors, CommandText, Dapper and EF raw-query/execute APIs; additional provider commands, declared MongoDB collection filters and bounded controller-to-service-to-repository parameter handoffs | Composition follows direct expressions and bounded same-callable aliases; indirect command factories, arbitrary builders, inferred MongoDB factories, generic type aliases and chains deeper than two formal-parameter calls are not universal |
+| C | SQLite execution and preparation; no embedded MongoDB client filter rule | PostgreSQL libpq, MySQL and ODBC query-text positions; MongoDB C client read, delete, update and aggregate filter positions | Client wrappers, function pointers and no compiler/linker identity resolution |
+| C++ | SQLite; no typed MongoDB collection filter rule | PostgreSQL/MySQL/ODBC native APIs, MongoDB C APIs and declared `mongocxx::collection` filters | Qt database adapters, inferred collection factories and cross-file aliases |
+| C# | SqlCommand, typed CommandText assignments, EF/EF Core raw SQL and typed Dapper calls | Typed object-initializer CommandText, data-adapter and batch-command query text, broader Dapper terminal APIs, dynamic SQL composition facts, additional provider commands and declared MongoDB collection filters | Composition follows direct expressions and bounded same-callable aliases; indirect command factories, arbitrary builders, inferred MongoDB factories and generic type aliases are not universal |
 | Java | JDBC query/preparation, typed Spring JDBC and JPA queries/binding | JDBC execute overloads, large updates, batch text and callable preparation; declared Hibernate/JDO/Vert.x query receivers; MongoDB collection filters and raw document/query construction | Turbine/Torque peers, arbitrary JDO overload dispatch, Hibernate sqlRestriction, mutable BSON put/append assembly, inferred asynchronous factories, cross-file receiver factories |
 | Kotlin | Typed JDBC, Spring JDBC, JPA and canonical Exposed SQL strings | JDBC large updates, declared Hibernate/JDO/Vert.x query receivers, typed MongoDB filters and raw document/query construction | Callback/overload dispatch, extension functions, inferred SDK factories and compiler effects across lambdas |
 | JavaScript | Conventional SQL receivers, driver-specific MySQL/PostgreSQL handling, MongoDB predicates/operator selectors and project summaries | Imported Knex raw clauses, SQLite methods, mssql requests, broader SQL execute/unsafe entrypoints; proven MongoDB filters/pipelines; DynamoDB v2 query requests and v3 query-command construction | Sequelize literal expression construction, arbitrary dependency injection, wrapper modules, unresolved collection aliases, computed methods and dynamic SDK dispatch |
 | TypeScript | Node SQL/NoSQL analyzers and conventional SQL receivers | Same extended Node mechanics, including imported constructors, aliases and namespace imports | Type-only imported interfaces and injected/inferred fields are not general receiver proof |
 | TSX | Node SQL/NoSQL analyzers in parsed TSX | Same extended Node mechanics | Same bounded Node receiver inference; JSX/framework dispatch does not establish a database identity |
-| Python | DB-API execute methods, framework-specific SQLAlchemy observations; no general imported MongoDB filter rule | Renamed DB-API producers and class connection properties; asyncpg fetch/prepare, additional native/async driver imports, SQLAlchemy Session/text/driver SQL; Django RawSQL and locally declared model-manager raw queries; PyMongo/Motor filters and DynamoDB expressions | Imported application model definitions, Django extra/custom expressions, arbitrary async context managers, injected connection types and wrapper factories |
+| Python | DB-API execute methods, framework-specific SQLAlchemy observations; no general imported MongoDB filter rule | Renamed DB-API producers and class connection properties; DB-API stored-procedure selection; asyncpg fetch/prepare, additional native/async driver imports, SQLAlchemy Session/text/driver SQL; Django RawSQL and locally declared model-manager raw queries; PyMongo/Motor filters and DynamoDB expressions | Imported application model definitions, Django extra/custom expressions, arbitrary async context managers, injected connection types and wrapper factories |
 | PHP | Native mysqli/PDO calls, typed native parameters and bounded include-based connections | Unique same-class constructor connection properties; native PostgreSQL functions; Laravel SQL facade and raw builder clauses, declared Doctrine query/builder receivers; MongoDB Driver Query construction | Dynamic/untyped properties, connection promotion and arbitrary includes; untyped WordPress bootstrap globals, generic Laravel validators, dynamic builder identifiers and joins, injected SDK properties and wrapper factories |
 | Go | database/sql query methods, dynamic preparation, GORM v1, MongoDB filters/writes and project summaries | QueryRow and preparation siblings; typed pgx context/name/query positions and sqlx destination/query positions; GORM v2 imports and additional raw clauses; MongoDB v2 imports, delete/aggregate and mutation filters | Inferred pgx/sqlx factories, legacy pg/pgx Ex overloads and go-pg ORM builders; GORM/MongoDB analyzers retain existing file-import gates rather than compiler dispatch |
 | Rust | Canonical SQLx/Diesel functions and locally constructed postgres clients | PostgreSQL simple/batch text, SQLx query-with-bindings functions, declared rusqlite/tokio-postgres/MySQL client text APIs, declared MongoDB collection filters | Destructured async client factories, inferred MongoDB collections, macros and compiler-resolved trait dispatch |
@@ -59,22 +59,19 @@ This is not a claim of exhaustive database-driver or backend coverage.
 - PHP constructor connection fields require one unconditional assignment in the
   constructor of the same lexical class. Native typed parameters and typed SDK
   parameters exclude receiver replacement and unknown prior helper mutation.
-- C# project summaries can follow a controller-bound parameter through one
-  service method and one repository-like method when both calls forward the
-  exact formal parameter and each syntactic target is unique.
+- C# project summaries may add caller context when exact syntactic targets are
+  already cheap and unambiguous. Sink admission and AI review do not depend on
+  these summaries or on a fixed number of caller hops.
 - SQL sinks in every supported language classify direct interpolation,
   concatenation, formatting, and bounded same-callable aliases independently
-  of repository handoff recognition. C# additionally identifies integral,
+  of repository handoff recognition. Nonliteral operands at recognized raw
+  query boundaries remain decision-critical even when local composition or
+  origin cannot be resolved. C# additionally identifies integral,
   Boolean and `Guid` parameters as constrained representations. Separately
   bound query values are not labeled as dynamic SQL composition.
-- In every supported language, when a decision-critical sink is inside a
-  uniquely named callable, review context can include at most two caller layers.
-  Each layer must forward the relevant value at the exact formal-parameter
-  position, either unchanged or through member/index access. Transformed
-  arguments and ambiguous callable names stop the handoff, while an exact
-  recognized request-source argument can terminate it with the enclosing caller
-  excerpt. This exposes common handler-to-service-to-repository shapes without
-  building a CFG or asserting a source-to-sink flow.
+- Review context may include a small exact-caller excerpt as optional
+  enrichment. Missing caller context never suppresses a strong typed sink, and
+  the scanner does not claim a CFG or whole-program source-to-sink flow.
 - pgx SQL follows its context argument; pgx Prepare SQL follows context and
   statement name. sqlx Get/Select SQL follows the destination. These operands
   are not interchangeable with database/sql argument positions.

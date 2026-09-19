@@ -240,6 +240,7 @@ pub(crate) fn scan_source(
                         | "typescript-database-query"
                         | "tsx-database-query"
                         | "python-database-query"
+                        | "python-stored-procedure-call"
                 ) {
                     let receiver = matched.get_env().get_match("DATABASE");
                     if receiver.is_some_and(|receiver| {

@@ -32,8 +32,8 @@ fn database_query_variants_preserve_sql_operand_across_languages() {
         ),
         (
             "app.py",
-            "import sqlite3\nclass Store:\n    def __init__(self):\n        self.db = sqlite3.connect('app.db')\n    def run(self, sql):\n        renamed = self.db.cursor()\n        self.db.execute(sql)\n        renamed.executemany(sql, [])\n        self.db.executescript(sql)\n",
-            3,
+            "import sqlite3\nclass Store:\n    def __init__(self):\n        self.db = sqlite3.connect('app.db')\n    def run(self, sql):\n        renamed = self.db.cursor()\n        self.db.execute(sql)\n        renamed.executemany(sql, [])\n        renamed.callproc(sql, [])\n        self.db.executescript(sql)\n",
+            4,
         ),
         (
             "app.go",
@@ -57,13 +57,13 @@ fn database_query_variants_preserve_sql_operand_across_languages() {
         ),
         (
             "app.c",
-            "void run(char *sql) { PQexec(db, sql); PQexecParams(db, sql, 0, 0, 0, 0, 0, 0); mysql_real_query(db, sql, 10); mysql_stmt_prepare(stmt, sql, 10); }",
-            4,
+            "void run(char *sql) { PQexec(db, sql); PQexecParams(db, sql, 0, 0, 0, 0, 0, 0); mysql_real_query(db, sql, 10); mysql_stmt_prepare(stmt, sql, 10); SQLExecDirect(stmt, sql, 10); SQLPrepareW(stmt, sql, 10); }",
+            6,
         ),
         (
             "app.cpp",
-            "void run(char *sql) { PQexec(db, sql); PQexecParams(db, sql, 0, 0, 0, 0, 0, 0); mysql_real_query(db, sql, 10); mysql_stmt_prepare(stmt, sql, 10); }",
-            4,
+            "void run(char *sql) { PQexec(db, sql); PQexecParams(db, sql, 0, 0, 0, 0, 0, 0); mysql_real_query(db, sql, 10); mysql_stmt_prepare(stmt, sql, 10); SQLExecDirect(stmt, sql, 10); SQLPrepareW(stmt, sql, 10); }",
+            6,
         ),
     ];
     for (path, source, _) in cases {
@@ -83,6 +83,14 @@ fn database_query_variants_preserve_sql_operand_across_languages() {
                 .iter()
                 .all(|e| e.captures["query"].text == "sql" || e.captures["query"].text == "$sql"),
             "{path}"
+        );
+        assert!(
+            sinks.iter().all(|e| {
+                e.tags
+                    .iter()
+                    .any(|tag| tag == "review-origin:decision-critical")
+            }),
+            "{path}: nonliteral query operands must remain reviewable"
         );
     }
     std::fs::remove_dir_all(root).unwrap();

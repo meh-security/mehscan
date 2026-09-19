@@ -19,6 +19,32 @@ public class CsharpSinksController
     }
 
     [HttpGet]
+    public object InitializedCommandText([FromQuery] string query)
+    {
+        var command = new SqlCommand { CommandText = query };
+        return command;
+    }
+
+    [HttpGet]
+    public object TargetTypedCommandText([FromQuery] string query)
+    {
+        SqlCommand command = new() { CommandText = query };
+        return command;
+    }
+
+    [HttpGet]
+    public object DynamicStoredProcedure([FromQuery] string procedure)
+    {
+        var command = new SqlCommand
+        {
+            CommandText = procedure,
+            CommandType = CommandType.StoredProcedure,
+        };
+        command.Parameters.AddWithValue("@id", 1);
+        return command;
+    }
+
+    [HttpGet]
     public object DapperQuery([FromQuery] string query, IDbConnection database)
     {
         return database.Query<Row>(query);
@@ -34,6 +60,12 @@ public class CsharpSinksController
     public object DapperMultiple([FromQuery] string query, SqlConnection database)
     {
         return database.QueryMultiple(query);
+    }
+
+    [HttpGet]
+    public object DapperSingle([FromQuery] string query, IDbConnection database)
+    {
+        return database.QuerySingle<Row>(query);
     }
 
     [HttpGet]

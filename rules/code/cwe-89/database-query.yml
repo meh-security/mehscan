@@ -33,6 +33,26 @@
         captures: { query: QUERY }
       - pattern: new OleDbCommand($QUERY, $$$ARGUMENTS)
         captures: { query: QUERY }
+      - pattern: new SqlBatchCommand($QUERY)
+        captures: { query: QUERY }
+      - pattern: new NpgsqlBatchCommand($QUERY)
+        captures: { query: QUERY }
+      - pattern: new MySqlBatchCommand($QUERY)
+        captures: { query: QUERY }
+      - pattern: new SqlDataAdapter($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: new NpgsqlDataAdapter($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: new MySqlDataAdapter($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: new SQLiteDataAdapter($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: new OracleDataAdapter($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: new OdbcDataAdapter($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: new OleDbDataAdapter($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
       - pattern: $DATABASE.ExecuteSqlRawAsync($QUERY)
         captures: { query: QUERY }
       - pattern: $DATABASE.ExecuteSqlRawAsync($QUERY, $$$ARGUMENTS)
@@ -182,6 +202,27 @@
       - https://cwe.mitre.org/data/definitions/89.html
       - https://docs.python.org/3/library/sqlite3.html#sqlite3.Cursor.execute
 
+- id: python-stored-procedure-call
+  version: 1
+  title: Python DB-API stored-procedure selection
+  language: python
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: $DATABASE.callproc($QUERY)
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: $DATABASE.callproc($QUERY, $$$ARGUMENTS)
+        captures: { database: DATABASE, query: QUERY }
+  tags: [database, sql, stored-procedure, query-role:stored-procedure-name]
+  ai: *database_guidance
+  provenance:
+    note: Python DB-API procedure-name operands are mapped separately from bound procedure arguments.
+    references:
+      - https://peps.python.org/pep-0249/#callproc
+      - https://cwe.mitre.org/data/definitions/89.html
+
 - id: go-database-query
   version: 1
   title: Go database query execution
@@ -324,7 +365,7 @@
 
 - id: c-client-database-query
   version: 1
-  title: C PostgreSQL and MySQL query text entrypoints
+  title: C PostgreSQL, MySQL and ODBC query text entrypoints
   language: c
   kind: sink
   capability: database_query
@@ -355,6 +396,30 @@
         context: void pattern_context() { mysql_stmt_prepare($STATEMENT, $QUERY, $LENGTH); }
         selector: call_expression
         captures: { query: QUERY }
+      - pattern: SQLExecDirect($STATEMENT, $QUERY, $LENGTH)
+        context: void pattern_context() { SQLExecDirect($STATEMENT, $QUERY, $LENGTH); }
+        selector: call_expression
+        captures: { query: QUERY }
+      - pattern: SQLExecDirectA($STATEMENT, $QUERY, $LENGTH)
+        context: void pattern_context() { SQLExecDirectA($STATEMENT, $QUERY, $LENGTH); }
+        selector: call_expression
+        captures: { query: QUERY }
+      - pattern: SQLExecDirectW($STATEMENT, $QUERY, $LENGTH)
+        context: void pattern_context() { SQLExecDirectW($STATEMENT, $QUERY, $LENGTH); }
+        selector: call_expression
+        captures: { query: QUERY }
+      - pattern: SQLPrepare($STATEMENT, $QUERY, $LENGTH)
+        context: void pattern_context() { SQLPrepare($STATEMENT, $QUERY, $LENGTH); }
+        selector: call_expression
+        captures: { query: QUERY }
+      - pattern: SQLPrepareA($STATEMENT, $QUERY, $LENGTH)
+        context: void pattern_context() { SQLPrepareA($STATEMENT, $QUERY, $LENGTH); }
+        selector: call_expression
+        captures: { query: QUERY }
+      - pattern: SQLPrepareW($STATEMENT, $QUERY, $LENGTH)
+        context: void pattern_context() { SQLPrepareW($STATEMENT, $QUERY, $LENGTH); }
+        selector: call_expression
+        captures: { query: QUERY }
   tags: [database, sql, native]
   ai: &native_client_database_guidance
     investigate:
@@ -366,14 +431,15 @@
     exclude:
       - a constant query, prepared handle, or separately bound values alone are not vulnerability proof
   provenance: &native_client_database_provenance
-    note: Query-text positions in PostgreSQL libpq and MySQL C client APIs; prepared handles and bound values alone are not query text.
+    note: Query-text positions in PostgreSQL libpq, MySQL C client and ODBC APIs; prepared handles and bound values alone are not query text.
     references:
       - https://www.postgresql.org/docs/current/libpq-exec.html
       - https://dev.mysql.com/doc/c-api/8.4/en/mysql-real-query.html
+      - https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlexecdirect-function
 
 - id: cpp-client-database-query
   version: 1
-  title: C++ PostgreSQL and MySQL query text entrypoints
+  title: C++ PostgreSQL, MySQL and ODBC query text entrypoints
   language: cpp
   kind: sink
   capability: database_query

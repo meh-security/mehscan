@@ -67,7 +67,14 @@ fn annotate_dynamic_sql(
     root: &Node<'_, StrDoc<SupportLang>>,
     item: &mut Evidence,
 ) {
-    if has_marker(item) || item.tags.iter().any(|tag| tag == "nosql") {
+    if item.tags.iter().any(|tag| tag == "nosql")
+        || item.tags.iter().any(|tag| {
+            matches!(
+                tag.as_str(),
+                "dynamic-query-composition" | "dynamic-query-operand"
+            )
+        })
+    {
         return;
     }
     let Some(query) = item.captures.get("query").cloned() else {
@@ -83,6 +90,22 @@ fn annotate_dynamic_sql(
         bounded_query_composition(language, source, root, item, &query, query.text.trim())
     };
     let Some((style, mut references)) = composition else {
+        if query_is_fixed_local_alias(language, source, root, item, &query)
+            || !capture_is_dynamic(item, &["query"])
+        {
+            return;
+        }
+        push_tag(&mut item.tags, "dynamic-query-operand");
+        push_tag(&mut item.tags, "review-origin:decision-critical");
+        push_tag(&mut item.tags, "query-operand:nonliteral");
+        push_tag(&mut item.tags, "dynamic-origin:unknown");
+        item.captures.insert(
+            "dynamic_operand".to_string(),
+            Capture {
+                text: query.text.trim().to_string(),
+                location: query.location,
+            },
+        );
         return;
     };
     if references.is_empty() {
@@ -111,6 +134,40 @@ fn annotate_dynamic_sql(
             },
         );
     }
+}
+
+fn query_is_fixed_local_alias(
+    language: Language,
+    source: &str,
+    root: &Node<'_, StrDoc<SupportLang>>,
+    item: &Evidence,
+    query_capture: &Capture,
+) -> bool {
+    let name = query_capture
+        .text
+        .trim()
+        .trim_start_matches('&')
+        .trim_start_matches('$');
+    if !plain_identifier(name) {
+        return false;
+    }
+    let Some(scope_start) = callable_start(root, query_capture) else {
+        return false;
+    };
+    let Some(prefix) = source.get(scope_start..item.location.start.byte_offset.min(source.len()))
+    else {
+        return false;
+    };
+    for statement in bounded_statements(prefix).into_iter().rev().take(96) {
+        let trimmed = statement.trim();
+        if mutation_value(trimmed, name, language).is_some() {
+            return false;
+        }
+        if matches_assignment_to(trimmed, name, language) {
+            return assignment_value(trimmed).is_some_and(is_quoted_literal);
+        }
+    }
+    false
 }
 
 fn bounded_query_composition(

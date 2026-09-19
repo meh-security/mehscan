@@ -4302,6 +4302,8 @@ fn is_advisory_observation_question(question: &str) -> bool {
 #[derive(Clone, Copy)]
 enum DecisionCriticalBoundary {
     Sql,
+    SqlOperand,
+    SqlIdentifier,
     TrustedHtml,
     ProcessExecutable,
     ShellCommand,
@@ -4330,6 +4332,8 @@ impl DecisionCriticalOrigin<'_> {
     fn relationship(self) -> &'static str {
         match self.boundary {
             DecisionCriticalBoundary::Sql => "bounded_dynamic_query_composition",
+            DecisionCriticalBoundary::SqlOperand => "bounded_dynamic_query_operand",
+            DecisionCriticalBoundary::SqlIdentifier => "bounded_dynamic_sql_identifier",
             DecisionCriticalBoundary::TrustedHtml => "bounded_trusted_html_interpretation",
             DecisionCriticalBoundary::ProcessExecutable => "bounded_dynamic_executable_selection",
             DecisionCriticalBoundary::ShellCommand => "bounded_shell_command_interpretation",
@@ -4354,6 +4358,12 @@ impl DecisionCriticalOrigin<'_> {
         match (self.boundary, self.language) {
             (DecisionCriticalBoundary::Sql, "C#") => {
                 "Review dynamically composed C# SQL for CWE-89"
+            }
+            (DecisionCriticalBoundary::SqlOperand, "C#") => {
+                "Review nonliteral C# SQL operand for CWE-89"
+            }
+            (DecisionCriticalBoundary::SqlIdentifier, "C#") => {
+                "Review dynamic C# stored-procedure selection"
             }
             (DecisionCriticalBoundary::TrustedHtml, "C#") => {
                 "Review dynamic C# trusted HTML output for CWE-79"
@@ -4393,6 +4403,10 @@ impl DecisionCriticalOrigin<'_> {
                 "Review dynamic C# XPath expression for CWE-643"
             }
             (DecisionCriticalBoundary::Sql, _) => "Review dynamically composed SQL for CWE-89",
+            (DecisionCriticalBoundary::SqlOperand, _) => "Review nonliteral SQL operand for CWE-89",
+            (DecisionCriticalBoundary::SqlIdentifier, _) => {
+                "Review dynamic SQL identifier selection"
+            }
             (DecisionCriticalBoundary::TrustedHtml, _) => {
                 "Review dynamic trusted HTML output for CWE-79"
             }
@@ -4431,6 +4445,8 @@ impl DecisionCriticalOrigin<'_> {
     fn security_question(self) -> String {
         match self.boundary {
             DecisionCriticalBoundary::Sql => "Can the dynamic operand incorporated into executable SQL be influenced by an attacker, or is it affirmatively restricted to a safe fixed, numeric, enum, or allowlisted value?".to_string(),
+            DecisionCriticalBoundary::SqlOperand => "Can the nonliteral raw-query operand be influenced by an attacker, or is its complete query structure fixed with untrusted values supplied only through bound parameters?".to_string(),
+            DecisionCriticalBoundary::SqlIdentifier => "Can an attacker select the stored procedure or SQL identifier used by this database operation, or is the identifier fixed or restricted to an exact server-owned allowlist?".to_string(),
             DecisionCriticalBoundary::TrustedHtml => "Can the runtime value passed across this explicit HTML trust boundary be influenced by an attacker, or is it sanitized for the exact browser context before escaping is bypassed?".to_string(),
             DecisionCriticalBoundary::ProcessExecutable => "Can an attacker influence the executable selected by this process launch, or is it chosen from an exact server-owned allowlist?".to_string(),
             DecisionCriticalBoundary::ShellCommand => "Can an attacker influence text interpreted by this command shell, or is every dynamic value kept outside shell grammar under an exact allowlist?".to_string(),
@@ -4452,6 +4468,14 @@ impl DecisionCriticalOrigin<'_> {
             DecisionCriticalBoundary::Sql => format!(
                 "Is dynamic SQL operand `{}` used by this {} attacker-controlled at any production call site, or is it affirmatively restricted before composition to a fixed, numeric, enum, or exact allowlisted value?",
                 self.operand, self.style
+            ),
+            DecisionCriticalBoundary::SqlOperand => format!(
+                "Is nonliteral raw-query operand `{}` attacker-controlled at any production call site, or is its complete query structure fixed with untrusted values supplied only through bound parameters?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::SqlIdentifier => format!(
+                "Can attacker-controlled input select stored procedure or SQL identifier `{}`, or is that identifier fixed or restricted to an exact server-owned allowlist?",
+                self.operand
             ),
             DecisionCriticalBoundary::TrustedHtml => format!(
                 "Can dynamic trusted-HTML operand `{}` contain attacker-controlled markup at this {} boundary, or is it sanitized for the exact browser context before escaping is bypassed?",
@@ -4556,6 +4580,10 @@ impl DecisionCriticalOrigin<'_> {
                     DecisionCriticalBoundary::LdapDistinguishedName =>
                         "LDAP distinguished-name interpretation",
                     DecisionCriticalBoundary::XpathExpression => "XPath expression interpretation",
+                    DecisionCriticalBoundary::SqlOperand => "raw SQL query interpretation",
+                    DecisionCriticalBoundary::SqlIdentifier => {
+                        "stored procedure or SQL identifier selection"
+                    }
                     DecisionCriticalBoundary::Sql => unreachable!(),
                 },
                 self.style
@@ -4598,6 +4626,19 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
             && item
                 .tags
                 .iter()
+                .any(|tag| tag == "query-role:stored-procedure-name")
+        {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::SqlIdentifier,
+                "stored-procedure command target",
+                &["dynamic_operand", "query"],
+                false,
+            )?)
+        } else if item.capability == Capability::DatabaseQuery
+            && item
+                .tags
+                .iter()
                 .any(|tag| tag == "dynamic-query-composition")
         {
             let style = item
@@ -4620,6 +4661,16 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
                     .iter()
                     .any(|tag| tag == "dynamic-origin:constrained-scalar"),
             })
+        } else if item.capability == Capability::DatabaseQuery
+            && item.tags.iter().any(|tag| tag == "dynamic-query-operand")
+        {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::SqlOperand,
+                "raw-query API",
+                &["dynamic_operand", "query"],
+                false,
+            )?)
         } else if item.capability == Capability::HtmlOutput {
             Some(decision_origin_from_capture(
                 item,
