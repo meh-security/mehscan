@@ -157,8 +157,10 @@ lexical caller index only when decision-critical observations exist. It follows
 at most two exact-name caller layers, requires each callable to have one unique
 repository definition, and requires the relevant formal parameter to be passed
 unchanged or through member/index access at the same argument position.
-Transformed arguments and ambiguous definitions stop traversal. This supplies
-handler/service/repository excerpts without claiming deterministic dataflow.
+An exact recognized request-source argument can terminate the chain and supply
+its caller excerpt. Other transformed arguments and ambiguous definitions stop
+traversal. This supplies handler/service/repository excerpts without claiming
+deterministic dataflow.
 
 URL, redirect, and path cases remain dependent on request-role evidence and are
 not promoted from a generic nonliteral sink.

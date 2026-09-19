@@ -7198,7 +7198,11 @@ impl BoundedCallerIndex {
                             forwarded_parameter_index(argument, &caller.caller_parameters)
                         })
                         .collect::<BTreeSet<_>>();
-                    if forwarded.is_empty() {
+                    let terminal_request_source = tracked_parameters
+                        .iter()
+                        .filter_map(|index| caller.arguments.get(*index))
+                        .any(|argument| exact_request_source_argument(language, argument));
+                    if forwarded.is_empty() && !terminal_request_source {
                         continue;
                     }
                     if facts.len() == limit {
@@ -7215,7 +7219,9 @@ impl BoundedCallerIndex {
                         location: caller.location.clone(),
                         excerpt: caller.excerpt.clone(),
                         evidence_id: None,
-                        provenance: textual_provenance(if depth == 0 {
+                        provenance: textual_provenance(if terminal_request_source {
+                            "bounded exact request-source argument to one unique callee definition; lexical non-flow 1"
+                        } else if depth == 0 {
                             "bounded exact parameter forwarding to one unique repository definition; lexical non-flow 1"
                         } else {
                             "bounded upstream parameter forwarding to one unique service definition; lexical non-flow 1"
@@ -7233,6 +7239,61 @@ impl BoundedCallerIndex {
         }
         (facts, false)
     }
+}
+
+fn exact_request_source_argument(language: Language, argument: &str) -> bool {
+    let compact = argument
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    match language {
+        Language::C | Language::Cpp => {
+            compact.starts_with("getenv(\"QUERY_STRING\")")
+                || compact.starts_with("getenv('QUERY_STRING')")
+        }
+        Language::Java | Language::Kotlin => {
+            compact.contains(".getParameter(") || compact.contains(".getQueryString(")
+        }
+        Language::Javascript | Language::Typescript | Language::Tsx => [
+            "req.query",
+            "req.body",
+            "req.params",
+            "request.query",
+            "request.body",
+        ]
+        .iter()
+        .any(|source| starts_member_access(&compact, source)),
+        Language::Python => [
+            "request.args",
+            "request.form",
+            "request.json",
+            "request.get_json(",
+        ]
+        .iter()
+        .any(|source| {
+            source.ends_with('(') && compact.starts_with(source)
+                || starts_member_access(&compact, source)
+        }),
+        Language::Php => [
+            "$_GET[",
+            "$_POST[",
+            "$_REQUEST[",
+            "$request->input(",
+            "$request->query(",
+            "$request->get(",
+        ]
+        .iter()
+        .any(|source| compact.starts_with(source)),
+        Language::Go => compact.contains(".URL.Query().Get(") || compact.contains(".FormValue("),
+        Language::Rust | Language::Csharp => false,
+    }
+}
+
+fn starts_member_access(value: &str, prefix: &str) -> bool {
+    value == prefix
+        || value.strip_prefix(prefix).is_some_and(|suffix| {
+            suffix.starts_with('.') || suffix.starts_with('[') || suffix.starts_with("?.")
+        })
 }
 
 fn exact_call_sites(source: &str) -> Vec<(String, Vec<String>)> {

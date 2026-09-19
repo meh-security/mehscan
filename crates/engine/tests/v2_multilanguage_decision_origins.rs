@@ -127,7 +127,7 @@ function findUser(name) { return db.query(`SELECT * FROM users WHERE name='${nam
     .unwrap();
     std::fs::write(
         root.join("controller.c"),
-        "void native_controller(char *request_name) { native_service(request_name); }\n",
+        "void native_controller() { native_service(getenv(\"QUERY_STRING\")); }\n",
     )
     .unwrap();
 

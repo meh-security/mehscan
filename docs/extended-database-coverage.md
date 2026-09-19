@@ -71,9 +71,10 @@ This is not a claim of exhaustive database-driver or backend coverage.
   uniquely named callable, review context can include at most two caller layers.
   Each layer must forward the relevant value at the exact formal-parameter
   position, either unchanged or through member/index access. Transformed
-  arguments and ambiguous callable names stop the handoff. This exposes common
-  handler-to-service-to-repository shapes without building a CFG or asserting a
-  source-to-sink flow.
+  arguments and ambiguous callable names stop the handoff, while an exact
+  recognized request-source argument can terminate it with the enclosing caller
+  excerpt. This exposes common handler-to-service-to-repository shapes without
+  building a CFG or asserting a source-to-sink flow.
 - pgx SQL follows its context argument; pgx Prepare SQL follows context and
   statement name. sqlx Get/Select SQL follows the destination. These operands
   are not interchangeable with database/sql argument positions.
