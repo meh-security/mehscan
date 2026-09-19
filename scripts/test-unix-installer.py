@@ -64,6 +64,7 @@ class InstallerTests(unittest.TestCase):
         class Connection:
             def __init__(self, response):
                 self.response = response
+                self.sock = None
 
             def request(self, *args, **kwargs):
                 pass
@@ -77,6 +78,11 @@ class InstallerTests(unittest.TestCase):
         with patch.object(installer.http.client, 'HTTPSConnection',
                           return_value=Connection(Response(headers={'Content-Length': '7'}))):
             self.assertEqual(installer.download('https://github.com/a', 7), b'example')
+        eof = Response(data=b'', headers={'Content-Length': '0'})
+        eof.fp = None
+        with patch.object(installer.http.client, 'HTTPSConnection',
+                          return_value=Connection(eof)):
+            self.assertEqual(installer.download('https://github.com/a', 7), b'')
         for response in (Response(), Response(headers={'Content-Length': '8'}),
                          Response(headers={'Content-Length': '3'}),
                          Response(status=302, headers={'Location': 'https://example.com/evil'})):

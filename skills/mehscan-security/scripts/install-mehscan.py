@@ -78,8 +78,16 @@ def download(url, maximum, destination=None):
                 while True:
                     remaining = deadline - time.monotonic()
                     require(remaining > 0, 'Download time limit exceeded')
-                    # Response owns the socket after a server sends Connection: close.
-                    response.fp.raw._sock.settimeout(remaining)
+                    # Depending on the response and Python version, the socket can
+                    # remain on the connection, move under response.fp, or already
+                    # be gone at EOF. Tighten the active socket timeout when one is
+                    # still available without depending on either private layout.
+                    socket = connection.sock
+                    if socket is None and response.fp is not None:
+                        raw = getattr(response.fp, 'raw', None)
+                        socket = getattr(raw, '_sock', None)
+                    if socket is not None:
+                        socket.settimeout(remaining)
                     chunk = response.read1(min(65536, maximum - total + 1))
                     if not chunk:
                         break
