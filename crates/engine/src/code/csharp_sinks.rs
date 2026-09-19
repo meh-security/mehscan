@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use ast_grep_core::Node;
@@ -318,6 +318,120 @@ pub(crate) fn annotate_dynamic_query_composition<'tree>(
             );
         }
     }
+}
+
+/// Marks C# sink operands whose local shape already proves interpretation as
+/// executable or structural grammar. The review layer retains origin as a
+/// decision-critical question for these markers; ordinary API boundaries stay
+/// advisory.
+pub(crate) fn annotate_decision_critical_origins(language: Language, evidence: &mut [Evidence]) {
+    if language != Language::Csharp {
+        return;
+    }
+    let resolved_process_starts = evidence
+        .iter()
+        .filter(|item| item.rule_id == "csharp-process-start-info")
+        .map(|item| {
+            (
+                item.location.path.clone(),
+                item.location.start.byte_offset,
+                item.location.end.byte_offset,
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    for item in evidence
+        .iter_mut()
+        .filter(|item| item.kind == EvidenceKind::Sink && item.rule_id.starts_with("csharp-"))
+    {
+        let strong_operand = match item.capability {
+            Capability::HtmlOutput => {
+                (item.tags.iter().any(|tag| tag == "trusted-markup")
+                    || item.tags.iter().any(|tag| tag == "explicit-raw-html")
+                    || item.rule_id == "csharp-razor-html-raw-output")
+                    && capture_is_dynamic(item, "content", "html")
+            }
+            Capability::DynamicCodeExecution => capture_is_dynamic(item, "code", "code"),
+            Capability::Deserialization => capture_is_dynamic(item, "payload", "payload"),
+            Capability::LdapQuery => capture_is_dynamic(item, "filter", "distinguished_name"),
+            Capability::DatabaseQuery if item.rule_id == "csharp-extended-nosql-json" => {
+                capture_is_dynamic(item, "nosql_query", "nosql_query")
+            }
+            Capability::ProcessExecution => {
+                let replaced_by_resolved_start_info = item.rule_id == "csharp-process-start"
+                    && resolved_process_starts.contains(&(
+                        item.location.path.clone(),
+                        item.location.start.byte_offset,
+                        item.location.end.byte_offset,
+                    ));
+                !replaced_by_resolved_start_info && process_origin_is_decision_critical(item)
+            }
+            _ => false,
+        };
+        if strong_operand {
+            push_unique_tag(&mut item.tags, "review-origin:decision-critical");
+        }
+    }
+}
+
+fn process_origin_is_decision_critical(item: &Evidence) -> bool {
+    if item.tags.iter().any(|tag| tag == "shell-command-text")
+        && capture_is_dynamic(item, "arguments", "arguments")
+    {
+        return true;
+    }
+    if capture_is_dynamic(item, "command", "command") {
+        return true;
+    }
+    fixed_literal_string(item, "command").is_some_and(is_shell_name)
+        && capture_is_dynamic(item, "arguments", "arguments")
+}
+
+fn capture_is_dynamic(item: &Evidence, primary: &str, fallback: &str) -> bool {
+    let role = if item.captures.contains_key(primary) {
+        primary
+    } else if item.captures.contains_key(fallback) {
+        fallback
+    } else {
+        return false;
+    };
+    fixed_literal_string(item, role).is_none()
+        && item
+            .captures
+            .get(role)
+            .is_some_and(|capture| !is_quoted_literal(capture.text.trim()))
+}
+
+fn fixed_literal_string<'a>(item: &'a Evidence, role: &str) -> Option<&'a str> {
+    let literal = item.context.literals.get(role)?;
+    if literal.state != LiteralState::Known {
+        return None;
+    }
+    match literal.value.as_ref()? {
+        mehscan_core::LiteralValue::String(value) => Some(value),
+        _ => None,
+    }
+}
+
+fn is_shell_name(value: &str) -> bool {
+    let normalized = value.replace('\\', "/").to_ascii_lowercase();
+    matches!(
+        normalized.rsplit('/').next().unwrap_or(&normalized),
+        "cmd"
+            | "cmd.exe"
+            | "powershell"
+            | "powershell.exe"
+            | "pwsh"
+            | "pwsh.exe"
+            | "sh"
+            | "bash"
+            | "zsh"
+    )
+}
+
+fn is_quoted_literal(value: &str) -> bool {
+    let value = value.trim().trim_start_matches('@');
+    (value.starts_with('"') && value.ends_with('"'))
+        || (value.starts_with("\"\"\"") && value.ends_with("\"\"\""))
 }
 
 fn query_composition<'tree>(

@@ -1,5 +1,5 @@
 - id: csharp-dynamic-code
-  version: 1
+  version: 2
   title: .NET dynamic code evaluation
   language: csharp
   kind: sink
@@ -11,10 +11,18 @@
         captures: { code: CODE }
       - pattern: CSharpScript.EvaluateAsync($CODE, $$$ARGUMENTS)
         captures: { code: CODE }
+      - pattern: CSharpScript.EvaluateAsync<$TYPE>($CODE)
+        captures: { code: CODE, result_type: TYPE }
+      - pattern: CSharpScript.EvaluateAsync<$TYPE>($CODE, $$$ARGUMENTS)
+        captures: { code: CODE, result_type: TYPE }
       - pattern: CSharpScript.RunAsync($CODE)
         captures: { code: CODE }
       - pattern: CSharpScript.RunAsync($CODE, $$$ARGUMENTS)
         captures: { code: CODE }
+      - pattern: CSharpScript.RunAsync<$TYPE>($CODE)
+        captures: { code: CODE, result_type: TYPE }
+      - pattern: CSharpScript.RunAsync<$TYPE>($CODE, $$$ARGUMENTS)
+        captures: { code: CODE, result_type: TYPE }
       - pattern: Razor.Parse($CODE)
         captures: { code: CODE }
       - pattern: Razor.Parse($CODE, $$$ARGUMENTS)

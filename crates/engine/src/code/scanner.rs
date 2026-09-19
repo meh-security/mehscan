@@ -315,6 +315,10 @@ pub(crate) fn scan_profiled(
                 Ok(source) => {
                     let mut razor_evidence =
                         crate::code::razor::scan_escape_hatches(&file.relative, &source);
+                    crate::code::csharp_sinks::annotate_decision_critical_origins(
+                        Language::Csharp,
+                        &mut razor_evidence,
+                    );
                     specialized_files += 1;
                     coverage.totals.scanned += 1;
                     if options.scan_secrets {
@@ -361,6 +365,10 @@ pub(crate) fn scan_profiled(
                 Ok(source) => {
                     let (mut webforms_evidence, mut webforms_paths) =
                         crate::code::webforms::scan_inline_output(&file.relative, &source);
+                    crate::code::csharp_sinks::annotate_decision_critical_origins(
+                        Language::Csharp,
+                        &mut webforms_evidence,
+                    );
                     specialized_files += 1;
                     coverage.totals.scanned += 1;
                     if options.scan_secrets {

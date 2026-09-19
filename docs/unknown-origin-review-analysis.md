@@ -10,6 +10,20 @@ not get the same treatment merely because its argument is nonliteral.
 This distinction preserves useful sinks without making every configurable URL,
 path, redirect, query, or process argument decision-critical.
 
+## C# implementation status
+
+C# now applies this policy to dynamic SQL composition, explicit trusted-HTML
+output, dynamic executable selection, command text passed to a known shell,
+runtime code evaluation, executable object deserialization, raw MongoDB JSON,
+and LDAP filter or distinguished-name grammar. Exact LDAP encoding is retained
+as affirmative counterevidence.
+
+Ordinary HTML output, fixed programs, fixed LDAP expressions, typed MongoDB
+filters, structured arguments passed to a fixed non-shell executable, and
+generic URL, redirect, or filesystem boundaries remain advisory. Request-bound
+URL, redirect, and path cases continue through the existing source-to-sink path
+review instead of being promoted solely because an argument is nonliteral.
+
 ## Current failure mode
 
 Observation review currently asks one of two generic provenance questions when

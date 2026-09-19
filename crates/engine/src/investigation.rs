@@ -4111,17 +4111,7 @@ fn observation_decision_facts(
         );
     }
     if let Some(origin) = decision_critical_origin {
-        established.push(if origin.affirmatively_constrained {
-            format!(
-                "The exact C# database query operand constructs SQL text through {} with dynamic operand `{}`, whose declared integral, Boolean, or Guid type has a fixed non-SQL-token representation, affirmatively disproving SQL-syntax injection through that exact operand. Separate query-authorization concerns may remain.",
-                origin.style, origin.operand
-            )
-        } else {
-            format!(
-                "The exact C# database query operand constructs executable SQL text through {} with dynamic operand `{}`. This is stronger than an ordinary query API observation, but its production origin or an exact constraining invariant is not established by composition syntax alone.",
-                origin.style, origin.operand
-            )
-        });
+        established.push(origin.established_fact());
     }
     if let Some(policy) = &java_policy {
         established.push(policy.established.to_string());
@@ -4160,7 +4150,7 @@ fn observation_decision_facts(
             ResourcePolicyState::Unknown => unreachable!(),
         });
     }
-    let effective_controls = if javascript_policy.as_ref().is_some_and(|policy| policy.safe) {
+    let mut effective_controls = if javascript_policy.as_ref().is_some_and(|policy| policy.safe) {
         vec![
             javascript_policy
                 .as_ref()
@@ -4223,6 +4213,9 @@ fn observation_decision_facts(
         // only verified policy cases belong in effective_controls.
         Vec::new()
     };
+    if let Some(control) = decision_critical_origin.and_then(|origin| origin.effective_control()) {
+        effective_controls.push(control);
+    }
     let unresolved = if javascript_policy.is_some()
         || rust_policy.is_some()
         || go_policy.is_some()
@@ -4286,11 +4279,187 @@ fn is_advisory_observation_question(question: &str) -> bool {
 }
 
 #[derive(Clone, Copy)]
+enum DecisionCriticalBoundary {
+    Sql,
+    TrustedHtml,
+    ProcessExecutable,
+    ShellCommand,
+    DynamicCode,
+    ObjectDeserialization,
+    RawNosql,
+    LdapFilter,
+    LdapDistinguishedName,
+}
+
+#[derive(Clone, Copy)]
 struct DecisionCriticalOrigin<'a> {
-    boundary: &'static str,
+    boundary: DecisionCriticalBoundary,
     style: &'a str,
     operand: &'a str,
     affirmatively_constrained: bool,
+}
+
+impl DecisionCriticalOrigin<'_> {
+    fn relationship(self) -> &'static str {
+        match self.boundary {
+            DecisionCriticalBoundary::Sql => "bounded_dynamic_query_composition",
+            DecisionCriticalBoundary::TrustedHtml => "bounded_trusted_html_interpretation",
+            DecisionCriticalBoundary::ProcessExecutable => "bounded_dynamic_executable_selection",
+            DecisionCriticalBoundary::ShellCommand => "bounded_shell_command_interpretation",
+            DecisionCriticalBoundary::DynamicCode => "bounded_dynamic_code_interpretation",
+            DecisionCriticalBoundary::ObjectDeserialization => {
+                "bounded_executable_object_deserialization"
+            }
+            DecisionCriticalBoundary::RawNosql => "bounded_raw_nosql_interpretation",
+            DecisionCriticalBoundary::LdapFilter => "bounded_ldap_filter_interpretation",
+            DecisionCriticalBoundary::LdapDistinguishedName => {
+                "bounded_ldap_distinguished_name_interpretation"
+            }
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self.boundary {
+            DecisionCriticalBoundary::Sql => "Review dynamically composed C# SQL for CWE-89",
+            DecisionCriticalBoundary::TrustedHtml => {
+                "Review dynamic C# trusted HTML output for CWE-79"
+            }
+            DecisionCriticalBoundary::ProcessExecutable => {
+                "Review dynamic C# executable selection for CWE-78"
+            }
+            DecisionCriticalBoundary::ShellCommand => {
+                "Review dynamic C# shell command text for CWE-78"
+            }
+            DecisionCriticalBoundary::DynamicCode => {
+                "Review dynamic C# code interpretation for CWE-94"
+            }
+            DecisionCriticalBoundary::ObjectDeserialization => {
+                "Review C# executable object deserialization for CWE-502"
+            }
+            DecisionCriticalBoundary::RawNosql => "Review dynamic C# raw NoSQL query for CWE-943",
+            DecisionCriticalBoundary::LdapFilter
+            | DecisionCriticalBoundary::LdapDistinguishedName => {
+                "Review dynamic C# LDAP query construction for CWE-90"
+            }
+        }
+    }
+
+    fn security_question(self) -> String {
+        match self.boundary {
+            DecisionCriticalBoundary::Sql => "Can the dynamic operand incorporated into executable SQL be influenced by an attacker, or is it affirmatively restricted to a safe fixed, numeric, enum, or allowlisted value?".to_string(),
+            DecisionCriticalBoundary::TrustedHtml => "Can the runtime value passed across this explicit HTML trust boundary be influenced by an attacker, or is it sanitized for the exact browser context before escaping is bypassed?".to_string(),
+            DecisionCriticalBoundary::ProcessExecutable => "Can an attacker influence the executable selected by this process launch, or is it chosen from an exact server-owned allowlist?".to_string(),
+            DecisionCriticalBoundary::ShellCommand => "Can an attacker influence text interpreted by this command shell, or is every dynamic value kept outside shell grammar under an exact allowlist?".to_string(),
+            DecisionCriticalBoundary::DynamicCode => "Can an attacker influence the program or expression interpreted by this runtime evaluator, or is the exact grammar fixed and trusted?".to_string(),
+            DecisionCriticalBoundary::ObjectDeserialization => "Can an attacker modify the payload consumed by this executable object deserializer, or is its exact producer protected by a trusted immutable or authenticated boundary?".to_string(),
+            DecisionCriticalBoundary::RawNosql => "Can an attacker influence operators or structure in this raw NoSQL query document, or is the exact document fixed or built through typed scalar predicates?".to_string(),
+            DecisionCriticalBoundary::LdapFilter => "Can an attacker influence LDAP filter grammar in this operand, or is every dynamic value encoded for LDAP filter context before composition?".to_string(),
+            DecisionCriticalBoundary::LdapDistinguishedName => "Can an attacker influence distinguished-name grammar in this operand, or is every dynamic value encoded for LDAP distinguished-name context before composition?".to_string(),
+        }
+    }
+
+    fn unresolved_question(self) -> String {
+        match self.boundary {
+            DecisionCriticalBoundary::Sql => format!(
+                "Is dynamic SQL operand `{}` used by this {} attacker-controlled at any production call site, or is it affirmatively restricted before composition to a fixed, numeric, enum, or exact allowlisted value?",
+                self.operand, self.style
+            ),
+            DecisionCriticalBoundary::TrustedHtml => format!(
+                "Can dynamic trusted-HTML operand `{}` contain attacker-controlled markup at this {} boundary, or is it sanitized for the exact browser context before escaping is bypassed?",
+                self.operand, self.style
+            ),
+            DecisionCriticalBoundary::ProcessExecutable => format!(
+                "Can attacker-controlled input select executable `{}` at this process launch, or is the executable restricted to an exact server-owned allowlist?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::ShellCommand => format!(
+                "Can attacker-controlled input influence shell command text `{}`, or is every dynamic value excluded from shell grammar by an exact allowlist or structured non-shell execution?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::DynamicCode => format!(
+                "Can attacker-controlled input influence code or expression `{}` interpreted by this {}, or is the complete program fixed and trusted?",
+                self.operand, self.style
+            ),
+            DecisionCriticalBoundary::ObjectDeserialization => format!(
+                "Can an untrusted user, transport, file writer, adjacent process, or deployment mechanism modify payload `{}` before this {} consumes it, or is that exact payload protected by a trusted immutable or authenticated boundary?",
+                self.operand, self.style
+            ),
+            DecisionCriticalBoundary::RawNosql => format!(
+                "Can attacker-controlled input influence operators or document structure in raw NoSQL operand `{}`, or is it fixed or built only through typed scalar predicates?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::LdapFilter => format!(
+                "Can attacker-controlled input influence LDAP filter operand `{}`, or is every dynamic value encoded for LDAP filter context before composition?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::LdapDistinguishedName => format!(
+                "Can attacker-controlled input influence LDAP distinguished-name operand `{}`, or is every dynamic value encoded for distinguished-name context before composition?",
+                self.operand
+            ),
+        }
+    }
+
+    fn established_fact(self) -> String {
+        if self.affirmatively_constrained {
+            return match self.boundary {
+                DecisionCriticalBoundary::Sql => format!(
+                    "The exact C# database query operand constructs SQL text through {} with dynamic operand `{}`, whose declared integral, Boolean, or Guid type has a fixed non-SQL-token representation, affirmatively disproving SQL-syntax injection through that exact operand. Separate query-authorization concerns may remain.",
+                    self.style, self.operand
+                ),
+                DecisionCriticalBoundary::LdapFilter => format!(
+                    "The exact dynamic LDAP filter operand `{}` is passed through the observed context-specific LDAP filter encoder before query construction, affirmatively preventing that value from changing filter grammar.",
+                    self.operand
+                ),
+                DecisionCriticalBoundary::LdapDistinguishedName => format!(
+                    "The exact dynamic LDAP distinguished-name operand `{}` is passed through the observed context-specific distinguished-name encoder before use, affirmatively preventing that value from changing DN grammar.",
+                    self.operand
+                ),
+                _ => format!(
+                    "The exact dynamic operand `{}` at this {} boundary has an affirmative applicable constraint.",
+                    self.operand, self.style
+                ),
+            };
+        }
+        match self.boundary {
+            DecisionCriticalBoundary::Sql => format!(
+                "The exact C# database query operand constructs executable SQL text through {} with dynamic operand `{}`. This is stronger than an ordinary query API observation, but its production origin or an exact constraining invariant is not established by composition syntax alone.",
+                self.style, self.operand
+            ),
+            _ => format!(
+                "The exact C# operand `{}` crosses a {} boundary through {}. This is stronger than an ordinary API observation, but its production origin or an exact constraining invariant is not established by local syntax alone.",
+                self.operand,
+                match self.boundary {
+                    DecisionCriticalBoundary::TrustedHtml => "trusted HTML interpretation",
+                    DecisionCriticalBoundary::ProcessExecutable => "process executable selection",
+                    DecisionCriticalBoundary::ShellCommand => "shell command interpretation",
+                    DecisionCriticalBoundary::DynamicCode => "dynamic code interpretation",
+                    DecisionCriticalBoundary::ObjectDeserialization =>
+                        "executable object deserialization",
+                    DecisionCriticalBoundary::RawNosql => "raw NoSQL document interpretation",
+                    DecisionCriticalBoundary::LdapFilter => "LDAP filter interpretation",
+                    DecisionCriticalBoundary::LdapDistinguishedName =>
+                        "LDAP distinguished-name interpretation",
+                    DecisionCriticalBoundary::Sql => unreachable!(),
+                },
+                self.style
+            ),
+        }
+    }
+
+    fn effective_control(self) -> Option<String> {
+        if !self.affirmatively_constrained {
+            return None;
+        }
+        match self.boundary {
+            DecisionCriticalBoundary::LdapFilter => Some(
+                "A context-specific LDAP filter encoder applies to the exact dynamic operand before query construction.".to_string(),
+            ),
+            DecisionCriticalBoundary::LdapDistinguishedName => Some(
+                "A context-specific LDAP distinguished-name encoder applies to the exact dynamic operand before use.".to_string(),
+            ),
+            _ => None,
+        }
+    }
 }
 
 /// Identifies a dynamic operand whose local use already proves interpretation
@@ -4299,20 +4468,21 @@ struct DecisionCriticalOrigin<'a> {
 /// therefore remains decision-critical. Add new families only with an exact
 /// capability, semantic tag, and capture-role check.
 fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOrigin<'_>> {
-    evidence
-        .iter()
-        .filter(|item| {
-            item.capability == Capability::DatabaseQuery
-                && item
-                    .tags
-                    .iter()
-                    .any(|tag| tag == "dynamic-query-composition")
-                && item
-                    .tags
-                    .iter()
-                    .any(|tag| tag == "review-origin:decision-critical")
-        })
-        .find_map(|item| {
+    evidence.iter().find_map(|item| {
+        if item.kind != EvidenceKind::Sink
+            || !item
+                .tags
+                .iter()
+                .any(|tag| tag == "review-origin:decision-critical")
+        {
+            return None;
+        }
+        if item.capability == Capability::DatabaseQuery
+            && item
+                .tags
+                .iter()
+                .any(|tag| tag == "dynamic-query-composition")
+        {
             let style = item
                 .tags
                 .iter()
@@ -4324,7 +4494,7 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
                 .text
                 .trim();
             Some(DecisionCriticalOrigin {
-                boundary: "sql",
+                boundary: DecisionCriticalBoundary::Sql,
                 style,
                 operand,
                 affirmatively_constrained: item
@@ -4332,7 +4502,144 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
                     .iter()
                     .any(|tag| tag == "dynamic-origin:constrained-scalar"),
             })
-        })
+        } else if item.capability == Capability::HtmlOutput {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::TrustedHtml,
+                "trusted-markup API",
+                &["content", "html"],
+                false,
+            )?)
+        } else if item.capability == Capability::ProcessExecution {
+            let shell = item.tags.iter().any(|tag| tag == "shell-command-text")
+                || (item.captures.contains_key("arguments")
+                    && item.context.literals.get("command").is_some_and(|literal| {
+                        matches!(
+                            literal.value.as_ref(),
+                            Some(LiteralValue::String(value)) if is_known_shell_executable(value)
+                        )
+                    }));
+            Some(decision_origin_from_capture(
+                item,
+                if shell {
+                    DecisionCriticalBoundary::ShellCommand
+                } else {
+                    DecisionCriticalBoundary::ProcessExecutable
+                },
+                if shell {
+                    "shell process API"
+                } else {
+                    "process launch API"
+                },
+                if shell { &["arguments"] } else { &["command"] },
+                false,
+            )?)
+        } else if item.capability == Capability::DynamicCodeExecution {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::DynamicCode,
+                "runtime evaluator",
+                &["code"],
+                false,
+            )?)
+        } else if item.capability == Capability::Deserialization {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::ObjectDeserialization,
+                "executable object deserializer",
+                &["payload"],
+                false,
+            )?)
+        } else if item.capability == Capability::DatabaseQuery
+            && item.rule_id == "csharp-extended-nosql-json"
+        {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::RawNosql,
+                "raw document parser",
+                &["nosql_query"],
+                false,
+            )?)
+        } else if item.capability == Capability::LdapQuery {
+            let filter = item.captures.contains_key("filter");
+            let role = if filter {
+                "filter"
+            } else {
+                "distinguished_name"
+            };
+            let sink_capture = item.captures.get(role)?;
+            let constrained = evidence.iter().any(|candidate| {
+                candidate.kind == EvidenceKind::Validation
+                    && candidate.location.path == item.location.path
+                    && candidate.capability
+                        == if filter {
+                            Capability::LdapFilterEncoding
+                        } else {
+                            Capability::LdapDistinguishedNameEncoding
+                        }
+                    && candidate.captures.get(role).is_some_and(|control_capture| {
+                        control_capture.location.path == sink_capture.location.path
+                            && control_capture.location.start.byte_offset
+                                == sink_capture.location.start.byte_offset
+                            && control_capture.location.end.byte_offset
+                                == sink_capture.location.end.byte_offset
+                    })
+            });
+            Some(decision_origin_from_capture(
+                item,
+                if filter {
+                    DecisionCriticalBoundary::LdapFilter
+                } else {
+                    DecisionCriticalBoundary::LdapDistinguishedName
+                },
+                if filter {
+                    "LDAP filter API"
+                } else {
+                    "LDAP distinguished-name API"
+                },
+                &[role],
+                constrained,
+            )?)
+        } else {
+            None
+        }
+    })
+}
+
+fn decision_origin_from_capture<'a>(
+    item: &'a Evidence,
+    boundary: DecisionCriticalBoundary,
+    style: &'static str,
+    roles: &[&str],
+    affirmatively_constrained: bool,
+) -> Option<DecisionCriticalOrigin<'a>> {
+    let operand = roles
+        .iter()
+        .find_map(|role| item.captures.get(*role))?
+        .text
+        .trim();
+    Some(DecisionCriticalOrigin {
+        boundary,
+        style,
+        operand,
+        affirmatively_constrained,
+    })
+}
+
+fn is_known_shell_executable(value: &str) -> bool {
+    let normalized = value.replace('\\', "/").to_ascii_lowercase();
+    matches!(
+        normalized.rsplit('/').next().unwrap_or(&normalized),
+        "cmd"
+            | "cmd.exe"
+            | "powershell"
+            | "powershell.exe"
+            | "pwsh"
+            | "pwsh.exe"
+            | "sh"
+            | "bash"
+            | "zsh"
+    )
 }
 
 struct JavaObservationPolicy {
@@ -5552,16 +5859,13 @@ fn observation_review_basis(
     let decision_critical_origin = decision_critical_origin(evidence);
     ObservationReviewBasis {
         relationship: if let Some(origin) = decision_critical_origin {
-            match origin.boundary {
-                "sql" => "bounded_dynamic_query_composition",
-                _ => "bounded_interpreted_operand",
-            }
+            origin.relationship()
         } else {
             "bounded_non_path_observation"
         }
         .to_string(),
-        security_question: if decision_critical_origin.is_some() {
-            "Can the dynamic operand incorporated into executable SQL be influenced by an attacker, or is it affirmatively restricted to a safe fixed, numeric, enum, or allowlisted value?".to_string()
+        security_question: if let Some(origin) = decision_critical_origin {
+            origin.security_question()
         } else {
             format!(
                 "Does the supplied context establish a concrete weakness involving {capabilities}, rather than only the observed syntax or API boundary?"
@@ -7896,6 +8200,21 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
     if item.kind != EvidenceKind::Sink {
         return false;
     }
+    if item
+        .tags
+        .iter()
+        .any(|tag| tag == "review-origin:decision-critical")
+    {
+        return false;
+    }
+    if item.capability == Capability::DatabaseQuery && item.rule_id == "csharp-extended-nosql-json"
+    {
+        return has_known_string_literal(item, "nosql_query");
+    }
+    if item.capability == Capability::LdapQuery {
+        return has_known_string_literal(item, "filter")
+            || has_known_string_literal(item, "distinguished_name");
+    }
     let literal_role = match item.capability {
         Capability::DatabaseQuery => "query",
         // A fixed executable or fixed format string remains valuable inventory
@@ -7951,6 +8270,13 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
         || (item.capability == Capability::Redirect
             && literal.is_some_and(has_fixed_internal_redirect_prefix))
         || is_fixed_python_local_path(item, sources)
+}
+
+fn has_known_string_literal(item: &Evidence, role: &str) -> bool {
+    item.context.literals.get(role).is_some_and(|literal| {
+        literal.state == LiteralState::Known
+            && matches!(literal.value, Some(LiteralValue::String(_)))
+    })
 }
 
 /// Omit a standalone verdict job only when the source proves a narrowly safe
@@ -9508,8 +9834,8 @@ fn is_plain_identifier(value: &str) -> bool {
 }
 
 fn observation_review_title(evidence: &[Evidence]) -> String {
-    if decision_critical_origin(evidence).is_some_and(|origin| origin.boundary == "sql") {
-        return "Review dynamically composed C# SQL for CWE-89".to_string();
+    if let Some(origin) = decision_critical_origin(evidence) {
+        return origin.title().to_string();
     }
     let mut anchors = evidence
         .iter()
@@ -9808,10 +10134,7 @@ fn observation_review_questions(
         && let Some(origin) = decision_critical_origin
         && !origin.affirmatively_constrained
     {
-        questions.push(format!(
-            "Is dynamic SQL operand `{}` used by this {} attacker-controlled at any production call site, or is it affirmatively restricted before composition to a fixed, numeric, enum, or exact allowlisted value?",
-            origin.operand, origin.style
-        ));
+        questions.push(origin.unresolved_question());
     } else if !has_precise_node_boundary
         && has_database_caller_context
         && !evidence.iter().any(|item| {

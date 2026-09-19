@@ -1009,6 +1009,7 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    super::csharp_sinks::annotate_decision_critical_origins(language, &mut evidence);
     super::csharp_handoff::add_forwarded_parameter_sources(
         path,
         &root,
