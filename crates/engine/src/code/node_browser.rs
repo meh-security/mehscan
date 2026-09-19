@@ -41,6 +41,16 @@ pub(crate) fn add_browser_observations<'tree>(
     let dom_bindings = dom_bindings(root, &shadowed_globals);
     let react_refs = react_ref_targets(root);
     let react_factories = react_factories(root);
+    let lit_unsafe_html = imported_named_bindings(
+        root,
+        &[
+            "lit/directives/unsafe-html.js",
+            "lit-html/directives/unsafe-html.js",
+        ],
+        "unsafeHTML",
+    );
+    let vue_factories = imported_named_bindings(root, &["vue"], "h");
+    let solid_runtime = imports_module(root, "solid-js");
     let react_state = untrusted_react_state_fields(root, &response_data);
 
     for node in root.dfs() {
@@ -221,6 +231,60 @@ pub(crate) fn add_browser_observations<'tree>(
                     &["browser", "dom", "html", "xss"],
                     Confidence::High,
                     canonical,
+                    comments,
+                    conditional,
+                    literals,
+                    evidence,
+                );
+            }
+
+            if let Some(content) = imported_unary_call_content(&node, &lit_unsafe_html) {
+                push_observation(
+                    path,
+                    language,
+                    &node,
+                    &content,
+                    EvidenceKind::Sink,
+                    Capability::HtmlOutput,
+                    &format!("{}-lit-unsafe-html-output", language_prefix(language)),
+                    "content",
+                    "Lit unsafeHTML",
+                    &[
+                        "browser",
+                        "lit",
+                        "trusted-markup",
+                        "explicit-raw-html",
+                        "xss",
+                    ],
+                    Confidence::High,
+                    "Lit unsafeHTML directive",
+                    comments,
+                    conditional,
+                    literals,
+                    evidence,
+                );
+            }
+
+            if let Some(content) = vue_render_inner_html_content(&node, &vue_factories) {
+                push_observation(
+                    path,
+                    language,
+                    &node,
+                    &content,
+                    EvidenceKind::Sink,
+                    Capability::HtmlOutput,
+                    &format!("{}-vue-inner-html-output", language_prefix(language)),
+                    "content",
+                    "Vue h innerHTML",
+                    &[
+                        "browser",
+                        "vue",
+                        "trusted-markup",
+                        "explicit-raw-html",
+                        "xss",
+                    ],
+                    Confidence::High,
+                    "Vue render-function innerHTML property",
                     comments,
                     conditional,
                     literals,
@@ -426,6 +490,36 @@ pub(crate) fn add_browser_observations<'tree>(
                 &["browser", "react", "url-attribute", "xss"],
                 Confidence::High,
                 "React href attribute",
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+        }
+
+        if solid_runtime
+            && kind == "jsx_attribute"
+            && let Some(content) = jsx_attribute_content(&node, "innerHTML")
+        {
+            push_observation(
+                path,
+                language,
+                &node,
+                &content,
+                EvidenceKind::Sink,
+                Capability::HtmlOutput,
+                &format!("{}-solid-inner-html-output", language_prefix(language)),
+                "content",
+                "Solid innerHTML",
+                &[
+                    "browser",
+                    "solidjs",
+                    "trusted-markup",
+                    "explicit-raw-html",
+                    "xss",
+                ],
+                Confidence::High,
+                "Solid innerHTML JSX property",
                 comments,
                 conditional,
                 literals,
@@ -1220,6 +1314,96 @@ fn wildcard_postmessage_sink<'tree>(
         .then(|| arguments[0].clone())
 }
 
+fn imports_module(root: &Node<'_, StrDoc<SupportLang>>, expected: &str) -> bool {
+    root.dfs()
+        .filter(|node| node.kind().as_ref() == "import_statement")
+        .any(|node| {
+            node.text()
+                .trim()
+                .strip_prefix("import ")
+                .and_then(|rest| rest.rsplit_once(" from "))
+                .and_then(|(_, module)| exact_quoted(module.trim().trim_end_matches(';')))
+                == Some(expected)
+        })
+}
+
+fn imported_named_bindings(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    modules: &[&str],
+    exported: &str,
+) -> BTreeSet<String> {
+    let mut bindings = BTreeSet::new();
+    for import in root
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "import_statement")
+    {
+        let text = import.text();
+        let Some((clause, module)) = text
+            .trim()
+            .strip_prefix("import ")
+            .and_then(|rest| rest.rsplit_once(" from "))
+        else {
+            continue;
+        };
+        let Some(module) = exact_quoted(module.trim().trim_end_matches(';')) else {
+            continue;
+        };
+        if !modules.contains(&module) {
+            continue;
+        }
+        for entry in clause.trim().trim_matches(['{', '}']).split(',') {
+            let words = entry.split_whitespace().collect::<Vec<_>>();
+            if words.first() == Some(&exported) {
+                bindings.insert(
+                    if words.get(1) == Some(&"as") {
+                        words.get(2).copied().unwrap_or(exported)
+                    } else {
+                        exported
+                    }
+                    .to_string(),
+                );
+            }
+        }
+    }
+    bindings
+}
+
+fn imported_unary_call_content<'tree>(
+    call: &Node<'tree, StrDoc<SupportLang>>,
+    bindings: &BTreeSet<String>,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    let callee = normalized(&call.field("function")?.text());
+    bindings.contains(&callee).then(|| {
+        call.field("arguments")?
+            .children()
+            .find(|child| child.is_named())
+    })?
+}
+
+fn vue_render_inner_html_content<'tree>(
+    call: &Node<'tree, StrDoc<SupportLang>>,
+    factories: &BTreeSet<String>,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    let callee = normalized(&call.field("function")?.text());
+    if !factories.contains(&callee) {
+        return None;
+    }
+    let properties = call
+        .field("arguments")?
+        .children()
+        .filter(|child| child.is_named())
+        .nth(1)?;
+    properties
+        .dfs()
+        .find(|node| {
+            node.kind().as_ref() == "pair"
+                && node
+                    .field("key")
+                    .is_some_and(|key| normalized(&key.text()) == "innerHTML")
+        })?
+        .field("value")
+}
+
 #[allow(clippy::too_many_arguments)]
 fn add_message_origin_validations<'tree>(
     path: &str,
@@ -1299,8 +1483,15 @@ fn add_message_origin_validations<'tree>(
 fn jsx_url_attribute_content<'tree>(
     attribute: &Node<'tree, StrDoc<SupportLang>>,
 ) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    jsx_attribute_content(attribute, "href")
+}
+
+fn jsx_attribute_content<'tree>(
+    attribute: &Node<'tree, StrDoc<SupportLang>>,
+    name: &str,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
     let text = normalized(&attribute.text());
-    if !text.starts_with("href=") {
+    if !text.starts_with(&format!("{name}=")) {
         return None;
     }
     let value = attribute.field("value").or_else(|| {

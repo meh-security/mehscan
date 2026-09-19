@@ -5,6 +5,7 @@
 - Extended SQL and NoSQL rules across supported languages.
 - Broader filesystem, dynamic-code, and executable-deserialization sinks.
 - Typed Java and .NET XPath expression review, plus additional native process launch APIs.
+- Explicit Lit, Vue render-function, and Solid trusted-HTML sinks.
 - Partial triage reports and summaries with explicit completion coverage.
 - Built-in review response schema generation.
 
