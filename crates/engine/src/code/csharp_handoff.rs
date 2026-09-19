@@ -50,7 +50,23 @@ struct PendingCall {
 }
 
 #[derive(Clone, Debug)]
+struct PendingForwardCall {
+    source_owner: String,
+    source_method: String,
+    source_argument_count: usize,
+    source_parameter_index: usize,
+    receiver_type: String,
+    method_name: String,
+    argument_count: usize,
+    parameter_index: usize,
+    call: Location,
+}
+
+#[derive(Clone, Debug)]
 struct ParameterHandoff {
+    target_owner: String,
+    target_argument_count: usize,
+    target_parameter_index: usize,
     target_path: String,
     target_parameter: String,
     target_location: Location,
@@ -58,6 +74,9 @@ struct ParameterHandoff {
     controller_source: Location,
     controller_call: Location,
     controller_symbol: String,
+    controller_target_symbol: String,
+    forwarding_call: Option<Location>,
+    forwarding_symbol: Option<String>,
     target_symbol: String,
 }
 
@@ -71,20 +90,43 @@ pub(crate) struct CsharpHandoffCatalogBuilder {
     methods: Vec<MethodRecord>,
     types: Vec<TypeRecord>,
     calls: Vec<PendingCall>,
+    forwards: Vec<PendingForwardCall>,
 }
 
 impl CsharpHandoffCatalogBuilder {
     pub(crate) fn add_file(&mut self, path: &str, root: &Node<'_, StrDoc<SupportLang>>) {
-        catalog_types_and_methods(path, root, &mut self.types, &mut self.methods);
+        catalog_types_and_methods(
+            path,
+            root,
+            &mut self.types,
+            &mut self.methods,
+            &mut self.forwards,
+        );
         catalog_controller_calls(path, root, &mut self.calls);
     }
 
     pub(crate) fn finish(self) -> CsharpHandoffProjectContext {
-        let mut handoffs = self
+        let direct = self
             .calls
             .into_iter()
             .filter_map(|call| resolve_call(call, &self.types, &self.methods))
             .collect::<Vec<_>>();
+        let mut handoffs = direct.clone();
+        for handoff in direct {
+            handoffs.extend(
+                self.forwards
+                    .iter()
+                    .filter(|forward| {
+                        forward.source_owner == handoff.target_owner
+                            && forward.source_method == handoff.target_symbol
+                            && forward.source_argument_count == handoff.target_argument_count
+                            && forward.source_parameter_index == handoff.target_parameter_index
+                    })
+                    .filter_map(|forward| {
+                        resolve_forward(&handoff, forward, &self.types, &self.methods)
+                    }),
+            );
+        }
         handoffs.sort_by(|left, right| {
             left.target_path
                 .cmp(&right.target_path)
@@ -169,7 +211,7 @@ pub(crate) fn add_forwarded_parameter_sources<'tree>(
                 (
                     "controller_call".to_string(),
                     Capture {
-                        text: handoff.target_symbol.clone(),
+                        text: handoff.controller_target_symbol.clone(),
                         location: handoff.controller_call.clone(),
                     },
                 ),
@@ -187,8 +229,16 @@ pub(crate) fn add_forwarded_parameter_sources<'tree>(
                 "request".to_string(),
                 "attacker-controlled".to_string(),
                 "aspnet-core".to_string(),
-                "controller-service-handoff".to_string(),
-                "single-hop".to_string(),
+                if handoff.forwarding_call.is_some() {
+                    "controller-service-repository-handoff".to_string()
+                } else {
+                    "controller-service-handoff".to_string()
+                },
+                if handoff.forwarding_call.is_some() {
+                    "two-hop".to_string()
+                } else {
+                    "single-hop".to_string()
+                },
                 "unique-syntactic-target".to_string(),
             ],
             confidence: Confidence::Medium,
@@ -207,6 +257,17 @@ pub(crate) fn add_forwarded_parameter_sources<'tree>(
             rule_id: FORWARDED_PARAMETER_RULE_ID.to_string(),
             related_evidence: vec![controller_source_evidence_id(&handoff.controller_source)],
         });
+        if let (Some(call), Some(symbol)) = (&handoff.forwarding_call, &handoff.forwarding_symbol)
+            && let Some(item) = evidence.last_mut()
+        {
+            item.captures.insert(
+                "service_call".to_string(),
+                Capture {
+                    text: symbol.clone(),
+                    location: call.clone(),
+                },
+            );
+        }
     }
 }
 
@@ -215,6 +276,7 @@ fn catalog_types_and_methods(
     root: &Node<'_, StrDoc<SupportLang>>,
     types: &mut Vec<TypeRecord>,
     methods: &mut Vec<MethodRecord>,
+    forwards: &mut Vec<PendingForwardCall>,
 ) {
     for declaration in root.dfs().filter(|node| {
         matches!(
@@ -254,11 +316,80 @@ fn catalog_types_and_methods(
             else {
                 continue;
             };
+            let parameters = method_parameters(path, &method);
             methods.push(MethodRecord {
                 owner: name.clone(),
                 name: method_name,
-                parameters: method_parameters(path, &method),
+                parameters: parameters.clone(),
                 path: path.to_string(),
+            });
+            catalog_method_forwards(&name, &method, &parameters, path, forwards);
+        }
+    }
+}
+
+fn catalog_method_forwards(
+    owner: &str,
+    method: &Node<'_, StrDoc<SupportLang>>,
+    parameters: &[ParameterRecord],
+    path: &str,
+    forwards: &mut Vec<PendingForwardCall>,
+) {
+    let Some(source_method) = method
+        .field("name")
+        .and_then(|node| simple_identifier(node.text().as_ref()))
+    else {
+        return;
+    };
+    let receiver_types = receiver_types(method);
+    for invocation in method
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "invocation_expression")
+        .filter(|node| nearest_method(node).is_some_and(|item| item.range() == method.range()))
+        .filter(|node| !nested_callable_between(node, method))
+    {
+        let Some(function) = invocation.field("function") else {
+            continue;
+        };
+        if function.kind().as_ref() != "member_access_expression" {
+            continue;
+        }
+        let (Some(receiver), Some(method_name)) = (
+            function
+                .field("expression")
+                .and_then(|node| simple_identifier(node.text().as_ref())),
+            function
+                .field("name")
+                .and_then(|node| simple_identifier(node.text().as_ref())),
+        ) else {
+            continue;
+        };
+        let Some(receiver_type) = receiver_types.get(&receiver) else {
+            continue;
+        };
+        if !looks_like_service_type(receiver_type) {
+            continue;
+        }
+        let Some(arguments) = invocation_arguments(&invocation) else {
+            continue;
+        };
+        for (parameter_index, argument) in arguments.iter().enumerate() {
+            let Some(source_parameter_index) = parameters
+                .iter()
+                .position(|parameter| parameter.name == *argument)
+            else {
+                continue;
+            };
+            forwards.push(PendingForwardCall {
+                source_owner: owner.to_string(),
+                source_method: source_method.clone(),
+                source_argument_count: parameters.len(),
+                source_parameter_index,
+                receiver_type: receiver_type.clone(),
+                method_name: method_name.clone(),
+                argument_count: arguments.len(),
+                parameter_index,
+                call: node_location(path, &invocation),
             });
         }
     }
@@ -351,34 +482,18 @@ fn resolve_call(
     types: &[TypeRecord],
     methods: &[MethodRecord],
 ) -> Option<ParameterHandoff> {
-    let owners = if methods
-        .iter()
-        .any(|method| method.owner == call.receiver_type)
-    {
-        BTreeSet::from([call.receiver_type.clone()])
-    } else {
-        types
-            .iter()
-            .filter(|kind| kind.bases.contains(&call.receiver_type))
-            .map(|kind| kind.name.clone())
-            .collect()
-    };
-    if owners.is_empty() {
-        return None;
-    }
-    let candidates = methods
-        .iter()
-        .filter(|method| owners.contains(&method.owner))
-        .filter(|method| {
-            method.name == call.method_name && method.parameters.len() == call.argument_count
-        })
-        .collect::<Vec<_>>();
-    if candidates.len() != 1 {
-        return None;
-    }
-    let target = candidates[0];
+    let target = resolve_method(
+        &call.receiver_type,
+        &call.method_name,
+        call.argument_count,
+        types,
+        methods,
+    )?;
     let parameter = target.parameters.get(call.parameter_index)?;
     Some(ParameterHandoff {
+        target_owner: target.owner.clone(),
+        target_argument_count: target.parameters.len(),
+        target_parameter_index: call.parameter_index,
         target_path: target.path.clone(),
         target_parameter: parameter.name.clone(),
         target_location: parameter.location.clone(),
@@ -386,8 +501,77 @@ fn resolve_call(
         controller_source: call.controller_source,
         controller_call: call.controller_call,
         controller_symbol: call.controller_symbol,
+        controller_target_symbol: target.name.clone(),
+        forwarding_call: None,
+        forwarding_symbol: None,
         target_symbol: target.name.clone(),
     })
+}
+
+fn resolve_forward(
+    source: &ParameterHandoff,
+    forward: &PendingForwardCall,
+    types: &[TypeRecord],
+    methods: &[MethodRecord],
+) -> Option<ParameterHandoff> {
+    let target = resolve_method(
+        &forward.receiver_type,
+        &forward.method_name,
+        forward.argument_count,
+        types,
+        methods,
+    )?;
+    if target.owner == source.target_owner
+        && target.name == source.target_symbol
+        && target.parameters.len() == source.target_argument_count
+    {
+        return None;
+    }
+    let parameter = target.parameters.get(forward.parameter_index)?;
+    Some(ParameterHandoff {
+        target_owner: target.owner.clone(),
+        target_argument_count: target.parameters.len(),
+        target_parameter_index: forward.parameter_index,
+        target_path: target.path.clone(),
+        target_parameter: parameter.name.clone(),
+        target_location: parameter.location.clone(),
+        controller_parameter: source.controller_parameter.clone(),
+        controller_source: source.controller_source.clone(),
+        controller_call: source.controller_call.clone(),
+        controller_symbol: source.controller_symbol.clone(),
+        controller_target_symbol: source.controller_target_symbol.clone(),
+        forwarding_call: Some(forward.call.clone()),
+        forwarding_symbol: Some(target.name.clone()),
+        target_symbol: target.name.clone(),
+    })
+}
+
+fn resolve_method<'a>(
+    receiver_type: &str,
+    method_name: &str,
+    argument_count: usize,
+    types: &[TypeRecord],
+    methods: &'a [MethodRecord],
+) -> Option<&'a MethodRecord> {
+    let owners = if methods.iter().any(|method| method.owner == receiver_type) {
+        BTreeSet::from([receiver_type.to_string()])
+    } else {
+        types
+            .iter()
+            .filter(|kind| kind.bases.contains(receiver_type))
+            .map(|kind| kind.name.clone())
+            .collect()
+    };
+    if owners.is_empty() {
+        return None;
+    }
+    let mut candidates = methods.iter().filter(|method| {
+        owners.contains(&method.owner)
+            && method.name == method_name
+            && method.parameters.len() == argument_count
+    });
+    let target = candidates.next()?;
+    candidates.next().is_none().then_some(target)
 }
 
 fn receiver_types(method: &Node<'_, StrDoc<SupportLang>>) -> BTreeMap<String, String> {
@@ -631,13 +815,17 @@ fn node_location(path: &str, node: &Node<'_, StrDoc<SupportLang>>) -> Location {
 
 fn evidence_id(handoff: &ParameterHandoff) -> String {
     let input = format!(
-        "{}\0{}\0{}\0{}\0{}\0{}",
+        "{}\0{}\0{}\0{}\0{}\0{}\0{}",
         handoff.target_path,
         FORWARDED_PARAMETER_RULE_ID,
         handoff.target_location.start.byte_offset,
         handoff.controller_source.path,
         handoff.controller_call.start.byte_offset,
         handoff.controller_source.start.byte_offset,
+        handoff
+            .forwarding_call
+            .as_ref()
+            .map_or(0, |location| location.start.byte_offset),
     );
     let hash = input.bytes().fold(0xcbf29ce484222325_u64, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)

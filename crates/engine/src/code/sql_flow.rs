@@ -1954,7 +1954,7 @@ fn bound_parameter_steps(
             | super::rust_project::ACTIX_FORWARDED_RULE_ID
     ) {
         let call = source.captures.get("controller_call")?;
-        vec![
+        let mut steps = vec![
             SecurityPathStep {
                 kind: SecurityPathStepKind::Alias,
                 location: call.location.clone(),
@@ -1967,7 +1967,19 @@ fn bound_parameter_steps(
                 evidence_id: None,
                 symbol: Some(format!("unique callee parameter {parameter}")),
             },
-        ]
+        ];
+        if let Some(service_call) = source.captures.get("service_call") {
+            steps.insert(
+                1,
+                SecurityPathStep {
+                    kind: SecurityPathStepKind::Alias,
+                    location: service_call.location.clone(),
+                    evidence_id: None,
+                    symbol: Some(format!("service call into {parameter}")),
+                },
+            );
+        }
+        steps
     } else {
         Vec::new()
     };
@@ -3903,7 +3915,14 @@ fn push_path(
         uncertainty_reasons.push("aspnet_parameter_binding_is_syntactic".to_string());
         uncertainty_reasons.push("controller_service_parameter_summary_is_syntactic".to_string());
         uncertainty_reasons.push("runtime_dispatch_unverified".to_string());
-        uncertainty_reasons.push("single_formal_parameter_hop".to_string());
+        uncertainty_reasons.push(
+            if source.captures.contains_key("service_call") {
+                "two_formal_parameter_hops"
+            } else {
+                "single_formal_parameter_hop"
+            }
+            .to_string(),
+        );
     }
     let id = path_id(source, sink, state, &steps);
     paths.push(SecurityPath {

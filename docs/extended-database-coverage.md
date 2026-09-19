@@ -16,7 +16,7 @@ equality selectors and fixed documents are not injection proof.
 | --- | --- | --- | --- |
 | C | SQLite execution and preparation; no embedded MongoDB client filter rule | PostgreSQL libpq and MySQL query-text positions; MongoDB C client read, delete, update and aggregate filter positions | Client wrappers, function pointers, ODBC and wide-character SQL APIs; no compiler/linker identity resolution |
 | C++ | SQLite; no typed MongoDB collection filter rule | PostgreSQL/MySQL native APIs, MongoDB C APIs and declared `mongocxx::collection` filters | Qt/ODBC database adapters, inferred collection factories and cross-file aliases |
-| C# | SqlCommand, typed CommandText assignments, EF raw SQL and typed Dapper calls | Additional provider command constructors and CommandText receivers, async EF raw SQL, declared MongoDB collection filters, raw BSON/JSON filter construction | Constructor matching retains existing syntax-based behavior; indirect command factories, inferred MongoDB factories and generic type aliases are not universal |
+| C# | SqlCommand, typed CommandText assignments, EF raw SQL and typed Dapper calls | Additional provider command constructors and CommandText receivers, async EF raw SQL, declared MongoDB collection filters, raw BSON/JSON filter construction; bounded controller-to-service-to-repository parameter handoffs | Constructor matching retains existing syntax-based behavior; indirect command factories, inferred MongoDB factories, generic type aliases and chains deeper than two formal-parameter calls are not universal |
 | Java | JDBC query/preparation, typed Spring JDBC and JPA queries/binding | JDBC execute overloads, large updates, batch text and callable preparation; declared Hibernate/JDO/Vert.x query receivers; MongoDB collection filters and raw document/query construction | Turbine/Torque peers, arbitrary JDO overload dispatch, Hibernate sqlRestriction, mutable BSON put/append assembly, inferred asynchronous factories, cross-file receiver factories |
 | Kotlin | Typed JDBC, Spring JDBC, JPA and canonical Exposed SQL strings | JDBC large updates, declared Hibernate/JDO/Vert.x query receivers, typed MongoDB filters and raw document/query construction | Callback/overload dispatch, extension functions, inferred SDK factories and compiler effects across lambdas |
 | JavaScript | Conventional SQL receivers, driver-specific MySQL/PostgreSQL handling, MongoDB predicates/operator selectors and project summaries | Imported Knex raw clauses, SQLite methods, mssql requests, broader SQL execute/unsafe entrypoints; proven MongoDB filters/pipelines; DynamoDB v2 query requests and v3 query-command construction | Sequelize literal expression construction, arbitrary dependency injection, wrapper modules, unresolved collection aliases, computed methods and dynamic SDK dispatch |
@@ -59,6 +59,10 @@ This is not a claim of exhaustive database-driver or backend coverage.
 - PHP constructor connection fields require one unconditional assignment in the
   constructor of the same lexical class. Native typed parameters and typed SDK
   parameters exclude receiver replacement and unknown prior helper mutation.
+- C# project summaries can follow a controller-bound parameter through one
+  service method and one repository-like method when both calls forward the
+  exact formal parameter and each syntactic target is unique. This does not
+  build a CFG, infer arbitrary expressions or recursively walk a call graph.
 - pgx SQL follows its context argument; pgx Prepare SQL follows context and
   statement name. sqlx Get/Select SQL follows the destination. These operands
   are not interchangeable with database/sql argument positions.
