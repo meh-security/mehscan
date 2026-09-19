@@ -33,30 +33,6 @@ pub(super) fn is_rule(rule: &str) -> bool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn identity_registry_covers_the_catalog_without_intercepting_custom_rule_names() {
-        let rules = crate::rules::load_builtin_rules().unwrap();
-        let extended: Vec<_> = rules
-            .iter()
-            .filter(|r| {
-                r.tags.iter().any(|tag| tag == "extended-rules")
-                    && r.tags.iter().any(|tag| tag == "database")
-            })
-            .collect();
-        assert_eq!(extended.len(), 36);
-        assert!(extended.iter().all(|r| super::is_rule(&r.id)));
-        for custom in [
-            "my-extended-http",
-            "javascript-extended-http-request",
-            "cpp-extended-custom-query",
-        ] {
-            assert!(!super::is_rule(custom));
-        }
-    }
-}
-
 pub(super) fn accepts(
     root: &DbNode<'_>,
     node: &DbNode<'_>,
@@ -542,4 +518,28 @@ pub(super) fn pgx_receiver(root: &DbNode<'_>, node: &DbNode<'_>, receiver: &DbNo
         Some(receiver),
         None,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn identity_registry_covers_the_catalog_without_intercepting_custom_rule_names() {
+        let rules = crate::rules::load_builtin_rules().unwrap();
+        let extended: Vec<_> = rules
+            .iter()
+            .filter(|r| {
+                r.tags.iter().any(|tag| tag == "extended-rules")
+                    && r.tags.iter().any(|tag| tag == "database")
+            })
+            .collect();
+        assert_eq!(extended.len(), 36);
+        assert!(extended.iter().all(|r| super::is_rule(&r.id)));
+        for custom in [
+            "my-extended-http",
+            "javascript-extended-http-request",
+            "cpp-extended-custom-query",
+        ] {
+            assert!(!super::is_rule(custom));
+        }
+    }
 }

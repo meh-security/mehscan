@@ -218,13 +218,53 @@
           func patternContext() { _ = template.HTML($HTML) }
         selector: call_expression
         captures: { content: HTML }
+      - pattern: template.HTMLAttr($HTML)
+        context: |
+          package pattern
+          func patternContext() { _ = template.HTMLAttr($HTML) }
+        selector: call_expression
+        captures: { content: HTML }
+      - pattern: template.JS($HTML)
+        context: |
+          package pattern
+          func patternContext() { _ = template.JS($HTML) }
+        selector: call_expression
+        captures: { content: HTML }
+      - pattern: template.JSStr($HTML)
+        context: |
+          package pattern
+          func patternContext() { _ = template.JSStr($HTML) }
+        selector: call_expression
+        captures: { content: HTML }
+      - pattern: template.URL($HTML)
+        context: |
+          package pattern
+          func patternContext() { _ = template.URL($HTML) }
+        selector: call_expression
+        captures: { content: HTML }
+      - pattern: template.CSS($HTML)
+        context: |
+          package pattern
+          func patternContext() { _ = template.CSS($HTML) }
+        selector: call_expression
+        captures: { content: HTML }
   symbols:
     - canonical: html/template.HTML
+      captures: { content: 0 }
+    - canonical: html/template.HTMLAttr
+      captures: { content: 0 }
+    - canonical: html/template.JS
+      captures: { content: 0 }
+    - canonical: html/template.JSStr
+      captures: { content: 0 }
+    - canonical: html/template.URL
+      captures: { content: 0 }
+    - canonical: html/template.CSS
       captures: { content: 0 }
   tags: [http, response, html, xss, trusted-markup]
   ai: *html_guidance
   provenance:
-    note: Go trusted HTML conversion mapped to CWE-79 review.
+    note: Go html/template trusted content conversions mapped to context-specific CWE-79 review.
     references:
       - https://cwe.mitre.org/data/definitions/79.html
       - https://pkg.go.dev/html/template#HTML

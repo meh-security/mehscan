@@ -254,6 +254,36 @@ fn add_outbound_observations<'tree>(
             );
         }
 
+        if jdk_request
+            && operation == "uri"
+            && object
+                .as_ref()
+                .is_some_and(|object| jdk_request_builder_receiver(root, object))
+            && let Some(endpoint) = args.first()
+        {
+            push(
+                path,
+                &invocation,
+                endpoint,
+                "java-jdk-http-request-builder",
+                EvidenceKind::Sink,
+                Capability::OutboundNetworkRequest,
+                "endpoint",
+                &["CWE-918"],
+                &[
+                    "http",
+                    "ssrf",
+                    "jdk-http-client",
+                    "request-builder-uri-mutation",
+                    "typed-receiver",
+                ],
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+        }
+
         if jdk_client
             && matches!(operation.as_str(), "send" | "sendAsync")
             && object
@@ -409,6 +439,62 @@ fn add_outbound_observations<'tree>(
             );
         }
     }
+}
+
+fn jdk_request_builder_receiver(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    expression: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    if expression.kind().as_ref() == "method_invocation" {
+        return expression
+            .field("name")
+            .is_some_and(|name| name.text().as_ref() == "newBuilder")
+            && expression.field("object").is_some_and(|object| {
+                matches!(
+                    object.text().trim(),
+                    "HttpRequest" | "java.net.http.HttpRequest"
+                )
+            });
+    }
+    let name = expression.text();
+    if !name
+        .chars()
+        .all(|character| character.is_alphanumeric() || matches!(character, '_' | '$'))
+    {
+        return false;
+    }
+    let bindings = root
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "variable_declarator")
+        .filter(|binding| {
+            binding.range().end <= expression.range().start
+                && binding
+                    .field("name")
+                    .is_some_and(|field| field.text() == name)
+                && binding.ancestors().any(|scope| {
+                    matches!(scope.kind().as_ref(), "block" | "method_declaration")
+                        && scope.range().start <= expression.range().start
+                        && expression.range().end <= scope.range().end
+                })
+        })
+        .collect::<Vec<_>>();
+    let Some(binding) = bindings.last() else {
+        return false;
+    };
+    let declared_builder = binding
+        .parent()
+        .and_then(|declaration| declaration.field("type"));
+    if declared_builder.is_some_and(|kind| {
+        matches!(
+            kind.text().as_ref(),
+            "HttpRequest.Builder" | "java.net.http.HttpRequest.Builder"
+        )
+    }) {
+        return true;
+    }
+    binding
+        .field("value")
+        .is_some_and(|value| jdk_request_builder_receiver(root, &value))
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -334,6 +334,21 @@
           void pattern_context() { sqlite3_prepare_v3($DATABASE, $QUERY, $LENGTH, $FLAGS, $STATEMENT, $TAIL); }
         selector: call_expression
         captures: { database: DATABASE, query: QUERY }
+      - pattern: sqlite3_prepare16($DATABASE, $QUERY, $LENGTH, $STATEMENT, $TAIL)
+        context: |
+          void pattern_context() { sqlite3_prepare16($DATABASE, $QUERY, $LENGTH, $STATEMENT, $TAIL); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: sqlite3_prepare16_v2($DATABASE, $QUERY, $LENGTH, $STATEMENT, $TAIL)
+        context: |
+          void pattern_context() { sqlite3_prepare16_v2($DATABASE, $QUERY, $LENGTH, $STATEMENT, $TAIL); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: sqlite3_prepare16_v3($DATABASE, $QUERY, $LENGTH, $FLAGS, $STATEMENT, $TAIL)
+        context: |
+          void pattern_context() { sqlite3_prepare16_v3($DATABASE, $QUERY, $LENGTH, $FLAGS, $STATEMENT, $TAIL); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
   tags: [database, sql, sqlite, native]
   ai: &native_sqlite_guidance
     investigate:
@@ -384,12 +399,28 @@
         context: void pattern_context() { PQprepare($DATABASE, $NAME, $QUERY, $$$ARGUMENTS); }
         selector: call_expression
         captures: { database: DATABASE, query: QUERY }
+      - pattern: PQsendQuery($DATABASE, $QUERY)
+        context: void pattern_context() { PQsendQuery($DATABASE, $QUERY); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: PQsendQueryParams($DATABASE, $QUERY, $$$ARGUMENTS)
+        context: void pattern_context() { PQsendQueryParams($DATABASE, $QUERY, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: PQsendPrepare($DATABASE, $NAME, $QUERY, $$$ARGUMENTS)
+        context: void pattern_context() { PQsendPrepare($DATABASE, $NAME, $QUERY, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
       - pattern: mysql_query($DATABASE, $QUERY)
         context: void pattern_context() { mysql_query($DATABASE, $QUERY); }
         selector: call_expression
         captures: { database: DATABASE, query: QUERY }
       - pattern: mysql_real_query($DATABASE, $QUERY, $LENGTH)
         context: void pattern_context() { mysql_real_query($DATABASE, $QUERY, $LENGTH); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: mysql_send_query($DATABASE, $QUERY, $LENGTH)
+        context: void pattern_context() { mysql_send_query($DATABASE, $QUERY, $LENGTH); }
         selector: call_expression
         captures: { database: DATABASE, query: QUERY }
       - pattern: mysql_stmt_prepare($STATEMENT, $QUERY, $LENGTH)

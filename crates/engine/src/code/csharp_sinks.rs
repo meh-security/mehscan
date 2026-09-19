@@ -137,6 +137,8 @@ pub(crate) fn add_typed_property_sinks<'tree>(
         });
     }
 
+    add_http_request_uri_properties(path, root, comments, conditional, literals, evidence);
+
     let dapper_imported = has_dapper_import(root);
     for invocation in root
         .dfs()
@@ -237,6 +239,107 @@ pub(crate) fn add_typed_property_sinks<'tree>(
                 evidence,
             );
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_http_request_uri_properties<'tree>(
+    path: &str,
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    const RULE: &str = "csharp-http-request-uri";
+    // A source-declared type with this short name wins over framework implicit
+    // usings. Avoid treating its ordinary RequestUri property as an HTTP sink.
+    if declares_type(root, "HttpRequestMessage") {
+        return;
+    }
+    for assignment in root
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "assignment_expression")
+    {
+        if comments.is_in_comment(assignment.range()) || assignment_operator(&assignment) != "=" {
+            continue;
+        }
+        let Some(left) = assignment.field("left") else {
+            continue;
+        };
+        let request = if let Some((receiver, member)) = member_assignment(&left) {
+            if member != "RequestUri"
+                || !receiver_has_type(
+                    root,
+                    &assignment,
+                    receiver.as_str(),
+                    is_http_request_message_type,
+                )
+            {
+                continue;
+            }
+            receiver
+        } else if left.text().trim() == "RequestUri" {
+            let Some(request_type) = initializer_type(&assignment, is_http_request_message_type)
+            else {
+                continue;
+            };
+            request_type
+        } else {
+            continue;
+        };
+        let Some(value) = assignment.field("right") else {
+            continue;
+        };
+        let endpoint = uri_constructor_operand(&value).unwrap_or_else(|| value.clone());
+        evidence.push(Evidence {
+            id: evidence_id_for(RULE, path, assignment.range().start, assignment.range().end),
+            kind: EvidenceKind::Sink,
+            capability: Capability::OutboundNetworkRequest,
+            location: location(path, &assignment),
+            enclosing_symbol: enclosing_symbol(&assignment),
+            captures: BTreeMap::from([
+                (
+                    "endpoint".to_string(),
+                    Capture {
+                        text: endpoint.text().into_owned(),
+                        location: location(path, &endpoint),
+                    },
+                ),
+                (
+                    "request".to_string(),
+                    Capture {
+                        text: request,
+                        location: location(path, &left),
+                    },
+                ),
+            ]),
+            cwe_candidates: vec!["CWE-918".to_string()],
+            tags: vec![
+                "http".to_string(),
+                "network".to_string(),
+                "ssrf".to_string(),
+                "http-request-message".to_string(),
+                "request-uri-property".to_string(),
+                "typed-receiver".to_string(),
+            ],
+            confidence: Confidence::High,
+            provenance: Provenance {
+                resolution: Resolution::Ast,
+                engine: CALL_ENGINE.to_string(),
+                rule_version: 1,
+            },
+            context: EvidenceContext {
+                comment: false,
+                reachability: Some(reachability::classify(&assignment, literals)),
+                availability: Some(conditional.availability_for(assignment.range())),
+                literals: BTreeMap::from([("endpoint".to_string(), literals.evaluate(&endpoint))]),
+                ..EvidenceContext::default()
+            },
+            symbol_resolution: None,
+            rule_id: RULE.to_string(),
+            related_evidence: Vec::new(),
+        });
     }
 }
 
@@ -798,6 +901,13 @@ fn command_receiver_identifier(receiver: &Node<'_, StrDoc<SupportLang>>) -> Opti
 }
 
 fn database_command_initializer_type(assignment: &Node<'_, StrDoc<SupportLang>>) -> Option<String> {
+    initializer_type(assignment, is_database_command_type)
+}
+
+fn initializer_type(
+    assignment: &Node<'_, StrDoc<SupportLang>>,
+    predicate: fn(&str) -> bool,
+) -> Option<String> {
     let creation = assignment.ancestors().find(|ancestor| {
         matches!(
             ancestor.kind().as_ref(),
@@ -805,7 +915,7 @@ fn database_command_initializer_type(assignment: &Node<'_, StrDoc<SupportLang>>)
         )
     })?;
     if let Some(observed) = creation.field("type")
-        && is_database_command_type(observed.text().as_ref())
+        && predicate(observed.text().as_ref())
     {
         return Some(observed.text().trim().to_string());
     }
@@ -816,7 +926,25 @@ fn database_command_initializer_type(assignment: &Node<'_, StrDoc<SupportLang>>)
         .ancestors()
         .find(|ancestor| ancestor.kind().as_ref() == "variable_declaration")?;
     let observed = declaration.field("type")?;
-    is_database_command_type(observed.text().as_ref()).then(|| observed.text().trim().to_string())
+    predicate(observed.text().as_ref()).then(|| observed.text().trim().to_string())
+}
+
+fn uri_constructor_operand<'tree>(
+    expression: &Node<'tree, StrDoc<SupportLang>>,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    if expression.kind().as_ref() != "object_creation_expression"
+        || expression.field("type").is_none_or(|kind| {
+            !matches!(
+                kind.text().trim().rsplit('.').next(),
+                Some("Uri" | "UriBuilder")
+            )
+        })
+    {
+        return None;
+    }
+    expression
+        .field("arguments")
+        .and_then(|arguments| arguments.children().find(|child| child.is_named()))
 }
 
 fn initializer_sets_stored_procedure(assignment: &Node<'_, StrDoc<SupportLang>>) -> bool {
@@ -1164,6 +1292,24 @@ fn is_http_client_type(observed: &str) -> bool {
         observed.trim().trim_end_matches('?').rsplit('.').next(),
         Some("HttpClient")
     )
+}
+
+fn is_http_request_message_type(observed: &str) -> bool {
+    matches!(
+        observed.trim().trim_end_matches('?').rsplit('.').next(),
+        Some("HttpRequestMessage")
+    )
+}
+
+fn declares_type(root: &Node<'_, StrDoc<SupportLang>>, expected: &str) -> bool {
+    root.dfs().any(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "class_declaration" | "struct_declaration" | "record_declaration"
+        ) && node
+            .field("name")
+            .is_some_and(|name| name.text().trim() == expected)
+    })
 }
 
 fn compact(text: &str) -> String {

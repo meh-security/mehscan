@@ -27,7 +27,11 @@ pub(crate) fn add_typed_process_sinks<'tree>(
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
     evidence: &mut Vec<Evidence>,
 ) {
-    if language != Language::Java || declares_type(root, "Runtime") {
+    if language != Language::Java {
+        return;
+    }
+    add_process_builder_mutations(path, root, comments, conditional, literals, evidence);
+    if declares_type(root, "Runtime") {
         return;
     }
     let runtime_variables = root
@@ -106,6 +110,97 @@ pub(crate) fn add_typed_process_sinks<'tree>(
                 "process".to_string(),
                 "java".to_string(),
                 "exact-runtime-receiver".to_string(),
+            ],
+            confidence: Confidence::High,
+            provenance: Provenance {
+                resolution: Resolution::Ast,
+                engine: ENGINE.to_string(),
+                rule_version: 1,
+            },
+            context: EvidenceContext {
+                comment: false,
+                reachability: Some(reachability::classify(&invocation, literals)),
+                availability: Some(conditional.availability_for(invocation.range())),
+                literals: BTreeMap::from([("command".to_string(), literals.evaluate(&command))]),
+                ..EvidenceContext::default()
+            },
+            symbol_resolution: None,
+            rule_id: PROCESS_RULE_ID.to_string(),
+            related_evidence: Vec::new(),
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_process_builder_mutations<'tree>(
+    path: &str,
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    if declares_type(root, "ProcessBuilder") {
+        return;
+    }
+    for invocation in root
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "method_invocation")
+    {
+        if comments.is_in_comment(invocation.range())
+            || invocation
+                .field("name")
+                .is_none_or(|name| name.text().as_ref() != "command")
+        {
+            continue;
+        }
+        let Some(receiver) = invocation.field("object") else {
+            continue;
+        };
+        if !super::java_persistence::typed_database_receiver(root, &receiver, "ProcessBuilder", 8)
+            && !super::java_persistence::typed_database_receiver(
+                root,
+                &receiver,
+                "java.lang.ProcessBuilder",
+                8,
+            )
+        {
+            continue;
+        }
+        let Some(command) = invocation
+            .field("arguments")
+            .and_then(|arguments| arguments.children().find(|child| child.is_named()))
+        else {
+            continue;
+        };
+        let sink_location = location(path, &invocation);
+        if evidence.iter().any(|item| {
+            item.rule_id == PROCESS_RULE_ID
+                && item.location.path == sink_location.path
+                && item.location.start.byte_offset == sink_location.start.byte_offset
+        }) {
+            continue;
+        }
+        evidence.push(Evidence {
+            id: evidence_id(path, invocation.range().start, invocation.range().end),
+            kind: EvidenceKind::Sink,
+            capability: Capability::ProcessExecution,
+            location: sink_location,
+            enclosing_symbol: enclosing_symbol(&invocation),
+            captures: BTreeMap::from([(
+                "command".to_string(),
+                Capture {
+                    text: command.text().into_owned(),
+                    location: location(path, &command),
+                },
+            )]),
+            cwe_candidates: vec!["CWE-78".to_string()],
+            tags: vec![
+                "command".to_string(),
+                "process".to_string(),
+                "java".to_string(),
+                "process-builder-command-mutation".to_string(),
+                "typed-receiver".to_string(),
             ],
             confidence: Confidence::High,
             provenance: Provenance {

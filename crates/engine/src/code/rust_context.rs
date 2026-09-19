@@ -313,7 +313,10 @@ pub(crate) fn is_exact_process_execution(
     if observed.ends_with(".arg") || observed.ends_with(".args") {
         return true;
     }
-    canonical_path(root, &observed) == "std::process::Command::new"
+    matches!(
+        canonical_path(root, &observed).as_str(),
+        "std::process::Command::new" | "tokio::process::Command::new"
+    )
 }
 
 pub(crate) fn is_reviewable_safety_boundary(

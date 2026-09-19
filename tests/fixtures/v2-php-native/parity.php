@@ -22,6 +22,10 @@ function strong_password($password) { return password_hash($password, PASSWORD_D
 function weak_password($password, $storedDigest) { return md5($password) === $storedDigest; }
 function checksum_only($data) { return md5($data); }
 function weak_sha1($message, $expected) { return sha1($message) === $expected; }
+function xpath_expression($document) {
+    $xpath = new \DOMXPath($document);
+    return $xpath->query($_GET['expression']);
+}
 }
 
 namespace NativeAliases {

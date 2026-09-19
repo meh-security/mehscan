@@ -120,6 +120,38 @@
     references:
     - https://www.php.net/manual/en/security.php
     - https://cwe.mitre.org/data/definitions/78.html
+- id: php-shell-command-operator
+  version: 1
+  title: PHP shell execution operator
+  language: php
+  kind: sink
+  capability: process_execution
+  cwe:
+  - CWE-78
+  match:
+    any:
+    - pattern: "`$COMMAND`"
+      context: "<?php `$COMMAND`;"
+      selector: shell_command_expression
+      captures:
+        command: COMMAND
+  tags:
+  - php
+  - shell
+  - command
+  - language-operator
+  ai:
+    investigate:
+    - Confirm the interpolated shell command's origin and exact shell grammar.
+    verify:
+    - Check whether attacker-controlled values enter command text or executable selection.
+    exclude:
+    - Fixed command text and unrelated string interpolation are not vulnerability proof.
+  provenance:
+    note: PHP backtick syntax executes its contents through the shell and is retained as an explicit command boundary.
+    references:
+    - https://www.php.net/manual/en/language.operators.execution.php
+    - https://cwe.mitre.org/data/definitions/78.html
 - id: php-mysqli-query
   version: 1
   title: mysqli SQL query

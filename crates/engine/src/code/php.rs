@@ -564,6 +564,9 @@ impl<'a> PhpContext<'a> {
         if rule == "php-html-output" {
             return matches!(node.kind().as_ref(), "echo_statement" | "print_intrinsic");
         }
+        if rule == "php-shell-command-operator" {
+            return node.kind().as_ref() == "shell_command_expression";
+        }
         if rule == "php-file-inclusion" {
             return matches!(
                 node.kind().as_ref(),
@@ -599,6 +602,14 @@ impl<'a> PhpContext<'a> {
                 .field("object")
                 .is_some_and(|object| self.native_database_receiver(&object, node, class));
         }
+        if rule == "php-extended-xpath-query" {
+            return node
+                .field("name")
+                .is_some_and(|name| matches!(name.text().as_ref(), "query" | "evaluate"))
+                && node.field("object").is_some_and(|object| {
+                    self.native_database_receiver(&object, node, "domxpath")
+                });
+        }
         let Some(function) = node.field("function") else {
             return false;
         };
@@ -616,7 +627,13 @@ impl<'a> PhpContext<'a> {
         match rule {
             "php-command-execution" => matches!(
                 canonical.as_str(),
-                "shell_exec" | "exec" | "system" | "passthru" | "popen"
+                "shell_exec"
+                    | "exec"
+                    | "system"
+                    | "passthru"
+                    | "popen"
+                    | "proc_open"
+                    | "pcntl_exec"
             ),
             "php-mysqli-query" => {
                 matches!(

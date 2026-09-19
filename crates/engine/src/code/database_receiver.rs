@@ -138,34 +138,34 @@ fn proven_family(
                 continue;
             }
             if import.kind().as_ref() == "variable_declarator" {
-                if let (Some(name), Some(value)) = (import.field("name"), import.field("value")) {
-                    if compact(value.text().as_ref()).starts_with("require(") {
-                        if name.kind().as_ref() == "identifier" {
-                            let name = compact(name.text().as_ref());
-                            if ["knex", "better-sqlite3"].iter().any(|m| {
-                                compact_source.contains(&format!("'{m}'"))
-                                    || compact_source.contains(&format!("\"{m}\""))
-                            }) {
-                                factories.insert(name.clone());
-                            }
-                            modules.insert(name);
-                        } else {
-                            for part in name.dfs().filter(|n| {
-                                n.kind().as_ref() == "shorthand_property_identifier_pattern"
-                            }) {
-                                if matches!(
-                                    part.text().as_ref(),
-                                    "Pool"
-                                        | "Client"
-                                        | "Sequelize"
-                                        | "PrismaClient"
-                                        | "Database"
-                                        | "ConnectionPool"
-                                        | "Request"
-                                        | "MongoClient"
-                                ) {
-                                    factories.insert(part.text().to_string());
-                                }
+                if let (Some(name), Some(value)) = (import.field("name"), import.field("value"))
+                    && compact(value.text().as_ref()).starts_with("require(")
+                {
+                    if name.kind().as_ref() == "identifier" {
+                        let name = compact(name.text().as_ref());
+                        if ["knex", "better-sqlite3"].iter().any(|m| {
+                            compact_source.contains(&format!("'{m}'"))
+                                || compact_source.contains(&format!("\"{m}\""))
+                        }) {
+                            factories.insert(name.clone());
+                        }
+                        modules.insert(name);
+                    } else {
+                        for part in name.dfs().filter(|n| {
+                            n.kind().as_ref() == "shorthand_property_identifier_pattern"
+                        }) {
+                            if matches!(
+                                part.text().as_ref(),
+                                "Pool"
+                                    | "Client"
+                                    | "Sequelize"
+                                    | "PrismaClient"
+                                    | "Database"
+                                    | "ConnectionPool"
+                                    | "Request"
+                                    | "MongoClient"
+                            ) {
+                                factories.insert(part.text().to_string());
                             }
                         }
                     }
@@ -180,8 +180,8 @@ fn proven_family(
                             modules.insert(name.text().to_string());
                         }
                     } else if part.kind().as_ref() == "import_specifier" {
-                        if let Some(name) = part.field("name") {
-                            if matches!(
+                        if let Some(name) = part.field("name")
+                            && matches!(
                                 name.text().as_ref(),
                                 "Pool"
                                     | "Client"
@@ -192,10 +192,10 @@ fn proven_family(
                                     | "Request"
                                     | "MongoClient"
                                     | "knex"
-                            ) {
-                                factories
-                                    .insert(part.field("alias").unwrap_or(name).text().to_string());
-                            }
+                            )
+                        {
+                            factories
+                                .insert(part.field("alias").unwrap_or(name).text().to_string());
                         }
                     } else if part.kind().as_ref() == "import_clause" {
                         for name in part

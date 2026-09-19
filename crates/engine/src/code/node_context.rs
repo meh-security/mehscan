@@ -2940,12 +2940,18 @@ fn function_has_control_flow(function: &Node<'_, StrDoc<SupportLang>>) -> bool {
 fn summary_sink(callee: &str) -> Option<SummarySink> {
     let callee = compact(callee);
     match callee.as_str() {
-        "child_process.exec" | "child_process.execSync" => Some(SummarySink::Process),
+        "child_process.exec"
+        | "child_process.execSync"
+        | "child_process.execFile"
+        | "child_process.execFileSync"
+        | "child_process.spawn"
+        | "child_process.spawnSync"
+        | "child_process.fork" => Some(SummarySink::Process),
         "eval" | "global.eval" => Some(SummarySink::DynamicCode),
         "fs.readFile" | "fs.readFileSync" => Some(SummarySink::FilesystemRead),
-        "fetch" | "axios.get" | "http.get" | "https.get" | "request.get" | "needle.get" => {
-            Some(SummarySink::OutboundRequest)
-        }
+        "fetch" | "axios.get" | "axios.post" | "axios.put" | "axios.patch" | "axios.delete"
+        | "axios.head" | "axios.options" | "http.get" | "https.get" | "request.get"
+        | "needle.get" => Some(SummarySink::OutboundRequest),
         "yaml.load" | "jsyaml.load" | "js_yaml.load" => Some(SummarySink::Deserialization),
         _ if terminal_symbol(&callee) == "redirect" => Some(SummarySink::Redirect),
         _ if matches!(terminal_symbol(&callee), "send" | "write") => Some(SummarySink::HtmlOutput),
