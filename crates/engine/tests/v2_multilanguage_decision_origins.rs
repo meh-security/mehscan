@@ -81,6 +81,15 @@ fn marks_composed_sql_without_promoting_plain_unknown_query_parameters() {
                 .collect::<Vec<_>>()
         );
     }
+    for path in ["app.c", "app.cpp"] {
+        assert!(result.evidence.iter().any(|item| {
+            item.location.path == path
+                && item
+                    .captures
+                    .get("dynamic_operand")
+                    .is_some_and(|capture| capture.text == "name")
+        }));
+    }
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -106,6 +115,21 @@ function findUser(name) { return db.query(`SELECT * FROM users WHERE name='${nam
          function unrelatedController(req) { return searchService(normalize(req.query.name)); }\n",
     )
     .unwrap();
+    std::fs::write(
+        root.join("repository.c"),
+        "void find_native(char *name) {\n char sql[256];\n snprintf(sql, 256, \"SELECT * FROM users WHERE name='%s'\", name);\n PQexec(db, sql);\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("service.c"),
+        "void native_service(char *name) { find_native(name); }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("controller.c"),
+        "void native_controller(char *request_name) { native_service(request_name); }\n",
+    )
+    .unwrap();
 
     let reviews =
         mehscan_engine::investigation::build_path_review_jobs(&root, Some(8), Some(100)).unwrap();
@@ -113,10 +137,10 @@ function findUser(name) { return db.query(`SELECT * FROM users WHERE name='${nam
         .observation_reviews
         .iter()
         .find(|review| {
-            review
-                .review_basis
-                .as_ref()
-                .is_some_and(|basis| basis.relationship == "bounded_dynamic_query_composition")
+            review.evidence.iter().any(|item| {
+                item.location.path == "repository.js"
+                    && item.capability == Capability::DatabaseQuery
+            })
         })
         .expect("dynamic repository query review");
     assert!(review.facts.iter().any(|fact| {
@@ -132,6 +156,22 @@ function findUser(name) { return db.query(`SELECT * FROM users WHERE name='${nam
             .any(|fact| fact.excerpt.contains("unrelatedController"))
     );
     assert_eq!(review.decision_facts.unresolved.len(), 1);
+
+    let native = reviews
+        .observation_reviews
+        .iter()
+        .find(|review| {
+            review.evidence.iter().any(|item| {
+                item.location.path == "repository.c" && item.capability == Capability::DatabaseQuery
+            })
+        })
+        .expect("dynamic native repository query review");
+    assert!(native.facts.iter().any(|fact| {
+        fact.role == "exact_caller_context" && fact.excerpt.contains("native_service")
+    }));
+    assert!(native.facts.iter().any(|fact| {
+        fact.role == "upstream_caller_context" && fact.excerpt.contains("native_controller")
+    }));
 
     std::fs::remove_dir_all(root).unwrap();
 }

@@ -6504,7 +6504,18 @@ fn build_observation_reviews(
             let (mut callers, callers_truncated) = bounded_callers
                 .as_ref()
                 .expect("decision-critical groups build the bounded caller index")
-                .facts(language, &group.path, &group.symbol, origin.operand, 4);
+                .facts(
+                    language,
+                    &group.path,
+                    &group.symbol,
+                    group
+                        .evidence
+                        .iter()
+                        .find(|item| item.kind == EvidenceKind::Sink)
+                        .map(|item| item.location.start.byte_offset),
+                    origin.operand,
+                    4,
+                );
             context_truncated |= callers_truncated;
             facts.append(&mut callers);
         }
@@ -7113,22 +7124,56 @@ impl BoundedCallerIndex {
         language: Language,
         definition_path: &str,
         symbol: &str,
+        anchor_offset: Option<usize>,
         operand: &str,
         limit: usize,
     ) -> (Vec<ReviewNeighborhoodFact>, bool) {
-        let Some(target) = terminal_identifier(symbol) else {
+        let Some(operand_root) = leading_identifier(operand) else {
             return (Vec::new(), false);
         };
-        let key = (language, target.to_string());
+        let target = (!symbol.starts_with("line-"))
+            .then(|| terminal_identifier(symbol))
+            .flatten()
+            .filter(|target| is_plain_identifier(target) && is_helpful_reference_identifier(target))
+            .map(str::to_string)
+            .or_else(|| {
+                let offset = anchor_offset?;
+                self.definitions
+                    .iter()
+                    .filter_map(|((candidate_language, name), definitions)| {
+                        let [definition] = definitions.as_slice() else {
+                            return None;
+                        };
+                        (*candidate_language == language
+                            && definition.location.path == definition_path
+                            && definition.location.start.byte_offset <= offset
+                            && offset <= definition.location.end.byte_offset
+                            && definition
+                                .parameters
+                                .iter()
+                                .any(|parameter| parameter == operand_root))
+                        .then_some((
+                            name.clone(),
+                            definition
+                                .location
+                                .end
+                                .byte_offset
+                                .saturating_sub(definition.location.start.byte_offset),
+                        ))
+                    })
+                    .min_by_key(|(_, span)| *span)
+                    .map(|(name, _)| name)
+            });
+        let Some(target) = target else {
+            return (Vec::new(), false);
+        };
+        let key = (language, target.clone());
         let Some([definition]) = self.definitions.get(&key).map(Vec::as_slice) else {
             return (Vec::new(), false);
         };
         if definition.location.path != definition_path {
             return (Vec::new(), false);
         }
-        let Some(operand_root) = leading_identifier(operand) else {
-            return (Vec::new(), false);
-        };
         let tracked = definition
             .parameters
             .iter()
@@ -7140,8 +7185,8 @@ impl BoundedCallerIndex {
         }
 
         let mut facts = Vec::new();
-        let mut frontier = vec![(target.to_string(), tracked)];
-        let mut seen = BTreeSet::from([target.to_string()]);
+        let mut frontier = vec![(target.clone(), tracked)];
+        let mut seen = BTreeSet::from([target]);
         for depth in 0..2 {
             let mut next = Vec::new();
             for (called, tracked_parameters) in frontier {

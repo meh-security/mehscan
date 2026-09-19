@@ -148,10 +148,71 @@ fn bounded_query_composition(
             && (trimmed.contains(&format!("sprintf({name},"))
                 || trimmed.contains(&format!("snprintf({name},")))
         {
-            return Some(("native-format-buffer", vec![name.to_string()]));
+            return Some((
+                "native-format-buffer",
+                native_format_arguments(trimmed, name),
+            ));
         }
     }
     None
+}
+
+fn native_format_arguments(statement: &str, buffer: &str) -> Vec<String> {
+    let (call, format_index) = if statement.contains(&format!("snprintf({buffer},")) {
+        ("snprintf", 2)
+    } else {
+        ("sprintf", 1)
+    };
+    let Some(start) = statement.find(&format!("{call}(")) else {
+        return vec![buffer.to_string()];
+    };
+    let arguments = &statement[start + call.len() + 1..];
+    let arguments = arguments.strip_suffix(')').unwrap_or(arguments);
+    let values = split_arguments(arguments);
+    let references = values
+        .into_iter()
+        .skip(format_index + 1)
+        .flat_map(identifier_tokens)
+        .filter(|reference| reference != buffer)
+        .collect::<Vec<_>>();
+    if references.is_empty() {
+        vec![buffer.to_string()]
+    } else {
+        references
+    }
+}
+
+fn split_arguments(source: &str) -> Vec<&str> {
+    let bytes = source.as_bytes();
+    let mut arguments = Vec::new();
+    let mut start = 0;
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == active {
+                quote = None;
+            }
+            continue;
+        }
+        match byte {
+            b'\'' | b'"' => quote = Some(byte),
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                arguments.push(source[start..index].trim());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    arguments.push(source[start..].trim());
+    arguments
 }
 
 fn bounded_statements(source: &str) -> Vec<&str> {
