@@ -199,3 +199,53 @@ fn similarly_named_receivers_are_not_extended_boundaries() {
     )));
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn typed_xpath_boundaries_preserve_the_expression_operand() {
+    let root = std::env::temp_dir().join(format!("mehscan-xpath-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("Probe.cs"),
+        "using System.Xml.XPath; class Other { public void Select(string value) {} } class Probe { void Run(XPathNavigator navigator, Other other, string expression) { navigator.Select(expression); other.Select(expression); } }",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Probe.java"),
+        "import javax.xml.xpath.XPath; class Other { void evaluate(String value, Object item) {} } class Probe { void run(XPath xpath, Other other, String expression) throws Exception { xpath.evaluate(expression, null); other.evaluate(expression, null); } }",
+    )
+    .unwrap();
+
+    let result = mehscan_engine::scan_path(&root).unwrap();
+    for path in ["Probe.cs", "Probe.java"] {
+        let matches = result
+            .evidence
+            .iter()
+            .filter(|item| item.location.path == path && item.capability == Capability::XpathQuery)
+            .collect::<Vec<_>>();
+        assert_eq!(matches.len(), 1, "{path}: {matches:#?}");
+        assert_eq!(matches[0].captures["expression"].text, "expression");
+        assert!(
+            matches[0]
+                .tags
+                .iter()
+                .any(|tag| tag == "review-origin:decision-critical")
+        );
+    }
+
+    let reviews =
+        mehscan_engine::investigation::build_path_review_jobs(&root, Some(8), Some(100)).unwrap();
+    assert!(reviews.observation_reviews.iter().all(|review| {
+        review
+            .review_basis
+            .as_ref()
+            .is_none_or(|basis| basis.relationship != "bounded_xpath_expression_interpretation")
+            || !review.decision_facts.unresolved.is_empty()
+    }));
+    assert!(reviews.observation_reviews.iter().any(|review| {
+        review
+            .review_basis
+            .as_ref()
+            .is_some_and(|basis| basis.relationship == "bounded_xpath_expression_interpretation")
+    }));
+    std::fs::remove_dir_all(&root).unwrap();
+}

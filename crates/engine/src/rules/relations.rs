@@ -90,6 +90,10 @@ fn validate_relations(relations: &[RelationContract], rules: &[Rule]) -> Result<
         .entry((EvidenceKind::Sink, Capability::LdapQuery))
         .or_default()
         .extend(["filter".to_string(), "distinguished_name".to_string()]);
+    capture_roles
+        .entry((EvidenceKind::Sink, Capability::XpathQuery))
+        .or_default()
+        .insert("expression".to_string());
     // Exact Jinja import identity plus a proved render call is emitted by the
     // bounded Python project-context pass rather than a syntax-only matcher.
     capture_roles

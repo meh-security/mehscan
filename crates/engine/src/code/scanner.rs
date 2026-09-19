@@ -1044,6 +1044,7 @@ fn capability_name(capability: Capability) -> &'static str {
         Capability::ProcessExecution => "process_execution",
         Capability::ProcessArgumentSeparation => "process_argument_separation",
         Capability::LdapQuery => "ldap_query",
+        Capability::XpathQuery => "xpath_query",
         Capability::LdapFilterEncoding => "ldap_filter_encoding",
         Capability::LdapDistinguishedNameEncoding => "ldap_distinguished_name_encoding",
         Capability::DynamicCodeExecution => "dynamic_code_execution",

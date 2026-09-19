@@ -92,8 +92,9 @@ const COMMON_DECLARATIVE_SURFACE: [Capability; 29] = [
 
 // PHP has an explicit partial native contract. Missing policy/control roles
 // must not be silently counted as supported by an unrelated API inventory.
-const PHP_NATIVE_SURFACE: [Capability; 18] = [
+const PHP_NATIVE_SURFACE: [Capability; 19] = [
     Capability::HttpRequestData,
+    Capability::LdapQuery,
     Capability::DatabaseQuery,
     Capability::SqlParameterization,
     Capability::ProcessExecution,
@@ -134,7 +135,10 @@ fn php_parity_accounts_for_every_common_role_and_declared_cwe() {
     assert!(supported.is_disjoint(&missing));
     assert_eq!(
         supported.union(&missing).copied().collect::<BTreeSet<_>>(),
-        COMMON_DECLARATIVE_SURFACE.into_iter().collect()
+        COMMON_DECLARATIVE_SURFACE
+            .into_iter()
+            .chain([Capability::LdapQuery])
+            .collect()
     );
     let rules = mehscan_engine::rules::load_builtin_rules().unwrap();
     let php = rules
@@ -153,8 +157,8 @@ fn php_parity_accounts_for_every_common_role_and_declared_cwe() {
     assert_eq!(
         declared,
         [
-            "CWE-20", "CWE-22", "CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-98", "CWE-327",
-            "CWE-434", "CWE-502", "CWE-601", "CWE-918", "CWE-295", "CWE-943"
+            "CWE-20", "CWE-22", "CWE-78", "CWE-79", "CWE-89", "CWE-90", "CWE-94", "CWE-98",
+            "CWE-327", "CWE-434", "CWE-502", "CWE-601", "CWE-918", "CWE-295", "CWE-943"
         ]
         .into_iter()
         .collect(),

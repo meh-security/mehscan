@@ -224,11 +224,11 @@ fn retains_dynamic_interpreter_operands_but_not_fixed_or_structured_ones() {
     for (path, source) in [
         (
             "app.js",
-            "function run(code, args) { eval(code); eval('2 + 2'); child_process.exec(code); child_process.spawn('tool', args); document.body.innerHTML = code; }\n",
+            "const ejs = require('ejs'); function run(code, args, template, url, res) { eval(code); eval('2 + 2'); child_process.exec(code); child_process.spawn('tool', args); document.body.innerHTML = code; ejs.render(template); fetch(url); res.redirect(url); }\n",
         ),
         (
             "app.py",
-            "import os, pickle\ndef run(command, payload):\n    os.system(command)\n    return pickle.loads(payload)\n",
+            "import os, pickle\nfrom flask import Flask\nfrom jinja2 import Template\ndef run(command, payload, template):\n    os.system(command)\n    Template(template).render()\n    return pickle.loads(payload)\n",
         ),
         (
             "app.php",
@@ -240,7 +240,7 @@ fn retains_dynamic_interpreter_operands_but_not_fixed_or_structured_ones() {
         ),
         (
             "app.c",
-            "void run(char *format, char *value) { printf(format, value); printf(\"%s\", format); }\n",
+            "void run(char *format, char *value, char **args, char **env) { printf(format, value); printf(\"%s\", format); execvp(value, args); posix_spawnp(0, value, 0, 0, args, env); }\n",
         ),
         (
             "app.rs",
@@ -264,11 +264,15 @@ fn retains_dynamic_interpreter_operands_but_not_fixed_or_structured_ones() {
         "javascript-dynamic-code",
         "javascript-child-process",
         "javascript-browser-dom-html-output",
+        "javascript-outbound-http",
+        "javascript-http-redirect",
         "python-process-execution",
         "python-pickle-deserialization",
+        "python-jinja-dynamic-template-evaluation",
         "php-deserialization",
         "java-native-object-deserialization",
         "c-format-string-output",
+        "c-process-execution",
     ] {
         assert!(
             marked.iter().any(|item| item.rule_id == rule),
@@ -306,6 +310,9 @@ fn retains_dynamic_interpreter_operands_but_not_fixed_or_structured_ones() {
         "bounded_shell_command_interpretation",
         "bounded_native_format_interpretation",
         "bounded_dynamic_code_interpretation",
+        "bounded_dynamic_template_interpretation",
+        "bounded_dynamic_outbound_destination",
+        "bounded_dynamic_redirect_destination",
         "bounded_executable_object_deserialization",
         "bounded_trusted_html_interpretation",
     ] {

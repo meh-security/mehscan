@@ -38,11 +38,17 @@ pub(crate) fn annotate(
             }
             Capability::FormatStringOutput => capture_is_dynamic(item, &["format"]),
             Capability::DynamicCodeExecution => capture_is_dynamic(item, &["code"]),
+            Capability::TemplateEvaluation => capture_is_dynamic(item, &["template"]),
             Capability::Deserialization => {
                 executable_deserializer(item) && capture_is_dynamic(item, &["payload", "stream"])
             }
             Capability::DatabaseQuery => raw_nosql_boundary(item),
             Capability::LdapQuery => capture_is_dynamic(item, &["filter", "distinguished_name"]),
+            Capability::XpathQuery => capture_is_dynamic(item, &["expression"]),
+            Capability::OutboundNetworkRequest => {
+                capture_is_dynamic(item, &["url", "destination", "endpoint"])
+            }
+            Capability::Redirect => capture_is_dynamic(item, &["location", "destination", "url"]),
             _ => false,
         };
         if strong {

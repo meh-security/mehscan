@@ -82,6 +82,15 @@
   cwe_candidates: [CWE-90]
   strategy: bounded_local_value
 
+- id: cwe-643-remote-request-to-xpath-expression
+  version: 1
+  source: { capabilities: [http_request_data, rpc_request_data, external_input] }
+  sink:
+    capability: xpath_query
+    input_roles: [expression]
+  cwe_candidates: [CWE-643]
+  strategy: bounded_local_value
+
 - id: cwe-94-stored-user-content-to-dynamic-code
   version: 1
   source: { capability: stored_user_content }

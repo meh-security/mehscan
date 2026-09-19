@@ -4307,10 +4307,14 @@ enum DecisionCriticalBoundary {
     ShellCommand,
     NativeFormat,
     DynamicCode,
+    TemplateSource,
+    OutboundDestination,
+    RedirectDestination,
     ObjectDeserialization,
     RawNosql,
     LdapFilter,
     LdapDistinguishedName,
+    XpathExpression,
 }
 
 #[derive(Clone, Copy)]
@@ -4331,6 +4335,9 @@ impl DecisionCriticalOrigin<'_> {
             DecisionCriticalBoundary::ShellCommand => "bounded_shell_command_interpretation",
             DecisionCriticalBoundary::NativeFormat => "bounded_native_format_interpretation",
             DecisionCriticalBoundary::DynamicCode => "bounded_dynamic_code_interpretation",
+            DecisionCriticalBoundary::TemplateSource => "bounded_dynamic_template_interpretation",
+            DecisionCriticalBoundary::OutboundDestination => "bounded_dynamic_outbound_destination",
+            DecisionCriticalBoundary::RedirectDestination => "bounded_dynamic_redirect_destination",
             DecisionCriticalBoundary::ObjectDeserialization => {
                 "bounded_executable_object_deserialization"
             }
@@ -4339,6 +4346,7 @@ impl DecisionCriticalOrigin<'_> {
             DecisionCriticalBoundary::LdapDistinguishedName => {
                 "bounded_ldap_distinguished_name_interpretation"
             }
+            DecisionCriticalBoundary::XpathExpression => "bounded_xpath_expression_interpretation",
         }
     }
 
@@ -4362,6 +4370,15 @@ impl DecisionCriticalOrigin<'_> {
             (DecisionCriticalBoundary::DynamicCode, "C#") => {
                 "Review dynamic C# code interpretation for CWE-94"
             }
+            (DecisionCriticalBoundary::TemplateSource, "C#") => {
+                "Review dynamic C# template interpretation for CWE-1336"
+            }
+            (DecisionCriticalBoundary::OutboundDestination, "C#") => {
+                "Review dynamic C# outbound destination for CWE-918"
+            }
+            (DecisionCriticalBoundary::RedirectDestination, "C#") => {
+                "Review dynamic C# redirect destination for CWE-601"
+            }
             (DecisionCriticalBoundary::ObjectDeserialization, "C#") => {
                 "Review C# executable object deserialization for CWE-502"
             }
@@ -4371,6 +4388,9 @@ impl DecisionCriticalOrigin<'_> {
             (DecisionCriticalBoundary::LdapFilter, "C#")
             | (DecisionCriticalBoundary::LdapDistinguishedName, "C#") => {
                 "Review dynamic C# LDAP query construction for CWE-90"
+            }
+            (DecisionCriticalBoundary::XpathExpression, "C#") => {
+                "Review dynamic C# XPath expression for CWE-643"
             }
             (DecisionCriticalBoundary::Sql, _) => "Review dynamically composed SQL for CWE-89",
             (DecisionCriticalBoundary::TrustedHtml, _) => {
@@ -4385,6 +4405,15 @@ impl DecisionCriticalOrigin<'_> {
             (DecisionCriticalBoundary::DynamicCode, _) => {
                 "Review dynamic code interpretation for CWE-94"
             }
+            (DecisionCriticalBoundary::TemplateSource, _) => {
+                "Review dynamic template interpretation for CWE-1336"
+            }
+            (DecisionCriticalBoundary::OutboundDestination, _) => {
+                "Review dynamic outbound destination for CWE-918"
+            }
+            (DecisionCriticalBoundary::RedirectDestination, _) => {
+                "Review dynamic redirect destination for CWE-601"
+            }
             (DecisionCriticalBoundary::ObjectDeserialization, _) => {
                 "Review executable object deserialization for CWE-502"
             }
@@ -4392,6 +4421,9 @@ impl DecisionCriticalOrigin<'_> {
             (DecisionCriticalBoundary::LdapFilter, _)
             | (DecisionCriticalBoundary::LdapDistinguishedName, _) => {
                 "Review dynamic LDAP query construction for CWE-90"
+            }
+            (DecisionCriticalBoundary::XpathExpression, _) => {
+                "Review dynamic XPath expression for CWE-643"
             }
         }
     }
@@ -4404,10 +4436,14 @@ impl DecisionCriticalOrigin<'_> {
             DecisionCriticalBoundary::ShellCommand => "Can an attacker influence text interpreted by this command shell, or is every dynamic value kept outside shell grammar under an exact allowlist?".to_string(),
             DecisionCriticalBoundary::NativeFormat => "Can an attacker influence the printf-family format operand, or is the exact format string fixed by trusted code?".to_string(),
             DecisionCriticalBoundary::DynamicCode => "Can an attacker influence the program or expression interpreted by this runtime evaluator, or is the exact grammar fixed and trusted?".to_string(),
+            DecisionCriticalBoundary::TemplateSource => "Can an attacker influence the template source interpreted by this template engine, or is the template fixed and untrusted values supplied only as data?".to_string(),
+            DecisionCriticalBoundary::OutboundDestination => "Can an attacker influence the effective scheme, authority, or address reached by this outbound request, or is the destination restricted to an exact server-owned allowlist?".to_string(),
+            DecisionCriticalBoundary::RedirectDestination => "Can an attacker influence the effective redirect destination, or is it restricted to an intended local path or exact origin allowlist?".to_string(),
             DecisionCriticalBoundary::ObjectDeserialization => "Can an attacker modify the payload consumed by this executable object deserializer, or is its exact producer protected by a trusted immutable or authenticated boundary?".to_string(),
             DecisionCriticalBoundary::RawNosql => "Can an attacker influence operators or structure in this raw NoSQL query document, or is the exact document fixed or built through typed scalar predicates?".to_string(),
             DecisionCriticalBoundary::LdapFilter => "Can an attacker influence LDAP filter grammar in this operand, or is every dynamic value encoded for LDAP filter context before composition?".to_string(),
             DecisionCriticalBoundary::LdapDistinguishedName => "Can an attacker influence distinguished-name grammar in this operand, or is every dynamic value encoded for LDAP distinguished-name context before composition?".to_string(),
+            DecisionCriticalBoundary::XpathExpression => "Can an attacker influence XPath expression grammar in this operand, or is the expression fixed with untrusted values supplied only through bound variables?".to_string(),
         }
     }
 
@@ -4437,6 +4473,18 @@ impl DecisionCriticalOrigin<'_> {
                 "Can attacker-controlled input influence code or expression `{}` interpreted by this {}, or is the complete program fixed and trusted?",
                 self.operand, self.style
             ),
+            DecisionCriticalBoundary::TemplateSource => format!(
+                "Can attacker-controlled input influence template source `{}` interpreted by this {}, or is the template fixed with untrusted values supplied only as data?",
+                self.operand, self.style
+            ),
+            DecisionCriticalBoundary::OutboundDestination => format!(
+                "Can attacker-controlled input influence the effective outbound destination `{}`, including its scheme, authority, resolved address, or redirects, or is it restricted to an exact server-owned allowlist?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::RedirectDestination => format!(
+                "Can attacker-controlled input influence redirect destination `{}`, or is it restricted to an intended local path or exact origin allowlist?",
+                self.operand
+            ),
             DecisionCriticalBoundary::ObjectDeserialization => format!(
                 "Can an untrusted user, transport, file writer, adjacent process, or deployment mechanism modify payload `{}` before this {} consumes it, or is that exact payload protected by a trusted immutable or authenticated boundary?",
                 self.operand, self.style
@@ -4451,6 +4499,10 @@ impl DecisionCriticalOrigin<'_> {
             ),
             DecisionCriticalBoundary::LdapDistinguishedName => format!(
                 "Can attacker-controlled input influence LDAP distinguished-name operand `{}`, or is every dynamic value encoded for distinguished-name context before composition?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::XpathExpression => format!(
+                "Can attacker-controlled input influence XPath expression `{}`, or is the expression fixed with untrusted values supplied only through bound variables or an exact allowlist?",
                 self.operand
             ),
         }
@@ -4492,12 +4544,18 @@ impl DecisionCriticalOrigin<'_> {
                     DecisionCriticalBoundary::ShellCommand => "shell command interpretation",
                     DecisionCriticalBoundary::NativeFormat => "native format-string interpretation",
                     DecisionCriticalBoundary::DynamicCode => "dynamic code interpretation",
+                    DecisionCriticalBoundary::TemplateSource => "dynamic template interpretation",
+                    DecisionCriticalBoundary::OutboundDestination =>
+                        "outbound destination selection",
+                    DecisionCriticalBoundary::RedirectDestination =>
+                        "redirect destination selection",
                     DecisionCriticalBoundary::ObjectDeserialization =>
                         "executable object deserialization",
                     DecisionCriticalBoundary::RawNosql => "raw NoSQL document interpretation",
                     DecisionCriticalBoundary::LdapFilter => "LDAP filter interpretation",
                     DecisionCriticalBoundary::LdapDistinguishedName =>
                         "LDAP distinguished-name interpretation",
+                    DecisionCriticalBoundary::XpathExpression => "XPath expression interpretation",
                     DecisionCriticalBoundary::Sql => unreachable!(),
                 },
                 self.style
@@ -4606,6 +4664,30 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
                 &["code"],
                 false,
             )?)
+        } else if item.capability == Capability::TemplateEvaluation {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::TemplateSource,
+                "template evaluator",
+                &["template"],
+                false,
+            )?)
+        } else if item.capability == Capability::OutboundNetworkRequest {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::OutboundDestination,
+                "outbound request API",
+                &["endpoint", "url", "destination"],
+                false,
+            )?)
+        } else if item.capability == Capability::Redirect {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::RedirectDestination,
+                "redirect API",
+                &["location", "destination", "url"],
+                false,
+            )?)
         } else if item.capability == Capability::FormatStringOutput {
             Some(decision_origin_from_capture(
                 item,
@@ -4671,6 +4753,14 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
                 },
                 &[role],
                 constrained,
+            )?)
+        } else if item.capability == Capability::XpathQuery {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::XpathExpression,
+                "XPath evaluator",
+                &["expression"],
+                false,
             )?)
         } else {
             None
@@ -8800,6 +8890,9 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
         return has_known_string_literal(item, "filter")
             || has_known_string_literal(item, "distinguished_name");
     }
+    if item.capability == Capability::XpathQuery {
+        return has_known_string_literal(item, "expression");
+    }
     let literal_role = match item.capability {
         Capability::DatabaseQuery => "query",
         // A fixed executable or fixed format string remains valuable inventory
@@ -11263,6 +11356,9 @@ fn missing_protection_question(capability: Capability) -> &'static str {
         }
         Capability::LdapQuery => {
             "Is each source-derived LDAP value encoded for its exact filter or distinguished-name context before query construction?"
+        }
+        Capability::XpathQuery => {
+            "Is the XPath expression fixed, with source-derived values supplied only through bound variables or an exact allowlist?"
         }
         Capability::FileUpload | Capability::UploadedFileContent | Capability::UploadedFilePath => {
             "Does the upload path enforce server-generated storage names, path containment, size limits, and content validation appropriate to later use?"
