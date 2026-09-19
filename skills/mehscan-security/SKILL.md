@@ -210,7 +210,8 @@ mehscan investigate review-bundle-triage --bundle REQUEST --responses RESPONSE
 ```
 
 When the review runner supports structured output, generate a request-specific
-schema with `scripts/new-review-response-schema.ps1 -Bundle REQUEST -Output SCHEMA`.
+schema with `mehscan investigate review-response-schema --bundle REQUEST --output SCHEMA`.
+Older versions can use the packaged `scripts/new-review-response-schema.ps1` helper.
 It constrains the fingerprint, allowed IDs and exact result count; it cannot
 enforce unique IDs or semantic correctness. The CLI validator remains required.
 
@@ -315,3 +316,12 @@ duplicates were analyzed; coverage applies to the maintained source trees.
 
 When the user asks whether the final Markdown is useful or actionable, apply
 the separate `mehscan-report-quality` skill to the generated report.
+
+For deliberately scoped triage, use `mehscan report --run DIR --allow-partial true`
+or `mehscan investigate review-bundle-summary --run DIR --allow-partial true`.
+Only missing response files are skipped. Each submitted bundle must still be complete
+and valid. Output identifies completed versus total bundles/reviews; unreviewed
+bundles are not dismissed and this is not a complete application assessment.
+
+The response envelope is `{"schema_version":"1.0","bundle_fingerprint":"EXACT_REQUEST_FINGERPRINT","results":[{"review_id":"EXACT_REVIEW_ID","decision":"issue","confidence":"high","summary":"Specific supported conclusion","checks":[]}]}`.
+Repeat the result object for every request review ID, exactly once.

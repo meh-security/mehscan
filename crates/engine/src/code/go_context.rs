@@ -161,8 +161,10 @@ impl GoProjectContext {
         }
         let calls = root.dfs().filter_map(call_site).collect::<Vec<_>>();
         let file_text = root.text();
-        let uses_mongo = file_text.contains("go.mongodb.org/mongo-driver/mongo");
-        let uses_gorm = file_text.contains("github.com/jinzhu/gorm");
+        let uses_mongo = file_text.contains("go.mongodb.org/mongo-driver/mongo")
+            || file_text.contains("go.mongodb.org/mongo-driver/v2/mongo");
+        let uses_gorm =
+            file_text.contains("github.com/jinzhu/gorm") || file_text.contains("gorm.io/gorm");
         let body_values = calls
             .iter()
             .filter(|call| call.callee == "io.ReadAll" && is_request_body(call.arguments.first()))
@@ -316,7 +318,48 @@ impl GoProjectContext {
                     evidence,
                 );
             }
-            if uses_gorm && matches!(terminal_name(&call.callee), "Where" | "Raw" | "Exec") {
+            if uses_mongo
+                && matches!(
+                    terminal_name(&call.callee),
+                    "UpdateOne"
+                        | "UpdateMany"
+                        | "ReplaceOne"
+                        | "FindOneAndUpdate"
+                        | "FindOneAndReplace"
+                )
+                && let Some(filter) = call.arguments.get(1)
+            {
+                push(
+                    path,
+                    &call.node,
+                    "go-mongodb-mutation-filter",
+                    EvidenceKind::Sink,
+                    Capability::DatabaseQuery,
+                    BTreeMap::from([("nosql_query".to_string(), capture(path, filter))]),
+                    &["CWE-943"],
+                    &["database", "mongodb", "query-filter"],
+                    Confidence::Medium,
+                    comments,
+                    conditional,
+                    literals,
+                    evidence,
+                );
+            }
+            if uses_gorm
+                && matches!(
+                    terminal_name(&call.callee),
+                    "Where"
+                        | "Raw"
+                        | "Exec"
+                        | "Having"
+                        | "Order"
+                        | "Group"
+                        | "Select"
+                        | "Joins"
+                        | "Distinct"
+                        | "Table"
+                )
+            {
                 let mut captures = capture_first(path, "query", call);
                 if call.arguments.len() > 1 {
                     captures.insert("parameters".to_string(), capture(path, &call.arguments[1]));
@@ -1271,6 +1314,10 @@ fn mongo_operation(callee: &str) -> Option<(&'static str, MongoParameterRole)> {
     match terminal_name(callee) {
         "Find" => Some(("find", MongoParameterRole::Filter)),
         "FindOne" => Some(("find-one", MongoParameterRole::Filter)),
+        "DeleteOne" => Some(("delete-one", MongoParameterRole::Filter)),
+        "DeleteMany" => Some(("delete-many", MongoParameterRole::Filter)),
+        "Aggregate" => Some(("aggregate", MongoParameterRole::Filter)),
+        "FindOneAndDelete" => Some(("find-one-delete", MongoParameterRole::Filter)),
         "UpdateOne" => Some(("update-one", MongoParameterRole::Write)),
         "InsertOne" => Some(("insert-one", MongoParameterRole::Write)),
         "CountDocuments" => Some(("count-documents", MongoParameterRole::Filter)),

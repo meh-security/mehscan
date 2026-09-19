@@ -43,7 +43,7 @@ fn validate_relations(relations: &[RelationContract], rules: &[Rule]) -> Result<
     capture_roles
         .entry((EvidenceKind::Sink, Capability::DatabaseQuery))
         .or_default()
-        .insert("nosql_query".to_string());
+        .extend(["nosql_query".to_string(), "nosql_expression".to_string()]);
     capture_roles
         .entry((EvidenceKind::Sink, Capability::ResourceAccess))
         .or_default()
@@ -90,6 +90,10 @@ fn validate_relations(relations: &[RelationContract], rules: &[Rule]) -> Result<
         .entry((EvidenceKind::Sink, Capability::LdapQuery))
         .or_default()
         .extend(["filter".to_string(), "distinguished_name".to_string()]);
+    capture_roles
+        .entry((EvidenceKind::Sink, Capability::XpathQuery))
+        .or_default()
+        .insert("expression".to_string());
     // Exact Jinja import identity plus a proved render call is emitted by the
     // bounded Python project-context pass rather than a syntax-only matcher.
     capture_roles
@@ -349,7 +353,7 @@ mod tests {
     fn built_in_relations_validate_against_matcher_roles() {
         let rules = super::super::load_builtin_rules().expect("rules should load");
         let relations = load_builtin_relations(&rules).expect("relations should validate");
-        assert_eq!(relations.len(), 51);
+        assert_eq!(relations.len(), 52);
         assert_eq!(
             relations
                 .iter()

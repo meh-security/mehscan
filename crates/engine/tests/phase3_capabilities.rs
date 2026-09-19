@@ -97,7 +97,9 @@ fn enumerates_first_cwe_capability_set_across_priority_languages() {
         assert_eq!(coverage.level, CweSupportLevel::Partial);
         assert_eq!(
             coverage.supported_languages.len(),
-            if matches!(id, "CWE-94" | "CWE-434") {
+            if id == "CWE-94" {
+                10
+            } else if id == "CWE-434" {
                 9
             } else if matches!(id, "CWE-614" | "CWE-1004" | "CWE-862") {
                 8
@@ -191,11 +193,10 @@ fn enumerates_first_cwe_capability_set_across_priority_languages() {
         cwe["CWE-762"].supported_languages,
         [mehscan_core::Language::Cpp]
     );
-    for id in [
-        "CWE-312", "CWE-400", "CWE-489", "CWE-598", "CWE-693", "CWE-943",
-    ] {
+    for id in ["CWE-312", "CWE-400", "CWE-489", "CWE-598", "CWE-693"] {
         assert_eq!(cwe[id].supported_languages, [mehscan_core::Language::Go]);
     }
+    assert_eq!(cwe["CWE-943"].supported_languages.len(), 12);
     for id in ["CWE-59", "CWE-732"] {
         assert_eq!(
             cwe[id].supported_languages,
@@ -220,14 +221,23 @@ fn enumerates_first_cwe_capability_set_across_priority_languages() {
     assert_eq!(ldap.level, CweSupportLevel::Partial);
     assert_eq!(
         ldap.supported_languages,
-        [mehscan_core::Language::Csharp, mehscan_core::Language::Go]
+        [
+            mehscan_core::Language::C,
+            mehscan_core::Language::Cpp,
+            mehscan_core::Language::Csharp,
+            mehscan_core::Language::Java,
+            mehscan_core::Language::Kotlin,
+            mehscan_core::Language::Php,
+            mehscan_core::Language::Go,
+            mehscan_core::Language::Rust,
+        ]
     );
 }
 
 #[test]
 fn built_in_catalog_has_valid_provenance() {
     let rules = mehscan_engine::rules::load_builtin_rules().expect("catalog should validate");
-    assert_eq!(rules.len(), 364);
+    assert_eq!(rules.len(), 415);
     let invalid = rules
         .iter()
         .filter(|rule| {

@@ -48,3 +48,23 @@ fn retains_valid_security_evidence_outside_recovered_syntax_errors() {
             .contains("retained evidence outside invalid syntax ranges")
     }));
 }
+
+#[test]
+fn funnel_retains_recovered_evidence_when_outlines_fail() {
+    let scan = mehscan_engine::scan_path(fixture_root()).unwrap();
+    let funnel = mehscan_engine::investigation::relationship_funnel(&fixture_root()).unwrap();
+    assert_eq!(funnel.results.security_paths, scan.security_paths.len());
+    assert_eq!(
+        funnel.results.parse_failed_files,
+        scan.coverage.totals.parse_failed
+    );
+    assert!(!funnel.results.outline_failures.is_empty());
+    assert!(funnel.results.eligible_sink_observations > 0);
+    assert!(
+        funnel
+            .results
+            .interpretation
+            .iter()
+            .any(|s| s.contains("Outline extraction failed"))
+    );
+}

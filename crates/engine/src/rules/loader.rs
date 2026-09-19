@@ -25,6 +25,8 @@ const BUILTIN_RULE_CATALOGS: &[(&str, &str)] = builtin_catalogs!(
     "rules/code/cwe-78/process-argument-separation.yml",
     "rules/code/cwe-90/ldap-encoding.yml",
     "rules/code/cwe-89/database-query.yml",
+    "rules/code/extended-database.yml",
+    "rules/code/extended-boundaries.yml",
     "rules/code/cwe-89/sql-parameterization.yml",
     "rules/code/cwe-918/outbound-request.yml",
     "rules/code/cwe-918/url-parsing.yml",

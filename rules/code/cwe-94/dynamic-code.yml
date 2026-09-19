@@ -1,5 +1,5 @@
 - id: csharp-dynamic-code
-  version: 1
+  version: 2
   title: .NET dynamic code evaluation
   language: csharp
   kind: sink
@@ -11,14 +11,30 @@
         captures: { code: CODE }
       - pattern: CSharpScript.EvaluateAsync($CODE, $$$ARGUMENTS)
         captures: { code: CODE }
+      - pattern: CSharpScript.EvaluateAsync<$TYPE>($CODE)
+        captures: { code: CODE, result_type: TYPE }
+      - pattern: CSharpScript.EvaluateAsync<$TYPE>($CODE, $$$ARGUMENTS)
+        captures: { code: CODE, result_type: TYPE }
       - pattern: CSharpScript.RunAsync($CODE)
         captures: { code: CODE }
       - pattern: CSharpScript.RunAsync($CODE, $$$ARGUMENTS)
+        captures: { code: CODE }
+      - pattern: CSharpScript.RunAsync<$TYPE>($CODE)
+        captures: { code: CODE, result_type: TYPE }
+      - pattern: CSharpScript.RunAsync<$TYPE>($CODE, $$$ARGUMENTS)
+        captures: { code: CODE, result_type: TYPE }
+      - pattern: Razor.Parse($CODE)
+        captures: { code: CODE }
+      - pattern: Razor.Parse($CODE, $$$ARGUMENTS)
         captures: { code: CODE }
   symbols:
     - canonical: Microsoft.CodeAnalysis.CSharp.Scripting.CSharpScript.EvaluateAsync
       captures: { code: 0 }
     - canonical: Microsoft.CodeAnalysis.CSharp.Scripting.CSharpScript.RunAsync
+      captures: { code: 0 }
+    - canonical: RazorEngine.Razor.Parse
+      captures: { code: 0 }
+    - canonical: RazorEngine.Templating.Razor.Parse
       captures: { code: 0 }
   tags: [code, dynamic-execution]
   ai: &dynamic_code_guidance
@@ -82,6 +98,16 @@
         captures: { code: CODE }
       - pattern: vm.runInContext($CODE, $$$ARGUMENTS)
         captures: { code: CODE }
+      - pattern: vm.compileFunction($CODE, $$$ARGUMENTS)
+        captures: { code: CODE }
+      - pattern: new vm.Script($CODE)
+        captures: { code: CODE }
+      - pattern: new vm.Script($CODE, $$$ARGUMENTS)
+        captures: { code: CODE }
+      - pattern: new vm.SourceTextModule($CODE)
+        captures: { code: CODE }
+      - pattern: new vm.SourceTextModule($CODE, $$$ARGUMENTS)
+        captures: { code: CODE }
   symbols: &javascript_dynamic_code_symbols
     - canonical: eval
       captures: { code: 0 }
@@ -92,6 +118,12 @@
     - canonical: vm.runInThisContext
       captures: { code: 0 }
     - canonical: vm.runInContext
+      captures: { code: 0 }
+    - canonical: vm.compileFunction
+      captures: { code: 0 }
+    - canonical: vm.Script
+      captures: { code: 0 }
+    - canonical: vm.SourceTextModule
       captures: { code: 0 }
   tags: [code, dynamic-execution]
   ai: *dynamic_code_guidance

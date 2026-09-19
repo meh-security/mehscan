@@ -175,18 +175,41 @@
         captures: { payload: PAYLOAD }
       - pattern: yaml.load($PAYLOAD, Loader=yaml.UnsafeLoader)
         captures: { payload: PAYLOAD }
+      - pattern: marshal.load($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: marshal.loads($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: dill.load($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: dill.loads($PAYLOAD)
+        captures: { payload: PAYLOAD }
+      - pattern: jsonpickle.decode($PAYLOAD)
+        captures: { payload: PAYLOAD }
   symbols:
     - canonical: pickle.load
       captures: { payload: 0 }
     - canonical: pickle.loads
       captures: { payload: 0 }
-  tags: [deserialization, pickle, unsafe-yaml, object-graph]
+    - canonical: marshal.load
+      captures: { payload: 0 }
+    - canonical: marshal.loads
+      captures: { payload: 0 }
+    - canonical: dill.load
+      captures: { payload: 0 }
+    - canonical: dill.loads
+      captures: { payload: 0 }
+    - canonical: jsonpickle.decode
+      captures: { payload: 0 }
+  tags: [deserialization, executable-object, unsafe-yaml, object-graph]
   ai: *deserialization_guidance
   provenance:
-    note: Python pickle and YAML loading mapped to CWE-502 review.
+    note: Python pickle, marshal, dill, jsonpickle, and YAML loading mapped to CWE-502 review.
     references:
       - https://cwe.mitre.org/data/definitions/502.html
       - https://docs.python.org/3/library/pickle.html
+      - https://docs.python.org/3/library/marshal.html
+      - https://dill.readthedocs.io/en/latest/dill.html
+      - https://jsonpickle.github.io/api.html
       - https://pyyaml.org/wiki/PyYAMLDocumentation
 
 - id: go-gob-deserialization

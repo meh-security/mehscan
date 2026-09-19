@@ -203,11 +203,25 @@ fn add_legacy_execute_sql_queries<'tree>(
         let Some(function) = invocation.field("function") else {
             continue;
         };
-        let function_text = compact(function.text().as_ref());
-        let receiver = [".ExecuteSqlCommand", ".ExecuteSqlCommandAsync"]
-            .iter()
-            .find_map(|suffix| function_text.strip_suffix(suffix));
-        let Some(context) = receiver.and_then(|value| value.strip_suffix(".Database")) else {
+        if function.kind().as_ref() != "member_access_expression" {
+            continue;
+        }
+        let Some(receiver) = function.field("expression") else {
+            continue;
+        };
+        let Some(method) = function.field("name") else {
+            continue;
+        };
+        let method_text = compact(method.text().as_ref());
+        let method_name = method_text.split('<').next().unwrap_or_default();
+        if !matches!(
+            method_name,
+            "ExecuteSqlCommand" | "ExecuteSqlCommandAsync" | "SqlQuery" | "SqlQueryRaw"
+        ) {
+            continue;
+        }
+        let receiver = compact(receiver.text().as_ref());
+        let Some(context) = receiver.strip_suffix(".Database") else {
             continue;
         };
         let Some(context_type) = variable_type(root, &invocation, context) else {
@@ -225,10 +239,27 @@ fn add_legacy_execute_sql_queries<'tree>(
             &query,
             EvidenceKind::Sink,
             Capability::DatabaseQuery,
-            "csharp-ef-legacy-execute-sql-command",
+            if method_name.starts_with("SqlQuery") {
+                "csharp-ef-database-sql-query"
+            } else {
+                "csharp-ef-legacy-execute-sql-command"
+            },
             "query",
             &["CWE-89"],
-            &["ef-core", "database", "sql", "legacy-execute-sql-command"],
+            &[
+                if method_name == "SqlQueryRaw" {
+                    "ef-core"
+                } else {
+                    "entity-framework"
+                },
+                "database",
+                "sql",
+                if method_name.starts_with("SqlQuery") {
+                    "database-sql-query"
+                } else {
+                    "legacy-execute-sql-command"
+                },
+            ],
             None,
             comments,
             conditional,

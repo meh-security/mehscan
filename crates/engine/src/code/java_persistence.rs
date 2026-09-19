@@ -524,6 +524,154 @@ fn has_repository_save(
     })
 }
 
+// New ambiguous JDBC method names require a native receiver identity. Keep
+// the existing distinctive executeQuery/executeUpdate rules compatible.
+pub(super) fn jdbc_statement_receiver(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    invocation: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    invocation
+        .field("object")
+        .is_some_and(|receiver| typed_database_receiver(root, &receiver, "java.sql.Statement", 8))
+}
+
+pub(super) fn typed_database_receiver(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    expression: &Node<'_, StrDoc<SupportLang>>,
+    canonical: &str,
+    depth: usize,
+) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    let short = canonical.rsplit('.').next().unwrap_or(canonical);
+    if expression.kind().as_ref() == "object_creation_expression" {
+        return expression.field("type").is_some_and(|ty| {
+            ty.text() == canonical
+                || ty.text() == short
+                    && imported_exact(&imports(root), &declared_types(root), canonical, short)
+        });
+    }
+    if expression.kind().as_ref() == "method_invocation" {
+        let Some(object) = expression.field("object") else {
+            return false;
+        };
+        let operation = expression.field("name").map(|n| n.text().to_string());
+        return short == "Statement"
+            && operation.as_deref() == Some("createStatement")
+            && typed_database_receiver(root, &object, "java.sql.Connection", depth - 1);
+    }
+    let name = expression.text();
+    let explicit_this = name.starts_with("this.");
+    let name = name.strip_prefix("this.").unwrap_or(&name);
+    if !name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+    {
+        return false;
+    }
+    let class = expression
+        .ancestors()
+        .find(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "class_declaration" | "record_declaration"
+            )
+        })
+        .map(|n| n.range());
+    let mut locals = Vec::new();
+    let mut fields = Vec::new();
+    for binding in root.dfs().filter(|n| {
+        matches!(
+            n.kind().as_ref(),
+            "variable_declarator" | "formal_parameter"
+        )
+    }) {
+        if binding.field("name").is_none_or(|n| n.text() != name) {
+            continue;
+        }
+        let declaration = if binding.kind().as_ref() == "formal_parameter" {
+            binding.clone()
+        } else {
+            let Some(parent) = binding.parent() else {
+                continue;
+            };
+            parent
+        };
+        let Some(ty) = declaration.field("type") else {
+            continue;
+        };
+        if declaration.kind().as_ref() == "field_declaration" {
+            let owner = binding
+                .ancestors()
+                .find(|n| {
+                    matches!(
+                        n.kind().as_ref(),
+                        "class_declaration" | "record_declaration"
+                    )
+                })
+                .map(|n| n.range());
+            if owner == class {
+                fields.push((binding, ty.text().to_string()));
+            }
+        } else if !explicit_this && binding.range().end <= expression.range().start {
+            let scope = binding.ancestors().find(|n| {
+                matches!(
+                    n.kind().as_ref(),
+                    "block"
+                        | "lambda_expression"
+                        | "method_declaration"
+                        | "constructor_declaration"
+                )
+            });
+            if scope.is_some_and(|n| {
+                n.range().start <= expression.range().start
+                    && expression.range().end <= n.range().end
+            }) {
+                locals.push((binding, ty.text().to_string()));
+            }
+        }
+    }
+    locals.sort_by_key(|(binding, _)| binding.range().start);
+    let binding = locals.last().or_else(|| fields.first());
+    let Some((binding, ty)) = binding else {
+        return false;
+    };
+    let ty = ty.split('<').next().unwrap_or(ty);
+    if ty == canonical {
+        return true;
+    }
+    let generic_shadow = root.dfs().any(|n| {
+        n.kind().as_ref() == "type_parameter"
+            && n.children()
+                .any(|child| child.kind().as_ref() == "type_identifier" && child.text() == short)
+            && n.ancestors()
+                .find(|owner| {
+                    matches!(
+                        owner.kind().as_ref(),
+                        "method_declaration"
+                            | "class_declaration"
+                            | "interface_declaration"
+                            | "record_declaration"
+                    )
+                })
+                .is_some_and(|owner| {
+                    owner.range().start <= expression.range().start
+                        && expression.range().end <= owner.range().end
+                })
+    });
+    if ty == short
+        && !generic_shadow
+        && imported_exact(&imports(root), &declared_types(root), canonical, short)
+    {
+        return true;
+    }
+    ty == "var"
+        && binding
+            .field("value")
+            .is_some_and(|value| typed_database_receiver(root, &value, canonical, depth - 1))
+}
+
 fn receiver_types(root: &Node<'_, StrDoc<SupportLang>>) -> BTreeMap<String, String> {
     let mut result = BTreeMap::new();
     for declaration in root.dfs().filter(|node| {

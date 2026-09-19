@@ -125,3 +125,4 @@ function unsafe_redirect() { header('Location: ' . $_GET['next']); }
 function fixed_redirect() { header('Location: /home'); }
 function unrelated_header() { header('X-Message: ' . $_GET['message']); }
 function misleading_header() { header('X-Message: ' . 'Location: ' . $_GET['next']); }
+function ldap_filter($connection) { ldap_search($connection, 'dc=example,dc=org', $_GET['filter']); }

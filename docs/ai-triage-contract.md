@@ -225,6 +225,15 @@ sites with their bounded enclosing methods. These roles remain lexical review
 context; they improve a model's final verdict without manufacturing a
 deterministic security path or claiming general interprocedural taint.
 
+C# database observations distinguish a typed query API from locally visible
+dynamic SQL construction. Concatenation, interpolation, formatting and bounded
+same-callable aliases produce a `bounded_dynamic_query_composition` review even
+when no controller or repository handoff resolves. Unknown production origin
+is decision-critical for that review: it remains `needs_review` until supplied
+facts establish attacker influence or an affirmative fixed, constrained or
+allowlisted origin. A resolved request-to-query path can promote the same code
+to an issue; a missing path does not turn dynamic construction into a safe fact.
+
 Generic local names such as `model`, `options`, and `order` are not treated as
 cross-file helper identities. Razor UTF-8 BOMs are tolerated when resolving an
 `@model` declaration.

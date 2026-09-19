@@ -192,7 +192,7 @@
       vulnerability proof.
   provenance:
     note: Native PHP syntax with canonical callable or locally proven PDO identity; bounded source review
-      only.
+      only. A unique unconditional constructor assignment identifies exact same-class database properties.
     references:
     - https://www.php.net/manual/en/security.php
     - https://cwe.mitre.org/data/definitions/89.html
@@ -231,7 +231,7 @@
       vulnerability proof.
   provenance:
     note: Native PHP syntax with canonical callable or locally proven native database identity; bounded source review
-      only.
+      only. A unique unconditional constructor assignment identifies exact same-class database properties.
     references:
     - https://www.php.net/manual/en/security.php
     - https://cwe.mitre.org/data/definitions/89.html
@@ -461,6 +461,32 @@
   - CWE-22
   match:
     any:
+    - pattern: rename($SOURCE, $PATH)
+      context: <?php rename($SOURCE, $PATH);
+      selector: function_call_expression
+      captures:
+        source: SOURCE
+        path: PATH
+    - pattern: unlink($PATH)
+      context: <?php unlink($PATH);
+      selector: function_call_expression
+      captures:
+        path: PATH
+    - pattern: rmdir($PATH)
+      context: <?php rmdir($PATH);
+      selector: function_call_expression
+      captures:
+        path: PATH
+    - pattern: mkdir($PATH, $$$REST)
+      context: <?php mkdir($PATH, $$$REST);
+      selector: function_call_expression
+      captures:
+        path: PATH
+    - pattern: touch($PATH, $$$REST)
+      context: <?php touch($PATH, $$$REST);
+      selector: function_call_expression
+      captures:
+        path: PATH
     - pattern: $FUNCTION($PATH, $CONTENT)
       context: <?php $FUNCTION($PATH, $CONTENT);
       selector: function_call_expression
@@ -488,6 +514,64 @@
       only.
     references:
     - https://www.php.net/manual/en/security.php
+    - https://cwe.mitre.org/data/definitions/22.html
+- id: php-filesystem-copy-read
+  version: 1
+  title: PHP filesystem copy source
+  language: php
+  kind: sink
+  capability: filesystem_read
+  cwe:
+  - CWE-22
+  match:
+    any:
+    - pattern: copy($PATH, $DESTINATION)
+      context: <?php copy($PATH, $DESTINATION);
+      selector: function_call_expression
+      captures:
+        path: PATH
+        destination: DESTINATION
+  tags: [php, filesystem, copy, source]
+  ai:
+    investigate:
+    - Inspect source path selection, containment, symlinks, and any remote stream-wrapper behavior.
+    verify:
+    - Verify that the captured source is the file read by the native copy operation.
+    exclude:
+    - Exclude fixed paths, namespaced lookalikes, and paths already constrained to an authorized root.
+  provenance:
+    note: Native PHP copy source mapped separately from its destination.
+    references:
+    - https://www.php.net/manual/en/function.copy.php
+    - https://cwe.mitre.org/data/definitions/22.html
+- id: php-filesystem-copy-write
+  version: 1
+  title: PHP filesystem copy destination
+  language: php
+  kind: sink
+  capability: filesystem_write
+  cwe:
+  - CWE-22
+  match:
+    any:
+    - pattern: copy($SOURCE, $PATH)
+      context: <?php copy($SOURCE, $PATH);
+      selector: function_call_expression
+      captures:
+        source: SOURCE
+        path: PATH
+  tags: [php, filesystem, copy, destination]
+  ai:
+    investigate:
+    - Inspect destination path selection, containment, overwrite behavior, symlinks, and authorization.
+    verify:
+    - Verify that the captured path is the destination mutated by the native copy operation.
+    exclude:
+    - Exclude fixed paths, namespaced lookalikes, and destinations already constrained to an authorized root.
+  provenance:
+    note: Native PHP copy destination mapped separately from its source.
+    references:
+    - https://www.php.net/manual/en/function.copy.php
     - https://cwe.mitre.org/data/definitions/22.html
 - id: php-path-canonicalization
   version: 1

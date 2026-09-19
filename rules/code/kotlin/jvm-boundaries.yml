@@ -46,6 +46,8 @@
         captures: { path: PATH }
       - pattern: $FILES.readString($PATH)
         captures: { path: PATH }
+      - pattern: $FILES.copy($PATH, $DESTINATION)
+        captures: { path: PATH, destination: DESTINATION }
   tags: [kotlin, jvm, filesystem]
   ai: *guidance
   provenance: &filesystem_provenance
@@ -71,6 +73,18 @@
         captures: { path: PATH, content: CONTENT }
       - pattern: $FILES.writeString($PATH, $CONTENT)
         captures: { path: PATH, content: CONTENT }
+      - pattern: $FILES.copy($SOURCE, $PATH)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: $FILES.move($SOURCE, $PATH)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: $FILES.delete($PATH)
+        captures: { path: PATH }
+      - pattern: $FILES.deleteIfExists($PATH)
+        captures: { path: PATH }
+      - pattern: $FILES.createDirectory($PATH)
+        captures: { path: PATH }
+      - pattern: $FILES.createDirectories($PATH)
+        captures: { path: PATH }
   tags: [kotlin, jvm, filesystem]
   ai:
     investigate:
@@ -212,6 +226,8 @@
       - pattern: $STATEMENT.execute($QUERY)
         captures: { query: QUERY }
       - pattern: $STATEMENT.executeUpdate($QUERY)
+        captures: { query: QUERY }
+      - pattern: $STATEMENT.executeLargeUpdate($QUERY)
         captures: { query: QUERY }
       - pattern: $STATEMENT.addBatch($QUERY)
         captures: { query: QUERY }

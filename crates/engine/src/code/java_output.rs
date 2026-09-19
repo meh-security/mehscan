@@ -82,6 +82,72 @@ pub(crate) fn add_java_output_observations<'tree>(
         literals,
         evidence,
     );
+    add_xpath_boundaries(
+        path,
+        root,
+        &imports,
+        &declarations,
+        comments,
+        conditional,
+        literals,
+        evidence,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_xpath_boundaries<'tree>(
+    path: &str,
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    imports: &BTreeSet<String>,
+    declarations: &BTreeSet<String>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    if !imported_exact(imports, declarations, "javax.xml.xpath.XPath", "XPath") {
+        return;
+    }
+    for invocation in invocations(root) {
+        let Some(operation) = invocation
+            .field("name")
+            .map(|name| name.text().into_owned())
+        else {
+            continue;
+        };
+        if !matches!(operation.as_str(), "compile" | "evaluate") {
+            continue;
+        }
+        let Some(object) = invocation.field("object") else {
+            continue;
+        };
+        if !receiver_is_at(&invocation, &object, "XPath") {
+            continue;
+        }
+        let Some(expression) = arguments(&invocation).into_iter().next() else {
+            continue;
+        };
+        push(
+            path,
+            &invocation,
+            EvidenceKind::Sink,
+            Capability::XpathQuery,
+            "java-xpath-expression",
+            &["CWE-643"],
+            &["xpath", "query", "injection"],
+            &[("expression", &expression)],
+            Some(SymbolResolution {
+                canonical: format!("javax.xml.xpath.XPath.{operation}"),
+                observed: invocation.text().into_owned(),
+                method: SymbolResolutionMethod::ImportedNamespace,
+                confidence: SymbolConfidence::High,
+            }),
+            comments,
+            conditional,
+            literals,
+            evidence,
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

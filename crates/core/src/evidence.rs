@@ -26,6 +26,7 @@ pub enum Capability {
     ProcessExecution,
     ProcessArgumentSeparation,
     LdapQuery,
+    XpathQuery,
     LdapFilterEncoding,
     LdapDistinguishedNameEncoding,
     DynamicCodeExecution,
