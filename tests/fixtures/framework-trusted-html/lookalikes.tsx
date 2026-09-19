@@ -4,5 +4,6 @@ import { h } from "./local-view";
 export function renderLookalikes(content: string) {
   unsafeHTML(content);
   h("section", { innerHTML: content });
-  return <section innerHTML={content} />;
+  const Card = (_props: { innerHTML: string }) => null;
+  return <Card innerHTML={content} />;
 }

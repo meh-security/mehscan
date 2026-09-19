@@ -39,6 +39,14 @@ fn inventories_explicit_framework_html_trust_boundaries() {
             .iter()
             .all(|item| item.captures.contains_key("content"))
     );
+    assert_eq!(
+        sinks
+            .iter()
+            .filter(|item| item.rule_id == "tsx-solid-inner-html-output")
+            .count(),
+        1,
+        "custom-component props are not intrinsic DOM innerHTML sinks"
+    );
     assert!(result.evidence.iter().all(|item| {
         item.location.path != "lookalikes.tsx"
             || !matches!(

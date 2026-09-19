@@ -499,6 +499,7 @@ pub(crate) fn add_browser_observations<'tree>(
 
         if solid_runtime
             && kind == "jsx_attribute"
+            && jsx_attribute_is_on_intrinsic_element(&node)
             && let Some(content) = jsx_attribute_content(&node, "innerHTML")
         {
             push_observation(
@@ -1388,11 +1389,21 @@ fn vue_render_inner_html_content<'tree>(
     if !factories.contains(&callee) {
         return None;
     }
-    let properties = call
+    let arguments = call
         .field("arguments")?
         .children()
         .filter(|child| child.is_named())
-        .nth(1)?;
+        .collect::<Vec<_>>();
+    let tag_text = arguments.first()?.text();
+    let tag = exact_quoted(&tag_text)?;
+    if !tag
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_lowercase())
+    {
+        return None;
+    }
+    let properties = arguments.get(1)?;
     properties
         .dfs()
         .find(|node| {
@@ -1402,6 +1413,27 @@ fn vue_render_inner_html_content<'tree>(
                     .is_some_and(|key| normalized(&key.text()) == "innerHTML")
         })?
         .field("value")
+}
+
+fn jsx_attribute_is_on_intrinsic_element(attribute: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    attribute
+        .ancestors()
+        .find(|ancestor| {
+            matches!(
+                ancestor.kind().as_ref(),
+                "jsx_opening_element" | "jsx_self_closing_element"
+            )
+        })
+        .and_then(|element| {
+            normalized(&element.text())
+                .trim_start_matches('<')
+                .split(|character: char| {
+                    character.is_whitespace() || matches!(character, '>' | '/')
+                })
+                .next()
+                .and_then(|name| name.chars().next())
+        })
+        .is_some_and(|character| character.is_ascii_lowercase())
 }
 
 #[allow(clippy::too_many_arguments)]
