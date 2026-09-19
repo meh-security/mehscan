@@ -97,7 +97,9 @@ fn enumerates_first_cwe_capability_set_across_priority_languages() {
         assert_eq!(coverage.level, CweSupportLevel::Partial);
         assert_eq!(
             coverage.supported_languages.len(),
-            if matches!(id, "CWE-94" | "CWE-434") {
+            if id == "CWE-94" {
+                10
+            } else if id == "CWE-434" {
                 9
             } else if matches!(id, "CWE-614" | "CWE-1004" | "CWE-862") {
                 8
@@ -219,7 +221,16 @@ fn enumerates_first_cwe_capability_set_across_priority_languages() {
     assert_eq!(ldap.level, CweSupportLevel::Partial);
     assert_eq!(
         ldap.supported_languages,
-        [mehscan_core::Language::Csharp, mehscan_core::Language::Go]
+        [
+            mehscan_core::Language::C,
+            mehscan_core::Language::Cpp,
+            mehscan_core::Language::Csharp,
+            mehscan_core::Language::Java,
+            mehscan_core::Language::Kotlin,
+            mehscan_core::Language::Php,
+            mehscan_core::Language::Go,
+            mehscan_core::Language::Rust,
+        ]
     );
 }
 

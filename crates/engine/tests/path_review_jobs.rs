@@ -195,7 +195,7 @@ fn preserves_decisive_observation_guidance_across_every_language() {
     // Reviewer-visible decision-ready path/observation and review-specific
     // summary, mutation/representation/origin checks and per-review evidence
     // scope instructions are part of the serialized contract and fingerprint.
-    assert_eq!(job.fingerprint, "path-reviewpack-5950b05967ebd6ea");
+    assert_eq!(job.fingerprint, "path-reviewpack-78f99557292114ec");
     let languages = job
         .observation_reviews
         .iter()
@@ -1275,7 +1275,11 @@ fn scopes_python_owner_control_to_resource_access_in_mixed_observations() {
         })
         .expect("mixed process observation should remain reviewable");
     assert!(process.decision_facts.effective_controls.is_empty());
-    assert!(process.decision_facts.unresolved.is_empty());
+    assert!(
+        process.decision_facts.unresolved.iter().any(|question| {
+            question.contains("executable") && question.contains("command.split")
+        })
+    );
     assert!(!process.open_questions.is_empty());
     assert_eq!(
         process.confidence_policy.not_issue,

@@ -40,7 +40,10 @@ mod tests {
         let rules = crate::rules::load_builtin_rules().unwrap();
         let extended: Vec<_> = rules
             .iter()
-            .filter(|r| r.tags.iter().any(|tag| tag == "extended-rules"))
+            .filter(|r| {
+                r.tags.iter().any(|tag| tag == "extended-rules")
+                    && r.tags.iter().any(|tag| tag == "database")
+            })
             .collect();
         assert_eq!(extended.len(), 36);
         assert!(extended.iter().all(|r| super::is_rule(&r.id)));

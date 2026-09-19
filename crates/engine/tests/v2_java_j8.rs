@@ -34,7 +34,7 @@ fn models_exact_java_filesystem_archive_and_containment_policy() {
             .iter()
             .any(|evidence| evidence.location.path == "Lookalikes.java")
     );
-    assert_eq!(counts["java-filesystem-read"], 2);
+    assert_eq!(counts["java-filesystem-read"], 3);
     assert_eq!(counts["java-filesystem-write"], 7);
     assert_eq!(counts["java-spring-multipart-transfer-to-filesystem"], 2);
     assert_eq!(counts["java-spring-multipart-file-storage"], 2);
@@ -58,7 +58,7 @@ fn models_exact_java_filesystem_archive_and_containment_policy() {
         assert_eq!(counts[rule], 1, "{rule}");
     }
     assert_eq!(counts["java-random-access-file-write"], 1);
-    assert_eq!(j8.len(), 39);
+    assert_eq!(j8.len(), 40);
 
     let archive_paths = result
         .security_paths

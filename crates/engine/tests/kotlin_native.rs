@@ -468,6 +468,7 @@ fn kotlin_jvm_boundaries_and_scripts_preserve_captures() {
         "kotlin-uploads",
         "kotlin-html-encoding",
         "kotlin-extended-database",
+        "kotlin-extended-boundaries",
     ] {
         let scan = mehscan_engine::scan_path(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))

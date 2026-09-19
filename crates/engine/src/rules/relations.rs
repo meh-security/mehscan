@@ -353,7 +353,7 @@ mod tests {
     fn built_in_relations_validate_against_matcher_roles() {
         let rules = super::super::load_builtin_rules().expect("rules should load");
         let relations = load_builtin_relations(&rules).expect("relations should validate");
-        assert_eq!(relations.len(), 51);
+        assert_eq!(relations.len(), 52);
         assert_eq!(
             relations
                 .iter()

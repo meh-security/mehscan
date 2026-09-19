@@ -7080,7 +7080,8 @@ fn exact_csharp_caller_facts(
                 .collect::<String>();
             if !compact.contains(&marker)
                 || line.trim_start().starts_with("//")
-                || textual_definition_identifier(line).as_deref() == Some(symbol)
+                || looks_like_csharp_method_declaration(line)
+                    && textual_definition_identifier(line).as_deref() == Some(symbol)
             {
                 continue;
             }
@@ -8875,13 +8876,6 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
     if item.kind != EvidenceKind::Sink {
         return false;
     }
-    if item
-        .tags
-        .iter()
-        .any(|tag| tag == "review-origin:decision-critical")
-    {
-        return false;
-    }
     if item.capability == Capability::DatabaseQuery && item.rule_id == "csharp-extended-nosql-json"
     {
         return has_known_string_literal(item, "nosql_query");
@@ -8892,6 +8886,25 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
     }
     if item.capability == Capability::XpathQuery {
         return has_known_string_literal(item, "expression");
+    }
+    if item
+        .tags
+        .iter()
+        .any(|tag| tag == "review-origin:decision-critical")
+    {
+        return match item.capability {
+            Capability::OutboundNetworkRequest => item
+                .context
+                .literals
+                .get("endpoint")
+                .is_some_and(has_fixed_http_authority),
+            Capability::Redirect => item
+                .context
+                .literals
+                .get("location")
+                .is_some_and(has_fixed_internal_redirect_prefix),
+            _ => false,
+        };
     }
     let literal_role = match item.capability {
         Capability::DatabaseQuery => "query",
@@ -10809,11 +10822,6 @@ fn observation_review_questions(
                 .to_string(),
         );
     } else if !has_precise_node_boundary
-        && let Some(origin) = decision_critical_origin
-        && !origin.affirmatively_constrained
-    {
-        questions.push(origin.unresolved_question());
-    } else if !has_precise_node_boundary
         && has_database_caller_context
         && !evidence.iter().any(|item| {
             matches!(
@@ -10836,6 +10844,11 @@ fn observation_review_questions(
         );
     } else if !has_precise_node_boundary && let Some(question) = browser_html_endpoint_question {
         questions.push(question);
+    } else if !has_precise_node_boundary
+        && let Some(origin) = decision_critical_origin
+        && !origin.affirmatively_constrained
+    {
+        questions.push(origin.unresolved_question());
     } else if !has_precise_node_boundary && direct_request_resource_selector {
         questions.push(
             "Does this request-selected resource reach a sensitive read, mutation, or response without a later owner or tenant constraint?"
@@ -13316,6 +13329,8 @@ fn is_textual_callable_definition(line: &str) -> bool {
     trimmed.contains("function ")
         || trimmed.starts_with("func ")
         || trimmed.starts_with("func (")
+        || trimmed.starts_with("fun ")
+        || trimmed.starts_with("fn ")
         || trimmed.starts_with("def ")
         || ((trimmed.starts_with("const ")
             || trimmed.starts_with("let ")
@@ -13782,7 +13797,8 @@ fn collect_review_reference_tokens(source: &str, output: &mut BTreeSet<String>) 
                 || lower.contains("allowlist")
                 || lower.contains("redirect")
         };
-        if is_helpful_reference_identifier(token)
+        if before != Some('@')
+            && is_helpful_reference_identifier(token)
             && (after == Some('(')
                 || before == Some('.') && after == Some('(')
                 || qualified_call
