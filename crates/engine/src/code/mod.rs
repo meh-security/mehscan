@@ -18,6 +18,7 @@ mod csharp_sinks;
 mod csharp_standalone;
 mod csharp_streaming_upload;
 mod database_receiver;
+mod decision_origins;
 mod dotnet_project;
 mod embedded_javascript;
 mod extended_boundaries;

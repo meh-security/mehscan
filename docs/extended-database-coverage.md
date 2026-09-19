@@ -61,14 +61,19 @@ This is not a claim of exhaustive database-driver or backend coverage.
   parameters exclude receiver replacement and unknown prior helper mutation.
 - C# project summaries can follow a controller-bound parameter through one
   service method and one repository-like method when both calls forward the
-  exact formal parameter and each syntactic target is unique. This does not
-  build a CFG, infer arbitrary expressions or recursively walk a call graph.
-- C# SQL sinks classify concatenation, interpolation, `string.Format`,
-  `string.Concat` and bounded same-callable aliases independently of repository
-  handoff recognition. Unresolved string operands remain focused AI review
-  questions; integral, Boolean and `Guid` parameters are identified as
-  constrained representations, while separately bound query values are not
-  labeled as dynamic SQL composition.
+  exact formal parameter and each syntactic target is unique.
+- SQL sinks in every supported language classify direct interpolation,
+  concatenation, formatting, and bounded same-callable aliases independently
+  of repository handoff recognition. C# additionally identifies integral,
+  Boolean and `Guid` parameters as constrained representations. Separately
+  bound query values are not labeled as dynamic SQL composition.
+- In every supported language, when a decision-critical sink is inside a
+  uniquely named callable, review context can include at most two caller layers.
+  Each layer must forward the relevant value at the exact formal-parameter
+  position, either unchanged or through member/index access. Transformed
+  arguments and ambiguous callable names stop the handoff. This exposes common
+  handler-to-service-to-repository shapes without building a CFG or asserting a
+  source-to-sink flow.
 - pgx SQL follows its context argument; pgx Prepare SQL follows context and
   statement name. sqlx Get/Select SQL follows the destination. These operands
   are not interchangeable with database/sql argument positions.

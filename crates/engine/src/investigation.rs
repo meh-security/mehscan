@@ -99,6 +99,27 @@ struct ReviewContextIndex {
     usages: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
 }
 
+#[derive(Clone)]
+struct BoundedCallerRecord {
+    caller: String,
+    caller_parameters: Vec<String>,
+    arguments: Vec<String>,
+    location: Location,
+    excerpt: String,
+}
+
+#[derive(Clone)]
+struct BoundedDefinition {
+    location: Location,
+    parameters: Vec<String>,
+}
+
+#[derive(Default)]
+struct BoundedCallerIndex {
+    definitions: BTreeMap<(Language, String), Vec<BoundedDefinition>>,
+    callers: BTreeMap<(Language, String), Vec<BoundedCallerRecord>>,
+}
+
 type NativeParsedFile = (AstGrep<StrDoc<SupportLang>>, Vec<OutlineSymbol>);
 
 fn is_review_material_path(path: &str) -> bool {
@@ -4284,6 +4305,7 @@ enum DecisionCriticalBoundary {
     TrustedHtml,
     ProcessExecutable,
     ShellCommand,
+    NativeFormat,
     DynamicCode,
     ObjectDeserialization,
     RawNosql,
@@ -4294,6 +4316,7 @@ enum DecisionCriticalBoundary {
 #[derive(Clone, Copy)]
 struct DecisionCriticalOrigin<'a> {
     boundary: DecisionCriticalBoundary,
+    language: &'static str,
     style: &'a str,
     operand: &'a str,
     affirmatively_constrained: bool,
@@ -4306,6 +4329,7 @@ impl DecisionCriticalOrigin<'_> {
             DecisionCriticalBoundary::TrustedHtml => "bounded_trusted_html_interpretation",
             DecisionCriticalBoundary::ProcessExecutable => "bounded_dynamic_executable_selection",
             DecisionCriticalBoundary::ShellCommand => "bounded_shell_command_interpretation",
+            DecisionCriticalBoundary::NativeFormat => "bounded_native_format_interpretation",
             DecisionCriticalBoundary::DynamicCode => "bounded_dynamic_code_interpretation",
             DecisionCriticalBoundary::ObjectDeserialization => {
                 "bounded_executable_object_deserialization"
@@ -4319,27 +4343,55 @@ impl DecisionCriticalOrigin<'_> {
     }
 
     fn title(self) -> &'static str {
-        match self.boundary {
-            DecisionCriticalBoundary::Sql => "Review dynamically composed C# SQL for CWE-89",
-            DecisionCriticalBoundary::TrustedHtml => {
+        match (self.boundary, self.language) {
+            (DecisionCriticalBoundary::Sql, "C#") => {
+                "Review dynamically composed C# SQL for CWE-89"
+            }
+            (DecisionCriticalBoundary::TrustedHtml, "C#") => {
                 "Review dynamic C# trusted HTML output for CWE-79"
             }
-            DecisionCriticalBoundary::ProcessExecutable => {
+            (DecisionCriticalBoundary::ProcessExecutable, "C#") => {
                 "Review dynamic C# executable selection for CWE-78"
             }
-            DecisionCriticalBoundary::ShellCommand => {
+            (DecisionCriticalBoundary::ShellCommand, "C#") => {
                 "Review dynamic C# shell command text for CWE-78"
             }
-            DecisionCriticalBoundary::DynamicCode => {
+            (DecisionCriticalBoundary::NativeFormat, _) => {
+                "Review dynamic native format string for CWE-134"
+            }
+            (DecisionCriticalBoundary::DynamicCode, "C#") => {
                 "Review dynamic C# code interpretation for CWE-94"
             }
-            DecisionCriticalBoundary::ObjectDeserialization => {
+            (DecisionCriticalBoundary::ObjectDeserialization, "C#") => {
                 "Review C# executable object deserialization for CWE-502"
             }
-            DecisionCriticalBoundary::RawNosql => "Review dynamic C# raw NoSQL query for CWE-943",
-            DecisionCriticalBoundary::LdapFilter
-            | DecisionCriticalBoundary::LdapDistinguishedName => {
+            (DecisionCriticalBoundary::RawNosql, "C#") => {
+                "Review dynamic C# raw NoSQL query for CWE-943"
+            }
+            (DecisionCriticalBoundary::LdapFilter, "C#")
+            | (DecisionCriticalBoundary::LdapDistinguishedName, "C#") => {
                 "Review dynamic C# LDAP query construction for CWE-90"
+            }
+            (DecisionCriticalBoundary::Sql, _) => "Review dynamically composed SQL for CWE-89",
+            (DecisionCriticalBoundary::TrustedHtml, _) => {
+                "Review dynamic trusted HTML output for CWE-79"
+            }
+            (DecisionCriticalBoundary::ProcessExecutable, _) => {
+                "Review dynamic executable selection for CWE-78"
+            }
+            (DecisionCriticalBoundary::ShellCommand, _) => {
+                "Review dynamic shell command text for CWE-78"
+            }
+            (DecisionCriticalBoundary::DynamicCode, _) => {
+                "Review dynamic code interpretation for CWE-94"
+            }
+            (DecisionCriticalBoundary::ObjectDeserialization, _) => {
+                "Review executable object deserialization for CWE-502"
+            }
+            (DecisionCriticalBoundary::RawNosql, _) => "Review dynamic raw NoSQL query for CWE-943",
+            (DecisionCriticalBoundary::LdapFilter, _)
+            | (DecisionCriticalBoundary::LdapDistinguishedName, _) => {
+                "Review dynamic LDAP query construction for CWE-90"
             }
         }
     }
@@ -4350,6 +4402,7 @@ impl DecisionCriticalOrigin<'_> {
             DecisionCriticalBoundary::TrustedHtml => "Can the runtime value passed across this explicit HTML trust boundary be influenced by an attacker, or is it sanitized for the exact browser context before escaping is bypassed?".to_string(),
             DecisionCriticalBoundary::ProcessExecutable => "Can an attacker influence the executable selected by this process launch, or is it chosen from an exact server-owned allowlist?".to_string(),
             DecisionCriticalBoundary::ShellCommand => "Can an attacker influence text interpreted by this command shell, or is every dynamic value kept outside shell grammar under an exact allowlist?".to_string(),
+            DecisionCriticalBoundary::NativeFormat => "Can an attacker influence the printf-family format operand, or is the exact format string fixed by trusted code?".to_string(),
             DecisionCriticalBoundary::DynamicCode => "Can an attacker influence the program or expression interpreted by this runtime evaluator, or is the exact grammar fixed and trusted?".to_string(),
             DecisionCriticalBoundary::ObjectDeserialization => "Can an attacker modify the payload consumed by this executable object deserializer, or is its exact producer protected by a trusted immutable or authenticated boundary?".to_string(),
             DecisionCriticalBoundary::RawNosql => "Can an attacker influence operators or structure in this raw NoSQL query document, or is the exact document fixed or built through typed scalar predicates?".to_string(),
@@ -4374,6 +4427,10 @@ impl DecisionCriticalOrigin<'_> {
             ),
             DecisionCriticalBoundary::ShellCommand => format!(
                 "Can attacker-controlled input influence shell command text `{}`, or is every dynamic value excluded from shell grammar by an exact allowlist or structured non-shell execution?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::NativeFormat => format!(
+                "Can attacker-controlled input influence native format operand `{}`, or is the complete printf-family format fixed by trusted code?",
                 self.operand
             ),
             DecisionCriticalBoundary::DynamicCode => format!(
@@ -4403,8 +4460,8 @@ impl DecisionCriticalOrigin<'_> {
         if self.affirmatively_constrained {
             return match self.boundary {
                 DecisionCriticalBoundary::Sql => format!(
-                    "The exact C# database query operand constructs SQL text through {} with dynamic operand `{}`, whose declared integral, Boolean, or Guid type has a fixed non-SQL-token representation, affirmatively disproving SQL-syntax injection through that exact operand. Separate query-authorization concerns may remain.",
-                    self.style, self.operand
+                    "The exact {} database query operand constructs SQL text through {} with dynamic operand `{}`, whose constrained representation cannot introduce SQL tokens, affirmatively disproving SQL-syntax injection through that exact operand. Separate query-authorization concerns may remain.",
+                    self.language, self.style, self.operand
                 ),
                 DecisionCriticalBoundary::LdapFilter => format!(
                     "The exact dynamic LDAP filter operand `{}` is passed through the observed context-specific LDAP filter encoder before query construction, affirmatively preventing that value from changing filter grammar.",
@@ -4422,16 +4479,18 @@ impl DecisionCriticalOrigin<'_> {
         }
         match self.boundary {
             DecisionCriticalBoundary::Sql => format!(
-                "The exact C# database query operand constructs executable SQL text through {} with dynamic operand `{}`. This is stronger than an ordinary query API observation, but its production origin or an exact constraining invariant is not established by composition syntax alone.",
-                self.style, self.operand
+                "The exact {} database query operand constructs executable SQL text through {} with dynamic operand `{}`. This is stronger than an ordinary query API observation, but its production origin or an exact constraining invariant is not established by composition syntax alone.",
+                self.language, self.style, self.operand
             ),
             _ => format!(
-                "The exact C# operand `{}` crosses a {} boundary through {}. This is stronger than an ordinary API observation, but its production origin or an exact constraining invariant is not established by local syntax alone.",
+                "The exact {} operand `{}` crosses a {} boundary through {}. This is stronger than an ordinary API observation, but its production origin or an exact constraining invariant is not established by local syntax alone.",
+                self.language,
                 self.operand,
                 match self.boundary {
                     DecisionCriticalBoundary::TrustedHtml => "trusted HTML interpretation",
                     DecisionCriticalBoundary::ProcessExecutable => "process executable selection",
                     DecisionCriticalBoundary::ShellCommand => "shell command interpretation",
+                    DecisionCriticalBoundary::NativeFormat => "native format-string interpretation",
                     DecisionCriticalBoundary::DynamicCode => "dynamic code interpretation",
                     DecisionCriticalBoundary::ObjectDeserialization =>
                         "executable object deserialization",
@@ -4495,6 +4554,7 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
                 .trim();
             Some(DecisionCriticalOrigin {
                 boundary: DecisionCriticalBoundary::Sql,
+                language: evidence_language_name(item),
                 style,
                 operand,
                 affirmatively_constrained: item
@@ -4531,7 +4591,11 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
                 } else {
                     "process launch API"
                 },
-                if shell { &["arguments"] } else { &["command"] },
+                if shell {
+                    &["arguments", "command"]
+                } else {
+                    &["command"]
+                },
                 false,
             )?)
         } else if item.capability == Capability::DynamicCodeExecution {
@@ -4542,12 +4606,20 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
                 &["code"],
                 false,
             )?)
+        } else if item.capability == Capability::FormatStringOutput {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::NativeFormat,
+                "printf-family API",
+                &["format"],
+                false,
+            )?)
         } else if item.capability == Capability::Deserialization {
             Some(decision_origin_from_capture(
                 item,
                 DecisionCriticalBoundary::ObjectDeserialization,
                 "executable object deserializer",
-                &["payload"],
+                &["payload", "stream"],
                 false,
             )?)
         } else if item.capability == Capability::DatabaseQuery
@@ -4620,10 +4692,30 @@ fn decision_origin_from_capture<'a>(
         .trim();
     Some(DecisionCriticalOrigin {
         boundary,
+        language: evidence_language_name(item),
         style,
         operand,
         affirmatively_constrained,
     })
+}
+
+fn evidence_language_name(item: &Evidence) -> &'static str {
+    let prefix = item.rule_id.split('-').next().unwrap_or_default();
+    match prefix {
+        "c" => "C",
+        "cpp" => "C++",
+        "csharp" => "C#",
+        "go" => "Go",
+        "java" => "Java",
+        "javascript" => "JavaScript",
+        "kotlin" => "Kotlin",
+        "php" => "PHP",
+        "python" => "Python",
+        "rust" => "Rust",
+        "tsx" => "TSX",
+        "typescript" => "TypeScript",
+        _ => "application",
+    }
 }
 
 fn is_known_shell_executable(value: &str) -> bool {
@@ -6080,6 +6172,10 @@ fn build_observation_reviews(
         indexed_references.extend(observation_group_references(group, sources, context_lines)?);
     }
     let review_context = ReviewContextIndex::build(sources, &indexed_references)?;
+    let bounded_callers = groups
+        .iter()
+        .any(|group| decision_critical_origin(&group.evidence).is_some())
+        .then(|| BoundedCallerIndex::build(sources));
     let mut php_contexts = BTreeMap::new();
     let mut reviews = Vec::new();
     for group in groups {
@@ -6398,6 +6494,17 @@ fn build_observation_reviews(
         {
             let (mut callers, callers_truncated) =
                 exact_csharp_caller_facts(sources, &group.path, &group.symbol, 2);
+            context_truncated |= callers_truncated;
+            facts.append(&mut callers);
+        }
+        if let Some(language) = languages.get(group.path.as_str()).copied()
+            && language != Language::Csharp
+            && let Some(origin) = decision_critical_origin(&group.evidence)
+        {
+            let (mut callers, callers_truncated) = bounded_callers
+                .as_ref()
+                .expect("decision-critical groups build the bounded caller index")
+                .facts(language, &group.path, &group.symbol, origin.operand, 4);
             context_truncated |= callers_truncated;
             facts.append(&mut callers);
         }
@@ -6905,6 +7012,378 @@ fn exact_csharp_caller_facts(
         }
     }
     (facts, false)
+}
+
+impl BoundedCallerIndex {
+    fn build(sources: &RepositorySources) -> Self {
+        #[derive(Clone)]
+        struct Definition {
+            language: Language,
+            name: String,
+            parameters: Vec<String>,
+            location: Location,
+            excerpt: String,
+        }
+
+        let mut records = Vec::new();
+        let mut definitions: BTreeMap<(Language, String), Vec<BoundedDefinition>> = BTreeMap::new();
+        for file in sources.files.values().filter(|file| {
+            file.language.is_some()
+                && file.source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES
+                && !is_nonproduction_review_context_path(&file.path)
+        }) {
+            let language = file.language.expect("filtered supported source");
+            let spans = line_spans(&file.source);
+            for (line_index, (start, _)) in spans.iter().copied().enumerate() {
+                let line = &file.source[spans[line_index].0..spans[line_index].1];
+                let Some(name) = definition_identifier_for_language(line, language) else {
+                    continue;
+                };
+                let parameters = definition_parameters(line, language);
+                let end_index =
+                    definition_end_for_language(&file.source, &spans, line_index, language, 96);
+                let location =
+                    location_from_offsets(&file.path, &file.source, start, spans[end_index].1);
+                definitions
+                    .entry((language, name.clone()))
+                    .or_default()
+                    .push(BoundedDefinition {
+                        location: location.clone(),
+                        parameters: parameters.clone(),
+                    });
+                records.push(Definition {
+                    language,
+                    name,
+                    parameters,
+                    location,
+                    excerpt: file.source[start..spans[end_index].1].to_string(),
+                });
+            }
+        }
+
+        let unique = definitions
+            .iter()
+            .filter(|(_, locations)| locations.len() == 1)
+            .map(|(key, _)| key.clone())
+            .collect::<BTreeSet<_>>();
+        let mut callers: BTreeMap<(Language, String), Vec<BoundedCallerRecord>> = BTreeMap::new();
+        for definition in records {
+            if !unique.contains(&(definition.language, definition.name.clone())) {
+                continue;
+            }
+            for (called, arguments) in exact_call_sites(&definition.excerpt) {
+                if called == definition.name
+                    || !unique.contains(&(definition.language, called.clone()))
+                {
+                    continue;
+                }
+                callers
+                    .entry((definition.language, called))
+                    .or_default()
+                    .push(BoundedCallerRecord {
+                        caller: definition.name.clone(),
+                        caller_parameters: definition.parameters.clone(),
+                        arguments,
+                        location: definition.location.clone(),
+                        excerpt: definition.excerpt.clone(),
+                    });
+            }
+        }
+        for values in callers.values_mut() {
+            values.sort_by(|left, right| {
+                left.location.path.cmp(&right.location.path).then_with(|| {
+                    left.location
+                        .start
+                        .byte_offset
+                        .cmp(&right.location.start.byte_offset)
+                })
+            });
+            values.dedup_by(|left, right| {
+                left.location == right.location && left.arguments == right.arguments
+            });
+        }
+        Self {
+            definitions,
+            callers,
+        }
+    }
+
+    fn facts(
+        &self,
+        language: Language,
+        definition_path: &str,
+        symbol: &str,
+        operand: &str,
+        limit: usize,
+    ) -> (Vec<ReviewNeighborhoodFact>, bool) {
+        let Some(target) = terminal_identifier(symbol) else {
+            return (Vec::new(), false);
+        };
+        let key = (language, target.to_string());
+        let Some([definition]) = self.definitions.get(&key).map(Vec::as_slice) else {
+            return (Vec::new(), false);
+        };
+        if definition.location.path != definition_path {
+            return (Vec::new(), false);
+        }
+        let Some(operand_root) = leading_identifier(operand) else {
+            return (Vec::new(), false);
+        };
+        let tracked = definition
+            .parameters
+            .iter()
+            .enumerate()
+            .filter_map(|(index, parameter)| (parameter == operand_root).then_some(index))
+            .collect::<BTreeSet<_>>();
+        if tracked.is_empty() {
+            return (Vec::new(), false);
+        }
+
+        let mut facts = Vec::new();
+        let mut frontier = vec![(target.to_string(), tracked)];
+        let mut seen = BTreeSet::from([target.to_string()]);
+        for depth in 0..2 {
+            let mut next = Vec::new();
+            for (called, tracked_parameters) in frontier {
+                for caller in self.callers.get(&(language, called)).into_iter().flatten() {
+                    let forwarded = tracked_parameters
+                        .iter()
+                        .filter_map(|index| caller.arguments.get(*index))
+                        .filter_map(|argument| {
+                            forwarded_parameter_index(argument, &caller.caller_parameters)
+                        })
+                        .collect::<BTreeSet<_>>();
+                    if forwarded.is_empty() {
+                        continue;
+                    }
+                    if facts.len() == limit {
+                        return (facts, true);
+                    }
+                    facts.push(ReviewNeighborhoodFact {
+                        role: if depth == 0 {
+                            "exact_caller_context"
+                        } else {
+                            "upstream_caller_context"
+                        }
+                        .to_string(),
+                        symbol: caller.caller.clone(),
+                        location: caller.location.clone(),
+                        excerpt: caller.excerpt.clone(),
+                        evidence_id: None,
+                        provenance: textual_provenance(if depth == 0 {
+                            "bounded exact parameter forwarding to one unique repository definition; lexical non-flow 1"
+                        } else {
+                            "bounded upstream parameter forwarding to one unique service definition; lexical non-flow 1"
+                        }),
+                    });
+                    if seen.insert(caller.caller.clone()) {
+                        next.push((caller.caller.clone(), forwarded));
+                    }
+                }
+            }
+            frontier = next;
+            if frontier.is_empty() {
+                break;
+            }
+        }
+        (facts, false)
+    }
+}
+
+fn exact_call_sites(source: &str) -> Vec<(String, Vec<String>)> {
+    let bytes = source.as_bytes();
+    let mut calls = Vec::new();
+    for open in source.match_indices('(').map(|(index, _)| index) {
+        let mut end = open;
+        while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        let mut start = end;
+        while start > 0
+            && (bytes[start - 1].is_ascii_alphanumeric() || matches!(bytes[start - 1], b'_' | b'$'))
+        {
+            start -= 1;
+        }
+        if start < end
+            && let Some(name) = source.get(start..end)
+            && is_helpful_reference_identifier(name)
+            && let Some(close) = matching_delimiter(source, open, b'(', b')')
+        {
+            calls.push((
+                name.to_string(),
+                split_top_level_arguments(&source[open + 1..close]),
+            ));
+        }
+    }
+    calls
+}
+
+fn definition_parameters(line: &str, language: Language) -> Vec<String> {
+    let Some(open) = line.find('(') else {
+        return Vec::new();
+    };
+    let Some(close) = matching_delimiter(line, open, b'(', b')') else {
+        return Vec::new();
+    };
+    split_top_level_arguments(&line[open + 1..close])
+        .into_iter()
+        .filter_map(|parameter| parameter_identifier(&parameter, language))
+        .collect()
+}
+
+fn parameter_identifier(parameter: &str, language: Language) -> Option<String> {
+    let parameter = parameter.split('=').next()?.trim();
+    let candidate = match language {
+        Language::Python
+        | Language::Rust
+        | Language::Kotlin
+        | Language::Typescript
+        | Language::Tsx => parameter.split(':').next()?.trim(),
+        Language::Go => parameter.split_whitespace().next()?,
+        _ => parameter
+            .split(|character: char| {
+                !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
+            })
+            .rfind(|part| !part.is_empty())?,
+    };
+    let candidate = candidate
+        .trim()
+        .trim_start_matches('&')
+        .trim_start_matches("mut ")
+        .trim_start_matches('$')
+        .trim_end_matches('?');
+    (!matches!(candidate, "self" | "this") && is_plain_identifier(candidate))
+        .then(|| candidate.to_string())
+}
+
+fn forwarded_parameter_index(argument: &str, parameters: &[String]) -> Option<usize> {
+    let argument = argument
+        .trim()
+        .trim_start_matches('&')
+        .trim_start_matches('*');
+    if argument.contains('(')
+        || argument.contains('+')
+        || argument.contains('%')
+        || argument.contains("||")
+        || argument.contains("&&")
+    {
+        return None;
+    }
+    let root = leading_identifier(argument)?;
+    let suffix = argument.trim_start_matches('$').strip_prefix(root)?;
+    if !suffix.is_empty()
+        && !suffix.starts_with('.')
+        && !suffix.starts_with('[')
+        && !suffix.starts_with("?.")
+        && !suffix.starts_with("->")
+    {
+        return None;
+    }
+    parameters.iter().position(|parameter| parameter == root)
+}
+
+fn leading_identifier(value: &str) -> Option<&str> {
+    let value = value
+        .trim()
+        .trim_start_matches('&')
+        .trim_start_matches('*')
+        .trim_start_matches('$');
+    let end = value
+        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .unwrap_or(value.len());
+    (end > 0).then(|| &value[..end])
+}
+
+fn split_top_level_arguments(source: &str) -> Vec<String> {
+    let bytes = source.as_bytes();
+    let mut arguments = Vec::new();
+    let mut start = 0;
+    let mut stack = Vec::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == active {
+                quote = None;
+            }
+            continue;
+        }
+        match byte {
+            b'\'' | b'"' | b'`' => quote = Some(byte),
+            b'(' | b'[' | b'{' => stack.push(byte),
+            b')' | b']' | b'}' => {
+                stack.pop();
+            }
+            b',' if stack.is_empty() => {
+                arguments.push(source[start..index].trim().to_string());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < source.len() || !source.trim().is_empty() {
+        arguments.push(source[start..].trim().to_string());
+    }
+    arguments
+}
+
+fn matching_delimiter(source: &str, open: usize, left: u8, right: u8) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if bytes.get(open) != Some(&left) {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, byte) in bytes.iter().copied().enumerate().skip(open) {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == active {
+                quote = None;
+            }
+            continue;
+        }
+        if matches!(byte, b'\'' | b'"' | b'`') {
+            quote = Some(byte);
+        } else if byte == left {
+            depth += 1;
+        } else if byte == right {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(index);
+            }
+        }
+    }
+    None
+}
+
+fn definition_identifier_for_language(line: &str, language: Language) -> Option<String> {
+    if language == Language::Python {
+        python_definition_identifier(line)
+    } else {
+        textual_definition_identifier(line)
+    }
+}
+
+fn definition_end_for_language(
+    source: &str,
+    spans: &[(usize, usize)],
+    definition_index: usize,
+    language: Language,
+    max_lines: usize,
+) -> usize {
+    if language == Language::Python {
+        python_definition_end_index(source, spans, definition_index, max_lines)
+    } else {
+        textual_definition_end_with_limit(source, spans, definition_index, max_lines)
+    }
 }
 
 fn exact_python_observation_caller_facts(
@@ -13368,7 +13847,7 @@ fn textual_definition_identifier(line: &str) -> Option<String> {
     for (index, token) in tokens.iter().enumerate() {
         if matches!(
             *token,
-            "const" | "let" | "var" | "function" | "class" | "def"
+            "const" | "let" | "var" | "function" | "class" | "def" | "fn" | "fun"
         ) {
             let name = tokens.get(index + 1).copied()?;
             return is_helpful_reference_identifier(name).then(|| name.to_string());
@@ -13395,6 +13874,26 @@ fn textual_definition_identifier(line: &str) -> Option<String> {
             if is_helpful_reference_identifier(name) {
                 return Some(name.to_string());
             }
+        }
+    }
+    if trimmed.contains('(')
+        && !trimmed.contains('=')
+        && !trimmed.ends_with(';')
+        && ![
+            "if", "for", "while", "switch", "catch", "return", "throw", "new",
+        ]
+        .iter()
+        .any(|keyword| trimmed.starts_with(&format!("{keyword} ")))
+    {
+        let prefix = trimmed.split_once('(')?.0.trim_end();
+        let name = prefix
+            .split(|character: char| {
+                !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
+            })
+            .rfind(|token| !token.is_empty())?;
+        let prefix_without_name = prefix[..prefix.rfind(name)?].trim();
+        if !prefix_without_name.is_empty() && is_helpful_reference_identifier(name) {
+            return Some(name.to_string());
         }
     }
     let first = tokens.first().copied()?;

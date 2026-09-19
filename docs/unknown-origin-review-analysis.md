@@ -10,13 +10,14 @@ not get the same treatment merely because its argument is nonliteral.
 This distinction preserves useful sinks without making every configurable URL,
 path, redirect, query, or process argument decision-critical.
 
-## C# implementation status
+## Implementation status
 
-C# now applies this policy to dynamic SQL composition, explicit trusted-HTML
-output, dynamic executable selection, command text passed to a known shell,
-runtime code evaluation, executable object deserialization, raw MongoDB JSON,
-and LDAP filter or distinguished-name grammar. Exact LDAP encoding is retained
-as affirmative counterevidence.
+All supported languages now apply this policy to locally composed SQL, explicit
+trusted-HTML output, dynamic executable selection, command text passed to a
+known shell, native format strings, runtime code evaluation, executable object
+deserialization, raw NoSQL grammar, and LDAP filter or distinguished-name
+grammar where the underlying rule exposes the required semantic operand. Exact
+LDAP encoding is retained as affirmative counterevidence.
 
 Ordinary HTML output, fixed programs, fixed LDAP expressions, typed MongoDB
 filters, structured arguments passed to a fixed non-shell executable, and
@@ -38,7 +39,7 @@ triage can use `not_issue` when it sees a strong sink but no proved source.
 That is reasonable for ordinary boundaries. It is lossy when the observation
 already establishes dangerous construction or interpretation.
 
-C# dynamic SQL composition now demonstrates the intended middle ground:
+Dynamic SQL composition demonstrates the intended middle ground:
 
 1. The sink alone remains an ordinary observation.
 2. Concatenation, interpolation, formatting, or bounded aliases into executable
@@ -137,30 +138,30 @@ interpreter boundary. C# dynamic SQL becomes the first producer of the shared
 shape instead of a permanent one-off policy. The existing advisory filter stays
 in place for generic questions.
 
-This work does not require a CFG, general taint engine, compiler-wide type
-resolution, or cross-file tracing. It reads evidence tags, captures, literal
-metadata, and already-supplied bounded facts. Classification is linear in the
-small evidence/fact neighborhood already assembled for a review, adds no file
-parsing or repository traversal, and should have negligible scan-time impact.
-It may increase AI review volume because strong unknown-origin observations
-will correctly remain `needs_review`; ordinary sink volume is unchanged.
+This work does not require a CFG, general taint engine, or compiler-wide type
+resolution. Scan-time classification reads evidence tags, captures and literal
+metadata, plus at most 96 preceding statements inside the containing callable.
+Review construction builds a repository-wide lexical index only when at least
+one decision-critical observation exists. That index is linear in supported
+production source, excludes oversized files, and follows no more than two
+unique call layers through exact parameter positions. Per-review lookup is
+bounded. It may increase AI review volume because strong unknown-origin
+observations correctly remain `needs_review`; ordinary sink volume is unchanged.
 
 ## Delivery sequence
 
-1. Introduce the shared strong-operand classifier and migrate C# dynamic SQL to
-   it without changing its current verdict behavior.
-2. Extend SQL composition facts to the remaining supported languages, reusing
-   existing query operand captures and bounded same-callable aliases.
-3. Mark explicit trusted-HTML bypasses, shell-string APIs, and native format
-   operands. These are common, locally distinguishable, and high signal.
-4. Mark dynamic code/expression evaluators, excluding plugin paths and fixed
-   programs.
-5. Split executable deserializers from safe structured-data decoders, then mark
-   only the executable group.
-6. Add raw NoSQL/operator and LDAP filter construction after their safe binding
-   and encoding counterevidence is represented.
-7. Evaluate URL, redirect, and path cases only with request-role evidence; do
-   not promote their generic nonliteral sinks.
+The shared classifier and the first seven ranked families are implemented for
+the supported language set. Query composition uses existing literal facts plus
+bounded local assignment and formatting shapes. Review construction builds one
+lexical caller index only when decision-critical observations exist. It follows
+at most two exact-name caller layers, requires each callable to have one unique
+repository definition, and requires the relevant formal parameter to be passed
+unchanged or through member/index access at the same argument position.
+Transformed arguments and ambiguous definitions stop traversal. This supplies
+handler/service/repository excerpts without claiming deterministic dataflow.
+
+URL, redirect, and path cases remain dependent on request-role evidence and are
+not promoted from a generic nonliteral sink.
 
 Validation at this stage should stay small: classifier unit tests plus one
 synthetic positive and one safe counterexample per newly enabled semantic
