@@ -5,8 +5,8 @@ use ast_grep_core::Node;
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_language::SupportLang;
 use mehscan_core::{
-    Capability, Capture, Confidence, Evidence, EvidenceContext, EvidenceKind, Language, Location,
-    Position, Provenance, Resolution,
+    Capability, Capture, Confidence, Evidence, EvidenceContext, EvidenceKind, Language,
+    LiteralState, Location, Position, Provenance, Resolution,
 };
 
 use super::comments::CommentRanges;
@@ -21,6 +21,13 @@ const DAPPER_RULE_ID: &str = "csharp-dapper-database-query";
 const WEBCLIENT_RULE_ID: &str = "csharp-webclient-outbound-http";
 const HTTPCLIENT_RULE_ID: &str = "csharp-httpclient-outbound-http";
 const CALL_ENGINE: &str = "mehscan csharp-call-summary 1";
+
+#[derive(Clone)]
+struct QueryComposition<'tree> {
+    expression: Node<'tree, StrDoc<SupportLang>>,
+    style: &'static str,
+    references: Vec<String>,
+}
 
 pub(crate) fn add_typed_property_sinks<'tree>(
     path: &str,
@@ -195,6 +202,304 @@ pub(crate) fn add_typed_property_sinks<'tree>(
                 evidence,
             );
         }
+    }
+}
+
+/// Marks locally visible SQL string construction on every admitted C# query
+/// sink. This is deliberately independent of controller/repository handoff
+/// resolution: it describes the query operand without claiming its origin.
+pub(crate) fn annotate_dynamic_query_composition<'tree>(
+    path: &str,
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    language: Language,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut [Evidence],
+) {
+    if language != Language::Csharp {
+        return;
+    }
+    for item in evidence.iter_mut().filter(|item| {
+        item.location.path == path
+            && item.kind == EvidenceKind::Sink
+            && item.capability == Capability::DatabaseQuery
+    }) {
+        let Some(query_capture) = item.captures.get("query").cloned() else {
+            continue;
+        };
+        let Some(query) = root
+            .dfs()
+            .filter(|node| {
+                node.range().start == query_capture.location.start.byte_offset
+                    && node.range().end == query_capture.location.end.byte_offset
+            })
+            .last()
+        else {
+            continue;
+        };
+        let Some(composition) = query_composition(root, &query, literals, 0) else {
+            continue;
+        };
+        push_unique_tag(&mut item.tags, "dynamic-query-composition");
+        push_unique_tag(
+            &mut item.tags,
+            &format!("query-composition:{}", composition.style),
+        );
+        let parameters = enclosing_parameters(&query);
+        let method_parameters = composition
+            .references
+            .iter()
+            .filter_map(|reference| {
+                parameters.iter().find_map(|(parameter, observed_type)| {
+                    (reference == parameter
+                        || reference
+                            .strip_prefix(parameter.as_str())
+                            .is_some_and(|tail| tail.starts_with('.')))
+                    .then_some((reference, observed_type))
+                })
+            })
+            .collect::<Vec<_>>();
+        push_unique_tag(
+            &mut item.tags,
+            if !method_parameters.is_empty() {
+                "dynamic-origin:method-parameter"
+            } else {
+                "dynamic-origin:local-expression"
+            },
+        );
+        if method_parameters.len() == composition.references.len()
+            && method_parameters
+                .iter()
+                .all(|(_, observed_type)| sql_safe_scalar(observed_type))
+        {
+            push_unique_tag(&mut item.tags, "dynamic-origin:constrained-scalar");
+        }
+        item.captures.insert(
+            "query_composition".to_string(),
+            Capture {
+                text: composition.expression.text().into_owned(),
+                location: location(path, &composition.expression),
+            },
+        );
+        item.captures.insert(
+            "dynamic_operands".to_string(),
+            Capture {
+                text: composition.references.join(", "),
+                location: location(path, &composition.expression),
+            },
+        );
+        if let Some(reference) = method_parameters
+            .first()
+            .map(|(reference, _)| *reference)
+            .or_else(|| composition.references.first())
+        {
+            let operand = composition
+                .expression
+                .dfs()
+                .filter(|node| node.is_named())
+                .find(|node| node.text().trim() == reference)
+                .unwrap_or_else(|| composition.expression.clone());
+            item.captures.insert(
+                "dynamic_operand".to_string(),
+                Capture {
+                    text: reference.clone(),
+                    location: location(path, &operand),
+                },
+            );
+        }
+        if method_parameters.len() == 1 {
+            let (_, observed_type) = method_parameters[0];
+            item.captures.insert(
+                "dynamic_operand_type".to_string(),
+                Capture {
+                    text: observed_type.clone(),
+                    location: item.captures["dynamic_operand"].location.clone(),
+                },
+            );
+        }
+    }
+}
+
+fn query_composition<'tree>(
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    query: &Node<'tree, StrDoc<SupportLang>>,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    depth: usize,
+) -> Option<QueryComposition<'tree>> {
+    if depth >= 4 {
+        return None;
+    }
+    let evaluation = literals.evaluate(query);
+    if evaluation.state == LiteralState::Partial && !evaluation.references.is_empty() {
+        return Some(QueryComposition {
+            expression: query.clone(),
+            style: composition_style(query),
+            references: evaluation.references,
+        });
+    }
+    if let Some(composition) = formatted_string_composition(query, literals) {
+        return Some(composition);
+    }
+    let query_text = query.text();
+    let name = simple_identifier(query_text.trim())?;
+    let value = latest_local_value(root, query, name)?;
+    query_composition(root, &value, literals, depth + 1)
+}
+
+fn formatted_string_composition<'tree>(
+    query: &Node<'tree, StrDoc<SupportLang>>,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+) -> Option<QueryComposition<'tree>> {
+    if query.kind().as_ref() != "invocation_expression" {
+        return None;
+    }
+    let function = compact(query.field("function")?.text().as_ref());
+    if !matches!(
+        function.as_str(),
+        "string.Format" | "String.Format" | "string.Concat" | "String.Concat"
+    ) {
+        return None;
+    }
+    let arguments = invocation_arguments(query);
+    if arguments.len() < 2 || literals.evaluate(&arguments[0]).state != LiteralState::Known {
+        return None;
+    }
+    let mut references = Vec::new();
+    for argument in arguments.iter().skip(1) {
+        let evaluation = literals.evaluate(argument);
+        if evaluation.state == LiteralState::Known {
+            continue;
+        }
+        if evaluation.references.is_empty() {
+            references.push(argument.text().trim().to_string());
+        } else {
+            references.extend(evaluation.references);
+        }
+    }
+    references.sort();
+    references.dedup();
+    (!references.is_empty()).then(|| QueryComposition {
+        expression: query.clone(),
+        style: "format",
+        references,
+    })
+}
+
+fn latest_local_value<'tree>(
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    use_site: &Node<'tree, StrDoc<SupportLang>>,
+    name: &str,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    let scope = scope_range(use_site, root);
+    let mut values = root
+        .dfs()
+        .filter(|node| {
+            scope.start <= node.range().start
+                && node.range().end <= scope.end
+                && node.range().start < use_site.range().start
+        })
+        .filter_map(|node| match node.kind().as_ref() {
+            "variable_declarator"
+                if node
+                    .field("name")
+                    .is_some_and(|field| field.text().trim() == name) =>
+            {
+                node.field("value")
+                    .or_else(|| node.children().filter(|child| child.is_named()).last())
+                    .map(|value| (node.range().start, value))
+            }
+            "assignment_expression"
+                if assignment_operator(&node) == "="
+                    && node
+                        .field("left")
+                        .is_some_and(|left| left.text().trim() == name) =>
+            {
+                node.field("right").map(|value| (node.range().start, value))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    values.sort_by_key(|(offset, _)| *offset);
+    values.pop().map(|(_, value)| value)
+}
+
+fn invocation_arguments<'tree>(
+    invocation: &Node<'tree, StrDoc<SupportLang>>,
+) -> Vec<Node<'tree, StrDoc<SupportLang>>> {
+    invocation
+        .field("arguments")
+        .map(|arguments| {
+            arguments
+                .children()
+                .filter(|child| child.is_named())
+                .filter_map(argument_expression)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn enclosing_parameters(node: &Node<'_, StrDoc<SupportLang>>) -> Vec<(String, String)> {
+    let Some(callable) = node.ancestors().find(|ancestor| {
+        matches!(
+            ancestor.kind().as_ref(),
+            "method_declaration" | "constructor_declaration" | "local_function_statement"
+        )
+    }) else {
+        return Vec::new();
+    };
+    let Some(parameters) = callable.field("parameters") else {
+        return Vec::new();
+    };
+    parameters
+        .children()
+        .filter(|parameter| parameter.kind().as_ref() == "parameter")
+        .filter_map(|parameter| {
+            let name = parameter.field("name")?;
+            let observed_type = parameter.field("type")?;
+            Some((
+                name.text().trim().to_string(),
+                observed_type.text().trim().to_string(),
+            ))
+        })
+        .collect()
+}
+
+fn sql_safe_scalar(observed_type: &str) -> bool {
+    matches!(
+        observed_type
+            .trim()
+            .trim_end_matches('?')
+            .rsplit('.')
+            .next(),
+        Some(
+            "sbyte"
+                | "byte"
+                | "short"
+                | "ushort"
+                | "int"
+                | "uint"
+                | "long"
+                | "ulong"
+                | "nint"
+                | "nuint"
+                | "bool"
+                | "Guid"
+        )
+    )
+}
+
+fn composition_style(node: &Node<'_, StrDoc<SupportLang>>) -> &'static str {
+    if node.kind().as_ref() == "interpolated_string_expression"
+        || node.text().trim().starts_with('$')
+    {
+        "interpolation"
+    } else {
+        "concatenation"
+    }
+}
+
+fn push_unique_tag(tags: &mut Vec<String>, tag: &str) {
+    if !tags.iter().any(|existing| existing == tag) {
+        tags.push(tag.to_string());
     }
 }
 

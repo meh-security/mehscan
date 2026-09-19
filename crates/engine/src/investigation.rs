@@ -3454,6 +3454,8 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Apply this decision procedure: issue requires established dangerous behavior plus attacker influence or a concrete policy failure and no demonstrated effective applicable control; not_issue requires affirmative safe purpose, non-attacker input, non-executable behavior, or an effective applicable control; needs_review requires a supplied unresolved fact that can change issue versus not_issue."
                 .to_string(),
+            "For a dynamic SQL composition observation, the missing production origin is decision-critical rather than evidence of safety. Use needs_review while its supplied origin-or-constraint question remains unresolved. Use not_issue only when supplied facts affirmatively establish a fixed, numeric, enum, exact allowlisted, or otherwise non-attacker-controlled operand, or an effective SQL-safe construction; separate parameter binding does not neutralize a value already concatenated into executable SQL text."
+                .to_string(),
             "A bounded path may satisfy the issue test, but path status alone is not sufficient. Observation status alone is not a reason for needs_review."
                 .to_string(),
             "For a deterministic bounded path whose decision_facts.unresolved and decision_facts.effective_controls are both empty, use issue when its rule-specific established behavior describes the named weakness. Use not_issue only when another supplied fact affirmatively disproves that same behavior; do not substitute a different invariant such as resource ownership for plaintext storage, CSRF, validation, or lifecycle review."
@@ -3985,6 +3987,7 @@ fn observation_decision_facts(
         observation_has_direct_stored_html_trust_bypass(evidence, facts);
     let direct_request_resource_selector =
         observation_has_direct_request_resource_selector(evidence);
+    let dynamic_sql = csharp_dynamic_sql_composition(evidence);
     let resource_policy = evidence.iter().find_map(|item| {
         item.context
             .resource_policy
@@ -4106,6 +4109,17 @@ fn observation_decision_facts(
             "The request-data capture is used directly in this exact resource selector; authentication alone does not establish object ownership."
                 .to_string(),
         );
+    }
+    if let Some((style, operand, constrained_scalar)) = dynamic_sql {
+        established.push(if constrained_scalar {
+            format!(
+                "The exact C# database query operand constructs SQL text through {style} with dynamic operand `{operand}`, whose declared integral, Boolean, or Guid type has a fixed non-SQL-token representation, affirmatively disproving SQL-syntax injection through that exact operand. Separate query-authorization concerns may remain."
+            )
+        } else {
+            format!(
+                "The exact C# database query operand constructs executable SQL text through {style} with dynamic operand `{operand}`. This is stronger than an ordinary query API observation, but its production origin or an exact constraining invariant is not established by composition syntax alone."
+            )
+        });
     }
     if let Some(policy) = &java_policy {
         established.push(policy.established.to_string());
@@ -4267,6 +4281,37 @@ fn is_advisory_observation_question(question: &str) -> bool {
             | "Does the observed sensitive operation establish a concrete weakness in this context?"
             | "Does this bounded observation establish a concrete security issue?"
     )
+}
+
+fn csharp_dynamic_sql_composition(evidence: &[Evidence]) -> Option<(&str, &str, bool)> {
+    evidence
+        .iter()
+        .filter(|item| {
+            item.capability == Capability::DatabaseQuery
+                && item
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "dynamic-query-composition")
+        })
+        .find_map(|item| {
+            let style = item
+                .tags
+                .iter()
+                .find_map(|tag| tag.strip_prefix("query-composition:"))?;
+            let operand = item
+                .captures
+                .get("dynamic_operands")
+                .or_else(|| item.captures.get("dynamic_operand"))?
+                .text
+                .trim();
+            Some((
+                style,
+                operand,
+                item.tags
+                    .iter()
+                    .any(|tag| tag == "dynamic-origin:constrained-scalar"),
+            ))
+        })
 }
 
 struct JavaObservationPolicy {
@@ -5483,11 +5528,21 @@ fn observation_review_basis(
         .into_iter()
         .collect::<Vec<_>>()
         .join(", ");
+    let dynamic_sql = csharp_dynamic_sql_composition(evidence).is_some();
     ObservationReviewBasis {
-        relationship: "bounded_non_path_observation".to_string(),
-        security_question: format!(
-            "Does the supplied context establish a concrete weakness involving {capabilities}, rather than only the observed syntax or API boundary?"
-        ),
+        relationship: if dynamic_sql {
+            "bounded_dynamic_query_composition"
+        } else {
+            "bounded_non_path_observation"
+        }
+        .to_string(),
+        security_question: if dynamic_sql {
+            "Can the dynamic operand incorporated into executable SQL be influenced by an attacker, or is it affirmatively restricted to a safe fixed, numeric, enum, or allowlisted value?".to_string()
+        } else {
+            format!(
+                "Does the supplied context establish a concrete weakness involving {capabilities}, rather than only the observed syntax or API boundary?"
+            )
+        },
         observations,
         deterministic_facts,
         investigate: investigate.into_iter().collect(),
@@ -9429,6 +9484,9 @@ fn is_plain_identifier(value: &str) -> bool {
 }
 
 fn observation_review_title(evidence: &[Evidence]) -> String {
+    if csharp_dynamic_sql_composition(evidence).is_some() {
+        return "Review dynamically composed C# SQL for CWE-89".to_string();
+    }
     let mut anchors = evidence
         .iter()
         .filter(|item| {
@@ -9580,6 +9638,7 @@ fn observation_review_questions(
         evidence.iter().any(|item| {
             item.kind == EvidenceKind::Sink && item.capability == Capability::DatabaseQuery
         }) && facts.iter().any(|fact| fact.role == "exact_caller_context");
+    let dynamic_sql = csharp_dynamic_sql_composition(evidence);
     let has_browser_outbound_request = evidence.iter().any(|item| {
         item.kind == EvidenceKind::Sink
             && item.capability == Capability::OutboundNetworkRequest
@@ -9721,6 +9780,10 @@ fn observation_review_questions(
             "Do the supplied write, persistence, retrieval/view, and raw-output excerpts show a context-appropriate sanitizer or a write invariant that prevents stored attacker HTML from executing?"
                 .to_string(),
         );
+    } else if !has_precise_node_boundary && let Some((style, operand, false)) = dynamic_sql {
+        questions.push(format!(
+            "Is dynamic SQL operand `{operand}` used by this {style} attacker-controlled at any production call site, or is it affirmatively restricted before composition to a fixed, numeric, enum, or exact allowlisted value?"
+        ));
     } else if !has_precise_node_boundary
         && has_database_caller_context
         && !evidence.iter().any(|item| {

@@ -34,6 +34,17 @@ fn maps_one_service_pass_through_to_a_unique_repository_sink() {
         "Service.cs"
     );
     assert!(repository.tags.iter().any(|tag| tag == "two-hop"));
+    let sink = result
+        .evidence
+        .iter()
+        .find(|item| item.rule_id == "csharp-sql-command-text")
+        .expect("repository query sink should exist");
+    assert!(
+        sink.tags
+            .iter()
+            .any(|tag| tag == "dynamic-query-composition")
+    );
+    assert_eq!(sink.captures["dynamic_operand"].text, "email");
 
     let paths = result
         .security_paths

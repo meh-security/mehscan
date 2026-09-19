@@ -1002,6 +1002,13 @@ pub(crate) fn scan_source(
         csharp_model_context,
         &mut evidence,
     );
+    super::csharp_sinks::annotate_dynamic_query_composition(
+        path,
+        &root,
+        language,
+        &literals,
+        &mut evidence,
+    );
     super::csharp_handoff::add_forwarded_parameter_sources(
         path,
         &root,
