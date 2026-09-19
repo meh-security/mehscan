@@ -15,7 +15,7 @@ mod flow;
 pub(crate) use exposed::facts as exposed_facts;
 mod identity;
 mod jdbc;
-mod jvm;
+pub(super) mod jvm;
 pub(super) use jvm::file_content;
 pub(crate) use jvm::okhttp_facts;
 pub(super) use jvm::process_command;

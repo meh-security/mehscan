@@ -74,6 +74,8 @@ A complete review requires a validated response for every request in the manifes
 - [Review and reporting formats](docs/output-contract.md)
 - [AI reviewer contract](docs/ai-reviewer-contract.md)
 - [AI triage contract](docs/ai-triage-contract.md)
+- [Extended rule gap analysis](docs/extended-rule-gap-analysis.md)
+- [Extended database coverage](docs/extended-database-coverage.md)
 - [Latest release notes](docs/release-notes-v0.4.0.md)
 
 ## License

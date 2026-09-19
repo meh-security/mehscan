@@ -1,0 +1,280 @@
+- id: java-extended-dynamic-expression
+  version: 1
+  title: JVM dynamic expression or script evaluation
+  language: java
+  kind: sink
+  capability: dynamic_code_execution
+  confidence: high
+  cwe: [CWE-94]
+  match: &jvm_dynamic_expression
+    any:
+      - pattern: $BOUNDARY.evaluate($CODE)
+        captures: { boundary: BOUNDARY, code: CODE }
+      - pattern: $BOUNDARY.parse($CODE)
+        captures: { boundary: BOUNDARY, code: CODE }
+      - pattern: $BOUNDARY.parseClass($CODE)
+        captures: { boundary: BOUNDARY, code: CODE }
+      - pattern: $BOUNDARY.parseExpression($CODE)
+        captures: { boundary: BOUNDARY, code: CODE }
+      - pattern: $BOUNDARY.createValueExpression($CONTEXT, $CODE, $TYPE)
+        captures: { boundary: BOUNDARY, context: CONTEXT, code: CODE, type: TYPE }
+      - pattern: $BOUNDARY.createMethodExpression($CONTEXT, $CODE, $TYPE, $PARAMETERS)
+        captures: { boundary: BOUNDARY, context: CONTEXT, code: CODE, type: TYPE }
+  tags: [extended-rules, jvm, expression, script, dynamic-code]
+  ai: &dynamic_expression_guidance
+    investigate:
+      - origin and allowed grammar of the captured script or expression
+      - objects, methods, classes and host capabilities exposed to evaluation
+      - authorization, isolation, resource limits and output handling
+    verify:
+      - confirm the typed Groovy, Spring Expression Language or Jakarta/Javax EL receiver and effective evaluation consumer
+      - determine whether separately supplied variables remain data rather than expression syntax
+    exclude:
+      - exclude fixed expressions, unrelated same-name methods and parsers that produce inert data
+  provenance:
+    note: Typed Groovy, Spring expression and EL boundaries extend the existing JVM dynamic-code surface.
+    references:
+      - https://cwe.mitre.org/data/definitions/94.html
+      - https://docs.groovy-lang.org/latest/html/api/groovy/lang/GroovyShell.html
+      - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/expression/ExpressionParser.html
+      - https://jakarta.ee/specifications/expression-language/6.0/apidocs/jakarta.el/jakarta/el/expressionfactory
+
+- id: kotlin-extended-dynamic-expression
+  version: 1
+  title: Kotlin JVM dynamic expression or script evaluation
+  language: kotlin
+  kind: sink
+  capability: dynamic_code_execution
+  confidence: high
+  cwe: [CWE-94]
+  match: *jvm_dynamic_expression
+  tags: [extended-rules, kotlin, jvm, expression, script, dynamic-code]
+  ai: *dynamic_expression_guidance
+  provenance:
+    note: Typed JVM expression boundaries in Kotlin; compiler dispatch and runtime policy remain review facts.
+    references:
+      - https://cwe.mitre.org/data/definitions/94.html
+      - https://docs.groovy-lang.org/latest/html/api/groovy/lang/GroovyShell.html
+      - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/expression/ExpressionParser.html
+
+- id: java-extended-script-engine
+  version: 1
+  title: Java script-engine evaluation
+  language: java
+  kind: sink
+  capability: dynamic_code_execution
+  confidence: high
+  cwe: [CWE-94]
+  match:
+    any:
+      - pattern: $BOUNDARY.eval($CODE)
+        captures: { boundary: BOUNDARY, code: CODE }
+      - pattern: $BOUNDARY.eval($CODE, $CONTEXT)
+        captures: { boundary: BOUNDARY, code: CODE, context: CONTEXT }
+  tags: [extended-rules, java, script-engine, dynamic-code]
+  ai: *dynamic_expression_guidance
+  provenance:
+    note: Typed ScriptEngine variables and fields extend the existing directly chained ScriptEngineManager evaluation rule.
+    references:
+      - https://cwe.mitre.org/data/definitions/94.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.scripting/javax/script/ScriptEngine.html
+
+- id: java-extended-ldap-query
+  version: 1
+  title: Java LDAP search filter
+  language: java
+  kind: sink
+  capability: ldap_query
+  confidence: high
+  cwe: [CWE-90]
+  match: &jvm_ldap_query
+    any:
+      - pattern: $BOUNDARY.search($BASE, $FILTER, $CONTROLS)
+        captures: { boundary: BOUNDARY, base: BASE, filter: FILTER, controls: CONTROLS }
+      - pattern: $BOUNDARY.search($BASE, $FILTER, $VALUES, $CONTROLS)
+        captures: { boundary: BOUNDARY, base: BASE, filter: FILTER, values: VALUES, controls: CONTROLS }
+  tags: [extended-rules, jvm, ldap, query, injection]
+  ai: &ldap_query_guidance
+    investigate:
+      - origin and construction of the captured LDAP filter expression
+      - filter-value encoding, distinguished-name context and any placeholder values
+      - search base, scope, returned attributes and authorization boundary
+    verify:
+      - confirm the typed JNDI directory or LDAP context receiver and selected search overload
+      - keep the filter expression separate from the object-array values supplied to filter placeholders
+    exclude:
+      - exclude fixed filters, unrelated search methods and attacker data confined to correctly encoded or separately substituted values
+  provenance:
+    note: Typed JNDI search overloads add their filter expression to the existing CWE-90 query relationship.
+    references:
+      - https://cwe.mitre.org/data/definitions/90.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.naming/javax/naming/directory/DirContext.html
+
+- id: kotlin-extended-ldap-query
+  version: 1
+  title: Kotlin JVM LDAP search filter
+  language: kotlin
+  kind: sink
+  capability: ldap_query
+  confidence: high
+  cwe: [CWE-90]
+  match: *jvm_ldap_query
+  tags: [extended-rules, kotlin, jvm, ldap, query, injection]
+  ai: *ldap_query_guidance
+  provenance:
+    note: Typed JNDI search overloads in Kotlin add their filter expression to the existing CWE-90 query relationship.
+    references:
+      - https://cwe.mitre.org/data/definitions/90.html
+      - https://docs.oracle.com/en/java/javase/25/docs/api/java.naming/javax/naming/directory/DirContext.html
+
+- id: php-extended-ldap-query
+  version: 1
+  title: PHP LDAP search filter
+  language: php
+  kind: sink
+  capability: ldap_query
+  confidence: high
+  cwe: [CWE-90]
+  match:
+    any:
+      - pattern: ldap_search($CONNECTION, $BASE, $FILTER)
+        context: <?php ldap_search($CONNECTION, $BASE, $FILTER);
+        selector: function_call_expression
+        captures: { connection: CONNECTION, base: BASE, filter: FILTER }
+      - pattern: ldap_search($CONNECTION, $BASE, $FILTER, $$$ARGUMENTS)
+        context: <?php ldap_search($CONNECTION, $BASE, $FILTER, $$$ARGUMENTS);
+        selector: function_call_expression
+        captures: { connection: CONNECTION, base: BASE, filter: FILTER }
+      - pattern: ldap_list($CONNECTION, $BASE, $FILTER, $$$ARGUMENTS)
+        context: <?php ldap_list($CONNECTION, $BASE, $FILTER, $$$ARGUMENTS);
+        selector: function_call_expression
+        captures: { connection: CONNECTION, base: BASE, filter: FILTER }
+      - pattern: ldap_read($CONNECTION, $BASE, $FILTER, $$$ARGUMENTS)
+        context: <?php ldap_read($CONNECTION, $BASE, $FILTER, $$$ARGUMENTS);
+        selector: function_call_expression
+        captures: { connection: CONNECTION, base: BASE, filter: FILTER }
+  tags: [extended-rules, php, ldap, query, injection]
+  ai: *ldap_query_guidance
+  provenance:
+    note: Native PHP LDAP search functions preserve the filter separately from connection, base and attributes.
+    references:
+      - https://cwe.mitre.org/data/definitions/90.html
+      - https://www.php.net/manual/en/function.ldap-search.php
+
+- id: c-extended-ldap-query
+  version: 1
+  title: Native LDAP search filter
+  language: c
+  kind: sink
+  capability: ldap_query
+  confidence: medium
+  cwe: [CWE-90]
+  match: &native_ldap_query
+    any:
+      - pattern: ldap_search_s($CONNECTION, $BASE, $SCOPE, $FILTER, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { ldap_search_s($CONNECTION, $BASE, $SCOPE, $FILTER, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { connection: CONNECTION, base: BASE, scope: SCOPE, filter: FILTER }
+      - pattern: ldap_search_ext_s($CONNECTION, $BASE, $SCOPE, $FILTER, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { ldap_search_ext_s($CONNECTION, $BASE, $SCOPE, $FILTER, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { connection: CONNECTION, base: BASE, scope: SCOPE, filter: FILTER }
+      - pattern: ldap_search_ext($CONNECTION, $BASE, $SCOPE, $FILTER, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { ldap_search_ext($CONNECTION, $BASE, $SCOPE, $FILTER, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { connection: CONNECTION, base: BASE, scope: SCOPE, filter: FILTER }
+  tags: [extended-rules, native, ldap, query, injection]
+  ai: *ldap_query_guidance
+  provenance: &native_ldap_provenance
+    note: Native LDAP search APIs preserve the filter operand; header/link identity remains a review fact.
+    references:
+      - https://cwe.mitre.org/data/definitions/90.html
+      - https://www.openldap.org/software/man.cgi?query=ldap_search_ext_s
+
+- id: cpp-extended-ldap-query
+  version: 1
+  title: Native LDAP search filter
+  language: cpp
+  kind: sink
+  capability: ldap_query
+  confidence: medium
+  cwe: [CWE-90]
+  match: *native_ldap_query
+  tags: [extended-rules, native, cpp, ldap, query, injection]
+  ai: *ldap_query_guidance
+  provenance: *native_ldap_provenance
+
+- id: rust-extended-ldap-query
+  version: 1
+  title: Rust ldap3 search filter
+  language: rust
+  kind: sink
+  capability: ldap_query
+  confidence: high
+  cwe: [CWE-90]
+  match:
+    any:
+      - pattern: $BOUNDARY.search($BASE, $SCOPE, $FILTER, $ATTRIBUTES)
+        captures: { boundary: BOUNDARY, base: BASE, scope: SCOPE, filter: FILTER, attributes: ATTRIBUTES }
+      - pattern: $BOUNDARY.streaming_search($BASE, $SCOPE, $FILTER, $ATTRIBUTES)
+        captures: { boundary: BOUNDARY, base: BASE, scope: SCOPE, filter: FILTER, attributes: ATTRIBUTES }
+  tags: [extended-rules, rust, ldap3, query, injection]
+  ai: *ldap_query_guidance
+  provenance:
+    note: Declared ldap3 clients preserve filter syntax separately from base, scope and returned attributes.
+    references:
+      - https://cwe.mitre.org/data/definitions/90.html
+      - https://docs.rs/ldap3/latest/ldap3/struct.Ldap.html
+
+- id: go-extended-dynamic-expression
+  version: 1
+  title: Go Otto JavaScript evaluation
+  language: go
+  kind: sink
+  capability: dynamic_code_execution
+  confidence: high
+  cwe: [CWE-94]
+  match:
+    any:
+      - pattern: $BOUNDARY.Run($CODE)
+        context: |
+          package pattern
+          func patternContext() { $BOUNDARY.Run($CODE) }
+        selector: call_expression
+        captures: { boundary: BOUNDARY, code: CODE }
+  tags: [extended-rules, go, otto, javascript, dynamic-code]
+  ai: *dynamic_expression_guidance
+  provenance:
+    note: Declared Otto VM receivers add their JavaScript source operand to dynamic-code review.
+    references:
+      - https://cwe.mitre.org/data/definitions/94.html
+      - https://pkg.go.dev/github.com/robertkrimen/otto#Otto.Run
+
+- id: rust-extended-dynamic-expression
+  version: 1
+  title: Rust Rhai script evaluation
+  language: rust
+  kind: sink
+  capability: dynamic_code_execution
+  confidence: high
+  cwe: [CWE-94]
+  match:
+    any:
+      - pattern: $BOUNDARY.eval($CODE)
+        captures: { boundary: BOUNDARY, code: CODE }
+      - pattern: $BOUNDARY.run($CODE)
+        captures: { boundary: BOUNDARY, code: CODE }
+      - pattern: $BOUNDARY.eval_with_scope($SCOPE, $CODE)
+        captures: { boundary: BOUNDARY, scope: SCOPE, code: CODE }
+      - pattern: $BOUNDARY.run_with_scope($SCOPE, $CODE)
+        captures: { boundary: BOUNDARY, scope: SCOPE, code: CODE }
+  tags: [extended-rules, rust, rhai, script, dynamic-code]
+  ai: *dynamic_expression_guidance
+  provenance:
+    note: Declared Rhai engines preserve script source separately from an optional variable scope.
+    references:
+      - https://cwe.mitre.org/data/definitions/94.html
+      - https://docs.rs/rhai/latest/rhai/struct.Engine.html

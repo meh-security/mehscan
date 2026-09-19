@@ -659,7 +659,17 @@ impl<'a> PhpContext<'a> {
             ),
             "php-url-parsing" => canonical == "parse_url",
             "php-weak-hash-selection" => matches!(canonical.as_str(), "md5" | "sha1"),
-            "php-filesystem-write" => canonical == "file_put_contents",
+            "php-filesystem-write" => matches!(
+                canonical.as_str(),
+                "file_put_contents" | "rename" | "unlink" | "rmdir" | "mkdir" | "touch"
+            ),
+            "php-filesystem-copy-read" | "php-filesystem-copy-write" => canonical == "copy",
+            "php-extended-ldap-query" => {
+                matches!(
+                    canonical.as_str(),
+                    "ldap_search" | "ldap_list" | "ldap_read"
+                )
+            }
             "php-upload-move" => canonical == "move_uploaded_file",
             "php-header-redirect" => {
                 canonical == "header"

@@ -349,7 +349,7 @@ pub(super) fn exact_symbol(
     })
 }
 
-fn typed_receiver(
+pub(super) fn typed_receiver(
     root: &DbNode<'_>,
     use_site: &DbNode<'_>,
     receiver: &DbNode<'_>,

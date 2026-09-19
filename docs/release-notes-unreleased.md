@@ -3,6 +3,7 @@
 ## Features
 
 - Extended SQL and NoSQL rules across supported languages.
+- Broader filesystem, dynamic-code, and executable-deserialization sinks.
 - Partial triage reports and summaries with explicit completion coverage.
 - Built-in review response schema generation.
 

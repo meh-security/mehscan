@@ -161,6 +161,22 @@ fn add_filesystem_access<'tree>(
             && args.len() >= 2
             && path_expression(&invocation, &args[1])
         {
+            if operation == "copy" && path_expression(&invocation, &args[0]) {
+                push(
+                    path,
+                    &invocation,
+                    EvidenceKind::Sink,
+                    Capability::FilesystemRead,
+                    "java-filesystem-read",
+                    &["CWE-22"],
+                    &["filesystem", "path", "java-nio", operation.as_str()],
+                    &[("path", &args[0]), ("destination", &args[1])],
+                    comments,
+                    conditional,
+                    literals,
+                    evidence,
+                );
+            }
             push(
                 path,
                 &invocation,

@@ -31,6 +31,10 @@
         captures: { path: PATH }
       - pattern: Directory.GetDirectories($PATH, $$$ARGUMENTS)
         captures: { path: PATH }
+      - pattern: File.Copy($PATH, $DESTINATION)
+        captures: { path: PATH, destination: DESTINATION }
+      - pattern: File.Copy($PATH, $DESTINATION, $OVERWRITE)
+        captures: { path: PATH, destination: DESTINATION }
   symbols:
     - canonical: System.IO.File.ReadAllText
       captures: { path: 0 }
@@ -50,6 +54,8 @@
       captures: { path: 0 }
     - canonical: System.IO.Directory.GetDirectories
       captures: { path: 0 }
+    - canonical: System.IO.File.Copy
+      captures: { path: 0, destination: 1 }
   tags: [filesystem, path]
   ai: &filesystem_guidance
     investigate:
@@ -91,6 +97,8 @@
         captures: { path: PATH }
       - pattern: Directory.Delete($PATH, $RECURSIVE)
         captures: { path: PATH }
+      - pattern: Directory.Move($SOURCE, $PATH)
+        captures: { source: SOURCE, path: PATH }
   symbols:
     - canonical: System.IO.File.WriteAllText
       captures: { path: 0 }
@@ -110,6 +118,8 @@
       captures: { path: 0 }
     - canonical: System.IO.Directory.Delete
       captures: { path: 0 }
+    - canonical: System.IO.Directory.Move
+      captures: { source: 0, path: 1 }
   tags: [filesystem, path]
   ai: *filesystem_guidance
   provenance: *csharp_filesystem_provenance
@@ -131,6 +141,10 @@
         captures: { path: PATH }
       - pattern: Files.newInputStream($PATH, $$$ARGUMENTS)
         captures: { path: PATH }
+      - pattern: Files.copy($PATH, $DESTINATION, $$$ARGUMENTS)
+        captures: { path: PATH, destination: DESTINATION }
+      - pattern: Files.copy($PATH, $DESTINATION)
+        captures: { path: PATH, destination: DESTINATION }
   symbols:
     - canonical: java.nio.file.Files.readString
       captures: { path: 0 }
@@ -140,6 +154,8 @@
       captures: { path: 0 }
     - canonical: java.nio.file.Files.newInputStream
       captures: { path: 0 }
+    - canonical: java.nio.file.Files.copy
+      captures: { path: 0, destination: 1 }
   tags: [filesystem, path]
   ai: *filesystem_guidance
   provenance: &java_filesystem_provenance
@@ -167,12 +183,40 @@
         captures: { path: PATH }
       - pattern: Files.newBufferedWriter($PATH, $$$ARGUMENTS)
         captures: { path: PATH }
+      - pattern: Files.copy($SOURCE, $PATH, $$$ARGUMENTS)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: Files.copy($SOURCE, $PATH)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: Files.move($SOURCE, $PATH, $$$ARGUMENTS)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: Files.move($SOURCE, $PATH)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: Files.delete($PATH)
+        captures: { path: PATH }
+      - pattern: Files.deleteIfExists($PATH)
+        captures: { path: PATH }
+      - pattern: Files.createDirectory($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: Files.createDirectories($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
   symbols:
     - canonical: java.nio.file.Files.write
       captures: { path: 0 }
     - canonical: java.nio.file.Files.writeString
       captures: { path: 0 }
     - canonical: java.nio.file.Files.newBufferedWriter
+      captures: { path: 0 }
+    - canonical: java.nio.file.Files.copy
+      captures: { source: 0, path: 1 }
+    - canonical: java.nio.file.Files.move
+      captures: { source: 0, path: 1 }
+    - canonical: java.nio.file.Files.delete
+      captures: { path: 0 }
+    - canonical: java.nio.file.Files.deleteIfExists
+      captures: { path: 0 }
+    - canonical: java.nio.file.Files.createDirectory
+      captures: { path: 0 }
+    - canonical: java.nio.file.Files.createDirectories
       captures: { path: 0 }
   tags: [filesystem, path]
   ai: *filesystem_guidance
@@ -201,6 +245,16 @@
         captures: { path: PATH }
       - pattern: fs.promises.readFile($PATH, $$$ARGUMENTS)
         captures: { path: PATH }
+      - pattern: fs.copyFile($PATH, $DESTINATION, $$$ARGUMENTS)
+        captures: { path: PATH, destination: DESTINATION }
+      - pattern: fs.copyFileSync($PATH, $DESTINATION)
+        captures: { path: PATH, destination: DESTINATION }
+      - pattern: fs.copyFileSync($PATH, $DESTINATION, $$$ARGUMENTS)
+        captures: { path: PATH, destination: DESTINATION }
+      - pattern: fs.promises.copyFile($PATH, $DESTINATION)
+        captures: { path: PATH, destination: DESTINATION }
+      - pattern: fs.promises.copyFile($PATH, $DESTINATION, $$$ARGUMENTS)
+        captures: { path: PATH, destination: DESTINATION }
   symbols: &node_filesystem_read_symbols
     - canonical: fs.readFile
       captures: { path: 0 }
@@ -210,6 +264,12 @@
       captures: { path: 0 }
     - canonical: fs.promises.readFile
       captures: { path: 0 }
+    - canonical: fs.copyFile
+      captures: { path: 0, destination: 1 }
+    - canonical: fs.copyFileSync
+      captures: { path: 0, destination: 1 }
+    - canonical: fs.promises.copyFile
+      captures: { path: 0, destination: 1 }
   tags: [filesystem, path, nodejs]
   ai: *filesystem_guidance
   provenance: &node_filesystem_provenance
@@ -239,6 +299,48 @@
         captures: { path: PATH }
       - pattern: fs.promises.writeFile($PATH, $CONTENT, $$$ARGUMENTS)
         captures: { path: PATH }
+      - pattern: fs.rename($SOURCE, $PATH, $$$ARGUMENTS)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: fs.renameSync($SOURCE, $PATH)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: fs.copyFile($SOURCE, $PATH, $$$ARGUMENTS)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: fs.copyFileSync($SOURCE, $PATH, $$$ARGUMENTS)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: fs.copyFileSync($SOURCE, $PATH)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: fs.unlink($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: fs.unlinkSync($PATH)
+        captures: { path: PATH }
+      - pattern: fs.rm($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: fs.rmSync($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: fs.rmSync($PATH)
+        captures: { path: PATH }
+      - pattern: fs.mkdir($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: fs.mkdirSync($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: fs.mkdirSync($PATH)
+        captures: { path: PATH }
+      - pattern: fs.promises.rename($SOURCE, $PATH)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: fs.promises.copyFile($SOURCE, $PATH)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: fs.promises.copyFile($SOURCE, $PATH, $$$ARGUMENTS)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: fs.promises.unlink($PATH)
+        captures: { path: PATH }
+      - pattern: fs.promises.rm($PATH)
+        captures: { path: PATH }
+      - pattern: fs.promises.rm($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: fs.promises.mkdir($PATH)
+        captures: { path: PATH }
+      - pattern: fs.promises.mkdir($PATH, $$$ARGUMENTS)
+        captures: { path: PATH }
   symbols: &node_filesystem_write_symbols
     - canonical: fs.writeFile
       captures: { path: 0 }
@@ -249,6 +351,36 @@
     - canonical: fs.promises.writeFile
       captures: { path: 0 }
     - canonical: fs/promises.writeFile
+      captures: { path: 0 }
+    - canonical: fs.rename
+      captures: { source: 0, path: 1 }
+    - canonical: fs.renameSync
+      captures: { source: 0, path: 1 }
+    - canonical: fs.copyFile
+      captures: { source: 0, path: 1 }
+    - canonical: fs.copyFileSync
+      captures: { source: 0, path: 1 }
+    - canonical: fs.unlink
+      captures: { path: 0 }
+    - canonical: fs.unlinkSync
+      captures: { path: 0 }
+    - canonical: fs.rm
+      captures: { path: 0 }
+    - canonical: fs.rmSync
+      captures: { path: 0 }
+    - canonical: fs.mkdir
+      captures: { path: 0 }
+    - canonical: fs.mkdirSync
+      captures: { path: 0 }
+    - canonical: fs.promises.rename
+      captures: { source: 0, path: 1 }
+    - canonical: fs.promises.copyFile
+      captures: { source: 0, path: 1 }
+    - canonical: fs.promises.unlink
+      captures: { path: 0 }
+    - canonical: fs.promises.rm
+      captures: { path: 0 }
+    - canonical: fs.promises.mkdir
       captures: { path: 0 }
   tags: [filesystem, path, nodejs]
   ai: *filesystem_guidance
@@ -327,6 +459,16 @@
         captures: { path: PATH }
       - pattern: codecs.open($PATH, $$$ARGUMENTS)
         captures: { path: PATH }
+      - pattern: pathlib.Path($PATH).read_text()
+        captures: { path: PATH }
+      - pattern: pathlib.Path($PATH).read_text($$$ARGUMENTS)
+        captures: { path: PATH }
+      - pattern: pathlib.Path($PATH).read_bytes()
+        captures: { path: PATH }
+      - pattern: shutil.copy($PATH, $DESTINATION)
+        captures: { path: PATH, destination: DESTINATION }
+      - pattern: shutil.copy2($PATH, $DESTINATION)
+        captures: { path: PATH, destination: DESTINATION }
   tags: [filesystem, path]
   ai: *filesystem_guidance
   provenance: &python_filesystem_provenance
@@ -360,11 +502,29 @@
         captures: { path: PATH }
       - pattern: os.unlink($PATH)
         captures: { path: PATH }
+      - pattern: shutil.copy($SOURCE, $PATH)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: shutil.copy2($SOURCE, $PATH)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: shutil.move($SOURCE, $PATH)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: pathlib.Path($PATH).write_text($CONTENT)
+        captures: { path: PATH }
+      - pattern: pathlib.Path($PATH).write_bytes($CONTENT)
+        captures: { path: PATH }
+      - pattern: pathlib.Path($PATH).unlink()
+        captures: { path: PATH }
   symbols:
     - canonical: os.remove
       captures: { path: 0 }
     - canonical: os.unlink
       captures: { path: 0 }
+    - canonical: shutil.copy
+      captures: { source: 0, path: 1 }
+    - canonical: shutil.copy2
+      captures: { source: 0, path: 1 }
+    - canonical: shutil.move
+      captures: { source: 0, path: 1 }
   tags: [filesystem, path]
   ai: *filesystem_guidance
   provenance: *python_filesystem_provenance
@@ -430,12 +590,28 @@
           func patternContext() { os.Remove($PATH) }
         selector: call_expression
         captures: { path: PATH }
+      - pattern: os.Rename($SOURCE, $PATH)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: os.RemoveAll($PATH)
+        captures: { path: PATH }
+      - pattern: os.Mkdir($PATH, $PERMISSIONS)
+        captures: { path: PATH }
+      - pattern: os.MkdirAll($PATH, $PERMISSIONS)
+        captures: { path: PATH }
   symbols:
     - canonical: os.Create
       captures: { path: 0 }
     - canonical: os.WriteFile
       captures: { path: 0 }
     - canonical: os.Remove
+      captures: { path: 0 }
+    - canonical: os.Rename
+      captures: { source: 0, path: 1 }
+    - canonical: os.RemoveAll
+      captures: { path: 0 }
+    - canonical: os.Mkdir
+      captures: { path: 0 }
+    - canonical: os.MkdirAll
       captures: { path: 0 }
   tags: [filesystem, path]
   ai: *filesystem_guidance
@@ -460,6 +636,8 @@
         captures: { path: PATH }
       - pattern: std::fs::File::open($PATH)
         captures: { path: PATH }
+      - pattern: std::fs::copy($PATH, $DESTINATION)
+        captures: { path: PATH, destination: DESTINATION }
   tags: [filesystem, path, rust]
   ai: *filesystem_guidance
   provenance: &rust_filesystem_provenance
@@ -486,6 +664,16 @@
       - pattern: File::create($PATH)
         captures: { path: PATH }
       - pattern: std::fs::File::create($PATH)
+        captures: { path: PATH }
+      - pattern: std::fs::copy($SOURCE, $PATH)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: std::fs::rename($SOURCE, $PATH)
+        captures: { source: SOURCE, path: PATH }
+      - pattern: std::fs::create_dir($PATH)
+        captures: { path: PATH }
+      - pattern: std::fs::create_dir_all($PATH)
+        captures: { path: PATH }
+      - pattern: std::fs::remove_dir($PATH)
         captures: { path: PATH }
   tags: [filesystem, path, rust]
   ai: *filesystem_guidance
@@ -575,6 +763,11 @@
           void pattern_context() { unlink($PATH); }
         selector: call_expression
         captures: { path: PATH }
+      - pattern: rename($SOURCE, $PATH)
+        context: |
+          void pattern_context() { rename($SOURCE, $PATH); }
+        selector: call_expression
+        captures: { source: SOURCE, path: PATH }
   tags: [filesystem, path, native]
   ai: *native_filesystem_guidance
   provenance: *native_filesystem_provenance

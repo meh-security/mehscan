@@ -204,6 +204,17 @@ pub(crate) fn scan_source(
                 {
                     continue;
                 }
+                if super::extended_boundaries::is_rule(&compiled_rule.rule.id)
+                    && !super::extended_boundaries::accepts(
+                        &root,
+                        matched.get_node(),
+                        &compiled_rule.rule.id,
+                        language,
+                        matched.get_env().get_match("BOUNDARY"),
+                    )
+                {
+                    continue;
+                }
                 if php_context.as_ref().is_some_and(|context| {
                     !context.accepts(&compiled_rule.rule.id, matched.get_node())
                 }) {
@@ -397,14 +408,16 @@ pub(crate) fn scan_source(
                     continue;
                 }
                 let deduplication_key = (compiled_rule.rule.id.clone(), range.start, range.end);
-                if kotlin_imports.as_ref().is_some_and(|imports| {
-                    !super::kotlin::accept(
-                        &root,
-                        imports,
-                        &compiled_rule.rule.id,
-                        matched.get_node(),
-                    )
-                }) {
+                if !super::extended_boundaries::is_rule(&compiled_rule.rule.id)
+                    && kotlin_imports.as_ref().is_some_and(|imports| {
+                        !super::kotlin::accept(
+                            &root,
+                            imports,
+                            &compiled_rule.rule.id,
+                            matched.get_node(),
+                        )
+                    })
+                {
                     continue;
                 }
                 if !seen.insert(deduplication_key) {

@@ -115,7 +115,7 @@ pub(super) fn file_operands<'a>(
 
 /// Bounded JVM identities. Only exact declarations, immutable local aliases and
 /// enumerated library factories contribute identity; helper return types do not.
-pub(super) fn owned<'a>(
+pub(crate) fn owned<'a>(
     root: &KNode<'a>,
     expression: &KNode<'a>,
     canonical: &str,
