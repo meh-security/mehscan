@@ -15,31 +15,44 @@ Resolve the executable in this order:
 
 1. Honor a user-supplied executable.
 2. Check for `mehscan` on `PATH` using the host's command lookup. Do not infer
-   availability from a previous task or a filename elsewhere on disk.
+   availability from a previous task or a filename elsewhere on disk. If present,
+   check its version and use its absolute path; do not install Mehscan or setup
+   tools. If an explicitly requested version differs, or a source digest cannot
+   be established, report the mismatch instead of implicitly replacing it.
 3. In a Mehscan source checkout, check `target/release/mehscan` (or
    `mehscan.exe` on Windows).
-4. If no executable is available, run the bundled
-   `scripts/install-mehscan.ps1` from this skill directory. It selects the
+4. If no executable is available, read
+   [references/installation.md](references/installation.md) for host-specific
+   prerequisite setup and invocation. On Linux/macOS use
+   `bash scripts/install-mehscan.sh` (Bash and Python 3.9+, no PowerShell).
+   On Windows use `scripts/install-mehscan.ps1` with PowerShell 7 (`pwsh`).
+   Each installer selects the
    latest exact OS/architecture public release asset without GitHub login,
    downloads its attestation bundle, verifies its checksum and GitHub
    build provenance, validates archive membership and the release manifest,
    installs into a versioned user-owned location, and returns the executable's
    absolute path. On Linux and macOS it applies executable permissions and
    conservatively publishes `~/.local/bin/mehscan` without replacing an
-   unrelated entry. Pass `-Version` only when the user requested a particular
-   release and `-InstallDirectory` when the task requires a specific location.
+   unrelated entry. Pass `--version` (PowerShell: `-Version`) only when the user
+   requested a particular release and `--install-directory` (PowerShell:
+   `-InstallDirectory`) when the task requires a specific location.
 5. If no exact release asset exists, or checksum/provenance verification cannot
    succeed, do not execute the download. Build the release CLI only when the
    current checkout contains Mehscan and building is within scope; otherwise
    report that the scanner is unavailable for this target.
 
-The installer requires PowerShell 7 and GitHub CLI with `attestation verify`,
-but no GitHub login. Public HTTPS downloads have byte, redirect, origin, and
+Recommend GitHub CLI (`gh`) for release installation because its attestation
+verifier establishes the expected build workflow and source provenance; a
+checksum alone only establishes agreement with the supplied checksum file.
+GitHub CLI is optional for using Mehscan or building from trusted source, but
+both release installers require `gh` with `attestation verify`, without GitHub
+login. Linux/macOS installation requires Bash and Python 3.9+; only the Windows
+installer requires PowerShell 7. Public HTTPS downloads have byte, redirect, origin, and
 time limits. GitHub CLI verifies the local bundle using its trusted Sigstore
 roots and enforces the repository, signer workflow, source tag, and hosted
 runner policy. Known releases also enforce the source commit pinned in
 `references/release-pins.json`; for another explicitly requested release, pass
-`-SourceDigest` only when an independently trusted exact source commit is
+`--source-digest` (PowerShell: `-SourceDigest`) only when an independently trusted exact source commit is
 available. A commit discovered solely from the downloaded bundle is not an
 independent pin. Update the pin file only from trusted release review.
 
@@ -47,8 +60,14 @@ The installer fails closed when the
 target, checksum, provenance, archive, manifest, or version cannot be verified.
 Do not replace GitHub CLI with agent-written signature verification, treat a
 checksum alone as provenance, or fall back to execution after any failed check.
-If GitHub CLI is missing or too old, report the required verifier or use the
-source-build fallback already described above when authorized. Trust-root
+If GitHub CLI is missing or too old, recommend installing or upgrading it with
+the platform instructions and explain its provenance-verification purpose.
+If that is unsuitable, use an existing trusted Mehscan checkout to run
+`cargo build -p mehscan-cli --release --locked` when building is within scope,
+then check the built binary's `--version` and use its absolute path. This is an
+agent-selected fallback, not an automatic installer downgrade. If no trusted
+checkout or build toolchain is available, report the missing prerequisite and
+scanner unavailability. Never execute the rejected release archive. Trust-root
 metadata may still require network access even though the bundle is local.
 Do not reproduce its download logic ad hoc or weaken a failed check. Use only
 the official GitHub repository for automatic downloads. Never download

@@ -52,15 +52,7 @@ function Normalize-VersionTag {
 }
 
 function Get-Target {
-    $platform = if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
-        'windows'
-    } elseif ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Linux)) {
-        'linux'
-    } elseif ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::OSX)) {
-        'macos'
-    } else {
-        throw 'Unsupported operating system'
-    }
+    if (-not $IsWindows) { throw 'The PowerShell installer is Windows-only. On Linux/macOS use bash scripts/install-mehscan.sh.' }
 
     $architecture = switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()) {
         'X64' { 'x86_64' }
@@ -70,9 +62,9 @@ function Get-Target {
     }
 
     return [pscustomobject]@{
-        Platform = $platform
+        Platform = 'windows'
         Architecture = $architecture
-        BinaryName = if ($platform -eq 'windows') { 'mehscan.exe' } else { 'mehscan' }
+        BinaryName = 'mehscan.exe'
     }
 }
 
@@ -84,48 +76,17 @@ function Get-DefaultInstallRoot {
     return [IO.Path]::Combine($userProfile, '.mehscan', 'cli')
 }
 
-function Publish-UserPathLink {
-    param(
-        [Parameter(Mandatory)][string]$Executable,
-        [Parameter(Mandatory)][string]$ManagedRoot,
-        [Parameter(Mandatory)][string]$BinaryName
-    )
-
-    if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
+function Resolve-InstalledMehscan {
+    param([string]$RequestedTag, [string]$SourceDigest, [switch]$ForceDownload)
+    if ($ForceDownload) { return $null }
+    $pathCommand = Get-Command 'mehscan' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $pathCommand) {
+        $pathVersion = Read-MehscanVersion $pathCommand.Source
+        if ($null -eq $pathVersion) { throw 'Mehscan is on PATH but its version check failed. No installation attempted.' }
+        if ($RequestedTag -and "v$pathVersion" -cne $RequestedTag) { throw "Mehscan $pathVersion is on PATH but $RequestedTag was requested. No installation attempted." }
+        if ($SourceDigest) { throw 'Mehscan is on PATH; a version check cannot establish source provenance. No installation attempted. Explicit verified reinstallation requires -ForceDownload.' }
+        Write-Output ([IO.Path]::GetFullPath($pathCommand.Source))
         return
-    }
-
-    $userProfile = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
-    $localBin = [IO.Path]::Combine($userProfile, '.local', 'bin')
-    $linkPath = [IO.Path]::Combine($localBin, $BinaryName)
-    New-Item -ItemType Directory -Path $localBin -Force | Out-Null
-
-    $existing = Get-Item -LiteralPath $linkPath -Force -ErrorAction SilentlyContinue
-    if ($null -ne $existing) {
-        if ($existing.LinkType -ne 'SymbolicLink') {
-            Write-Verbose "Leaving existing non-symlink PATH entry unchanged: $linkPath"
-            return
-        }
-        $resolvedTarget = $existing.ResolveLinkTarget($true)
-        $managedPrefix = [IO.Path]::GetFullPath($ManagedRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
-        if ($null -eq $resolvedTarget -or
-            -not $resolvedTarget.FullName.StartsWith($managedPrefix, [StringComparison]::Ordinal)) {
-            Write-Verbose "Leaving externally managed PATH symlink unchanged: $linkPath"
-            return
-        }
-        Remove-Item -LiteralPath $linkPath -Force
-    }
-
-    try {
-        New-Item -ItemType SymbolicLink -Path $linkPath -Target $Executable | Out-Null
-        if ((Read-MehscanVersion $linkPath) -eq $null) {
-            throw 'PATH link execution test failed'
-        }
-        Write-Verbose "Published Mehscan PATH link: $linkPath"
-    }
-    catch {
-        Remove-Item -LiteralPath $linkPath -Force -ErrorAction SilentlyContinue
-        Write-Verbose "Could not publish optional PATH link: $_"
     }
 }
 
@@ -133,17 +94,9 @@ $requestedTag = Normalize-VersionTag $Version
 if ($SourceDigest -and ($SourceDigest -cnotmatch '^[0-9a-f]{40}$' -or -not $requestedTag)) {
     throw 'SourceDigest requires an exact version and a lowercase 40-character Git commit'
 }
-# A caller-supplied provenance pin must not be satisfied by a PATH version check.
-if (-not $ForceDownload -and -not $SourceDigest) {
-    $pathCommand = Get-Command 'mehscan' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($null -ne $pathCommand) {
-        $pathVersion = Read-MehscanVersion $pathCommand.Source
-        if ($null -ne $pathVersion -and ($null -eq $requestedTag -or "v$pathVersion" -ceq $requestedTag)) {
-            Write-Output ([IO.Path]::GetFullPath($pathCommand.Source))
-            exit 0
-        }
-    }
-}
+if (-not $IsWindows) { throw 'The PowerShell installer is Windows-only. On Linux/macOS use bash scripts/install-mehscan.sh.' }
+$installedPath = Resolve-InstalledMehscan -RequestedTag $requestedTag -SourceDigest $SourceDigest -ForceDownload:$ForceDownload
+if ($installedPath) { Write-Output $installedPath; exit 0 }
 
 $ghCommand = Get-Command 'gh' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($null -eq $ghCommand) {
@@ -253,19 +206,9 @@ try {
 
     $extractedBinary = [IO.Path]::Combine($extractionRoot, $target.BinaryName)
     New-Item -ItemType Directory -Path $InstallDirectory -Force | Out-Null
-    $stagedName = if ($target.Platform -eq 'windows') {
-        ".mehscan.$([guid]::NewGuid().ToString('N')).exe"
-    } else {
-        ".mehscan.$([guid]::NewGuid().ToString('N')).tmp"
-    }
+    $stagedName = ".mehscan.$([guid]::NewGuid().ToString('N')).exe"
     $stagedDestination = [IO.Path]::Combine($InstallDirectory, $stagedName)
     Copy-Item -LiteralPath $extractedBinary -Destination $stagedDestination
-    if ($target.Platform -ne 'windows') {
-        & chmod 755 $stagedDestination
-        if ($LASTEXITCODE -ne 0) {
-            throw 'Could not make the installed Mehscan binary executable'
-        }
-    }
     $stagedVersion = Read-MehscanVersion $stagedDestination
     if ($null -eq $stagedVersion -or "v$stagedVersion" -cne $tag) {
         throw "Installed executable does not report version $($tag.Substring(1))"
@@ -275,9 +218,6 @@ try {
     $installedVersion = Read-MehscanVersion $destination
     if ($null -eq $installedVersion -or "v$installedVersion" -cne $tag) {
         throw "Final installed executable does not report version $($tag.Substring(1))"
-    }
-    if ($usingDefaultInstallDirectory) {
-        Publish-UserPathLink -Executable $destination -ManagedRoot $managedInstallRoot -BinaryName $target.BinaryName
     }
     Write-Output $destination
 }
