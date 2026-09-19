@@ -32,6 +32,10 @@ fn promotes_dynamic_sql_composition_across_csharp_database_apis() {
             && item
                 .tags
                 .iter()
+                .any(|tag| tag == "review-origin:decision-critical")
+            && item
+                .tags
+                .iter()
                 .any(|tag| tag == "dynamic-origin:method-parameter")
     }));
     assert!(

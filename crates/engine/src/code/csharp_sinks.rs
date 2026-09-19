@@ -240,6 +240,7 @@ pub(crate) fn annotate_dynamic_query_composition<'tree>(
             continue;
         };
         push_unique_tag(&mut item.tags, "dynamic-query-composition");
+        push_unique_tag(&mut item.tags, "review-origin:decision-critical");
         push_unique_tag(
             &mut item.tags,
             &format!("query-composition:{}", composition.style),

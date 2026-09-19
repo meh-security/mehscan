@@ -6,6 +6,11 @@ Mehscan's supported languages. The reference corpus spans 106 CWE labels. The
 comparison is by security boundary and effective argument role, rather than by
 rule name or raw catalog count.
 
+The separate [unknown-origin review policy](unknown-origin-review-analysis.md)
+defines which strong sink shapes must retain a decision-critical provenance
+question during AI triage instead of allowing missing provenance to support
+dismissal.
+
 | Reference language | Rules assessed | Mehscan mapping note |
 | --- | ---: | --- |
 | C | 16 | C mechanics were also checked for applicable C++ boundaries. |
