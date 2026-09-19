@@ -15,7 +15,7 @@ mod flow;
 pub(crate) use exposed::facts as exposed_facts;
 mod identity;
 mod jdbc;
-mod jvm;
+pub(super) mod jvm;
 pub(super) use jvm::file_content;
 pub(crate) use jvm::okhttp_facts;
 pub(super) use jvm::process_command;
@@ -160,6 +160,43 @@ pub(super) fn accept<'a>(
     rule: &str,
     node: &KNode<'a>,
 ) -> bool {
+    if rule.starts_with("kotlin-extended-") {
+        let Some(call) = identity::call(node) else {
+            return false;
+        };
+        let observed = call.callee.text();
+        if rule == "kotlin-extended-nosql-json" {
+            let owner = observed.strip_suffix(".parse").unwrap_or(&observed);
+            return [
+                "org.bson.Document",
+                "com.mongodb.BasicDBObject",
+                "org.springframework.data.mongodb.core.query.BasicQuery",
+            ]
+            .iter()
+            .any(|ty| imports.exact(root, node, owner, ty));
+        }
+        let Some(receiver) = call.callee.children().find(|n| n.is_named()) else {
+            return false;
+        };
+        let candidates: &[&str] = if rule.contains("nosql") {
+            &[
+                "com.mongodb.client.MongoCollection",
+                "org.springframework.data.mongodb.core.MongoOperations",
+                "org.springframework.data.mongodb.core.MongoTemplate",
+            ]
+        } else {
+            &[
+                "org.hibernate.Session",
+                "javax.jdo.Query",
+                "io.vertx.sqlclient.SqlConnection",
+                "io.vertx.sqlclient.Pool",
+                "io.vertx.ext.sql.SQLConnection",
+            ]
+        };
+        return candidates
+            .iter()
+            .any(|ty| jdbc::receiver(root, imports, &receiver, ty, 8));
+    }
     if rule == "kotlin-html-encoding" {
         let Some(call) = identity::call(node) else {
             return false;

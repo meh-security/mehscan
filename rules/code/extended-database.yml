@@ -1,0 +1,1652 @@
+- id: javascript-extended-sql-query
+  version: 1
+  title: Extended raw SQL and client query entrypoints
+  language: javascript
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-89]
+  match: &extended_match_1
+    any:
+      - pattern: "$DATABASE.raw($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.raw($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.fromRaw($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.fromRaw($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.whereRaw($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.whereRaw($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.orWhereRaw($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.orWhereRaw($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.andWhereRaw($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.andWhereRaw($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.havingRaw($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.havingRaw($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.orderByRaw($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.orderByRaw($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.groupByRaw($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.groupByRaw($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.joinRaw($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.joinRaw($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.batch($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.batch($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.run($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.run($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.get($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.get($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.all($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.all($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.each($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.each($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.exec($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.exec($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.prepare($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.prepare($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+  tags: [database, extended-rules, sql, raw-query]
+  ai: &extended_sql_guidance
+    investigate:
+      - Trace SQL text and raw clauses to their producers; separately bound values do not change query syntax.
+    verify:
+      - Confirm the canonical driver API, argument role, downstream query use and request influence before reporting an issue.
+    exclude:
+      - Fixed SQL, prepared handles, typed builder values and separately bound values alone are not injection proof.
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://knexjs.org/guide/raw
+      - https://github.com/TryGhost/node-sqlite3/wiki/API
+      - https://github.com/tediousjs/node-mssql#queries
+      - https://cwe.mitre.org/data/definitions/89.html
+
+- id: javascript-extended-nosql-query
+  version: 1
+  title: Extended MongoDB filter and pipeline entrypoints
+  language: javascript
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match: &extended_match_2
+    any:
+      - pattern: "$DATABASE.find($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.findOne($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.findOne($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.countDocuments($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.countDocuments($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.deleteOne($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.deleteOne($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.deleteMany($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.deleteMany($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.updateOne($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.updateOne($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.updateMany($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.updateMany($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.replaceOne($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.replaceOne($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.findOneAndUpdate($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.findOneAndUpdate($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.findOneAndDelete($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.findOneAndDelete($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.aggregate($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.aggregate($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: &extended_nosql_guidance
+    investigate:
+      - Trace operator-capable filters, pipelines, raw query documents and executable predicates to their producers.
+    verify:
+      - Confirm the canonical driver API, argument role, downstream query use and request influence before reporting an issue.
+    exclude:
+      - Typed scalar equality values, fixed documents and parsing without downstream query use are not injection proof.
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://www.mongodb.com/docs/drivers/node/current/crud/query/query-document/
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: javascript-extended-nosql-command
+  version: 1
+  title: Extended DynamoDB query command construction
+  language: javascript
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match: &extended_match_3
+    any:
+      - pattern: "new $TYPE($QUERY)"
+        captures: { nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/javascript_dynamodb_code_examples.html
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: javascript-extended-nosql-request
+  version: 1
+  title: Extended DynamoDB request query entrypoints
+  language: javascript
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match: &extended_match_4
+    any:
+      - pattern: "$DATABASE.query($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.query($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.scan($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.scan($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.executeStatement($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.executeStatement($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.html
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: typescript-extended-sql-query
+  version: 1
+  title: Extended raw SQL and client query entrypoints
+  language: typescript
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-89]
+  match: *extended_match_1
+  tags: [database, extended-rules, sql, raw-query]
+  ai: *extended_sql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://knexjs.org/guide/raw
+      - https://github.com/TryGhost/node-sqlite3/wiki/API
+      - https://github.com/tediousjs/node-mssql#queries
+      - https://cwe.mitre.org/data/definitions/89.html
+
+- id: typescript-extended-nosql-query
+  version: 1
+  title: Extended MongoDB filter and pipeline entrypoints
+  language: typescript
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match: *extended_match_2
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://www.mongodb.com/docs/drivers/node/current/crud/query/query-document/
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: typescript-extended-nosql-command
+  version: 1
+  title: Extended DynamoDB query command construction
+  language: typescript
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match: *extended_match_3
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/javascript_dynamodb_code_examples.html
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: typescript-extended-nosql-request
+  version: 1
+  title: Extended DynamoDB request query entrypoints
+  language: typescript
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match: *extended_match_4
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.html
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: tsx-extended-sql-query
+  version: 1
+  title: Extended raw SQL and client query entrypoints
+  language: tsx
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-89]
+  match: *extended_match_1
+  tags: [database, extended-rules, sql, raw-query]
+  ai: *extended_sql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://knexjs.org/guide/raw
+      - https://github.com/TryGhost/node-sqlite3/wiki/API
+      - https://github.com/tediousjs/node-mssql#queries
+      - https://cwe.mitre.org/data/definitions/89.html
+
+- id: tsx-extended-nosql-query
+  version: 1
+  title: Extended MongoDB filter and pipeline entrypoints
+  language: tsx
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match: *extended_match_2
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://www.mongodb.com/docs/drivers/node/current/crud/query/query-document/
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: tsx-extended-nosql-command
+  version: 1
+  title: Extended DynamoDB query command construction
+  language: tsx
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match: *extended_match_3
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/javascript_dynamodb_code_examples.html
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: tsx-extended-nosql-request
+  version: 1
+  title: Extended DynamoDB request query entrypoints
+  language: tsx
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match: *extended_match_4
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Expressions.html
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: python-extended-sql-query
+  version: 1
+  title: Extended asynchronous and native SQL text entrypoints
+  language: python
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: "$DATABASE.fetch($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.fetch($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.fetchrow($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.fetchrow($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.fetchval($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.fetchval($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.prepare($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.prepare($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.mogrify($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.mogrify($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.exec_driver_sql($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.exec_driver_sql($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+  tags: [database, extended-rules, sql, raw-query]
+  ai: *extended_sql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://magicstack.github.io/asyncpg/current/api/index.html
+      - https://docs.sqlalchemy.org/en/20/core/connections.html#sqlalchemy.engine.Connection.exec_driver_sql
+      - https://cwe.mitre.org/data/definitions/89.html
+
+- id: python-extended-sql-expression
+  version: 1
+  title: Extended raw SQL expression construction
+  language: python
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: "$TYPE($QUERY, $$$ARGS)"
+        captures: { query: QUERY }
+      - pattern: "$TYPE($QUERY)"
+        captures: { query: QUERY }
+  tags: [database, extended-rules, sql, raw-query]
+  ai: *extended_sql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://docs.djangoproject.com/en/5.2/ref/models/expressions/#raw-sql-expressions
+      - https://docs.sqlalchemy.org/en/20/core/sqlelement.html#sqlalchemy.sql.expression.text
+      - https://cwe.mitre.org/data/definitions/89.html
+
+- id: python-extended-django-query
+  version: 1
+  title: Extended Django model raw SQL queries
+  language: python
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: "$DATABASE.raw($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.raw($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+  tags: [database, extended-rules, sql, raw-query]
+  ai: *extended_sql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://docs.djangoproject.com/en/5.2/topics/db/sql/
+      - https://cwe.mitre.org/data/definitions/89.html
+
+- id: python-extended-nosql-query
+  version: 1
+  title: Extended MongoDB filter and pipeline entrypoints
+  language: python
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match:
+    any:
+      - pattern: "$DATABASE.find($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find_one($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find_one($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.count_documents($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.count_documents($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.delete_one($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.delete_one($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.delete_many($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.delete_many($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.update_one($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.update_one($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.update_many($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.update_many($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.replace_one($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.replace_one($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find_one_and_update($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find_one_and_update($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find_one_and_delete($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find_one_and_delete($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.aggregate($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.aggregate($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://pymongo.readthedocs.io/en/stable/api/pymongo/collection.html
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: python-extended-nosql-expression
+  version: 1
+  title: Extended DynamoDB filter and condition expressions
+  language: python
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match:
+    any:
+      - pattern: "$DATABASE.query(KeyConditionExpression=$QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.query(KeyConditionExpression=$QUERY, $$$AFTER)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.query($$$BEFORE, KeyConditionExpression=$QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.query($$$BEFORE, KeyConditionExpression=$QUERY, $$$AFTER)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.query(FilterExpression=$QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.query(FilterExpression=$QUERY, $$$AFTER)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.query($$$BEFORE, FilterExpression=$QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.query($$$BEFORE, FilterExpression=$QUERY, $$$AFTER)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.query(QueryFilter=$QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.query(QueryFilter=$QUERY, $$$AFTER)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.query($$$BEFORE, QueryFilter=$QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.query($$$BEFORE, QueryFilter=$QUERY, $$$AFTER)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.scan(FilterExpression=$QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.scan(FilterExpression=$QUERY, $$$AFTER)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.scan($$$BEFORE, FilterExpression=$QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.scan($$$BEFORE, FilterExpression=$QUERY, $$$AFTER)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.scan(ScanFilter=$QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.scan(ScanFilter=$QUERY, $$$AFTER)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.scan($$$BEFORE, ScanFilter=$QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.scan($$$BEFORE, ScanFilter=$QUERY, $$$AFTER)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.execute_statement(Statement=$QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.execute_statement(Statement=$QUERY, $$$AFTER)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.execute_statement($$$BEFORE, Statement=$QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.execute_statement($$$BEFORE, Statement=$QUERY, $$$AFTER)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://docs.aws.amazon.com/boto3/latest/reference/services/dynamodb/table/query.html
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: java-extended-sql-query
+  version: 1
+  title: Extended JVM raw query and clause entrypoints
+  language: java
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: "$DATABASE.createQuery($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.createQuery($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.createNativeQuery($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.createNativeQuery($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.createSQLQuery($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.createSQLQuery($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.setFilter($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.setFilter($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.setGrouping($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.setGrouping($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.query($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.query($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.preparedQuery($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.preparedQuery($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+  tags: [database, extended-rules, sql, raw-query]
+  ai: *extended_sql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://docs.jboss.org/hibernate/orm/6.6/javadocs/org/hibernate/Session.html
+      - https://vertx.io/docs/apidocs/io/vertx/sqlclient/SqlClient.html
+      - https://cwe.mitre.org/data/definitions/89.html
+
+- id: java-extended-nosql-query
+  version: 1
+  title: Extended MongoDB typed filter entrypoints
+  language: java
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match:
+    any:
+      - pattern: "$DATABASE.find($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.countDocuments($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.countDocuments($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.deleteOne($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.deleteOne($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.deleteMany($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.deleteMany($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.updateOne($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.updateOne($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.updateMany($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.updateMany($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.replaceOne($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.replaceOne($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.findOneAndUpdate($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.findOneAndUpdate($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.findOneAndDelete($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.findOneAndDelete($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.aggregate($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.aggregate($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://www.mongodb.com/docs/drivers/java/sync/current/crud/query-documents/
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: java-extended-nosql-json
+  version: 1
+  title: Extended MongoDB raw document query construction
+  language: java
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match:
+    any:
+      - pattern: "$TYPE.parse($QUERY)"
+        captures: { nosql_query: QUERY }
+      - pattern: "new $TYPE($QUERY)"
+        captures: { nosql_query: QUERY }
+      - pattern: "new $TYPE(\"$where\", $QUERY)"
+        captures: { nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://mongodb.github.io/mongo-java-driver/5.6/apidocs/bson/org/bson/Document.html
+      - https://docs.spring.io/spring-data/mongodb/docs/current/api/org/springframework/data/mongodb/core/query/BasicQuery.html
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: kotlin-extended-sql-query
+  version: 1
+  title: Extended JVM raw query and clause entrypoints
+  language: kotlin
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: "$DATABASE.createQuery($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.createQuery($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.createNativeQuery($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.createNativeQuery($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.createSQLQuery($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.createSQLQuery($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.setFilter($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.setFilter($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.setGrouping($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.setGrouping($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.query($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.query($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.preparedQuery($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.preparedQuery($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+  tags: [database, extended-rules, sql, raw-query]
+  ai: *extended_sql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://docs.jboss.org/hibernate/orm/6.6/javadocs/org/hibernate/Session.html
+      - https://vertx.io/docs/apidocs/io/vertx/sqlclient/SqlClient.html
+      - https://cwe.mitre.org/data/definitions/89.html
+
+- id: kotlin-extended-nosql-query
+  version: 1
+  title: Extended MongoDB typed filter entrypoints
+  language: kotlin
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match:
+    any:
+      - pattern: "$DATABASE.find($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.countDocuments($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.countDocuments($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.deleteOne($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.deleteOne($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.deleteMany($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.deleteMany($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.updateOne($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.updateOne($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.updateMany($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.updateMany($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.replaceOne($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.replaceOne($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.findOneAndUpdate($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.findOneAndUpdate($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.findOneAndDelete($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.findOneAndDelete($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.aggregate($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.aggregate($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://www.mongodb.com/docs/drivers/java/sync/current/crud/query-documents/
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: kotlin-extended-nosql-json
+  version: 1
+  title: Extended MongoDB raw document query construction
+  language: kotlin
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match:
+    any:
+      - pattern: "$TYPE.parse($QUERY)"
+        captures: { nosql_query: QUERY }
+      - pattern: "$TYPE($QUERY)"
+        captures: { nosql_query: QUERY }
+      - pattern: "$TYPE(\"\\$where\", $QUERY)"
+        captures: { nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://mongodb.github.io/mongo-java-driver/5.6/apidocs/bson/org/bson/Document.html
+      - https://docs.spring.io/spring-data/mongodb/docs/current/api/org/springframework/data/mongodb/core/query/BasicQuery.html
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: csharp-extended-nosql-json
+  version: 1
+  title: Extended MongoDB raw JSON filter construction
+  language: csharp
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match:
+    any:
+      - pattern: "$TYPE.Parse($QUERY)"
+        captures: { nosql_query: QUERY }
+      - pattern: "new $TYPE($QUERY)"
+        captures: { nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://www.mongodb.com/docs/drivers/csharp/current/crud/query/query-filter/
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: csharp-extended-nosql-query
+  version: 1
+  title: Extended MongoDB typed collection filters
+  language: csharp
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match:
+    any:
+      - pattern: "$DATABASE.Find($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.Find($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.FindAsync($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.FindAsync($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.CountDocuments($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.CountDocuments($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.CountDocumentsAsync($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.CountDocumentsAsync($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.DeleteOne($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.DeleteOne($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.DeleteMany($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.DeleteMany($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.UpdateOne($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.UpdateOne($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.UpdateMany($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.UpdateMany($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.ReplaceOne($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.ReplaceOne($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.FindOneAndUpdate($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.FindOneAndUpdate($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.Aggregate($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.Aggregate($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://www.mongodb.com/docs/drivers/csharp/current/crud/query/query-filter/
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: php-extended-nosql-query
+  version: 1
+  title: Extended MongoDB driver query filters
+  language: php
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match:
+    any:
+      - pattern: "new $TYPE($QUERY)"
+        context: "<?php new $TYPE($QUERY);"
+        selector: object_creation_expression
+        captures: { nosql_query: QUERY }
+      - pattern: "new $TYPE($QUERY, $$$ARGS)"
+        context: "<?php new $TYPE($QUERY, $$$ARGS);"
+        selector: object_creation_expression
+        captures: { nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://www.php.net/manual/en/mongodb-driver-query.construct.php
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: php-extended-sql-facade
+  version: 1
+  title: Extended Laravel raw SQL facade entrypoints
+  language: php
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: "$TYPE::select($QUERY)"
+        context: "<?php $TYPE::select($QUERY);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::select($QUERY, $$$ARGS)"
+        context: "<?php $TYPE::select($QUERY, $$$ARGS);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::selectOne($QUERY)"
+        context: "<?php $TYPE::selectOne($QUERY);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::selectOne($QUERY, $$$ARGS)"
+        context: "<?php $TYPE::selectOne($QUERY, $$$ARGS);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::statement($QUERY)"
+        context: "<?php $TYPE::statement($QUERY);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::statement($QUERY, $$$ARGS)"
+        context: "<?php $TYPE::statement($QUERY, $$$ARGS);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::unprepared($QUERY)"
+        context: "<?php $TYPE::unprepared($QUERY);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::unprepared($QUERY, $$$ARGS)"
+        context: "<?php $TYPE::unprepared($QUERY, $$$ARGS);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::raw($QUERY)"
+        context: "<?php $TYPE::raw($QUERY);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::raw($QUERY, $$$ARGS)"
+        context: "<?php $TYPE::raw($QUERY, $$$ARGS);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::insert($QUERY)"
+        context: "<?php $TYPE::insert($QUERY);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::insert($QUERY, $$$ARGS)"
+        context: "<?php $TYPE::insert($QUERY, $$$ARGS);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::update($QUERY)"
+        context: "<?php $TYPE::update($QUERY);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::update($QUERY, $$$ARGS)"
+        context: "<?php $TYPE::update($QUERY, $$$ARGS);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::delete($QUERY)"
+        context: "<?php $TYPE::delete($QUERY);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::delete($QUERY, $$$ARGS)"
+        context: "<?php $TYPE::delete($QUERY, $$$ARGS);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::cursor($QUERY)"
+        context: "<?php $TYPE::cursor($QUERY);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+      - pattern: "$TYPE::cursor($QUERY, $$$ARGS)"
+        context: "<?php $TYPE::cursor($QUERY, $$$ARGS);"
+        selector: scoped_call_expression
+        captures: { query: QUERY }
+  tags: [database, extended-rules, sql, raw-query]
+  ai: *extended_sql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://laravel.com/docs/12.x/database#running-sql-queries
+      - https://cwe.mitre.org/data/definitions/89.html
+
+- id: php-extended-sql-builder
+  version: 1
+  title: Extended Doctrine and Laravel raw query clauses
+  language: php
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: "$DATABASE->executeQuery($QUERY)"
+        context: "<?php $DATABASE->executeQuery($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->executeQuery($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->executeQuery($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->executeStatement($QUERY)"
+        context: "<?php $DATABASE->executeStatement($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->executeStatement($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->executeStatement($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->fetchAllAssociative($QUERY)"
+        context: "<?php $DATABASE->fetchAllAssociative($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->fetchAllAssociative($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->fetchAllAssociative($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->fetchAssociative($QUERY)"
+        context: "<?php $DATABASE->fetchAssociative($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->fetchAssociative($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->fetchAssociative($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->fetchOne($QUERY)"
+        context: "<?php $DATABASE->fetchOne($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->fetchOne($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->fetchOne($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->createQuery($QUERY)"
+        context: "<?php $DATABASE->createQuery($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->createQuery($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->createQuery($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->where($QUERY)"
+        context: "<?php $DATABASE->where($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->where($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->where($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->andWhere($QUERY)"
+        context: "<?php $DATABASE->andWhere($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->andWhere($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->andWhere($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->orWhere($QUERY)"
+        context: "<?php $DATABASE->orWhere($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->orWhere($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->orWhere($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->having($QUERY)"
+        context: "<?php $DATABASE->having($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->having($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->having($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->andHaving($QUERY)"
+        context: "<?php $DATABASE->andHaving($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->andHaving($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->andHaving($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->orHaving($QUERY)"
+        context: "<?php $DATABASE->orHaving($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->orHaving($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->orHaving($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->orderBy($QUERY)"
+        context: "<?php $DATABASE->orderBy($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->orderBy($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->orderBy($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->groupBy($QUERY)"
+        context: "<?php $DATABASE->groupBy($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->groupBy($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->groupBy($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->whereRaw($QUERY)"
+        context: "<?php $DATABASE->whereRaw($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->whereRaw($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->whereRaw($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->orWhereRaw($QUERY)"
+        context: "<?php $DATABASE->orWhereRaw($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->orWhereRaw($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->orWhereRaw($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->havingRaw($QUERY)"
+        context: "<?php $DATABASE->havingRaw($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->havingRaw($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->havingRaw($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->selectRaw($QUERY)"
+        context: "<?php $DATABASE->selectRaw($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->selectRaw($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->selectRaw($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->orderByRaw($QUERY)"
+        context: "<?php $DATABASE->orderByRaw($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->orderByRaw($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->orderByRaw($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->groupByRaw($QUERY)"
+        context: "<?php $DATABASE->groupByRaw($QUERY);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+      - pattern: "$DATABASE->groupByRaw($QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->groupByRaw($QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { query: QUERY }
+  tags: [database, extended-rules, sql, raw-query]
+  ai: *extended_sql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://www.doctrine-project.org/projects/doctrine-dbal/en/4.4/reference/query-builder.html#security-safely-preventing-sql-injection
+      - https://laravel.com/docs/12.x/queries#raw-expressions
+      - https://cwe.mitre.org/data/definitions/89.html
+
+- id: php-extended-pgsql-query
+  version: 1
+  title: Extended PostgreSQL native query text entrypoints
+  language: php
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: "pg_query($QUERY)"
+        context: "<?php pg_query($QUERY);"
+        selector: function_call_expression
+        captures: { query: QUERY }
+      - pattern: "pg_query($CONNECTION, $QUERY)"
+        context: "<?php pg_query($CONNECTION, $QUERY);"
+        selector: function_call_expression
+        captures: { query: QUERY }
+      - pattern: "pg_send_query($QUERY)"
+        context: "<?php pg_send_query($QUERY);"
+        selector: function_call_expression
+        captures: { query: QUERY }
+      - pattern: "pg_send_query($CONNECTION, $QUERY)"
+        context: "<?php pg_send_query($CONNECTION, $QUERY);"
+        selector: function_call_expression
+        captures: { query: QUERY }
+      - pattern: "pg_query_params($QUERY, $PARAMETERS)"
+        context: "<?php pg_query_params($QUERY, $PARAMETERS);"
+        selector: function_call_expression
+        captures: { query: QUERY }
+      - pattern: "pg_query_params($CONNECTION, $QUERY, $PARAMETERS)"
+        context: "<?php pg_query_params($CONNECTION, $QUERY, $PARAMETERS);"
+        selector: function_call_expression
+        captures: { query: QUERY }
+      - pattern: "pg_send_query_params($QUERY, $PARAMETERS)"
+        context: "<?php pg_send_query_params($QUERY, $PARAMETERS);"
+        selector: function_call_expression
+        captures: { query: QUERY }
+      - pattern: "pg_send_query_params($CONNECTION, $QUERY, $PARAMETERS)"
+        context: "<?php pg_send_query_params($CONNECTION, $QUERY, $PARAMETERS);"
+        selector: function_call_expression
+        captures: { query: QUERY }
+      - pattern: "pg_prepare($NAME, $QUERY)"
+        context: "<?php pg_prepare($NAME, $QUERY);"
+        selector: function_call_expression
+        captures: { query: QUERY }
+      - pattern: "pg_prepare($CONNECTION, $NAME, $QUERY)"
+        context: "<?php pg_prepare($CONNECTION, $NAME, $QUERY);"
+        selector: function_call_expression
+        captures: { query: QUERY }
+      - pattern: "pg_send_prepare($NAME, $QUERY)"
+        context: "<?php pg_send_prepare($NAME, $QUERY);"
+        selector: function_call_expression
+        captures: { query: QUERY }
+      - pattern: "pg_send_prepare($CONNECTION, $NAME, $QUERY)"
+        context: "<?php pg_send_prepare($CONNECTION, $NAME, $QUERY);"
+        selector: function_call_expression
+        captures: { query: QUERY }
+  tags: [database, extended-rules, sql, raw-query]
+  ai: *extended_sql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://www.php.net/manual/en/ref.pgsql.php
+      - https://cwe.mitre.org/data/definitions/89.html
+
+- id: c-extended-nosql-native
+  version: 1
+  title: Extended MongoDB C client filter entrypoints
+  language: c
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match:
+    any:
+      - pattern: "mongoc_collection_find_with_opts($DATABASE, $QUERY, $OPTIONS, $PREFS)"
+        context: "void pattern_context() { mongoc_collection_find_with_opts($DATABASE, $QUERY, $OPTIONS, $PREFS); }"
+        selector: call_expression
+        captures: { nosql_query: QUERY }
+      - pattern: "mongoc_collection_count_documents($DATABASE, $QUERY, $$$ARGS)"
+        context: "void pattern_context() { mongoc_collection_count_documents($DATABASE, $QUERY, $$$ARGS); }"
+        selector: call_expression
+        captures: { nosql_query: QUERY }
+      - pattern: "mongoc_collection_delete_one($DATABASE, $QUERY, $$$ARGS)"
+        context: "void pattern_context() { mongoc_collection_delete_one($DATABASE, $QUERY, $$$ARGS); }"
+        selector: call_expression
+        captures: { nosql_query: QUERY }
+      - pattern: "mongoc_collection_delete_many($DATABASE, $QUERY, $$$ARGS)"
+        context: "void pattern_context() { mongoc_collection_delete_many($DATABASE, $QUERY, $$$ARGS); }"
+        selector: call_expression
+        captures: { nosql_query: QUERY }
+      - pattern: "mongoc_collection_update_one($DATABASE, $QUERY, $$$ARGS)"
+        context: "void pattern_context() { mongoc_collection_update_one($DATABASE, $QUERY, $$$ARGS); }"
+        selector: call_expression
+        captures: { nosql_query: QUERY }
+      - pattern: "mongoc_collection_update_many($DATABASE, $QUERY, $$$ARGS)"
+        context: "void pattern_context() { mongoc_collection_update_many($DATABASE, $QUERY, $$$ARGS); }"
+        selector: call_expression
+        captures: { nosql_query: QUERY }
+      - pattern: "mongoc_collection_aggregate($DATABASE, $FLAGS, $QUERY, $$$ARGS)"
+        context: "void pattern_context() { mongoc_collection_aggregate($DATABASE, $FLAGS, $QUERY, $$$ARGS); }"
+        selector: call_expression
+        captures: { nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://mongoc.org/libmongoc/current/mongoc_collection_find_with_opts.html
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: cpp-extended-nosql-native
+  version: 1
+  title: Extended MongoDB C client filter entrypoints
+  language: cpp
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match:
+    any:
+      - pattern: "mongoc_collection_find_with_opts($DATABASE, $QUERY, $OPTIONS, $PREFS)"
+        context: "void pattern_context() { mongoc_collection_find_with_opts($DATABASE, $QUERY, $OPTIONS, $PREFS); }"
+        selector: call_expression
+        captures: { nosql_query: QUERY }
+      - pattern: "mongoc_collection_count_documents($DATABASE, $QUERY, $$$ARGS)"
+        context: "void pattern_context() { mongoc_collection_count_documents($DATABASE, $QUERY, $$$ARGS); }"
+        selector: call_expression
+        captures: { nosql_query: QUERY }
+      - pattern: "mongoc_collection_delete_one($DATABASE, $QUERY, $$$ARGS)"
+        context: "void pattern_context() { mongoc_collection_delete_one($DATABASE, $QUERY, $$$ARGS); }"
+        selector: call_expression
+        captures: { nosql_query: QUERY }
+      - pattern: "mongoc_collection_delete_many($DATABASE, $QUERY, $$$ARGS)"
+        context: "void pattern_context() { mongoc_collection_delete_many($DATABASE, $QUERY, $$$ARGS); }"
+        selector: call_expression
+        captures: { nosql_query: QUERY }
+      - pattern: "mongoc_collection_update_one($DATABASE, $QUERY, $$$ARGS)"
+        context: "void pattern_context() { mongoc_collection_update_one($DATABASE, $QUERY, $$$ARGS); }"
+        selector: call_expression
+        captures: { nosql_query: QUERY }
+      - pattern: "mongoc_collection_update_many($DATABASE, $QUERY, $$$ARGS)"
+        context: "void pattern_context() { mongoc_collection_update_many($DATABASE, $QUERY, $$$ARGS); }"
+        selector: call_expression
+        captures: { nosql_query: QUERY }
+      - pattern: "mongoc_collection_aggregate($DATABASE, $FLAGS, $QUERY, $$$ARGS)"
+        context: "void pattern_context() { mongoc_collection_aggregate($DATABASE, $FLAGS, $QUERY, $$$ARGS); }"
+        selector: call_expression
+        captures: { nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://mongoc.org/libmongoc/current/mongoc_collection_find_with_opts.html
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: cpp-extended-nosql-query
+  version: 1
+  title: Extended MongoDB C++ typed collection filters
+  language: cpp
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match:
+    any:
+      - pattern: "$DATABASE.find($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find_one($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find_one($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.count_documents($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.count_documents($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.delete_one($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.delete_one($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.delete_many($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.delete_many($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.update_one($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.update_one($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.update_many($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.update_many($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.replace_one($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.replace_one($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.aggregate($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.aggregate($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://www.mongodb.com/docs/languages/cpp/cpp-driver/current/read/
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: rust-extended-nosql-query
+  version: 1
+  title: Extended MongoDB Rust typed collection filters
+  language: rust
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match:
+    any:
+      - pattern: "$DATABASE.find($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find_one($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.find_one($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.count_documents($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.count_documents($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.delete_one($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.delete_one($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.delete_many($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.delete_many($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.update_one($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.update_one($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.update_many($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.update_many($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.replace_one($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.replace_one($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.aggregate($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.aggregate($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://docs.rs/mongodb/latest/mongodb/struct.Collection.html
+      - https://cwe.mitre.org/data/definitions/943.html
+
+- id: rust-extended-sql-query
+  version: 1
+  title: Extended Rust typed SQL client entrypoints
+  language: rust
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: "$DATABASE.prepare($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.prepare($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.prepare_cached($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.prepare_cached($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.execute_batch($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.execute_batch($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.query_row($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.query_row($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.query($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.query($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.query_one($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.query_one($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.query_opt($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.query_opt($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.execute($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.execute($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.simple_query($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.simple_query($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.batch_execute($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.batch_execute($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.query_drop($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.query_drop($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.exec($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.exec($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.exec_drop($QUERY)"
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.exec_drop($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, query: QUERY }
+  tags: [database, extended-rules, sql, raw-query]
+  ai: *extended_sql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://docs.rs/rusqlite/latest/rusqlite/struct.Connection.html
+      - https://docs.rs/tokio-postgres/latest/tokio_postgres/struct.Client.html
+      - https://cwe.mitre.org/data/definitions/89.html
+
+- id: go-extended-pgx-query
+  version: 1
+  title: Extended pgx context-aware SQL text entrypoints
+  language: go
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: "$DATABASE.Query($CONTEXT, $QUERY)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.Query($CONTEXT, $QUERY) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.Query($CONTEXT, $QUERY, $$$ARGS)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.Query($CONTEXT, $QUERY, $$$ARGS) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.QueryRow($CONTEXT, $QUERY)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.QueryRow($CONTEXT, $QUERY) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.QueryRow($CONTEXT, $QUERY, $$$ARGS)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.QueryRow($CONTEXT, $QUERY, $$$ARGS) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.Exec($CONTEXT, $QUERY)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.Exec($CONTEXT, $QUERY) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.Exec($CONTEXT, $QUERY, $$$ARGS)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.Exec($CONTEXT, $QUERY, $$$ARGS) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.Prepare($CONTEXT, $NAME, $QUERY)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.Prepare($CONTEXT, $NAME, $QUERY) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+  tags: [database, extended-rules, sql, raw-query]
+  ai: *extended_sql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://pkg.go.dev/github.com/jackc/pgx/v5#Conn.Query
+      - https://pkg.go.dev/github.com/jackc/pgx/v5#Conn.Prepare
+      - https://cwe.mitre.org/data/definitions/89.html
+
+- id: go-extended-sqlx-query
+  version: 1
+  title: Extended sqlx raw query text entrypoints
+  language: go
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-89]
+  match:
+    any:
+      - pattern: "$DATABASE.Get($DEST, $QUERY)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.Get($DEST, $QUERY) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.Get($DEST, $QUERY, $$$ARGS)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.Get($DEST, $QUERY, $$$ARGS) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.Select($DEST, $QUERY)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.Select($DEST, $QUERY) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.Select($DEST, $QUERY, $$$ARGS)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.Select($DEST, $QUERY, $$$ARGS) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.GetContext($CONTEXT, $DEST, $QUERY)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.GetContext($CONTEXT, $DEST, $QUERY) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.GetContext($CONTEXT, $DEST, $QUERY, $$$ARGS)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.GetContext($CONTEXT, $DEST, $QUERY, $$$ARGS) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.SelectContext($CONTEXT, $DEST, $QUERY)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.SelectContext($CONTEXT, $DEST, $QUERY) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.SelectContext($CONTEXT, $DEST, $QUERY, $$$ARGS)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.SelectContext($CONTEXT, $DEST, $QUERY, $$$ARGS) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.NamedQuery($QUERY, $VALUES)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.NamedQuery($QUERY, $VALUES) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.NamedExec($QUERY, $VALUES)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.NamedExec($QUERY, $VALUES) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.NamedQueryContext($CONTEXT, $QUERY, $VALUES)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.NamedQueryContext($CONTEXT, $QUERY, $VALUES) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: "$DATABASE.NamedExecContext($CONTEXT, $QUERY, $VALUES)"
+        context: "package pattern\nfunc patternContext() { $DATABASE.NamedExecContext($CONTEXT, $QUERY, $VALUES) }"
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+  tags: [database, extended-rules, sql, raw-query]
+  ai: *extended_sql_guidance
+  provenance:
+    note: Independently authored extended rules with bounded SDK identity and explicit query argument roles.
+    references:
+      - https://pkg.go.dev/github.com/jmoiron/sqlx
+      - https://cwe.mitre.org/data/definitions/89.html

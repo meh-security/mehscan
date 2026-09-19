@@ -87,6 +87,10 @@ pub struct RelationshipFunnelCapability {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RelationshipFunnel {
+    #[serde(default)]
+    pub parse_failed_files: usize,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub outline_failures: BTreeMap<String, String>,
     pub relation_source_observations: usize,
     pub remote_source_observations: usize,
     pub eligible_sink_observations: usize,

@@ -414,7 +414,11 @@ fn validate_selected_paths(
         }
         if first.is_some_and(|step| {
             step.evidence_id.as_deref() != Some(source.id.as_str())
-                || step.location != source.location
+                || !(step.location == source.location
+                    || source
+                        .captures
+                        .get("controller_source")
+                        .is_some_and(|capture| step.location == capture.location))
         }) {
             mismatches.push(format!("{} has an inconsistent source step", path.id));
         }

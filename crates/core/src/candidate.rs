@@ -210,7 +210,7 @@ fn validate_terminal_steps(
     let last = path.steps.last().expect("a first step implies a last step");
     if first.kind != SecurityPathStepKind::Source
         || first.evidence_id.as_deref() != Some(source.id.as_str())
-        || first.location != source.location
+        || !source_step_location_matches(source, &first.location)
     {
         return Err(CandidateBuildError::new(format!(
             "security path {} has an inconsistent source step",
@@ -229,14 +229,30 @@ fn validate_terminal_steps(
     Ok(())
 }
 
+fn source_step_location_matches(source: &Evidence, location: &crate::Location) -> bool {
+    &source.location == location
+        || source
+            .captures
+            .get("controller_source")
+            .is_some_and(|capture| &capture.location == location)
+}
+
 fn candidate_evidence(evidence: &Evidence) -> CandidateEvidence {
+    let projected_controller_source = (evidence.kind == crate::EvidenceKind::Source)
+        .then(|| evidence.captures.get("controller_source"))
+        .flatten();
     CandidateEvidence {
         id: evidence.id.clone(),
         rule_id: evidence.rule_id.clone(),
         kind: evidence.kind,
         capability: evidence.capability,
-        location: evidence.location.clone(),
-        enclosing_symbol: evidence.enclosing_symbol.clone(),
+        location: projected_controller_source
+            .map(|capture| capture.location.clone())
+            .unwrap_or_else(|| evidence.location.clone()),
+        enclosing_symbol: projected_controller_source
+            .and_then(|_| evidence.captures.get("controller_action"))
+            .map(|capture| capture.text.clone())
+            .or_else(|| evidence.enclosing_symbol.clone()),
         confidence: evidence.confidence,
         provenance: evidence.provenance.clone(),
         context: evidence.context.clone(),

@@ -84,6 +84,7 @@ try {
         (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.py'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.ps1'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/public-download.ps1'),
+        (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/new-review-response-schema.ps1'),
         (Join-Path $repositoryRoot 'skills/mehscan-report-quality/SKILL.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-report-quality/agents/openai.yaml')
     )

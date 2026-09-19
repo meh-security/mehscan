@@ -293,6 +293,7 @@ fn add_process_sinks<'tree>(
             &assignment,
             &right,
             property,
+            false,
             comments,
             conditional,
             literals,
@@ -316,6 +317,10 @@ fn add_process_sinks<'tree>(
                     &creation,
                     value,
                     if index == 0 { "FileName" } else { "Arguments" },
+                    index == 1
+                        && args
+                            .first()
+                            .is_some_and(|command| is_known_shell(command.text().as_ref())),
                     comments,
                     conditional,
                     literals,
@@ -332,11 +337,22 @@ fn push_process<'tree>(
     operation: &Node<'tree, StrDoc<SupportLang>>,
     value: &Node<'tree, StrDoc<SupportLang>>,
     property: &str,
+    shell_command_text: bool,
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
     evidence: &mut Vec<Evidence>,
 ) {
+    let tags = if shell_command_text {
+        vec![
+            "process",
+            "process-start-info",
+            "dynamic-value",
+            "shell-command-text",
+        ]
+    } else {
+        vec!["process", "process-start-info", "dynamic-value"]
+    };
     push(
         path,
         operation,
@@ -354,12 +370,33 @@ fn push_process<'tree>(
             "arguments"
         },
         &["CWE-78"],
-        &["process", "process-start-info", "dynamic-value"],
+        &tags,
         comments,
         conditional,
         literals,
         evidence,
     );
+}
+
+fn is_known_shell(expression: &str) -> bool {
+    let value = expression
+        .trim()
+        .trim_start_matches('@')
+        .trim_matches('"')
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    matches!(
+        value.rsplit('/').next().unwrap_or(&value),
+        "cmd"
+            | "cmd.exe"
+            | "powershell"
+            | "powershell.exe"
+            | "pwsh"
+            | "pwsh.exe"
+            | "sh"
+            | "bash"
+            | "zsh"
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

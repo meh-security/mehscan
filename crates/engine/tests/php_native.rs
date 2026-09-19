@@ -336,7 +336,7 @@ fn php_native_boundaries_preserve_identity_scope_and_safe_alternatives() {
         "{:?}",
         result.diagnostics
     );
-    assert_eq!(result.coverage.languages[&Language::Php].scanned, 6);
+    assert_eq!(result.coverage.languages[&Language::Php].scanned, 7);
     for symbol in [
         "direct_command",
         "alias_command",

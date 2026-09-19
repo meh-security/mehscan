@@ -11,6 +11,32 @@
         captures: { query: QUERY }
       - pattern: new SqlCommand($QUERY, $$$ARGUMENTS)
         captures: { query: QUERY }
+      - pattern: new NpgsqlCommand($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: new MySqlCommand($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: new SQLiteCommand($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: new NpgsqlCommand($QUERY)
+        captures: { query: QUERY }
+      - pattern: new MySqlCommand($QUERY)
+        captures: { query: QUERY }
+      - pattern: new SqliteCommand($QUERY)
+        captures: { query: QUERY }
+      - pattern: new SqliteCommand($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: new SQLiteCommand($QUERY)
+        captures: { query: QUERY }
+      - pattern: new OracleCommand($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: new OdbcCommand($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: new OleDbCommand($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: $DATABASE.ExecuteSqlRawAsync($QUERY)
+        captures: { query: QUERY }
+      - pattern: $DATABASE.ExecuteSqlRawAsync($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
       - pattern: $DATABASE.ExecuteSqlRaw($QUERY)
         captures: { query: QUERY }
       - pattern: $DATABASE.ExecuteSqlRaw($QUERY, $$$ARGUMENTS)
@@ -40,6 +66,24 @@
   cwe: [CWE-89]
   match:
     any:
+      - pattern: $STATEMENT.execute($QUERY)
+        captures: { query: QUERY }
+      - pattern: $STATEMENT.execute($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: $STATEMENT.executeUpdate($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: $STATEMENT.executeLargeUpdate($QUERY)
+        captures: { query: QUERY }
+      - pattern: $STATEMENT.executeLargeUpdate($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: $STATEMENT.addBatch($QUERY)
+        captures: { query: QUERY }
+      - pattern: $CONNECTION.prepareCall($QUERY)
+        captures: { query: QUERY }
+      - pattern: $CONNECTION.prepareStatement($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: $CONNECTION.prepareCall($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
       - pattern: $STATEMENT.executeQuery($QUERY)
         captures: { query: QUERY }
       - pattern: $STATEMENT.executeUpdate($QUERY)
@@ -65,26 +109,22 @@
   cwe: [CWE-89]
   match: &node_database_match
     any:
-      - pattern: pool.query($QUERY)
-        captures: { query: QUERY }
-      - pattern: pool.query($QUERY, $$$ARGUMENTS)
-        captures: { query: QUERY }
-      - pattern: connection.query($QUERY)
-        captures: { query: QUERY }
-      - pattern: connection.query($QUERY, $$$ARGUMENTS)
-        captures: { query: QUERY }
-      - pattern: sequelize.query($QUERY)
-        captures: { query: QUERY }
-      - pattern: sequelize.query($QUERY, $$$ARGUMENTS)
-        captures: { query: QUERY }
-      - pattern: $DATABASE.sequelize.query($QUERY)
+      - pattern: $DATABASE.query($QUERY)
         captures: { database: DATABASE, query: QUERY }
-      - pattern: $DATABASE.sequelize.query($QUERY, $$$ARGUMENTS)
+      - pattern: $DATABASE.query($QUERY, $$$ARGUMENTS)
         captures: { database: DATABASE, query: QUERY }
-      - pattern: prisma.$queryRawUnsafe($QUERY)
-        captures: { query: QUERY }
-      - pattern: prisma.$queryRawUnsafe($QUERY, $$$ARGUMENTS)
-        captures: { query: QUERY }
+      - pattern: $DATABASE.execute($QUERY)
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: $DATABASE.execute($QUERY, $$$ARGUMENTS)
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: $DATABASE.$queryRawUnsafe($QUERY)
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: $DATABASE.$queryRawUnsafe($QUERY, $$$ARGUMENTS)
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: $DATABASE.$executeRawUnsafe($QUERY)
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: $DATABASE.$executeRawUnsafe($QUERY, $$$ARGUMENTS)
+        captures: { database: DATABASE, query: QUERY }
   tags: [database, sql, nodejs]
   ai: *database_guidance
   provenance: &node_database_provenance
@@ -126,17 +166,13 @@
   cwe: [CWE-89]
   match:
     any:
-      - pattern: cursor.execute($QUERY)
+      - pattern: $DATABASE.execute($QUERY)
         captures: { query: QUERY }
-      - pattern: cursor.execute($QUERY, $$$ARGUMENTS)
+      - pattern: $DATABASE.execute($QUERY, $$$ARGUMENTS)
         captures: { query: QUERY }
-      - pattern: cursor.executemany($QUERY, $$$ARGUMENTS)
+      - pattern: $DATABASE.executemany($QUERY, $$$ARGUMENTS)
         captures: { query: QUERY }
-      - pattern: cursor.executescript($QUERY)
-        captures: { query: QUERY }
-      - pattern: connection.execute($QUERY)
-        captures: { query: QUERY }
-      - pattern: connection.execute($QUERY, $$$ARGUMENTS)
+      - pattern: $DATABASE.executescript($QUERY)
         captures: { query: QUERY }
   tags: [database, sql]
   ai: *database_guidance
@@ -163,6 +199,18 @@
         captures: { query: QUERY }
       - pattern: $DB.Query($QUERY, $$$ARGUMENTS)
         captures: { query: QUERY }
+      - pattern: $DB.QueryRow($QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY }
+      - pattern: $DB.QueryRowContext($CONTEXT, $QUERY, $$$ARGUMENTS)
+        captures: { query: QUERY, context: CONTEXT }
+      - pattern: $DB.Prepare($QUERY)
+        context: |
+          package pattern
+          func patternContext() { $DB.Prepare($QUERY) }
+        selector: call_expression
+        captures: { query: QUERY }
+      - pattern: $DB.PrepareContext($CONTEXT, $QUERY)
+        captures: { query: QUERY, context: CONTEXT }
       - pattern: $DB.QueryContext($CONTEXT, $QUERY, $$$ARGUMENTS)
         captures: { query: QUERY, context: CONTEXT }
       - pattern: $DB.Exec($QUERY)
@@ -194,8 +242,14 @@
     any:
       - pattern: $QUERY_FUNCTION($QUERY)
         captures: { query: QUERY }
+      - pattern: $QUERY_FUNCTION($QUERY, $PARAMETERS)
+        captures: { query: QUERY, parameters: PARAMETERS }
       - pattern: $DATABASE.query($QUERY, $PARAMETERS)
         captures: { database: DATABASE, query: QUERY, parameters: PARAMETERS }
+      - pattern: $DATABASE.simple_query($QUERY)
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: $DATABASE.batch_execute($QUERY)
+        captures: { database: DATABASE, query: QUERY }
       - pattern: $DATABASE.query_one($QUERY, $PARAMETERS)
         captures: { database: DATABASE, query: QUERY, parameters: PARAMETERS }
       - pattern: $DATABASE.query_opt($QUERY, $PARAMETERS)
@@ -267,3 +321,64 @@
   tags: [database, sql, sqlite, native, cpp]
   ai: *native_sqlite_guidance
   provenance: *native_sqlite_provenance
+
+- id: c-client-database-query
+  version: 1
+  title: C PostgreSQL and MySQL query text entrypoints
+  language: c
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match: &native_client_database_match
+    any:
+      - pattern: PQexec($DATABASE, $QUERY)
+        context: void pattern_context() { PQexec($DATABASE, $QUERY); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: PQexecParams($DATABASE, $QUERY, $$$ARGUMENTS)
+        context: void pattern_context() { PQexecParams($DATABASE, $QUERY, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: PQprepare($DATABASE, $NAME, $QUERY, $$$ARGUMENTS)
+        context: void pattern_context() { PQprepare($DATABASE, $NAME, $QUERY, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: mysql_query($DATABASE, $QUERY)
+        context: void pattern_context() { mysql_query($DATABASE, $QUERY); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: mysql_real_query($DATABASE, $QUERY, $LENGTH)
+        context: void pattern_context() { mysql_real_query($DATABASE, $QUERY, $LENGTH); }
+        selector: call_expression
+        captures: { database: DATABASE, query: QUERY }
+      - pattern: mysql_stmt_prepare($STATEMENT, $QUERY, $LENGTH)
+        context: void pattern_context() { mysql_stmt_prepare($STATEMENT, $QUERY, $LENGTH); }
+        selector: call_expression
+        captures: { query: QUERY }
+  tags: [database, sql, native]
+  ai: &native_client_database_guidance
+    investigate:
+      - origin and construction of the SQL text, including dynamic identifiers and clauses
+      - separately bound values versus data concatenated into the SQL argument
+    verify:
+      - confirm the exact client API identity and query-text argument position
+      - confirm external data influences SQL syntax rather than only a bound value
+    exclude:
+      - a constant query, prepared handle, or separately bound values alone are not vulnerability proof
+  provenance: &native_client_database_provenance
+    note: Query-text positions in PostgreSQL libpq and MySQL C client APIs; prepared handles and bound values alone are not query text.
+    references:
+      - https://www.postgresql.org/docs/current/libpq-exec.html
+      - https://dev.mysql.com/doc/c-api/8.4/en/mysql-real-query.html
+
+- id: cpp-client-database-query
+  version: 1
+  title: C++ PostgreSQL and MySQL query text entrypoints
+  language: cpp
+  kind: sink
+  capability: database_query
+  cwe: [CWE-89]
+  match: *native_client_database_match
+  tags: [database, sql, native, cpp]
+  ai: *native_client_database_guidance
+  provenance: *native_client_database_provenance

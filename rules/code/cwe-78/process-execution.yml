@@ -299,6 +299,61 @@
           void pattern_context() { execve($COMMAND, $ARGUMENTS, $ENVIRONMENT); }
         selector: call_expression
         captures: { command: COMMAND, arguments: ARGUMENTS, environment: ENVIRONMENT }
+      - pattern: execl($COMMAND, $ARGUMENT_ZERO, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { execl($COMMAND, $ARGUMENT_ZERO, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: execlp($COMMAND, $ARGUMENT_ZERO, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { execlp($COMMAND, $ARGUMENT_ZERO, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: execvp($COMMAND, $ARGUMENTS)
+        context: |
+          void pattern_context() { execvp($COMMAND, $ARGUMENTS); }
+        selector: call_expression
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: execvpe($COMMAND, $ARGUMENTS, $ENVIRONMENT)
+        context: |
+          void pattern_context() { execvpe($COMMAND, $ARGUMENTS, $ENVIRONMENT); }
+        selector: call_expression
+        captures: { command: COMMAND, arguments: ARGUMENTS, environment: ENVIRONMENT }
+      - pattern: posix_spawn($PID, $COMMAND, $FILE_ACTIONS, $ATTRIBUTES, $ARGUMENTS, $ENVIRONMENT)
+        context: |
+          void pattern_context() { posix_spawn($PID, $COMMAND, $FILE_ACTIONS, $ATTRIBUTES, $ARGUMENTS, $ENVIRONMENT); }
+        selector: call_expression
+        captures: { command: COMMAND, arguments: ARGUMENTS, environment: ENVIRONMENT }
+      - pattern: posix_spawnp($PID, $COMMAND, $FILE_ACTIONS, $ATTRIBUTES, $ARGUMENTS, $ENVIRONMENT)
+        context: |
+          void pattern_context() { posix_spawnp($PID, $COMMAND, $FILE_ACTIONS, $ATTRIBUTES, $ARGUMENTS, $ENVIRONMENT); }
+        selector: call_expression
+        captures: { command: COMMAND, arguments: ARGUMENTS, environment: ENVIRONMENT }
+      - pattern: CreateProcessA($APPLICATION, $COMMAND_LINE, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { CreateProcessA($APPLICATION, $COMMAND_LINE, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { command: APPLICATION, arguments: COMMAND_LINE }
+      - pattern: CreateProcessW($APPLICATION, $COMMAND_LINE, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { CreateProcessW($APPLICATION, $COMMAND_LINE, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { command: APPLICATION, arguments: COMMAND_LINE }
+      - pattern: ShellExecuteA($WINDOW, $OPERATION, $COMMAND, $ARGUMENTS, $DIRECTORY, $SHOW)
+        context: |
+          void pattern_context() { ShellExecuteA($WINDOW, $OPERATION, $COMMAND, $ARGUMENTS, $DIRECTORY, $SHOW); }
+        selector: call_expression
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: ShellExecuteW($WINDOW, $OPERATION, $COMMAND, $ARGUMENTS, $DIRECTORY, $SHOW)
+        context: |
+          void pattern_context() { ShellExecuteW($WINDOW, $OPERATION, $COMMAND, $ARGUMENTS, $DIRECTORY, $SHOW); }
+        selector: call_expression
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: WinExec($COMMAND, $SHOW)
+        context: |
+          void pattern_context() { WinExec($COMMAND, $SHOW); }
+        selector: call_expression
+        captures: { command: COMMAND }
   tags: [command, process, native]
   ai: &native_process_guidance
     investigate:

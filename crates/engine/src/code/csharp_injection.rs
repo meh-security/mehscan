@@ -120,6 +120,60 @@ pub(crate) fn add_injection_evidence<'tree>(
         }
     }
 
+    for invocation in root
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "invocation_expression")
+    {
+        if comments.is_in_comment(invocation.range()) {
+            continue;
+        }
+        let Some(function) = invocation.field("function") else {
+            continue;
+        };
+        let callee = compact(function.text().as_ref());
+        let Some((receiver, method)) = callee.rsplit_once('.') else {
+            continue;
+        };
+        if !matches!(
+            method,
+            "Compile" | "Evaluate" | "Select" | "SelectSingleNode" | "SelectNodes" | "Matches"
+        ) {
+            continue;
+        }
+        let owned = type_is(root, receiver, "System.Xml.XPath.XPathExpression")
+            || simple_identifier(receiver).is_some_and(|receiver| {
+                [
+                    "System.Xml.XPath.XPathNavigator",
+                    "System.Xml.XmlNode",
+                    "System.Xml.XmlDocument",
+                ]
+                .iter()
+                .any(|canonical| receiver_has_type(root, &invocation, receiver, canonical))
+            });
+        if !owned {
+            continue;
+        }
+        let Some(expression) =
+            node_arguments(&invocation).and_then(|arguments| arguments.into_iter().next())
+        else {
+            continue;
+        };
+        let mut item = build_evidence(
+            path,
+            &invocation,
+            EvidenceKind::Sink,
+            Capability::XpathQuery,
+            "csharp-xpath-expression",
+            &["xpath", "query", "injection"],
+            [("expression", &expression)],
+            comments,
+            conditional,
+            literals,
+        );
+        item.cwe_candidates = vec!["CWE-643".to_string()];
+        evidence.push(item);
+    }
+
     for assignment in root
         .dfs()
         .filter(|node| node.kind().as_ref() == "assignment_expression")

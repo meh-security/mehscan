@@ -99,6 +99,27 @@ struct ReviewContextIndex {
     usages: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
 }
 
+#[derive(Clone)]
+struct BoundedCallerRecord {
+    caller: String,
+    caller_parameters: Vec<String>,
+    arguments: Vec<String>,
+    location: Location,
+    excerpt: String,
+}
+
+#[derive(Clone)]
+struct BoundedDefinition {
+    location: Location,
+    parameters: Vec<String>,
+}
+
+#[derive(Default)]
+struct BoundedCallerIndex {
+    definitions: BTreeMap<(Language, String), Vec<BoundedDefinition>>,
+    callers: BTreeMap<(Language, String), Vec<BoundedCallerRecord>>,
+}
+
 type NativeParsedFile = (AstGrep<StrDoc<SupportLang>>, Vec<OutlineSymbol>);
 
 fn is_review_material_path(path: &str) -> bool {
@@ -308,6 +329,7 @@ pub fn relationship_funnel(root: &Path) -> Result<QueryResponse<RelationshipFunn
     let sources = RepositorySources::load(root)?;
     let outlines = OutlineExtractors::build()?;
     let mut outline_cache: BTreeMap<String, Vec<OutlineSymbol>> = BTreeMap::new();
+    let mut outline_failures = BTreeMap::new();
     for path in source_observations
         .iter()
         .map(|item| item.location.path.as_str())
@@ -316,7 +338,14 @@ pub fn relationship_funnel(root: &Path) -> Result<QueryResponse<RelationshipFunn
     {
         let file = sources.file(path)?;
         if file.language.is_some() {
-            outline_cache.insert(path.to_string(), outlines.extract(file)?);
+            match outlines.extract(file) {
+                Ok(symbols) => {
+                    outline_cache.insert(path.to_string(), symbols);
+                }
+                Err(error) => {
+                    outline_failures.insert(path.to_string(), error.to_string());
+                }
+            }
         }
     }
     let mut sources_by_symbol: BTreeMap<
@@ -362,7 +391,9 @@ pub fn relationship_funnel(root: &Path) -> Result<QueryResponse<RelationshipFunn
             stats.unlinked_sinks_with_compatible_source_in_symbol += 1;
         }
     }
-    let result = RelationshipFunnel {
+    let mut result = RelationshipFunnel {
+        parse_failed_files: scan.coverage.totals.parse_failed,
+        outline_failures: outline_failures.clone(),
         relation_source_observations: source_observations.len(),
         remote_source_observations: source_observations
             .iter()
@@ -387,6 +418,10 @@ pub fn relationship_funnel(root: &Path) -> Result<QueryResponse<RelationshipFunn
             "Security-path count can exceed linked sink count when multiple source observations reach one sink.".to_string(),
         ],
     };
+    if !outline_failures.is_empty() {
+        result.interpretation.push(format!("Outline extraction failed for {} files; same-symbol compatibility is unavailable for those files. Scan evidence and linked paths are retained.", outline_failures.len()));
+        result.interpretation.extend(outline_failures.into_values());
+    }
     Ok(response(
         &scan.root,
         "relationship_funnel",
@@ -3440,6 +3475,8 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Apply this decision procedure: issue requires established dangerous behavior plus attacker influence or a concrete policy failure and no demonstrated effective applicable control; not_issue requires affirmative safe purpose, non-attacker input, non-executable behavior, or an effective applicable control; needs_review requires a supplied unresolved fact that can change issue versus not_issue."
                 .to_string(),
+            "For an observation whose evidence marks an interpreted operand's origin as decision-critical, missing production origin is not evidence of safety. Use needs_review while its supplied origin-or-constraint question remains unresolved. Use not_issue only when supplied facts affirmatively establish a safe value domain, trusted immutable producer, non-executable use, or effective construction for that exact operand. For SQL, separate parameter binding does not neutralize a value already concatenated into executable query text."
+                .to_string(),
             "A bounded path may satisfy the issue test, but path status alone is not sufficient. Observation status alone is not a reason for needs_review."
                 .to_string(),
             "For a deterministic bounded path whose decision_facts.unresolved and decision_facts.effective_controls are both empty, use issue when its rule-specific established behavior describes the named weakness. Use not_issue only when another supplied fact affirmatively disproves that same behavior; do not substitute a different invariant such as resource ownership for plaintext storage, CSRF, validation, or lifecycle review."
@@ -3971,6 +4008,7 @@ fn observation_decision_facts(
         observation_has_direct_stored_html_trust_bypass(evidence, facts);
     let direct_request_resource_selector =
         observation_has_direct_request_resource_selector(evidence);
+    let decision_critical_origin = decision_critical_origin(evidence);
     let resource_policy = evidence.iter().find_map(|item| {
         item.context
             .resource_policy
@@ -4093,6 +4131,9 @@ fn observation_decision_facts(
                 .to_string(),
         );
     }
+    if let Some(origin) = decision_critical_origin {
+        established.push(origin.established_fact());
+    }
     if let Some(policy) = &java_policy {
         established.push(policy.established.to_string());
     }
@@ -4130,7 +4171,7 @@ fn observation_decision_facts(
             ResourcePolicyState::Unknown => unreachable!(),
         });
     }
-    let effective_controls = if javascript_policy.as_ref().is_some_and(|policy| policy.safe) {
+    let mut effective_controls = if javascript_policy.as_ref().is_some_and(|policy| policy.safe) {
         vec![
             javascript_policy
                 .as_ref()
@@ -4193,6 +4234,9 @@ fn observation_decision_facts(
         // only verified policy cases belong in effective_controls.
         Vec::new()
     };
+    if let Some(control) = decision_critical_origin.and_then(|origin| origin.effective_control()) {
+        effective_controls.push(control);
+    }
     let unresolved = if javascript_policy.is_some()
         || rust_policy.is_some()
         || go_policy.is_some()
@@ -4252,6 +4296,531 @@ fn is_advisory_observation_question(question: &str) -> bool {
             | "What is the effective runtime or deployed control value at the authoritative layer?"
             | "Does the observed sensitive operation establish a concrete weakness in this context?"
             | "Does this bounded observation establish a concrete security issue?"
+    )
+}
+
+#[derive(Clone, Copy)]
+enum DecisionCriticalBoundary {
+    Sql,
+    TrustedHtml,
+    ProcessExecutable,
+    ShellCommand,
+    NativeFormat,
+    DynamicCode,
+    TemplateSource,
+    OutboundDestination,
+    RedirectDestination,
+    ObjectDeserialization,
+    RawNosql,
+    LdapFilter,
+    LdapDistinguishedName,
+    XpathExpression,
+}
+
+#[derive(Clone, Copy)]
+struct DecisionCriticalOrigin<'a> {
+    boundary: DecisionCriticalBoundary,
+    language: &'static str,
+    style: &'a str,
+    operand: &'a str,
+    affirmatively_constrained: bool,
+}
+
+impl DecisionCriticalOrigin<'_> {
+    fn relationship(self) -> &'static str {
+        match self.boundary {
+            DecisionCriticalBoundary::Sql => "bounded_dynamic_query_composition",
+            DecisionCriticalBoundary::TrustedHtml => "bounded_trusted_html_interpretation",
+            DecisionCriticalBoundary::ProcessExecutable => "bounded_dynamic_executable_selection",
+            DecisionCriticalBoundary::ShellCommand => "bounded_shell_command_interpretation",
+            DecisionCriticalBoundary::NativeFormat => "bounded_native_format_interpretation",
+            DecisionCriticalBoundary::DynamicCode => "bounded_dynamic_code_interpretation",
+            DecisionCriticalBoundary::TemplateSource => "bounded_dynamic_template_interpretation",
+            DecisionCriticalBoundary::OutboundDestination => "bounded_dynamic_outbound_destination",
+            DecisionCriticalBoundary::RedirectDestination => "bounded_dynamic_redirect_destination",
+            DecisionCriticalBoundary::ObjectDeserialization => {
+                "bounded_executable_object_deserialization"
+            }
+            DecisionCriticalBoundary::RawNosql => "bounded_raw_nosql_interpretation",
+            DecisionCriticalBoundary::LdapFilter => "bounded_ldap_filter_interpretation",
+            DecisionCriticalBoundary::LdapDistinguishedName => {
+                "bounded_ldap_distinguished_name_interpretation"
+            }
+            DecisionCriticalBoundary::XpathExpression => "bounded_xpath_expression_interpretation",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match (self.boundary, self.language) {
+            (DecisionCriticalBoundary::Sql, "C#") => {
+                "Review dynamically composed C# SQL for CWE-89"
+            }
+            (DecisionCriticalBoundary::TrustedHtml, "C#") => {
+                "Review dynamic C# trusted HTML output for CWE-79"
+            }
+            (DecisionCriticalBoundary::ProcessExecutable, "C#") => {
+                "Review dynamic C# executable selection for CWE-78"
+            }
+            (DecisionCriticalBoundary::ShellCommand, "C#") => {
+                "Review dynamic C# shell command text for CWE-78"
+            }
+            (DecisionCriticalBoundary::NativeFormat, _) => {
+                "Review dynamic native format string for CWE-134"
+            }
+            (DecisionCriticalBoundary::DynamicCode, "C#") => {
+                "Review dynamic C# code interpretation for CWE-94"
+            }
+            (DecisionCriticalBoundary::TemplateSource, "C#") => {
+                "Review dynamic C# template interpretation for CWE-1336"
+            }
+            (DecisionCriticalBoundary::OutboundDestination, "C#") => {
+                "Review dynamic C# outbound destination for CWE-918"
+            }
+            (DecisionCriticalBoundary::RedirectDestination, "C#") => {
+                "Review dynamic C# redirect destination for CWE-601"
+            }
+            (DecisionCriticalBoundary::ObjectDeserialization, "C#") => {
+                "Review C# executable object deserialization for CWE-502"
+            }
+            (DecisionCriticalBoundary::RawNosql, "C#") => {
+                "Review dynamic C# raw NoSQL query for CWE-943"
+            }
+            (DecisionCriticalBoundary::LdapFilter, "C#")
+            | (DecisionCriticalBoundary::LdapDistinguishedName, "C#") => {
+                "Review dynamic C# LDAP query construction for CWE-90"
+            }
+            (DecisionCriticalBoundary::XpathExpression, "C#") => {
+                "Review dynamic C# XPath expression for CWE-643"
+            }
+            (DecisionCriticalBoundary::Sql, _) => "Review dynamically composed SQL for CWE-89",
+            (DecisionCriticalBoundary::TrustedHtml, _) => {
+                "Review dynamic trusted HTML output for CWE-79"
+            }
+            (DecisionCriticalBoundary::ProcessExecutable, _) => {
+                "Review dynamic executable selection for CWE-78"
+            }
+            (DecisionCriticalBoundary::ShellCommand, _) => {
+                "Review dynamic shell command text for CWE-78"
+            }
+            (DecisionCriticalBoundary::DynamicCode, _) => {
+                "Review dynamic code interpretation for CWE-94"
+            }
+            (DecisionCriticalBoundary::TemplateSource, _) => {
+                "Review dynamic template interpretation for CWE-1336"
+            }
+            (DecisionCriticalBoundary::OutboundDestination, _) => {
+                "Review dynamic outbound destination for CWE-918"
+            }
+            (DecisionCriticalBoundary::RedirectDestination, _) => {
+                "Review dynamic redirect destination for CWE-601"
+            }
+            (DecisionCriticalBoundary::ObjectDeserialization, _) => {
+                "Review executable object deserialization for CWE-502"
+            }
+            (DecisionCriticalBoundary::RawNosql, _) => "Review dynamic raw NoSQL query for CWE-943",
+            (DecisionCriticalBoundary::LdapFilter, _)
+            | (DecisionCriticalBoundary::LdapDistinguishedName, _) => {
+                "Review dynamic LDAP query construction for CWE-90"
+            }
+            (DecisionCriticalBoundary::XpathExpression, _) => {
+                "Review dynamic XPath expression for CWE-643"
+            }
+        }
+    }
+
+    fn security_question(self) -> String {
+        match self.boundary {
+            DecisionCriticalBoundary::Sql => "Can the dynamic operand incorporated into executable SQL be influenced by an attacker, or is it affirmatively restricted to a safe fixed, numeric, enum, or allowlisted value?".to_string(),
+            DecisionCriticalBoundary::TrustedHtml => "Can the runtime value passed across this explicit HTML trust boundary be influenced by an attacker, or is it sanitized for the exact browser context before escaping is bypassed?".to_string(),
+            DecisionCriticalBoundary::ProcessExecutable => "Can an attacker influence the executable selected by this process launch, or is it chosen from an exact server-owned allowlist?".to_string(),
+            DecisionCriticalBoundary::ShellCommand => "Can an attacker influence text interpreted by this command shell, or is every dynamic value kept outside shell grammar under an exact allowlist?".to_string(),
+            DecisionCriticalBoundary::NativeFormat => "Can an attacker influence the printf-family format operand, or is the exact format string fixed by trusted code?".to_string(),
+            DecisionCriticalBoundary::DynamicCode => "Can an attacker influence the program or expression interpreted by this runtime evaluator, or is the exact grammar fixed and trusted?".to_string(),
+            DecisionCriticalBoundary::TemplateSource => "Can an attacker influence the template source interpreted by this template engine, or is the template fixed and untrusted values supplied only as data?".to_string(),
+            DecisionCriticalBoundary::OutboundDestination => "Can an attacker influence the effective scheme, authority, or address reached by this outbound request, or is the destination restricted to an exact server-owned allowlist?".to_string(),
+            DecisionCriticalBoundary::RedirectDestination => "Can an attacker influence the effective redirect destination, or is it restricted to an intended local path or exact origin allowlist?".to_string(),
+            DecisionCriticalBoundary::ObjectDeserialization => "Can an attacker modify the payload consumed by this executable object deserializer, or is its exact producer protected by a trusted immutable or authenticated boundary?".to_string(),
+            DecisionCriticalBoundary::RawNosql => "Can an attacker influence operators or structure in this raw NoSQL query document, or is the exact document fixed or built through typed scalar predicates?".to_string(),
+            DecisionCriticalBoundary::LdapFilter => "Can an attacker influence LDAP filter grammar in this operand, or is every dynamic value encoded for LDAP filter context before composition?".to_string(),
+            DecisionCriticalBoundary::LdapDistinguishedName => "Can an attacker influence distinguished-name grammar in this operand, or is every dynamic value encoded for LDAP distinguished-name context before composition?".to_string(),
+            DecisionCriticalBoundary::XpathExpression => "Can an attacker influence XPath expression grammar in this operand, or is the expression fixed with untrusted values supplied only through bound variables?".to_string(),
+        }
+    }
+
+    fn unresolved_question(self) -> String {
+        match self.boundary {
+            DecisionCriticalBoundary::Sql => format!(
+                "Is dynamic SQL operand `{}` used by this {} attacker-controlled at any production call site, or is it affirmatively restricted before composition to a fixed, numeric, enum, or exact allowlisted value?",
+                self.operand, self.style
+            ),
+            DecisionCriticalBoundary::TrustedHtml => format!(
+                "Can dynamic trusted-HTML operand `{}` contain attacker-controlled markup at this {} boundary, or is it sanitized for the exact browser context before escaping is bypassed?",
+                self.operand, self.style
+            ),
+            DecisionCriticalBoundary::ProcessExecutable => format!(
+                "Can attacker-controlled input select executable `{}` at this process launch, or is the executable restricted to an exact server-owned allowlist?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::ShellCommand => format!(
+                "Can attacker-controlled input influence shell command text `{}`, or is every dynamic value excluded from shell grammar by an exact allowlist or structured non-shell execution?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::NativeFormat => format!(
+                "Can attacker-controlled input influence native format operand `{}`, or is the complete printf-family format fixed by trusted code?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::DynamicCode => format!(
+                "Can attacker-controlled input influence code or expression `{}` interpreted by this {}, or is the complete program fixed and trusted?",
+                self.operand, self.style
+            ),
+            DecisionCriticalBoundary::TemplateSource => format!(
+                "Can attacker-controlled input influence template source `{}` interpreted by this {}, or is the template fixed with untrusted values supplied only as data?",
+                self.operand, self.style
+            ),
+            DecisionCriticalBoundary::OutboundDestination => format!(
+                "Can attacker-controlled input influence the effective outbound destination `{}`, including its scheme, authority, resolved address, or redirects, or is it restricted to an exact server-owned allowlist?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::RedirectDestination => format!(
+                "Can attacker-controlled input influence redirect destination `{}`, or is it restricted to an intended local path or exact origin allowlist?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::ObjectDeserialization => format!(
+                "Can an untrusted user, transport, file writer, adjacent process, or deployment mechanism modify payload `{}` before this {} consumes it, or is that exact payload protected by a trusted immutable or authenticated boundary?",
+                self.operand, self.style
+            ),
+            DecisionCriticalBoundary::RawNosql => format!(
+                "Can attacker-controlled input influence operators or document structure in raw NoSQL operand `{}`, or is it fixed or built only through typed scalar predicates?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::LdapFilter => format!(
+                "Can attacker-controlled input influence LDAP filter operand `{}`, or is every dynamic value encoded for LDAP filter context before composition?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::LdapDistinguishedName => format!(
+                "Can attacker-controlled input influence LDAP distinguished-name operand `{}`, or is every dynamic value encoded for distinguished-name context before composition?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::XpathExpression => format!(
+                "Can attacker-controlled input influence XPath expression `{}`, or is the expression fixed with untrusted values supplied only through bound variables or an exact allowlist?",
+                self.operand
+            ),
+        }
+    }
+
+    fn established_fact(self) -> String {
+        if self.affirmatively_constrained {
+            return match self.boundary {
+                DecisionCriticalBoundary::Sql => format!(
+                    "The exact {} database query operand constructs SQL text through {} with dynamic operand `{}`, whose constrained representation cannot introduce SQL tokens, affirmatively disproving SQL-syntax injection through that exact operand. Separate query-authorization concerns may remain.",
+                    self.language, self.style, self.operand
+                ),
+                DecisionCriticalBoundary::LdapFilter => format!(
+                    "The exact dynamic LDAP filter operand `{}` is passed through the observed context-specific LDAP filter encoder before query construction, affirmatively preventing that value from changing filter grammar.",
+                    self.operand
+                ),
+                DecisionCriticalBoundary::LdapDistinguishedName => format!(
+                    "The exact dynamic LDAP distinguished-name operand `{}` is passed through the observed context-specific distinguished-name encoder before use, affirmatively preventing that value from changing DN grammar.",
+                    self.operand
+                ),
+                _ => format!(
+                    "The exact dynamic operand `{}` at this {} boundary has an affirmative applicable constraint.",
+                    self.operand, self.style
+                ),
+            };
+        }
+        match self.boundary {
+            DecisionCriticalBoundary::Sql => format!(
+                "The exact {} database query operand constructs executable SQL text through {} with dynamic operand `{}`. This is stronger than an ordinary query API observation, but its production origin or an exact constraining invariant is not established by composition syntax alone.",
+                self.language, self.style, self.operand
+            ),
+            _ => format!(
+                "The exact {} operand `{}` crosses a {} boundary through {}. This is stronger than an ordinary API observation, but its production origin or an exact constraining invariant is not established by local syntax alone.",
+                self.language,
+                self.operand,
+                match self.boundary {
+                    DecisionCriticalBoundary::TrustedHtml => "trusted HTML interpretation",
+                    DecisionCriticalBoundary::ProcessExecutable => "process executable selection",
+                    DecisionCriticalBoundary::ShellCommand => "shell command interpretation",
+                    DecisionCriticalBoundary::NativeFormat => "native format-string interpretation",
+                    DecisionCriticalBoundary::DynamicCode => "dynamic code interpretation",
+                    DecisionCriticalBoundary::TemplateSource => "dynamic template interpretation",
+                    DecisionCriticalBoundary::OutboundDestination =>
+                        "outbound destination selection",
+                    DecisionCriticalBoundary::RedirectDestination =>
+                        "redirect destination selection",
+                    DecisionCriticalBoundary::ObjectDeserialization =>
+                        "executable object deserialization",
+                    DecisionCriticalBoundary::RawNosql => "raw NoSQL document interpretation",
+                    DecisionCriticalBoundary::LdapFilter => "LDAP filter interpretation",
+                    DecisionCriticalBoundary::LdapDistinguishedName =>
+                        "LDAP distinguished-name interpretation",
+                    DecisionCriticalBoundary::XpathExpression => "XPath expression interpretation",
+                    DecisionCriticalBoundary::Sql => unreachable!(),
+                },
+                self.style
+            ),
+        }
+    }
+
+    fn effective_control(self) -> Option<String> {
+        if !self.affirmatively_constrained {
+            return None;
+        }
+        match self.boundary {
+            DecisionCriticalBoundary::LdapFilter => Some(
+                "A context-specific LDAP filter encoder applies to the exact dynamic operand before query construction.".to_string(),
+            ),
+            DecisionCriticalBoundary::LdapDistinguishedName => Some(
+                "A context-specific LDAP distinguished-name encoder applies to the exact dynamic operand before use.".to_string(),
+            ),
+            _ => None,
+        }
+    }
+}
+
+/// Identifies a dynamic operand whose local use already proves interpretation
+/// as security-sensitive grammar. Unlike a generic sink-origin question, the
+/// missing origin of this exact operand can change issue versus not_issue and
+/// therefore remains decision-critical. Add new families only with an exact
+/// capability, semantic tag, and capture-role check.
+fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOrigin<'_>> {
+    evidence.iter().find_map(|item| {
+        if item.kind != EvidenceKind::Sink
+            || !item
+                .tags
+                .iter()
+                .any(|tag| tag == "review-origin:decision-critical")
+        {
+            return None;
+        }
+        if item.capability == Capability::DatabaseQuery
+            && item
+                .tags
+                .iter()
+                .any(|tag| tag == "dynamic-query-composition")
+        {
+            let style = item
+                .tags
+                .iter()
+                .find_map(|tag| tag.strip_prefix("query-composition:"))?;
+            let operand = item
+                .captures
+                .get("dynamic_operands")
+                .or_else(|| item.captures.get("dynamic_operand"))?
+                .text
+                .trim();
+            Some(DecisionCriticalOrigin {
+                boundary: DecisionCriticalBoundary::Sql,
+                language: evidence_language_name(item),
+                style,
+                operand,
+                affirmatively_constrained: item
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "dynamic-origin:constrained-scalar"),
+            })
+        } else if item.capability == Capability::HtmlOutput {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::TrustedHtml,
+                "trusted-markup API",
+                &["content", "html"],
+                false,
+            )?)
+        } else if item.capability == Capability::ProcessExecution {
+            let shell = item.tags.iter().any(|tag| tag == "shell-command-text")
+                || (item.captures.contains_key("arguments")
+                    && item.context.literals.get("command").is_some_and(|literal| {
+                        matches!(
+                            literal.value.as_ref(),
+                            Some(LiteralValue::String(value)) if is_known_shell_executable(value)
+                        )
+                    }));
+            Some(decision_origin_from_capture(
+                item,
+                if shell {
+                    DecisionCriticalBoundary::ShellCommand
+                } else {
+                    DecisionCriticalBoundary::ProcessExecutable
+                },
+                if shell {
+                    "shell process API"
+                } else {
+                    "process launch API"
+                },
+                if shell {
+                    &["arguments", "command"]
+                } else {
+                    &["command"]
+                },
+                false,
+            )?)
+        } else if item.capability == Capability::DynamicCodeExecution {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::DynamicCode,
+                "runtime evaluator",
+                &["code"],
+                false,
+            )?)
+        } else if item.capability == Capability::TemplateEvaluation {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::TemplateSource,
+                "template evaluator",
+                &["template"],
+                false,
+            )?)
+        } else if item.capability == Capability::OutboundNetworkRequest {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::OutboundDestination,
+                "outbound request API",
+                &["endpoint", "url", "destination"],
+                false,
+            )?)
+        } else if item.capability == Capability::Redirect {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::RedirectDestination,
+                "redirect API",
+                &["location", "destination", "url"],
+                false,
+            )?)
+        } else if item.capability == Capability::FormatStringOutput {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::NativeFormat,
+                "printf-family API",
+                &["format"],
+                false,
+            )?)
+        } else if item.capability == Capability::Deserialization {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::ObjectDeserialization,
+                "executable object deserializer",
+                &["payload", "stream"],
+                false,
+            )?)
+        } else if item.capability == Capability::DatabaseQuery
+            && item.rule_id == "csharp-extended-nosql-json"
+        {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::RawNosql,
+                "raw document parser",
+                &["nosql_query"],
+                false,
+            )?)
+        } else if item.capability == Capability::LdapQuery {
+            let filter = item.captures.contains_key("filter");
+            let role = if filter {
+                "filter"
+            } else {
+                "distinguished_name"
+            };
+            let sink_capture = item.captures.get(role)?;
+            let constrained = evidence.iter().any(|candidate| {
+                candidate.kind == EvidenceKind::Validation
+                    && candidate.location.path == item.location.path
+                    && candidate.capability
+                        == if filter {
+                            Capability::LdapFilterEncoding
+                        } else {
+                            Capability::LdapDistinguishedNameEncoding
+                        }
+                    && candidate.captures.get(role).is_some_and(|control_capture| {
+                        control_capture.location.path == sink_capture.location.path
+                            && control_capture.location.start.byte_offset
+                                == sink_capture.location.start.byte_offset
+                            && control_capture.location.end.byte_offset
+                                == sink_capture.location.end.byte_offset
+                    })
+            });
+            Some(decision_origin_from_capture(
+                item,
+                if filter {
+                    DecisionCriticalBoundary::LdapFilter
+                } else {
+                    DecisionCriticalBoundary::LdapDistinguishedName
+                },
+                if filter {
+                    "LDAP filter API"
+                } else {
+                    "LDAP distinguished-name API"
+                },
+                &[role],
+                constrained,
+            )?)
+        } else if item.capability == Capability::XpathQuery {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::XpathExpression,
+                "XPath evaluator",
+                &["expression"],
+                false,
+            )?)
+        } else {
+            None
+        }
+    })
+}
+
+fn decision_origin_from_capture<'a>(
+    item: &'a Evidence,
+    boundary: DecisionCriticalBoundary,
+    style: &'static str,
+    roles: &[&str],
+    affirmatively_constrained: bool,
+) -> Option<DecisionCriticalOrigin<'a>> {
+    let operand = roles
+        .iter()
+        .find_map(|role| item.captures.get(*role))?
+        .text
+        .trim();
+    Some(DecisionCriticalOrigin {
+        boundary,
+        language: evidence_language_name(item),
+        style,
+        operand,
+        affirmatively_constrained,
+    })
+}
+
+fn evidence_language_name(item: &Evidence) -> &'static str {
+    let prefix = item.rule_id.split('-').next().unwrap_or_default();
+    match prefix {
+        "c" => "C",
+        "cpp" => "C++",
+        "csharp" => "C#",
+        "go" => "Go",
+        "java" => "Java",
+        "javascript" => "JavaScript",
+        "kotlin" => "Kotlin",
+        "php" => "PHP",
+        "python" => "Python",
+        "rust" => "Rust",
+        "tsx" => "TSX",
+        "typescript" => "TypeScript",
+        _ => "application",
+    }
+}
+
+fn is_known_shell_executable(value: &str) -> bool {
+    let normalized = value.replace('\\', "/").to_ascii_lowercase();
+    matches!(
+        normalized.rsplit('/').next().unwrap_or(&normalized),
+        "cmd"
+            | "cmd.exe"
+            | "powershell"
+            | "powershell.exe"
+            | "pwsh"
+            | "pwsh.exe"
+            | "sh"
+            | "bash"
+            | "zsh"
     )
 }
 
@@ -5469,11 +6038,21 @@ fn observation_review_basis(
         .into_iter()
         .collect::<Vec<_>>()
         .join(", ");
+    let decision_critical_origin = decision_critical_origin(evidence);
     ObservationReviewBasis {
-        relationship: "bounded_non_path_observation".to_string(),
-        security_question: format!(
-            "Does the supplied context establish a concrete weakness involving {capabilities}, rather than only the observed syntax or API boundary?"
-        ),
+        relationship: if let Some(origin) = decision_critical_origin {
+            origin.relationship()
+        } else {
+            "bounded_non_path_observation"
+        }
+        .to_string(),
+        security_question: if let Some(origin) = decision_critical_origin {
+            origin.security_question()
+        } else {
+            format!(
+                "Does the supplied context establish a concrete weakness involving {capabilities}, rather than only the observed syntax or API boundary?"
+            )
+        },
         observations,
         deterministic_facts,
         investigate: investigate.into_iter().collect(),
@@ -5683,6 +6262,10 @@ fn build_observation_reviews(
         indexed_references.extend(observation_group_references(group, sources, context_lines)?);
     }
     let review_context = ReviewContextIndex::build(sources, &indexed_references)?;
+    let bounded_callers = groups
+        .iter()
+        .any(|group| decision_critical_origin(&group.evidence).is_some())
+        .then(|| BoundedCallerIndex::build(sources));
     let mut php_contexts = BTreeMap::new();
     let mut reviews = Vec::new();
     for group in groups {
@@ -6001,6 +6584,28 @@ fn build_observation_reviews(
         {
             let (mut callers, callers_truncated) =
                 exact_csharp_caller_facts(sources, &group.path, &group.symbol, 2);
+            context_truncated |= callers_truncated;
+            facts.append(&mut callers);
+        }
+        if let Some(language) = languages.get(group.path.as_str()).copied()
+            && language != Language::Csharp
+            && let Some(origin) = decision_critical_origin(&group.evidence)
+        {
+            let (mut callers, callers_truncated) = bounded_callers
+                .as_ref()
+                .expect("decision-critical groups build the bounded caller index")
+                .facts(
+                    language,
+                    &group.path,
+                    &group.symbol,
+                    group
+                        .evidence
+                        .iter()
+                        .find(|item| item.kind == EvidenceKind::Sink)
+                        .map(|item| item.location.start.byte_offset),
+                    origin.operand,
+                    4,
+                );
             context_truncated |= callers_truncated;
             facts.append(&mut callers);
         }
@@ -6475,7 +7080,8 @@ fn exact_csharp_caller_facts(
                 .collect::<String>();
             if !compact.contains(&marker)
                 || line.trim_start().starts_with("//")
-                || textual_definition_identifier(line).as_deref() == Some(symbol)
+                || looks_like_csharp_method_declaration(line)
+                    && textual_definition_identifier(line).as_deref() == Some(symbol)
             {
                 continue;
             }
@@ -6508,6 +7114,473 @@ fn exact_csharp_caller_facts(
         }
     }
     (facts, false)
+}
+
+impl BoundedCallerIndex {
+    fn build(sources: &RepositorySources) -> Self {
+        #[derive(Clone)]
+        struct Definition {
+            language: Language,
+            name: String,
+            parameters: Vec<String>,
+            location: Location,
+            excerpt: String,
+        }
+
+        let mut records = Vec::new();
+        let mut definitions: BTreeMap<(Language, String), Vec<BoundedDefinition>> = BTreeMap::new();
+        for file in sources.files.values().filter(|file| {
+            file.language.is_some()
+                && file.source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES
+                && !is_nonproduction_review_context_path(&file.path)
+        }) {
+            let language = file.language.expect("filtered supported source");
+            let spans = line_spans(&file.source);
+            for (line_index, (start, _)) in spans.iter().copied().enumerate() {
+                let line = &file.source[spans[line_index].0..spans[line_index].1];
+                let Some(name) = definition_identifier_for_language(line, language) else {
+                    continue;
+                };
+                let parameters = definition_parameters(line, language);
+                let end_index =
+                    definition_end_for_language(&file.source, &spans, line_index, language, 96);
+                let location =
+                    location_from_offsets(&file.path, &file.source, start, spans[end_index].1);
+                definitions
+                    .entry((language, name.clone()))
+                    .or_default()
+                    .push(BoundedDefinition {
+                        location: location.clone(),
+                        parameters: parameters.clone(),
+                    });
+                records.push(Definition {
+                    language,
+                    name,
+                    parameters,
+                    location,
+                    excerpt: file.source[start..spans[end_index].1].to_string(),
+                });
+            }
+        }
+
+        let unique = definitions
+            .iter()
+            .filter(|(_, locations)| locations.len() == 1)
+            .map(|(key, _)| key.clone())
+            .collect::<BTreeSet<_>>();
+        let mut callers: BTreeMap<(Language, String), Vec<BoundedCallerRecord>> = BTreeMap::new();
+        for definition in records {
+            if !unique.contains(&(definition.language, definition.name.clone())) {
+                continue;
+            }
+            for (called, arguments) in exact_call_sites(&definition.excerpt) {
+                if called == definition.name
+                    || !unique.contains(&(definition.language, called.clone()))
+                {
+                    continue;
+                }
+                callers
+                    .entry((definition.language, called))
+                    .or_default()
+                    .push(BoundedCallerRecord {
+                        caller: definition.name.clone(),
+                        caller_parameters: definition.parameters.clone(),
+                        arguments,
+                        location: definition.location.clone(),
+                        excerpt: definition.excerpt.clone(),
+                    });
+            }
+        }
+        for values in callers.values_mut() {
+            values.sort_by(|left, right| {
+                left.location.path.cmp(&right.location.path).then_with(|| {
+                    left.location
+                        .start
+                        .byte_offset
+                        .cmp(&right.location.start.byte_offset)
+                })
+            });
+            values.dedup_by(|left, right| {
+                left.location == right.location && left.arguments == right.arguments
+            });
+        }
+        Self {
+            definitions,
+            callers,
+        }
+    }
+
+    fn facts(
+        &self,
+        language: Language,
+        definition_path: &str,
+        symbol: &str,
+        anchor_offset: Option<usize>,
+        operand: &str,
+        limit: usize,
+    ) -> (Vec<ReviewNeighborhoodFact>, bool) {
+        let Some(operand_root) = leading_identifier(operand) else {
+            return (Vec::new(), false);
+        };
+        let target = (!symbol.starts_with("line-"))
+            .then(|| terminal_identifier(symbol))
+            .flatten()
+            .filter(|target| is_plain_identifier(target) && is_helpful_reference_identifier(target))
+            .map(str::to_string)
+            .or_else(|| {
+                let offset = anchor_offset?;
+                self.definitions
+                    .iter()
+                    .filter_map(|((candidate_language, name), definitions)| {
+                        let [definition] = definitions.as_slice() else {
+                            return None;
+                        };
+                        (*candidate_language == language
+                            && definition.location.path == definition_path
+                            && definition.location.start.byte_offset <= offset
+                            && offset <= definition.location.end.byte_offset
+                            && definition
+                                .parameters
+                                .iter()
+                                .any(|parameter| parameter == operand_root))
+                        .then_some((
+                            name.clone(),
+                            definition
+                                .location
+                                .end
+                                .byte_offset
+                                .saturating_sub(definition.location.start.byte_offset),
+                        ))
+                    })
+                    .min_by_key(|(_, span)| *span)
+                    .map(|(name, _)| name)
+            });
+        let Some(target) = target else {
+            return (Vec::new(), false);
+        };
+        let key = (language, target.clone());
+        let Some([definition]) = self.definitions.get(&key).map(Vec::as_slice) else {
+            return (Vec::new(), false);
+        };
+        if definition.location.path != definition_path {
+            return (Vec::new(), false);
+        }
+        let tracked = definition
+            .parameters
+            .iter()
+            .enumerate()
+            .filter_map(|(index, parameter)| (parameter == operand_root).then_some(index))
+            .collect::<BTreeSet<_>>();
+        if tracked.is_empty() {
+            return (Vec::new(), false);
+        }
+
+        let mut facts = Vec::new();
+        let mut frontier = vec![(target.clone(), tracked)];
+        let mut seen = BTreeSet::from([target]);
+        for depth in 0..2 {
+            let mut next = Vec::new();
+            for (called, tracked_parameters) in frontier {
+                for caller in self.callers.get(&(language, called)).into_iter().flatten() {
+                    let forwarded = tracked_parameters
+                        .iter()
+                        .filter_map(|index| caller.arguments.get(*index))
+                        .filter_map(|argument| {
+                            forwarded_parameter_index(argument, &caller.caller_parameters)
+                        })
+                        .collect::<BTreeSet<_>>();
+                    let terminal_request_source = tracked_parameters
+                        .iter()
+                        .filter_map(|index| caller.arguments.get(*index))
+                        .any(|argument| exact_request_source_argument(language, argument));
+                    if forwarded.is_empty() && !terminal_request_source {
+                        continue;
+                    }
+                    if facts.len() == limit {
+                        return (facts, true);
+                    }
+                    facts.push(ReviewNeighborhoodFact {
+                        role: if depth == 0 {
+                            "exact_caller_context"
+                        } else {
+                            "upstream_caller_context"
+                        }
+                        .to_string(),
+                        symbol: caller.caller.clone(),
+                        location: caller.location.clone(),
+                        excerpt: caller.excerpt.clone(),
+                        evidence_id: None,
+                        provenance: textual_provenance(if terminal_request_source {
+                            "bounded exact request-source argument to one unique callee definition; lexical non-flow 1"
+                        } else if depth == 0 {
+                            "bounded exact parameter forwarding to one unique repository definition; lexical non-flow 1"
+                        } else {
+                            "bounded upstream parameter forwarding to one unique service definition; lexical non-flow 1"
+                        }),
+                    });
+                    if seen.insert(caller.caller.clone()) {
+                        next.push((caller.caller.clone(), forwarded));
+                    }
+                }
+            }
+            frontier = next;
+            if frontier.is_empty() {
+                break;
+            }
+        }
+        (facts, false)
+    }
+}
+
+fn exact_request_source_argument(language: Language, argument: &str) -> bool {
+    let compact = argument
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    match language {
+        Language::C | Language::Cpp => {
+            compact.starts_with("getenv(\"QUERY_STRING\")")
+                || compact.starts_with("getenv('QUERY_STRING')")
+        }
+        Language::Java | Language::Kotlin => {
+            compact.contains(".getParameter(") || compact.contains(".getQueryString(")
+        }
+        Language::Javascript | Language::Typescript | Language::Tsx => [
+            "req.query",
+            "req.body",
+            "req.params",
+            "request.query",
+            "request.body",
+        ]
+        .iter()
+        .any(|source| starts_member_access(&compact, source)),
+        Language::Python => [
+            "request.args",
+            "request.form",
+            "request.json",
+            "request.get_json(",
+        ]
+        .iter()
+        .any(|source| {
+            source.ends_with('(') && compact.starts_with(source)
+                || starts_member_access(&compact, source)
+        }),
+        Language::Php => [
+            "$_GET[",
+            "$_POST[",
+            "$_REQUEST[",
+            "$request->input(",
+            "$request->query(",
+            "$request->get(",
+        ]
+        .iter()
+        .any(|source| compact.starts_with(source)),
+        Language::Go => compact.contains(".URL.Query().Get(") || compact.contains(".FormValue("),
+        Language::Rust | Language::Csharp => false,
+    }
+}
+
+fn starts_member_access(value: &str, prefix: &str) -> bool {
+    value == prefix
+        || value.strip_prefix(prefix).is_some_and(|suffix| {
+            suffix.starts_with('.') || suffix.starts_with('[') || suffix.starts_with("?.")
+        })
+}
+
+fn exact_call_sites(source: &str) -> Vec<(String, Vec<String>)> {
+    let bytes = source.as_bytes();
+    let mut calls = Vec::new();
+    for open in source.match_indices('(').map(|(index, _)| index) {
+        let mut end = open;
+        while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        let mut start = end;
+        while start > 0
+            && (bytes[start - 1].is_ascii_alphanumeric() || matches!(bytes[start - 1], b'_' | b'$'))
+        {
+            start -= 1;
+        }
+        if start < end
+            && let Some(name) = source.get(start..end)
+            && is_helpful_reference_identifier(name)
+            && let Some(close) = matching_delimiter(source, open, b'(', b')')
+        {
+            calls.push((
+                name.to_string(),
+                split_top_level_arguments(&source[open + 1..close]),
+            ));
+        }
+    }
+    calls
+}
+
+fn definition_parameters(line: &str, language: Language) -> Vec<String> {
+    let Some(open) = line.find('(') else {
+        return Vec::new();
+    };
+    let Some(close) = matching_delimiter(line, open, b'(', b')') else {
+        return Vec::new();
+    };
+    split_top_level_arguments(&line[open + 1..close])
+        .into_iter()
+        .filter_map(|parameter| parameter_identifier(&parameter, language))
+        .collect()
+}
+
+fn parameter_identifier(parameter: &str, language: Language) -> Option<String> {
+    let parameter = parameter.split('=').next()?.trim();
+    let candidate = match language {
+        Language::Python
+        | Language::Rust
+        | Language::Kotlin
+        | Language::Typescript
+        | Language::Tsx => parameter.split(':').next()?.trim(),
+        Language::Go => parameter.split_whitespace().next()?,
+        _ => parameter
+            .split(|character: char| {
+                !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
+            })
+            .rfind(|part| !part.is_empty())?,
+    };
+    let candidate = candidate
+        .trim()
+        .trim_start_matches('&')
+        .trim_start_matches("mut ")
+        .trim_start_matches('$')
+        .trim_end_matches('?');
+    (!matches!(candidate, "self" | "this") && is_plain_identifier(candidate))
+        .then(|| candidate.to_string())
+}
+
+fn forwarded_parameter_index(argument: &str, parameters: &[String]) -> Option<usize> {
+    let argument = argument
+        .trim()
+        .trim_start_matches('&')
+        .trim_start_matches('*');
+    if argument.contains('(')
+        || argument.contains('+')
+        || argument.contains('%')
+        || argument.contains("||")
+        || argument.contains("&&")
+    {
+        return None;
+    }
+    let root = leading_identifier(argument)?;
+    let suffix = argument.trim_start_matches('$').strip_prefix(root)?;
+    if !suffix.is_empty()
+        && !suffix.starts_with('.')
+        && !suffix.starts_with('[')
+        && !suffix.starts_with("?.")
+        && !suffix.starts_with("->")
+    {
+        return None;
+    }
+    parameters.iter().position(|parameter| parameter == root)
+}
+
+fn leading_identifier(value: &str) -> Option<&str> {
+    let value = value
+        .trim()
+        .trim_start_matches('&')
+        .trim_start_matches('*')
+        .trim_start_matches('$');
+    let end = value
+        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .unwrap_or(value.len());
+    (end > 0).then(|| &value[..end])
+}
+
+fn split_top_level_arguments(source: &str) -> Vec<String> {
+    let bytes = source.as_bytes();
+    let mut arguments = Vec::new();
+    let mut start = 0;
+    let mut stack = Vec::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == active {
+                quote = None;
+            }
+            continue;
+        }
+        match byte {
+            b'\'' | b'"' | b'`' => quote = Some(byte),
+            b'(' | b'[' | b'{' => stack.push(byte),
+            b')' | b']' | b'}' => {
+                stack.pop();
+            }
+            b',' if stack.is_empty() => {
+                arguments.push(source[start..index].trim().to_string());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < source.len() || !source.trim().is_empty() {
+        arguments.push(source[start..].trim().to_string());
+    }
+    arguments
+}
+
+fn matching_delimiter(source: &str, open: usize, left: u8, right: u8) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if bytes.get(open) != Some(&left) {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, byte) in bytes.iter().copied().enumerate().skip(open) {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == active {
+                quote = None;
+            }
+            continue;
+        }
+        if matches!(byte, b'\'' | b'"' | b'`') {
+            quote = Some(byte);
+        } else if byte == left {
+            depth += 1;
+        } else if byte == right {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(index);
+            }
+        }
+    }
+    None
+}
+
+fn definition_identifier_for_language(line: &str, language: Language) -> Option<String> {
+    if language == Language::Python {
+        python_definition_identifier(line)
+    } else {
+        textual_definition_identifier(line)
+    }
+}
+
+fn definition_end_for_language(
+    source: &str,
+    spans: &[(usize, usize)],
+    definition_index: usize,
+    language: Language,
+    max_lines: usize,
+) -> usize {
+    if language == Language::Python {
+        python_definition_end_index(source, spans, definition_index, max_lines)
+    } else {
+        textual_definition_end_with_limit(source, spans, definition_index, max_lines)
+    }
 }
 
 fn exact_python_observation_caller_facts(
@@ -7803,6 +8876,36 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
     if item.kind != EvidenceKind::Sink {
         return false;
     }
+    if item.capability == Capability::DatabaseQuery && item.rule_id == "csharp-extended-nosql-json"
+    {
+        return has_known_string_literal(item, "nosql_query");
+    }
+    if item.capability == Capability::LdapQuery {
+        return has_known_string_literal(item, "filter")
+            || has_known_string_literal(item, "distinguished_name");
+    }
+    if item.capability == Capability::XpathQuery {
+        return has_known_string_literal(item, "expression");
+    }
+    if item
+        .tags
+        .iter()
+        .any(|tag| tag == "review-origin:decision-critical")
+    {
+        return match item.capability {
+            Capability::OutboundNetworkRequest => item
+                .context
+                .literals
+                .get("endpoint")
+                .is_some_and(has_fixed_http_authority),
+            Capability::Redirect => item
+                .context
+                .literals
+                .get("location")
+                .is_some_and(has_fixed_internal_redirect_prefix),
+            _ => false,
+        };
+    }
     let literal_role = match item.capability {
         Capability::DatabaseQuery => "query",
         // A fixed executable or fixed format string remains valuable inventory
@@ -7858,6 +8961,13 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
         || (item.capability == Capability::Redirect
             && literal.is_some_and(has_fixed_internal_redirect_prefix))
         || is_fixed_python_local_path(item, sources)
+}
+
+fn has_known_string_literal(item: &Evidence, role: &str) -> bool {
+    item.context.literals.get(role).is_some_and(|literal| {
+        literal.state == LiteralState::Known
+            && matches!(literal.value, Some(LiteralValue::String(_)))
+    })
 }
 
 /// Omit a standalone verdict job only when the source proves a narrowly safe
@@ -9415,6 +10525,9 @@ fn is_plain_identifier(value: &str) -> bool {
 }
 
 fn observation_review_title(evidence: &[Evidence]) -> String {
+    if let Some(origin) = decision_critical_origin(evidence) {
+        return origin.title().to_string();
+    }
     let mut anchors = evidence
         .iter()
         .filter(|item| {
@@ -9566,6 +10679,7 @@ fn observation_review_questions(
         evidence.iter().any(|item| {
             item.kind == EvidenceKind::Sink && item.capability == Capability::DatabaseQuery
         }) && facts.iter().any(|fact| fact.role == "exact_caller_context");
+    let decision_critical_origin = decision_critical_origin(evidence);
     let has_browser_outbound_request = evidence.iter().any(|item| {
         item.kind == EvidenceKind::Sink
             && item.capability == Capability::OutboundNetworkRequest
@@ -9730,6 +10844,11 @@ fn observation_review_questions(
         );
     } else if !has_precise_node_boundary && let Some(question) = browser_html_endpoint_question {
         questions.push(question);
+    } else if !has_precise_node_boundary
+        && let Some(origin) = decision_critical_origin
+        && !origin.affirmatively_constrained
+    {
+        questions.push(origin.unresolved_question());
     } else if !has_precise_node_boundary && direct_request_resource_selector {
         questions.push(
             "Does this request-selected resource reach a sensitive read, mutation, or response without a later owner or tenant constraint?"
@@ -10250,6 +11369,9 @@ fn missing_protection_question(capability: Capability) -> &'static str {
         }
         Capability::LdapQuery => {
             "Is each source-derived LDAP value encoded for its exact filter or distinguished-name context before query construction?"
+        }
+        Capability::XpathQuery => {
+            "Is the XPath expression fixed, with source-derived values supplied only through bound variables or an exact allowlist?"
         }
         Capability::FileUpload | Capability::UploadedFileContent | Capability::UploadedFilePath => {
             "Does the upload path enforce server-generated storage names, path containment, size limits, and content validation appropriate to later use?"
@@ -12207,6 +13329,8 @@ fn is_textual_callable_definition(line: &str) -> bool {
     trimmed.contains("function ")
         || trimmed.starts_with("func ")
         || trimmed.starts_with("func (")
+        || trimmed.starts_with("fun ")
+        || trimmed.starts_with("fn ")
         || trimmed.starts_with("def ")
         || ((trimmed.starts_with("const ")
             || trimmed.starts_with("let ")
@@ -12673,7 +13797,8 @@ fn collect_review_reference_tokens(source: &str, output: &mut BTreeSet<String>) 
                 || lower.contains("allowlist")
                 || lower.contains("redirect")
         };
-        if is_helpful_reference_identifier(token)
+        if before != Some('@')
+            && is_helpful_reference_identifier(token)
             && (after == Some('(')
                 || before == Some('.') && after == Some('(')
                 || qualified_call
@@ -12940,7 +14065,7 @@ fn textual_definition_identifier(line: &str) -> Option<String> {
     for (index, token) in tokens.iter().enumerate() {
         if matches!(
             *token,
-            "const" | "let" | "var" | "function" | "class" | "def"
+            "const" | "let" | "var" | "function" | "class" | "def" | "fn" | "fun"
         ) {
             let name = tokens.get(index + 1).copied()?;
             return is_helpful_reference_identifier(name).then(|| name.to_string());
@@ -12967,6 +14092,26 @@ fn textual_definition_identifier(line: &str) -> Option<String> {
             if is_helpful_reference_identifier(name) {
                 return Some(name.to_string());
             }
+        }
+    }
+    if trimmed.contains('(')
+        && !trimmed.contains('=')
+        && !trimmed.ends_with(';')
+        && ![
+            "if", "for", "while", "switch", "catch", "return", "throw", "new",
+        ]
+        .iter()
+        .any(|keyword| trimmed.starts_with(&format!("{keyword} ")))
+    {
+        let prefix = trimmed.split_once('(')?.0.trim_end();
+        let name = prefix
+            .split(|character: char| {
+                !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
+            })
+            .rfind(|token| !token.is_empty())?;
+        let prefix_without_name = prefix[..prefix.rfind(name)?].trim();
+        if !prefix_without_name.is_empty() && is_helpful_reference_identifier(name) {
+            return Some(name.to_string());
         }
     }
     let first = tokens.first().copied()?;

@@ -4,6 +4,8 @@ Mehscan is a source security scanner built for developers and AI coding agents. 
 
 Mehscan is under active development. It supports C, C++, C#, Java, JavaScript, TypeScript/TSX, Python, Go, and Rust, with partial PHP and Kotlin JVM coverage. Coverage varies by language and framework; see the [PHP](docs/php-coverage.md) and [Kotlin](docs/kotlin-coverage.md) profiles for their limitations.
 
+See [extended SQL and NoSQL coverage](docs/extended-database-coverage.md) for database query mechanics and remaining language-specific gaps.
+
 ## What it does
 
 - Scans source code locally without executing build tools or application code.
@@ -72,6 +74,10 @@ The optional [security skill](skills/mehscan-security/SKILL.md) guides the agent
 
 ```text
 mehscan report --run mehscan-review --responses mehscan-review/responses-reviewer --format markdown --output mehscan-report.md --reviewer reviewer-id
+# For deliberately scoped triage; output includes completed/total review coverage:
+mehscan report --run mehscan-review --allow-partial true --format markdown --output mehscan-partial-report.md
+# Generate the exact response contract without a PowerShell helper:
+mehscan investigate review-response-schema --bundle REQUEST.json --output response-schema.json
 ```
 
 A complete review requires a validated response for every request in the manifest. Selected or sampled reviews cover only the reviewed scope. The [report quality skill](skills/mehscan-report-quality/SKILL.md) checks the final handoff for clarity and actionability.
@@ -81,6 +87,8 @@ A complete review requires a validated response for every request in the manifes
 - [Review and reporting formats](docs/output-contract.md)
 - [AI reviewer contract](docs/ai-reviewer-contract.md)
 - [AI triage contract](docs/ai-triage-contract.md)
+- [Extended rule gap analysis](docs/extended-rule-gap-analysis.md)
+- [Extended database coverage](docs/extended-database-coverage.md)
 - [Latest release notes](docs/release-notes-v0.4.0.md)
 
 ## License

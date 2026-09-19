@@ -595,6 +595,10 @@ fn push_sink_dynamic<'tree, const N: usize>(
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
     evidence: &mut Vec<Evidence>,
 ) {
+    let captured_literals = captures
+        .iter()
+        .map(|(role, capture)| ((*role).to_string(), literals.evaluate(capture)))
+        .collect();
     evidence.push(Evidence {
         id: evidence_id(rule_id, path, node.range().start, node.range().end),
         kind: EvidenceKind::Sink,
@@ -625,6 +629,7 @@ fn push_sink_dynamic<'tree, const N: usize>(
             comment: comments.is_in_comment(node.range()),
             reachability: Some(reachability::classify(node, literals)),
             availability: Some(conditional.availability_for(node.range())),
+            literals: captured_literals,
             ..EvidenceContext::default()
         },
         symbol_resolution: None,

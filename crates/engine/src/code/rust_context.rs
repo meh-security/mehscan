@@ -64,6 +64,9 @@ pub(crate) fn is_exact_database_query(
     if matches!(
         canonical.as_str(),
         "sqlx::query"
+            | "sqlx::query_with"
+            | "sqlx::query_as_with"
+            | "sqlx::query_scalar_with"
             | "sqlx::query_as"
             | "sqlx::query_scalar"
             | "diesel::sql_query"
