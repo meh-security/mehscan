@@ -397,6 +397,9 @@ remain AI context rather than authorization controls.
 
 ## AI skill contract
 
+The pinned real-application evaluation and current bundle gaps are recorded in
+[authorization-framework-validation.md](authorization-framework-validation.md).
+
 The security skill should use authorization facts to answer these questions in
 order:
 
