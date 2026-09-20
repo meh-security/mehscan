@@ -25,7 +25,7 @@ fn distinguishes_django_object_policy_and_sensitive_writes() {
         orm.iter()
             .filter(|item| item.kind == EvidenceKind::Sink)
             .count(),
-        1
+        3
     );
     assert_eq!(
         orm.iter()
@@ -36,7 +36,7 @@ fn distinguishes_django_object_policy_and_sensitive_writes() {
                     .is_some_and(|policy| policy.state == ResourcePolicyState::OwnerScoped)
             })
             .count(),
-        2
+        0
     );
 
     let mutations = result

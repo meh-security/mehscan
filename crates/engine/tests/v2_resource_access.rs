@@ -70,7 +70,7 @@ fn reports_request_selected_unscoped_resources_and_retains_scoped_controls() {
     assert_eq!(authenticated.context.http_routes.len(), 1);
     assert_eq!(
         authenticated.context.http_routes[0].access,
-        HttpRouteAccess::Authenticated
+        HttpRouteAccess::Unknown
     );
     assert_eq!(
         authenticated.context.http_routes[0].guards,

@@ -195,7 +195,7 @@ fn preserves_decisive_observation_guidance_across_every_language() {
     // Reviewer-visible decision-ready path/observation and review-specific
     // summary, mutation/representation/origin checks and per-review evidence
     // scope instructions are part of the serialized contract and fingerprint.
-    assert_eq!(job.fingerprint, "path-reviewpack-78f99557292114ec");
+    assert_eq!(job.fingerprint, "path-reviewpack-6d5702cc1f621a80");
     let languages = job
         .observation_reviews
         .iter()
