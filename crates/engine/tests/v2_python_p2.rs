@@ -51,7 +51,7 @@ fn models_django_drf_routes_request_shapes_and_access_context() {
         item.context.http_routes.iter().any(|route| {
             route.path == "/api/public"
                 && route.method == "GET"
-                && route.access == HttpRouteAccess::Unknown
+                && route.access == HttpRouteAccess::ExplicitlyPublic
         })
     }));
 

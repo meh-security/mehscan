@@ -2254,13 +2254,9 @@ fn collect_express_routes(
         );
         guards.sort();
         guards.dedup();
-        let access = if guards.iter().any(|guard| is_role_guard(guard)) {
-            HttpRouteAccess::RoleRestricted
-        } else if guards.iter().any(|guard| is_auth_guard(guard)) {
-            HttpRouteAccess::Authenticated
-        } else {
-            HttpRouteAccess::Unknown
-        };
+        // Express middleware is application-defined. Preserve exact route and
+        // mount attachments, but leave their meaning to bounded review.
+        let access = HttpRouteAccess::Unknown;
         routes
             .entry(handler.clone())
             .or_default()
@@ -3770,31 +3766,11 @@ fn resolve_handler(
 
 fn guard_name(node: &Node<'_, StrDoc<SupportLang>>) -> Option<String> {
     if let Some(call) = call_site(node.clone()) {
-        let terminal = terminal_symbol(&call.callee);
-        return (is_auth_guard(terminal) || is_role_guard(terminal)).then_some(call.callee);
+        return Some(call.callee);
     }
     let text = node.text();
     let name = simple_identifier(text.trim())?;
-    (is_auth_guard(name) || is_role_guard(name)).then(|| name.to_string())
-}
-
-fn is_auth_guard(name: &str) -> bool {
-    matches!(
-        terminal_symbol(name),
-        "authenticate" | "isAuthorized" | "appendUserId" | "isLoggedIn" | "requireAuth"
-    )
-}
-
-fn is_role_guard(name: &str) -> bool {
-    matches!(
-        terminal_symbol(name),
-        "isAccounting"
-            | "isAdmin"
-            | "isAdminUserMiddleware"
-            | "requireRole"
-            | "authorizeRole"
-            | "denyAll"
-    )
+    Some(name.to_string())
 }
 
 fn handler_reads_collection(
@@ -5584,10 +5560,11 @@ fn add_express_session_policy<'tree>(
             .flatten()
             .filter(|route| {
                 matches!(route.method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE")
-                    && matches!(
-                        route.access,
-                        HttpRouteAccess::Authenticated | HttpRouteAccess::RoleRestricted
-                    )
+                    && (!route.guards.is_empty()
+                        || matches!(
+                            route.access,
+                            HttpRouteAccess::Authenticated | HttpRouteAccess::RoleRestricted
+                        ))
             })
             .map(|route| format!("{} {}", route.method, route.path))
             .collect::<Vec<_>>();
@@ -6268,7 +6245,7 @@ mod tests {
         };
 
         let checkout = route("/rest/basket/:id/checkout");
-        assert_eq!(checkout.access, HttpRouteAccess::Authenticated);
+        assert_eq!(checkout.access, HttpRouteAccess::Unknown);
         assert!(
             checkout
                 .guards

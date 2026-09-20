@@ -55,9 +55,8 @@ fn distinguishes_python_identity_boundaries_and_effective_drf_policy() {
         })
     }));
     assert!(handlers.iter().any(|item| {
-        item.context
-            .http_routes
-            .iter()
-            .any(|route| route.path == "/public" && route.access == HttpRouteAccess::Unknown)
+        item.context.http_routes.iter().any(|route| {
+            route.path == "/public" && route.access == HttpRouteAccess::ExplicitlyPublic
+        })
     }));
 }

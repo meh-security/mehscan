@@ -44,7 +44,8 @@ fn locks_the_js5_fastify_clean_baseline() {
     assert!(fastify.iter().any(|item| {
         item.rule_id == "typescript-fastify-route-pre-handler"
             && item.capability == Capability::Authorization
-            && item.context.http_routes[0].access == HttpRouteAccess::RoleRestricted
+            && item.context.http_routes[0].access == HttpRouteAccess::Unknown
+            && !item.context.http_routes[0].guards.is_empty()
     }));
     for capability in [
         Capability::CookieConfiguration,

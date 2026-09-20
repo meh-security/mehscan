@@ -724,7 +724,7 @@ impl GoProjectContext {
         self.routes_by_handler.get(&symbol).is_some_and(|routes| {
             routes.iter().any(|route| {
                 route_matches_path(&route.target_hint, path)
-                    && route.access == HttpRouteAccess::Authenticated
+                    && (!route.guards.is_empty() || route.access == HttpRouteAccess::Authenticated)
                     && matches!(route.method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE")
             })
         })
@@ -835,24 +835,13 @@ fn collect_routes(
             .nth(1)
             .and_then(|text| first_quoted(text).map(|(value, _)| value))
             .unwrap_or_else(|| "ANY".to_string());
-        let auth_guard = [
-            "SetMiddlewareAuthentication",
-            "RequireAuth",
-            "AuthMiddleware",
-            "JWTMiddleware",
-        ]
-        .into_iter()
-        .find(|guard| statement.contains(guard));
+        let guards = go_route_attachments(rest, handler);
         routes.entry(handler.clone()).or_default().push(GoRoute {
             target_hint: selector_before(rest, handler).unwrap_or_default(),
             method,
             path,
-            access: if auth_guard.is_some() {
-                HttpRouteAccess::Authenticated
-            } else {
-                HttpRouteAccess::Unknown
-            },
-            guards: auth_guard.into_iter().map(str::to_string).collect(),
+            access: HttpRouteAccess::Unknown,
+            guards,
         });
     }
     for statement in source.lines() {
@@ -879,21 +868,46 @@ fn collect_routes(
         else {
             continue;
         };
-        let auth_guard = ["AuthCheck", "RequireAuth", "Authenticated", "JWTMiddleware"]
-            .into_iter()
-            .find(|guard| statement.contains(guard));
+        let guards = go_route_attachments(rest, handler);
         routes.entry(handler.clone()).or_default().push(GoRoute {
             target_hint: selector_before(rest, handler).unwrap_or_default(),
             method: method.to_string(),
             path,
-            access: if auth_guard.is_some() {
-                HttpRouteAccess::Authenticated
-            } else {
-                HttpRouteAccess::Unknown
-            },
-            guards: auth_guard.into_iter().map(str::to_string).collect(),
+            access: HttpRouteAccess::Unknown,
+            guards,
         });
     }
+}
+
+fn go_route_attachments(arguments: &str, handler: &str) -> Vec<String> {
+    let prefix = arguments
+        .rfind(handler)
+        .map(|index| &arguments[..index])
+        .unwrap_or(arguments);
+    let mut names = BTreeSet::new();
+    for (open, _) in prefix.match_indices('(') {
+        let before = prefix[..open].trim_end();
+        let start = before
+            .rfind(|character: char| {
+                !(character.is_ascii_alphanumeric() || matches!(character, '_' | '.'))
+            })
+            .map_or(0, |index| index + 1);
+        let name = before[start..].rsplit('.').next().unwrap_or_default();
+        if valid_identifier(name) {
+            names.insert(name.to_string());
+        }
+    }
+    for argument in prefix.split(',').map(str::trim) {
+        let name = argument
+            .trim_matches(|character: char| matches!(character, '(' | ')' | '[' | ']'))
+            .rsplit('.')
+            .next()
+            .unwrap_or_default();
+        if valid_identifier(name) {
+            names.insert(name.to_string());
+        }
+    }
+    names.into_iter().collect()
 }
 
 fn collect_sql_summaries(source: &str, summaries: &mut BTreeMap<String, Vec<SqlParameterSummary>>) {
@@ -1514,7 +1528,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalogs_authenticated_gorilla_route() {
+    fn catalogs_gorilla_middleware_without_inferring_its_policy() {
         let source = r#"
 package api
 func Handle(w http.ResponseWriter, r *http.Request) {}
@@ -1527,7 +1541,8 @@ func Routes(router *mux.Router) {
         let routes = context.routes_by_handler.get("Handle").unwrap();
         assert_eq!(routes[0].path, "/items/{id}");
         assert_eq!(routes[0].method, "GET");
-        assert_eq!(routes[0].access, HttpRouteAccess::Authenticated);
+        assert_eq!(routes[0].access, HttpRouteAccess::Unknown);
+        assert!(routes[0].guards.iter().any(|guard| guard == "RequireAuth"));
     }
 
     #[test]

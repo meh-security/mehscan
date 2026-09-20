@@ -47,7 +47,7 @@ impl PythonIdentityContext {
                 };
             }
             return Self {
-                default_access: Some(HttpRouteAccess::Unknown),
+                default_access: Some(HttpRouteAccess::ExplicitlyPublic),
                 default_guard: Some(
                     if permissions_declared && policy.contains("AllowAny") {
                         "DEFAULT_PERMISSION_CLASSES:AllowAny"

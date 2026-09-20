@@ -895,7 +895,10 @@ fn add_route_authorization_review<'tree>(
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
     evidence: &mut Vec<Evidence>,
 ) {
-    if route.access != HttpRouteAccess::Unknown {
+    if matches!(
+        route.access,
+        HttpRouteAccess::Authenticated | HttpRouteAccess::RoleRestricted | HttpRouteAccess::Denied
+    ) {
         return;
     }
     let lower_path = route.path.to_ascii_lowercase();

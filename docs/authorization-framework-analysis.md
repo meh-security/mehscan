@@ -1,5 +1,57 @@
 # Authorization framework analysis
 
+## P0-P3 implementation goal
+
+This roadmap is the active implementation goal for the current development
+run. The deliverables are:
+
+- **P0 — shared semantics:** distinguish unknown, explicitly public, denied,
+  authenticated, and role-restricted routes; preserve custom control names as
+  attachments without inferring their meaning from words such as `auth`,
+  `role`, or `admin`.
+- **P1 — managed web frameworks:** emit bounded authorization boundary,
+  requirement, default, exception, activation, attachment, and resource facts
+  for ASP.NET Core, Spring/Spring Security, Django/DRF, NestJS, Express, and
+  Fastify.
+- **P2 — PHP frameworks:** add the same factual coverage for Laravel gates,
+  policies, middleware, and route groups, and for Symfony `access_control`,
+  security attributes, voters, and controller authorization calls.
+- **P3 — remaining common frameworks:** add factual coverage for FastAPI,
+  Flask, Go HTTP routers, Next.js, and Ktor.
+
+Completion means these facts are attached to relevant path and observation
+review bundles under the bounds below. It does not require resolving custom
+policy meaning, dependency injection, meta-programmed registration, or
+cross-file execution flow; those remain explicit AI review questions.
+
+### Implementation status
+
+P0 through P3 are implemented on `fix/dangerous-sink-shapes`:
+
+- Route access now distinguishes `unknown`, `explicitly_public`, `denied`,
+  `authenticated`, and `role_restricted`. Express, NestJS, Fastify, and Go
+  preserve custom middleware/guard attachments without classifying access from
+  names.
+- Authorization facts are collected in the same bounded project-context pass
+  as framework facts. A fact is admitted only when its owning framework was
+  identified in the same manifest scope.
+- Path and observation bundles receive the closest local boundary,
+  requirement, attachment, exception, resource, guard-definition, and order
+  facts. Only defaults and activation facts may cross files within the same
+  framework scope.
+- ASP.NET Core, Spring Security, Ktor, Express, NestJS, Fastify, Next.js,
+  Django, DRF, Flask, FastAPI, Gin/Echo/Fiber/Chi/Gorilla, Laravel, and Symfony
+  contribute framework-specific authorization facts.
+- The triage contract tells the AI reviewer to distinguish authentication,
+  coarse authorization, and action/resource authorization; validate custom
+  definitions and rejection behavior; and avoid dismissing a dangerous sink
+  merely because a security-sounding attachment is present.
+
+The implementation adds no CFG, DI resolution, call graph, or taint pass. It
+scans files already admitted to the framework-context pass, ignores files over
+512 KiB, performs bounded exact-name lookups already used by review context,
+and adds at most eight authorization facts to one review.
+
 ## Goal
 
 Authorization coverage should preserve three separate questions:
@@ -34,10 +86,13 @@ requirement as facts instead of adding an enum variant for every policy style.
 | `resource_authorization_context` | Exact subject/resource/action arguments, owner or tenant predicate, or framework object-permission call associated with the sensitive operation. |
 | `authorization_order_context` | Exact source order when the framework defines order semantically, such as Express/Go middleware registered before a route or ordered Spring request matchers. |
 
-Bound each review to one effective default, two direct requirements, two
-attachment facts, and one custom definition. Reuse the framework index and
-existing exact-name context index. This remains one source pass plus bounded
-name lookups: no general call graph, DI resolution, CFG, or taint propagation.
+Bound each review to eight authorization facts, with per-role limits of one
+effective default, exception, resource check, or custom definition and two
+requirements, attachments, activation entries, or order entries. Prefer facts
+closest to the supplied sink, source, caller, and helper excerpts. Reuse the
+framework index and existing exact-name context index. This remains one source
+pass plus bounded name lookups: no general call graph, DI resolution, CFG, or
+taint propagation.
 
 ## What should become findings
 
