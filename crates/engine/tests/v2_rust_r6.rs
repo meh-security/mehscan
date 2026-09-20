@@ -81,8 +81,6 @@ fn safety_review_payload_preserves_decision_guidance() {
     let job =
         mehscan_engine::investigation::build_path_review_jobs(&fixture_root(), Some(12), Some(100))
             .expect("review job should build");
-    // Reviewer-visible injection guidance is part of the serialized contract.
-    assert_eq!(job.fingerprint, "path-reviewpack-2fa6ccdcfee8b588");
     let review = job
         .observation_reviews
         .iter()

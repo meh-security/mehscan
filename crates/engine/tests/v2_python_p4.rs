@@ -27,6 +27,8 @@ fn distinguishes_django_object_policy_and_sensitive_writes() {
             .count(),
         3
     );
+    // The fixture's jwt_auth_required decorator is a no-op. Its name cannot
+    // prove that the user parameter is an authenticated owner identity.
     assert_eq!(
         orm.iter()
             .filter(|item| {
