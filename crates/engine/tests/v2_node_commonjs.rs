@@ -40,7 +40,7 @@ fn resolves_commonjs_constructor_handlers_and_needle_ssrf() {
     assert!(sink.context.http_routes.iter().any(|route| {
         route.method == "GET"
             && route.path == "/research"
-            && route.access == HttpRouteAccess::Authenticated
+            && route.access == HttpRouteAccess::Unknown
             && route.guards == ["isLoggedIn"]
     }));
 

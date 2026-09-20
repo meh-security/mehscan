@@ -35,6 +35,97 @@ pub(crate) fn add_rust_sql_sources<'tree>(
     add_fixed_origin_url_controls(path, root, comments, conditional, literals, evidence);
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_rust_security_policy_observations<'tree>(
+    path: &str,
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    language: Language,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    if language != Language::Rust {
+        return;
+    }
+    for assignment in root
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "assignment_expression")
+    {
+        let text = compact(assignment.text().as_ref());
+        let Some((property, value)) = text.rsplit_once('=') else {
+            continue;
+        };
+        if value != "false" {
+            continue;
+        }
+        let Some((receiver, setting)) = property.rsplit_once('.') else {
+            continue;
+        };
+        if !matches!(setting, "validate_exp" | "validate_aud")
+            || !is_jsonwebtoken_validation_receiver(root, &assignment, receiver)
+        {
+            continue;
+        }
+        let (rule_id, cwe, tag) = if setting == "validate_exp" {
+            (
+                "rust-jwt-expiration-validation-disabled",
+                "CWE-613",
+                "expiration-validation-disabled",
+            )
+        } else {
+            (
+                "rust-jwt-audience-validation-disabled",
+                "CWE-287",
+                "audience-validation-disabled",
+            )
+        };
+        push_security_configuration(
+            path,
+            &assignment,
+            rule_id,
+            Capability::Authentication,
+            &[cwe],
+            &["jwt", "jsonwebtoken", tag, "explicit-security-disable"],
+            comments,
+            conditional,
+            literals,
+            evidence,
+        );
+    }
+}
+
+fn is_jsonwebtoken_validation_receiver(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    use_site: &Node<'_, StrDoc<SupportLang>>,
+    receiver: &str,
+) -> bool {
+    if !is_identifier(receiver) {
+        return false;
+    }
+    let scope = use_site
+        .ancestors()
+        .find(|node| matches!(node.kind().as_ref(), "function_item" | "closure_expression"))
+        .map(|node| node.range())
+        .unwrap_or_else(|| root.range());
+    root.dfs()
+        .filter(|node| {
+            node.kind().as_ref() == "let_declaration"
+                && node.range().start >= scope.start
+                && node.range().end <= scope.end
+                && node.range().start < use_site.range().start
+                && node
+                    .field("pattern")
+                    .is_some_and(|pattern| pattern.text().trim() == receiver)
+        })
+        .max_by_key(|node| node.range().start)
+        .and_then(|declaration| declaration.field("value"))
+        .is_some_and(|value| {
+            canonical_path(root, &compact(value.text().as_ref()))
+                .starts_with("jsonwebtoken::Validation::")
+        })
+}
+
 pub(crate) fn is_exact_axum_extractor(root: &Node<'_, StrDoc<SupportLang>>, visible: &str) -> bool {
     rust_imports(root).get(visible).is_some_and(|canonical| {
         matches!(
@@ -313,7 +404,10 @@ pub(crate) fn is_exact_process_execution(
     if observed.ends_with(".arg") || observed.ends_with(".args") {
         return true;
     }
-    canonical_path(root, &observed) == "std::process::Command::new"
+    matches!(
+        canonical_path(root, &observed).as_str(),
+        "std::process::Command::new" | "tokio::process::Command::new"
+    )
 }
 
 pub(crate) fn is_reviewable_safety_boundary(
@@ -913,6 +1007,49 @@ fn push_parameter_source<'tree>(
         symbol_resolution: None,
         rule_id: rule_id.to_string(),
         related_evidence: related.into_iter().map(str::to_string).collect(),
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_security_configuration<'tree>(
+    path: &str,
+    node: &Node<'tree, StrDoc<SupportLang>>,
+    rule_id: &str,
+    capability: Capability,
+    cwes: &[&str],
+    tags: &[&str],
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    if comments.is_in_comment(node.range()) {
+        return;
+    }
+    evidence.push(Evidence {
+        id: evidence_id(path, rule_id, node.range().start, node.range().end),
+        kind: EvidenceKind::SecurityConfiguration,
+        capability,
+        location: location(path, node),
+        enclosing_symbol: enclosing_symbol(node),
+        captures: BTreeMap::from([("policy".to_string(), capture(path, node))]),
+        cwe_candidates: cwes.iter().map(|cwe| (*cwe).to_string()).collect(),
+        tags: tags.iter().map(|tag| (*tag).to_string()).collect(),
+        confidence: Confidence::High,
+        provenance: Provenance {
+            resolution: Resolution::Ast,
+            engine: "mehscan bounded-rust-security-policy 1".to_string(),
+            rule_version: 1,
+        },
+        context: EvidenceContext {
+            comment: false,
+            reachability: Some(reachability::classify(node, literals)),
+            availability: Some(conditional.availability_for(node.range())),
+            ..EvidenceContext::default()
+        },
+        symbol_resolution: None,
+        rule_id: rule_id.to_string(),
+        related_evidence: Vec::new(),
     });
 }
 

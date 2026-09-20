@@ -240,6 +240,7 @@ pub(crate) fn scan_source(
                         | "typescript-database-query"
                         | "tsx-database-query"
                         | "python-database-query"
+                        | "python-stored-procedure-call"
                 ) {
                     let receiver = matched.get_env().get_match("DATABASE");
                     if receiver.is_some_and(|receiver| {
@@ -1352,6 +1353,15 @@ pub(crate) fn scan_source(
         &mut evidence,
     );
     super::rust_context::add_rust_sql_sources(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    super::rust_context::add_rust_security_policy_observations(
         path,
         &root,
         language,

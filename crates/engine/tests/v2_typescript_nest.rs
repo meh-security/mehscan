@@ -59,7 +59,7 @@ fn catalogs_exact_nestjs_boundaries_aliases_guards_pipes_and_response_sinks() {
     let preview_route = &preview.context.http_routes[0];
     assert_eq!(preview_route.method, "POST");
     assert_eq!(preview_route.path, "/reports/preview");
-    assert_eq!(preview_route.access, HttpRouteAccess::RoleRestricted);
+    assert_eq!(preview_route.access, HttpRouteAccess::Unknown);
     assert_eq!(preview_route.guards, ["JwtAuthGuard", "RolesGuard"]);
     assert_eq!(preview.captures["selector"].text, "html");
     assert_eq!(

@@ -278,3 +278,89 @@
     references:
       - https://cwe.mitre.org/data/definitions/94.html
       - https://docs.rs/rhai/latest/rhai/struct.Engine.html
+
+- id: php-extended-xpath-query
+  version: 1
+  title: PHP DOM XPath expression evaluation
+  language: php
+  kind: sink
+  capability: xpath_query
+  confidence: high
+  cwe: [CWE-643]
+  match:
+    any:
+      - pattern: $BOUNDARY->query($EXPRESSION)
+        context: <?php $BOUNDARY->query($EXPRESSION);
+        selector: member_call_expression
+        captures: { boundary: BOUNDARY, expression: EXPRESSION }
+      - pattern: $BOUNDARY->query($EXPRESSION, $$$ARGUMENTS)
+        context: <?php $BOUNDARY->query($EXPRESSION, $$$ARGUMENTS);
+        selector: member_call_expression
+        captures: { boundary: BOUNDARY, expression: EXPRESSION }
+      - pattern: $BOUNDARY->evaluate($EXPRESSION)
+        context: <?php $BOUNDARY->evaluate($EXPRESSION);
+        selector: member_call_expression
+        captures: { boundary: BOUNDARY, expression: EXPRESSION }
+      - pattern: $BOUNDARY->evaluate($EXPRESSION, $$$ARGUMENTS)
+        context: <?php $BOUNDARY->evaluate($EXPRESSION, $$$ARGUMENTS);
+        selector: member_call_expression
+        captures: { boundary: BOUNDARY, expression: EXPRESSION }
+  tags: [extended-rules, php, xpath, query, injection, typed-receiver]
+  ai: &xpath_guidance
+    investigate:
+      - origin and construction of the captured XPath expression
+      - whether external values alter XPath grammar or remain separately supplied variables
+      - document sensitivity, authorization scope and result disclosure
+    verify:
+      - confirm the DOMXPath receiver and exact expression operand
+      - distinguish fixed expressions and correctly quoted literal values from dynamic XPath syntax
+    exclude:
+      - exclude unrelated query or evaluate methods and fixed expressions
+  provenance:
+    note: Locally constructed, typed or constructor-owned DOMXPath receivers preserve the expression operand for CWE-643 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/643.html
+      - https://www.php.net/manual/en/class.domxpath.php
+
+- id: python-lxml-xpath-query
+  version: 1
+  title: Python lxml XPath expression evaluation
+  language: python
+  kind: sink
+  capability: xpath_query
+  confidence: high
+  cwe: [CWE-643]
+  match:
+    any:
+      - pattern: etree.XPath($EXPRESSION)
+        captures: { expression: EXPRESSION }
+      - pattern: etree.ETXPath($EXPRESSION)
+        captures: { expression: EXPRESSION }
+      - pattern: lxml.etree.XPath($EXPRESSION)
+        captures: { expression: EXPRESSION }
+      - pattern: lxml.etree.ETXPath($EXPRESSION)
+        captures: { expression: EXPRESSION }
+      - pattern: etree.fromstring($PAYLOAD).xpath($EXPRESSION)
+        captures: { payload: PAYLOAD, expression: EXPRESSION }
+      - pattern: etree.parse($PAYLOAD).xpath($EXPRESSION)
+        captures: { payload: PAYLOAD, expression: EXPRESSION }
+      - pattern: lxml.etree.fromstring($PAYLOAD).xpath($EXPRESSION)
+        captures: { payload: PAYLOAD, expression: EXPRESSION }
+      - pattern: lxml.etree.parse($PAYLOAD).xpath($EXPRESSION)
+        captures: { payload: PAYLOAD, expression: EXPRESSION }
+      - pattern: $BOUNDARY.xpath($EXPRESSION)
+        captures: { boundary: BOUNDARY, expression: EXPRESSION }
+      - pattern: $BOUNDARY.xpath($EXPRESSION, $$$ARGUMENTS)
+        captures: { boundary: BOUNDARY, expression: EXPRESSION }
+  symbols:
+    - canonical: lxml.etree.XPath
+      captures: { expression: 0 }
+    - canonical: lxml.etree.ETXPath
+      captures: { expression: 0 }
+  tags: [extended-rules, python, lxml, xpath, query, injection]
+  ai: *xpath_guidance
+  provenance:
+    note: lxml XPath compiler and direct parsed-tree evaluation entrypoints preserve the expression operand for CWE-643 review.
+    references:
+      - https://cwe.mitre.org/data/definitions/643.html
+      - https://lxml.de/xpathxslt.html

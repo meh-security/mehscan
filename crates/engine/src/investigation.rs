@@ -97,6 +97,14 @@ struct ReviewContextIndex {
     definitions: BTreeMap<String, Vec<OutlineSymbol>>,
     registrations: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
     usages: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
+    frameworks: Vec<FrameworkContextFact>,
+    authorizations: Vec<FrameworkContextFact>,
+}
+
+#[derive(Clone)]
+struct FrameworkContextFact {
+    scope: String,
+    fact: ReviewNeighborhoodFact,
 }
 
 #[derive(Clone)]
@@ -813,6 +821,10 @@ fn build_path_review_jobs_internal(
         );
         context_truncated |= configuration_truncated;
         facts.append(&mut configuration_facts);
+        let (mut framework_facts, framework_truncated) =
+            review_context.framework_facts(&candidate_paths, 8);
+        context_truncated |= framework_truncated;
+        facts.append(&mut framework_facts);
         if candidate
             .source
             .provenance
@@ -917,6 +929,19 @@ fn build_path_review_jobs_internal(
                         || bound_type == Some(fact.symbol.as_str()))
             });
         }
+        // Authorization applicability starts from the deterministic path, not
+        // from auxiliary helper/configuration facts. Promoting every fact path
+        // made unrelated registration files eligible and attached arbitrary
+        // middleware to otherwise independent reviews.
+        let authorization_anchors = candidate
+            .steps
+            .iter()
+            .map(|step| step.location.clone())
+            .collect::<Vec<_>>();
+        let (mut authorization_facts, authorization_truncated) =
+            review_context.authorization_facts(&candidate_paths, &authorization_anchors, 8);
+        context_truncated |= authorization_truncated;
+        facts.append(&mut authorization_facts);
         sort_review_facts(&mut facts);
         let has_configuration = facts
             .iter()
@@ -970,6 +995,7 @@ fn build_path_review_jobs_internal(
             &csharp_neighborhoods,
             context_lines,
             &rules_by_id,
+            &review_context.frameworks,
         )?
     };
     let returned_reviews = reviews.len() + observation_reviews.len();
@@ -3465,6 +3491,12 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Observed guard, sanitizer, and validation syntax is possible control inventory, not demonstrated protection. Establish the same operand, owner, operation, and branch before applying it; a protected branch cannot protect a separate raw branch."
                 .to_string(),
+            "For authorization, distinguish boundary attachment, authentication, coarse role or permission checks, and authorization of the same action and resource. A custom guard, middleware, dependency, policy, or voter name is attachment inventory only until its supplied definition and rejection behavior establish what it enforces."
+                .to_string(),
+            "In HTTP route context, unknown means enforcement was not classified; guard names remain useful exact attachments but do not prove protection. explicitly_public and denied represent canonical local framework policy, while authenticated and role_restricted still do not by themselves prove owner, tenant, or object authorization."
+                .to_string(),
+            "Apply an authorization default or activation fact only within its supplied framework scope. For a custom check to protect a dangerous operation, the supplied facts must show the trusted server-side subject, relevant action or resource, and a rejection path that stops execution; otherwise retain it as context rather than dismissing the sink."
+                .to_string(),
             "Configuration facts are repository defaults or references, not proof of the effective deployed value."
                 .to_string(),
             "Distinguish application-owned controls from proxy, gateway, ingress, platform, framework, and client controls."
@@ -4302,6 +4334,8 @@ fn is_advisory_observation_question(question: &str) -> bool {
 #[derive(Clone, Copy)]
 enum DecisionCriticalBoundary {
     Sql,
+    SqlOperand,
+    SqlIdentifier,
     TrustedHtml,
     ProcessExecutable,
     ShellCommand,
@@ -4330,6 +4364,8 @@ impl DecisionCriticalOrigin<'_> {
     fn relationship(self) -> &'static str {
         match self.boundary {
             DecisionCriticalBoundary::Sql => "bounded_dynamic_query_composition",
+            DecisionCriticalBoundary::SqlOperand => "bounded_dynamic_query_operand",
+            DecisionCriticalBoundary::SqlIdentifier => "bounded_dynamic_sql_identifier",
             DecisionCriticalBoundary::TrustedHtml => "bounded_trusted_html_interpretation",
             DecisionCriticalBoundary::ProcessExecutable => "bounded_dynamic_executable_selection",
             DecisionCriticalBoundary::ShellCommand => "bounded_shell_command_interpretation",
@@ -4354,6 +4390,12 @@ impl DecisionCriticalOrigin<'_> {
         match (self.boundary, self.language) {
             (DecisionCriticalBoundary::Sql, "C#") => {
                 "Review dynamically composed C# SQL for CWE-89"
+            }
+            (DecisionCriticalBoundary::SqlOperand, "C#") => {
+                "Review nonliteral C# SQL operand for CWE-89"
+            }
+            (DecisionCriticalBoundary::SqlIdentifier, "C#") => {
+                "Review dynamic C# stored-procedure selection"
             }
             (DecisionCriticalBoundary::TrustedHtml, "C#") => {
                 "Review dynamic C# trusted HTML output for CWE-79"
@@ -4393,6 +4435,10 @@ impl DecisionCriticalOrigin<'_> {
                 "Review dynamic C# XPath expression for CWE-643"
             }
             (DecisionCriticalBoundary::Sql, _) => "Review dynamically composed SQL for CWE-89",
+            (DecisionCriticalBoundary::SqlOperand, _) => "Review nonliteral SQL operand for CWE-89",
+            (DecisionCriticalBoundary::SqlIdentifier, _) => {
+                "Review dynamic SQL identifier selection"
+            }
             (DecisionCriticalBoundary::TrustedHtml, _) => {
                 "Review dynamic trusted HTML output for CWE-79"
             }
@@ -4431,6 +4477,8 @@ impl DecisionCriticalOrigin<'_> {
     fn security_question(self) -> String {
         match self.boundary {
             DecisionCriticalBoundary::Sql => "Can the dynamic operand incorporated into executable SQL be influenced by an attacker, or is it affirmatively restricted to a safe fixed, numeric, enum, or allowlisted value?".to_string(),
+            DecisionCriticalBoundary::SqlOperand => "Can the nonliteral raw-query operand be influenced by an attacker, or is its complete query structure fixed with untrusted values supplied only through bound parameters?".to_string(),
+            DecisionCriticalBoundary::SqlIdentifier => "Can an attacker select the stored procedure or SQL identifier used by this database operation, or is the identifier fixed or restricted to an exact server-owned allowlist?".to_string(),
             DecisionCriticalBoundary::TrustedHtml => "Can the runtime value passed across this explicit HTML trust boundary be influenced by an attacker, or is it sanitized for the exact browser context before escaping is bypassed?".to_string(),
             DecisionCriticalBoundary::ProcessExecutable => "Can an attacker influence the executable selected by this process launch, or is it chosen from an exact server-owned allowlist?".to_string(),
             DecisionCriticalBoundary::ShellCommand => "Can an attacker influence text interpreted by this command shell, or is every dynamic value kept outside shell grammar under an exact allowlist?".to_string(),
@@ -4452,6 +4500,14 @@ impl DecisionCriticalOrigin<'_> {
             DecisionCriticalBoundary::Sql => format!(
                 "Is dynamic SQL operand `{}` used by this {} attacker-controlled at any production call site, or is it affirmatively restricted before composition to a fixed, numeric, enum, or exact allowlisted value?",
                 self.operand, self.style
+            ),
+            DecisionCriticalBoundary::SqlOperand => format!(
+                "Is nonliteral raw-query operand `{}` attacker-controlled at any production call site, or is its complete query structure fixed with untrusted values supplied only through bound parameters?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::SqlIdentifier => format!(
+                "Can attacker-controlled input select stored procedure or SQL identifier `{}`, or is that identifier fixed or restricted to an exact server-owned allowlist?",
+                self.operand
             ),
             DecisionCriticalBoundary::TrustedHtml => format!(
                 "Can dynamic trusted-HTML operand `{}` contain attacker-controlled markup at this {} boundary, or is it sanitized for the exact browser context before escaping is bypassed?",
@@ -4556,6 +4612,10 @@ impl DecisionCriticalOrigin<'_> {
                     DecisionCriticalBoundary::LdapDistinguishedName =>
                         "LDAP distinguished-name interpretation",
                     DecisionCriticalBoundary::XpathExpression => "XPath expression interpretation",
+                    DecisionCriticalBoundary::SqlOperand => "raw SQL query interpretation",
+                    DecisionCriticalBoundary::SqlIdentifier => {
+                        "stored procedure or SQL identifier selection"
+                    }
                     DecisionCriticalBoundary::Sql => unreachable!(),
                 },
                 self.style
@@ -4598,6 +4658,19 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
             && item
                 .tags
                 .iter()
+                .any(|tag| tag == "query-role:stored-procedure-name")
+        {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::SqlIdentifier,
+                "stored-procedure command target",
+                &["dynamic_operand", "query"],
+                false,
+            )?)
+        } else if item.capability == Capability::DatabaseQuery
+            && item
+                .tags
+                .iter()
                 .any(|tag| tag == "dynamic-query-composition")
         {
             let style = item
@@ -4620,6 +4693,16 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
                     .iter()
                     .any(|tag| tag == "dynamic-origin:constrained-scalar"),
             })
+        } else if item.capability == Capability::DatabaseQuery
+            && item.tags.iter().any(|tag| tag == "dynamic-query-operand")
+        {
+            Some(decision_origin_from_capture(
+                item,
+                DecisionCriticalBoundary::SqlOperand,
+                "raw-query API",
+                &["dynamic_operand", "query"],
+                false,
+            )?)
         } else if item.capability == Capability::HtmlOutput {
             Some(decision_origin_from_capture(
                 item,
@@ -6255,13 +6338,15 @@ fn build_observation_reviews(
     csharp_neighborhoods: &[mehscan_core::ReviewNeighborhood],
     context_lines: usize,
     rules_by_id: &BTreeMap<&str, &Rule>,
+    framework_context: &[FrameworkContextFact],
 ) -> Result<Vec<ObservationReview>, EngineError> {
     let groups = groups.into_iter().collect::<Vec<_>>();
     let mut indexed_references = BTreeSet::new();
     for group in &groups {
         indexed_references.extend(observation_group_references(group, sources, context_lines)?);
     }
-    let review_context = ReviewContextIndex::build(sources, &indexed_references)?;
+    let review_context =
+        ReviewContextIndex::build_with_frameworks(sources, &indexed_references, framework_context)?;
     let bounded_callers = groups
         .iter()
         .any(|group| decision_critical_origin(&group.evidence).is_some())
@@ -6372,6 +6457,9 @@ fn build_observation_reviews(
         );
         context_truncated |= configuration_truncated;
         facts.append(&mut configuration);
+        let (mut framework_facts, framework_truncated) = review_context.framework_facts(&paths, 8);
+        context_truncated |= framework_truncated;
+        facts.append(&mut framework_facts);
         let (mut helpers, helpers_truncated) = observation_helper_definition_facts(
             sources,
             &review_context,
@@ -6635,6 +6723,18 @@ fn build_observation_reviews(
             context_truncated |= retrieval_truncated;
             facts.append(&mut retrieval);
         }
+        // Keep policy selection tied to the observation neighborhood. Helper,
+        // registration, and configuration enrichment may explain the review,
+        // but their locations do not make nearby authorization syntax apply.
+        let authorization_anchors = group
+            .evidence
+            .iter()
+            .map(|evidence| evidence.location.clone())
+            .collect::<Vec<_>>();
+        let (mut authorization_facts, authorization_truncated) =
+            review_context.authorization_facts(&paths, &authorization_anchors, 8);
+        context_truncated |= authorization_truncated;
+        facts.append(&mut authorization_facts);
         sort_review_facts(&mut facts);
         let review_id =
             observation_review_id(&group.path, &group.symbol, &group.anchor_evidence_ids);
@@ -12023,6 +12123,15 @@ fn relative_review_import_paths(
 
 impl ReviewContextIndex {
     fn build(sources: &RepositorySources, wanted: &BTreeSet<String>) -> Result<Self, EngineError> {
+        let frameworks = collect_framework_context(sources);
+        Self::build_with_frameworks(sources, wanted, &frameworks)
+    }
+
+    fn build_with_frameworks(
+        sources: &RepositorySources,
+        wanted: &BTreeSet<String>,
+        frameworks: &[FrameworkContextFact],
+    ) -> Result<Self, EngineError> {
         let mut definitions: BTreeMap<String, Vec<OutlineSymbol>> = BTreeMap::new();
         let mut registrations: BTreeMap<String, Vec<ReviewNeighborhoodFact>> = BTreeMap::new();
         let mut usages: BTreeMap<String, Vec<ReviewNeighborhoodFact>> = BTreeMap::new();
@@ -12085,7 +12194,111 @@ impl ReviewContextIndex {
             definitions,
             registrations,
             usages,
+            frameworks: frameworks
+                .iter()
+                .filter(|item| item.fact.role == "framework_context")
+                .cloned()
+                .collect(),
+            authorizations: frameworks
+                .iter()
+                .filter(|item| item.fact.role != "framework_context")
+                .cloned()
+                .collect(),
         })
+    }
+
+    fn framework_facts(
+        &self,
+        candidate_paths: &BTreeSet<&str>,
+        limit: usize,
+    ) -> (Vec<ReviewNeighborhoodFact>, bool) {
+        let mut facts = Vec::new();
+        let mut truncated = false;
+        for framework in &self.frameworks {
+            let applies = candidate_paths.iter().any(|path| {
+                framework.scope.is_empty()
+                    || **path == framework.scope
+                    || path
+                        .strip_prefix(&framework.scope)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+            });
+            if !applies {
+                continue;
+            }
+            if facts.len() == limit {
+                truncated = true;
+                break;
+            }
+            facts.push(framework.fact.clone());
+        }
+        (facts, truncated)
+    }
+
+    fn authorization_facts(
+        &self,
+        candidate_paths: &BTreeSet<&str>,
+        anchors: &[Location],
+        limit: usize,
+    ) -> (Vec<ReviewNeighborhoodFact>, bool) {
+        let mut eligible = self
+            .authorizations
+            .iter()
+            .filter_map(|authorization| {
+                let direct = candidate_paths.contains(authorization.fact.location.path.as_str());
+                let scoped = candidate_paths.iter().any(|path| {
+                    authorization.scope.is_empty()
+                        || **path == authorization.scope
+                        || path
+                            .strip_prefix(&authorization.scope)
+                            .is_some_and(|suffix| suffix.starts_with('/'))
+                });
+                let project_wide = matches!(
+                    authorization.fact.role.as_str(),
+                    "authorization_default_context" | "authorization_activation_context"
+                );
+                let distance = authorization_distance(&authorization.fact.location, anchors);
+                (direct || (scoped && project_wide)).then_some((direct, distance, authorization))
+            })
+            .collect::<Vec<_>>();
+        eligible.sort_by(
+            |(left_direct, left_distance, left), (right_direct, right_distance, right)| {
+                right_direct
+                    .cmp(left_direct)
+                    .then_with(|| left_distance.cmp(right_distance))
+                    .then_with(|| {
+                        authorization_role_priority(&left.fact.role)
+                            .cmp(&authorization_role_priority(&right.fact.role))
+                    })
+                    .then_with(|| left.fact.location.path.cmp(&right.fact.location.path))
+                    .then_with(|| {
+                        left.fact
+                            .location
+                            .start
+                            .byte_offset
+                            .cmp(&right.fact.location.start.byte_offset)
+                    })
+            },
+        );
+
+        let mut role_counts = BTreeMap::<&str, usize>::new();
+        let mut facts = Vec::new();
+        let mut truncated = false;
+        for (_, _, authorization) in eligible {
+            let role_limit = authorization_role_limit(&authorization.fact.role);
+            let count = role_counts
+                .entry(authorization.fact.role.as_str())
+                .or_default();
+            if *count == role_limit {
+                continue;
+            }
+            if facts.len() == limit {
+                truncated = true;
+                break;
+            }
+            *count += 1;
+            facts.push(authorization.fact.clone());
+        }
+        (facts, truncated)
     }
 
     fn expanded_references(
@@ -14392,6 +14605,975 @@ fn looks_like_registration_reference(line: &str) -> bool {
             .any(|route| route.starts_with('/') && route.len() > 1)
 }
 
+fn collect_framework_context(sources: &RepositorySources) -> Vec<FrameworkContextFact> {
+    let manifest_scopes = sources
+        .files
+        .values()
+        .filter(|file| is_framework_manifest(&file.path))
+        .map(|file| path_directory(&file.path))
+        .collect::<BTreeSet<_>>();
+    let mut observed = BTreeMap::<(String, String), FrameworkContextFact>::new();
+    let mut authorizations = Vec::new();
+    for file in sources.files.values() {
+        if is_nonproduction_review_context_path(&file.path)
+            || file.source.len() > MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES
+        {
+            continue;
+        }
+        let scope = nearest_framework_scope(&file.path, &manifest_scopes);
+        for (line_index, (start, end)) in line_spans(&file.source).into_iter().enumerate() {
+            let line = &file.source[start..end];
+            for framework in framework_markers(file, line) {
+                let key = (scope.clone(), framework.to_string());
+                if observed.contains_key(&key) {
+                    continue;
+                }
+                let Ok((slice, _)) = source_slice(file, line_index + 1, line_index + 1) else {
+                    continue;
+                };
+                observed.insert(
+                    key,
+                    FrameworkContextFact {
+                        scope: scope.clone(),
+                        fact: ReviewNeighborhoodFact {
+                            role: "framework_context".to_string(),
+                            symbol: framework.to_string(),
+                            location: slice.location,
+                            excerpt: slice.text,
+                            evidence_id: None,
+                            provenance: textual_provenance(
+                                "bounded exact framework import, entrypoint, or manifest declaration; runtime activation unproved 1",
+                            ),
+                        },
+                    },
+                );
+            }
+            for (role, symbol) in authorization_markers(file, line) {
+                let Ok((slice, _)) = source_slice(file, line_index + 1, line_index + 1) else {
+                    continue;
+                };
+                authorizations.push(FrameworkContextFact {
+                    scope: scope.clone(),
+                    fact: ReviewNeighborhoodFact {
+                        role: role.to_string(),
+                        symbol: symbol.to_string(),
+                        location: slice.location,
+                        excerpt: slice.text,
+                        evidence_id: None,
+                        provenance: textual_provenance(
+                            "bounded exact framework authorization syntax; custom policy meaning and effective execution unproved 1",
+                        ),
+                    },
+                });
+            }
+        }
+    }
+    authorizations.retain(|authorization| {
+        authorization_frameworks(&authorization.fact.symbol)
+            .iter()
+            .any(|framework| {
+                observed.contains_key(&(authorization.scope.clone(), (*framework).to_string()))
+            })
+    });
+    let mut facts = observed.into_values().collect::<Vec<_>>();
+    facts.append(&mut authorizations);
+    facts
+}
+
+fn authorization_frameworks(symbol: &str) -> &'static [&'static str] {
+    match symbol {
+        "AllowAnonymous"
+        | "Authorize"
+        | "RequireRole"
+        | "RequireClaim"
+        | "RequireAuthenticatedUser"
+        | "RequireAssertion"
+        | "FallbackPolicy"
+        | "DefaultPolicy"
+        | "RazorPagesConvention"
+        | "MinimalApiAuthorization"
+        | "EndpointGroupAuthorization"
+        | "UseAuthentication"
+        | "UseAuthorization"
+        | "AspNetMiddlewareOrder"
+        | "AuthorizeAsync"
+        | "PrincipalRoleOrClaim" => &["aspnet-core"],
+        "EnableMethodSecurity"
+        | "SpringRequestMatcher"
+        | "SpringAnyRequest"
+        | "SpringMatcherOrder"
+        | "permitAll"
+        | "denyAll"
+        | "authenticated"
+        | "SpringAuthority"
+        | "SpringMethodAuthorization"
+        | "AuthorizationManager" => &["spring-security"],
+        "KtorAuthentication"
+        | "KtorAuthenticate"
+        | "KtorPrincipal"
+        | "KtorRoutePlugin"
+        | "KtorAuthorizationDecision" => &["ktor"],
+        "NestUseGuards" | "NestAuthorizationMetadata" | "NestGlobalGuard" | "NestCanActivate" => {
+            &["nestjs"]
+        }
+        "PassportAuthenticate" => &["express"],
+        "FastifyLifecycleHook" | "FastifyRouteHook" => &["fastify"],
+        "NextMiddleware"
+        | "NextMiddlewareMatcher"
+        | "NextServerSession"
+        | "NextPublicRoute"
+        | "NextAuthorizationDecision" => &["nextjs"],
+        "AllowAny"
+        | "DRFDefaultPermissionClasses"
+        | "DRFPermissionClasses"
+        | "DRFPermissionDefinition"
+        | "DRFObjectPermission" => &["django-rest-framework"],
+        "DjangoPermission" | "DjangoLoginRequired" => &["django"],
+        "FlaskLoginRequired" | "FlaskBeforeRequest" | "FlaskPrincipalPermission" => &["flask"],
+        "FastAPIDependency" | "FastAPISecurityScopes" | "FastAPIRouterDependency" => &["fastapi"],
+        "PythonPrincipalResourceCheck" => &["django", "django-rest-framework", "flask", "fastapi"],
+        "GoRouterMiddleware"
+        | "GoCanonicalAuthMiddleware"
+        | "GoPrincipalContext"
+        | "GoAuthorizationMiddleware"
+        | "GoMiddlewareOrder" => &["gin", "echo", "fiber", "chi", "gorilla-mux"],
+        "LaravelMiddleware"
+        | "LaravelCanMiddleware"
+        | "LaravelGate"
+        | "LaravelPolicyRegistration"
+        | "LaravelGateDefinition"
+        | "LaravelResourceAuthorization"
+        | "LaravelWithoutMiddleware" => &["laravel"],
+        "SymfonyPublicAccess"
+        | "SymfonyAccessControl"
+        | "SymfonyIsGranted"
+        | "SymfonyControllerAuthorization"
+        | "SymfonyVoter"
+        | "SymfonyVoterDecision"
+        | "SymfonyAccessControlOrder" => &["symfony"],
+        _ => &[],
+    }
+}
+
+fn authorization_role_priority(role: &str) -> u8 {
+    match role {
+        "authorization_exception_context" => 0,
+        "authorization_requirement_context" => 1,
+        "resource_authorization_context" => 2,
+        "authorization_attachment_context" => 3,
+        "authorization_default_context" => 4,
+        "authorization_activation_context" => 5,
+        "authorization_order_context" => 6,
+        "authorization_guard_definition_context" => 7,
+        _ => 8,
+    }
+}
+
+fn authorization_distance(location: &Location, anchors: &[Location]) -> usize {
+    anchors
+        .iter()
+        .filter(|anchor| anchor.path == location.path)
+        .map(|anchor| {
+            if location.end.line < anchor.start.line {
+                anchor.start.line - location.end.line
+            } else {
+                location.start.line.saturating_sub(anchor.end.line)
+            }
+        })
+        .min()
+        .unwrap_or(usize::MAX)
+}
+
+fn authorization_role_limit(role: &str) -> usize {
+    match role {
+        "authorization_requirement_context"
+        | "authorization_attachment_context"
+        | "authorization_activation_context"
+        | "authorization_order_context" => 2,
+        _ => 1,
+    }
+}
+
+fn authorization_markers(file: &SourceFile, line: &str) -> Vec<(&'static str, &'static str)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || authorization_comment(file.language, trimmed) {
+        return Vec::new();
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let mut facts = Vec::new();
+    let mut add = |role: &'static str, symbol: &'static str, matched: bool| {
+        if matched && !facts.contains(&(role, symbol)) {
+            facts.push((role, symbol));
+        }
+    };
+
+    match file.language {
+        Some(Language::Csharp) => {
+            add(
+                "authorization_exception_context",
+                "AllowAnonymous",
+                trimmed.contains("[AllowAnonymous") || trimmed.contains(".AllowAnonymous("),
+            );
+            add(
+                "authorization_requirement_context",
+                "Authorize",
+                trimmed.contains("[Authorize") || trimmed.contains(".RequireAuthorization("),
+            );
+            add(
+                "authorization_requirement_context",
+                "RequireRole",
+                trimmed.contains(".RequireRole("),
+            );
+            add(
+                "authorization_requirement_context",
+                "RequireClaim",
+                trimmed.contains(".RequireClaim("),
+            );
+            add(
+                "authorization_requirement_context",
+                "RequireAuthenticatedUser",
+                trimmed.contains(".RequireAuthenticatedUser("),
+            );
+            add(
+                "authorization_requirement_context",
+                "RequireAssertion",
+                trimmed.contains(".RequireAssertion("),
+            );
+            add(
+                "authorization_default_context",
+                "FallbackPolicy",
+                trimmed.contains("FallbackPolicy"),
+            );
+            add(
+                "authorization_default_context",
+                "DefaultPolicy",
+                trimmed.contains("DefaultPolicy"),
+            );
+            add(
+                "authorization_default_context",
+                "RazorPagesConvention",
+                [
+                    "AuthorizeFolder(",
+                    "AuthorizePage(",
+                    "AllowAnonymousToPage(",
+                ]
+                .iter()
+                .any(|marker| trimmed.contains(marker)),
+            );
+            add(
+                "authorization_attachment_context",
+                "MinimalApiAuthorization",
+                trimmed.contains(".RequireAuthorization("),
+            );
+            add(
+                "authorization_attachment_context",
+                "EndpointGroupAuthorization",
+                trimmed.contains("MapGroup(") && trimmed.contains("RequireAuthorization("),
+            );
+            add(
+                "authorization_activation_context",
+                "UseAuthentication",
+                trimmed.contains(".UseAuthentication("),
+            );
+            add(
+                "authorization_activation_context",
+                "UseAuthorization",
+                trimmed.contains(".UseAuthorization("),
+            );
+            add(
+                "authorization_order_context",
+                "AspNetMiddlewareOrder",
+                trimmed.contains(".UseAuthentication(") || trimmed.contains(".UseAuthorization("),
+            );
+            add(
+                "resource_authorization_context",
+                "AuthorizeAsync",
+                trimmed.contains(".AuthorizeAsync("),
+            );
+            add(
+                "resource_authorization_context",
+                "PrincipalRoleOrClaim",
+                trimmed.contains(".IsInRole(") || trimmed.contains(".HasClaim("),
+            );
+        }
+        Some(Language::Java | Language::Kotlin) => {
+            add(
+                "authorization_activation_context",
+                "EnableMethodSecurity",
+                trimmed.contains("@EnableMethodSecurity"),
+            );
+            add(
+                "authorization_attachment_context",
+                "SpringRequestMatcher",
+                [".requestMatchers(", ".antMatchers(", ".securityMatcher("]
+                    .iter()
+                    .any(|marker| trimmed.contains(marker)),
+            );
+            add(
+                "authorization_order_context",
+                "SpringMatcherOrder",
+                [
+                    ".requestMatchers(",
+                    ".antMatchers(",
+                    ".securityMatcher(",
+                    ".anyRequest(",
+                ]
+                .iter()
+                .any(|marker| trimmed.contains(marker)),
+            );
+            add(
+                "authorization_default_context",
+                "SpringAnyRequest",
+                trimmed.contains(".anyRequest("),
+            );
+            add(
+                "authorization_exception_context",
+                "permitAll",
+                trimmed.contains(".permitAll(") || trimmed.contains("@PermitAll"),
+            );
+            add(
+                "authorization_requirement_context",
+                "denyAll",
+                trimmed.contains(".denyAll(") || trimmed.contains("@DenyAll"),
+            );
+            add(
+                "authorization_requirement_context",
+                "authenticated",
+                trimmed.contains(".authenticated("),
+            );
+            add(
+                "authorization_requirement_context",
+                "SpringAuthority",
+                [
+                    ".hasRole(",
+                    ".hasAnyRole(",
+                    ".hasAuthority(",
+                    ".hasAnyAuthority(",
+                    ".access(",
+                ]
+                .iter()
+                .any(|marker| trimmed.contains(marker)),
+            );
+            add(
+                "authorization_requirement_context",
+                "SpringMethodAuthorization",
+                [
+                    "@PreAuthorize",
+                    "@PostAuthorize",
+                    "@Secured",
+                    "@RolesAllowed",
+                ]
+                .iter()
+                .any(|marker| trimmed.contains(marker)),
+            );
+            add(
+                "resource_authorization_context",
+                "AuthorizationManager",
+                trimmed.contains("AuthorizationManager")
+                    && (trimmed.contains(".check(") || trimmed.contains(".authorize(")),
+            );
+
+            if file.language == Some(Language::Kotlin) {
+                add(
+                    "authorization_activation_context",
+                    "KtorAuthentication",
+                    trimmed.contains("install(Authentication")
+                        || trimmed.contains("install(io.ktor.server.auth.Authentication"),
+                );
+                add(
+                    "authorization_attachment_context",
+                    "KtorAuthenticate",
+                    trimmed.contains("authenticate("),
+                );
+                add(
+                    "authorization_requirement_context",
+                    "KtorPrincipal",
+                    trimmed.contains("call.principal<") || trimmed.contains("principal<"),
+                );
+                add(
+                    "authorization_attachment_context",
+                    "KtorRoutePlugin",
+                    trimmed.contains("createRouteScopedPlugin(")
+                        || trimmed.contains("install(") && lower.contains("authoriz"),
+                );
+                add(
+                    "resource_authorization_context",
+                    "KtorAuthorizationDecision",
+                    lower.contains("principal")
+                        && ["role", "permission", "scope", "owner", "tenant"]
+                            .iter()
+                            .any(|marker| lower.contains(marker)),
+                );
+            }
+        }
+        Some(Language::Javascript | Language::Typescript | Language::Tsx) => {
+            add(
+                "authorization_attachment_context",
+                "NestUseGuards",
+                trimmed.contains("@UseGuards("),
+            );
+            add(
+                "authorization_attachment_context",
+                "NestAuthorizationMetadata",
+                ["@Roles(", "@Permissions(", "@SetMetadata("]
+                    .iter()
+                    .any(|marker| trimmed.contains(marker)),
+            );
+            add(
+                "authorization_activation_context",
+                "NestGlobalGuard",
+                trimmed.contains("APP_GUARD"),
+            );
+            add(
+                "authorization_guard_definition_context",
+                "NestCanActivate",
+                trimmed.contains("CanActivate")
+                    && (trimmed.contains("implements") || trimmed.contains("canActivate(")),
+            );
+            add(
+                "authorization_requirement_context",
+                "PassportAuthenticate",
+                trimmed.contains("passport.authenticate("),
+            );
+            add(
+                "authorization_attachment_context",
+                "FastifyLifecycleHook",
+                trimmed.contains("addHook(")
+                    && ["onRequest", "preHandler", "preValidation"]
+                        .iter()
+                        .any(|marker| trimmed.contains(marker)),
+            );
+            add(
+                "authorization_attachment_context",
+                "FastifyRouteHook",
+                trimmed.contains("preHandler:") || trimmed.contains("onRequest:"),
+            );
+            add(
+                "authorization_boundary_context",
+                "NextMiddleware",
+                trimmed.contains("function middleware(") || trimmed.contains("const middleware"),
+            );
+            add(
+                "authorization_attachment_context",
+                "NextMiddlewareMatcher",
+                trimmed.contains("matcher:") || trimmed.contains("matcher ="),
+            );
+            add(
+                "authorization_requirement_context",
+                "NextServerSession",
+                ["getServerSession(", "getToken(", "auth("]
+                    .iter()
+                    .any(|marker| trimmed.contains(marker)),
+            );
+            add(
+                "authorization_exception_context",
+                "NextPublicRoute",
+                lower.contains("publicroutes") || lower.contains("public_paths"),
+            );
+            add(
+                "resource_authorization_context",
+                "NextAuthorizationDecision",
+                ["session.user", "auth.user", "userId", "tenantId"]
+                    .iter()
+                    .any(|marker| trimmed.contains(marker))
+                    && ["redirect(", "unauthorized(", "forbidden(", "throw new"]
+                        .iter()
+                        .any(|marker| trimmed.contains(marker)),
+            );
+        }
+        Some(Language::Python) => {
+            add(
+                "authorization_exception_context",
+                "AllowAny",
+                trimmed.contains("AllowAny"),
+            );
+            add(
+                "authorization_requirement_context",
+                "DjangoPermission",
+                [
+                    "@permission_required",
+                    "PermissionRequiredMixin",
+                    "UserPassesTestMixin",
+                    "@user_passes_test",
+                ]
+                .iter()
+                .any(|marker| trimmed.contains(marker)),
+            );
+            add(
+                "authorization_requirement_context",
+                "DjangoLoginRequired",
+                trimmed.contains("@login_required") || trimmed.contains("LoginRequiredMixin"),
+            );
+            add(
+                "authorization_default_context",
+                "DRFDefaultPermissionClasses",
+                trimmed.contains("DEFAULT_PERMISSION_CLASSES"),
+            );
+            add(
+                "authorization_requirement_context",
+                "DRFPermissionClasses",
+                trimmed.contains("permission_classes") || trimmed.contains("@permission_classes("),
+            );
+            add(
+                "authorization_guard_definition_context",
+                "DRFPermissionDefinition",
+                trimmed.contains("def has_permission(")
+                    || trimmed.contains("def has_object_permission("),
+            );
+            add(
+                "resource_authorization_context",
+                "DRFObjectPermission",
+                trimmed.contains("check_object_permissions(")
+                    || trimmed.contains("has_object_permission("),
+            );
+            add(
+                "authorization_requirement_context",
+                "FlaskLoginRequired",
+                trimmed.contains("@login_required"),
+            );
+            add(
+                "authorization_attachment_context",
+                "FlaskBeforeRequest",
+                trimmed.contains("@app.before_request")
+                    || trimmed.contains("@blueprint.before_request"),
+            );
+            add(
+                "authorization_requirement_context",
+                "FlaskPrincipalPermission",
+                trimmed.contains("Permission(") && trimmed.contains(".require("),
+            );
+            add(
+                "authorization_attachment_context",
+                "FastAPIDependency",
+                trimmed.contains("Depends(") || trimmed.contains("Security("),
+            );
+            add(
+                "authorization_requirement_context",
+                "FastAPISecurityScopes",
+                trimmed.contains("SecurityScopes") || trimmed.contains("scopes="),
+            );
+            add(
+                "authorization_default_context",
+                "FastAPIRouterDependency",
+                (trimmed.contains("FastAPI(") || trimmed.contains("APIRouter("))
+                    && trimmed.contains("dependencies="),
+            );
+            add(
+                "resource_authorization_context",
+                "PythonPrincipalResourceCheck",
+                ["current_user", "request.user", "g.user"]
+                    .iter()
+                    .any(|marker| trimmed.contains(marker))
+                    && ["owner", "tenant", "permission", "role"]
+                        .iter()
+                        .any(|marker| lower.contains(marker)),
+            );
+        }
+        Some(Language::Go) => {
+            add(
+                "authorization_attachment_context",
+                "GoRouterMiddleware",
+                trimmed.contains(".Use(")
+                    || (trimmed.contains(".Group(") && trimmed.matches(',').count() > 0),
+            );
+            add(
+                "authorization_order_context",
+                "GoMiddlewareOrder",
+                trimmed.contains(".Use("),
+            );
+            add(
+                "authorization_requirement_context",
+                "GoCanonicalAuthMiddleware",
+                [
+                    "middleware.BasicAuth(",
+                    "middleware.JWT(",
+                    "middleware.KeyAuth(",
+                    "jwtware.New(",
+                    "basicauth.New(",
+                ]
+                .iter()
+                .any(|marker| trimmed.contains(marker)),
+            );
+            add(
+                "resource_authorization_context",
+                "GoPrincipalContext",
+                [".Get(\"user\")", ".Get(\"principal\")", "UserContext("]
+                    .iter()
+                    .any(|marker| trimmed.contains(marker)),
+            );
+            add(
+                "authorization_guard_definition_context",
+                "GoAuthorizationMiddleware",
+                trimmed.starts_with("func ")
+                    && [
+                        "http.Handler",
+                        "gin.HandlerFunc",
+                        "echo.MiddlewareFunc",
+                        "fiber.Handler",
+                    ]
+                    .iter()
+                    .any(|marker| trimmed.contains(marker)),
+            );
+        }
+        Some(Language::Php) => {
+            add(
+                "authorization_attachment_context",
+                "LaravelMiddleware",
+                trimmed.contains("->middleware("),
+            );
+            add(
+                "authorization_requirement_context",
+                "LaravelCanMiddleware",
+                lower.contains("can:") || trimmed.contains("->can("),
+            );
+            add(
+                "authorization_requirement_context",
+                "LaravelGate",
+                [
+                    "Gate::authorize(",
+                    "Gate::allows(",
+                    "Gate::denies(",
+                    "$this->authorize(",
+                ]
+                .iter()
+                .any(|marker| trimmed.contains(marker)),
+            );
+            add(
+                "authorization_default_context",
+                "LaravelPolicyRegistration",
+                trimmed.contains("Gate::policy(") || trimmed.contains("protected $policies"),
+            );
+            add(
+                "authorization_guard_definition_context",
+                "LaravelGateDefinition",
+                trimmed.contains("Gate::define("),
+            );
+            add(
+                "resource_authorization_context",
+                "LaravelResourceAuthorization",
+                trimmed.contains("authorizeResource(") || trimmed.contains("$this->authorize("),
+            );
+            add(
+                "authorization_exception_context",
+                "LaravelWithoutMiddleware",
+                trimmed.contains("withoutMiddleware(") && lower.contains("auth"),
+            );
+            add(
+                "authorization_exception_context",
+                "SymfonyPublicAccess",
+                trimmed.contains("PUBLIC_ACCESS"),
+            );
+            add(
+                "authorization_default_context",
+                "SymfonyAccessControl",
+                trimmed.contains("access_control:")
+                    || (trimmed.contains("path:") && trimmed.contains("roles:")),
+            );
+            add(
+                "authorization_order_context",
+                "SymfonyAccessControlOrder",
+                trimmed.contains("path:") && trimmed.contains("roles:"),
+            );
+            add(
+                "authorization_requirement_context",
+                "SymfonyIsGranted",
+                trimmed.contains("#[IsGranted(") || trimmed.contains("#[Security("),
+            );
+            add(
+                "authorization_requirement_context",
+                "SymfonyControllerAuthorization",
+                trimmed.contains("denyAccessUnlessGranted(") || trimmed.contains("isGranted("),
+            );
+            add(
+                "authorization_guard_definition_context",
+                "SymfonyVoter",
+                trimmed.contains("extends Voter") || trimmed.contains("voteOnAttribute("),
+            );
+            add(
+                "resource_authorization_context",
+                "SymfonyVoterDecision",
+                trimmed.contains("denyAccessUnlessGranted(")
+                    || trimmed.contains("voteOnAttribute("),
+            );
+        }
+        None if file.path.to_ascii_lowercase().ends_with(".yaml")
+            || file.path.to_ascii_lowercase().ends_with(".yml") =>
+        {
+            add(
+                "authorization_exception_context",
+                "SymfonyPublicAccess",
+                trimmed.contains("PUBLIC_ACCESS"),
+            );
+            add(
+                "authorization_default_context",
+                "SymfonyAccessControl",
+                trimmed.contains("access_control:")
+                    || (trimmed.contains("path:") && trimmed.contains("roles:")),
+            );
+            add(
+                "authorization_order_context",
+                "SymfonyAccessControlOrder",
+                trimmed.contains("path:") && trimmed.contains("roles:"),
+            );
+        }
+        _ => {}
+    }
+    facts
+}
+
+fn authorization_comment(language: Option<Language>, trimmed: &str) -> bool {
+    match language {
+        Some(Language::Python) => trimmed.starts_with('#'),
+        Some(Language::Php) => {
+            trimmed.starts_with("//") || (trimmed.starts_with('#') && !trimmed.starts_with("#["))
+        }
+        _ => trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*'),
+    }
+}
+
+fn is_framework_manifest(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "package.json"
+            | "pyproject.toml"
+            | "requirements.txt"
+            | "pom.xml"
+            | "build.gradle"
+            | "build.gradle.kts"
+            | "go.mod"
+            | "cargo.toml"
+            | "composer.json"
+    ) || name.ends_with(".csproj")
+}
+
+fn path_directory(path: &str) -> String {
+    path.rsplit_once('/')
+        .map(|(directory, _)| directory.to_string())
+        .unwrap_or_default()
+}
+
+fn nearest_framework_scope(path: &str, scopes: &BTreeSet<String>) -> String {
+    scopes
+        .iter()
+        .filter(|scope| {
+            scope.is_empty()
+                || path
+                    .strip_prefix(scope.as_str())
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+        })
+        .max_by_key(|scope| scope.len())
+        .cloned()
+        .unwrap_or_else(|| path_directory(path))
+}
+
+fn framework_markers(file: &SourceFile, line: &str) -> Vec<&'static str> {
+    let trimmed = line.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    let manifest = is_framework_manifest(&file.path);
+    if !manifest
+        && match file.language {
+            Some(Language::Python | Language::Php) => trimmed.starts_with('#'),
+            Some(Language::Cpp) => {
+                trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*')
+            }
+            _ => trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*'),
+        }
+    {
+        return Vec::new();
+    }
+    let mut frameworks = Vec::new();
+    let mut add = |id: &'static str, matched: bool| {
+        if matched && !frameworks.contains(&id) {
+            frameworks.push(id);
+        }
+    };
+
+    if manifest {
+        add(
+            "aspnet-core",
+            lower.contains("microsoft.net.sdk.web") || lower.contains("microsoft.aspnetcore"),
+        );
+        add("spring-boot", lower.contains("spring-boot-starter"));
+        add("spring-security", lower.contains("spring-security"));
+        add(
+            "ktor",
+            lower.contains("io.ktor") || lower.contains("ktor-server"),
+        );
+        for (id, package) in [
+            ("express", "\"express\""),
+            ("fastify", "\"fastify\""),
+            ("nestjs", "\"@nestjs/core\""),
+            ("nextjs", "\"next\""),
+            ("apollo-server", "\"@apollo/server\""),
+            ("django", "django"),
+            ("django-rest-framework", "djangorestframework"),
+            ("flask", "flask"),
+            ("fastapi", "fastapi"),
+            ("gin", "github.com/gin-gonic/gin"),
+            ("echo", "github.com/labstack/echo"),
+            ("fiber", "github.com/gofiber/fiber"),
+            ("chi", "github.com/go-chi/chi"),
+            ("gorilla-mux", "github.com/gorilla/mux"),
+            ("axum", "axum"),
+            ("actix-web", "actix-web"),
+            ("warp", "warp"),
+            ("rocket", "rocket"),
+            ("laravel", "laravel/framework"),
+            ("symfony", "symfony/framework-bundle"),
+            ("drogon", "drogon"),
+        ] {
+            let exact_dependency = matches!(
+                id,
+                "django"
+                    | "django-rest-framework"
+                    | "flask"
+                    | "fastapi"
+                    | "axum"
+                    | "warp"
+                    | "rocket"
+                    | "drogon"
+            );
+            add(
+                id,
+                if exact_dependency {
+                    manifest_dependency_matches(&lower, package)
+                } else {
+                    lower.contains(package)
+                },
+            );
+        }
+        return frameworks;
+    }
+
+    match file.language {
+        Some(Language::Csharp) => {
+            add(
+                "aspnet-core",
+                trimmed.starts_with("using Microsoft.AspNetCore.")
+                    || line.contains("WebApplication.CreateBuilder("),
+            );
+        }
+        Some(Language::Java | Language::Kotlin) => {
+            if !lower.starts_with("import ") {
+                return frameworks;
+            }
+            add("spring-boot", lower.contains("org.springframework.boot"));
+            add(
+                "spring-security",
+                lower.contains("org.springframework.security"),
+            );
+            add("spring-web", lower.contains("org.springframework.web"));
+            add("ktor", lower.contains("io.ktor."));
+        }
+        Some(Language::Javascript | Language::Typescript | Language::Tsx) => {
+            if !looks_like_import(line) {
+                return frameworks;
+            }
+            let module = quoted_module_name(line);
+            add("express", module.as_deref() == Some("express"));
+            add("fastify", module.as_deref() == Some("fastify"));
+            add(
+                "nestjs",
+                module
+                    .as_deref()
+                    .is_some_and(|value| value.starts_with("@nestjs/")),
+            );
+            add(
+                "nextjs",
+                module
+                    .as_deref()
+                    .is_some_and(|value| value == "next" || value.starts_with("next/")),
+            );
+            add(
+                "apollo-server",
+                module.as_deref().is_some_and(|value| {
+                    value == "@apollo/server" || value.starts_with("apollo-server")
+                }),
+            );
+        }
+        Some(Language::Python) => {
+            add(
+                "django",
+                lower == "import django"
+                    || lower.starts_with("import django as ")
+                    || lower.starts_with("import django.")
+                    || lower.starts_with("from django ")
+                    || lower.starts_with("from django."),
+            );
+            add(
+                "django-rest-framework",
+                lower == "import rest_framework"
+                    || lower.starts_with("import rest_framework as ")
+                    || lower.starts_with("import rest_framework.")
+                    || lower.starts_with("from rest_framework ")
+                    || lower.starts_with("from rest_framework."),
+            );
+            add(
+                "flask",
+                lower == "import flask"
+                    || lower.starts_with("import flask as ")
+                    || lower.starts_with("import flask.")
+                    || lower.starts_with("from flask ")
+                    || lower.starts_with("from flask."),
+            );
+            add(
+                "fastapi",
+                lower == "import fastapi"
+                    || lower.starts_with("import fastapi as ")
+                    || lower.starts_with("import fastapi.")
+                    || lower.starts_with("from fastapi ")
+                    || lower.starts_with("from fastapi."),
+            );
+        }
+        Some(Language::Go) => {
+            add("gin", lower.contains("\"github.com/gin-gonic/gin\""));
+            add("echo", lower.contains("\"github.com/labstack/echo"));
+            add("fiber", lower.contains("\"github.com/gofiber/fiber"));
+            add("chi", lower.contains("\"github.com/go-chi/chi"));
+            add("gorilla-mux", lower.contains("\"github.com/gorilla/mux\""));
+        }
+        Some(Language::Rust) => {
+            add("axum", lower.starts_with("use axum::"));
+            add("actix-web", lower.starts_with("use actix_web::"));
+            add("warp", lower.starts_with("use warp::"));
+            add("rocket", lower.starts_with("use rocket::"));
+        }
+        Some(Language::Php) => {
+            add("laravel", lower.starts_with("use illuminate\\"));
+            add("symfony", lower.starts_with("use symfony\\component\\"));
+        }
+        Some(Language::Cpp) => {
+            add("drogon", lower.starts_with("#include <drogon/"));
+            add(
+                "crow",
+                lower.starts_with("#include <crow") || lower.starts_with("#include \"crow"),
+            );
+        }
+        _ => {}
+    }
+    frameworks
+}
+
+fn manifest_dependency_matches(line: &str, dependency: &str) -> bool {
+    if line.contains(&format!("\"{dependency}\"")) || line.contains(&format!("'{dependency}'")) {
+        return true;
+    }
+    line.match_indices(dependency).any(|(start, _)| {
+        let before = line[..start].chars().next_back();
+        let after = line[start + dependency.len()..].chars().next();
+        before.is_none_or(|character| {
+            character.is_whitespace() || matches!(character, '=' | '<' | '>' | '~' | '!')
+        }) && after.is_none_or(|character| {
+            character.is_whitespace()
+                || matches!(
+                    character,
+                    '=' | '<' | '>' | '~' | '!' | '[' | ':' | ',' | ';'
+                )
+        })
+    })
+}
+
 fn configuration_facts(
     sources: &RepositorySources,
     candidate_paths: &BTreeSet<&str>,
@@ -14978,6 +16160,7 @@ pub fn run_structural_query(
         sources.file(path)?;
     }
     let mut matches = Vec::new();
+    let mut skipped_files = Vec::new();
     let mut truncated = false;
     'files: for file in sources.files.values().filter(|file| {
         file.language == Some(language)
@@ -14985,15 +16168,32 @@ pub fn run_structural_query(
                 .as_ref()
                 .is_none_or(|path| file.path == *path)
     }) {
-        let document = StrDoc::try_new(&file.source, parser)
-            .map_err(|error| EngineError(format!("could not parse {}: {error}", file.path)))?;
+        let document = match StrDoc::try_new(&file.source, parser) {
+            Ok(document) => document,
+            Err(error) if requested_path.is_some() => {
+                return Err(EngineError(format!(
+                    "could not parse {}: {error}",
+                    file.path
+                )));
+            }
+            Err(_) => {
+                skipped_files.push(file.path.clone());
+                truncated = true;
+                continue;
+            }
+        };
         let ast = AstGrep::doc(document);
         let root = ast.root();
         if root.dfs().any(|node| node.is_error() || node.is_missing()) {
-            return Err(EngineError(format!(
-                "could not run structural query on {}: parser produced ERROR or missing nodes",
-                file.path
-            )));
+            if requested_path.is_some() {
+                return Err(EngineError(format!(
+                    "could not run structural query on {}: parser produced ERROR or missing nodes",
+                    file.path
+                )));
+            }
+            skipped_files.push(file.path.clone());
+            truncated = true;
+            continue;
         }
         for matched in root.find_all(&pattern) {
             if matches.len() == limit {
@@ -15012,13 +16212,15 @@ pub fn run_structural_query(
             });
         }
     }
-    Ok(response(
+    let mut response = response(
         &sources.root,
         "run_structural_query",
         ast_provenance("ast-grep 0.45.1 ephemeral pattern"),
         truncated,
         matches,
-    ))
+    );
+    response.skipped_files = skipped_files;
+    Ok(response)
 }
 
 pub fn find_native_call_sites(
@@ -15569,6 +16771,7 @@ fn response<T>(
         operation: operation.to_string(),
         provenance,
         truncated,
+        skipped_files: Vec::new(),
         results,
     }
 }
@@ -16455,6 +17658,19 @@ mod tests {
         assert!(contract.instructions.iter().any(|instruction| {
             instruction.contains("requested artifact is absent from facts")
                 && instruction.contains("instead of asking to inspect it again")
+        }));
+    }
+
+    #[test]
+    fn triage_contract_keeps_authorization_attachments_distinct_from_enforcement() {
+        let contract = path_review_triage_contract();
+        assert!(contract.instructions.iter().any(|instruction| {
+            instruction.contains("custom guard, middleware, dependency, policy, or voter name")
+                && instruction.contains("attachment inventory only")
+        }));
+        assert!(contract.instructions.iter().any(|instruction| {
+            instruction.contains("unknown means enforcement was not classified")
+                && instruction.contains("owner, tenant, or object authorization")
         }));
     }
 
@@ -18154,6 +19370,193 @@ mod tests {
                 finding_remediation(capability, &[cwe.into()])
                     .text
                     .contains(required)
+            );
+        }
+    }
+
+    #[test]
+    fn framework_context_is_collected_once_and_scoped_to_the_nearest_manifest() {
+        let sources = RepositorySources {
+            root: ".".to_string(),
+            files: BTreeMap::from([
+                (
+                    "apps/api/package.json".to_string(),
+                    SourceFile {
+                        path: "apps/api/package.json".to_string(),
+                        language: None,
+                        source: "{\n  \"dependencies\": { \"express\": \"^5\" }\n}\n"
+                            .to_string(),
+                    },
+                ),
+                (
+                    "apps/api/src/app.js".to_string(),
+                    SourceFile {
+                        path: "apps/api/src/app.js".to_string(),
+                        language: Some(Language::Javascript),
+                        source: "const express = require('express');\napp.use('/admin', requireAdmin);\napp.get('/admin', passport.authenticate('jwt'), handler);\n".to_string(),
+                    },
+                ),
+                (
+                    "services/auth/pom.xml".to_string(),
+                    SourceFile {
+                        path: "services/auth/pom.xml".to_string(),
+                        language: None,
+                        source: "<artifactId>spring-boot-starter-security</artifactId>\n"
+                            .to_string(),
+                    },
+                ),
+                (
+                    "services/auth/src/Security.java".to_string(),
+                    SourceFile {
+                        path: "services/auth/src/Security.java".to_string(),
+                        language: Some(Language::Java),
+                        source: "import org.springframework.security.config.annotation.web.builders.HttpSecurity;\n@EnableMethodSecurity\n"
+                            .to_string(),
+                    },
+                ),
+                (
+                    "apps/api/src/cors.py".to_string(),
+                    SourceFile {
+                        path: "apps/api/src/cors.py".to_string(),
+                        language: Some(Language::Python),
+                        source: "from flask_cors import CORS\n".to_string(),
+                    },
+                ),
+            ]),
+        };
+        let index = ReviewContextIndex::build(&sources, &BTreeSet::new()).unwrap();
+        let api_paths = BTreeSet::from(["apps/api/src/app.js"]);
+        let (api, truncated) = index.framework_facts(&api_paths, 8);
+        assert!(!truncated);
+        assert_eq!(
+            api.iter()
+                .map(|fact| fact.symbol.as_str())
+                .collect::<Vec<_>>(),
+            ["express"]
+        );
+        let (api_authorization, truncated) = index.authorization_facts(&api_paths, &[], 8);
+        assert!(!truncated);
+        assert!(api_authorization.iter().any(|fact| {
+            fact.role == "authorization_requirement_context"
+                && fact.symbol == "PassportAuthenticate"
+        }));
+        assert!(!api_authorization.iter().any(|fact| {
+            fact.symbol == "ExpressMiddleware" || fact.symbol == "ExpressMiddlewareOrder"
+        }));
+
+        let auth_paths = BTreeSet::from(["services/auth/src/Security.java"]);
+        let (auth, truncated) = index.framework_facts(&auth_paths, 8);
+        assert!(!truncated);
+        assert_eq!(
+            auth.iter()
+                .map(|fact| fact.symbol.as_str())
+                .collect::<Vec<_>>(),
+            ["spring-boot", "spring-security"]
+        );
+        let controller_paths = BTreeSet::from(["services/auth/src/Controller.java"]);
+        let (controller_authorization, truncated) =
+            index.authorization_facts(&controller_paths, &[], 8);
+        assert!(!truncated);
+        assert!(controller_authorization.iter().any(|fact| {
+            fact.role == "authorization_activation_context"
+                && fact.symbol == "EnableMethodSecurity"
+                && fact.location.path == "services/auth/src/Security.java"
+        }));
+    }
+
+    #[test]
+    fn authorization_markers_cover_p0_through_p3_framework_controls() {
+        let observed = [
+            (
+                Language::Csharp,
+                "[Authorize(Policy = \"paid\")] app.UseAuthorization(); service.AuthorizeAsync(user, order, \"edit\");",
+            ),
+            (
+                Language::Java,
+                "@PreAuthorize(\"hasRole('ADMIN')\") http.requestMatchers(\"/admin/**\").denyAll();",
+            ),
+            (
+                Language::Kotlin,
+                "install(Authentication) { } authenticate(\"session\") { call.principal<User>() }",
+            ),
+            (
+                Language::Typescript,
+                "@UseGuards(ProjectGuard) @Roles('admin') APP_GUARD passport.authenticate('jwt')",
+            ),
+            (
+                Language::Typescript,
+                "fastify.addHook('preHandler', verifyProject); export function middleware(req) { return auth(req) }",
+            ),
+            (
+                Language::Python,
+                "permission_classes = [IsAuthenticated]  # DRF",
+            ),
+            (
+                Language::Python,
+                "user = Security(get_current_user, scopes=['items:write'])",
+            ),
+            (
+                Language::Python,
+                "@login_required",
+            ),
+            (
+                Language::Go,
+                "admin.Use(middleware.JWT(config)); user := c.Get(\"user\")",
+            ),
+            (
+                Language::Php,
+                "Route::put('/post', $handler)->middleware('can:update,post');",
+            ),
+            (
+                Language::Php,
+                "#[IsGranted('EDIT', subject: 'post')] $this->denyAccessUnlessGranted('EDIT', $post);",
+            ),
+        ]
+        .into_iter()
+        .flat_map(|(language, source)| {
+            let file = SourceFile {
+                path: "synthetic".to_string(),
+                language: Some(language),
+                source: source.to_string(),
+            };
+            authorization_markers(&file, source)
+                .into_iter()
+                .map(|(role, symbol)| (role.to_string(), symbol.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .collect::<BTreeSet<_>>();
+
+        for expected in [
+            ("authorization_requirement_context", "Authorize"),
+            ("authorization_activation_context", "UseAuthorization"),
+            ("resource_authorization_context", "AuthorizeAsync"),
+            (
+                "authorization_requirement_context",
+                "SpringMethodAuthorization",
+            ),
+            ("authorization_requirement_context", "denyAll"),
+            ("authorization_activation_context", "KtorAuthentication"),
+            ("authorization_attachment_context", "KtorAuthenticate"),
+            ("authorization_attachment_context", "NestUseGuards"),
+            (
+                "authorization_attachment_context",
+                "NestAuthorizationMetadata",
+            ),
+            ("authorization_requirement_context", "PassportAuthenticate"),
+            ("authorization_attachment_context", "FastifyLifecycleHook"),
+            ("authorization_boundary_context", "NextMiddleware"),
+            ("authorization_requirement_context", "DRFPermissionClasses"),
+            ("authorization_attachment_context", "FastAPIDependency"),
+            ("authorization_requirement_context", "FlaskLoginRequired"),
+            ("authorization_attachment_context", "GoRouterMiddleware"),
+            ("resource_authorization_context", "GoPrincipalContext"),
+            ("authorization_requirement_context", "LaravelCanMiddleware"),
+            ("authorization_requirement_context", "SymfonyIsGranted"),
+            ("resource_authorization_context", "SymfonyVoterDecision"),
+        ] {
+            assert!(
+                observed.contains(&(expected.0.to_string(), expected.1.to_string())),
+                "missing {expected:?} in {observed:?}"
             );
         }
     }

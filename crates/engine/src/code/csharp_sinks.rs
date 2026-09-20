@@ -46,26 +46,55 @@ pub(crate) fn add_typed_property_sinks<'tree>(
         .dfs()
         .filter(|node| node.kind().as_ref() == "assignment_expression")
     {
-        if comments.is_in_comment(assignment.range()) || assignment_operator(&assignment) != "=" {
+        let operator = assignment_operator(&assignment);
+        if comments.is_in_comment(assignment.range()) || !matches!(operator.as_str(), "=" | "+=") {
             continue;
         }
         let Some(left) = assignment.field("left") else {
             continue;
         };
-        let Some((receiver, member)) = member_assignment(&left) else {
-            continue;
-        };
-        if member != "CommandText" {
-            continue;
-        }
-        let Some(receiver_kind) =
-            database_command_receiver_kind(root, &assignment, receiver.as_str())
-        else {
-            continue;
-        };
+        let (command, receiver_kind, object_initializer) =
+            if let Some((receiver, member)) = member_assignment(&left) {
+                if member != "CommandText" {
+                    continue;
+                }
+                let Some(receiver_kind) =
+                    database_command_receiver_kind(root, &assignment, receiver.as_str())
+                else {
+                    continue;
+                };
+                (receiver, receiver_kind, false)
+            } else if left.text().trim() == "CommandText" {
+                let Some(command_type) = database_command_initializer_type(&assignment) else {
+                    continue;
+                };
+                (command_type, "typed-object-initializer", true)
+            } else {
+                continue;
+            };
         let Some(query) = assignment.field("right") else {
             continue;
         };
+        let stored_procedure = if object_initializer {
+            initializer_sets_stored_procedure(&assignment)
+        } else {
+            command_type_is_stored_procedure(root, &assignment, &command)
+        };
+        let mut tags = vec![
+            "database".to_string(),
+            "sql".to_string(),
+            "ado-net".to_string(),
+            "command-text".to_string(),
+            receiver_kind.to_string(),
+            if stored_procedure {
+                "query-role:stored-procedure-name".to_string()
+            } else {
+                "query-role:sql-text".to_string()
+            },
+        ];
+        if operator == "+=" {
+            tags.push("command-text-append".to_string());
+        }
         evidence.push(Evidence {
             id: evidence_id(path, assignment.range().start, assignment.range().end),
             kind: EvidenceKind::Sink,
@@ -83,19 +112,13 @@ pub(crate) fn add_typed_property_sinks<'tree>(
                 (
                     "command".to_string(),
                     Capture {
-                        text: receiver,
+                        text: command,
                         location: location(path, &left),
                     },
                 ),
             ]),
             cwe_candidates: vec!["CWE-89".to_string()],
-            tags: vec![
-                "database".to_string(),
-                "sql".to_string(),
-                "ado-net".to_string(),
-                "command-text".to_string(),
-                receiver_kind.to_string(),
-            ],
+            tags,
             confidence: Confidence::High,
             provenance: Provenance {
                 resolution: Resolution::Ast,
@@ -114,6 +137,8 @@ pub(crate) fn add_typed_property_sinks<'tree>(
         });
     }
 
+    add_http_request_uri_properties(path, root, comments, conditional, literals, evidence);
+
     let dapper_imported = has_dapper_import(root);
     for invocation in root
         .dfs()
@@ -130,8 +155,20 @@ pub(crate) fn add_typed_property_sinks<'tree>(
                 method.as_str(),
                 "Query"
                     | "QueryAsync"
+                    | "QueryFirst"
+                    | "QueryFirstAsync"
+                    | "QueryFirstOrDefault"
+                    | "QueryFirstOrDefaultAsync"
+                    | "QuerySingle"
+                    | "QuerySingleAsync"
+                    | "QuerySingleOrDefault"
+                    | "QuerySingleOrDefaultAsync"
                     | "Execute"
                     | "ExecuteAsync"
+                    | "ExecuteScalar"
+                    | "ExecuteScalarAsync"
+                    | "ExecuteReader"
+                    | "ExecuteReaderAsync"
                     | "QueryMultiple"
                     | "QueryMultipleAsync"
             )
@@ -205,6 +242,107 @@ pub(crate) fn add_typed_property_sinks<'tree>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn add_http_request_uri_properties<'tree>(
+    path: &str,
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    const RULE: &str = "csharp-http-request-uri";
+    // A source-declared type with this short name wins over framework implicit
+    // usings. Avoid treating its ordinary RequestUri property as an HTTP sink.
+    if declares_type(root, "HttpRequestMessage") {
+        return;
+    }
+    for assignment in root
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "assignment_expression")
+    {
+        if comments.is_in_comment(assignment.range()) || assignment_operator(&assignment) != "=" {
+            continue;
+        }
+        let Some(left) = assignment.field("left") else {
+            continue;
+        };
+        let request = if let Some((receiver, member)) = member_assignment(&left) {
+            if member != "RequestUri"
+                || !receiver_has_type(
+                    root,
+                    &assignment,
+                    receiver.as_str(),
+                    is_http_request_message_type,
+                )
+            {
+                continue;
+            }
+            receiver
+        } else if left.text().trim() == "RequestUri" {
+            let Some(request_type) = initializer_type(&assignment, is_http_request_message_type)
+            else {
+                continue;
+            };
+            request_type
+        } else {
+            continue;
+        };
+        let Some(value) = assignment.field("right") else {
+            continue;
+        };
+        let endpoint = uri_constructor_operand(&value).unwrap_or_else(|| value.clone());
+        evidence.push(Evidence {
+            id: evidence_id_for(RULE, path, assignment.range().start, assignment.range().end),
+            kind: EvidenceKind::Sink,
+            capability: Capability::OutboundNetworkRequest,
+            location: location(path, &assignment),
+            enclosing_symbol: enclosing_symbol(&assignment),
+            captures: BTreeMap::from([
+                (
+                    "endpoint".to_string(),
+                    Capture {
+                        text: endpoint.text().into_owned(),
+                        location: location(path, &endpoint),
+                    },
+                ),
+                (
+                    "request".to_string(),
+                    Capture {
+                        text: request,
+                        location: location(path, &left),
+                    },
+                ),
+            ]),
+            cwe_candidates: vec!["CWE-918".to_string()],
+            tags: vec![
+                "http".to_string(),
+                "network".to_string(),
+                "ssrf".to_string(),
+                "http-request-message".to_string(),
+                "request-uri-property".to_string(),
+                "typed-receiver".to_string(),
+            ],
+            confidence: Confidence::High,
+            provenance: Provenance {
+                resolution: Resolution::Ast,
+                engine: CALL_ENGINE.to_string(),
+                rule_version: 1,
+            },
+            context: EvidenceContext {
+                comment: false,
+                reachability: Some(reachability::classify(&assignment, literals)),
+                availability: Some(conditional.availability_for(assignment.range())),
+                literals: BTreeMap::from([("endpoint".to_string(), literals.evaluate(&endpoint))]),
+                ..EvidenceContext::default()
+            },
+            symbol_resolution: None,
+            rule_id: RULE.to_string(),
+            related_evidence: Vec::new(),
+        });
+    }
+}
+
 /// Marks locally visible SQL string construction on every admitted C# query
 /// sink. This is deliberately independent of controller/repository handoff
 /// resolution: it describes the query operand without claiming its origin.
@@ -236,6 +374,18 @@ pub(crate) fn annotate_dynamic_query_composition<'tree>(
         else {
             continue;
         };
+        if query
+            .ancestors()
+            .find(|ancestor| {
+                matches!(
+                    ancestor.kind().as_ref(),
+                    "object_creation_expression" | "implicit_object_creation_expression"
+                )
+            })
+            .is_some_and(|creation| creation_sets_stored_procedure(&creation))
+        {
+            push_unique_tag(&mut item.tags, "query-role:stored-procedure-name");
+        }
         let Some(composition) = query_composition(root, &query, literals, 0) else {
             continue;
         };
@@ -353,6 +503,14 @@ pub(crate) fn annotate_decision_critical_origins(language: Language, evidence: &
             Capability::DynamicCodeExecution => capture_is_dynamic(item, "code", "code"),
             Capability::Deserialization => capture_is_dynamic(item, "payload", "payload"),
             Capability::LdapQuery => capture_is_dynamic(item, "filter", "distinguished_name"),
+            Capability::DatabaseQuery
+                if item
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "query-role:stored-procedure-name") =>
+            {
+                capture_is_dynamic(item, "query", "query")
+            }
             Capability::DatabaseQuery if item.rule_id == "csharp-extended-nosql-json" => {
                 capture_is_dynamic(item, "nosql_query", "nosql_query")
             }
@@ -722,8 +880,122 @@ fn member_assignment(left: &Node<'_, StrDoc<SupportLang>>) -> Option<(String, St
     }
     let receiver = left.field("expression")?;
     let member = left.field("name")?;
-    let receiver = simple_identifier(receiver.text().trim())?.to_string();
+    let receiver = command_receiver_identifier(&receiver)?;
     Some((receiver, member.text().into_owned()))
+}
+
+fn command_receiver_identifier(receiver: &Node<'_, StrDoc<SupportLang>>) -> Option<String> {
+    if let Some(receiver) = simple_identifier(receiver.text().trim()) {
+        return Some(receiver.to_string());
+    }
+    if receiver.kind().as_ref() != "member_access_expression"
+        || receiver
+            .field("expression")
+            .is_none_or(|owner| owner.text().trim() != "this")
+    {
+        return None;
+    }
+    receiver
+        .field("name")
+        .and_then(|name| simple_identifier(name.text().trim()).map(str::to_string))
+}
+
+fn database_command_initializer_type(assignment: &Node<'_, StrDoc<SupportLang>>) -> Option<String> {
+    initializer_type(assignment, is_database_command_type)
+}
+
+fn initializer_type(
+    assignment: &Node<'_, StrDoc<SupportLang>>,
+    predicate: fn(&str) -> bool,
+) -> Option<String> {
+    let creation = assignment.ancestors().find(|ancestor| {
+        matches!(
+            ancestor.kind().as_ref(),
+            "object_creation_expression" | "implicit_object_creation_expression"
+        )
+    })?;
+    if let Some(observed) = creation.field("type")
+        && predicate(observed.text().as_ref())
+    {
+        return Some(observed.text().trim().to_string());
+    }
+    let declarator = creation
+        .ancestors()
+        .find(|ancestor| ancestor.kind().as_ref() == "variable_declarator")?;
+    let declaration = declarator
+        .ancestors()
+        .find(|ancestor| ancestor.kind().as_ref() == "variable_declaration")?;
+    let observed = declaration.field("type")?;
+    predicate(observed.text().as_ref()).then(|| observed.text().trim().to_string())
+}
+
+fn uri_constructor_operand<'tree>(
+    expression: &Node<'tree, StrDoc<SupportLang>>,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    if expression.kind().as_ref() != "object_creation_expression"
+        || expression.field("type").is_none_or(|kind| {
+            !matches!(
+                kind.text().trim().rsplit('.').next(),
+                Some("Uri" | "UriBuilder")
+            )
+        })
+    {
+        return None;
+    }
+    expression
+        .field("arguments")
+        .and_then(|arguments| arguments.children().find(|child| child.is_named()))
+}
+
+fn initializer_sets_stored_procedure(assignment: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    let Some(creation) = assignment.ancestors().find(|ancestor| {
+        matches!(
+            ancestor.kind().as_ref(),
+            "object_creation_expression" | "implicit_object_creation_expression"
+        )
+    }) else {
+        return false;
+    };
+    creation_sets_stored_procedure(&creation)
+}
+
+fn creation_sets_stored_procedure(creation: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    creation.dfs().any(|node| {
+        node.kind().as_ref() == "assignment_expression"
+            && node
+                .field("left")
+                .is_some_and(|left| left.text().trim() == "CommandType")
+            && node.field("right").is_some_and(|right| {
+                compact(right.text().as_ref()).ends_with("CommandType.StoredProcedure")
+            })
+    })
+}
+
+fn command_type_is_stored_procedure(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    assignment: &Node<'_, StrDoc<SupportLang>>,
+    receiver: &str,
+) -> bool {
+    let scope = scope_range(assignment, root);
+    root.dfs().any(|node| {
+        if node.kind().as_ref() != "assignment_expression"
+            || node.range().start < scope.start
+            || node.range().end > scope.end
+        {
+            return false;
+        }
+        let Some(left) = node.field("left") else {
+            return false;
+        };
+        let Some((candidate, member)) = member_assignment(&left) else {
+            return false;
+        };
+        candidate == receiver
+            && member == "CommandType"
+            && node.field("right").is_some_and(|right| {
+                compact(right.text().as_ref()).ends_with("CommandType.StoredProcedure")
+            })
+    })
 }
 
 fn database_command_receiver_kind(
@@ -984,6 +1256,9 @@ fn is_database_command_type(observed: &str) -> bool {
                 | "OracleCommand"
                 | "OleDbCommand"
                 | "OdbcCommand"
+                | "SqlBatchCommand"
+                | "NpgsqlBatchCommand"
+                | "MySqlBatchCommand"
         )
     )
 }
@@ -1017,6 +1292,24 @@ fn is_http_client_type(observed: &str) -> bool {
         observed.trim().trim_end_matches('?').rsplit('.').next(),
         Some("HttpClient")
     )
+}
+
+fn is_http_request_message_type(observed: &str) -> bool {
+    matches!(
+        observed.trim().trim_end_matches('?').rsplit('.').next(),
+        Some("HttpRequestMessage")
+    )
+}
+
+fn declares_type(root: &Node<'_, StrDoc<SupportLang>>, expected: &str) -> bool {
+    root.dfs().any(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "class_declaration" | "struct_declaration" | "record_declaration"
+        ) && node
+            .field("name")
+            .is_some_and(|name| name.text().trim() == expected)
+    })
 }
 
 fn compact(text: &str) -> String {

@@ -69,7 +69,7 @@ fn enumerates_first_cwe_capability_set_across_priority_languages() {
         .iter()
         .map(|coverage| (coverage.cwe.as_str(), coverage))
         .collect();
-    assert_eq!(cwe.len(), 68);
+    assert_eq!(cwe.len(), 69);
     for id in ["CWE-20", "CWE-22", "CWE-78", "CWE-89", "CWE-798", "CWE-918"] {
         let coverage = cwe.get(id).expect("CWE coverage should be declared");
         assert_eq!(coverage.level, CweSupportLevel::Partial);
@@ -237,7 +237,7 @@ fn enumerates_first_cwe_capability_set_across_priority_languages() {
 #[test]
 fn built_in_catalog_has_valid_provenance() {
     let rules = mehscan_engine::rules::load_builtin_rules().expect("catalog should validate");
-    assert_eq!(rules.len(), 415);
+    assert_eq!(rules.len(), 419);
     let invalid = rules
         .iter()
         .filter(|rule| {

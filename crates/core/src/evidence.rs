@@ -372,6 +372,8 @@ pub struct ValueTransform {
 #[serde(rename_all = "snake_case")]
 pub enum HttpRouteAccess {
     Unknown,
+    ExplicitlyPublic,
+    Denied,
     Authenticated,
     RoleRestricted,
 }

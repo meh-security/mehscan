@@ -99,8 +99,10 @@ locally returned syntax match. Never convert multiple matches into a flow or
 reachability claim. Querying must not add scan evidence, change review
 admission, or introduce checks outside the supplied unresolved set.
 
-Keep the generic `structural` operation as a rule-development escape hatch. Do
-not use model-invented structural patterns as default verdict evidence.
+The generic `structural` operation is also available for bounded AST lookup in
+every supported language. Use it only to answer an exact existing unresolved
+syntactic question, preferably with `--path`; do not use model-invented patterns
+as default verdict evidence or as a source of new findings.
 
 ## Response and reporting
 

@@ -40,6 +40,8 @@ pub(crate) fn add_go_policy_observations<'tree>(
     let source = root.text();
     let uses_http = source.contains("\"net/http\"");
     let uses_io = source.contains("\"io\"");
+    let golang_jwt_qualifiers = go_import_qualifiers(root, "github.com/golang-jwt/jwt/v5", "jwt");
+    let gin_cors_qualifiers = go_import_qualifiers(root, "github.com/gin-contrib/cors", "cors");
 
     for call in root.dfs().filter_map(call_site) {
         if comments.is_in_comment(call.node.range()) {
@@ -72,6 +74,31 @@ pub(crate) fn add_go_policy_observations<'tree>(
                     },
                     "review-gateway-ownership",
                     "review-not-automatic-fix",
+                ],
+                Confidence::High,
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+        }
+        if golang_jwt_qualifiers
+            .iter()
+            .any(|qualifier| call.callee == format!("{qualifier}.WithoutClaimsValidation"))
+        {
+            push(
+                path,
+                &call.node,
+                "go-jwt-claims-validation-disabled",
+                EvidenceKind::SecurityConfiguration,
+                Capability::Authentication,
+                captures(path, &call, &[]),
+                &["CWE-287", "CWE-613"],
+                &[
+                    "jwt",
+                    "claims-validation-disabled",
+                    "explicit-security-disable",
+                    "golang-jwt",
                 ],
                 Confidence::High,
                 comments,
@@ -343,6 +370,38 @@ pub(crate) fn add_go_policy_observations<'tree>(
             );
         }
         if node.kind().as_ref() == "composite_literal"
+            && gin_cors_qualifiers.iter().any(|qualifier| {
+                compact(text.as_ref()).starts_with(&format!("{qualifier}.Config{{"))
+            })
+        {
+            let configuration = compact(text.as_ref());
+            if configuration.contains("AllowAllOrigins:true")
+                && configuration.contains("AllowCredentials:true")
+            {
+                push(
+                    path,
+                    &node,
+                    "go-gin-credentialed-all-origins-cors",
+                    EvidenceKind::SecurityConfiguration,
+                    Capability::CorsConfiguration,
+                    BTreeMap::from([("policy".to_string(), capture(path, &node))]),
+                    &["CWE-942"],
+                    &[
+                        "gin",
+                        "cors",
+                        "all-origins",
+                        "credentials-enabled",
+                        "explicit-permissive-policy",
+                    ],
+                    Confidence::High,
+                    comments,
+                    conditional,
+                    literals,
+                    evidence,
+                );
+            }
+        }
+        if node.kind().as_ref() == "composite_literal"
             && (compact(text.as_ref()).starts_with("sessions.Options{")
                 || compact(text.as_ref()).starts_with("http.Cookie{"))
         {
@@ -459,6 +518,30 @@ fn relate_identity_evidence(path: &str, evidence: &mut [Evidence]) {
     }) {
         item.related_evidence = ids.iter().filter(|id| **id != item.id).cloned().collect();
     }
+}
+
+fn go_import_qualifiers(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    expected_path: &str,
+    default: &str,
+) -> BTreeSet<String> {
+    root.dfs()
+        .filter(|node| node.kind().as_ref() == "import_spec")
+        .filter(|node| {
+            node.field("path")
+                .is_some_and(|path| path.text().trim_matches('"') == expected_path)
+                || node
+                    .text()
+                    .trim()
+                    .ends_with(&format!("\"{expected_path}\""))
+        })
+        .filter_map(|node| {
+            node.field("name")
+                .map(|name| name.text().trim().to_string())
+                .or_else(|| Some(default.to_string()))
+        })
+        .filter(|qualifier| qualifier != "." && qualifier != "_")
+        .collect()
 }
 
 struct CallSite<'tree> {

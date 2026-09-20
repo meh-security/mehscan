@@ -68,9 +68,11 @@ fn reports_request_selected_unscoped_resources_and_retains_scoped_controls() {
         .find(|item| item.location.path.ends_with("authenticated-route.ts"))
         .expect("authenticated unscoped resource");
     assert_eq!(authenticated.context.http_routes.len(), 1);
+    // Keep the application-defined middleware attachment for review without
+    // assigning authentication semantics from its name.
     assert_eq!(
         authenticated.context.http_routes[0].access,
-        HttpRouteAccess::Authenticated
+        HttpRouteAccess::Unknown
     );
     assert_eq!(
         authenticated.context.http_routes[0].guards,

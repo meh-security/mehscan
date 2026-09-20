@@ -38,7 +38,8 @@ fn catalogs_exact_fastify_routes_sources_schemas_guards_replies_and_plugins() {
     assert!(fastify.iter().any(|item| {
         item.kind == EvidenceKind::Guard
             && item.capability == Capability::Authorization
-            && item.context.http_routes[0].access == HttpRouteAccess::RoleRestricted
+            && item.context.http_routes[0].access == HttpRouteAccess::Unknown
+            && !item.context.http_routes[0].guards.is_empty()
     }));
     assert!(fastify.iter().any(|item| {
         item.kind == EvidenceKind::Guard && item.rule_id == "typescript-fastify-lifecycle-guard"

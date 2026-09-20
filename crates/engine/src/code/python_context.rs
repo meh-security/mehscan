@@ -763,8 +763,10 @@ fn authenticated_identity_value(call: &Node<'_, StrDoc<SupportLang>>, value: &st
     call.ancestors()
         .find(|ancestor| ancestor.kind().as_ref() == "function_definition")
         .is_some_and(|function| {
-            handler_access(&function, enclosing_python_class(&function).as_deref()).0
-                != HttpRouteAccess::Unknown
+            matches!(
+                handler_access(&function, enclosing_python_class(&function).as_deref()).0,
+                HttpRouteAccess::Authenticated | HttpRouteAccess::RoleRestricted
+            )
         })
 }
 
@@ -2119,17 +2121,11 @@ fn handler_access(
             guards.push(guard.to_string());
         }
     }
-    let access = if guards
-        .iter()
-        .any(|guard| guard.contains("Admin") || guard.contains("permission_required"))
-    {
+    let access = if guards.iter().any(|guard| guard == "AllowAny") {
+        HttpRouteAccess::ExplicitlyPublic
+    } else if guards.iter().any(|guard| guard == "IsAdminUser") {
         HttpRouteAccess::RoleRestricted
-    } else if guards.iter().any(|guard| {
-        matches!(
-            guard.as_str(),
-            "jwt_auth_required" | "login_required" | "authentication_classes" | "IsAuthenticated"
-        )
-    }) {
+    } else if guards.iter().any(|guard| guard == "IsAuthenticated") {
         HttpRouteAccess::Authenticated
     } else {
         HttpRouteAccess::Unknown

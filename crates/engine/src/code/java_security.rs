@@ -60,6 +60,12 @@ pub(crate) fn add_spring_security_observations<'tree>(
         let Some((policy, policy_node)) = chained_policy(&invocation) else {
             continue;
         };
+        let broad_public = policy == "permit_all" && matches!(route.as_str(), "*" | "/**");
+        let rule_id = if broad_public {
+            "java-spring-security-broad-permit-all"
+        } else {
+            RULE_ID
+        };
         let policy_location = location(path, &invocation);
         evidence.push(Evidence {
             id: format!(
@@ -67,7 +73,7 @@ pub(crate) fn add_spring_security_observations<'tree>(
                 path,
                 invocation.range().start,
                 invocation.range().end,
-                RULE_ID
+                rule_id
             ),
             kind: EvidenceKind::SecurityConfiguration,
             capability: Capability::Authorization,
@@ -95,7 +101,10 @@ pub(crate) fn add_spring_security_observations<'tree>(
                 "route-policy".to_string(),
                 format!("access:{policy}"),
                 format!("route:{route}"),
-            ],
+            ]
+            .into_iter()
+            .chain(broad_public.then(|| "broad-public-access".to_string()))
+            .collect(),
             confidence: Confidence::High,
             provenance: Provenance {
                 resolution: Resolution::Ast,
@@ -109,7 +118,7 @@ pub(crate) fn add_spring_security_observations<'tree>(
                 ..EvidenceContext::default()
             },
             symbol_resolution: None,
-            rule_id: RULE_ID.to_string(),
+            rule_id: rule_id.to_string(),
             related_evidence: Vec::new(),
         });
     }

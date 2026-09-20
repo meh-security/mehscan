@@ -25,8 +25,10 @@ fn distinguishes_django_object_policy_and_sensitive_writes() {
         orm.iter()
             .filter(|item| item.kind == EvidenceKind::Sink)
             .count(),
-        1
+        3
     );
+    // The fixture's jwt_auth_required decorator is a no-op. Its name cannot
+    // prove that the user parameter is an authenticated owner identity.
     assert_eq!(
         orm.iter()
             .filter(|item| {
@@ -36,7 +38,7 @@ fn distinguishes_django_object_policy_and_sensitive_writes() {
                     .is_some_and(|policy| policy.state == ResourcePolicyState::OwnerScoped)
             })
             .count(),
-        2
+        0
     );
 
     let mutations = result

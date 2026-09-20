@@ -32,6 +32,13 @@ public class LookalikesController
     }
 
     [HttpGet]
+    public object UnrelatedInitializedCommandText([FromQuery] string query)
+    {
+        var report = new Report { CommandText = query };
+        return report;
+    }
+
+    [HttpGet]
     public object ReassignedCommand([FromQuery] string query)
     {
         var command = new SqlCommand();

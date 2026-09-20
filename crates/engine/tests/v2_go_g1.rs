@@ -47,7 +47,8 @@ fn adds_go_request_route_identity_and_mongo_context_without_json_cwe_502() {
         item.context.http_routes.iter().any(|route| {
             route.method == "POST"
                 && route.path == "/items/{id}"
-                && route.access == HttpRouteAccess::Authenticated
+                && route.access == HttpRouteAccess::Unknown
+                && !route.guards.is_empty()
         })
     }));
     assert!(result.evidence.iter().any(|item| {

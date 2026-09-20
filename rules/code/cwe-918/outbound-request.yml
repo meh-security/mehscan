@@ -73,6 +73,34 @@
         captures: { endpoint: URL }
       - pattern: axios.post($URL, $$$ARGUMENTS)
         captures: { endpoint: URL }
+      - pattern: axios.put($URL)
+        captures: { endpoint: URL }
+      - pattern: axios.put($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: axios.patch($URL)
+        captures: { endpoint: URL }
+      - pattern: axios.patch($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: axios.delete($URL)
+        captures: { endpoint: URL }
+      - pattern: axios.delete($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: axios.head($URL)
+        captures: { endpoint: URL }
+      - pattern: axios.head($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: axios.options($URL)
+        captures: { endpoint: URL }
+      - pattern: axios.options($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: "axios({ url: $URL })"
+        captures: { endpoint: URL }
+      - pattern: "axios({ url: $URL, $$$OPTIONS })"
+        captures: { endpoint: URL }
+      - pattern: "axios.request({ url: $URL })"
+        captures: { endpoint: URL }
+      - pattern: "axios.request({ url: $URL, $$$OPTIONS })"
+        captures: { endpoint: URL }
       - pattern: needle.get($URL, $$$ARGUMENTS)
         captures: { endpoint: URL }
       - pattern: http.get($URL)
@@ -101,6 +129,28 @@
     - canonical: axios.default.get
       captures: { endpoint: 0 }
     - canonical: axios.post
+      captures: { endpoint: 0 }
+    - canonical: axios.default.post
+      captures: { endpoint: 0 }
+    - canonical: axios.put
+      captures: { endpoint: 0 }
+    - canonical: axios.default.put
+      captures: { endpoint: 0 }
+    - canonical: axios.patch
+      captures: { endpoint: 0 }
+    - canonical: axios.default.patch
+      captures: { endpoint: 0 }
+    - canonical: axios.delete
+      captures: { endpoint: 0 }
+    - canonical: axios.default.delete
+      captures: { endpoint: 0 }
+    - canonical: axios.head
+      captures: { endpoint: 0 }
+    - canonical: axios.default.head
+      captures: { endpoint: 0 }
+    - canonical: axios.options
+      captures: { endpoint: 0 }
+    - canonical: axios.default.options
       captures: { endpoint: 0 }
     - canonical: needle.get
       captures: { endpoint: 0 }
@@ -163,6 +213,16 @@
         captures: { endpoint: URL }
       - pattern: requests.post($URL, $$$ARGUMENTS)
         captures: { endpoint: URL }
+      - pattern: requests.put($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: requests.patch($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: requests.delete($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: requests.head($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: requests.options($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
       - pattern: requests.request($METHOD, $URL, $$$ARGUMENTS)
         captures: { endpoint: URL, method: METHOD }
       - pattern: urllib.request.urlopen($URL)
@@ -173,10 +233,34 @@
         captures: { endpoint: URL }
       - pattern: httpx.get($URL, $$$ARGUMENTS)
         captures: { endpoint: URL }
+      - pattern: httpx.post($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: httpx.put($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: httpx.patch($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: httpx.delete($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: httpx.head($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: httpx.options($URL, $$$ARGUMENTS)
+        captures: { endpoint: URL }
+      - pattern: httpx.request($METHOD, $URL, $$$ARGUMENTS)
+        captures: { endpoint: URL, method: METHOD }
   symbols:
     - canonical: requests.get
       captures: { endpoint: 0 }
     - canonical: requests.post
+      captures: { endpoint: 0 }
+    - canonical: requests.put
+      captures: { endpoint: 0 }
+    - canonical: requests.patch
+      captures: { endpoint: 0 }
+    - canonical: requests.delete
+      captures: { endpoint: 0 }
+    - canonical: requests.head
+      captures: { endpoint: 0 }
+    - canonical: requests.options
       captures: { endpoint: 0 }
     - canonical: requests.request
       captures: { method: 0, endpoint: 1 }
@@ -184,6 +268,20 @@
       captures: { endpoint: 0 }
     - canonical: httpx.get
       captures: { endpoint: 0 }
+    - canonical: httpx.post
+      captures: { endpoint: 0 }
+    - canonical: httpx.put
+      captures: { endpoint: 0 }
+    - canonical: httpx.patch
+      captures: { endpoint: 0 }
+    - canonical: httpx.delete
+      captures: { endpoint: 0 }
+    - canonical: httpx.head
+      captures: { endpoint: 0 }
+    - canonical: httpx.options
+      captures: { endpoint: 0 }
+    - canonical: httpx.request
+      captures: { method: 0, endpoint: 1 }
   tags: [http, network, ssrf]
   ai: *outbound_guidance
   provenance:
@@ -209,6 +307,8 @@
         captures: { endpoint: URL }
       - pattern: http.Post($URL, $CONTENT_TYPE, $BODY)
         captures: { endpoint: URL }
+      - pattern: http.Head($URL)
+        captures: { endpoint: URL }
       - pattern: http.NewRequest($METHOD, $URL, $BODY)
         captures: { endpoint: URL, method: METHOD }
       - pattern: http.NewRequestWithContext($CONTEXT, $METHOD, $URL, $BODY)
@@ -223,6 +323,8 @@
     - canonical: net/http.Get
       captures: { endpoint: 0 }
     - canonical: net/http.Post
+      captures: { endpoint: 0 }
+    - canonical: net/http.Head
       captures: { endpoint: 0 }
     - canonical: net/http.NewRequest
       captures: { method: 0, endpoint: 1 }
@@ -255,11 +357,27 @@
         captures: { endpoint: URL }
       - pattern: reqwest::Client::new().post($URL)
         captures: { endpoint: URL }
+      - pattern: reqwest::Client::new().put($URL)
+        captures: { endpoint: URL }
+      - pattern: reqwest::Client::new().patch($URL)
+        captures: { endpoint: URL }
+      - pattern: reqwest::Client::new().delete($URL)
+        captures: { endpoint: URL }
+      - pattern: reqwest::Client::new().head($URL)
+        captures: { endpoint: URL }
       - pattern: reqwest::Client::new().request($METHOD, $URL)
         captures: { method: METHOD, endpoint: URL }
       - pattern: $CLIENT.get($URL)
         captures: { client: CLIENT, endpoint: URL }
       - pattern: $CLIENT.post($URL)
+        captures: { client: CLIENT, endpoint: URL }
+      - pattern: $CLIENT.put($URL)
+        captures: { client: CLIENT, endpoint: URL }
+      - pattern: $CLIENT.patch($URL)
+        captures: { client: CLIENT, endpoint: URL }
+      - pattern: $CLIENT.delete($URL)
+        captures: { client: CLIENT, endpoint: URL }
+      - pattern: $CLIENT.head($URL)
         captures: { client: CLIENT, endpoint: URL }
       - pattern: $CLIENT.request($METHOD, $URL)
         captures: { client: CLIENT, method: METHOD, endpoint: URL }

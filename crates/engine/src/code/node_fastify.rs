@@ -146,7 +146,11 @@ pub(crate) fn add_fastify_observations<'tree>(
             );
         }
         if !route.guards.is_empty() {
-            let capability = if context.access == HttpRouteAccess::RoleRestricted {
+            let capability = if route
+                .guards
+                .iter()
+                .any(|guard| looks_like_role_guard(guard))
+            {
                 Capability::Authorization
             } else {
                 Capability::Authentication
@@ -359,7 +363,6 @@ fn fastify_routes<'tree>(
         let schema = options.and_then(|options| object_property_value(options, "schema"));
         let guards = options
             .and_then(|options| object_property_value(options, "preHandler"))
-            .filter(|value| looks_like_auth_guard(&value.text()))
             .map(|value| vec![compact(&value.text())])
             .unwrap_or_default();
         routes.push(FastifyRoute {
@@ -869,17 +872,9 @@ fn route_context(route: &FastifyRoute<'_>) -> HttpRouteContext {
     HttpRouteContext {
         method: route.method.clone(),
         path: route.path.clone(),
-        access: if route
-            .guards
-            .iter()
-            .any(|guard| looks_like_role_guard(guard))
-        {
-            HttpRouteAccess::RoleRestricted
-        } else if route.guards.is_empty() {
-            HttpRouteAccess::Unknown
-        } else {
-            HttpRouteAccess::Authenticated
-        },
+        // Hooks are custom code. Keep exact attachments without inferring
+        // authentication or authorization from their names.
+        access: HttpRouteAccess::Unknown,
         guards: route.guards.clone(),
     }
 }

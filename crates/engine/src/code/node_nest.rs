@@ -307,19 +307,10 @@ fn pipe_decorators<'tree>(
 }
 
 fn guard_access(guards: &[String]) -> HttpRouteAccess {
-    if guards.iter().any(|guard| {
-        let guard = guard.to_ascii_lowercase();
-        guard.contains("role") || guard.contains("permission") || guard.contains("admin")
-    }) {
-        HttpRouteAccess::RoleRestricted
-    } else if guards.iter().any(|guard| {
-        let guard = guard.to_ascii_lowercase();
-        guard.contains("auth") || guard.contains("jwt") || guard.contains("session")
-    }) {
-        HttpRouteAccess::Authenticated
-    } else {
-        HttpRouteAccess::Unknown
-    }
+    // Nest guards are application-defined. Their exact names are useful
+    // attachment facts, but their names do not prove enforcement semantics.
+    let _ = guards;
+    HttpRouteAccess::Unknown
 }
 
 fn route_context(route: &NestRoute<'_>) -> HttpRouteContext {

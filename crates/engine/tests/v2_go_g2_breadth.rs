@@ -44,7 +44,8 @@ fn adds_httprouter_sql_helper_and_cookie_policy_context() {
     assert!(unsafe_query.context.http_routes.iter().any(|route| {
         route.method == "GET"
             && route.path == "/unsafe"
-            && route.access == HttpRouteAccess::Authenticated
+            && route.access == HttpRouteAccess::Unknown
+            && !route.guards.is_empty()
     }));
 
     let safe = result

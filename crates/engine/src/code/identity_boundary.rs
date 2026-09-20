@@ -212,12 +212,73 @@ fn add_jwt_observations<'tree>(
             let Some(token) = call.arguments.first() else {
                 continue;
             };
-            let algorithms = call.arguments.iter().skip(2).any(|argument| {
-                compact(argument.text().as_ref())
-                    .to_ascii_lowercase()
-                    .contains("algorithms:")
-            });
-            if algorithms {
+            let expiration_disabled = jwt_boolean_option(&call.arguments, "ignoreExpiration");
+            let not_before_disabled = jwt_boolean_option(&call.arguments, "ignoreNotBefore");
+            let algorithm_weakened =
+                jwt_boolean_option(&call.arguments, "allowInvalidAsymmetricKeyTypes")
+                    || jwt_algorithms_include_none(&call.arguments);
+            if expiration_disabled {
+                push_configuration(
+                    path,
+                    language,
+                    "jwt-expiration-validation-disabled",
+                    &call.node,
+                    Capability::Authentication,
+                    "CWE-613",
+                    vec![
+                        "jwt".into(),
+                        "verification".into(),
+                        "expiration-validation-disabled".into(),
+                        "explicit-security-disable".into(),
+                    ],
+                    comments,
+                    conditional,
+                    literals,
+                    evidence,
+                );
+            }
+            if not_before_disabled {
+                push_configuration(
+                    path,
+                    language,
+                    "jwt-not-before-validation-disabled",
+                    &call.node,
+                    Capability::Authentication,
+                    "CWE-345",
+                    vec![
+                        "jwt".into(),
+                        "verification".into(),
+                        "not-before-validation-disabled".into(),
+                        "explicit-security-disable".into(),
+                    ],
+                    comments,
+                    conditional,
+                    literals,
+                    evidence,
+                );
+            }
+            if algorithm_weakened {
+                push_configuration(
+                    path,
+                    language,
+                    "jwt-algorithm-validation-weakened",
+                    &call.node,
+                    Capability::Authentication,
+                    "CWE-347",
+                    vec![
+                        "jwt".into(),
+                        "verification".into(),
+                        "algorithm-validation-weakened".into(),
+                        "explicit-security-disable".into(),
+                    ],
+                    comments,
+                    conditional,
+                    literals,
+                    evidence,
+                );
+            }
+            let algorithms = jwt_option_value(&call.arguments, "algorithms").is_some();
+            if algorithms && !algorithm_weakened {
                 push_control(
                     path,
                     language,
@@ -1011,6 +1072,40 @@ struct CallSite<'tree> {
     node: Node<'tree, StrDoc<SupportLang>>,
     callee: String,
     arguments: Vec<Node<'tree, StrDoc<SupportLang>>>,
+}
+
+fn jwt_option_value<'tree>(
+    arguments: &[Node<'tree, StrDoc<SupportLang>>],
+    expected: &str,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    arguments.iter().skip(2).find_map(|argument| {
+        argument.dfs().find_map(|node| {
+            if node.kind().as_ref() != "pair" {
+                return None;
+            }
+            let key = node.field("key")?;
+            (key.text().trim_matches(['\'', '"']) == expected)
+                .then(|| node.field("value"))
+                .flatten()
+        })
+    })
+}
+
+fn jwt_boolean_option(arguments: &[Node<'_, StrDoc<SupportLang>>], expected: &str) -> bool {
+    jwt_option_value(arguments, expected)
+        .is_some_and(|value| value.kind().as_ref() == "true" && value.text().trim() == "true")
+}
+
+fn jwt_algorithms_include_none(arguments: &[Node<'_, StrDoc<SupportLang>>]) -> bool {
+    jwt_option_value(arguments, "algorithms").is_some_and(|value| {
+        value.dfs().any(|node| {
+            matches!(node.kind().as_ref(), "string" | "string_fragment")
+                && node
+                    .text()
+                    .trim_matches(['\'', '"'])
+                    .eq_ignore_ascii_case("none")
+        })
+    })
 }
 
 fn call_site<'tree>(node: Node<'tree, StrDoc<SupportLang>>) -> Option<CallSite<'tree>> {

@@ -38,7 +38,7 @@ fn applies_bounded_node_function_and_continuation_summaries() {
     assert!(source.context.http_routes.iter().any(|route| {
         route.method == "POST"
             && route.path == "/run"
-            && route.access == HttpRouteAccess::Authenticated
+            && route.access == HttpRouteAccess::Unknown
             && route.guards == ["isAuthorized"]
     }));
 

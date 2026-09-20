@@ -68,6 +68,10 @@
         captures: { command: COMMAND }
       - pattern: child_process.execFile($COMMAND, $$$ARGUMENTS)
         captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: child_process.execFileSync($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.execFileSync($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
       - pattern: child_process.spawn($COMMAND)
         captures: { command: COMMAND }
       - pattern: child_process.spawn($COMMAND, $$$ARGUMENTS)
@@ -76,6 +80,10 @@
         captures: { command: COMMAND }
       - pattern: child_process.spawnSync($COMMAND, $$$ARGUMENTS)
         captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: child_process.fork($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.fork($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
   symbols: &node_process_symbols
     - canonical: child_process.exec
       captures: { command: 0 }
@@ -83,9 +91,13 @@
       captures: { command: 0 }
     - canonical: child_process.execFile
       captures: { command: 0, arguments: 1 }
+    - canonical: child_process.execFileSync
+      captures: { command: 0, arguments: 1 }
     - canonical: child_process.spawn
       captures: { command: 0, arguments: 1 }
     - canonical: child_process.spawnSync
+      captures: { command: 0, arguments: 1 }
+    - canonical: child_process.fork
       captures: { command: 0, arguments: 1 }
   tags: [command, process, nodejs]
   ai: *process_guidance
@@ -112,6 +124,10 @@
         captures: { command: COMMAND }
       - pattern: child_process.execFile($COMMAND, $$$ARGUMENTS)
         captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: child_process.execFileSync($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.execFileSync($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
       - pattern: child_process.spawn($COMMAND)
         captures: { command: COMMAND }
       - pattern: child_process.spawn($COMMAND, $$$ARGUMENTS)
@@ -119,6 +135,10 @@
       - pattern: child_process.spawnSync($COMMAND)
         captures: { command: COMMAND }
       - pattern: child_process.spawnSync($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: child_process.fork($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.fork($COMMAND, $$$ARGUMENTS)
         captures: { command: COMMAND, arguments: ARGUMENTS }
   symbols: *node_process_symbols
   tags: [command, process, nodejs]
@@ -142,6 +162,10 @@
         captures: { command: COMMAND }
       - pattern: child_process.execFile($COMMAND, $$$ARGUMENTS)
         captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: child_process.execFileSync($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.execFileSync($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
       - pattern: child_process.spawn($COMMAND)
         captures: { command: COMMAND }
       - pattern: child_process.spawn($COMMAND, $$$ARGUMENTS)
@@ -149,6 +173,10 @@
       - pattern: child_process.spawnSync($COMMAND)
         captures: { command: COMMAND }
       - pattern: child_process.spawnSync($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: child_process.fork($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: child_process.fork($COMMAND, $$$ARGUMENTS)
         captures: { command: COMMAND, arguments: ARGUMENTS }
   symbols: *node_process_symbols
   tags: [command, process, nodejs]
@@ -188,6 +216,52 @@
         captures: { command: COMMAND }
       - pattern: subprocess.check_output($COMMAND, $$$ARGUMENTS)
         captures: { command: COMMAND }
+      - pattern: subprocess.getoutput($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: subprocess.getstatusoutput($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: asyncio.create_subprocess_shell($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: asyncio.create_subprocess_shell($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND }
+      - pattern: asyncio.create_subprocess_exec($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: asyncio.create_subprocess_exec($COMMAND)
+        captures: { command: COMMAND }
+      - pattern: os.execv($COMMAND, $ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: os.execve($COMMAND, $ARGUMENTS, $ENVIRONMENT)
+        captures: { command: COMMAND, arguments: ARGUMENTS, environment: ENVIRONMENT }
+      - pattern: os.execvp($COMMAND, $ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: os.execvpe($COMMAND, $ARGUMENTS, $ENVIRONMENT)
+        captures: { command: COMMAND, arguments: ARGUMENTS, environment: ENVIRONMENT }
+      - pattern: os.execl($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: os.execlp($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: os.execlpe($COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: os.posix_spawn($COMMAND, $ARGUMENTS, $ENVIRONMENT)
+        captures: { command: COMMAND, arguments: ARGUMENTS, environment: ENVIRONMENT }
+      - pattern: os.posix_spawnp($COMMAND, $ARGUMENTS, $ENVIRONMENT)
+        captures: { command: COMMAND, arguments: ARGUMENTS, environment: ENVIRONMENT }
+      - pattern: os.spawnl($MODE, $COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: os.spawnle($MODE, $COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: os.spawnlp($MODE, $COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: os.spawnlpe($MODE, $COMMAND, $$$ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: os.spawnv($MODE, $COMMAND, $ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: os.spawnve($MODE, $COMMAND, $ARGUMENTS, $ENVIRONMENT)
+        captures: { command: COMMAND, arguments: ARGUMENTS, environment: ENVIRONMENT }
+      - pattern: os.spawnvp($MODE, $COMMAND, $ARGUMENTS)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: os.spawnvpe($MODE, $COMMAND, $ARGUMENTS, $ENVIRONMENT)
+        captures: { command: COMMAND, arguments: ARGUMENTS, environment: ENVIRONMENT }
   symbols:
     - canonical: subprocess.Popen
       captures: { command: 0 }
@@ -203,6 +277,48 @@
       captures: { command: 0 }
     - canonical: os.popen
       captures: { command: 0 }
+    - canonical: subprocess.getoutput
+      captures: { command: 0 }
+    - canonical: subprocess.getstatusoutput
+      captures: { command: 0 }
+    - canonical: asyncio.create_subprocess_shell
+      captures: { command: 0 }
+    - canonical: asyncio.create_subprocess_exec
+      captures: { command: 0, arguments: 1 }
+    - canonical: os.execv
+      captures: { command: 0, arguments: 1 }
+    - canonical: os.execve
+      captures: { command: 0, arguments: 1, environment: 2 }
+    - canonical: os.execvp
+      captures: { command: 0, arguments: 1 }
+    - canonical: os.execvpe
+      captures: { command: 0, arguments: 1, environment: 2 }
+    - canonical: os.execl
+      captures: { command: 0, arguments: 1 }
+    - canonical: os.execlp
+      captures: { command: 0, arguments: 1 }
+    - canonical: os.execlpe
+      captures: { command: 0, arguments: 1 }
+    - canonical: os.posix_spawn
+      captures: { command: 0, arguments: 1, environment: 2 }
+    - canonical: os.posix_spawnp
+      captures: { command: 0, arguments: 1, environment: 2 }
+    - canonical: os.spawnl
+      captures: { command: 1, arguments: 2 }
+    - canonical: os.spawnle
+      captures: { command: 1, arguments: 2 }
+    - canonical: os.spawnlp
+      captures: { command: 1, arguments: 2 }
+    - canonical: os.spawnlpe
+      captures: { command: 1, arguments: 2 }
+    - canonical: os.spawnv
+      captures: { command: 1, arguments: 2 }
+    - canonical: os.spawnve
+      captures: { command: 1, arguments: 2, environment: 3 }
+    - canonical: os.spawnvp
+      captures: { command: 1, arguments: 2 }
+    - canonical: os.spawnvpe
+      captures: { command: 1, arguments: 2, environment: 3 }
   tags: [command, process]
   ai: *process_guidance
   provenance:
@@ -230,11 +346,19 @@
         captures: { command: COMMAND, arguments: ARGUMENTS }
       - pattern: exec.CommandContext($CONTEXT, $COMMAND, $$$ARGUMENTS)
         captures: { command: COMMAND, arguments: ARGUMENTS, context: CONTEXT }
+      - pattern: os.StartProcess($COMMAND, $ARGUMENTS, $ATTRIBUTES)
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: syscall.Exec($COMMAND, $ARGUMENTS, $ENVIRONMENT)
+        captures: { command: COMMAND, arguments: ARGUMENTS, environment: ENVIRONMENT }
   symbols:
     - canonical: os/exec.Command
       captures: { command: 0 }
     - canonical: os/exec.CommandContext
       captures: { context: 0, command: 1 }
+    - canonical: os.StartProcess
+      captures: { command: 0, arguments: 1 }
+    - canonical: syscall.Exec
+      captures: { command: 0, arguments: 1, environment: 2 }
   tags: [command, process]
   ai: *process_guidance
   provenance:
@@ -289,6 +413,21 @@
           void pattern_context() { popen($COMMAND, $MODE); }
         selector: call_expression
         captures: { command: COMMAND, mode: MODE }
+      - pattern: _popen($COMMAND, $MODE)
+        context: |
+          void pattern_context() { _popen($COMMAND, $MODE); }
+        selector: call_expression
+        captures: { command: COMMAND, mode: MODE }
+      - pattern: _wpopen($COMMAND, $MODE)
+        context: |
+          void pattern_context() { _wpopen($COMMAND, $MODE); }
+        selector: call_expression
+        captures: { command: COMMAND, mode: MODE }
+      - pattern: _wsystem($COMMAND)
+        context: |
+          void pattern_context() { _wsystem($COMMAND); }
+        selector: call_expression
+        captures: { command: COMMAND }
       - pattern: execv($COMMAND, $ARGUMENTS)
         context: |
           void pattern_context() { execv($COMMAND, $ARGUMENTS); }
@@ -307,6 +446,11 @@
       - pattern: execlp($COMMAND, $ARGUMENT_ZERO, $$$ARGUMENTS)
         context: |
           void pattern_context() { execlp($COMMAND, $ARGUMENT_ZERO, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { command: COMMAND, arguments: ARGUMENTS }
+      - pattern: execlpe($COMMAND, $ARGUMENT_ZERO, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { execlpe($COMMAND, $ARGUMENT_ZERO, $$$ARGUMENTS); }
         selector: call_expression
         captures: { command: COMMAND, arguments: ARGUMENTS }
       - pattern: execvp($COMMAND, $ARGUMENTS)
@@ -337,6 +481,26 @@
       - pattern: CreateProcessW($APPLICATION, $COMMAND_LINE, $$$ARGUMENTS)
         context: |
           void pattern_context() { CreateProcessW($APPLICATION, $COMMAND_LINE, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { command: APPLICATION, arguments: COMMAND_LINE }
+      - pattern: CreateProcessAsUserA($TOKEN, $APPLICATION, $COMMAND_LINE, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { CreateProcessAsUserA($TOKEN, $APPLICATION, $COMMAND_LINE, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { command: APPLICATION, arguments: COMMAND_LINE }
+      - pattern: CreateProcessAsUserW($TOKEN, $APPLICATION, $COMMAND_LINE, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { CreateProcessAsUserW($TOKEN, $APPLICATION, $COMMAND_LINE, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { command: APPLICATION, arguments: COMMAND_LINE }
+      - pattern: CreateProcessWithTokenW($TOKEN, $LOGON_FLAGS, $APPLICATION, $COMMAND_LINE, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { CreateProcessWithTokenW($TOKEN, $LOGON_FLAGS, $APPLICATION, $COMMAND_LINE, $$$ARGUMENTS); }
+        selector: call_expression
+        captures: { command: APPLICATION, arguments: COMMAND_LINE }
+      - pattern: CreateProcessWithLogonW($USERNAME, $DOMAIN, $PASSWORD, $LOGON_FLAGS, $APPLICATION, $COMMAND_LINE, $$$ARGUMENTS)
+        context: |
+          void pattern_context() { CreateProcessWithLogonW($USERNAME, $DOMAIN, $PASSWORD, $LOGON_FLAGS, $APPLICATION, $COMMAND_LINE, $$$ARGUMENTS); }
         selector: call_expression
         captures: { command: APPLICATION, arguments: COMMAND_LINE }
       - pattern: ShellExecuteA($WINDOW, $OPERATION, $COMMAND, $ARGUMENTS, $DIRECTORY, $SHOW)

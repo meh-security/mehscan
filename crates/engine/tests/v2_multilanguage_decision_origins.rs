@@ -8,7 +8,7 @@ fn temp_root(label: &str) -> PathBuf {
 }
 
 #[test]
-fn marks_composed_sql_without_promoting_plain_unknown_query_parameters() {
+fn marks_composed_sql_across_supported_languages() {
     let root = temp_root("multilanguage-origins");
     std::fs::create_dir_all(&root).unwrap();
     let cases = [
@@ -205,9 +205,20 @@ function built(name) { let sql = "SELECT * FROM users WHERE name='"; sql += name
                 .iter()
                 .any(|tag| tag == "review-origin:decision-critical"))
             .count(),
-        1,
+        2,
         "{queries:#?}"
     );
+    assert!(queries.iter().any(|item| {
+        item.enclosing_symbol.as_deref() == Some("plain")
+            && item.tags.iter().any(|tag| tag == "dynamic-query-operand")
+    }));
+    assert!(queries.iter().any(|item| {
+        item.enclosing_symbol.as_deref() == Some("reset")
+            && !item
+                .tags
+                .iter()
+                .any(|tag| tag == "review-origin:decision-critical")
+    }));
     assert!(queries.iter().any(|item| {
         item.tags
             .iter()

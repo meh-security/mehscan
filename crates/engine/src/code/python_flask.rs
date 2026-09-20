@@ -667,19 +667,33 @@ fn flask_access(
     decorated: &Node<'_, StrDoc<SupportLang>>,
 ) -> HttpRouteAccess {
     let text = decorated.text().into_owned();
-    if text.contains("@login_required") || text.contains("@auth_required") {
+    if text.contains("@login_required") && imports_flask_login_required(decorated) {
         return HttpRouteAccess::Authenticated;
     }
     let body = function.text().into_owned();
     let session_deny = (body.contains("not in g.session") || body.contains("not in session"))
         && (body.contains("redirect(") || body.contains("401"));
-    let api_deny = body.contains("authenticate(request)")
-        && (body.contains("if not ") || body.contains("401"));
-    if session_deny || api_deny {
+    if session_deny {
         HttpRouteAccess::Authenticated
     } else {
         HttpRouteAccess::Unknown
     }
+}
+
+fn imports_flask_login_required(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    node.ancestors()
+        .last()
+        .map(|root| root.text().into_owned())
+        .is_some_and(|source| {
+            source.lines().any(|line| {
+                let line = line.trim();
+                line.starts_with("from flask_login import ")
+                    && line["from flask_login import ".len()..]
+                        .split(',')
+                        .map(str::trim)
+                        .any(|name| name == "login_required")
+            })
+        })
 }
 
 fn flask_guards(

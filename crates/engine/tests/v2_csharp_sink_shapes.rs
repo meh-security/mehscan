@@ -26,8 +26,8 @@ fn completes_typed_and_framework_csharp_sink_shapes_without_lookalike_paths() {
             *counts.entry(item.rule_id.as_str()).or_insert(0usize) += 1;
             counts
         });
-    assert_eq!(rule_counts["csharp-sql-command-text"], 2);
-    assert_eq!(rule_counts["csharp-dapper-database-query"], 3);
+    assert_eq!(rule_counts["csharp-sql-command-text"], 5);
+    assert_eq!(rule_counts["csharp-dapper-database-query"], 4);
     assert_eq!(rule_counts["csharp-aspnet-explicit-html-output"], 2);
     assert_eq!(rule_counts["csharp-controller-http-redirect"], 2);
     assert_eq!(rule_counts["csharp-filesystem-read"], 2);
@@ -44,7 +44,10 @@ fn completes_typed_and_framework_csharp_sink_shapes_without_lookalike_paths() {
     });
     assert!(typed_sinks.clone().all(|item| {
         item.location.path == "positive/CsharpSinks.cs"
-            && item.tags.iter().any(|tag| tag == "typed-receiver")
+            && item
+                .tags
+                .iter()
+                .any(|tag| matches!(tag.as_str(), "typed-receiver" | "typed-object-initializer"))
     }));
     assert!(
         typed_sinks
@@ -73,7 +76,7 @@ fn completes_typed_and_framework_csharp_sink_shapes_without_lookalike_paths() {
                 .any(|reason| reason == "aspnet_parameter_binding_is_syntactic")
         })
         .collect::<Vec<_>>();
-    assert_eq!(paths.len(), 15);
+    assert_eq!(paths.len(), 19);
     assert!(paths.iter().all(|path| {
         path.state == SecurityPathState::Propagated
             && path
@@ -86,10 +89,31 @@ fn completes_typed_and_framework_csharp_sink_shapes_without_lookalike_paths() {
         *counts.entry(path.capability).or_insert(0usize) += 1;
         counts
     });
-    assert_eq!(by_capability[&Capability::DatabaseQuery], 5);
+    assert_eq!(by_capability[&Capability::DatabaseQuery], 9);
     assert_eq!(by_capability[&Capability::HtmlOutput], 2);
     assert_eq!(by_capability[&Capability::Redirect], 2);
     assert_eq!(by_capability[&Capability::FilesystemRead], 2);
     assert_eq!(by_capability[&Capability::FilesystemWrite], 2);
     assert_eq!(by_capability[&Capability::OutboundNetworkRequest], 2);
+
+    let stored_procedure = result
+        .evidence
+        .iter()
+        .find(|item| {
+            item.enclosing_symbol.as_deref() == Some("DynamicStoredProcedure")
+                && item.rule_id == "csharp-sql-command-text"
+        })
+        .expect("dynamic stored-procedure target should be retained");
+    assert!(
+        stored_procedure
+            .tags
+            .iter()
+            .any(|tag| tag == "query-role:stored-procedure-name")
+    );
+    assert!(
+        stored_procedure
+            .tags
+            .iter()
+            .any(|tag| tag == "review-origin:decision-critical")
+    );
 }

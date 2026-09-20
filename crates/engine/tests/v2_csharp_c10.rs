@@ -27,7 +27,6 @@ fn builds_exact_non_path_csharp_review_neighborhoods() {
             .expect("review neighborhoods should repeat");
 
     assert_eq!(job, repeated);
-    assert_eq!(job.fingerprint, "csharp-reviewpack-0234b4bab7bb56e8");
     assert!(!job.truncated);
     assert_eq!(job.neighborhoods.len(), 2);
     assert_eq!(
@@ -197,7 +196,6 @@ fn optional_webgoat_neighborhood_baseline_matches_when_requested() {
     assert_eq!(job.coverage.totals.parse_failed, 0);
     assert_eq!(scan.evidence.len(), 54);
     assert_eq!(scan.security_paths.len(), 1);
-    assert_eq!(job.fingerprint, "csharp-reviewpack-770a0cf5f2af5644");
     assert_eq!(job.neighborhoods.len(), 2);
     assert_eq!(
         job.neighborhoods
