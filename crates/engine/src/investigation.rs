@@ -97,6 +97,13 @@ struct ReviewContextIndex {
     definitions: BTreeMap<String, Vec<OutlineSymbol>>,
     registrations: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
     usages: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
+    frameworks: Vec<FrameworkContextFact>,
+}
+
+#[derive(Clone)]
+struct FrameworkContextFact {
+    scope: String,
+    fact: ReviewNeighborhoodFact,
 }
 
 #[derive(Clone)]
@@ -813,6 +820,10 @@ fn build_path_review_jobs_internal(
         );
         context_truncated |= configuration_truncated;
         facts.append(&mut configuration_facts);
+        let (mut framework_facts, framework_truncated) =
+            review_context.framework_facts(&candidate_paths, 8);
+        context_truncated |= framework_truncated;
+        facts.append(&mut framework_facts);
         if candidate
             .source
             .provenance
@@ -970,6 +981,7 @@ fn build_path_review_jobs_internal(
             &csharp_neighborhoods,
             context_lines,
             &rules_by_id,
+            &review_context.frameworks,
         )?
     };
     let returned_reviews = reviews.len() + observation_reviews.len();
@@ -6306,13 +6318,15 @@ fn build_observation_reviews(
     csharp_neighborhoods: &[mehscan_core::ReviewNeighborhood],
     context_lines: usize,
     rules_by_id: &BTreeMap<&str, &Rule>,
+    framework_context: &[FrameworkContextFact],
 ) -> Result<Vec<ObservationReview>, EngineError> {
     let groups = groups.into_iter().collect::<Vec<_>>();
     let mut indexed_references = BTreeSet::new();
     for group in &groups {
         indexed_references.extend(observation_group_references(group, sources, context_lines)?);
     }
-    let review_context = ReviewContextIndex::build(sources, &indexed_references)?;
+    let review_context =
+        ReviewContextIndex::build_with_frameworks(sources, &indexed_references, framework_context)?;
     let bounded_callers = groups
         .iter()
         .any(|group| decision_critical_origin(&group.evidence).is_some())
@@ -6423,6 +6437,9 @@ fn build_observation_reviews(
         );
         context_truncated |= configuration_truncated;
         facts.append(&mut configuration);
+        let (mut framework_facts, framework_truncated) = review_context.framework_facts(&paths, 8);
+        context_truncated |= framework_truncated;
+        facts.append(&mut framework_facts);
         let (mut helpers, helpers_truncated) = observation_helper_definition_facts(
             sources,
             &review_context,
@@ -12074,6 +12091,15 @@ fn relative_review_import_paths(
 
 impl ReviewContextIndex {
     fn build(sources: &RepositorySources, wanted: &BTreeSet<String>) -> Result<Self, EngineError> {
+        let frameworks = collect_framework_context(sources);
+        Self::build_with_frameworks(sources, wanted, &frameworks)
+    }
+
+    fn build_with_frameworks(
+        sources: &RepositorySources,
+        wanted: &BTreeSet<String>,
+        frameworks: &[FrameworkContextFact],
+    ) -> Result<Self, EngineError> {
         let mut definitions: BTreeMap<String, Vec<OutlineSymbol>> = BTreeMap::new();
         let mut registrations: BTreeMap<String, Vec<ReviewNeighborhoodFact>> = BTreeMap::new();
         let mut usages: BTreeMap<String, Vec<ReviewNeighborhoodFact>> = BTreeMap::new();
@@ -12136,7 +12162,35 @@ impl ReviewContextIndex {
             definitions,
             registrations,
             usages,
+            frameworks: frameworks.to_vec(),
         })
+    }
+
+    fn framework_facts(
+        &self,
+        candidate_paths: &BTreeSet<&str>,
+        limit: usize,
+    ) -> (Vec<ReviewNeighborhoodFact>, bool) {
+        let mut facts = Vec::new();
+        let mut truncated = false;
+        for framework in &self.frameworks {
+            let applies = candidate_paths.iter().any(|path| {
+                framework.scope.is_empty()
+                    || **path == framework.scope
+                    || path
+                        .strip_prefix(&framework.scope)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+            });
+            if !applies {
+                continue;
+            }
+            if facts.len() == limit {
+                truncated = true;
+                break;
+            }
+            facts.push(framework.fact.clone());
+        }
+        (facts, truncated)
     }
 
     fn expanded_references(
@@ -14441,6 +14495,296 @@ fn looks_like_registration_reference(line: &str) -> bool {
         && quoted_values(line)
             .iter()
             .any(|route| route.starts_with('/') && route.len() > 1)
+}
+
+fn collect_framework_context(sources: &RepositorySources) -> Vec<FrameworkContextFact> {
+    let manifest_scopes = sources
+        .files
+        .values()
+        .filter(|file| is_framework_manifest(&file.path))
+        .map(|file| path_directory(&file.path))
+        .collect::<BTreeSet<_>>();
+    let mut observed = BTreeMap::<(String, String), FrameworkContextFact>::new();
+    for file in sources.files.values() {
+        if is_nonproduction_review_context_path(&file.path)
+            || file.source.len() > MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES
+        {
+            continue;
+        }
+        let scope = nearest_framework_scope(&file.path, &manifest_scopes);
+        for (line_index, (start, end)) in line_spans(&file.source).into_iter().enumerate() {
+            let line = &file.source[start..end];
+            for framework in framework_markers(file, line) {
+                let key = (scope.clone(), framework.to_string());
+                if observed.contains_key(&key) {
+                    continue;
+                }
+                let Ok((slice, _)) = source_slice(file, line_index + 1, line_index + 1) else {
+                    continue;
+                };
+                observed.insert(
+                    key,
+                    FrameworkContextFact {
+                        scope: scope.clone(),
+                        fact: ReviewNeighborhoodFact {
+                            role: "framework_context".to_string(),
+                            symbol: framework.to_string(),
+                            location: slice.location,
+                            excerpt: slice.text,
+                            evidence_id: None,
+                            provenance: textual_provenance(
+                                "bounded exact framework import, entrypoint, or manifest declaration; runtime activation unproved 1",
+                            ),
+                        },
+                    },
+                );
+            }
+        }
+    }
+    observed.into_values().collect()
+}
+
+fn is_framework_manifest(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "package.json"
+            | "pyproject.toml"
+            | "requirements.txt"
+            | "pom.xml"
+            | "build.gradle"
+            | "build.gradle.kts"
+            | "go.mod"
+            | "cargo.toml"
+            | "composer.json"
+    ) || name.ends_with(".csproj")
+}
+
+fn path_directory(path: &str) -> String {
+    path.rsplit_once('/')
+        .map(|(directory, _)| directory.to_string())
+        .unwrap_or_default()
+}
+
+fn nearest_framework_scope(path: &str, scopes: &BTreeSet<String>) -> String {
+    scopes
+        .iter()
+        .filter(|scope| {
+            scope.is_empty()
+                || path
+                    .strip_prefix(scope.as_str())
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+        })
+        .max_by_key(|scope| scope.len())
+        .cloned()
+        .unwrap_or_else(|| path_directory(path))
+}
+
+fn framework_markers(file: &SourceFile, line: &str) -> Vec<&'static str> {
+    let trimmed = line.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    let manifest = is_framework_manifest(&file.path);
+    if !manifest
+        && match file.language {
+            Some(Language::Python | Language::Php) => trimmed.starts_with('#'),
+            Some(Language::Cpp) => {
+                trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*')
+            }
+            _ => trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*'),
+        }
+    {
+        return Vec::new();
+    }
+    let mut frameworks = Vec::new();
+    let mut add = |id: &'static str, matched: bool| {
+        if matched && !frameworks.contains(&id) {
+            frameworks.push(id);
+        }
+    };
+
+    if manifest {
+        add(
+            "aspnet-core",
+            lower.contains("microsoft.net.sdk.web") || lower.contains("microsoft.aspnetcore"),
+        );
+        add("spring-boot", lower.contains("spring-boot-starter"));
+        add("spring-security", lower.contains("spring-security"));
+        add(
+            "ktor",
+            lower.contains("io.ktor") || lower.contains("ktor-server"),
+        );
+        for (id, package) in [
+            ("express", "\"express\""),
+            ("fastify", "\"fastify\""),
+            ("nestjs", "\"@nestjs/core\""),
+            ("nextjs", "\"next\""),
+            ("apollo-server", "\"@apollo/server\""),
+            ("django", "django"),
+            ("django-rest-framework", "djangorestframework"),
+            ("flask", "flask"),
+            ("fastapi", "fastapi"),
+            ("gin", "github.com/gin-gonic/gin"),
+            ("echo", "github.com/labstack/echo"),
+            ("fiber", "github.com/gofiber/fiber"),
+            ("chi", "github.com/go-chi/chi"),
+            ("gorilla-mux", "github.com/gorilla/mux"),
+            ("axum", "axum"),
+            ("actix-web", "actix-web"),
+            ("warp", "warp"),
+            ("rocket", "rocket"),
+            ("laravel", "laravel/framework"),
+            ("symfony", "symfony/framework-bundle"),
+            ("drogon", "drogon"),
+        ] {
+            let exact_dependency = matches!(
+                id,
+                "django"
+                    | "django-rest-framework"
+                    | "flask"
+                    | "fastapi"
+                    | "axum"
+                    | "warp"
+                    | "rocket"
+                    | "drogon"
+            );
+            add(
+                id,
+                if exact_dependency {
+                    manifest_dependency_matches(&lower, package)
+                } else {
+                    lower.contains(package)
+                },
+            );
+        }
+        return frameworks;
+    }
+
+    match file.language {
+        Some(Language::Csharp) => {
+            add(
+                "aspnet-core",
+                trimmed.starts_with("using Microsoft.AspNetCore.")
+                    || line.contains("WebApplication.CreateBuilder("),
+            );
+        }
+        Some(Language::Java | Language::Kotlin) => {
+            if !lower.starts_with("import ") {
+                return frameworks;
+            }
+            add("spring-boot", lower.contains("org.springframework.boot"));
+            add(
+                "spring-security",
+                lower.contains("org.springframework.security"),
+            );
+            add("spring-web", lower.contains("org.springframework.web"));
+            add("ktor", lower.contains("io.ktor."));
+        }
+        Some(Language::Javascript | Language::Typescript | Language::Tsx) => {
+            if !looks_like_import(line) {
+                return frameworks;
+            }
+            let module = quoted_module_name(line);
+            add("express", module.as_deref() == Some("express"));
+            add("fastify", module.as_deref() == Some("fastify"));
+            add(
+                "nestjs",
+                module
+                    .as_deref()
+                    .is_some_and(|value| value.starts_with("@nestjs/")),
+            );
+            add(
+                "nextjs",
+                module
+                    .as_deref()
+                    .is_some_and(|value| value == "next" || value.starts_with("next/")),
+            );
+            add(
+                "apollo-server",
+                module.as_deref().is_some_and(|value| {
+                    value == "@apollo/server" || value.starts_with("apollo-server")
+                }),
+            );
+        }
+        Some(Language::Python) => {
+            add(
+                "django",
+                lower == "import django"
+                    || lower.starts_with("import django as ")
+                    || lower.starts_with("import django.")
+                    || lower.starts_with("from django ")
+                    || lower.starts_with("from django."),
+            );
+            add(
+                "django-rest-framework",
+                lower == "import rest_framework"
+                    || lower.starts_with("import rest_framework as ")
+                    || lower.starts_with("import rest_framework.")
+                    || lower.starts_with("from rest_framework ")
+                    || lower.starts_with("from rest_framework."),
+            );
+            add(
+                "flask",
+                lower == "import flask"
+                    || lower.starts_with("import flask as ")
+                    || lower.starts_with("import flask.")
+                    || lower.starts_with("from flask ")
+                    || lower.starts_with("from flask."),
+            );
+            add(
+                "fastapi",
+                lower == "import fastapi"
+                    || lower.starts_with("import fastapi as ")
+                    || lower.starts_with("import fastapi.")
+                    || lower.starts_with("from fastapi ")
+                    || lower.starts_with("from fastapi."),
+            );
+        }
+        Some(Language::Go) => {
+            add("gin", lower.contains("\"github.com/gin-gonic/gin\""));
+            add("echo", lower.contains("\"github.com/labstack/echo"));
+            add("fiber", lower.contains("\"github.com/gofiber/fiber"));
+            add("chi", lower.contains("\"github.com/go-chi/chi"));
+            add("gorilla-mux", lower.contains("\"github.com/gorilla/mux\""));
+        }
+        Some(Language::Rust) => {
+            add("axum", lower.starts_with("use axum::"));
+            add("actix-web", lower.starts_with("use actix_web::"));
+            add("warp", lower.starts_with("use warp::"));
+            add("rocket", lower.starts_with("use rocket::"));
+        }
+        Some(Language::Php) => {
+            add("laravel", lower.starts_with("use illuminate\\"));
+            add("symfony", lower.starts_with("use symfony\\component\\"));
+        }
+        Some(Language::Cpp) => {
+            add("drogon", lower.starts_with("#include <drogon/"));
+            add(
+                "crow",
+                lower.starts_with("#include <crow") || lower.starts_with("#include \"crow"),
+            );
+        }
+        _ => {}
+    }
+    frameworks
+}
+
+fn manifest_dependency_matches(line: &str, dependency: &str) -> bool {
+    if line.contains(&format!("\"{dependency}\"")) || line.contains(&format!("'{dependency}'")) {
+        return true;
+    }
+    line.match_indices(dependency).any(|(start, _)| {
+        let before = line[..start].chars().next_back();
+        let after = line[start + dependency.len()..].chars().next();
+        before.is_none_or(|character| {
+            character.is_whitespace() || matches!(character, '=' | '<' | '>' | '~' | '!')
+        }) && after.is_none_or(|character| {
+            character.is_whitespace()
+                || matches!(
+                    character,
+                    '=' | '<' | '>' | '~' | '!' | '[' | ':' | ',' | ';'
+                )
+        })
+    })
 }
 
 fn configuration_facts(
@@ -18207,5 +18551,77 @@ mod tests {
                     .contains(required)
             );
         }
+    }
+
+    #[test]
+    fn framework_context_is_collected_once_and_scoped_to_the_nearest_manifest() {
+        let sources = RepositorySources {
+            root: ".".to_string(),
+            files: BTreeMap::from([
+                (
+                    "apps/api/package.json".to_string(),
+                    SourceFile {
+                        path: "apps/api/package.json".to_string(),
+                        language: None,
+                        source: "{\n  \"dependencies\": { \"express\": \"^5\" }\n}\n"
+                            .to_string(),
+                    },
+                ),
+                (
+                    "apps/api/src/app.js".to_string(),
+                    SourceFile {
+                        path: "apps/api/src/app.js".to_string(),
+                        language: Some(Language::Javascript),
+                        source: "const express = require('express');\n".to_string(),
+                    },
+                ),
+                (
+                    "services/auth/pom.xml".to_string(),
+                    SourceFile {
+                        path: "services/auth/pom.xml".to_string(),
+                        language: None,
+                        source: "<artifactId>spring-boot-starter-security</artifactId>\n"
+                            .to_string(),
+                    },
+                ),
+                (
+                    "services/auth/src/Security.java".to_string(),
+                    SourceFile {
+                        path: "services/auth/src/Security.java".to_string(),
+                        language: Some(Language::Java),
+                        source: "import org.springframework.security.config.annotation.web.builders.HttpSecurity;\n"
+                            .to_string(),
+                    },
+                ),
+                (
+                    "apps/api/src/cors.py".to_string(),
+                    SourceFile {
+                        path: "apps/api/src/cors.py".to_string(),
+                        language: Some(Language::Python),
+                        source: "from flask_cors import CORS\n".to_string(),
+                    },
+                ),
+            ]),
+        };
+        let index = ReviewContextIndex::build(&sources, &BTreeSet::new()).unwrap();
+        let api_paths = BTreeSet::from(["apps/api/src/app.js"]);
+        let (api, truncated) = index.framework_facts(&api_paths, 8);
+        assert!(!truncated);
+        assert_eq!(
+            api.iter()
+                .map(|fact| fact.symbol.as_str())
+                .collect::<Vec<_>>(),
+            ["express"]
+        );
+
+        let auth_paths = BTreeSet::from(["services/auth/src/Security.java"]);
+        let (auth, truncated) = index.framework_facts(&auth_paths, 8);
+        assert!(!truncated);
+        assert_eq!(
+            auth.iter()
+                .map(|fact| fact.symbol.as_str())
+                .collect::<Vec<_>>(),
+            ["spring-boot", "spring-security"]
+        );
     }
 }

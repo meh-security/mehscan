@@ -198,16 +198,22 @@ it available:
   helper or model/configuration declaration;
 - `import_context` records the exact import used by the candidate;
 - `dependency_context` records the repository-declared package version while
-  explicitly not claiming the effective resolved/runtime version; and
+  explicitly not claiming the effective resolved/runtime version;
 - `registration_context` records up to two exact framework route registrations
-  for the named handler.
+  for the named handler; and
+- `framework_context` records exact framework imports, entrypoints, or small
+  manifest declarations in the nearest application scope. It identifies the
+  stack for review and does not claim that the framework is active at runtime.
 
 This enrichment is lexical and name-bounded, not a call graph. A review gets at
-most 12 related facts, divided across definitions, imports/dependencies, and
-registrations. Security-sensitive definition literals are redacted while their
-structural declaration remains visible. Ambiguous same-name definitions remain
-context rather than resolution claims, and parser failures never fail review
-construction merely because optional related context could not be found.
+most 12 exact-name related facts, divided across definitions,
+imports/dependencies, and registrations, plus at most eight scoped framework
+facts. Framework declarations are indexed once per bundle build and reused by
+path and observation reviews. Security-sensitive definition literals are
+redacted while their structural declaration remains visible. Ambiguous
+same-name definitions remain context rather than resolution claims, and parser
+failures never fail review construction merely because optional related context
+could not be found.
 
 Observation reviews use the same exact-name helper lookup when their captures
 reference a callable or named constant outside the candidate file. Anonymous
