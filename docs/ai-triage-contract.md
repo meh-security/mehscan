@@ -26,6 +26,14 @@ source around the source and sink, inspect the enclosing symbol, and expand
 references only when a named uncertainty is decisive. A one-shot model payload
 still needs the scanner to assemble that context.
 
+For an exact unresolved syntax question, `investigate structural` accepts an
+ephemeral ast-grep pattern for every supported language. It is supplemental
+navigation, not new scan evidence: matches do not establish flow, reachability,
+runtime binding, or control applicability. Repository-wide queries skip malformed
+files, return them in `skipped_files`, and set `truncated`; an explicitly selected
+malformed file fails clearly. Reviewers should prefer a named `--path` and must
+not treat an incomplete empty result as proof of absence.
+
 ## Trust boundary
 
 Deterministic output states what was observed and what bounded relationship was

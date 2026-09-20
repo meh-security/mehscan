@@ -929,21 +929,17 @@ fn build_path_review_jobs_internal(
                         || bound_type == Some(fact.symbol.as_str()))
             });
         }
-        let authorization_path_values = candidate_paths
+        // Authorization applicability starts from the deterministic path, not
+        // from auxiliary helper/configuration facts. Promoting every fact path
+        // made unrelated registration files eligible and attached arbitrary
+        // middleware to otherwise independent reviews.
+        let authorization_anchors = candidate
+            .steps
             .iter()
-            .map(|path| (*path).to_string())
-            .chain(facts.iter().map(|fact| fact.location.path.clone()))
-            .collect::<BTreeSet<_>>();
-        let authorization_paths = authorization_path_values
-            .iter()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>();
-        let authorization_anchors = facts
-            .iter()
-            .map(|fact| fact.location.clone())
+            .map(|step| step.location.clone())
             .collect::<Vec<_>>();
         let (mut authorization_facts, authorization_truncated) =
-            review_context.authorization_facts(&authorization_paths, &authorization_anchors, 8);
+            review_context.authorization_facts(&candidate_paths, &authorization_anchors, 8);
         context_truncated |= authorization_truncated;
         facts.append(&mut authorization_facts);
         sort_review_facts(&mut facts);
@@ -6727,21 +6723,16 @@ fn build_observation_reviews(
             context_truncated |= retrieval_truncated;
             facts.append(&mut retrieval);
         }
-        let authorization_path_values = paths
+        // Keep policy selection tied to the observation neighborhood. Helper,
+        // registration, and configuration enrichment may explain the review,
+        // but their locations do not make nearby authorization syntax apply.
+        let authorization_anchors = group
+            .evidence
             .iter()
-            .map(|path| (*path).to_string())
-            .chain(facts.iter().map(|fact| fact.location.path.clone()))
-            .collect::<BTreeSet<_>>();
-        let authorization_paths = authorization_path_values
-            .iter()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>();
-        let authorization_anchors = facts
-            .iter()
-            .map(|fact| fact.location.clone())
+            .map(|evidence| evidence.location.clone())
             .collect::<Vec<_>>();
         let (mut authorization_facts, authorization_truncated) =
-            review_context.authorization_facts(&authorization_paths, &authorization_anchors, 8);
+            review_context.authorization_facts(&paths, &authorization_anchors, 8);
         context_truncated |= authorization_truncated;
         facts.append(&mut authorization_facts);
         sort_review_facts(&mut facts);
@@ -14725,7 +14716,7 @@ fn authorization_frameworks(symbol: &str) -> &'static [&'static str] {
         "NestUseGuards" | "NestAuthorizationMetadata" | "NestGlobalGuard" | "NestCanActivate" => {
             &["nestjs"]
         }
-        "ExpressMiddleware" | "ExpressMiddlewareOrder" | "PassportAuthenticate" => &["express"],
+        "PassportAuthenticate" => &["express"],
         "FastifyLifecycleHook" | "FastifyRouteHook" => &["fastify"],
         "NextMiddleware"
         | "NextMiddlewareMatcher"
@@ -15038,18 +15029,6 @@ fn authorization_markers(file: &SourceFile, line: &str) -> Vec<(&'static str, &'
                 "NestCanActivate",
                 trimmed.contains("CanActivate")
                     && (trimmed.contains("implements") || trimmed.contains("canActivate(")),
-            );
-            add(
-                "authorization_attachment_context",
-                "ExpressMiddleware",
-                (trimmed.contains("app.use(") || trimmed.contains("router.use("))
-                    && !lower.contains("express.json")
-                    && !lower.contains("express.urlencoded"),
-            );
-            add(
-                "authorization_order_context",
-                "ExpressMiddlewareOrder",
-                trimmed.contains("app.use(") || trimmed.contains("router.use("),
             );
             add(
                 "authorization_requirement_context",
@@ -16181,6 +16160,7 @@ pub fn run_structural_query(
         sources.file(path)?;
     }
     let mut matches = Vec::new();
+    let mut skipped_files = Vec::new();
     let mut truncated = false;
     'files: for file in sources.files.values().filter(|file| {
         file.language == Some(language)
@@ -16188,15 +16168,32 @@ pub fn run_structural_query(
                 .as_ref()
                 .is_none_or(|path| file.path == *path)
     }) {
-        let document = StrDoc::try_new(&file.source, parser)
-            .map_err(|error| EngineError(format!("could not parse {}: {error}", file.path)))?;
+        let document = match StrDoc::try_new(&file.source, parser) {
+            Ok(document) => document,
+            Err(error) if requested_path.is_some() => {
+                return Err(EngineError(format!(
+                    "could not parse {}: {error}",
+                    file.path
+                )));
+            }
+            Err(_) => {
+                skipped_files.push(file.path.clone());
+                truncated = true;
+                continue;
+            }
+        };
         let ast = AstGrep::doc(document);
         let root = ast.root();
         if root.dfs().any(|node| node.is_error() || node.is_missing()) {
-            return Err(EngineError(format!(
-                "could not run structural query on {}: parser produced ERROR or missing nodes",
-                file.path
-            )));
+            if requested_path.is_some() {
+                return Err(EngineError(format!(
+                    "could not run structural query on {}: parser produced ERROR or missing nodes",
+                    file.path
+                )));
+            }
+            skipped_files.push(file.path.clone());
+            truncated = true;
+            continue;
         }
         for matched in root.find_all(&pattern) {
             if matches.len() == limit {
@@ -16215,13 +16212,15 @@ pub fn run_structural_query(
             });
         }
     }
-    Ok(response(
+    let mut response = response(
         &sources.root,
         "run_structural_query",
         ast_provenance("ast-grep 0.45.1 ephemeral pattern"),
         truncated,
         matches,
-    ))
+    );
+    response.skipped_files = skipped_files;
+    Ok(response)
 }
 
 pub fn find_native_call_sites(
@@ -16772,6 +16771,7 @@ fn response<T>(
         operation: operation.to_string(),
         provenance,
         truncated,
+        skipped_files: Vec::new(),
         results,
     }
 }
@@ -19393,8 +19393,7 @@ mod tests {
                     SourceFile {
                         path: "apps/api/src/app.js".to_string(),
                         language: Some(Language::Javascript),
-                        source: "const express = require('express');\napp.use('/admin', requireAdmin);\n"
-                            .to_string(),
+                        source: "const express = require('express');\napp.use('/admin', requireAdmin);\napp.get('/admin', passport.authenticate('jwt'), handler);\n".to_string(),
                     },
                 ),
                 (
@@ -19438,7 +19437,11 @@ mod tests {
         let (api_authorization, truncated) = index.authorization_facts(&api_paths, &[], 8);
         assert!(!truncated);
         assert!(api_authorization.iter().any(|fact| {
-            fact.role == "authorization_attachment_context" && fact.symbol == "ExpressMiddleware"
+            fact.role == "authorization_requirement_context"
+                && fact.symbol == "PassportAuthenticate"
+        }));
+        assert!(!api_authorization.iter().any(|fact| {
+            fact.symbol == "ExpressMiddleware" || fact.symbol == "ExpressMiddlewareOrder"
         }));
 
         let auth_paths = BTreeSet::from(["services/auth/src/Security.java"]);

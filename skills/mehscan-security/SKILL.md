@@ -168,6 +168,17 @@ operations with no supplied bridge, use `not_issue` for that named relationship
 and describe the mismatch. Do not use supplemental syntax lookup to repair a
 decision-ready payload or infer the missing bridge.
 
+When `decision_facts.unresolved` names an exact missing syntactic artifact that
+can change the decision, use the investigation API before leaving it unresolved.
+Prefer `source`, `enclosing`, `symbol`, `imports`, and `references` for ordinary
+navigation. For an exact AST shape, `mehscan investigate structural ROOT
+--language LANG --pattern PATTERN [--path FILE] [--limit N]` is available for
+every supported language. Scope it to the named file whenever possible and use
+the smallest pattern that answers the existing question. A structural match is
+ephemeral syntax inventory: it cannot create a finding, establish data flow,
+runtime binding, reachability, or make a control applicable to a different
+operation. Empty, truncated, or parse-failed results do not prove absence.
+
 Before claiming injection, match the producer's representation to the consumer
 operation. For example, PHP's default object-mode `json_decode` does not make
 array indexing a valid request-to-sink bridge; check the supplied decoder mode
@@ -202,11 +213,11 @@ For conditional policy failures, state applicability and the shown consequence;
 for example disabled certificate checks affect HTTPS and can undermine trust in
 the returned status, without establishing an attacker-selected URL.
 
-For C/C++ only, the native reference describes a bounded call-syntax inventory
-that may answer an exact existing unresolved syntactic fact. Use the supplied
-review payload first. It never establishes taint, call reachability, runtime
-binding, or a new finding, and truncated or parse-skipped results do not resolve
-the fact.
+For C/C++, the native reference also describes a specialized bounded call-syntax
+inventory. Use it for exact callee and argument questions; use the general
+structural operation for other language-specific AST shapes. Neither operation
+establishes taint, call reachability, runtime binding, or a new finding, and
+truncated or parse-skipped results do not resolve the fact.
 
 When a review is for C or C++, or uses a native memory, parser, lifetime,
 ownership, archive, or XML capability, read

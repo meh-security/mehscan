@@ -86,6 +86,14 @@ requirement as facts instead of adding an enum variant for every policy style.
 | `resource_authorization_context` | Exact subject/resource/action arguments, owner or tenant predicate, or framework object-permission call associated with the sensitive operation. |
 | `authorization_order_context` | Exact source order when the framework defines order semantically, such as Express/Go middleware registered before a route or ordered Spring request matchers. |
 
+Authorization facts are selected from the deterministic candidate or
+observation paths. Auxiliary helper, configuration, registration, and template
+facts do not expand authorization scope. This prevents an unrelated file that
+was included for explanation from contributing nearby middleware or policy
+syntax to the review. Generic middleware remains an unknown attachment unless
+the exact route context or a canonical framework primitive establishes its
+relationship to the reviewed boundary.
+
 Bound each review to eight authorization facts, with per-role limits of one
 effective default, exception, resource check, or custom definition and two
 requirements, attachments, activation entries, or order entries. Prefer facts

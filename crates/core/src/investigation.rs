@@ -19,6 +19,10 @@ pub struct QueryResponse<T> {
     pub operation: String,
     pub provenance: QueryProvenance,
     pub truncated: bool,
+    /// Files omitted because the requested structural parser could not produce
+    /// a complete tree. Empty for query types that do not parse source ASTs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_files: Vec<String>,
     pub results: T,
 }
 
