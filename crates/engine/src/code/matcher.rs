@@ -1361,6 +1361,15 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    super::rust_context::add_rust_security_policy_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
     super::rust_context::add_rust_safety_function_observations(
         path,
         &root,

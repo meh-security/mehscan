@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ast_grep_core::Node;
 use ast_grep_core::tree_sitter::StrDoc;
@@ -93,6 +93,7 @@ impl PythonIdentityContext {
             return;
         }
         add_jwt_observations(path, root, comments, conditional, literals, evidence);
+        add_python_cors_observations(path, root, comments, conditional, literals, evidence);
         if is_settings_path(path) {
             add_django_settings(path, root, comments, conditional, literals, evidence);
         }
@@ -115,9 +116,52 @@ fn add_jwt_observations<'tree>(
         let callee = function.text();
         let compact = compact(call.text().as_ref());
         if callee.ends_with("jwt.decode") || callee.trim() == "jwt.decode" {
-            let unverified = compact.contains("verify_signature\":False")
-                || compact.contains("verify_signature':False")
-                || compact.contains("verify_signature=False");
+            let unverified = option_false(&call, "verify_signature");
+            let expiration_disabled = option_false(&call, "verify_exp");
+            let identity_claims_disabled =
+                option_false(&call, "verify_aud") || option_false(&call, "verify_iss");
+            if expiration_disabled {
+                push(
+                    path,
+                    &call,
+                    EvidenceKind::SecurityConfiguration,
+                    Capability::Authentication,
+                    "python-jwt-expiration-validation-disabled",
+                    &["CWE-613"],
+                    vec![
+                        "jwt",
+                        "expiration-validation-disabled",
+                        "explicit-security-disable",
+                        "recommendation:fix-application",
+                    ],
+                    "token",
+                    comments,
+                    conditional,
+                    literals,
+                    evidence,
+                );
+            }
+            if identity_claims_disabled {
+                push(
+                    path,
+                    &call,
+                    EvidenceKind::SecurityConfiguration,
+                    Capability::Authentication,
+                    "python-jwt-identity-claim-validation-disabled",
+                    &["CWE-287"],
+                    vec![
+                        "jwt",
+                        "audience-or-issuer-validation-disabled",
+                        "explicit-security-disable",
+                        "recommendation:fix-application",
+                    ],
+                    "token",
+                    comments,
+                    conditional,
+                    literals,
+                    evidence,
+                );
+            }
             if unverified {
                 let scope = call
                     .ancestors()
@@ -226,6 +270,124 @@ fn add_jwt_observations<'tree>(
     }
 }
 
+fn option_false(call: &Node<'_, StrDoc<SupportLang>>, option: &str) -> bool {
+    call_arguments(call).into_iter().any(|argument| {
+        if argument.kind().as_ref() == "keyword_argument"
+            && argument
+                .field("name")
+                .is_some_and(|name| name.text().trim() == option)
+        {
+            return argument
+                .field("value")
+                .is_some_and(|value| value.kind().as_ref() == "false");
+        }
+        argument.dfs().any(|pair| {
+            pair.kind().as_ref() == "pair"
+                && pair
+                    .field("key")
+                    .is_some_and(|key| key.text().trim_matches(['\'', '"']) == option)
+                && pair
+                    .field("value")
+                    .is_some_and(|value| value.kind().as_ref() == "false")
+        })
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_python_cors_observations<'tree>(
+    path: &str,
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    let constructors = flask_cors_constructors(root);
+    if constructors.is_empty() {
+        return;
+    }
+    for call in root.dfs().filter(|node| node.kind().as_ref() == "call") {
+        let Some(function) = call.field("function") else {
+            continue;
+        };
+        let callee = function.text();
+        if !constructors.contains(callee.trim()) {
+            continue;
+        }
+        if keyword_argument_value(&call, "supports_credentials")
+            .is_some_and(|value| value.kind().as_ref() == "true")
+            && keyword_argument_value(&call, "origins").is_some_and(|value| {
+                value.kind().as_ref() == "string" && value.text().trim_matches(['\'', '"']) == "*"
+            })
+        {
+            push(
+                path,
+                &call,
+                EvidenceKind::SecurityConfiguration,
+                Capability::CorsConfiguration,
+                "python-flask-credentialed-wildcard-cors",
+                &["CWE-942"],
+                vec![
+                    "flask-cors",
+                    "wildcard-origin",
+                    "credentials-enabled",
+                    "explicit-permissive-policy",
+                ],
+                "policy",
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+        }
+    }
+}
+
+fn flask_cors_constructors(root: &Node<'_, StrDoc<SupportLang>>) -> BTreeSet<String> {
+    let mut constructors = BTreeSet::new();
+    for import in root.dfs().filter(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "import_statement" | "import_from_statement"
+        )
+    }) {
+        let text = import.text();
+        let trimmed = text.trim();
+        if let Some(names) = trimmed.strip_prefix("from flask_cors import ") {
+            for name in names.trim_matches(['(', ')']).split(',') {
+                let name = name.trim();
+                let (original, visible) = name.split_once(" as ").unwrap_or((name, name));
+                if original.trim() == "CORS" {
+                    constructors.insert(visible.trim().to_string());
+                }
+            }
+        } else if let Some(names) = trimmed.strip_prefix("import ") {
+            for name in names.split(',') {
+                let name = name.trim();
+                let (module, visible) = name.split_once(" as ").unwrap_or((name, name));
+                if module.trim() == "flask_cors" {
+                    constructors.insert(format!("{}.CORS", visible.trim()));
+                }
+            }
+        }
+    }
+    constructors
+}
+
+fn keyword_argument_value<'tree>(
+    call: &Node<'tree, StrDoc<SupportLang>>,
+    expected: &str,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    call_arguments(call).into_iter().find_map(|argument| {
+        (argument.kind().as_ref() == "keyword_argument"
+            && argument
+                .field("name")
+                .is_some_and(|name| name.text().trim() == expected))
+        .then(|| argument.field("value"))
+        .flatten()
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn add_django_settings<'tree>(
     path: &str,
@@ -235,6 +397,9 @@ fn add_django_settings<'tree>(
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
     evidence: &mut Vec<Evidence>,
 ) {
+    let credentialed_all_origins = setting_is_true(root, "CORS_ALLOW_CREDENTIALS")
+        && (setting_is_true(root, "CORS_ORIGIN_ALLOW_ALL")
+            || setting_is_true(root, "CORS_ALLOW_ALL_ORIGINS"));
     for assignment in root
         .dfs()
         .filter(|node| node.kind().as_ref() == "assignment")
@@ -287,16 +452,26 @@ fn add_django_settings<'tree>(
                 path,
                 &right,
                 EvidenceKind::SecurityConfiguration,
-                Capability::HttpRequestHandling,
+                Capability::CorsConfiguration,
                 "python-django-cors-all-origins-review",
                 &["CWE-942"],
-                vec![
-                    "django",
-                    "cors",
-                    "all-origins",
-                    "recommendation:review-effective-policy",
-                    "verify-api-gateway-and-credential-mode",
-                ],
+                if credentialed_all_origins {
+                    vec![
+                        "django",
+                        "cors",
+                        "all-origins",
+                        "credentials-enabled",
+                        "explicit-permissive-policy",
+                    ]
+                } else {
+                    vec![
+                        "django",
+                        "cors",
+                        "all-origins",
+                        "recommendation:review-effective-policy",
+                        "verify-api-gateway-and-credential-mode",
+                    ]
+                },
                 comments,
                 conditional,
                 literals,
@@ -497,6 +672,19 @@ fn add_django_settings<'tree>(
             _ => {}
         }
     }
+}
+
+fn setting_is_true(root: &Node<'_, StrDoc<SupportLang>>, expected: &str) -> bool {
+    root.dfs()
+        .filter(|node| node.kind().as_ref() == "assignment")
+        .any(|assignment| {
+            assignment
+                .field("left")
+                .is_some_and(|left| left.text().trim() == expected)
+                && assignment
+                    .field("right")
+                    .is_some_and(|right| compact(right.text().as_ref()) == "True")
+        })
 }
 
 #[allow(clippy::too_many_arguments)]

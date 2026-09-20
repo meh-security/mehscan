@@ -31,6 +31,7 @@ pub(crate) fn add_identity_policy_observations<'tree>(
     }
 
     add_jwt_policy(path, root, comments, conditional, literals, evidence);
+    add_jwt_metadata_policy(path, root, comments, conditional, literals, evidence);
     add_cookie_policy(path, root, comments, conditional, literals, evidence);
     add_session_cookie_policy(path, root, comments, conditional, literals, evidence);
     add_antiforgery_policy(path, root, comments, conditional, literals, evidence);
@@ -38,6 +39,64 @@ pub(crate) fn add_identity_policy_observations<'tree>(
     add_forwarded_headers_policy(path, root, comments, conditional, literals, evidence);
     add_authorization_policy(path, root, comments, conditional, literals, evidence);
     add_middleware_ordering(path, root, comments, conditional, literals, evidence);
+}
+
+fn add_jwt_metadata_policy<'tree>(
+    path: &str,
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    if !root.text().contains("AddJwtBearer") {
+        return;
+    }
+    for assignment in root
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "assignment_expression")
+    {
+        let text = compact(assignment.text().as_ref());
+        let Some((property, value)) = text.rsplit_once('=') else {
+            continue;
+        };
+        if value != "false"
+            || !property
+                .rsplit('.')
+                .next()
+                .is_some_and(|name| name == "RequireHttpsMetadata")
+            || !assignment.ancestors().any(|ancestor| {
+                ancestor.kind().as_ref() == "invocation_expression"
+                    && ancestor.field("function").is_some_and(|function| {
+                        compact(function.text().as_ref()).ends_with(".AddJwtBearer")
+                            || compact(function.text().as_ref()) == "AddJwtBearer"
+                    })
+            })
+        {
+            continue;
+        }
+        push(
+            path,
+            &assignment,
+            EvidenceKind::SecurityConfiguration,
+            Capability::Authentication,
+            "csharp-jwt-https-metadata-disabled",
+            &["CWE-295"],
+            &[
+                "aspnet-core",
+                "jwt-bearer",
+                "authority-metadata",
+                "https-not-required",
+                "explicit-security-disable",
+                "review-runtime-environment",
+            ],
+            "policy",
+            comments,
+            conditional,
+            literals,
+            evidence,
+        );
+    }
 }
 
 fn add_session_cookie_policy<'tree>(
