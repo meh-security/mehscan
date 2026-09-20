@@ -285,7 +285,7 @@ def install(options):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--version', help='Exact release, e.g. 0.5.0; default: latest')
+    parser.add_argument('--version', help='Exact release, e.g. 0.5.1; default: latest')
     parser.add_argument('--install-directory')
     parser.add_argument('--force-download', action='store_true')
     parser.add_argument('--source-digest', help='Independently trusted exact source commit')

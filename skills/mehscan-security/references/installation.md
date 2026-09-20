@@ -148,7 +148,7 @@ $mehscanBin = & ./scripts/install-mehscan.ps1
 ```
 
 Omitting `--version` (PowerShell: `-Version`) selects the latest release when
-installation is necessary. Append `--version 0.5.0` only when that release was
+installation is necessary. Append `--version 0.5.1` only when that release was
 requested; append `--install-directory PATH` for a requested destination
 (PowerShell: `-InstallDirectory PATH`). Use `--force-download` to bypass reuse
 of an existing binary on `PATH` only for explicitly requested reinstallation
