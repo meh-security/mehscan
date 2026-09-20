@@ -534,10 +534,13 @@ models.
 
 Bounded origin/consumer enrichment may add `reference_use_context`,
 `stored_write_origin_context`, `configuration_lifecycle_context`,
-`endpoint_registration_context`, and `endpoint_handler_context`. At most six
-such facts are attached per review. They require exact repository shapes and
-remain lexical, non-runtime context: they do not claim a call graph, deployed
-configuration, package implementation, or cross-function taint flow.
+`endpoint_registration_context`, `endpoint_handler_context`, and
+`endpoint_handler_helper_context`. The helper role is a single exact Spring
+controller-receiver-to-implementation hop used to explain the behavior behind
+a literal route policy; it is not a call graph. At most six such facts are
+attached per review. They require exact repository shapes and remain lexical,
+non-runtime context: they do not claim deployed configuration, package
+implementation, or cross-function taint flow.
 
 `protection_context` is reserved for a potentially effective control linked to
 the path. A syntactically present check that the deterministic relationship
