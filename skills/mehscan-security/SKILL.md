@@ -170,45 +170,25 @@ decision-ready payload or infer the missing bridge.
 
 ### Generated and framework-registered routes
 
-Treat a generated CRUD or resource registration as a set of HTTP operations,
-not as one route with one authorization state. For each sensitive read or
-mutation under review, identify the generated method and path, then compare it
-with middleware, route groups, policies, and explicit allow/deny registrations
-that cover that exact method and path. A guard for `GET`, `POST`, or `DELETE`
-does not protect a generated `PUT` or `PATCH`; protection on a collection path
-does not automatically protect an item path unless the supplied framework
-registration establishes that scope.
+For any authorization or resource-access review involving routes, handlers,
+resolvers, generated CRUD, or framework policy, read
+[references/authorization-routing.md](references/authorization-routing.md).
+Apply its framework-neutral operation matrix first, then only the section for
+the detected framework. The same method/path/action, control scope, registration
+order, and resource must line up; authentication or a sibling-route guard is not
+object authorization for the reviewed operation.
 
-Respect framework registration order when order is semantically meaningful.
-For Express-style routing, consider only covering middleware registered before
-the generated handler, including an applicable earlier `app.use` or router
-mount. Preserve custom middleware as an attachment until its exact definition
-shows authentication or authorization and a rejection path that stops
-execution. Commented-out middleware, challenge telemetry, client-side checks,
-and guards on sibling methods are not controls for the generated operation.
+When a Mehscan rule or review fact explicitly labels a registration as generated
+CRUD, do not decide from the generator excerpt alone. Treat the label as proof
+that server operations are generated, read the framework/package subsection to
+enumerate only its established operations, and retrieve the bounded controlling
+route-registration scope required by the reference before deciding.
 
-When the review names a generated resource but omits the decisive method-level
-registration context, retrieve one bounded source window around that exact
-generator and the complete preceding route-registration section in the same
-setup function. Do not use a fixed short window that begins after relevant
-middleware; locate the nearest registration-section boundary or retrieve a
-larger bounded window when needed. Prefer `mehscan investigate source`; use
-`structural` only for an exact method/path shape and inspect parse coverage
-before relying on an empty result. This exception gathers routing context for
-the same authorization observation; it does not authorize a broad search for
-unrelated vulnerabilities or create a data-flow relationship.
-
-Use `issue` when the gathered code establishes an application-owned sensitive
-generated operation with no covering application authorization and no supplied
-effective default. Use `not_issue` when the exact method/path is denied,
-intentionally public for a safe purpose, or covered by a demonstrated effective
-control. If dynamic composition, an unresolved mount, or an unknown global
-default prevents either conclusion, retain the exact route-coverage artifact as
-`needs_review` when the response contract supplies it as unresolved; do not
-dismiss the operation merely because the generator declaration alone is
-insufficient. An `issue` summary must name at least one exact uncovered HTTP
-method and path and the sensitive generated operation it exposes. Do not report
-only a list of models or claim that every generated operation is unprotected.
+When the bundle lacks decisive method-level context, the reference permits one
+bounded lookup around the named registration and its controlling scope. This is
+a same-review routing clarification, not a search for new findings or general
+data flow. A confirmed issue must name a concrete uncovered operation and its
+security impact.
 
 When `decision_facts.unresolved` names an exact missing syntactic artifact that
 can change the decision, use the investigation API before leaving it unresolved.

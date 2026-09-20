@@ -3495,11 +3495,13 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "For authorization, distinguish boundary attachment, authentication, coarse role or permission checks, and authorization of the same action and resource. A custom guard, middleware, dependency, policy, or voter name is attachment inventory only until its supplied definition and rejection behavior establish what it enforces."
                 .to_string(),
+            "For every routed authorization review, align the exact server boundary, method/path or resolver action, sensitive effect, attached control scope, framework inheritance or registration order, and selected resource before deciding. Authentication proves identity only; a sibling method/path guard, coarse role, or unrelated policy does not authorize the reviewed action and object. Explicit public overrides and ignored or fail-open decisions must be applied to the exact operation they affect."
+                .to_string(),
             "In HTTP route context, unknown means enforcement was not classified; guard names remain useful exact attachments but do not prove protection. explicitly_public and denied represent canonical local framework policy, while authenticated and role_restricted still do not by themselves prove owner, tenant, or object authorization."
                 .to_string(),
             "Apply an authorization default or activation fact only within its supplied framework scope. For a custom check to protect a dangerous operation, the supplied facts must show the trusted server-side subject, relevant action or resource, and a rejection path that stops execution; otherwise retain it as context rather than dismissing the sink."
                 .to_string(),
-            "For generated CRUD or framework-registered resources, evaluate each supplied HTTP method and path independently. Match only middleware, route groups, policies, or allow/deny registrations that cover that exact operation and, where the framework is order-sensitive, run before the generated handler; a guard on GET, POST, DELETE, a collection path, or a sibling route does not protect an uncovered PUT/PATCH or item route. Commented-out and client-side checks are not controls. An issue summary must name at least one exact uncovered method/path and sensitive generated operation rather than broadly claiming every generated model is exposed."
+            "For generated CRUD or framework-registered resources, evaluate each supplied HTTP method and path independently. A rule explicitly tagged generated-crud establishes that the matched registration generates server operations even when its excerpt contains endpoint templates rather than literal verbs; do not dismiss it on that basis. Match only middleware, route groups, policies, or allow/deny registrations that cover the exact operation and, where the framework is order-sensitive, run before the generated handler; a guard on GET, POST, DELETE, a collection path, or a sibling route does not protect an uncovered PUT/PATCH or item route. Commented-out and client-side checks are not controls. An issue summary must name at least one exact uncovered method/path and sensitive generated operation rather than broadly claiming every generated model is exposed."
                 .to_string(),
             "Configuration facts are repository defaults or references, not proof of the effective deployed value."
                 .to_string(),
@@ -6718,6 +6720,27 @@ fn build_observation_reviews(
         }
         if let Some(fact) = javascript_fixed_arithmetic_eval_fact(sources, &group) {
             facts.push(fact);
+        }
+        if group.evidence.iter().any(|item| {
+            item.tags.iter().any(|tag| tag == "generated-crud")
+                && item.capability == Capability::Authorization
+        }) {
+            let registration_start = first_line.saturating_sub(192).max(1);
+            let registration_end = last_line.saturating_add(12);
+            let (mut registration, registration_truncated) =
+                review_source_slice(file, registration_start, registration_end, anchor)?;
+            context_truncated |= registration_truncated;
+            redact_secrets_in_slice(&mut registration, &group.evidence);
+            facts.push(ReviewNeighborhoodFact {
+                role: "generated_route_registration_context".to_string(),
+                symbol: group.symbol.clone(),
+                location: registration.location,
+                excerpt: registration.text,
+                evidence_id: None,
+                provenance: textual_provenance(
+                    "bounded generated route and preceding registration scope 1",
+                ),
+            });
         }
         for neighborhood in csharp_neighborhoods.iter().filter(|neighborhood| {
             neighborhood
@@ -19372,6 +19395,34 @@ mod tests {
         assert!(review.decision_facts.established.iter().any(|fact| {
             fact == "The bounded path records this rule-specific behavior: model saved without an observed encryption transform."
         }));
+    }
+
+    #[test]
+    fn generated_crud_reviews_include_the_registration_scope() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("tests/fixtures/v2-node-policy");
+        let job = build_all_path_review_jobs(&root, Some(20), false)
+            .expect("node policy fixture should build review jobs");
+        let review = job
+            .observation_reviews
+            .iter()
+            .find(|review| {
+                review
+                    .evidence
+                    .iter()
+                    .any(|item| item.rule_id == "typescript-generated-crud-review")
+            })
+            .expect("generated CRUD observation review");
+        let registration = review
+            .facts
+            .iter()
+            .find(|fact| fact.role == "generated_route_registration_context")
+            .expect("generated route registration context");
+
+        assert!(registration.excerpt.contains("finale.resource"));
+        assert!(registration.location.start.line <= review.evidence[0].location.start.line);
+        assert!(registration.location.end.line >= review.evidence[0].location.end.line);
     }
 
     #[test]

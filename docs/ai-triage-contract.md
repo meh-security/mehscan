@@ -417,6 +417,14 @@ non-flow facts. They help the reviewer answer the supplied security question
 without pretending that proximity proves attacker influence or control
 effectiveness.
 
+Authorization reviews use a common operation baseline across frameworks: exact
+server boundary, method/path or resolver action, sensitive effect, attachment,
+control scope, inheritance or registration order, enforcement behavior, public
+override, and action/resource match. Authentication and coarse roles remain
+separate from owner, tenant, possession, or object policy. Framework-specific
+syntax changes how those fields are populated; it does not change the decision
+criteria.
+
 The triage contract requires a reviewer to confirm that a requested artifact is
 actually absent before returning `needs_review`. A response must not ask to
 inspect a helper, route, producer, consumer, configuration, validation, or
@@ -444,6 +452,10 @@ one bounded source lookup around the named generator and the complete preceding
 registration section in the same setup function when a repository review lacks
 this method-level context. A confirmed issue names an exact uncovered method
 and path; it does not characterize every generated model as unprotected.
+Generated-CRUD observations include a
+`generated_route_registration_context` fact with a bounded preceding
+registration scope so ordinary review does not depend on the model choosing a
+source window.
 
 Request-controlled C# Identity role assignment is a distinct path review. A
 bounded path is admitted only when an ASP.NET-bound model decision
