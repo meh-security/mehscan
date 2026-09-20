@@ -3499,6 +3499,8 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Apply an authorization default or activation fact only within its supplied framework scope. For a custom check to protect a dangerous operation, the supplied facts must show the trusted server-side subject, relevant action or resource, and a rejection path that stops execution; otherwise retain it as context rather than dismissing the sink."
                 .to_string(),
+            "For generated CRUD or framework-registered resources, evaluate each supplied HTTP method and path independently. Match only middleware, route groups, policies, or allow/deny registrations that cover that exact operation and, where the framework is order-sensitive, run before the generated handler; a guard on GET, POST, DELETE, a collection path, or a sibling route does not protect an uncovered PUT/PATCH or item route. Commented-out and client-side checks are not controls. An issue summary must name at least one exact uncovered method/path and sensitive generated operation rather than broadly claiming every generated model is exposed."
+                .to_string(),
             "Configuration facts are repository defaults or references, not proof of the effective deployed value."
                 .to_string(),
             "Distinguish application-owned controls from proxy, gateway, ingress, platform, framework, and client controls."

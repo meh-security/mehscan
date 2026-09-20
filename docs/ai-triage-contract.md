@@ -433,6 +433,18 @@ These application-owned policy facts replace the generic deployed-control
 question for that review; they do not prove arbitrary runtime authorization or
 cross-function role behavior.
 
+Generated CRUD and framework resource registrations are reviewed per HTTP
+method and path. Middleware or policy attached to a sibling method is not
+coverage: an authenticated `POST`, denied `DELETE`, or public `GET` says nothing
+about a generated `PUT` or `PATCH` unless an applicable route group or earlier
+mount covers it. In order-sensitive routers, only registrations that execute
+before the generated handler count. Commented-out middleware and client-side
+checks never count as server authorization. The Mehscan security skill may use
+one bounded source lookup around the named generator and the complete preceding
+registration section in the same setup function when a repository review lacks
+this method-level context. A confirmed issue names an exact uncovered method
+and path; it does not characterize every generated model as unprotected.
+
 Request-controlled C# Identity role assignment is a distinct path review. A
 bounded path is admitted only when an ASP.NET-bound model decision
 syntactically controls a typed `UserManager<T>.AddToRoleAsync` call. A rejecting
