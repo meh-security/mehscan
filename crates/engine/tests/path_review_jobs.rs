@@ -121,6 +121,23 @@ fn builds_language_neutral_self_contained_path_reviews() {
     assert!(job.fingerprint.starts_with("path-reviewpack-"));
     assert_eq!(job.context_lines, 3);
     assert_eq!(job.reviews.len(), 20);
+    assert_eq!(
+        job.review_coverage.returned_review_count,
+        job.reviews.len() + job.observation_reviews.len()
+    );
+    assert_eq!(
+        job.review_coverage.admitted_review_count,
+        job.review_coverage.returned_review_count
+    );
+    assert!(
+        job.review_coverage.recognized_boundary_count >= job.review_coverage.admitted_review_count
+    );
+    assert_eq!(
+        job.review_coverage.assessment_review_count
+            + job.review_coverage.investigation_ready_review_count
+            + job.review_coverage.blocked_review_count,
+        job.review_coverage.returned_review_count
+    );
     assert!(!job.truncated);
     assert_eq!(job.triage_contract.response_fields[0], "review_id");
     assert!(job.triage_contract.instructions.iter().any(|instruction| {

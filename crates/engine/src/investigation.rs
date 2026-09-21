@@ -32,9 +32,10 @@ use mehscan_core::{
     ResourcePolicyState, ReviewConfidence, ReviewConfidencePolicy, ReviewContextTruncation,
     ReviewDecision, ReviewDecisionFacts, ReviewInvestigationPlan, ReviewInvestigationTrace,
     ReviewLookupOutcome, ReviewLookupRequest, ReviewNeighborhoodFact, ReviewNeighborhoodJob,
-    ReviewReadiness, ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet,
-    ReviewWorkSummary, Rule, RuntimeEnvironment, SCHEMA_VERSION, SecurityPathState,
-    SecurityPathStepKind, Severity, SeveritySource, SourceSlice, StructuralMatch, TextReference,
+    ReviewPipelineCoverage, ReviewReadiness, ReviewTriageContract, ReviewTriageReport,
+    ReviewTriageResponseSet, ReviewWorkSummary, Rule, RuntimeEnvironment, SCHEMA_VERSION,
+    SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
+    StructuralMatch, TextReference,
 };
 
 mod review_admission;
@@ -608,6 +609,7 @@ fn build_path_review_jobs_internal(
         );
     }
     let all_observation_count = observation_groups.len();
+    let recognized_boundary_count = all_candidates.len() + all_observation_count;
     if !include_review_material {
         observation_groups.retain(|group| !group.review_material);
     }
@@ -1026,6 +1028,27 @@ fn build_path_review_jobs_internal(
         offset,
         include_review_material,
     );
+    let mut review_coverage = ReviewPipelineCoverage {
+        recognized_boundary_count,
+        admitted_review_count: total_reviews,
+        returned_review_count: returned_reviews,
+        ..ReviewPipelineCoverage::default()
+    };
+    for readiness in reviews
+        .iter()
+        .map(|review| review.investigation.readiness)
+        .chain(
+            observation_reviews
+                .iter()
+                .map(|review| review.investigation.readiness),
+        )
+    {
+        match readiness {
+            ReviewReadiness::Assessment => review_coverage.assessment_review_count += 1,
+            ReviewReadiness::Investigation => review_coverage.investigation_ready_review_count += 1,
+            ReviewReadiness::Blocked => review_coverage.blocked_review_count += 1,
+        }
+    }
     Ok(PathReviewJob {
         schema_version: SCHEMA_VERSION.to_string(),
         root: scan.root,
@@ -1042,6 +1065,7 @@ fn build_path_review_jobs_internal(
         truncated,
         reviews,
         observation_reviews,
+        review_coverage,
         coverage: scan.coverage,
         diagnostics: scan.diagnostics,
     })
@@ -3651,12 +3675,18 @@ fn completed_review_work(
         .iter()
         .map(|(_, responses)| responses.results.len())
         .sum();
+    let accepted_investigation_count = bundle_responses
+        .iter()
+        .flat_map(|(_, responses)| &responses.results)
+        .filter(|result| result.investigation.is_some())
+        .count();
     ReviewWorkSummary {
         complete: true,
         scheduled_bundle_count: bundle_responses.len(),
         scheduled_review_count: completed_review_count,
         completed_bundle_count: bundle_responses.len(),
         completed_review_count,
+        accepted_investigation_count,
         deferred_review_ids: Vec::new(),
         blocked_review_ids,
         truncated_review_ids,
@@ -3696,6 +3726,7 @@ fn merge_scheduled_review_work(
     }
     scheduled.completed_bundle_count = completed.completed_bundle_count;
     scheduled.completed_review_count = completed.completed_review_count;
+    scheduled.accepted_investigation_count = completed.accepted_investigation_count;
     scheduled.blocked_review_ids = completed.blocked_review_ids.clone();
     scheduled.truncated_review_ids = completed.truncated_review_ids.clone();
     scheduled.complete = scheduled.completed_bundle_count == scheduled.scheduled_bundle_count

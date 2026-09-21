@@ -544,9 +544,23 @@ pub struct PathReviewJob {
     pub reviews: Vec<PathReview>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub observation_reviews: Vec<ObservationReview>,
+    #[serde(default)]
+    pub review_coverage: ReviewPipelineCoverage,
     pub coverage: Coverage,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Accounting for deterministic recognition and AI-review admission. Readiness
+/// counts describe the returned page; admitted reviews can span later pages.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewPipelineCoverage {
+    pub recognized_boundary_count: usize,
+    pub admitted_review_count: usize,
+    pub returned_review_count: usize,
+    pub assessment_review_count: usize,
+    pub investigation_ready_review_count: usize,
+    pub blocked_review_count: usize,
 }
 
 pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.1";
@@ -789,6 +803,8 @@ pub struct ReviewWorkSummary {
     pub scheduled_review_count: usize,
     pub completed_bundle_count: usize,
     pub completed_review_count: usize,
+    #[serde(default)]
+    pub accepted_investigation_count: usize,
     #[serde(default)]
     pub deferred_review_ids: Vec<String>,
     #[serde(default)]

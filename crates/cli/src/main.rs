@@ -1052,6 +1052,7 @@ fn read_complete_bundle_responses(
         scheduled_review_count,
         completed_bundle_count,
         completed_review_count,
+        accepted_investigation_count: 0,
         deferred_review_ids: missing_review_ids.clone(),
         blocked_review_ids: Vec::new(),
         truncated_review_ids: Vec::new(),

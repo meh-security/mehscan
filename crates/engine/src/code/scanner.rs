@@ -6,8 +6,9 @@ use std::thread;
 use std::time::Instant;
 
 use mehscan_core::{
-    Capability, Coverage, CweCoverage, CweSupportLevel, Diagnostic, DiagnosticLevel, FileCoverage,
-    FileStatus, Language, RelationContract, Rule, SCHEMA_VERSION, ScanResult,
+    Capability, Coverage, CweCoverage, CweSupportLevel, Diagnostic, DiagnosticLevel, Evidence,
+    FileCoverage, FileStatus, Language, ProducerCoverage, RelationContract, Rule, SCHEMA_VERSION,
+    ScanResult,
 };
 
 use crate::code::comments::CommentRanges;
@@ -737,7 +738,8 @@ pub(crate) fn scan_profiled(
     });
     security_paths.sort_by(|left, right| left.id.cmp(&right.id));
     coverage.security_surfaces = security_surface_counts(&evidence);
-    coverage.cwe = cwe_coverage(rules);
+    (coverage.cwe, coverage.producers) =
+        cwe_coverage(rules, &evidence, &coverage.files, options.scan_secrets);
     let root = display_path(&discovery.root);
     let result = ScanResult {
         schema_version: SCHEMA_VERSION.to_string(),
@@ -1152,102 +1154,115 @@ fn capability_name(capability: Capability) -> &'static str {
     }
 }
 
-fn cwe_coverage(rules: &[Rule]) -> Vec<CweCoverage> {
-    let mut by_cwe: BTreeMap<String, BTreeSet<Language>> = BTreeMap::new();
+fn cwe_coverage(
+    rules: &[Rule],
+    evidence: &[Evidence],
+    files: &[FileCoverage],
+    secret_scanning_enabled: bool,
+) -> (Vec<CweCoverage>, ProducerCoverage) {
+    let mut declarative: BTreeMap<String, BTreeSet<Language>> = BTreeMap::new();
     for rule in rules {
         for cwe in &rule.cwe {
-            by_cwe.entry(cwe.clone()).or_default().insert(rule.language);
+            declarative
+                .entry(cwe.clone())
+                .or_default()
+                .insert(rule.language);
         }
     }
-    by_cwe
-        .entry("CWE-798".to_string())
-        .or_default()
-        .extend(all_languages());
-    // Kotlin's native MVC adapter inventories scalar request bindings.
-    by_cwe
-        .entry("CWE-20".to_string())
-        .or_default()
-        .insert(Language::Kotlin);
-    for cwe in [
-        "CWE-307", "CWE-321", "CWE-330", "CWE-345", "CWE-352", "CWE-640", "CWE-942", "CWE-1004",
-        "CWE-1275",
-    ] {
-        by_cwe.entry(cwe.to_string()).or_default().extend([
-            Language::Javascript,
-            Language::Typescript,
-            Language::Tsx,
-        ]);
+    let declarative_rule_ids = rules
+        .iter()
+        .map(|rule| rule.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let file_languages = files
+        .iter()
+        .filter_map(|file| file.language.map(|language| (file.path.as_str(), language)))
+        .collect::<BTreeMap<_, _>>();
+    let mut observed_procedural: BTreeMap<String, BTreeSet<Language>> = BTreeMap::new();
+    let mut producer_coverage = ProducerCoverage {
+        loaded_declarative_rules: rules.len(),
+        ..ProducerCoverage::default()
+    };
+    for item in evidence {
+        if declarative_rule_ids.contains(item.rule_id.as_str()) {
+            continue;
+        }
+        producer_coverage.observed_procedural_evidence += 1;
+        let language = file_languages
+            .get(item.location.path.as_str())
+            .copied()
+            .or_else(|| language_from_path(&item.location.path));
+        let Some(language) = language else {
+            producer_coverage.unattributed_procedural_evidence += 1;
+            continue;
+        };
+        for cwe in &item.cwe_candidates {
+            observed_procedural
+                .entry(cwe.clone())
+                .or_default()
+                .insert(language);
+        }
     }
-    for cwe in ["CWE-307", "CWE-319", "CWE-347", "CWE-613", "CWE-639"] {
-        by_cwe
-            .entry(cwe.to_string())
-            .or_default()
-            .extend([Language::Csharp, Language::Java]);
+
+    let mut cwes = declarative
+        .keys()
+        .chain(observed_procedural.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if secret_scanning_enabled {
+        cwes.insert("CWE-798".to_string());
     }
-    for cwe in ["CWE-330", "CWE-532", "CWE-915"] {
-        by_cwe
-            .entry(cwe.to_string())
-            .or_default()
-            .extend([Language::Csharp, Language::Java]);
-    }
-    // C# semantic summaries provide bounded hardcoded signing-key,
-    // password/reset fast-hash, password-lifecycle, and remote client-script
-    // include evidence.
-    for cwe in ["CWE-321", "CWE-640", "CWE-829", "CWE-916"] {
-        by_cwe
-            .entry(cwe.to_string())
-            .or_default()
-            .insert(Language::Csharp);
-    }
-    // Conservative Go project summaries and policy passes provide these
-    // partial surfaces even when no permanent declarative matcher owns them.
-    for cwe in [
-        "CWE-59", "CWE-90", "CWE-307", "CWE-312", "CWE-319", "CWE-321", "CWE-347", "CWE-352",
-        "CWE-400", "CWE-476", "CWE-489", "CWE-532", "CWE-598", "CWE-639", "CWE-693", "CWE-732",
-        "CWE-915", "CWE-916", "CWE-942", "CWE-943",
-    ] {
-        by_cwe
-            .entry(cwe.to_string())
-            .or_default()
-            .insert(Language::Go);
-    }
-    // C-family semantic relationship passes cover these arithmetic,
-    // lifetime, exceptional-state, and domain-dependent validation surfaces without a
-    // standalone declarative matcher.
-    for cwe in [
-        "CWE-59", "CWE-170", "CWE-190", "CWE-195", "CWE-369", "CWE-401", "CWE-404", "CWE-416",
-        "CWE-476", "CWE-562", "CWE-680", "CWE-681", "CWE-732", "CWE-754", "CWE-755", "CWE-772",
-        "CWE-825", "CWE-1284",
-    ] {
-        by_cwe
-            .entry(cwe.to_string())
-            .or_default()
-            .extend([Language::C, Language::Cpp]);
-    }
-    by_cwe
-        .entry("CWE-762".to_string())
-        .or_default()
-        .insert(Language::Cpp);
-    by_cwe
-        .entry("CWE-367".to_string())
-        .or_default()
-        .extend([Language::C, Language::Cpp]);
-    by_cwe.entry("CWE-611".to_string()).or_default().extend([
-        Language::C,
-        Language::Cpp,
-        Language::Csharp,
-        Language::Java,
-    ]);
-    by_cwe
+    let coverage = cwes
         .into_iter()
-        .map(|(cwe, languages)| CweCoverage {
-            language_independent: cwe == "CWE-798",
-            cwe,
-            // An API inventory is useful evidence, but it is not complete CWE detection.
-            level: CweSupportLevel::Partial,
-            supported_languages: languages.into_iter().collect(),
+        .map(|cwe| {
+            let declarative_languages = declarative
+                .remove(&cwe)
+                .unwrap_or_default()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let observed_procedural_languages = observed_procedural
+                .remove(&cwe)
+                .unwrap_or_default()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let mut supported_languages = declarative_languages
+                .iter()
+                .chain(&observed_procedural_languages)
+                .copied()
+                .collect::<BTreeSet<_>>();
+            let language_independent = cwe == "CWE-798" && secret_scanning_enabled;
+            if language_independent {
+                supported_languages.extend(all_languages());
+            }
+            CweCoverage {
+                cwe,
+                level: CweSupportLevel::Partial,
+                declarative_languages,
+                observed_procedural_languages,
+                supported_languages: supported_languages.into_iter().collect(),
+                language_independent,
+            }
         })
-        .collect()
+        .collect();
+    (coverage, producer_coverage)
+}
+
+fn language_from_path(path: &str) -> Option<Language> {
+    let extension = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "c" | "h" => Some(Language::C),
+        "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" => Some(Language::Cpp),
+        "cs" | "cshtml" | "aspx" | "ascx" => Some(Language::Csharp),
+        "java" => Some(Language::Java),
+        "kt" | "kts" => Some(Language::Kotlin),
+        "js" | "mjs" | "cjs" => Some(Language::Javascript),
+        "ts" => Some(Language::Typescript),
+        "tsx" => Some(Language::Tsx),
+        "py" => Some(Language::Python),
+        "php" => Some(Language::Php),
+        "go" => Some(Language::Go),
+        "rs" => Some(Language::Rust),
+        _ => None,
+    }
 }
 
 fn all_languages() -> [Language; 12] {

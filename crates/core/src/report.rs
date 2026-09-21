@@ -207,9 +207,10 @@ impl FindingReport {
             || !self.triage.work.invalid_review_ids.is_empty()
         {
             output.push_str(&format!(
-                "| Review work | {}/{} completed | {} deferred, {} blocked, {} truncated, {} missing, {} invalid |\n",
+                "| Review work | {}/{} completed | {} accepted investigation traces; {} deferred, {} blocked, {} truncated, {} missing, {} invalid |\n",
                 self.triage.work.completed_review_count,
                 self.triage.work.scheduled_review_count,
+                self.triage.work.accepted_investigation_count,
                 self.triage.work.deferred_review_ids.len(),
                 self.triage.work.blocked_review_ids.len(),
                 self.triage.work.truncated_review_ids.len(),

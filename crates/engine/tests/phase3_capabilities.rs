@@ -63,174 +63,53 @@ fn enumerates_first_cwe_capability_set_across_priority_languages() {
         }
     }));
 
+    let rules = mehscan_engine::rules::load_builtin_rules().expect("catalog should load");
+    assert_eq!(
+        result.coverage.producers.loaded_declarative_rules,
+        rules.len()
+    );
+
     let cwe: BTreeMap<_, _> = result
         .coverage
         .cwe
         .iter()
         .map(|coverage| (coverage.cwe.as_str(), coverage))
         .collect();
-    assert_eq!(cwe.len(), 69);
-    for id in ["CWE-20", "CWE-22", "CWE-78", "CWE-89", "CWE-798", "CWE-918"] {
-        let coverage = cwe.get(id).expect("CWE coverage should be declared");
-        assert_eq!(coverage.level, CweSupportLevel::Partial);
-        assert_eq!(
-            coverage.supported_languages.len(),
-            if matches!(
-                id,
-                "CWE-20" | "CWE-22" | "CWE-78" | "CWE-89" | "CWE-798" | "CWE-918"
-            ) {
-                12
-            } else {
-                11
-            }
-        );
+    for rule in &rules {
+        for id in &rule.cwe {
+            let coverage = cwe
+                .get(id.as_str())
+                .expect("every loaded rule CWE should have a coverage claim");
+            assert_eq!(coverage.level, CweSupportLevel::Partial);
+            assert!(coverage.declarative_languages.contains(&rule.language));
+        }
     }
-    for id in ["CWE-79", "CWE-502", "CWE-601"] {
-        let coverage = cwe.get(id).expect("CWE coverage should be declared");
-        assert_eq!(coverage.level, CweSupportLevel::Partial);
-        assert_eq!(coverage.supported_languages.len(), 10);
-    }
-    for id in [
-        "CWE-94", "CWE-306", "CWE-434", "CWE-614", "CWE-862", "CWE-1004",
-    ] {
-        let coverage = cwe.get(id).expect("CWE coverage should be declared");
-        assert_eq!(coverage.level, CweSupportLevel::Partial);
-        assert_eq!(
-            coverage.supported_languages.len(),
-            if id == "CWE-94" {
-                10
-            } else if id == "CWE-434" {
-                9
-            } else if matches!(id, "CWE-614" | "CWE-1004" | "CWE-862") {
-                8
-            } else {
-                7
-            }
-        );
-    }
-    assert_eq!(cwe["CWE-327"].supported_languages.len(), 11);
-    assert_eq!(cwe["CWE-295"].supported_languages.len(), 10);
-    for id in ["CWE-1275", "CWE-345"] {
-        let coverage = cwe.get(id).expect("Node CWE coverage should be declared");
-        assert_eq!(coverage.level, CweSupportLevel::Partial);
-        assert_eq!(coverage.supported_languages.len(), 3);
-    }
-    assert_eq!(cwe["CWE-321"].supported_languages.len(), 5);
-    assert_eq!(cwe["CWE-640"].supported_languages.len(), 4);
-    assert_eq!(
-        cwe["CWE-829"].supported_languages,
-        [mehscan_core::Language::Csharp]
-    );
-    assert!(
-        cwe["CWE-916"]
-            .supported_languages
-            .contains(&mehscan_core::Language::Csharp)
-    );
-    assert_eq!(
-        cwe["CWE-611"].supported_languages,
-        [
-            mehscan_core::Language::C,
-            mehscan_core::Language::Cpp,
-            mehscan_core::Language::Csharp,
-            mehscan_core::Language::Java,
-            mehscan_core::Language::Kotlin,
-            mehscan_core::Language::Javascript,
-            mehscan_core::Language::Typescript,
-            mehscan_core::Language::Tsx,
-            mehscan_core::Language::Python,
-        ]
-    );
-    for (id, languages) in [("CWE-307", 6), ("CWE-347", 7)] {
-        let coverage = cwe
-            .get(id)
-            .expect("identity CWE coverage should be declared");
-        assert_eq!(coverage.level, CweSupportLevel::Partial);
-        assert_eq!(coverage.supported_languages.len(), languages);
-    }
-    assert_eq!(cwe["CWE-613"].supported_languages.len(), 6);
-    assert_eq!(
-        cwe["CWE-319"].supported_languages,
-        [
-            mehscan_core::Language::Csharp,
-            mehscan_core::Language::Java,
-            mehscan_core::Language::Go,
-        ],
-        "programmatic transport coverage should represent all implemented stacks"
-    );
-    assert_eq!(cwe["CWE-352"].supported_languages.len(), 4);
-    assert_eq!(cwe["CWE-942"].supported_languages.len(), 5);
-    let resource_access = cwe
-        .get("CWE-639")
-        .expect("CWE-639 coverage should be declared");
-    assert_eq!(resource_access.level, CweSupportLevel::Partial);
-    assert_eq!(resource_access.supported_languages.len(), 6);
-    let semantic_coverage = cwe
-        .get("CWE-330")
-        .expect("semantic CWE coverage should be declared");
-    assert_eq!(semantic_coverage.level, CweSupportLevel::Partial);
-    assert_eq!(
-        semantic_coverage.supported_languages,
-        [
-            mehscan_core::Language::Csharp,
-            mehscan_core::Language::Java,
-            mehscan_core::Language::Javascript,
-            mehscan_core::Language::Typescript,
-            mehscan_core::Language::Tsx,
-        ]
-    );
-    assert_eq!(cwe["CWE-915"].supported_languages.len(), 3);
-    assert_eq!(cwe["CWE-532"].supported_languages.len(), 4);
-    for id in [
-        "CWE-170", "CWE-190", "CWE-195", "CWE-367", "CWE-369", "CWE-401", "CWE-404", "CWE-416",
-        "CWE-562", "CWE-680", "CWE-681", "CWE-754", "CWE-755", "CWE-772", "CWE-825", "CWE-1284",
-    ] {
-        assert_eq!(
-            cwe[id].supported_languages,
-            [mehscan_core::Language::C, mehscan_core::Language::Cpp]
-        );
-    }
-    assert_eq!(
-        cwe["CWE-762"].supported_languages,
-        [mehscan_core::Language::Cpp]
-    );
-    for id in ["CWE-312", "CWE-400", "CWE-489", "CWE-598", "CWE-693"] {
-        assert_eq!(cwe[id].supported_languages, [mehscan_core::Language::Go]);
-    }
-    assert_eq!(cwe["CWE-943"].supported_languages.len(), 12);
-    for id in ["CWE-59", "CWE-732"] {
-        assert_eq!(
-            cwe[id].supported_languages,
-            [
+    for coverage in cwe.values() {
+        let mut claimed = coverage.declarative_languages.clone();
+        claimed.extend(&coverage.observed_procedural_languages);
+        if coverage.language_independent {
+            claimed.extend([
                 mehscan_core::Language::C,
                 mehscan_core::Language::Cpp,
+                mehscan_core::Language::Csharp,
+                mehscan_core::Language::Java,
+                mehscan_core::Language::Kotlin,
+                mehscan_core::Language::Javascript,
+                mehscan_core::Language::Typescript,
+                mehscan_core::Language::Tsx,
+                mehscan_core::Language::Python,
+                mehscan_core::Language::Php,
                 mehscan_core::Language::Go,
-            ]
-        );
+                mehscan_core::Language::Rust,
+            ]);
+        }
+        claimed.sort();
+        claimed.dedup();
+        assert_eq!(coverage.supported_languages, claimed);
     }
-    assert_eq!(
-        cwe["CWE-476"].supported_languages,
-        [
-            mehscan_core::Language::C,
-            mehscan_core::Language::Cpp,
-            mehscan_core::Language::Go,
-        ]
-    );
-    let ldap = cwe
-        .get("CWE-90")
-        .expect("CWE-90 coverage should be declared");
-    assert_eq!(ldap.level, CweSupportLevel::Partial);
-    assert_eq!(
-        ldap.supported_languages,
-        [
-            mehscan_core::Language::C,
-            mehscan_core::Language::Cpp,
-            mehscan_core::Language::Csharp,
-            mehscan_core::Language::Java,
-            mehscan_core::Language::Kotlin,
-            mehscan_core::Language::Php,
-            mehscan_core::Language::Go,
-            mehscan_core::Language::Rust,
-        ]
+    assert!(
+        !cwe.contains_key("CWE-798"),
+        "disabled secret scanning must not claim language-independent coverage"
     );
 }
 

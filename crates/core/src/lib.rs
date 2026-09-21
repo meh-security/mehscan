@@ -23,7 +23,7 @@ pub use candidate::{
 };
 pub use coverage::{
     Coverage, CoverageTotals, CweCoverage, CweSupportLevel, FileCoverage, FileStatus,
-    LanguageCoverage,
+    LanguageCoverage, ProducerCoverage,
 };
 pub use evaluation::{
     ControlLayer, EVALUATION_PACK_SCHEMA_VERSION, EVALUATION_RESPONSE_SCHEMA_VERSION,
@@ -66,10 +66,10 @@ pub use investigation::{
     ReviewArtifactCitation, ReviewConfidence, ReviewConfidencePolicy, ReviewContextTruncation,
     ReviewDecision, ReviewDecisionFacts, ReviewInvestigationPlan, ReviewInvestigationTrace,
     ReviewLookupAttempt, ReviewLookupOutcome, ReviewLookupRequest, ReviewNeighborhood,
-    ReviewNeighborhoodFact, ReviewNeighborhoodJob, ReviewNeighborhoodVerification, ReviewReadiness,
-    ReviewRetrievedArtifact, ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet,
-    ReviewTriageResult, ReviewWorkSummary, ReviewerInference, SourceSlice, StructuralMatch,
-    TextReference,
+    ReviewNeighborhoodFact, ReviewNeighborhoodJob, ReviewNeighborhoodVerification,
+    ReviewPipelineCoverage, ReviewReadiness, ReviewRetrievedArtifact, ReviewTriageContract,
+    ReviewTriageReport, ReviewTriageResponseSet, ReviewTriageResult, ReviewWorkSummary,
+    ReviewerInference, SourceSlice, StructuralMatch, TextReference,
 };
 pub use location::{Capture, Location, Position};
 pub use protocol::{
