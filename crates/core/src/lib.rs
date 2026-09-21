@@ -63,10 +63,10 @@ pub use investigation::{
     PathReviewTriageReport, PathReviewTriageResponseSet, PathReviewTriageResult, QueryProvenance,
     QueryResponse, REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, RelationshipFunnel,
     RelationshipFunnelCapability, ReviewConfidence, ReviewConfidencePolicy,
-    ReviewContextTruncation, ReviewDecision, ReviewDecisionFacts, ReviewNeighborhood,
-    ReviewNeighborhoodFact, ReviewNeighborhoodJob, ReviewNeighborhoodVerification,
-    ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet, ReviewTriageResult,
-    SourceSlice, StructuralMatch, TextReference,
+    ReviewContextTruncation, ReviewDecision, ReviewDecisionFacts, ReviewInvestigationPlan,
+    ReviewLookupRequest, ReviewNeighborhood, ReviewNeighborhoodFact, ReviewNeighborhoodJob,
+    ReviewNeighborhoodVerification, ReviewReadiness, ReviewTriageContract, ReviewTriageReport,
+    ReviewTriageResponseSet, ReviewTriageResult, SourceSlice, StructuralMatch, TextReference,
 };
 pub use location::{Capture, Location, Position};
 pub use protocol::{

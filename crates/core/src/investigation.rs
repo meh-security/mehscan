@@ -359,6 +359,8 @@ pub struct PathReview {
     /// linked controls, and only the questions that remain unresolved.
     #[serde(default)]
     pub decision_facts: ReviewDecisionFacts,
+    #[serde(default)]
+    pub investigation: ReviewInvestigationPlan,
     /// Deterministic confidence calibration for each allowed decision. Models
     /// decide the verdict; the scanner owns confidence consistency.
     pub confidence_policy: ReviewConfidencePolicy,
@@ -382,6 +384,37 @@ pub struct ReviewDecisionFacts {
     pub effective_controls: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unresolved: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewReadiness {
+    #[default]
+    Assessment,
+    Investigation,
+    Blocked,
+}
+
+/// One concrete bounded repository query that can resolve one or more missing
+/// decision facts. `operation` names an existing `mehscan investigate`
+/// operation and `arguments` uses its long-option names without leading `--`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewLookupRequest {
+    pub operation: String,
+    pub arguments: BTreeMap<String, String>,
+    pub questions: Vec<String>,
+    pub purpose: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewInvestigationPlan {
+    pub readiness: ReviewReadiness,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_facts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lookup_requests: Vec<ReviewLookupRequest>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blockers: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -452,6 +485,8 @@ pub struct ObservationReview {
     pub review_basis: Option<ObservationReviewBasis>,
     #[serde(default)]
     pub decision_facts: ReviewDecisionFacts,
+    #[serde(default)]
+    pub investigation: ReviewInvestigationPlan,
     pub confidence_policy: ReviewConfidencePolicy,
     pub facts: Vec<ReviewNeighborhoodFact>,
     pub open_questions: Vec<String>,

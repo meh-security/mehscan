@@ -29,9 +29,10 @@ use mehscan_core::{
     QueryResponse, REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, RelationContract, RelationshipFunnel,
     RelationshipFunnelCapability, ReportedFinding, ReportedSeverity, Resolution,
     ResourcePolicyState, ReviewConfidence, ReviewConfidencePolicy, ReviewContextTruncation,
-    ReviewDecision, ReviewDecisionFacts, ReviewNeighborhoodFact, ReviewNeighborhoodJob,
-    ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet, Rule, RuntimeEnvironment,
-    SCHEMA_VERSION, SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
+    ReviewDecision, ReviewDecisionFacts, ReviewInvestigationPlan, ReviewLookupRequest,
+    ReviewNeighborhoodFact, ReviewNeighborhoodJob, ReviewReadiness, ReviewTriageContract,
+    ReviewTriageReport, ReviewTriageResponseSet, Rule, RuntimeEnvironment, SCHEMA_VERSION,
+    SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
     StructuralMatch, TextReference,
 };
 
@@ -977,6 +978,8 @@ fn build_path_review_jobs_internal(
         let unresolved = path_decision_blockers(&candidate, &review_basis, &open_questions, &facts);
         let decision_facts = path_decision_facts(&candidate, &review_basis, &facts, &unresolved);
         let truncation = review_truncation(context_truncated, decision_critical_context_truncated);
+        let investigation =
+            path_review_investigation(&candidate, &review_basis, &decision_facts, &truncation);
         let confidence_policy = path_confidence_policy(&candidate, &decision_facts, &truncation);
         reviews.push(PathReview {
             id: candidate.id.replacen("path-", "review-", 1),
@@ -984,6 +987,7 @@ fn build_path_review_jobs_internal(
             candidate,
             review_basis: Some(review_basis),
             decision_facts,
+            investigation,
             confidence_policy,
             facts,
             open_questions,
@@ -3528,6 +3532,10 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Treat every remaining decision_facts.unresolved entry as decision-critical. Do not use issue or not_issue while one remains unless a supplied established fact explicitly answers that exact entry; otherwise use needs_review and copy the entry into checks."
                 .to_string(),
+            "Use investigation.readiness as workflow metadata, not as a verdict. For investigation readiness, execute the supplied bounded lookup requests when available before deciding; for blocked readiness, preserve the named blockers and do not invent unavailable deployment or runtime facts."
+                .to_string(),
+            "A lookup request is a concrete repository query, not evidence that its expected producer or control exists. Apply only returned artifacts that match the exact operand, owner, operation, action, and resource in this review."
+                .to_string(),
             "Apply this decision procedure: issue requires established dangerous behavior plus attacker influence or a concrete policy failure and no demonstrated effective applicable control; not_issue requires affirmative safe purpose, non-attacker input, non-executable behavior, or an effective applicable control; needs_review requires a supplied unresolved fact that can change issue versus not_issue."
                 .to_string(),
             "For an observation whose evidence marks an interpreted operand's origin as decision-critical, missing production origin is not evidence of safety. Use needs_review while its supplied origin-or-constraint question remains unresolved. Use not_issue only when supplied facts affirmatively establish a safe value domain, trusted immutable producer, non-executable use, or effective construction for that exact operand. For SQL, separate parameter binding does not neutralize a value already concatenated into executable query text."
@@ -3638,6 +3646,174 @@ fn review_truncation(occurred: bool, decision_critical: bool) -> ReviewContextTr
         roles,
         decision_critical,
     }
+}
+
+fn path_review_investigation(
+    candidate: &mehscan_core::Candidate,
+    review_basis: &PathReviewBasis,
+    decision_facts: &ReviewDecisionFacts,
+    truncation: &ReviewContextTruncation,
+) -> ReviewInvestigationPlan {
+    let lookup_symbol = review_lookup_symbol(
+        review_basis
+            .source
+            .captures
+            .values()
+            .chain(review_basis.sink.captures.values())
+            .map(String::as_str),
+    );
+    review_investigation_plan(
+        &decision_facts.unresolved,
+        truncation,
+        &candidate.sink.location,
+        lookup_symbol.as_deref(),
+    )
+}
+
+fn observation_review_investigation(
+    evidence: &[Evidence],
+    decision_facts: &ReviewDecisionFacts,
+    truncation: &ReviewContextTruncation,
+) -> ReviewInvestigationPlan {
+    let anchor = evidence.first().map(|item| &item.location);
+    let lookup_symbol = review_lookup_symbol(
+        evidence
+            .iter()
+            .flat_map(|item| item.captures.values().map(|capture| capture.text.as_str())),
+    );
+    let Some(anchor) = anchor else {
+        let mut missing_facts = decision_facts.unresolved.clone();
+        if truncation.decision_critical {
+            missing_facts.push(
+                "Retrieve the decision-critical review context omitted by truncation.".to_string(),
+            );
+        }
+        let blockers = if missing_facts.is_empty() {
+            Vec::new()
+        } else {
+            vec!["No evidence anchor is available for a bounded repository lookup.".to_string()]
+        };
+        return ReviewInvestigationPlan {
+            readiness: if missing_facts.is_empty() {
+                ReviewReadiness::Assessment
+            } else {
+                ReviewReadiness::Blocked
+            },
+            missing_facts,
+            lookup_requests: Vec::new(),
+            blockers,
+        };
+    };
+    review_investigation_plan(
+        &decision_facts.unresolved,
+        truncation,
+        anchor,
+        lookup_symbol.as_deref(),
+    )
+}
+
+fn review_investigation_plan(
+    unresolved: &[String],
+    truncation: &ReviewContextTruncation,
+    anchor: &Location,
+    lookup_symbol: Option<&str>,
+) -> ReviewInvestigationPlan {
+    let mut missing_facts = unresolved.to_vec();
+    if truncation.decision_critical
+        && !missing_facts.iter().any(|fact| {
+            fact == "Retrieve the decision-critical review context omitted by truncation."
+        })
+    {
+        missing_facts.push(
+            "Retrieve the decision-critical review context omitted by truncation.".to_string(),
+        );
+    }
+    if missing_facts.is_empty() {
+        return ReviewInvestigationPlan::default();
+    }
+
+    let (repository_questions, external_questions): (Vec<_>, Vec<_>) = missing_facts
+        .iter()
+        .cloned()
+        .partition(|question| !review_question_requires_external_context(question));
+    let blockers = external_questions
+        .iter()
+        .map(|question| {
+            format!(
+                "The decisive fact requires deployment or runtime authority outside bounded repository inspection: {question}"
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut lookup_requests = Vec::new();
+    if !repository_questions.is_empty() {
+        let start_line = anchor.start.line.saturating_sub(80).max(1);
+        let end_line = anchor.end.line.saturating_add(80);
+        lookup_requests.push(ReviewLookupRequest {
+            operation: "source".to_string(),
+            arguments: BTreeMap::from([
+                ("path".to_string(), anchor.path.clone()),
+                ("start-line".to_string(), start_line.to_string()),
+                ("end-line".to_string(), end_line.to_string()),
+            ]),
+            questions: repository_questions.clone(),
+            purpose: "Inspect the expanded source around the exact review anchor for the missing producer, control, branch, or consumer fact.".to_string(),
+        });
+        if let Some(symbol) = lookup_symbol {
+            lookup_requests.push(ReviewLookupRequest {
+                operation: "references".to_string(),
+                arguments: BTreeMap::from([
+                    ("symbol".to_string(), symbol.to_string()),
+                    ("limit".to_string(), DEFAULT_RESULT_LIMIT.to_string()),
+                ]),
+                questions: repository_questions,
+                purpose: format!(
+                    "Find bounded repository references for the exact captured identifier `{symbol}` before inferring its origin or applicable controls."
+                ),
+            });
+        }
+    }
+    let readiness = if !lookup_requests.is_empty() {
+        ReviewReadiness::Investigation
+    } else {
+        ReviewReadiness::Blocked
+    };
+    ReviewInvestigationPlan {
+        readiness,
+        missing_facts,
+        lookup_requests,
+        blockers,
+    }
+}
+
+fn review_lookup_symbol<'a>(mut values: impl Iterator<Item = &'a str>) -> Option<String> {
+    values.find_map(|value| {
+        let value = value.trim();
+        let identifier = value
+            .strip_prefix('$')
+            .or_else(|| value.strip_prefix('@'))
+            .unwrap_or(value);
+        (is_plain_identifier(identifier)
+            && !matches!(
+                identifier,
+                "this" | "self" | "req" | "request" | "ctx" | "context"
+            ))
+        .then(|| identifier.to_string())
+    })
+}
+
+fn review_question_requires_external_context(question: &str) -> bool {
+    let question = question.to_ascii_lowercase();
+    [
+        "effective deployed",
+        "deployment layer",
+        "authoritative web-server",
+        "proxy, gateway",
+        "proxy or gateway",
+        "cdn, ingress",
+        "runtime-only",
+    ]
+    .iter()
+    .any(|marker| question.contains(marker))
 }
 
 fn path_decision_facts(
@@ -6858,6 +7034,8 @@ fn build_observation_reviews(
             }
         }
         let truncation = review_truncation(context_truncated, decision_critical_context_truncated);
+        let investigation =
+            observation_review_investigation(&selected_evidence, &decision_facts, &truncation);
         let confidence_policy =
             observation_confidence_policy(&selected_evidence, &decision_facts, &truncation);
         reviews.push(ObservationReview {
@@ -6868,6 +7046,7 @@ fn build_observation_reviews(
             evidence: selected_evidence,
             review_basis: Some(review_basis),
             decision_facts,
+            investigation,
             confidence_policy,
             facts,
             open_questions,
@@ -17530,6 +17709,62 @@ mod tests {
     use super::*;
 
     #[test]
+    fn investigation_readiness_separates_repository_work_from_external_blockers() {
+        let anchor = Location {
+            path: "src/handler.ts".to_string(),
+            start: Position {
+                line: 120,
+                column: 5,
+                byte_offset: 400,
+            },
+            end: Position {
+                line: 120,
+                column: 25,
+                byte_offset: 420,
+            },
+        };
+        let local_question =
+            "Can caller input influence the command passed to this shell?".to_string();
+        let local = review_investigation_plan(
+            std::slice::from_ref(&local_question),
+            &ReviewContextTruncation::default(),
+            &anchor,
+            Some("command"),
+        );
+        assert_eq!(local.readiness, ReviewReadiness::Investigation);
+        assert_eq!(local.missing_facts, [local_question]);
+        assert_eq!(
+            local
+                .lookup_requests
+                .iter()
+                .map(|request| request.operation.as_str())
+                .collect::<Vec<_>>(),
+            ["source", "references"]
+        );
+        assert_eq!(
+            local.lookup_requests[0].arguments.get("start-line"),
+            Some(&"40".to_string())
+        );
+        assert_eq!(
+            local.lookup_requests[1].arguments.get("symbol"),
+            Some(&"command".to_string())
+        );
+
+        let external_question =
+            "What is the effective deployed proxy, gateway, or application control?".to_string();
+        let external = review_investigation_plan(
+            std::slice::from_ref(&external_question),
+            &ReviewContextTruncation::default(),
+            &anchor,
+            None,
+        );
+        assert_eq!(external.readiness, ReviewReadiness::Blocked);
+        assert_eq!(external.missing_facts, [external_question]);
+        assert!(external.lookup_requests.is_empty());
+        assert_eq!(external.blockers.len(), 1);
+    }
+
+    #[test]
     fn review_admission_markers_require_server_boundary_and_mutation_effect() {
         let mut files = BTreeMap::new();
         files.insert(
@@ -19714,6 +19949,7 @@ mod tests {
             evidence: vec![anchor],
             review_basis: None,
             decision_facts: ReviewDecisionFacts::default(),
+            investigation: ReviewInvestigationPlan::default(),
             confidence_policy: policy,
             facts: vec![fact, policy_fact],
             open_questions: Vec::new(),
