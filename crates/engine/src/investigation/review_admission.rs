@@ -427,9 +427,9 @@ pub(super) fn decision_questions(
                 .filter(|(name, _)| name.starts_with("related_handler_"))
                 .map(|(_, capture)| capture.text.as_str())
                 .filter(|handler| {
-                    !facts.iter().any(|fact| {
-                        fact.role == "review_admission_helper_context" && fact.symbol == *handler
-                    })
+                    !facts
+                        .iter()
+                        .any(|fact| fact_supplies_mutation_helper(fact, handler))
                 })
                 .collect::<BTreeSet<_>>();
             if missing_helpers.is_empty() {
@@ -507,6 +507,25 @@ pub(super) fn decision_questions(
         }
         _ => Vec::new(),
     }
+}
+
+fn fact_supplies_mutation_helper(fact: &ReviewNeighborhoodFact, handler: &str) -> bool {
+    if fact.symbol != handler {
+        return false;
+    }
+    // Both helper producers cap excerpts at this budget. Reaching the cap can
+    // mean that the rejection or affected-resource logic was omitted, so only
+    // a definition that clearly fits inside the bound satisfies the question.
+    let supplied_lines = fact
+        .location
+        .end
+        .line
+        .saturating_sub(fact.location.start.line)
+        .saturating_add(1);
+    matches!(
+        fact.role.as_str(),
+        "review_admission_helper_context" | "helper_definition_context"
+    ) && supplied_lines < MAX_REVIEW_HELPER_LINES
 }
 
 pub(super) fn preferred_lookup_symbol(evidence: &[Evidence]) -> Option<String> {
