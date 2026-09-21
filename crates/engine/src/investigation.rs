@@ -10,10 +10,11 @@ use ast_grep_outline::combined_extractor::CombinedExtractors;
 use ast_grep_outline::extractor::parse_outline_rules;
 use ast_grep_outline::model::{OutlineEntry, OutlineItem, OutlineMember, SymbolType};
 use mehscan_core::{
-    CandidateReport, Capability, DismissedReview, EnclosingSymbolResult, Evidence, EvidenceFilter,
-    EvidenceKind, EvidenceResults, FINDING_REPORT_SCHEMA_VERSION, FileOutline, FindingFlow,
-    FindingProvenance, FindingRelatedLocation, FindingRemediation, FindingReport,
-    FindingReportScan, FindingReportSummary, FindingReportTool, FindingReportTriage, FindingStatus,
+    CandidateReport, Capability, Capture, Confidence, DismissedReview, EnclosingSymbolResult,
+    Evidence, EvidenceContext, EvidenceFilter, EvidenceKind, EvidenceResults,
+    FINDING_REPORT_SCHEMA_VERSION, FileOutline, FindingFlow, FindingProvenance,
+    FindingRelatedLocation, FindingRemediation, FindingReport, FindingReportScan,
+    FindingReportSummary, FindingReportTool, FindingReportTriage, FindingStatus,
     InvestigationAnchor, InvestigationJob, InvestigationLimits, InvestigationUnit,
     InvestigationUnitProvenance, Language, LiteralState, LiteralValue, Location,
     NativeCallArgument, NativeCallSite, NativeSyntaxAnchor, NativeSyntaxContext,
@@ -24,8 +25,8 @@ use mehscan_core::{
     PathReviewBundleResponseSet, PathReviewBundleRunReport, PathReviewBundleSet,
     PathReviewBundleTriageReport, PathReviewEvidenceBasis, PathReviewIssueGroup, PathReviewJob,
     PathReviewTask, PathReviewTaskPage, PathReviewTaskPayload, PathReviewTriageProgress,
-    PathReviewTriageReport, PathReviewTriageResponseSet, Position, QueryProvenance, QueryResponse,
-    REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, RelationContract, RelationshipFunnel,
+    PathReviewTriageReport, PathReviewTriageResponseSet, Position, Provenance, QueryProvenance,
+    QueryResponse, REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, RelationContract, RelationshipFunnel,
     RelationshipFunnelCapability, ReportedFinding, ReportedSeverity, Resolution,
     ResourcePolicyState, ReviewConfidence, ReviewConfidencePolicy, ReviewContextTruncation,
     ReviewDecision, ReviewDecisionFacts, ReviewNeighborhoodFact, ReviewNeighborhoodJob,
@@ -33,6 +34,8 @@ use mehscan_core::{
     SCHEMA_VERSION, SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
     StructuralMatch, TextReference,
 };
+
+mod review_admission;
 
 use crate::repository::{FileClass, discover, is_sast_excluded_source};
 use crate::rules::parser_language;
@@ -579,6 +582,14 @@ fn build_path_review_jobs_internal(
     let used_ids = candidate_evidence_ids(&all_candidates, &scan.evidence, &sources);
     let mut observation_groups =
         observation_groups(&scan.evidence, &used_ids, &all_candidates, &sources);
+    observation_groups.extend(review_admission::marker_groups(&sources, &scan.evidence));
+    observation_groups.sort_by(|left, right| {
+        left.review_material
+            .cmp(&right.review_material)
+            .then_with(|| left.priority.cmp(&right.priority))
+            .then_with(|| left.path.cmp(&right.path))
+            .then_with(|| left.symbol.cmp(&right.symbol))
+    });
     let repository_has_native_source = sources.files.values().any(|file| {
         matches!(file.language, Some(Language::C | Language::Cpp))
             && !is_nonproduction_review_context_path(&file.path)
@@ -3497,6 +3508,12 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "For every routed authorization review, align the exact server boundary, method/path or resolver action, sensitive effect, attached control scope, framework inheritance or registration order, and selected resource before deciding. Authentication proves identity only; a sibling method/path guard, coarse role, or unrelated policy does not authorize the reviewed action and object. Explicit public overrides and ignored or fail-open decisions must be applied to the exact operation they affect."
                 .to_string(),
+            "Evidence tagged review-admission-marker means deterministic facts established a security-relevant boundary and effect, but the normal sink/path vocabulary could not represent the complete review invariant. Do not dismiss it merely because no conventional sink or deterministic vulnerability path fired. Judge only the named review-invariant tag from the supplied facts; the marker admits review and is not itself proof of a weakness."
+                .to_string(),
+            "For review-invariant:action-resource-authorization, decide from the supplied boundary, handler/helper, subject, selected resource, and policy facts: issue requires a concrete uncovered or mismatched policy; not_issue requires an intentionally safe/public effect or an effective policy for the same action and resource."
+                .to_string(),
+            "For review-invariant:credential-lifecycle, decide whether the exact credential or authenticator state transition requires and enforces appropriate proof of the subject, current credential, recovery authority, or step-up authentication. A valid session alone may be insufficient for a high-impact change; issue requires a concrete bypass or missing required proof, while not_issue requires the applicable proof and enforced transition to be shown."
+                .to_string(),
             "In HTTP route context, unknown means enforcement was not classified; guard names remain useful exact attachments but do not prove protection. explicitly_public and denied represent canonical local framework policy, while authenticated and role_restricted still do not by themselves prove owner, tenant, or object authorization."
                 .to_string(),
             "Apply an authorization default or activation fact only within its supplied framework scope. For a custom check to protect a dangerous operation, the supplied facts must show the trusted server-side subject, relevant action or resource, and a rejection path that stops execution; otherwise retain it as context rather than dismissing the sink."
@@ -4070,6 +4087,29 @@ fn observation_decision_facts(
             )
         })
         .collect::<Vec<_>>();
+    for item in evidence
+        .iter()
+        .filter(|item| review_admission::is_marker(item))
+    {
+        let operation = item
+            .captures
+            .get("operation")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown operation");
+        let effect = item
+            .captures
+            .get("effect")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("mutation");
+        let invariant = item
+            .tags
+            .iter()
+            .find_map(|tag| tag.strip_prefix("review-invariant:"))
+            .unwrap_or("security");
+        established.push(format!(
+            "The bounded classifier established `{operation}` as a server mutation boundary with a mutation-shaped `{effect}` effect. This admits review of `{invariant}` even without an ordinary sink rule; it does not by itself prove that invariant is violated."
+        ));
+    }
     for item in evidence
         .iter()
         .filter(|item| item.rule_id == "kotlin-ktor-html-output")
@@ -6075,6 +6115,8 @@ fn observation_review_basis(
         .filter(|item| seen_rules.insert(item.rule_id.as_str()))
         .map(|item| review_evidence_basis(item, rules_by_id))
         .collect::<Vec<_>>();
+    let review_admission_marker = evidence.iter().any(review_admission::is_marker);
+    let marker_contract = review_admission::review_contract(evidence);
     let mut deterministic_facts = vec![
         "This is a bounded observation neighborhood, not a deterministic source-to-sink relationship or vulnerability verdict."
             .to_string(),
@@ -6098,6 +6140,12 @@ fn observation_review_basis(
     {
         deterministic_facts.push(
             "A sensitive operation or boundary is present, but unsafe syntax or API presence alone does not establish a violated invariant, attacker reachability, or security impact."
+                .to_string(),
+        );
+    }
+    if review_admission_marker {
+        deterministic_facts.push(
+            "This review-admission marker establishes the boundary and effect named by its tags. It requires review of the named invariant but does not establish that the invariant is violated."
                 .to_string(),
         );
     }
@@ -6129,13 +6177,17 @@ fn observation_review_basis(
         .join(", ");
     let decision_critical_origin = decision_critical_origin(evidence);
     ObservationReviewBasis {
-        relationship: if let Some(origin) = decision_critical_origin {
+        relationship: if let Some(contract) = &marker_contract {
+            contract.relationship
+        } else if let Some(origin) = decision_critical_origin {
             origin.relationship()
         } else {
             "bounded_non_path_observation"
         }
         .to_string(),
-        security_question: if let Some(origin) = decision_critical_origin {
+        security_question: if let Some(contract) = marker_contract {
+            contract.security_question.to_string()
+        } else if let Some(origin) = decision_critical_origin {
             origin.security_question()
         } else {
             format!(
@@ -6476,6 +6528,10 @@ fn build_observation_reviews(
         );
         context_truncated |= helpers_truncated;
         facts.append(&mut helpers);
+        let (mut marker_helpers, marker_helpers_truncated) =
+            review_admission::helper_facts(sources, &group, &facts, 4);
+        context_truncated |= marker_helpers_truncated;
+        facts.append(&mut marker_helpers);
         let (mut second_hop, second_hop_truncated) = second_hop_review_facts(
             sources,
             &review_context,
@@ -6949,7 +7005,8 @@ fn observation_group_references(
     for evidence in &group.evidence {
         for (name, capture) in &evidence.captures {
             collect_review_reference_tokens(&capture.text, &mut references);
-            if matches!(name.as_str(), "handler" | "callback" | "delegate")
+            if (matches!(name.as_str(), "handler" | "callback" | "delegate")
+                || name.starts_with("related_handler_"))
                 && let Some(identifier) = terminal_identifier(&capture.text)
             {
                 references.insert(identifier.to_string());
@@ -10923,6 +10980,9 @@ fn is_plain_identifier(value: &str) -> bool {
 }
 
 fn observation_review_title(evidence: &[Evidence]) -> String {
+    if let Some(contract) = review_admission::review_contract(evidence) {
+        return contract.title.to_string();
+    }
     if let Some(origin) = decision_critical_origin(evidence) {
         return origin.title().to_string();
     }
@@ -17468,6 +17528,88 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn review_admission_markers_require_server_boundary_and_mutation_effect() {
+        let mut files = BTreeMap::new();
+        files.insert(
+            "routes.ts".to_string(),
+            SourceFile {
+                path: "routes.ts".to_string(),
+                language: Some(Language::Typescript),
+                source: "fastify.patch('/tasks/:id', async (request) => {\n  return tasks.update(request.params.id, request.body)\n})\n\nasync function repositoryOnly(id) {\n  return db.delete(items).where(eq(items.id, id))\n}\n"
+                    .to_string(),
+            },
+        );
+        files.insert(
+            "routes.go".to_string(),
+            SourceFile {
+                path: "routes.go".to_string(),
+                language: Some(Language::Go),
+                source: "package api\nfunc Register(router *gin.RouterGroup) {\n router.DELETE(\"/:id\", DeleteArticle)\n}\nfunc DeleteArticle(c *gin.Context) {\n store.Delete(c.Param(\"id\"))\n}\n"
+                    .to_string(),
+            },
+        );
+        files.insert(
+            "Controller.php".to_string(),
+            SourceFile {
+                path: "Controller.php".to_string(),
+                language: Some(Language::Php),
+                source: "<?php\n#[Route('/posts/{id}') ]\npublic function removePost(Post $post) {\n $this->repository->remove($post);\n}\n"
+                    .to_string(),
+            },
+        );
+        files.insert(
+            "AccountController.cs".to_string(),
+            SourceFile {
+                path: "AccountController.cs".to_string(),
+                language: Some(Language::Csharp),
+                source: "[HttpPost(\"password\")]\npublic IActionResult ChangePassword(ChangePasswordRequest request) {\n account.UpdatePassword(request.NewPassword);\n return Ok();\n}\n"
+                    .to_string(),
+            },
+        );
+        files.insert(
+            "routes.rs".to_string(),
+            SourceFile {
+                path: "routes.rs".to_string(),
+                language: Some(Language::Rust),
+                source: "Router::new().route(\"/\", get(get_current_user).put(update_user))\nasync fn update_user() { store.update(); }\n"
+                    .to_string(),
+            },
+        );
+        let sources = RepositorySources {
+            root: ".".to_string(),
+            files,
+        };
+
+        let groups = review_admission::marker_groups(&sources, &[]);
+        assert_eq!(groups.len(), 5);
+        assert!(groups.iter().any(|group| group.path == "routes.ts"));
+        assert!(groups.iter().any(|group| group.path == "routes.go"));
+        assert!(groups.iter().any(|group| group.path == "Controller.php"));
+        assert!(
+            groups
+                .iter()
+                .any(|group| group.path == "routes.rs" && group.symbol == "update_user")
+        );
+        let credential = groups
+            .iter()
+            .find(|group| group.path == "AccountController.cs")
+            .unwrap();
+        assert_eq!(
+            credential.evidence[0].capability,
+            Capability::Authentication
+        );
+        assert_eq!(credential.evidence[0].cwe_candidates, ["CWE-620"]);
+        assert!(groups.iter().all(|group| {
+            group.evidence.iter().all(|evidence| {
+                evidence
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "review-admission-marker")
+            })
+        }));
+    }
 
     #[test]
     fn webclient_report_keeps_initial_argument_metadata_distinct_from_filter_effects() {

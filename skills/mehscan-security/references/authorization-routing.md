@@ -51,6 +51,26 @@ An issue summary names the exact method/path or resolver/action, the sensitive
 effect, and the missing or ineffective control. Do not broadly claim that every
 route, model, or generated operation is exposed.
 
+### Review-only mutation markers
+
+An `authorization-review-marker` is the authorization family of the shared
+`review-admission-marker` contract. It is emitted only when bounded syntax
+establishes both a server mutation boundary and a mutation-shaped operation or
+named helper, and carries
+`review-invariant:action-resource-authorization`. It exists because a sensitive
+action can deserve authorization review without calling a conventional security
+sink. The marker is review admission, not proof that authorization is absent.
+
+Do not ignore a marked operation because no ordinary sink, source-to-sink path,
+or deterministic vulnerability candidate fired. Build the operation matrix from
+the supplied boundary, handler, and framework facts. Use a supplied exact helper
+definition when the marker names one; if it is absent and decisive, retrieve at
+most one bounded exact definition. Use `issue` only for a concrete uncovered,
+mismatched, ignored, or fail-open action/resource policy. Use `not_issue` only
+when the supplied code establishes an intentionally safe or public effect, or an
+effective control for the same subject, action, and resource. Authentication or
+an unknown global policy does not by itself justify either conclusion.
+
 ## Bundle fact baseline
 
 Prefer these facts for the reviewed operation, in this order:

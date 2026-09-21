@@ -229,6 +229,44 @@ lambda parameters and local/object variables are not helper definitions. This
 keeps cross-file implementations such as a redirect URL builder visible without
 claiming call resolution or taint propagation.
 
+## Review-admission obligations
+
+Mehscan uses four distinct paths into AI review. Keeping them separate avoids a
+generic “suspicious code” queue and lets the model apply the right invariant.
+
+| Admission class | Deterministic fact | AI obligation |
+| --- | --- | --- |
+| Candidate/path | A bounded source, dangerous operation, and relationship were admitted. | Confirm the named weakness and applicable controls. |
+| Decision-critical operand | An interpreter or trust boundary consumes an exact dynamic operand, but its producer or constraint is unresolved. | Establish attacker influence or affirmative restriction; missing origin is not safety. |
+| Review-admission marker | A security-relevant boundary and effect are exact, but no conventional sink/path represents the complete invariant. | Judge only the supplied `review-invariant:*`; marker presence is not a verdict. |
+| Context inventory | A guard, sanitizer, framework, configuration reference, or ordinary API was observed without an impact anchor. | Supply context to another review; do not create a standalone verdict. |
+
+Marker families must define a two-factor deterministic admission predicate, a
+specific invariant tag, issue and not-issue boundaries, bounded context, and a
+volume cap. Authorization uses server boundary plus mutation effect and asks for
+same-subject/action/resource policy. Credential lifecycle uses a credential or
+authenticator state transition and asks for current-subject proof, recovery
+authority, or step-up enforcement. Dynamic SQL, NoSQL, LDAP, XPath, template,
+code, process, redirect, outbound-request, deserialization, and trusted-HTML
+cases already use decision-critical operand handling and do not need duplicate
+markers.
+
+Candidate families are evaluated by the same test rather than by CWE count:
+
+| Family | Current handling | Marker decision |
+| --- | --- | --- |
+| CWE-862/CWE-639 authorization | Server mutation boundary plus mutation-shaped operation/helper. | Implemented; AI checks the exact action/resource policy. |
+| CWE-620/CWE-640 credential lifecycle | Server mutation plus password, credential, authenticator, MFA, recovery-code, or API-key transition. | Implemented; AI checks current-subject proof, recovery authority, and step-up enforcement. |
+| CWE-352 CSRF | Existing framework rules where cookie/session semantics and missing request-bound protection are exact. | Do not emit for every mutation. A future marker requires deterministic cookie-auth scope plus a state-changing boundary, or it will overwhelm review with bearer-token APIs and non-browser calls. |
+| CWE-915 mass assignment | Existing source/sink rules and bounded model facts. | Promising only for a direct request-object-to-persistence update shape; naming a DTO or model is insufficient. |
+| CWE-200/CWE-639 sensitive reads | Existing resource-access and response evidence. | A generic GET/read marker is too broad. Require a recognized sensitive resource plus an exposed response before admission. |
+| Injection, SSRF, redirect, traversal, deserialization, trusted HTML, template/code/process execution | Exact sink or interpreter boundary with decision-critical dynamic operand handling. | No marker; improve sink vocabulary or operand/origin facts instead. |
+| Security configuration and fail-open enforcement | Explicit weak value, ignored decision, or continued execution is ordinary evidence. | No marker; these already enter review directly. |
+
+This keeps review admission small and evidence-driven. A new family must add a
+security question the existing sink, decision-critical operand, or configuration
+contracts cannot express; incomplete detection alone is not sufficient.
+
 C# observation reviews can also reuse the established stored-output
 neighborhood facts. For Razor raw-output leads this supplies exact
 `bound_remote_input`, property assignment, persistence, model-property,

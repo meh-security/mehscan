@@ -86,3 +86,28 @@ failure, or another condition before asking AI to judge a subsequent mutation.
 These additions remain bounded syntax and local context. They do not require a
 CFG, call graph, dependency-injection resolution, or general interprocedural
 data flow.
+
+## Review-admission follow-up
+
+The bounded review-admission implementation was run against the same pinned
+corpus. It now admits the previously invisible server mutations without
+requiring a database sink or resolved repository call.
+
+| Framework | Authorization markers | Other marker families |
+| --- | ---: | ---: |
+| Ktor | 8 | 0 |
+| NestJS | 10 | 0 |
+| Fastify | 6 | 1 credential-lifecycle |
+| Next.js | 6 | 1 credential-lifecycle |
+| Apollo GraphQL | 1 | 0 |
+| Gin | 11 | 0 |
+| Axum | 2 | 0 |
+| Symfony | 4 | 1 credential-lifecycle |
+
+The marker supplies the exact route or resolver operation and bounded named
+helper definitions; it does not claim a missing control. On the Fastify
+password-change review, both Luna and Terra used the supplied route, request
+schema, and exact repository helper to identify the enforced current-password
+check and returned `not_issue`. Both responses passed
+`review-bundle-triage`. Generic helper words such as `update` are excluded from
+cross-file lookup, so this bundle has no unrelated helper facts or truncation.

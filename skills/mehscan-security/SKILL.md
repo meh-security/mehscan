@@ -168,6 +168,27 @@ operations with no supplied bridge, use `not_issue` for that named relationship
 and describe the mismatch. Do not use supplemental syntax lookup to repair a
 decision-ready payload or infer the missing bridge.
 
+Evidence tagged `review-admission-marker` is different from an ordinary API
+inventory observation. It means Mehscan deterministically established the
+security-relevant boundary and effect named by a `review-invariant:*` tag, but
+the normal sink/path model could not express the complete review question. Do
+not dismiss it because no conventional sink or source-to-sink path fired. The
+marker is still not a vulnerability verdict: decide only the named invariant,
+using `issue` for a concrete violated invariant and `not_issue` for affirmative
+disproof or an effective applicable control. Keep unrelated possible weaknesses
+outside that review.
+
+Marker families remain intentionally specialized. For example, authorization
+markers establish a server mutation and ask whether the same subject, action,
+and resource are authorized. Credential-lifecycle markers ask whether password,
+passcode, MFA, authenticator, recovery-code, credential, or API-key changes
+enforce the required current-subject proof, recovery authority, or step-up
+authentication. Dynamic interpreter reviews establish an exact dynamic operand
+and make its origin or constraint decision-critical. Do not transfer the
+authorization test to credential lifecycle, injection, deserialization,
+redirect, SSRF, trusted-HTML, template, or process-execution reviews; use each
+review's named operand and invariant.
+
 ### Generated and framework-registered routes
 
 For any authorization or resource-access review involving routes, handlers,

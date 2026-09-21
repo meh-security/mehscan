@@ -52,6 +52,57 @@ scans files already admitted to the framework-context pass, ignores files over
 512 KiB, performs bounded exact-name lookups already used by review context,
 and adds at most eight authorization facts to one review.
 
+### Review admission for missed sinks
+
+Framework facts cannot help when no finding or observation admits the operation
+to a review bundle. Mehscan therefore uses a shared `review-admission-marker`
+contract when deterministic facts establish a security-relevant boundary and
+effect but the ordinary sink/path vocabulary cannot express the complete review
+invariant. Each family keeps its own narrow predicate and
+`review-invariant:*` tag; markers are not generic suspicious-code matches.
+
+The first family is `authorization-review-marker`, tagged
+`review-invariant:action-resource-authorization`. It is emitted when two local
+facts are both present:
+
+1. a recognized server mutation boundary, such as an HTTP mutation route,
+   controller decorator, GraphQL mutation field, or server-action wrapper; and
+2. a mutation-shaped operation or named helper, such as update, delete, remove,
+   invite, grant, revoke, publish, or transfer.
+
+The marker is a `SensitiveOperation` review lead, not a deterministic finding.
+It tells the reviewer that the absence of an ordinary sink rule is not a reason
+to ignore the operation. The reviewer must still establish a concrete uncovered
+or mismatched action/resource policy before using `issue`, and must establish an
+intentionally safe/public effect or an effective same-action, same-resource
+control before using `not_issue`.
+
+Admission is bounded to 48 markers per repository, eight per file, 120 lines per
+operation, and files no larger than 512 KiB. Named route handlers receive at
+most four exact textual definitions, limited to 40 lines each. This is a lexical
+repository-pattern lookup: it does not resolve receivers, dependency injection,
+dynamic dispatch, aliases, or runtime registration. Login, registration,
+sign-in, and sign-out bootstrap boundaries are excluded from authorization
+markers, while their dedicated authentication rules remain available.
+
+Credential and authenticator mutations use a separate
+`review-invariant:credential-lifecycle` family. Password, passcode, MFA, TOTP,
+recovery-code, credential, and API-key changes are reviewed for current-subject
+proof, recovery authority, or step-up enforcement instead of being forced into
+an object-authorization question. Ordinary changes use CWE-620; reset or
+recovery operations use CWE-640. Login and registration remain outside this
+family because their security contracts are covered by authentication-specific
+rules rather than mutation admission.
+
+Markers are unnecessary when an existing evidence family already represents
+the decision boundary. Dynamic SQL, NoSQL, LDAP, XPath, template, code,
+process, redirect, outbound-request, deserialization, and trusted-HTML rules
+already establish an interpreter or trust boundary plus an exact dynamic
+operand; a missing origin or constraint is decision-critical review state.
+Explicit fail-open controls and insecure configuration values already have
+ordinary deterministic evidence. Add another marker family only for an
+important boundary/effect pair that otherwise cannot enter review.
+
 ## Goal
 
 Authorization coverage should preserve three separate questions:
