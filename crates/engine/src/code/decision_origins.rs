@@ -880,7 +880,8 @@ fn annotate_process_semantics(language: Language, source: &str, item: &mut Evide
         insert_process_capture(item, operation, "executable", value, offset);
     }
 
-    let shell_api = process_is_shell_api(language, source, item);
+    let shell_api = item.tags.iter().any(|tag| tag == "shell-command-text")
+        || process_is_shell_api(language, source, item);
     let shell_executable = item
         .captures
         .get("executable")
@@ -888,9 +889,11 @@ fn annotate_process_semantics(language: Language, source: &str, item: &mut Evide
         .and_then(|capture| quoted_string(capture.text.trim()))
         .is_some_and(is_shell_name);
     if !shell_api && !shell_executable {
+        push_tag(&mut item.tags, "process-invocation:executable-selection");
         return;
     }
     push_tag(&mut item.tags, "shell-command-text");
+    push_tag(&mut item.tags, "process-invocation:shell-command");
 
     if let Some((payload, offset)) = exact_shell_payload(language, operation) {
         insert_process_capture(item, operation, "shell_command", payload, offset);
@@ -1049,7 +1052,17 @@ fn quoted_string(value: &str) -> Option<&str> {
 }
 
 fn process_is_shell_api(language: Language, source: &str, item: &Evidence) -> bool {
-    if item.rule_id == "php-command-execution" {
+    if matches!(
+        item.rule_id.as_str(),
+        "php-command-execution" | "php-shell-command-operator"
+    ) {
+        return true;
+    }
+    if item
+        .symbol_resolution
+        .as_ref()
+        .is_some_and(|resolution| canonical_process_api_uses_shell(&resolution.canonical))
+    {
         return true;
     }
     let operation = source
@@ -1070,11 +1083,24 @@ fn process_is_shell_api(language: Language, source: &str, item: &Evidence) -> bo
                 || operation.contains("os.popen(")
                 || operation.contains("shell=True")
         }
-        Language::C | Language::Cpp => {
-            operation.starts_with("system(") || operation.starts_with("popen(")
-        }
+        Language::C | Language::Cpp => ["system(", "popen(", "_popen(", "_wpopen(", "_wsystem("]
+            .iter()
+            .any(|callee| operation.starts_with(callee)),
         _ => false,
     }
+}
+
+fn canonical_process_api_uses_shell(canonical: &str) -> bool {
+    matches!(
+        canonical,
+        "child_process.exec"
+            | "child_process.execSync"
+            | "os.system"
+            | "os.popen"
+            | "subprocess.getoutput"
+            | "subprocess.getstatusoutput"
+            | "asyncio.create_subprocess_shell"
+    )
 }
 
 pub(crate) fn executable_deserializer(item: &Evidence) -> bool {

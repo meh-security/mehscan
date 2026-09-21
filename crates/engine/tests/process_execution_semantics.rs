@@ -34,6 +34,19 @@ func run(user string, args []string) {
 }"#,
         ),
         (
+            "app.py",
+            r#"from subprocess import getoutput as shell_output
+def run(user):
+    return shell_output(user)
+"#,
+        ),
+        (
+            "app.php",
+            r#"<?php
+function run($user) { return `$user`; }
+"#,
+        ),
+        (
             "app.rs",
             r#"use std::process::Command;
 fn run(user: &str, args: Vec<String>) {
@@ -103,14 +116,21 @@ class App { void Run(string command, string argument) {
         2,
         "instance Process.Start should resolve its exact local StartInfo"
     );
-    for path in ["app.js", "app.go", "app.rs", "App.cs"] {
+    for path in ["app.js", "app.go", "app.py", "app.php", "app.rs", "App.cs"] {
         assert!(
             process.iter().any(|item| {
                 item.location.path == path
                     && item.captures.get("shell_command").is_some_and(|capture| {
-                        matches!(capture.text.as_str(), "args" | "user" | "argument")
+                        matches!(
+                            capture.text.as_str(),
+                            "args" | "user" | "$user" | "argument"
+                        )
                     })
                     && item.tags.iter().any(|tag| tag == "shell-command-text")
+                    && item
+                        .tags
+                        .iter()
+                        .any(|tag| tag == "process-invocation:shell-command")
                     && item
                         .tags
                         .iter()
@@ -141,9 +161,30 @@ class App { void Run(string command, string argument) {
                 .as_ref()
                 .is_some_and(|symbol| symbol.canonical == "child_process.exec")
             && item
+                .captures
+                .get("shell_command")
+                .is_some_and(|capture| capture.text == "user")
+            && item.tags.iter().any(|tag| tag == "shell-command-text")
+            && item
                 .tags
                 .iter()
                 .any(|tag| tag == "review-origin:decision-critical")
+    }));
+    assert!(process.iter().any(|item| {
+        item.location.path == "app.js"
+            && item
+                .symbol_resolution
+                .as_ref()
+                .is_some_and(|symbol| symbol.canonical == "child_process.spawn")
+            && item
+                .captures
+                .get("command")
+                .is_some_and(|capture| capture.text == "user")
+            && item
+                .tags
+                .iter()
+                .any(|tag| tag == "process-invocation:executable-selection")
+            && !item.tags.iter().any(|tag| tag == "shell-command-text")
     }));
     assert_eq!(
         process
