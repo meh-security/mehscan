@@ -10,10 +10,11 @@ use ast_grep_outline::combined_extractor::CombinedExtractors;
 use ast_grep_outline::extractor::parse_outline_rules;
 use ast_grep_outline::model::{OutlineEntry, OutlineItem, OutlineMember, SymbolType};
 use mehscan_core::{
-    CandidateReport, Capability, DismissedReview, EnclosingSymbolResult, Evidence, EvidenceFilter,
-    EvidenceKind, EvidenceResults, FINDING_REPORT_SCHEMA_VERSION, FileOutline, FindingFlow,
-    FindingProvenance, FindingRelatedLocation, FindingRemediation, FindingReport,
-    FindingReportScan, FindingReportSummary, FindingReportTool, FindingReportTriage, FindingStatus,
+    CandidateReport, Capability, Capture, Confidence, DismissedReview, EnclosingSymbolResult,
+    Evidence, EvidenceContext, EvidenceFilter, EvidenceKind, EvidenceResults,
+    FINDING_REPORT_SCHEMA_VERSION, FileOutline, FindingFlow, FindingProvenance,
+    FindingRelatedLocation, FindingRemediation, FindingReport, FindingReportScan,
+    FindingReportSummary, FindingReportTool, FindingReportTriage, FindingStatus,
     InvestigationAnchor, InvestigationJob, InvestigationLimits, InvestigationUnit,
     InvestigationUnitProvenance, Language, LiteralState, LiteralValue, Location,
     NativeCallArgument, NativeCallSite, NativeSyntaxAnchor, NativeSyntaxContext,
@@ -24,8 +25,8 @@ use mehscan_core::{
     PathReviewBundleResponseSet, PathReviewBundleRunReport, PathReviewBundleSet,
     PathReviewBundleTriageReport, PathReviewEvidenceBasis, PathReviewIssueGroup, PathReviewJob,
     PathReviewTask, PathReviewTaskPage, PathReviewTaskPayload, PathReviewTriageProgress,
-    PathReviewTriageReport, PathReviewTriageResponseSet, Position, QueryProvenance, QueryResponse,
-    REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, RelationContract, RelationshipFunnel,
+    PathReviewTriageReport, PathReviewTriageResponseSet, Position, Provenance, QueryProvenance,
+    QueryResponse, REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, RelationContract, RelationshipFunnel,
     RelationshipFunnelCapability, ReportedFinding, ReportedSeverity, Resolution,
     ResourcePolicyState, ReviewConfidence, ReviewConfidencePolicy, ReviewContextTruncation,
     ReviewDecision, ReviewDecisionFacts, ReviewNeighborhoodFact, ReviewNeighborhoodJob,
@@ -33,6 +34,8 @@ use mehscan_core::{
     SCHEMA_VERSION, SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
     StructuralMatch, TextReference,
 };
+
+mod review_admission;
 
 use crate::repository::{FileClass, discover, is_sast_excluded_source};
 use crate::rules::parser_language;
@@ -579,6 +582,14 @@ fn build_path_review_jobs_internal(
     let used_ids = candidate_evidence_ids(&all_candidates, &scan.evidence, &sources);
     let mut observation_groups =
         observation_groups(&scan.evidence, &used_ids, &all_candidates, &sources);
+    observation_groups.extend(review_admission::marker_groups(&sources, &scan.evidence));
+    observation_groups.sort_by(|left, right| {
+        left.review_material
+            .cmp(&right.review_material)
+            .then_with(|| left.priority.cmp(&right.priority))
+            .then_with(|| left.path.cmp(&right.path))
+            .then_with(|| left.symbol.cmp(&right.symbol))
+    });
     let repository_has_native_source = sources.files.values().any(|file| {
         matches!(file.language, Some(Language::C | Language::Cpp))
             && !is_nonproduction_review_context_path(&file.path)
@@ -3469,6 +3480,8 @@ fn path_review_triage_contract() -> ReviewTriageContract {
         ],
         confidence_levels: vec!["high".to_string(), "medium".to_string(), "low".to_string()],
         instructions: vec![
+            "Return one JSON object with schema_version `1.0`, bundle_fingerprint copied exactly from this request, and a results array. Each results entry must contain review_id, decision, confidence, summary, and checks; use an empty checks array for issue and not_issue."
+                .to_string(),
             "Treat the candidate as a bounded review lead, not a vulnerability verdict."
                 .to_string(),
             "Use issue only when supplied evidence supports dangerous behavior, relevant attacker influence or policy failure, and no demonstrated effective protection."
@@ -3493,9 +3506,19 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "For authorization, distinguish boundary attachment, authentication, coarse role or permission checks, and authorization of the same action and resource. A custom guard, middleware, dependency, policy, or voter name is attachment inventory only until its supplied definition and rejection behavior establish what it enforces."
                 .to_string(),
+            "For every routed authorization review, align the exact server boundary, method/path or resolver action, sensitive effect, attached control scope, framework inheritance or registration order, and selected resource before deciding. Authentication proves identity only; a sibling method/path guard, coarse role, or unrelated policy does not authorize the reviewed action and object. Explicit public overrides and ignored or fail-open decisions must be applied to the exact operation they affect."
+                .to_string(),
+            "Evidence tagged review-admission-marker means deterministic facts established a security-relevant boundary and effect, but the normal sink/path vocabulary could not represent the complete review invariant. Do not dismiss it merely because no conventional sink or deterministic vulnerability path fired. Judge only the named review-invariant tag from the supplied facts; the marker admits review and is not itself proof of a weakness."
+                .to_string(),
+            "For review-invariant:action-resource-authorization, decide from the supplied boundary, handler/helper, subject, selected resource, and policy facts: issue requires a concrete uncovered or mismatched policy; not_issue requires an intentionally safe/public effect or an effective policy for the same action and resource."
+                .to_string(),
+            "For review-invariant:credential-lifecycle, decide whether the exact credential or authenticator state transition requires and enforces appropriate proof of the subject, current credential, recovery authority, or step-up authentication. A valid session alone may be insufficient for a high-impact change; issue requires a concrete bypass or missing required proof, while not_issue requires the applicable proof and enforced transition to be shown."
+                .to_string(),
             "In HTTP route context, unknown means enforcement was not classified; guard names remain useful exact attachments but do not prove protection. explicitly_public and denied represent canonical local framework policy, while authenticated and role_restricted still do not by themselves prove owner, tenant, or object authorization."
                 .to_string(),
             "Apply an authorization default or activation fact only within its supplied framework scope. For a custom check to protect a dangerous operation, the supplied facts must show the trusted server-side subject, relevant action or resource, and a rejection path that stops execution; otherwise retain it as context rather than dismissing the sink."
+                .to_string(),
+            "For generated CRUD or framework-registered resources, evaluate each supplied HTTP method and path independently. A rule explicitly tagged generated-crud establishes that the matched registration generates server operations even when its excerpt contains endpoint templates rather than literal verbs; do not dismiss it on that basis. Match only middleware, route groups, policies, or allow/deny registrations that cover the exact operation and, where the framework is order-sensitive, run before the generated handler; a guard on GET, POST, DELETE, a collection path, or a sibling route does not protect an uncovered PUT/PATCH or item route. Commented-out and client-side checks are not controls. An issue summary must name at least one exact uncovered method/path and sensitive generated operation rather than broadly claiming every generated model is exposed."
                 .to_string(),
             "Configuration facts are repository defaults or references, not proof of the effective deployed value."
                 .to_string(),
@@ -4064,6 +4087,29 @@ fn observation_decision_facts(
             )
         })
         .collect::<Vec<_>>();
+    for item in evidence
+        .iter()
+        .filter(|item| review_admission::is_marker(item))
+    {
+        let operation = item
+            .captures
+            .get("operation")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown operation");
+        let effect = item
+            .captures
+            .get("effect")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("mutation");
+        let invariant = item
+            .tags
+            .iter()
+            .find_map(|tag| tag.strip_prefix("review-invariant:"))
+            .unwrap_or("security");
+        established.push(format!(
+            "The bounded classifier established `{operation}` as a server mutation boundary with a mutation-shaped `{effect}` effect. This admits review of `{invariant}` even without an ordinary sink rule; it does not by itself prove that invariant is violated."
+        ));
+    }
     for item in evidence
         .iter()
         .filter(|item| item.rule_id == "kotlin-ktor-html-output")
@@ -6069,6 +6115,8 @@ fn observation_review_basis(
         .filter(|item| seen_rules.insert(item.rule_id.as_str()))
         .map(|item| review_evidence_basis(item, rules_by_id))
         .collect::<Vec<_>>();
+    let review_admission_marker = evidence.iter().any(review_admission::is_marker);
+    let marker_contract = review_admission::review_contract(evidence);
     let mut deterministic_facts = vec![
         "This is a bounded observation neighborhood, not a deterministic source-to-sink relationship or vulnerability verdict."
             .to_string(),
@@ -6092,6 +6140,12 @@ fn observation_review_basis(
     {
         deterministic_facts.push(
             "A sensitive operation or boundary is present, but unsafe syntax or API presence alone does not establish a violated invariant, attacker reachability, or security impact."
+                .to_string(),
+        );
+    }
+    if review_admission_marker {
+        deterministic_facts.push(
+            "This review-admission marker establishes the boundary and effect named by its tags. It requires review of the named invariant but does not establish that the invariant is violated."
                 .to_string(),
         );
     }
@@ -6123,13 +6177,17 @@ fn observation_review_basis(
         .join(", ");
     let decision_critical_origin = decision_critical_origin(evidence);
     ObservationReviewBasis {
-        relationship: if let Some(origin) = decision_critical_origin {
+        relationship: if let Some(contract) = &marker_contract {
+            contract.relationship
+        } else if let Some(origin) = decision_critical_origin {
             origin.relationship()
         } else {
             "bounded_non_path_observation"
         }
         .to_string(),
-        security_question: if let Some(origin) = decision_critical_origin {
+        security_question: if let Some(contract) = marker_contract {
+            contract.security_question.to_string()
+        } else if let Some(origin) = decision_critical_origin {
             origin.security_question()
         } else {
             format!(
@@ -6470,6 +6528,10 @@ fn build_observation_reviews(
         );
         context_truncated |= helpers_truncated;
         facts.append(&mut helpers);
+        let (mut marker_helpers, marker_helpers_truncated) =
+            review_admission::helper_facts(sources, &group, &facts, 4);
+        context_truncated |= marker_helpers_truncated;
+        facts.append(&mut marker_helpers);
         let (mut second_hop, second_hop_truncated) = second_hop_review_facts(
             sources,
             &review_context,
@@ -6500,6 +6562,10 @@ fn build_observation_reviews(
             exact_java_identity_observation_caller_facts(sources, &group, 4);
         context_truncated |= java_callers_truncated;
         facts.append(&mut java_callers);
+        let (mut route_handlers, route_handlers_truncated) =
+            java_route_policy_handler_facts(sources, &group, 2);
+        context_truncated |= route_handlers_truncated;
+        facts.append(&mut route_handlers);
         if file.language == Some(Language::Kotlin) {
             for item in &group.evidence {
                 if group.anchor_evidence_ids.contains(&item.id) {
@@ -6711,6 +6777,27 @@ fn build_observation_reviews(
         if let Some(fact) = javascript_fixed_arithmetic_eval_fact(sources, &group) {
             facts.push(fact);
         }
+        if group.evidence.iter().any(|item| {
+            item.tags.iter().any(|tag| tag == "generated-crud")
+                && item.capability == Capability::Authorization
+        }) {
+            let registration_start = first_line.saturating_sub(192).max(1);
+            let registration_end = last_line.saturating_add(12);
+            let (mut registration, registration_truncated) =
+                review_source_slice(file, registration_start, registration_end, anchor)?;
+            context_truncated |= registration_truncated;
+            redact_secrets_in_slice(&mut registration, &group.evidence);
+            facts.push(ReviewNeighborhoodFact {
+                role: "generated_route_registration_context".to_string(),
+                symbol: group.symbol.clone(),
+                location: registration.location,
+                excerpt: registration.text,
+                evidence_id: None,
+                provenance: textual_provenance(
+                    "bounded generated route and preceding registration scope 1",
+                ),
+            });
+        }
         for neighborhood in csharp_neighborhoods.iter().filter(|neighborhood| {
             neighborhood
                 .anchor_evidence_ids
@@ -6918,7 +7005,8 @@ fn observation_group_references(
     for evidence in &group.evidence {
         for (name, capture) in &evidence.captures {
             collect_review_reference_tokens(&capture.text, &mut references);
-            if matches!(name.as_str(), "handler" | "callback" | "delegate")
+            if (matches!(name.as_str(), "handler" | "callback" | "delegate")
+                || name.starts_with("related_handler_"))
                 && let Some(identifier) = terminal_identifier(&capture.text)
             {
                 references.insert(identifier.to_string());
@@ -7846,6 +7934,273 @@ fn exact_java_identity_observation_caller_facts(
         }
     }
     (facts, false)
+}
+
+/// Join an exact Spring Security route literal to matching controller mappings.
+/// This is deliberately a bounded lexical join: it handles literal class and
+/// method annotations in the same source module and does not infer runtime
+/// dispatch, composed annotations, or configuration properties.
+fn java_route_policy_handler_facts(
+    sources: &RepositorySources,
+    group: &ObservationGroup,
+    limit: usize,
+) -> (Vec<ReviewNeighborhoodFact>, bool) {
+    if limit == 0 {
+        return (Vec::new(), false);
+    }
+    let Some(policy_route) = group.evidence.iter().find_map(|item| {
+        (item.rule_id == "java-spring-security-route-policy")
+            .then(|| {
+                item.captures
+                    .get("route")
+                    .map(|capture| capture.text.trim())
+            })
+            .flatten()
+    }) else {
+        return (Vec::new(), false);
+    };
+    if !policy_route.starts_with('/') || policy_route.len() > 200 {
+        return (Vec::new(), false);
+    }
+    let module_scope = group
+        .path
+        .split_once("/src/")
+        .map(|(scope, _)| scope)
+        .unwrap_or_default();
+    let mut facts = Vec::new();
+    let mut truncated = false;
+    for file in sources.files.values().filter(|file| {
+        file.language == Some(Language::Java)
+            && !file.path.contains("/test/")
+            && (module_scope.is_empty()
+                || file.path == module_scope
+                || file.path.starts_with(&format!("{module_scope}/")))
+    }) {
+        let spans = line_spans(&file.source);
+        let Some(class_index) = spans.iter().position(|(start, end)| {
+            let line = file.source[*start..*end].trim();
+            line.contains(" class ") || line.starts_with("class ") || line.contains(" record ")
+        }) else {
+            continue;
+        };
+        let class_route = (0..class_index)
+            .rev()
+            .take(8)
+            .find_map(|index| spring_mapping_literal(&file.source[spans[index].0..spans[index].1]));
+        for (annotation_index, (start, end)) in
+            spans.iter().copied().enumerate().skip(class_index + 1)
+        {
+            let line = &file.source[start..end];
+            if !line.contains("Mapping(") {
+                continue;
+            }
+            let Some(method_route) = spring_mapping_literal(line) else {
+                continue;
+            };
+            let endpoint = join_http_route(class_route.as_deref(), &method_route);
+            if !http_route_pattern_matches(policy_route, &endpoint) {
+                continue;
+            }
+            let Some(definition_index) = (annotation_index..spans.len()).take(8).find(|index| {
+                let line = &file.source[spans[*index].0..spans[*index].1];
+                !line.trim_start().starts_with('@') && textual_definition_identifier(line).is_some()
+            }) else {
+                continue;
+            };
+            let method_end = java_method_end_index(&file.source, &spans, definition_index, 48);
+            let symbol = textual_definition_identifier(
+                &file.source[spans[definition_index].0..spans[definition_index].1],
+            )
+            .unwrap_or_else(|| endpoint.clone());
+            let handler_excerpt =
+                file.source[spans[annotation_index].0..spans[method_end].1].to_string();
+            facts.push(ReviewNeighborhoodFact {
+                role: "endpoint_handler_context".to_string(),
+                symbol,
+                location: location_from_offsets(
+                    &file.path,
+                    &file.source,
+                    spans[annotation_index].0,
+                    spans[method_end].1,
+                ),
+                excerpt: handler_excerpt.clone(),
+                evidence_id: None,
+                provenance: textual_provenance(
+                    "exact Spring policy and controller route literal join, bounded non-runtime 1",
+                ),
+            });
+            if facts.len() < limit
+                && let Some(helper) = java_route_handler_helper_fact(
+                    sources,
+                    module_scope,
+                    &file.source,
+                    &handler_excerpt,
+                )
+            {
+                facts.push(helper);
+            }
+            if facts.len() == limit {
+                truncated = spans.iter().skip(annotation_index + 1).any(|(start, end)| {
+                    spring_mapping_literal(&file.source[*start..*end]).is_some_and(|route| {
+                        http_route_pattern_matches(
+                            policy_route,
+                            &join_http_route(class_route.as_deref(), &route),
+                        )
+                    })
+                });
+                return (facts, truncated);
+            }
+        }
+    }
+    (facts, truncated)
+}
+
+fn java_route_handler_helper_fact(
+    sources: &RepositorySources,
+    module_scope: &str,
+    controller_source: &str,
+    handler_excerpt: &str,
+) -> Option<ReviewNeighborhoodFact> {
+    for line in handler_excerpt.lines() {
+        for (dot, _) in line.match_indices('.') {
+            let Some(receiver) = terminal_identifier(&line[..dot]) else {
+                continue;
+            };
+            let Some(method) = line[dot + 1..]
+                .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+                .next()
+                .filter(|value| is_plain_identifier(value))
+            else {
+                continue;
+            };
+            if !line[dot + 1..].contains('(') {
+                continue;
+            }
+            let Some(owner) = controller_source.lines().find_map(|field| {
+                let tokens = field
+                    .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+                    .filter(|token| !token.is_empty())
+                    .collect::<Vec<_>>();
+                let index = tokens.iter().position(|token| *token == receiver)?;
+                (index > 0).then(|| tokens[index - 1])
+            }) else {
+                continue;
+            };
+            let implementation_marker = format!("implements {owner}");
+            for file in sources.files.values().filter(|file| {
+                file.language == Some(Language::Java)
+                    && !file.path.contains("/test/")
+                    && (module_scope.is_empty()
+                        || file.path.starts_with(&format!("{module_scope}/")))
+                    && file.source.contains(&implementation_marker)
+            }) {
+                let spans = line_spans(&file.source);
+                for (definition_index, (start, end)) in spans.iter().copied().enumerate() {
+                    let definition = &file.source[start..end];
+                    if textual_definition_identifier(definition).as_deref() != Some(method) {
+                        continue;
+                    }
+                    let method_end =
+                        java_method_end_index(&file.source, &spans, definition_index, 48);
+                    let excerpt =
+                        file.source[spans[definition_index].0..spans[method_end].1].to_string();
+                    if !excerpt.contains('{') {
+                        continue;
+                    }
+                    return Some(ReviewNeighborhoodFact {
+                        role: "endpoint_handler_helper_context".to_string(),
+                        symbol: format!("{owner}.{method}"),
+                        location: location_from_offsets(
+                            &file.path,
+                            &file.source,
+                            spans[definition_index].0,
+                            spans[method_end].1,
+                        ),
+                        excerpt,
+                        evidence_id: None,
+                        provenance: textual_provenance(
+                            "exact Spring controller receiver type and implementation method, bounded one-hop non-flow 1",
+                        ),
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
+fn spring_mapping_literal(line: &str) -> Option<String> {
+    [
+        "@RequestMapping(",
+        "@GetMapping(",
+        "@PostMapping(",
+        "@PutMapping(",
+        "@PatchMapping(",
+        "@DeleteMapping(",
+    ]
+    .iter()
+    .find(|annotation| line.contains(**annotation))?;
+    quoted_values(line)
+        .into_iter()
+        .find(|value| value.starts_with('/'))
+        .map(str::to_string)
+}
+
+fn join_http_route(base: Option<&str>, method: &str) -> String {
+    let base = base.unwrap_or_default().trim_end_matches('/');
+    let method = method.trim_start_matches('/');
+    if base.is_empty() {
+        format!("/{method}")
+    } else if method.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base}/{method}")
+    }
+}
+
+fn http_route_pattern_matches(pattern: &str, endpoint: &str) -> bool {
+    if let Some(prefix) = pattern.strip_suffix("/**") {
+        endpoint == prefix || endpoint.starts_with(&format!("{prefix}/"))
+    } else {
+        endpoint == pattern
+    }
+}
+
+fn java_method_end_index(
+    source: &str,
+    spans: &[(usize, usize)],
+    definition_index: usize,
+    max_lines: usize,
+) -> usize {
+    let mut opened = false;
+    let mut depth = 0usize;
+    let last = definition_index
+        .saturating_add(max_lines.saturating_sub(1))
+        .min(spans.len().saturating_sub(1));
+    for (index, (start, end)) in spans
+        .iter()
+        .copied()
+        .enumerate()
+        .take(last + 1)
+        .skip(definition_index)
+    {
+        for character in source[start..end].chars() {
+            match character {
+                '{' => {
+                    opened = true;
+                    depth += 1;
+                }
+                '}' if opened => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return index;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    last
 }
 
 fn python_jwt_verification_facts(
@@ -10625,6 +10980,9 @@ fn is_plain_identifier(value: &str) -> bool {
 }
 
 fn observation_review_title(evidence: &[Evidence]) -> String {
+    if let Some(contract) = review_admission::review_contract(evidence) {
+        return contract.title.to_string();
+    }
     if let Some(origin) = decision_critical_origin(evidence) {
         return origin.title().to_string();
     }
@@ -17172,6 +17530,88 @@ mod tests {
     use super::*;
 
     #[test]
+    fn review_admission_markers_require_server_boundary_and_mutation_effect() {
+        let mut files = BTreeMap::new();
+        files.insert(
+            "routes.ts".to_string(),
+            SourceFile {
+                path: "routes.ts".to_string(),
+                language: Some(Language::Typescript),
+                source: "fastify.patch('/tasks/:id', async (request) => {\n  return tasks.update(request.params.id, request.body)\n})\n\nasync function repositoryOnly(id) {\n  return db.delete(items).where(eq(items.id, id))\n}\n"
+                    .to_string(),
+            },
+        );
+        files.insert(
+            "routes.go".to_string(),
+            SourceFile {
+                path: "routes.go".to_string(),
+                language: Some(Language::Go),
+                source: "package api\nfunc Register(router *gin.RouterGroup) {\n router.DELETE(\"/:id\", DeleteArticle)\n}\nfunc DeleteArticle(c *gin.Context) {\n store.Delete(c.Param(\"id\"))\n}\n"
+                    .to_string(),
+            },
+        );
+        files.insert(
+            "Controller.php".to_string(),
+            SourceFile {
+                path: "Controller.php".to_string(),
+                language: Some(Language::Php),
+                source: "<?php\n#[Route('/posts/{id}') ]\npublic function removePost(Post $post) {\n $this->repository->remove($post);\n}\n"
+                    .to_string(),
+            },
+        );
+        files.insert(
+            "AccountController.cs".to_string(),
+            SourceFile {
+                path: "AccountController.cs".to_string(),
+                language: Some(Language::Csharp),
+                source: "[HttpPost(\"password\")]\npublic IActionResult ChangePassword(ChangePasswordRequest request) {\n account.UpdatePassword(request.NewPassword);\n return Ok();\n}\n"
+                    .to_string(),
+            },
+        );
+        files.insert(
+            "routes.rs".to_string(),
+            SourceFile {
+                path: "routes.rs".to_string(),
+                language: Some(Language::Rust),
+                source: "Router::new().route(\"/\", get(get_current_user).put(update_user))\nasync fn update_user() { store.update(); }\n"
+                    .to_string(),
+            },
+        );
+        let sources = RepositorySources {
+            root: ".".to_string(),
+            files,
+        };
+
+        let groups = review_admission::marker_groups(&sources, &[]);
+        assert_eq!(groups.len(), 5);
+        assert!(groups.iter().any(|group| group.path == "routes.ts"));
+        assert!(groups.iter().any(|group| group.path == "routes.go"));
+        assert!(groups.iter().any(|group| group.path == "Controller.php"));
+        assert!(
+            groups
+                .iter()
+                .any(|group| group.path == "routes.rs" && group.symbol == "update_user")
+        );
+        let credential = groups
+            .iter()
+            .find(|group| group.path == "AccountController.cs")
+            .unwrap();
+        assert_eq!(
+            credential.evidence[0].capability,
+            Capability::Authentication
+        );
+        assert_eq!(credential.evidence[0].cwe_candidates, ["CWE-620"]);
+        assert!(groups.iter().all(|group| {
+            group.evidence.iter().all(|evidence| {
+                evidence
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "review-admission-marker")
+            })
+        }));
+    }
+
+    #[test]
     fn webclient_report_keeps_initial_argument_metadata_distinct_from_filter_effects() {
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/kotlin-webclient-policies");
@@ -19097,6 +19537,34 @@ mod tests {
         assert!(review.decision_facts.established.iter().any(|fact| {
             fact == "The bounded path records this rule-specific behavior: model saved without an observed encryption transform."
         }));
+    }
+
+    #[test]
+    fn generated_crud_reviews_include_the_registration_scope() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("tests/fixtures/v2-node-policy");
+        let job = build_all_path_review_jobs(&root, Some(20), false)
+            .expect("node policy fixture should build review jobs");
+        let review = job
+            .observation_reviews
+            .iter()
+            .find(|review| {
+                review
+                    .evidence
+                    .iter()
+                    .any(|item| item.rule_id == "typescript-generated-crud-review")
+            })
+            .expect("generated CRUD observation review");
+        let registration = review
+            .facts
+            .iter()
+            .find(|fact| fact.role == "generated_route_registration_context")
+            .expect("generated route registration context");
+
+        assert!(registration.excerpt.contains("finale.resource"));
+        assert!(registration.location.start.line <= review.evidence[0].location.start.line);
+        assert!(registration.location.end.line >= review.evidence[0].location.end.line);
     }
 
     #[test]

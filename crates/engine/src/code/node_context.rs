@@ -636,6 +636,28 @@ impl NodeProjectContext {
                     }
                     related_evidence.push(source_id);
                 }
+                let mut context = evidence_context(&call.node, comments, conditional, literals);
+                if summary.sink == SummarySink::ResourceAccess && self.has_express_session {
+                    let scope = function_scope(argument, root);
+                    if resource_owner_value_is_authenticated(
+                        root,
+                        argument.clone(),
+                        call.node.range().start,
+                        &scope,
+                        2,
+                    ) || resource_owner_argument_is_session_binding(
+                        root,
+                        argument,
+                        call.node.range().start,
+                        &scope,
+                    ) {
+                        context.resource_policy = Some(ResourcePolicyContext {
+                            state: ResourcePolicyState::OwnerScoped,
+                            basis: "resource_selector_traces_to_authenticated_session_identity"
+                                .to_string(),
+                        });
+                    }
+                }
                 evidence.push(Evidence {
                     id,
                     kind: EvidenceKind::Sink,
@@ -667,7 +689,7 @@ impl NodeProjectContext {
                         engine: PARAMETER_SINK_ENGINE.to_string(),
                         rule_version: 1,
                     },
-                    context: evidence_context(&call.node, comments, conditional, literals),
+                    context,
                     symbol_resolution: Some(SymbolResolution {
                         canonical: summary.canonical.clone(),
                         observed: call.callee.clone(),
@@ -3971,9 +3993,17 @@ fn resource_owner_value_is_authenticated(
     remaining_hops: usize,
 ) -> bool {
     let text = compact(value.text().as_ref()).replace("?.", ".");
+    let lower = text.to_ascii_lowercase();
     if text.starts_with("req.user.")
         || text.starts_with("request.user.")
         || text.starts_with("ctx.state.user.")
+        || [
+            "req.session.userid",
+            "req.session.accountid",
+            "request.session.userid",
+            "request.session.accountid",
+        ]
+        .contains(&lower.as_str())
     {
         return true;
     }
@@ -4007,6 +4037,37 @@ fn resource_owner_value_is_authenticated(
         scope,
         remaining_hops - 1,
     )
+}
+
+fn resource_owner_argument_is_session_binding(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    value: &Node<'_, StrDoc<SupportLang>>,
+    before: usize,
+    scope: &std::ops::Range<usize>,
+) -> bool {
+    let value_text = value.text();
+    let compact_value = compact(value_text.as_ref());
+    let candidate = ["parseInt(", "parseFloat(", "Number("]
+        .iter()
+        .find_map(|prefix| compact_value.strip_prefix(prefix)?.strip_suffix(')'))
+        .unwrap_or(compact_value.as_str());
+    let Some(identifier) = simple_identifier(candidate.trim()) else {
+        return false;
+    };
+    let source = root.text();
+    let start = scope.start.min(source.len());
+    let end = before.min(scope.end).min(source.len());
+    if start >= end || !source.is_char_boundary(start) || !source.is_char_boundary(end) {
+        return false;
+    }
+    let prior = compact(&source[start..end]).to_ascii_lowercase();
+    let identifier = identifier.to_ascii_lowercase();
+    ["req.session", "request.session"].iter().any(|session| {
+        prior.contains(&format!("{{{identifier}}}={session}"))
+            || prior.contains(&format!("{{{identifier},"))
+                && prior.contains(&format!("}}={session}"))
+            || prior.contains(&format!("{identifier}={session}.{identifier}"))
+    })
 }
 
 fn shared_domain_resource_basis(
@@ -6219,6 +6280,23 @@ mod tests {
             ),
             (true, false)
         );
+
+        let source = "function update(req) { const { userId } = req.session; profile.updateUser(parseInt(userId)); }";
+        let document = StrDoc::try_new(source, SupportLang::TypeScript).expect("valid source");
+        let ast = AstGrep::doc(document);
+        let root = ast.root();
+        let call = root
+            .dfs()
+            .filter_map(call_site)
+            .find(|call| call.callee == "profile.updateUser")
+            .expect("profile update call");
+        let argument = &call.arguments[0];
+        assert!(resource_owner_argument_is_session_binding(
+            &root,
+            argument,
+            call.node.range().start,
+            &function_scope(argument, &root),
+        ));
     }
 
     #[test]

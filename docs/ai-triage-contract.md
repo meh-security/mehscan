@@ -229,6 +229,44 @@ lambda parameters and local/object variables are not helper definitions. This
 keeps cross-file implementations such as a redirect URL builder visible without
 claiming call resolution or taint propagation.
 
+## Review-admission obligations
+
+Mehscan uses four distinct paths into AI review. Keeping them separate avoids a
+generic “suspicious code” queue and lets the model apply the right invariant.
+
+| Admission class | Deterministic fact | AI obligation |
+| --- | --- | --- |
+| Candidate/path | A bounded source, dangerous operation, and relationship were admitted. | Confirm the named weakness and applicable controls. |
+| Decision-critical operand | An interpreter or trust boundary consumes an exact dynamic operand, but its producer or constraint is unresolved. | Establish attacker influence or affirmative restriction; missing origin is not safety. |
+| Review-admission marker | A security-relevant boundary and effect are exact, but no conventional sink/path represents the complete invariant. | Judge only the supplied `review-invariant:*`; marker presence is not a verdict. |
+| Context inventory | A guard, sanitizer, framework, configuration reference, or ordinary API was observed without an impact anchor. | Supply context to another review; do not create a standalone verdict. |
+
+Marker families must define a two-factor deterministic admission predicate, a
+specific invariant tag, issue and not-issue boundaries, bounded context, and a
+volume cap. Authorization uses server boundary plus mutation effect and asks for
+same-subject/action/resource policy. Credential lifecycle uses a credential or
+authenticator state transition and asks for current-subject proof, recovery
+authority, or step-up enforcement. Dynamic SQL, NoSQL, LDAP, XPath, template,
+code, process, redirect, outbound-request, deserialization, and trusted-HTML
+cases already use decision-critical operand handling and do not need duplicate
+markers.
+
+Candidate families are evaluated by the same test rather than by CWE count:
+
+| Family | Current handling | Marker decision |
+| --- | --- | --- |
+| CWE-862/CWE-639 authorization | Server mutation boundary plus mutation-shaped operation/helper. | Implemented; AI checks the exact action/resource policy. |
+| CWE-620/CWE-640 credential lifecycle | Server mutation plus password, credential, authenticator, MFA, recovery-code, or API-key transition. | Implemented; AI checks current-subject proof, recovery authority, and step-up enforcement. |
+| CWE-352 CSRF | Existing framework rules where cookie/session semantics and missing request-bound protection are exact. | Do not emit for every mutation. A future marker requires deterministic cookie-auth scope plus a state-changing boundary, or it will overwhelm review with bearer-token APIs and non-browser calls. |
+| CWE-915 mass assignment | Existing source/sink rules and bounded model facts. | Promising only for a direct request-object-to-persistence update shape; naming a DTO or model is insufficient. |
+| CWE-200/CWE-639 sensitive reads | Existing resource-access and response evidence. | A generic GET/read marker is too broad. Require a recognized sensitive resource plus an exposed response before admission. |
+| Injection, SSRF, redirect, traversal, deserialization, trusted HTML, template/code/process execution | Exact sink or interpreter boundary with decision-critical dynamic operand handling. | No marker; improve sink vocabulary or operand/origin facts instead. |
+| Security configuration and fail-open enforcement | Explicit weak value, ignored decision, or continued execution is ordinary evidence. | No marker; these already enter review directly. |
+
+This keeps review admission small and evidence-driven. A new family must add a
+security question the existing sink, decision-critical operand, or configuration
+contracts cannot express; incomplete detection alone is not sufficient.
+
 C# observation reviews can also reuse the established stored-output
 neighborhood facts. For Razor raw-output leads this supplies exact
 `bound_remote_input`, property assignment, persistence, model-property,
@@ -417,6 +455,14 @@ non-flow facts. They help the reviewer answer the supplied security question
 without pretending that proximity proves attacker influence or control
 effectiveness.
 
+Authorization reviews use a common operation baseline across frameworks: exact
+server boundary, method/path or resolver action, sensitive effect, attachment,
+control scope, inheritance or registration order, enforcement behavior, public
+override, and action/resource match. Authentication and coarse roles remain
+separate from owner, tenant, possession, or object policy. Framework-specific
+syntax changes how those fields are populated; it does not change the decision
+criteria.
+
 The triage contract requires a reviewer to confirm that a requested artifact is
 actually absent before returning `needs_review`. A response must not ask to
 inspect a helper, route, producer, consumer, configuration, validation, or
@@ -432,6 +478,22 @@ performs privilege-bearing work beyond ordinary sign-in or self-registration.
 These application-owned policy facts replace the generic deployed-control
 question for that review; they do not prove arbitrary runtime authorization or
 cross-function role behavior.
+
+Generated CRUD and framework resource registrations are reviewed per HTTP
+method and path. Middleware or policy attached to a sibling method is not
+coverage: an authenticated `POST`, denied `DELETE`, or public `GET` says nothing
+about a generated `PUT` or `PATCH` unless an applicable route group or earlier
+mount covers it. In order-sensitive routers, only registrations that execute
+before the generated handler count. Commented-out middleware and client-side
+checks never count as server authorization. The Mehscan security skill may use
+one bounded source lookup around the named generator and the complete preceding
+registration section in the same setup function when a repository review lacks
+this method-level context. A confirmed issue names an exact uncovered method
+and path; it does not characterize every generated model as unprotected.
+Generated-CRUD observations include a
+`generated_route_registration_context` fact with a bounded preceding
+registration scope so ordinary review does not depend on the model choosing a
+source window.
 
 Request-controlled C# Identity role assignment is a distinct path review. A
 bounded path is admitted only when an ASP.NET-bound model decision
@@ -534,10 +596,13 @@ models.
 
 Bounded origin/consumer enrichment may add `reference_use_context`,
 `stored_write_origin_context`, `configuration_lifecycle_context`,
-`endpoint_registration_context`, and `endpoint_handler_context`. At most six
-such facts are attached per review. They require exact repository shapes and
-remain lexical, non-runtime context: they do not claim a call graph, deployed
-configuration, package implementation, or cross-function taint flow.
+`endpoint_registration_context`, `endpoint_handler_context`, and
+`endpoint_handler_helper_context`. The helper role is a single exact Spring
+controller-receiver-to-implementation hop used to explain the behavior behind
+a literal route policy; it is not a call graph. At most six such facts are
+attached per review. They require exact repository shapes and remain lexical,
+non-runtime context: they do not claim deployed configuration, package
+implementation, or cross-function taint flow.
 
 `protection_context` is reserved for a potentially effective control linked to
 the path. A syntactically present check that the deterministic relationship

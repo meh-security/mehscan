@@ -168,6 +168,49 @@ operations with no supplied bridge, use `not_issue` for that named relationship
 and describe the mismatch. Do not use supplemental syntax lookup to repair a
 decision-ready payload or infer the missing bridge.
 
+Evidence tagged `review-admission-marker` is different from an ordinary API
+inventory observation. It means Mehscan deterministically established the
+security-relevant boundary and effect named by a `review-invariant:*` tag, but
+the normal sink/path model could not express the complete review question. Do
+not dismiss it because no conventional sink or source-to-sink path fired. The
+marker is still not a vulnerability verdict: decide only the named invariant,
+using `issue` for a concrete violated invariant and `not_issue` for affirmative
+disproof or an effective applicable control. Keep unrelated possible weaknesses
+outside that review.
+
+Marker families remain intentionally specialized. For example, authorization
+markers establish a server mutation and ask whether the same subject, action,
+and resource are authorized. Credential-lifecycle markers ask whether password,
+passcode, MFA, authenticator, recovery-code, credential, or API-key changes
+enforce the required current-subject proof, recovery authority, or step-up
+authentication. Dynamic interpreter reviews establish an exact dynamic operand
+and make its origin or constraint decision-critical. Do not transfer the
+authorization test to credential lifecycle, injection, deserialization,
+redirect, SSRF, trusted-HTML, template, or process-execution reviews; use each
+review's named operand and invariant.
+
+### Generated and framework-registered routes
+
+For any authorization or resource-access review involving routes, handlers,
+resolvers, generated CRUD, or framework policy, read
+[references/authorization-routing.md](references/authorization-routing.md).
+Apply its framework-neutral operation matrix first, then only the section for
+the detected framework. The same method/path/action, control scope, registration
+order, and resource must line up; authentication or a sibling-route guard is not
+object authorization for the reviewed operation.
+
+When a Mehscan rule or review fact explicitly labels a registration as generated
+CRUD, do not decide from the generator excerpt alone. Treat the label as proof
+that server operations are generated, read the framework/package subsection to
+enumerate only its established operations, and retrieve the bounded controlling
+route-registration scope required by the reference before deciding.
+
+When the bundle lacks decisive method-level context, the reference permits one
+bounded lookup around the named registration and its controlling scope. This is
+a same-review routing clarification, not a search for new findings or general
+data flow. A confirmed issue must name a concrete uncovered operation and its
+security impact.
+
 When `decision_facts.unresolved` names an exact missing syntactic artifact that
 can change the decision, use the investigation API before leaving it unresolved.
 Prefer `source`, `enclosing`, `symbol`, `imports`, and `references` for ordinary
