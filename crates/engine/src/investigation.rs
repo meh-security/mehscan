@@ -5657,9 +5657,9 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
                     "process launch API"
                 },
                 if shell {
-                    &["arguments", "command"]
+                    &["shell_command", "arguments", "command"]
                 } else {
-                    &["command"]
+                    &["executable", "command"]
                 },
                 false,
             )?)

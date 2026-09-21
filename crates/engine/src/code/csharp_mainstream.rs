@@ -181,92 +181,34 @@ pub(crate) fn add_mainstream_sinks<'tree>(
             );
         } else if compact_callee.ends_with("Process.Start") && arguments.len() == 1 {
             if let Some(command) = process_start_info_command(root, &invocation, &arguments[0]) {
-                let process_arguments =
-                    process_start_info_arguments(root, &invocation, &arguments[0], &command);
-                let shell_policy = process_start_info_property(
+                push_process_start_info_sink(
+                    path,
                     root,
                     &invocation,
                     &arguments[0],
-                    "UseShellExecute",
+                    &command,
+                    comments,
+                    conditional,
+                    literals,
+                    evidence,
                 );
-                match (process_arguments, shell_policy) {
-                    (Some(process_arguments), Some(shell_policy)) => push_sink(
-                        path,
-                        &invocation,
-                        Capability::ProcessExecution,
-                        "csharp-process-start-info",
-                        "CWE-78",
-                        &[
-                            "command",
-                            "process",
-                            "process-start-info",
-                            "argument-policy",
-                        ],
-                        [
-                            ("command", &command),
-                            ("arguments", &process_arguments),
-                            ("start_info", &arguments[0]),
-                            ("shell_policy", &shell_policy),
-                        ],
-                        comments,
-                        conditional,
-                        literals,
-                        evidence,
-                    ),
-                    (Some(process_arguments), None) => push_sink(
-                        path,
-                        &invocation,
-                        Capability::ProcessExecution,
-                        "csharp-process-start-info",
-                        "CWE-78",
-                        &[
-                            "command",
-                            "process",
-                            "process-start-info",
-                            "argument-policy",
-                        ],
-                        [
-                            ("command", &command),
-                            ("arguments", &process_arguments),
-                            ("start_info", &arguments[0]),
-                        ],
-                        comments,
-                        conditional,
-                        literals,
-                        evidence,
-                    ),
-                    (None, Some(shell_policy)) => push_sink(
-                        path,
-                        &invocation,
-                        Capability::ProcessExecution,
-                        "csharp-process-start-info",
-                        "CWE-78",
-                        &["command", "process", "process-start-info", "shell-policy"],
-                        [
-                            ("command", &command),
-                            ("start_info", &arguments[0]),
-                            ("shell_policy", &shell_policy),
-                        ],
-                        comments,
-                        conditional,
-                        literals,
-                        evidence,
-                    ),
-                    (None, None) => push_sink(
-                        path,
-                        &invocation,
-                        Capability::ProcessExecution,
-                        "csharp-process-start-info",
-                        "CWE-78",
-                        &["command", "process", "process-start-info"],
-                        [("command", &command), ("start_info", &arguments[0])],
-                        comments,
-                        conditional,
-                        literals,
-                        evidence,
-                    ),
-                }
             }
+        } else if compact_callee.ends_with(".Start")
+            && arguments.is_empty()
+            && let Some(start_info) = process_instance_start_info(root, &invocation, &callee)
+            && let Some(command) = process_start_info_command(root, &invocation, &start_info)
+        {
+            push_process_start_info_sink(
+                path,
+                root,
+                &invocation,
+                &start_info,
+                &command,
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
         } else if matches!(compact_callee.as_str(), "File.Copy" | "System.IO.File.Copy")
             && arguments.len() >= 2
         {
@@ -1008,6 +950,138 @@ fn process_start_info_command<'tree>(
         .collect::<Vec<_>>();
     candidates.sort_by_key(|(offset, _)| *offset);
     candidates.pop().map(|(_, command)| command)
+}
+
+fn process_instance_start_info<'tree>(
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    use_site: &Node<'tree, StrDoc<SupportLang>>,
+    callee: &str,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    let receiver = callee.strip_suffix(".Start").and_then(simple_identifier)?;
+    if !receiver_has_short_type(root, use_site, receiver, "Process") {
+        return None;
+    }
+    let scope = scope_range(use_site, root);
+    let mut candidates = root
+        .dfs()
+        .filter(|node| is_prior_in_scope(node, use_site, &scope))
+        .filter_map(|node| {
+            if node.kind().as_ref() == "assignment_expression"
+                && compact(node.field("left")?.text().as_ref()) == format!("{receiver}.StartInfo")
+            {
+                return Some((node.range().start, node.field("right")?));
+            }
+            if node.kind().as_ref() != "variable_declarator"
+                || node
+                    .field("name")
+                    .is_none_or(|name| name.text().trim() != receiver)
+            {
+                return None;
+            }
+            let creation = node.dfs().find(|child| {
+                child.kind().as_ref() == "object_creation_expression"
+                    && child
+                        .field("type")
+                        .is_some_and(|kind| short_type(kind.text().as_ref()) == "Process")
+            })?;
+            creation_property(&creation, "StartInfo").map(|value| (node.range().start, value))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|(offset, _)| *offset);
+    candidates.pop().map(|(_, start_info)| start_info)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_process_start_info_sink<'tree>(
+    path: &str,
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    invocation: &Node<'tree, StrDoc<SupportLang>>,
+    start_info: &Node<'tree, StrDoc<SupportLang>>,
+    command: &Node<'tree, StrDoc<SupportLang>>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    let process_arguments = process_start_info_arguments(root, invocation, start_info, command);
+    let shell_policy = process_start_info_property(root, invocation, start_info, "UseShellExecute");
+    match (process_arguments, shell_policy) {
+        (Some(process_arguments), Some(shell_policy)) => push_sink(
+            path,
+            invocation,
+            Capability::ProcessExecution,
+            "csharp-process-start-info",
+            "CWE-78",
+            &[
+                "command",
+                "process",
+                "process-start-info",
+                "argument-policy",
+            ],
+            [
+                ("command", command),
+                ("arguments", &process_arguments),
+                ("start_info", start_info),
+                ("shell_policy", &shell_policy),
+            ],
+            comments,
+            conditional,
+            literals,
+            evidence,
+        ),
+        (Some(process_arguments), None) => push_sink(
+            path,
+            invocation,
+            Capability::ProcessExecution,
+            "csharp-process-start-info",
+            "CWE-78",
+            &[
+                "command",
+                "process",
+                "process-start-info",
+                "argument-policy",
+            ],
+            [
+                ("command", command),
+                ("arguments", &process_arguments),
+                ("start_info", start_info),
+            ],
+            comments,
+            conditional,
+            literals,
+            evidence,
+        ),
+        (None, Some(shell_policy)) => push_sink(
+            path,
+            invocation,
+            Capability::ProcessExecution,
+            "csharp-process-start-info",
+            "CWE-78",
+            &["command", "process", "process-start-info", "shell-policy"],
+            [
+                ("command", command),
+                ("start_info", start_info),
+                ("shell_policy", &shell_policy),
+            ],
+            comments,
+            conditional,
+            literals,
+            evidence,
+        ),
+        (None, None) => push_sink(
+            path,
+            invocation,
+            Capability::ProcessExecution,
+            "csharp-process-start-info",
+            "CWE-78",
+            &["command", "process", "process-start-info"],
+            [("command", command), ("start_info", start_info)],
+            comments,
+            conditional,
+            literals,
+            evidence,
+        ),
+    }
 }
 
 fn process_start_info_arguments<'tree>(

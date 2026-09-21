@@ -21,6 +21,9 @@ pub(crate) fn annotate(
         if item.capability == Capability::DatabaseQuery {
             annotate_dynamic_sql(language, source, root, item);
         }
+        if item.capability == Capability::ProcessExecution {
+            annotate_process_semantics(language, source, item);
+        }
 
         if has_marker(item) {
             continue;
@@ -563,11 +566,202 @@ fn explicit_html_trust_boundary(item: &Evidence) -> bool {
 }
 
 fn process_operand_is_dynamic(item: &Evidence) -> bool {
-    if capture_is_dynamic(item, &["command"]) {
+    if item.tags.iter().any(|tag| tag == "shell-command-text") {
+        return capture_is_dynamic(item, &["shell_command", "arguments", "command"]);
+    }
+    // Rust builder-chain matches also contain the nested Command::new call.
+    // The constructor owns executable selection; later .arg/.args matches do
+    // not create another dynamic-executable question for the same launch.
+    if item.rule_id == "rust-process-execution" && item.captures.contains_key("arguments") {
+        return false;
+    }
+    if capture_is_dynamic(item, &["executable", "command"]) {
         return true;
     }
     fixed_literal_string(item, "command").is_some_and(is_shell_name)
         && capture_is_dynamic(item, &["arguments"])
+}
+
+/// Recovers exact local launch semantics that variadic AST captures cannot
+/// represent on their own. This stays inside the matched invocation or Rust
+/// builder chain and does not infer values across statements or call sites.
+fn annotate_process_semantics(language: Language, source: &str, item: &mut Evidence) {
+    let start = item.location.start.byte_offset.min(source.len());
+    let end = item.location.end.byte_offset.min(source.len());
+    let operation = source.get(start..end).unwrap_or_default();
+
+    if language == Language::Rust
+        && let Some((value, offset)) = rust_command_new_operand(operation)
+    {
+        insert_process_capture(item, operation, "executable", value, offset);
+    }
+
+    let shell_api = process_is_shell_api(language, source, item);
+    let shell_executable = item
+        .captures
+        .get("executable")
+        .or_else(|| item.captures.get("command"))
+        .and_then(|capture| quoted_string(capture.text.trim()))
+        .is_some_and(is_shell_name);
+    if !shell_api && !shell_executable {
+        return;
+    }
+    push_tag(&mut item.tags, "shell-command-text");
+
+    if let Some((payload, offset)) = exact_shell_payload(language, operation) {
+        insert_process_capture(item, operation, "shell_command", payload, offset);
+    } else if shell_api {
+        let node_shell_option = matches!(
+            language,
+            Language::Javascript | Language::Typescript | Language::Tsx
+        ) && operation
+            .replace(char::is_whitespace, "")
+            .contains("shell:true");
+        let payload = if node_shell_option {
+            item.captures
+                .get("arguments")
+                .cloned()
+                .or_else(|| item.captures.get("command").cloned())
+        } else {
+            item.captures
+                .get("command")
+                .cloned()
+                .or_else(|| item.captures.get("arguments").cloned())
+        };
+        if let Some(payload) = payload {
+            item.captures.insert("shell_command".to_string(), payload);
+        }
+    } else if let Some(arguments) = item.captures.get("arguments").cloned() {
+        item.captures.insert("shell_command".to_string(), arguments);
+    }
+}
+
+fn insert_process_capture(
+    item: &mut Evidence,
+    operation: &str,
+    role: &str,
+    value: &str,
+    relative_offset: usize,
+) {
+    let prefix = operation.get(..relative_offset).unwrap_or(operation);
+    let start = advance_position(&item.location.start, prefix);
+    let end = advance_position(&start, value);
+    item.captures.insert(
+        role.to_string(),
+        Capture {
+            text: value.trim().to_string(),
+            location: mehscan_core::Location {
+                path: item.location.path.clone(),
+                start,
+                end,
+            },
+        },
+    );
+}
+
+fn advance_position(start: &mehscan_core::Position, text: &str) -> mehscan_core::Position {
+    let mut position = start.clone();
+    position.byte_offset += text.len();
+    for character in text.chars() {
+        if character == '\n' {
+            position.line += 1;
+            position.column = 1;
+        } else {
+            position.column += 1;
+        }
+    }
+    position
+}
+
+fn rust_command_new_operand(operation: &str) -> Option<(&str, usize)> {
+    let marker = "Command::new(";
+    let start = operation.find(marker)? + marker.len();
+    let end = matching_delimiter(operation, start - 1, b'(', b')')?;
+    let value = operation.get(start..end)?.trim();
+    let offset = operation.get(start..end)?.find(value)? + start;
+    Some((value, offset))
+}
+
+fn exact_shell_payload(language: Language, operation: &str) -> Option<(&str, usize)> {
+    if language == Language::Rust {
+        let mut values = Vec::new();
+        let mut search = 0usize;
+        while let Some(found) = operation.get(search..)?.find(".arg(") {
+            let open = search + found + ".arg".len();
+            let close = matching_delimiter(operation, open, b'(', b')')?;
+            let raw = operation.get(open + 1..close)?;
+            let value = raw.trim();
+            let offset = open + 1 + raw.find(value)?;
+            values.push((value, offset));
+            search = close + 1;
+        }
+        return shell_switch_payload(&values);
+    }
+
+    let open = operation.find('(')?;
+    let close = matching_delimiter(operation, open, b'(', b')')?;
+    let inside = operation.get(open + 1..close)?;
+    let values = split_arguments(inside)
+        .into_iter()
+        .filter(|value| !value.trim_start().starts_with("shell="))
+        .map(|value| {
+            let trimmed = value.trim();
+            let offset = open + 1 + inside.find(value)? + value.find(trimmed)?;
+            Some((trimmed, offset))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    shell_switch_payload(&values)
+}
+
+fn shell_switch_payload<'a>(values: &[(&'a str, usize)]) -> Option<(&'a str, usize)> {
+    values.windows(2).find_map(|pair| {
+        let switch = quoted_string(pair[0].0)?.to_ascii_lowercase();
+        matches!(
+            switch.as_str(),
+            "/c" | "/k" | "-c" | "-command" | "-encodedcommand" | "-file"
+        )
+        .then_some(pair[1])
+    })
+}
+
+fn matching_delimiter(source: &str, open: usize, opening: u8, closing: u8) -> Option<usize> {
+    let bytes = source.as_bytes();
+    (bytes.get(open) == Some(&opening)).then_some(())?;
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, byte) in bytes.iter().copied().enumerate().skip(open) {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == active {
+                quote = None;
+            }
+            continue;
+        }
+        match byte {
+            b'\'' | b'"' | b'`' => quote = Some(byte),
+            byte if byte == opening => depth += 1,
+            byte if byte == closing => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn quoted_string(value: &str) -> Option<&str> {
+    let value = value.trim().trim_start_matches('@');
+    (value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\''))))
+    .then(|| &value[1..value.len() - 1])
 }
 
 fn process_is_shell_api(language: Language, source: &str, item: &Evidence) -> bool {
@@ -583,7 +777,9 @@ fn process_is_shell_api(language: Language, source: &str, item: &Evidence) -> bo
         .replace(char::is_whitespace, "");
     match language {
         Language::Javascript | Language::Typescript | Language::Tsx => {
-            operation.contains(".exec(") || operation.contains(".execSync(")
+            operation.contains(".exec(")
+                || operation.contains(".execSync(")
+                || operation.contains("shell:true")
         }
         Language::Python => {
             operation.contains("os.system(")

@@ -9,8 +9,16 @@
     any:
       - pattern: java.lang.Runtime.getRuntime().exec($COMMAND)
         captures: { command: COMMAND }
+      - pattern: java.lang.Runtime.getRuntime().exec($COMMAND, $ENVIRONMENT)
+        captures: { command: COMMAND, environment: ENVIRONMENT }
+      - pattern: java.lang.Runtime.getRuntime().exec($COMMAND, $ENVIRONMENT, $DIRECTORY)
+        captures: { command: COMMAND, environment: ENVIRONMENT, directory: DIRECTORY }
       - pattern: $RUNTIME.getRuntime().exec($COMMAND)
         captures: { command: COMMAND }
+      - pattern: $RUNTIME.getRuntime().exec($COMMAND, $ENVIRONMENT)
+        captures: { command: COMMAND, environment: ENVIRONMENT }
+      - pattern: $RUNTIME.getRuntime().exec($COMMAND, $ENVIRONMENT, $DIRECTORY)
+        captures: { command: COMMAND, environment: ENVIRONMENT, directory: DIRECTORY }
   tags: [kotlin, jvm, command]
   ai: &guidance
     investigate:

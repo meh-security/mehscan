@@ -173,6 +173,7 @@ impl FileSymbolEnvironment {
             Language::Javascript | Language::Typescript | Language::Tsx
         ) {
             parse_javascript_requires(source, &mut environment.aliases);
+            parse_javascript_promisify_aliases(source, &mut environment.aliases);
         }
         environment
     }
@@ -795,6 +796,65 @@ fn parse_javascript_requires(source: &str, aliases: &mut BTreeMap<String, Bindin
     }
 }
 
+fn parse_javascript_promisify_aliases(source: &str, aliases: &mut BTreeMap<String, Binding>) {
+    for line in source.lines() {
+        let line = line.trim().trim_end_matches(';');
+        let Some(declaration) = line.strip_prefix("const ") else {
+            continue;
+        };
+        let Some((visible, expression)) = declaration.split_once('=') else {
+            continue;
+        };
+        let visible = visible.trim();
+        if !is_simple_identifier(visible) {
+            continue;
+        }
+        let expression = expression
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        let Some((callee, argument)) = expression.split_once('(') else {
+            continue;
+        };
+        let Some(argument) = argument.strip_suffix(')') else {
+            continue;
+        };
+        if argument.contains(',')
+            || resolve_javascript_binding(callee, aliases).as_deref() != Some("util.promisify")
+        {
+            continue;
+        }
+        let Some(target) = resolve_javascript_binding(argument, aliases) else {
+            continue;
+        };
+        if !matches!(
+            target.as_str(),
+            "child_process.exec"
+                | "child_process.execFile"
+                | "child_process.execFileSync"
+                | "child_process.execSync"
+        ) {
+            continue;
+        }
+        aliases.insert(
+            visible.to_string(),
+            Binding {
+                target,
+                method: SymbolResolutionMethod::Alias,
+            },
+        );
+    }
+}
+
+fn resolve_javascript_binding(value: &str, aliases: &BTreeMap<String, Binding>) -> Option<String> {
+    let value = normalize_symbol(value);
+    let (head, tail) = value
+        .split_once('.')
+        .map_or((value.as_str(), None), |(head, tail)| (head, Some(tail)));
+    let target = normalize_symbol(&aliases.get(head)?.target);
+    Some(tail.map_or(target.clone(), |tail| format!("{target}.{tail}")))
+}
+
 fn parse_go_import(text: &str, aliases: &mut BTreeMap<String, Binding>) {
     let mut words = text.split_whitespace();
     let first = words.next().unwrap_or_default();
@@ -982,5 +1042,18 @@ mod tests {
         );
         assert_eq!(aliases["exec"].target, "child_process.exec");
         assert_eq!(aliases["child"].target, "child_process");
+    }
+
+    #[test]
+    fn resolves_only_exact_promisified_child_process_bindings() {
+        let mut aliases = BTreeMap::new();
+        parse_javascript_import("import { exec } from 'node:child_process';", &mut aliases);
+        parse_javascript_import("import { promisify } from 'node:util';", &mut aliases);
+        parse_javascript_promisify_aliases(
+            "const execAsync = promisify(exec);\nconst unrelated = wrap(exec);",
+            &mut aliases,
+        );
+        assert_eq!(aliases["execAsync"].target, "child_process.exec");
+        assert!(!aliases.contains_key("unrelated"));
     }
 }
