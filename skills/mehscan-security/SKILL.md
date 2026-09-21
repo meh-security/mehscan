@@ -220,6 +220,15 @@ at the effect is affirmative local control for amount integrity, while product
 selection, discounts, staleness and cross-service authority remain separate
 questions when the supplied code does not establish them.
 
+For resource state transitions, keep the persisted current state, requested
+next state, affected resource, transition policy and rejection path separate.
+Status names, enums and a helper named `canTransition` do not prove that the
+exact edge is permitted. An applicable explicit transition map plus a return or
+throw before mutation is affirmative local control. Direct persistence of a
+request-supplied state remains decision-ready when no such enforcement is
+shown; when a referenced policy helper is missing, retrieve its exact
+definition before deciding.
+
 ### Generated and framework-registered routes
 
 For any authorization or resource-access review involving routes, handlers,

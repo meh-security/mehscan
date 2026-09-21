@@ -4224,6 +4224,8 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "For bounded authoritative-value review, keep the caller-supplied value, selected resource, server-loaded or quoted value, units/currency, version and financial effect distinct. A variable named price, a catalog lookup, or a payment SDK call is not proof that the exact effect uses the applicable authoritative value. Direct persistence of a request field as a paid amount is decision-ready when supplied evidence establishes that relationship; do not dismiss it merely because a separate price source might exist."
                 .to_string(),
+            "For bounded state-transition review, keep the persisted current state, requested next state, affected resource, allowed-transition policy and terminating rejection separate. Status names, enums, validation calls, or a transition helper name do not prove that the exact current-to-next edge is allowed. An explicit applicable map plus rejection before mutation is a local control; direct persistence of a request-supplied state is decision-ready when no such enforcement is shown."
+                .to_string(),
             "In HTTP route context, unknown means enforcement was not classified; guard names remain useful exact attachments but do not prove protection. explicitly_public and denied represent canonical local framework policy, while authenticated and role_restricted still do not by themselves prove owner, tenant, or object authorization."
                 .to_string(),
             "Apply an authorization default or activation fact only within its supplied framework scope. For a custom check to protect a dangerous operation, the supplied facts must show the trusted server-side subject, relevant action or resource, and a rejection path that stops execution; otherwise retain it as context rather than dismissing the sink."
@@ -5025,6 +5027,31 @@ fn observation_decision_facts(
             .unwrap_or_default();
         established.push(format!(
             "The bounded Next.js classifier established that request-body field `{request_field}` supplies expression `{supplied}` to financial effect field `{effect_field}`{resource} at {}:{}. This is an explicit value relationship, not a claim about arbitrary dataflow; a separate authoritative value protects it only if supplied facts show comparison, rejection, and use for this exact effect.",
+            item.location.path, item.location.start.line
+        ));
+    }
+    for item in evidence.iter().filter(|item| {
+        item.tags
+            .iter()
+            .any(|tag| tag == "review-invariant:state-transition-enforcement")
+    }) {
+        let next_state = item
+            .captures
+            .get("next_state")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown next state");
+        let request_field = item
+            .captures
+            .get("request_field")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown request field");
+        let resource = item
+            .captures
+            .get("state_resource")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown resource");
+        established.push(format!(
+            "The bounded Next.js classifier established that request-body field `{request_field}` supplies next-state expression `{next_state}` to a persisted state field for resource `{resource}` at {}:{}. This establishes the exact mutation relationship; it does not prove which current-to-next transitions policy allows.",
             item.location.path, item.location.start.line
         ));
     }

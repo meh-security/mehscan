@@ -1244,13 +1244,13 @@ fn add_business_policy_reviews<'tree>(
     evidence: &mut Vec<Evidence>,
 ) {
     let text = compact(&function.text());
-    let request_values = request_financial_values(function, path);
+    let request_values = request_body_values(function, path);
     let server_values = server_financial_values(function, path);
     for call in function.dfs().filter_map(call_site) {
         let Some(effect) = financial_effect(path, &call, evidence) else {
             continue;
         };
-        if let Some(origin) = request_financial_origin(&effect.value, &request_values) {
+        if let Some(origin) = request_value_origin(&effect.value, &request_values) {
             let authority_helper = financial_authority_helper(function, path, &call);
             let mut captures = BTreeMap::from([
                 ("financial_effect".to_string(), capture(path, &call.node)),
@@ -1337,6 +1337,17 @@ fn add_business_policy_reviews<'tree>(
             );
         }
     }
+    add_state_transition_review(
+        path,
+        function,
+        language,
+        route,
+        &request_values,
+        comments,
+        conditional,
+        literals,
+        evidence,
+    );
     if text.contains("currentBalance<amount")
         && text.contains("newBalance=currentBalance-amount")
         && text.contains("updateRow(\"credits\"")
@@ -1376,7 +1387,7 @@ fn add_business_policy_reviews<'tree>(
 }
 
 #[derive(Clone)]
-struct FinancialValueBinding {
+struct RequestValueBinding {
     field: String,
     capture: Capture,
 }
@@ -1388,10 +1399,137 @@ struct FinancialEffect<'tree> {
     status: Option<Node<'tree, StrDoc<SupportLang>>>,
 }
 
-fn request_financial_values(
+struct StateTransitionEffect<'tree> {
+    key: Node<'tree, StrDoc<SupportLang>>,
+    value: Node<'tree, StrDoc<SupportLang>>,
+    resource: Node<'tree, StrDoc<SupportLang>>,
+}
+
+struct TransitionPolicy<'tree> {
+    node: Node<'tree, StrDoc<SupportLang>>,
+    current_state: Node<'tree, StrDoc<SupportLang>>,
+    helper: Option<(String, Capture)>,
+    explicit_map: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_state_transition_review<'tree>(
+    path: &str,
+    function: &Node<'tree, StrDoc<SupportLang>>,
+    language: Language,
+    route: &HttpRouteContext,
+    request_values: &BTreeMap<String, RequestValueBinding>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    for call in function.dfs().filter_map(call_site) {
+        let Some(effect) = state_transition_effect(path, &call, evidence) else {
+            continue;
+        };
+        let Some(origin) = request_value_origin(&effect.value, request_values) else {
+            continue;
+        };
+        let policy = transition_policy(function, path, &call, &effect.value);
+        if policy.as_ref().is_some_and(|policy| policy.explicit_map) {
+            let policy = policy.expect("checked above");
+            push_fact(
+                path,
+                language,
+                "nextjs-explicit-state-transition-control",
+                &policy.node,
+                EvidenceKind::Validation,
+                Capability::ResourceAccess,
+                vec!["CWE-841"],
+                vec![
+                    "nextjs",
+                    "business-logic",
+                    "state-transition",
+                    "explicit-transition-map",
+                    "terminating-rejection",
+                ],
+                Confidence::High,
+                BTreeMap::from([
+                    (
+                        "transition_control".to_string(),
+                        capture(path, &policy.node),
+                    ),
+                    (
+                        "current_state".to_string(),
+                        capture(path, &policy.current_state),
+                    ),
+                    ("next_state".to_string(), capture(path, &effect.value)),
+                    (
+                        "state_resource".to_string(),
+                        capture(path, &effect.resource),
+                    ),
+                ]),
+                vec![route.clone()],
+                Vec::new(),
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+            continue;
+        }
+
+        let mut captures = BTreeMap::from([
+            ("transition_effect".to_string(), capture(path, &call.node)),
+            ("next_state".to_string(), capture(path, &effect.value)),
+            ("request_field".to_string(), origin),
+            ("state_field".to_string(), capture(path, &effect.key)),
+            (
+                "state_resource".to_string(),
+                capture(path, &effect.resource),
+            ),
+        ]);
+        let mut tags = vec![
+            "nextjs",
+            "business-logic",
+            "state-transition",
+            "client-controlled-next-state",
+            "review-invariant:state-transition-enforcement",
+            "recommendation:review-then-fix-application",
+        ];
+        if let Some(policy) = policy {
+            captures.insert(
+                "current_state".to_string(),
+                capture(path, &policy.current_state),
+            );
+            if let Some((_name, helper)) = policy.helper {
+                captures.insert("transition_helper".to_string(), helper);
+                tags.push("related-transition-helper-observed");
+            }
+        } else {
+            tags.push("transition-policy-not-observed");
+        }
+        push_fact(
+            path,
+            language,
+            "nextjs-client-controlled-state-transition-review",
+            &call.node,
+            EvidenceKind::SensitiveOperation,
+            Capability::ResourceAccess,
+            vec!["CWE-841"],
+            tags,
+            Confidence::High,
+            captures,
+            vec![route.clone()],
+            Vec::new(),
+            comments,
+            conditional,
+            literals,
+            evidence,
+        );
+    }
+}
+
+fn request_body_values(
     function: &Node<'_, StrDoc<SupportLang>>,
     path: &str,
-) -> BTreeMap<String, FinancialValueBinding> {
+) -> BTreeMap<String, RequestValueBinding> {
     let mut bindings = BTreeMap::new();
     let mut request_objects = BTreeMap::new();
     for declaration in function
@@ -1417,7 +1555,7 @@ fn request_financial_values(
             if let Some((field, local, node)) = object_pattern_binding(&property) {
                 bindings.insert(
                     local,
-                    FinancialValueBinding {
+                    RequestValueBinding {
                         field,
                         capture: capture(path, &node),
                     },
@@ -1444,7 +1582,7 @@ fn request_financial_values(
         {
             bindings.insert(
                 name.text().trim().to_string(),
-                FinancialValueBinding {
+                RequestValueBinding {
                     field,
                     capture: capture(path, &value),
                 },
@@ -1454,7 +1592,7 @@ fn request_financial_values(
     for (object, object_capture) in request_objects {
         bindings.insert(
             format!("{object}.*"),
-            FinancialValueBinding {
+            RequestValueBinding {
                 field: "*".to_string(),
                 capture: object_capture,
             },
@@ -1498,20 +1636,7 @@ fn financial_effect<'tree>(
     ) {
         return None;
     }
-    let owned_persistence = evidence.iter().any(|item| {
-        item.location.path == path
-            && item.location.start.byte_offset == call.node.range().start
-            && item.location.end.byte_offset == call.node.range().end
-            && item.kind == EvidenceKind::Sink
-            && item.capability == Capability::DatabaseQuery
-            && item.symbol_resolution.as_ref().is_some_and(|resolution| {
-                matches!(
-                    resolution.confidence,
-                    SymbolConfidence::Exact | SymbolConfidence::High
-                )
-            })
-    });
-    if !owned_persistence {
+    if !owned_persistence_call(path, call, evidence) {
         return None;
     }
     let object = call.arguments.iter().find(|argument| {
@@ -1535,6 +1660,153 @@ fn financial_effect<'tree>(
         resource,
         status,
     })
+}
+
+fn state_transition_effect<'tree>(
+    path: &str,
+    call: &CallSite<'tree>,
+    evidence: &[Evidence],
+) -> Option<StateTransitionEffect<'tree>> {
+    let operation = call.callee.rsplit('.').next()?.to_ascii_lowercase();
+    if !matches!(
+        operation.as_str(),
+        "create" | "insert" | "insertrow" | "save" | "update" | "upsert" | "updaterow"
+    ) || !owned_persistence_call(path, call, evidence)
+    {
+        return None;
+    }
+    let object = call.arguments.iter().find(|argument| {
+        matches!(argument.kind().as_ref(), "object" | "object_expression")
+            && object_field(argument, &["state", "status"]).is_some()
+    })?;
+    let (key, value) = object_field(object, &["state", "status"])?;
+    let resource = call
+        .arguments
+        .iter()
+        .find(|argument| quoted_stateful_resource(argument.text().trim()))?
+        .clone();
+    Some(StateTransitionEffect {
+        key,
+        value,
+        resource,
+    })
+}
+
+fn owned_persistence_call(path: &str, call: &CallSite<'_>, evidence: &[Evidence]) -> bool {
+    evidence.iter().any(|item| {
+        item.location.path == path
+            && item.location.start.byte_offset == call.node.range().start
+            && item.location.end.byte_offset == call.node.range().end
+            && item.kind == EvidenceKind::Sink
+            && item.capability == Capability::DatabaseQuery
+            && item.symbol_resolution.as_ref().is_some_and(|resolution| {
+                matches!(
+                    resolution.confidence,
+                    SymbolConfidence::Exact | SymbolConfidence::High
+                )
+            })
+    })
+}
+
+fn transition_policy<'tree>(
+    function: &Node<'tree, StrDoc<SupportLang>>,
+    path: &str,
+    effect: &CallSite<'tree>,
+    next_state: &Node<'tree, StrDoc<SupportLang>>,
+) -> Option<TransitionPolicy<'tree>> {
+    let next_state = compact(&next_state.text());
+    function
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "if_statement")
+        .filter(|node| belongs_to_function(node, function))
+        .filter(|node| node.range().start < effect.node.range().start)
+        .filter_map(|branch| {
+            let condition = branch.field("condition")?;
+            let consequence = branch.field("consequence")?;
+            if !rejects_transition(&condition, &consequence, &next_state) {
+                return None;
+            }
+            let current_state = condition.dfs().find(|node| {
+                matches!(
+                    node.kind().as_ref(),
+                    "member_expression" | "subscript_expression"
+                ) && ["state", "status"]
+                    .iter()
+                    .any(|field| compact(&node.text()).ends_with(&format!(".{field}")))
+            })?;
+            let condition_text = compact(&condition.text()).to_ascii_lowercase();
+            let explicit_map = condition_text.contains(".includes(")
+                && (condition_text.contains("allowed")
+                    || condition_text.contains("transitionmap")
+                    || condition_text.contains("transitions["));
+            let helper = condition
+                .dfs()
+                .filter_map(call_site)
+                .filter_map(|call| {
+                    transition_helper_name(&call.callee).map(|name| {
+                        let mut helper = capture(path, &call.node);
+                        helper.text = name.clone();
+                        (name, helper)
+                    })
+                })
+                .next();
+            Some(TransitionPolicy {
+                node: branch,
+                current_state,
+                helper,
+                explicit_map,
+            })
+        })
+        .next()
+}
+
+fn rejects_transition(
+    condition: &Node<'_, StrDoc<SupportLang>>,
+    consequence: &Node<'_, StrDoc<SupportLang>>,
+    next_state: &str,
+) -> bool {
+    let condition_text = compact(&condition.text());
+    let next_is_checked = condition_text.contains(next_state)
+        || condition.dfs().filter_map(call_site).any(|call| {
+            call.arguments
+                .iter()
+                .any(|argument| compact(&argument.text()) == next_state)
+        });
+    let rejects = consequence
+        .dfs()
+        .any(|node| matches!(node.kind().as_ref(), "return_statement" | "throw_statement"));
+    let negative = condition_text.trim_matches(['(', ')']).starts_with('!')
+        || condition_text.contains("===false")
+        || condition_text.contains("==false");
+    next_is_checked && rejects && negative
+}
+
+fn transition_helper_name(callee: &str) -> Option<String> {
+    let name = callee.rsplit('.').next()?.trim();
+    let lower = name.to_ascii_lowercase();
+    (lower.contains("transition")
+        || lower.contains("statemove")
+        || lower.contains("workflow")
+        || lower.contains("lifecycle"))
+    .then(|| name.to_string())
+}
+
+fn quoted_stateful_resource(value: &str) -> bool {
+    let value = value.trim_matches(['\'', '"']).to_ascii_lowercase();
+    [
+        "account",
+        "application",
+        "approval",
+        "invoice",
+        "order",
+        "payment",
+        "request",
+        "subscription",
+        "ticket",
+        "workflow",
+    ]
+    .iter()
+    .any(|marker| value.contains(marker))
 }
 
 const FINANCIAL_VALUE_FIELDS: [&str; 7] = [
@@ -1577,9 +1849,9 @@ fn object_field<'tree>(
         })
 }
 
-fn request_financial_origin(
+fn request_value_origin(
     value: &Node<'_, StrDoc<SupportLang>>,
-    bindings: &BTreeMap<String, FinancialValueBinding>,
+    bindings: &BTreeMap<String, RequestValueBinding>,
 ) -> Option<Capture> {
     let expression = compact(&value.text());
     if let Some(binding) = bindings.get(&expression) {

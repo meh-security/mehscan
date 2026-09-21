@@ -41,6 +41,7 @@ enum OperationReviewFamily {
     RequestIntegrity,
     FailOpen,
     AuthoritativeValue,
+    StateTransition,
 }
 
 /// Admit bounded review work for sensitive server mutations even when no
@@ -331,6 +332,11 @@ pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewCo
             security_question: "Does this financial effect use the applicable server-authoritative value for the selected resource and version, rather than a caller-supplied amount?",
             title: "Review authoritative financial value binding",
         }),
+        OperationReviewFamily::StateTransition => Some(OperationReviewContract {
+            relationship: "bounded_state_transition_enforcement_review",
+            security_question: "Does this exact resource state change enforce an allowed transition from the persisted current state to the requested next state, with rejection before mutation?",
+            title: "Review resource state transition",
+        }),
     }
 }
 
@@ -341,6 +347,9 @@ fn operation_review_family(evidence: &[Evidence]) -> Option<OperationReviewFamil
         .find_map(|tag| tag.strip_prefix("review-invariant:"));
     if invariant == Some("authoritative-value-binding") {
         return Some(OperationReviewFamily::AuthoritativeValue);
+    }
+    if invariant == Some("state-transition-enforcement") {
+        return Some(OperationReviewFamily::StateTransition);
     }
     if invariant == Some("action-resource-authorization")
         || evidence.iter().any(|item| {
@@ -460,6 +469,24 @@ pub(super) fn decision_questions(
                 )]
             }
         }
+        Some(OperationReviewFamily::StateTransition) => {
+            let helper = preferred_capture(evidence, &["transition_helper"]);
+            let Some(helper) = helper else {
+                return Vec::new();
+            };
+            if facts.iter().any(|fact| {
+                matches!(
+                    fact.role.as_str(),
+                    "helper_definition_context" | "captured_definition_context"
+                ) && fact.symbol == helper
+            }) {
+                Vec::new()
+            } else {
+                vec![format!(
+                    "What exact transitions does helper `{helper}` allow for this resource, and does its false result terminate execution before the shown state mutation?"
+                )]
+            }
+        }
         _ => Vec::new(),
     }
 }
@@ -469,6 +496,7 @@ pub(super) fn preferred_lookup_symbol(evidence: &[Evidence]) -> Option<String> {
         evidence,
         &[
             "authority_helper",
+            "transition_helper",
             "input_type",
             "model",
             "entity",

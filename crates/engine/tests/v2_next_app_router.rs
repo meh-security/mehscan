@@ -154,6 +154,35 @@ fn models_next_app_router_boundaries_postgres_js_and_production_test_routes() {
             .iter()
             .any(|item| item.location.path == "src/app/api/financial-lookalike/route.ts")
     );
+    let transitions = result
+        .evidence
+        .iter()
+        .filter(|item| {
+            item.rule_id == "typescript-nextjs-client-controlled-state-transition-review"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(transitions.len(), 2, "{transitions:#?}");
+    assert!(transitions.iter().any(|item| {
+        item.location.path == "src/app/api/orders/unsafe-state/route.ts"
+            && item.captures["request_field"].text == "status"
+            && item.captures["state_resource"].text == "\"orders\""
+            && !item.captures.contains_key("transition_helper")
+    }));
+    assert!(transitions.iter().any(|item| {
+        item.location.path == "src/app/api/orders/policy-state/route.ts"
+            && item.captures["current_state"].text == "order.status"
+            && item.captures["transition_helper"].text == "canTransitionOrder"
+    }));
+    assert!(result.evidence.iter().any(|item| {
+        item.rule_id == "typescript-nextjs-explicit-state-transition-control"
+            && item.location.path == "src/app/api/orders/guarded-state/route.ts"
+            && item.captures["current_state"].text == "order.status"
+    }));
+    assert!(
+        !transitions
+            .iter()
+            .any(|item| item.location.path == "src/app/api/orders/guarded-state/route.ts")
+    );
     assert!(!result.evidence.iter().any(|item| {
         item.rule_id == "typescript-nextjs-whole-body-persistence"
             && item.location.path == "src/app/api/safe-profile/route.ts"
@@ -234,5 +263,42 @@ fn packages_only_missing_financial_authority_as_investigation() {
     assert!(quoted.investigation.lookup_requests.iter().any(|lookup| {
         lookup.operation == "references"
             && lookup.arguments.get("symbol") == Some(&"lookupPrice".to_string())
+    }));
+
+    let transitions = job
+        .observation_reviews
+        .iter()
+        .filter(|review| {
+            review.evidence.iter().any(|item| {
+                item.rule_id == "typescript-nextjs-client-controlled-state-transition-review"
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(transitions.len(), 2, "{transitions:#?}");
+    let direct = transitions
+        .iter()
+        .find(|review| review.evidence[0].location.path.contains("unsafe-state"))
+        .expect("direct transition review");
+    assert_eq!(direct.investigation.readiness, ReviewReadiness::Assessment);
+    assert!(direct.decision_facts.unresolved.is_empty());
+    let policy = transitions
+        .iter()
+        .find(|review| review.evidence[0].location.path.contains("policy-state"))
+        .expect("external transition policy review");
+    assert_eq!(
+        policy
+            .review_basis
+            .as_ref()
+            .expect("state transition contract")
+            .relationship,
+        "bounded_state_transition_enforcement_review"
+    );
+    assert_eq!(
+        policy.investigation.readiness,
+        ReviewReadiness::Investigation
+    );
+    assert!(policy.investigation.lookup_requests.iter().any(|lookup| {
+        lookup.operation == "references"
+            && lookup.arguments.get("symbol") == Some(&"canTransitionOrder".to_string())
     }));
 }
