@@ -769,11 +769,36 @@ pub struct PathReviewBundleResponseSet {
 pub struct PathReviewBundleTriageReport {
     pub schema_version: String,
     pub bundle_fingerprint: String,
+    #[serde(default)]
+    pub response_fingerprint: String,
     pub complete: bool,
     pub issue_count: usize,
     pub not_issue_count: usize,
     pub needs_review_count: usize,
     pub results: Vec<PathReviewTriageResult>,
+}
+
+/// Explicit review-run accounting. Missing responses are also deferred when a
+/// partial run is intentionally accepted. Blocked and truncated IDs are
+/// completed responses whose verdict remains `needs_review`, so these states
+/// do not by themselves make the response set incomplete.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewWorkSummary {
+    pub complete: bool,
+    pub scheduled_bundle_count: usize,
+    pub scheduled_review_count: usize,
+    pub completed_bundle_count: usize,
+    pub completed_review_count: usize,
+    #[serde(default)]
+    pub deferred_review_ids: Vec<String>,
+    #[serde(default)]
+    pub blocked_review_ids: Vec<String>,
+    #[serde(default)]
+    pub truncated_review_ids: Vec<String>,
+    #[serde(default)]
+    pub missing_review_ids: Vec<String>,
+    #[serde(default)]
+    pub invalid_review_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -793,6 +818,10 @@ pub struct PathReviewBundleIssueGroup {
 pub struct PathReviewBundleRunReport {
     pub schema_version: String,
     pub job_fingerprint: String,
+    #[serde(default)]
+    pub response_fingerprint: String,
+    #[serde(default)]
+    pub work: ReviewWorkSummary,
     pub bundle_count: usize,
     pub review_count: usize,
     pub issue_count: usize,
@@ -809,6 +838,8 @@ pub struct PathReviewBundleRunReport {
 pub struct PathReviewTriageProgress {
     pub schema_version: String,
     pub job_fingerprint: String,
+    #[serde(default)]
+    pub response_fingerprint: String,
     pub submitted_count: usize,
     pub remaining_count: usize,
     pub complete: bool,
@@ -840,6 +871,8 @@ pub struct PathReviewIssueGroup {
 pub struct PathReviewTriageReport {
     pub schema_version: String,
     pub job_fingerprint: String,
+    #[serde(default)]
+    pub response_fingerprint: String,
     pub issue_count: usize,
     pub not_issue_count: usize,
     pub needs_review_count: usize,

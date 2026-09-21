@@ -25,14 +25,15 @@ use mehscan_core::{
     PathReviewBundlePayload, PathReviewBundleResponseSet, PathReviewBundleRunReport,
     PathReviewBundleSet, PathReviewBundleTriageReport, PathReviewEvidenceBasis,
     PathReviewIssueGroup, PathReviewJob, PathReviewTask, PathReviewTaskPage, PathReviewTaskPayload,
-    PathReviewTriageProgress, PathReviewTriageReport, PathReviewTriageResponseSet, Position,
-    Provenance, QueryProvenance, QueryResponse, REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
-    RelationContract, RelationshipFunnel, RelationshipFunnelCapability, ReportedFinding,
-    ReportedSeverity, Resolution, ResourcePolicyState, ReviewConfidence, ReviewConfidencePolicy,
-    ReviewContextTruncation, ReviewDecision, ReviewDecisionFacts, ReviewInvestigationPlan,
-    ReviewInvestigationTrace, ReviewLookupOutcome, ReviewLookupRequest, ReviewNeighborhoodFact,
-    ReviewNeighborhoodJob, ReviewReadiness, ReviewTriageContract, ReviewTriageReport,
-    ReviewTriageResponseSet, Rule, RuntimeEnvironment, SCHEMA_VERSION, SecurityPathState,
+    PathReviewTriageProgress, PathReviewTriageReport, PathReviewTriageResponseSet,
+    PathReviewTriageResult, Position, Provenance, QueryProvenance, QueryResponse,
+    REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, RelationContract, RelationshipFunnel,
+    RelationshipFunnelCapability, ReportedFinding, ReportedSeverity, Resolution,
+    ResourcePolicyState, ReviewConfidence, ReviewConfidencePolicy, ReviewContextTruncation,
+    ReviewDecision, ReviewDecisionFacts, ReviewInvestigationPlan, ReviewInvestigationTrace,
+    ReviewLookupOutcome, ReviewLookupRequest, ReviewNeighborhoodFact, ReviewNeighborhoodJob,
+    ReviewReadiness, ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet,
+    ReviewWorkSummary, Rule, RuntimeEnvironment, SCHEMA_VERSION, SecurityPathState,
     SecurityPathStepKind, Severity, SeveritySource, SourceSlice, StructuralMatch, TextReference,
 };
 
@@ -1076,6 +1077,11 @@ pub fn validate_path_review_triage(
     Ok(PathReviewTriageReport {
         schema_version: responses.schema_version.clone(),
         job_fingerprint: job.fingerprint.clone(),
+        response_fingerprint: review_response_fingerprint(
+            &responses.schema_version,
+            &responses.job_fingerprint,
+            &responses.results,
+        ),
         issue_count: responses
             .results
             .iter()
@@ -1381,6 +1387,11 @@ pub fn validate_path_review_bundle_response(
     Ok(PathReviewBundleTriageReport {
         schema_version: responses.schema_version.clone(),
         bundle_fingerprint: bundle.bundle_fingerprint.clone(),
+        response_fingerprint: review_response_fingerprint(
+            &responses.schema_version,
+            &responses.bundle_fingerprint,
+            &responses.results,
+        ),
         complete: true,
         issue_count: responses
             .results
@@ -1437,6 +1448,16 @@ pub fn summarize_path_review_bundle_manifest_run(
             "review manifest count does not match the run".to_string(),
         ));
     }
+    Ok(report)
+}
+
+pub fn summarize_path_review_bundle_manifest_run_with_work(
+    manifest: &PathReviewBundleManifest,
+    bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
+    scheduled_work: ReviewWorkSummary,
+) -> Result<PathReviewBundleRunReport, EngineError> {
+    let mut report = summarize_path_review_bundle_manifest_run(manifest, bundle_responses)?;
+    report.work = merge_scheduled_review_work(&report.work, scheduled_work)?;
     Ok(report)
 }
 
@@ -1516,9 +1537,13 @@ fn summarize_path_review_bundle_run_with_fingerprint(
         .count();
     let issue_groups = groups.into_values().collect::<Vec<_>>();
     let quality_warnings = review_run_quality_warnings(bundle_responses);
+    let response_fingerprint = review_run_response_fingerprint(&job_fingerprint, bundle_responses);
+    let work = completed_review_work(bundle_responses);
     Ok(PathReviewBundleRunReport {
         schema_version: PATH_REVIEW_BUNDLE_SCHEMA_VERSION.to_string(),
         job_fingerprint,
+        response_fingerprint,
+        work,
         bundle_count: bundle_responses.len(),
         review_count: results.len(),
         issue_count,
@@ -1560,6 +1585,31 @@ pub fn build_finding_report_from_manifest(
     include_dismissed: bool,
 ) -> Result<FindingReport, EngineError> {
     let run = summarize_path_review_bundle_manifest_run(manifest, bundle_responses)?;
+    let mut report = finding_report_from_run(
+        tool_version,
+        reviewer,
+        bundle_responses,
+        include_dismissed,
+        run,
+    )?;
+    report.scan.coverage = manifest.coverage.clone();
+    report.scan.scope = manifest.scope.clone();
+    Ok(report)
+}
+
+pub fn build_finding_report_from_manifest_with_work(
+    manifest: &PathReviewBundleManifest,
+    tool_version: impl Into<String>,
+    reviewer: Option<String>,
+    bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
+    include_dismissed: bool,
+    scheduled_work: ReviewWorkSummary,
+) -> Result<FindingReport, EngineError> {
+    let run = summarize_path_review_bundle_manifest_run_with_work(
+        manifest,
+        bundle_responses,
+        scheduled_work,
+    )?;
     let mut report = finding_report_from_run(
         tool_version,
         reviewer,
@@ -1676,6 +1726,8 @@ fn finding_report_from_run(
         },
         triage: FindingReportTriage {
             response_schema_version,
+            response_fingerprint: run.response_fingerprint.clone(),
+            work: run.work.clone(),
             reviewer,
         },
         summary: FindingReportSummary {
@@ -3488,6 +3540,198 @@ fn stable_review_hash(prefix: &str, input: &str) -> String {
     format!("{prefix}-{hash:016x}")
 }
 
+fn review_response_fingerprint(
+    schema_version: &str,
+    request_fingerprint: &str,
+    results: &[PathReviewTriageResult],
+) -> String {
+    let mut results = results.to_vec();
+    for result in &mut results {
+        result.checks.sort();
+        if let Some(trace) = &mut result.investigation {
+            for attempt in &mut trace.lookup_attempts {
+                attempt
+                    .artifacts
+                    .sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
+            }
+            trace
+                .lookup_attempts
+                .sort_by_key(|attempt| attempt.request_index);
+            trace.citations.sort_by(|left, right| {
+                left.artifact_id
+                    .cmp(&right.artifact_id)
+                    .then_with(|| left.claim.cmp(&right.claim))
+            });
+            for inference in &mut trace.reviewer_inferences {
+                inference.artifact_ids.sort();
+            }
+            trace.reviewer_inferences.sort_by(|left, right| {
+                left.claim
+                    .cmp(&right.claim)
+                    .then_with(|| left.artifact_ids.cmp(&right.artifact_ids))
+            });
+            trace.blockers.sort();
+        }
+    }
+    results.sort_by(|left, right| left.review_id.cmp(&right.review_id));
+    let serialized = serde_json::to_string(&(schema_version, request_fingerprint, results))
+        .expect("validated review responses must remain JSON serializable");
+    stable_review_hash("review-response", &serialized)
+}
+
+fn review_run_response_fingerprint(
+    job_fingerprint: &str,
+    bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
+) -> String {
+    let mut responses = bundle_responses
+        .iter()
+        .map(|(bundle, response)| {
+            (
+                bundle.bundle_fingerprint.as_str(),
+                review_response_fingerprint(
+                    &response.schema_version,
+                    &response.bundle_fingerprint,
+                    &response.results,
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+    responses.sort_by(|left, right| left.0.cmp(right.0));
+    let serialized = serde_json::to_string(&(job_fingerprint, responses))
+        .expect("validated review run identity must remain JSON serializable");
+    stable_review_hash("review-run-response", &serialized)
+}
+
+fn completed_review_work(
+    bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
+) -> ReviewWorkSummary {
+    let mut blocked_review_ids = Vec::new();
+    let mut truncated_review_ids = Vec::new();
+    for (bundle, responses) in bundle_responses {
+        for result in &responses.results {
+            if result.decision != ReviewDecision::NeedsReview {
+                continue;
+            }
+            let (readiness, decision_critical_truncation) =
+                bundle_review_work_metadata(bundle, &result.review_id)
+                    .expect("validated review ID must have work metadata");
+            let trace = result.investigation.as_ref();
+            let blocked = readiness == ReviewReadiness::Blocked
+                || trace.is_some_and(|trace| {
+                    !trace.blockers.is_empty()
+                        || trace.lookup_attempts.iter().any(|attempt| {
+                            matches!(
+                                attempt.outcome,
+                                ReviewLookupOutcome::Unavailable
+                                    | ReviewLookupOutcome::BudgetExhausted
+                                    | ReviewLookupOutcome::Failed
+                            )
+                        })
+                });
+            let truncated = decision_critical_truncation
+                || trace.is_some_and(|trace| {
+                    trace
+                        .lookup_attempts
+                        .iter()
+                        .any(|attempt| attempt.outcome == ReviewLookupOutcome::Truncated)
+                });
+            if blocked {
+                blocked_review_ids.push(result.review_id.clone());
+            }
+            if truncated {
+                truncated_review_ids.push(result.review_id.clone());
+            }
+        }
+    }
+    blocked_review_ids.sort();
+    blocked_review_ids.dedup();
+    truncated_review_ids.sort();
+    truncated_review_ids.dedup();
+    let completed_review_count = bundle_responses
+        .iter()
+        .map(|(_, responses)| responses.results.len())
+        .sum();
+    ReviewWorkSummary {
+        complete: true,
+        scheduled_bundle_count: bundle_responses.len(),
+        scheduled_review_count: completed_review_count,
+        completed_bundle_count: bundle_responses.len(),
+        completed_review_count,
+        deferred_review_ids: Vec::new(),
+        blocked_review_ids,
+        truncated_review_ids,
+        missing_review_ids: Vec::new(),
+        invalid_review_ids: Vec::new(),
+    }
+}
+
+fn merge_scheduled_review_work(
+    completed: &ReviewWorkSummary,
+    mut scheduled: ReviewWorkSummary,
+) -> Result<ReviewWorkSummary, EngineError> {
+    for ids in [
+        &mut scheduled.deferred_review_ids,
+        &mut scheduled.missing_review_ids,
+        &mut scheduled.invalid_review_ids,
+    ] {
+        ids.sort();
+        ids.dedup();
+    }
+    if scheduled.scheduled_bundle_count < completed.completed_bundle_count
+        || scheduled.scheduled_review_count < completed.completed_review_count
+        || (scheduled.completed_bundle_count != 0
+            && scheduled.completed_bundle_count != completed.completed_bundle_count)
+        || (scheduled.completed_review_count != 0
+            && scheduled.completed_review_count != completed.completed_review_count)
+        || scheduled.scheduled_review_count
+            != completed.completed_review_count + scheduled.missing_review_ids.len()
+        || !scheduled
+            .deferred_review_ids
+            .iter()
+            .all(|id| scheduled.missing_review_ids.binary_search(id).is_ok())
+    {
+        return Err(EngineError(
+            "review work accounting does not match the validated response selection".to_string(),
+        ));
+    }
+    scheduled.completed_bundle_count = completed.completed_bundle_count;
+    scheduled.completed_review_count = completed.completed_review_count;
+    scheduled.blocked_review_ids = completed.blocked_review_ids.clone();
+    scheduled.truncated_review_ids = completed.truncated_review_ids.clone();
+    scheduled.complete = scheduled.completed_bundle_count == scheduled.scheduled_bundle_count
+        && scheduled.completed_review_count == scheduled.scheduled_review_count
+        && scheduled.deferred_review_ids.is_empty()
+        && scheduled.missing_review_ids.is_empty()
+        && scheduled.invalid_review_ids.is_empty();
+    Ok(scheduled)
+}
+
+fn bundle_review_work_metadata(
+    bundle: &PathReviewBundle,
+    review_id: &str,
+) -> Option<(ReviewReadiness, bool)> {
+    match &bundle.payload {
+        PathReviewBundlePayload::SecurityPath { reviews } => reviews
+            .iter()
+            .find(|review| review.id == review_id)
+            .map(|review| {
+                (
+                    review.investigation.readiness,
+                    review.truncation.decision_critical,
+                )
+            }),
+        PathReviewBundlePayload::Observation { reviews } => reviews
+            .iter()
+            .find(|review| review.id == review_id)
+            .map(|review| {
+                (
+                    review.investigation.readiness,
+                    review.truncation.decision_critical,
+                )
+            }),
+    }
+}
+
 pub fn validate_path_review_progress(
     job: &PathReviewJob,
     responses: &PathReviewTriageResponseSet,
@@ -3496,6 +3740,11 @@ pub fn validate_path_review_progress(
     Ok(PathReviewTriageProgress {
         schema_version: responses.schema_version.clone(),
         job_fingerprint: job.fingerprint.clone(),
+        response_fingerprint: review_response_fingerprint(
+            &responses.schema_version,
+            &responses.job_fingerprint,
+            &responses.results,
+        ),
         submitted_count: responses.results.len(),
         remaining_count: missing_review_ids.len(),
         complete: missing_review_ids.is_empty(),
@@ -18294,6 +18543,61 @@ mod tests {
             &blocked_trace,
         )
         .expect("an exact supplied external blocker should preserve needs_review");
+    }
+
+    #[test]
+    fn response_fingerprint_is_order_stable_and_trace_sensitive() {
+        let artifact = ReviewRetrievedArtifact {
+            artifact_id: "lookup-source-1".to_string(),
+            location: Location {
+                path: "src/handler.ts".to_string(),
+                start: Position {
+                    line: 90,
+                    column: 1,
+                    byte_offset: 250,
+                },
+                end: Position {
+                    line: 90,
+                    column: 40,
+                    byte_offset: 290,
+                },
+            },
+            excerpt: "const command = request.query.command;".to_string(),
+        };
+        let result = PathReviewTriageResult {
+            review_id: "review-1".to_string(),
+            decision: ReviewDecision::NeedsReview,
+            confidence: ReviewConfidence::Medium,
+            summary: "The command origin remains unresolved after bounded lookup.".to_string(),
+            checks: vec!["check-b".to_string(), "check-a".to_string()],
+            investigation: Some(ReviewInvestigationTrace {
+                lookup_attempts: vec![ReviewLookupAttempt {
+                    request_index: 0,
+                    outcome: ReviewLookupOutcome::Answered,
+                    artifacts: vec![artifact],
+                    detail: "Retrieved the bounded source window.".to_string(),
+                }],
+                citations: vec![ReviewArtifactCitation {
+                    artifact_id: "lookup-source-1".to_string(),
+                    claim: "The assignment is relevant to command origin.".to_string(),
+                }],
+                reviewer_inferences: Vec::new(),
+                blockers: Vec::new(),
+            }),
+        };
+        let original = review_response_fingerprint("1.1", "bundle-1", &[result.clone()]);
+
+        let mut reordered = result.clone();
+        reordered.checks.reverse();
+        let reordered_fingerprint = review_response_fingerprint("1.1", "bundle-1", &[reordered]);
+        assert_eq!(original, reordered_fingerprint);
+
+        let mut changed = result;
+        changed.investigation.as_mut().unwrap().lookup_attempts[0].artifacts[0]
+            .excerpt
+            .push_str(" // changed");
+        let changed_fingerprint = review_response_fingerprint("1.1", "bundle-1", &[changed]);
+        assert_ne!(original, changed_fingerprint);
     }
 
     #[test]

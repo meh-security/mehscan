@@ -348,8 +348,35 @@ fn partial_triage_reports_coverage_and_rejects_invalid_present_responses() {
         );
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert!(value.to_string().contains("Partial triage: 1/"));
+        let work = if operation == "summary" {
+            &value["work"]
+        } else {
+            &value["triage"]["work"]
+        };
+        assert_eq!(work["complete"], false);
+        assert_eq!(work["scheduled_review_count"], manifest["review_count"]);
+        assert_eq!(work["completed_review_count"], 1);
+        assert_eq!(
+            work["missing_review_ids"].as_array().unwrap().len(),
+            manifest["review_count"].as_u64().unwrap() as usize - 1
+        );
+        assert_eq!(work["deferred_review_ids"], work["missing_review_ids"]);
+        assert_eq!(work["invalid_review_ids"], serde_json::json!([]));
         if operation == "summary" {
             assert_eq!(value["review_count"], 1);
+            assert!(
+                value["response_fingerprint"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("review-run-response-")
+            );
+        } else {
+            assert!(
+                value["triage"]["response_fingerprint"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("review-run-response-")
+            );
         }
     }
     for format in ["markdown", "sarif"] {
@@ -367,7 +394,13 @@ fn partial_triage_reports_coverage_and_rejects_invalid_present_responses() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(String::from_utf8_lossy(&output.stdout).contains("Partial triage: 1/"));
+        let rendered = String::from_utf8_lossy(&output.stdout);
+        assert!(rendered.contains("Partial triage: 1/"));
+        if format == "markdown" {
+            assert!(rendered.contains("Review work"));
+        } else {
+            assert!(rendered.contains("reviewWork"));
+        }
     }
     for invalid in ["not json".to_string(), serde_json::json!({"schema_version":"1.0", "bundle_fingerprint":request["bundle_fingerprint"], "results":[]}).to_string()] {
         std::fs::write(&response_path, invalid).unwrap();

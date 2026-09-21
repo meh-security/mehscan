@@ -68,7 +68,8 @@ pub use investigation::{
     ReviewLookupAttempt, ReviewLookupOutcome, ReviewLookupRequest, ReviewNeighborhood,
     ReviewNeighborhoodFact, ReviewNeighborhoodJob, ReviewNeighborhoodVerification, ReviewReadiness,
     ReviewRetrievedArtifact, ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet,
-    ReviewTriageResult, ReviewerInference, SourceSlice, StructuralMatch, TextReference,
+    ReviewTriageResult, ReviewWorkSummary, ReviewerInference, SourceSlice, StructuralMatch,
+    TextReference,
 };
 pub use location::{Capture, Location, Position};
 pub use protocol::{

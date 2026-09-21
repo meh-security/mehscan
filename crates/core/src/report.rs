@@ -26,6 +26,10 @@ pub struct FindingReportScan {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct FindingReportTriage {
     pub response_schema_version: String,
+    #[serde(default)]
+    pub response_fingerprint: String,
+    #[serde(default)]
+    pub work: crate::ReviewWorkSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reviewer: Option<String>,
 }
@@ -198,6 +202,21 @@ impl FindingReport {
             self.summary.needs_review_decisions,
             self.summary.not_issue_decisions
         ));
+        if self.triage.work.scheduled_review_count > 0
+            || !self.triage.work.missing_review_ids.is_empty()
+            || !self.triage.work.invalid_review_ids.is_empty()
+        {
+            output.push_str(&format!(
+                "| Review work | {}/{} completed | {} deferred, {} blocked, {} truncated, {} missing, {} invalid |\n",
+                self.triage.work.completed_review_count,
+                self.triage.work.scheduled_review_count,
+                self.triage.work.deferred_review_ids.len(),
+                self.triage.work.blocked_review_ids.len(),
+                self.triage.work.truncated_review_ids.len(),
+                self.triage.work.missing_review_ids.len(),
+                self.triage.work.invalid_review_ids.len()
+            ));
+        }
 
         output.push_str("\n## Scope and limitations\n\nStatic source conclusions do not establish deployed activation or external exploitation. Any isolated execution checks apply only to the controls identified in the scope label. Ignored and unsupported material is outside coverage. Severity defaults are not a validated impact ranking.\n\n");
         if let Some(coverage) = &self.scan.coverage {
@@ -713,6 +732,8 @@ mod tests {
             },
             triage: FindingReportTriage {
                 response_schema_version: "1.0".to_string(),
+                response_fingerprint: "review-run-response-test".to_string(),
+                work: crate::ReviewWorkSummary::default(),
                 reviewer: Some("reviewer-1".to_string()),
             },
             summary: FindingReportSummary {
@@ -789,6 +810,8 @@ mod tests {
             },
             triage: FindingReportTriage {
                 response_schema_version: "1.0".to_string(),
+                response_fingerprint: "review-run-response-test".to_string(),
+                work: crate::ReviewWorkSummary::default(),
                 reviewer: None,
             },
             summary: FindingReportSummary {
