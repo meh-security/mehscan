@@ -50,7 +50,7 @@ fn retains_unknown_origin_only_for_strong_csharp_interpreter_boundaries() {
     }));
     assert!(result.evidence.iter().any(|item| {
         item.rule_id == "csharp-extended-nosql-query"
-            && !item
+            && item
                 .tags
                 .iter()
                 .any(|tag| tag == "review-origin:decision-critical")

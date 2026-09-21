@@ -42,7 +42,7 @@ mod review_admission;
 
 use crate::repository::{FileClass, discover, is_sast_excluded_source};
 use crate::rules::parser_language;
-use crate::{EngineError, csharp_review, scan_path};
+use crate::{EngineError, code::executable_deserializer, csharp_review, scan_path};
 
 const DEFAULT_RESULT_LIMIT: usize = 200;
 const MAX_RESULT_LIMIT: usize = 1_000;
@@ -5710,7 +5710,7 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
             Some(decision_origin_from_capture(
                 item,
                 DecisionCriticalBoundary::ObjectDeserialization,
-                "executable object deserializer",
+                "code-capable object deserializer",
                 &["payload", "stream"],
                 false,
             )?)
@@ -10360,6 +10360,7 @@ fn is_non_actionable_safe_purpose_observation(
     }
     if item.kind == EvidenceKind::Sink
         && item.capability == Capability::Deserialization
+        && !executable_deserializer(item)
         && item
             .captures
             .get("payload")

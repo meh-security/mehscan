@@ -29,6 +29,9 @@ pub(crate) fn annotate(
         if item.capability == Capability::ProcessExecution {
             annotate_process_semantics(language, source, item);
         }
+        if item.capability == Capability::Deserialization {
+            annotate_deserialization_semantics(item);
+        }
 
         if has_marker(item) {
             continue;
@@ -47,9 +50,7 @@ pub(crate) fn annotate(
             Capability::FormatStringOutput => capture_is_dynamic(item, &["format"]),
             Capability::DynamicCodeExecution => capture_is_dynamic(item, &["code"]),
             Capability::TemplateEvaluation => capture_is_dynamic(item, &["template"]),
-            Capability::Deserialization => {
-                executable_deserializer(item) && capture_is_dynamic(item, &["payload", "stream"])
-            }
+            Capability::Deserialization => deserialization_origin_is_unresolved(item),
             Capability::DatabaseQuery => raw_nosql_boundary(item),
             Capability::LdapQuery => capture_is_dynamic(item, &["filter", "distinguished_name"]),
             Capability::XpathQuery => capture_is_dynamic(item, &["expression"]),
@@ -1025,11 +1026,14 @@ fn process_is_shell_api(language: Language, source: &str, item: &Evidence) -> bo
     }
 }
 
-fn executable_deserializer(item: &Evidence) -> bool {
+pub(crate) fn executable_deserializer(item: &Evidence) -> bool {
     if item.tags.iter().any(|tag| {
         matches!(
             tag.as_str(),
-            "executable-functions" | "executable-object" | "unsafe-yaml"
+            "executable-functions"
+                | "executable-object"
+                | "unsafe-yaml"
+                | "loader-policy:unspecified"
         )
     }) {
         return true;
@@ -1046,8 +1050,79 @@ fn executable_deserializer(item: &Evidence) -> bool {
                 | "java-xml-decoder-deserialization"
                 | "java-snakeyaml-load"
         ),
+        rule if rule.starts_with("csharp-") => matches!(
+            rule,
+            "csharp-binaryformatter-deserialization"
+                | "csharp-soapformatter-deserialization"
+                | "csharp-netdatacontractserializer-deserialization"
+                | "csharp-losformatter-deserialization"
+                | "csharp-objectstateformatter-deserialization"
+                | "csharp-xmlserializer-dynamic-type-deserialization"
+                | "csharp-jsonnet-typename-deserialization"
+                | "csharp-jsonnet-instance-typename-deserialization"
+                | "csharp-fastjson-unrestricted-deserialization"
+                | "csharp-fspickler-deserialization"
+        ),
         _ => false,
     }
+}
+
+fn annotate_deserialization_semantics(item: &mut Evidence) {
+    if item
+        .tags
+        .iter()
+        .any(|tag| tag == "loader-policy:unspecified")
+    {
+        push_tag(&mut item.tags, "loader-capability:version-dependent-object");
+    } else if executable_deserializer(item) {
+        push_tag(&mut item.tags, "loader-capability:executable-object");
+    } else {
+        push_tag(&mut item.tags, "loader-capability:structured-data");
+    }
+    if item.captures.contains_key("stream") {
+        push_tag(&mut item.tags, "deserialization-input:stream");
+    } else if item.captures.contains_key("payload") {
+        let file_content = item.captures.get("payload").is_some_and(|capture| {
+            let compact = capture
+                .text
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect::<String>();
+            compact.contains("readFileSync(")
+                || compact.starts_with("open(")
+                || compact.contains("File.OpenRead(")
+                || compact.contains("Files.newInputStream(")
+        });
+        push_tag(
+            &mut item.tags,
+            if file_content {
+                "deserialization-input:file-content"
+            } else {
+                "deserialization-input:bytes-or-text"
+            },
+        );
+    }
+    if item.captures.contains_key("type") {
+        push_tag(&mut item.tags, "deserialization-type-policy:explicit");
+    }
+    if item.tags.iter().any(|tag| tag == "model-artifact")
+        && fixed_literal_string(item, "payload").is_some()
+    {
+        push_tag(&mut item.tags, "artifact-path:fixed");
+    }
+}
+
+fn deserialization_origin_is_unresolved(item: &Evidence) -> bool {
+    if !executable_deserializer(item) {
+        return false;
+    }
+    if item.tags.iter().any(|tag| tag == "model-artifact") && item.captures.contains_key("payload")
+    {
+        // A constant model/artifact filename fixes selection, not the trust or
+        // integrity of the bytes read from that mutable artifact.
+        return true;
+    }
+    capture_is_dynamic(item, &["payload", "stream"])
 }
 
 fn raw_nosql_boundary(item: &Evidence) -> bool {

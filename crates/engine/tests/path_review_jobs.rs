@@ -1240,12 +1240,16 @@ fn supplies_python_caller_loader_jwt_and_fixed_payload_origin_context() {
         fact.contains("accepted with the same source-visible literal signing key")
     }));
 
-    let yaml = review_for_rule("python-pickle-deserialization")
+    let yaml = review_for_rule("python-unspecified-yaml-loader")
         .expect("fixed-file unsafe YAML should retain provenance review");
+    assert!(yaml.facts.iter().any(|fact| {
+        fact.role == "source_context" && fact.excerpt.contains("/opt/application/trusted.yaml")
+    }));
     assert!(
-        yaml.open_questions
+        yaml.decision_facts
+            .unresolved
             .iter()
-            .any(|question| question.contains("/opt/application/trusted.yaml"))
+            .any(|question| question.contains("modify payload `stream`"))
     );
 
     let read = review_for_rule("python-filesystem-read")

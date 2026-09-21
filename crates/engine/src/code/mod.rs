@@ -19,6 +19,7 @@ mod csharp_standalone;
 mod csharp_streaming_upload;
 mod database_receiver;
 mod decision_origins;
+pub(crate) use decision_origins::executable_deserializer;
 mod dotnet_project;
 mod embedded_javascript;
 mod extended_boundaries;
