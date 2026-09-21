@@ -14,12 +14,17 @@ pub(crate) fn annotate(
     root: &Node<'_, StrDoc<SupportLang>>,
     evidence: &mut [Evidence],
 ) {
-    for item in evidence
-        .iter_mut()
-        .filter(|item| item.kind == EvidenceKind::Sink)
-    {
+    for item in evidence.iter_mut().filter(|item| {
+        item.kind == EvidenceKind::Sink
+            || (item.kind == EvidenceKind::SensitiveOperation
+                && item.capability == Capability::DatabaseQuery
+                && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-943"))
+    }) {
         if item.capability == Capability::DatabaseQuery {
+            normalize_database_query_operand(language, source, root, item);
+            annotate_database_query_facts(source, item);
             annotate_dynamic_sql(language, source, root, item);
+            annotate_nosql_structure(root, item);
         }
         if item.capability == Capability::ProcessExecution {
             annotate_process_semantics(language, source, item);
@@ -61,6 +66,42 @@ pub(crate) fn annotate(
                 &format!("review-language:{}", language_tag(language)),
             );
         }
+    }
+}
+
+fn annotate_database_query_facts(source: &str, item: &mut Evidence) {
+    if item.tags.iter().any(|tag| tag == "sql")
+        && !item.tags.iter().any(|tag| tag.starts_with("query-role:"))
+    {
+        push_tag(&mut item.tags, "query-role:sql-text");
+    }
+    if ["parameters", "bindings", "values"]
+        .into_iter()
+        .any(|role| item.captures.contains_key(role))
+    {
+        push_tag(&mut item.tags, "query-bindings:separate");
+    }
+    let operation = source
+        .get(
+            item.location.start.byte_offset.min(source.len())
+                ..item.location.end.byte_offset.min(source.len()),
+        )
+        .unwrap_or_default();
+    let compact = operation
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let lower = compact.to_ascii_lowercase();
+    if item.captures.contains_key("query_envelope")
+        && (lower.contains("values:") || lower.contains("parameters:"))
+    {
+        push_tag(&mut item.tags, "query-bindings:separate");
+    }
+    if item.rule_id == "csharp-dapper-database-query"
+        && lower.contains("commandtype:commandtype.storedprocedure")
+    {
+        item.tags.retain(|tag| tag != "query-role:sql-text");
+        push_tag(&mut item.tags, "query-role:stored-procedure-name");
     }
 }
 
@@ -137,6 +178,197 @@ fn annotate_dynamic_sql(
             },
         );
     }
+}
+
+fn normalize_database_query_operand(
+    language: Language,
+    source: &str,
+    root: &Node<'_, StrDoc<SupportLang>>,
+    item: &mut Evidence,
+) {
+    let Some(query) = item.captures.get("query").cloned() else {
+        return;
+    };
+    let Some(node) = capture_node(root, &query) else {
+        return;
+    };
+    let normalized = match language {
+        Language::Javascript | Language::Typescript | Language::Tsx
+            if matches!(node.kind().as_ref(), "object" | "object_expression") =>
+        {
+            object_property(&node, &["sql", "text"])
+                .map(|value| (value, "query-envelope:object-property"))
+        }
+        Language::Csharp
+            if node.kind().as_ref() == "object_creation_expression"
+                && node.field("type").is_some_and(|kind| {
+                    kind.text().trim().rsplit('.').next() == Some("CommandDefinition")
+                }) =>
+        {
+            csharp_command_definition_text(&node)
+                .map(|value| (value, "query-envelope:dapper-command-definition"))
+        }
+        _ => None,
+    };
+    let Some((value, tag)) = normalized else {
+        return;
+    };
+    item.captures.insert("query_envelope".to_string(), query);
+    item.captures
+        .insert("query".to_string(), capture_for_node(source, item, &value));
+    push_tag(&mut item.tags, tag);
+}
+
+fn annotate_nosql_structure(root: &Node<'_, StrDoc<SupportLang>>, item: &mut Evidence) {
+    if !is_nosql_boundary(item) {
+        return;
+    }
+    let role = if item.captures.contains_key("nosql_expression") {
+        "nosql_expression"
+    } else if item.captures.contains_key("nosql_query") {
+        "nosql_query"
+    } else if item.captures.contains_key("filter") {
+        "filter"
+    } else {
+        return;
+    };
+    let Some(operand) = item.captures.get(role).cloned() else {
+        return;
+    };
+    if !capture_is_dynamic(item, &[role]) {
+        return;
+    }
+    let fixed_keys = capture_node(root, &operand).is_some_and(|node| fixed_document_shape(&node));
+    if fixed_keys {
+        push_tag(&mut item.tags, "query-shape:fixed-document-keys");
+    }
+    let style = if item.rule_id.contains("mongodb-where") {
+        "executable-predicate"
+    } else if item.rule_id.contains("nosql-json") {
+        "raw-document-text"
+    } else if role == "nosql_expression" {
+        "expression-syntax"
+    } else if fixed_keys {
+        "fixed-keys-unknown-values"
+    } else {
+        "unknown-document-structure"
+    };
+    push_tag(&mut item.tags, "dynamic-nosql-structure");
+    push_tag(&mut item.tags, &format!("nosql-structure:{style}"));
+    item.captures.insert("dynamic_operand".to_string(), operand);
+}
+
+fn is_nosql_boundary(item: &Evidence) -> bool {
+    item.tags.iter().any(|tag| tag == "nosql")
+        || item.cwe_candidates.iter().any(|cwe| cwe == "CWE-943")
+}
+
+fn capture_node<'tree>(
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    capture: &Capture,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    root.dfs()
+        .filter(|node| {
+            node.range().start == capture.location.start.byte_offset
+                && node.range().end == capture.location.end.byte_offset
+        })
+        .last()
+}
+
+fn capture_for_node(
+    source: &str,
+    item: &Evidence,
+    node: &Node<'_, StrDoc<SupportLang>>,
+) -> Capture {
+    let prefix = source
+        .get(
+            item.location.start.byte_offset.min(source.len())..node.range().start.min(source.len()),
+        )
+        .unwrap_or_default();
+    let location_start = advance_position(&item.location.start, prefix);
+    let location_end = advance_position(&location_start, node.text().as_ref());
+    Capture {
+        text: node.text().into_owned(),
+        location: mehscan_core::Location {
+            path: item.location.path.clone(),
+            start: location_start,
+            end: location_end,
+        },
+    }
+}
+
+fn object_property<'tree>(
+    object: &Node<'tree, StrDoc<SupportLang>>,
+    names: &[&str],
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    let mut matches = object.children().filter_map(|child| {
+        if child.kind().as_ref() != "pair" {
+            return None;
+        }
+        let key = child.field("key")?;
+        names
+            .contains(&key.text().trim_matches(['\'', '"']))
+            .then(|| child.field("value"))
+            .flatten()
+    });
+    let value = matches.next()?;
+    matches.next().is_none().then_some(value)
+}
+
+fn csharp_command_definition_text<'tree>(
+    creation: &Node<'tree, StrDoc<SupportLang>>,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    let arguments = creation.field("arguments")?;
+    let mut first = None;
+    for argument in arguments.children().filter(|child| child.is_named()) {
+        let text = argument.text();
+        let compact = text
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>();
+        let value = argument
+            .field("expression")
+            .or_else(|| argument.children().filter(|child| child.is_named()).last())
+            .unwrap_or_else(|| argument.clone());
+        if compact.starts_with("commandText:") {
+            return Some(value);
+        }
+        first.get_or_insert(value);
+    }
+    first
+}
+
+fn fixed_document_shape(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    if !matches!(
+        node.kind().as_ref(),
+        "object" | "object_expression" | "dictionary"
+    ) {
+        return false;
+    }
+    node.children()
+        .filter(|child| child.is_named())
+        .all(|child| {
+            if matches!(
+                child.kind().as_ref(),
+                "shorthand_property_identifier"
+                    | "shorthand_property_identifier_pattern"
+                    | "comment"
+            ) {
+                return true;
+            }
+            if child.kind().as_ref() != "pair" {
+                return false;
+            }
+            let Some(key) = child.field("key") else {
+                return false;
+            };
+            let key = key.text();
+            let key = key.trim_matches(['\'', '"']);
+            let fixed = key.chars().enumerate().all(|(index, character)| {
+                character.is_alphanumeric() || character == '_' || (index == 0 && character == '$')
+            });
+            fixed && !matches!(key, "$where" | "$expr" | "$function" | "$accumulator")
+        })
 }
 
 fn query_is_fixed_local_alias(
@@ -819,18 +1051,7 @@ fn executable_deserializer(item: &Evidence) -> bool {
 }
 
 fn raw_nosql_boundary(item: &Evidence) -> bool {
-    if item.rule_id.contains("mongodb-where") {
-        return capture_is_dynamic(item, &["nosql_query", "code"]);
-    }
-    if item.rule_id.contains("nosql-json") {
-        return capture_is_dynamic(item, &["nosql_query"]);
-    }
-    ["nosql_query", "nosql_expression"].into_iter().any(|role| {
-        item.context
-            .literals
-            .get(role)
-            .is_some_and(|literal| literal.state == LiteralState::Partial)
-    })
+    item.tags.iter().any(|tag| tag == "dynamic-nosql-structure")
 }
 
 fn capture_is_dynamic(item: &Evidence, roles: &[&str]) -> bool {

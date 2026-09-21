@@ -5570,7 +5570,10 @@ impl DecisionCriticalOrigin<'_> {
 /// capability, semantic tag, and capture-role check.
 fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOrigin<'_>> {
     evidence.iter().find_map(|item| {
-        if item.kind != EvidenceKind::Sink
+        if (item.kind != EvidenceKind::Sink
+            && !(item.kind == EvidenceKind::SensitiveOperation
+                && item.capability == Capability::DatabaseQuery
+                && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-943")))
             || !item
                 .tags
                 .iter()
@@ -5712,13 +5715,46 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
                 false,
             )?)
         } else if item.capability == Capability::DatabaseQuery
-            && item.rule_id == "csharp-extended-nosql-json"
+            && item.tags.iter().any(|tag| tag == "dynamic-nosql-structure")
         {
+            let style = if item
+                .tags
+                .iter()
+                .any(|tag| tag == "nosql-structure:executable-predicate")
+            {
+                "executable predicate"
+            } else if item
+                .tags
+                .iter()
+                .any(|tag| tag == "nosql-structure:raw-document-text")
+            {
+                "raw document text"
+            } else if item
+                .tags
+                .iter()
+                .any(|tag| tag == "nosql-structure:expression-syntax")
+            {
+                "expression syntax"
+            } else if item
+                .tags
+                .iter()
+                .any(|tag| tag == "nosql-structure:fixed-keys-unknown-values")
+            {
+                "fixed keys with unresolved values"
+            } else {
+                "unknown document structure"
+            };
             Some(decision_origin_from_capture(
                 item,
                 DecisionCriticalBoundary::RawNosql,
-                "raw document parser",
-                &["nosql_query"],
+                style,
+                &[
+                    "dynamic_operand",
+                    "nosql_expression",
+                    "nosql_query",
+                    "filter",
+                    "code",
+                ],
                 false,
             )?)
         } else if item.capability == Capability::LdapQuery {
