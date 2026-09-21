@@ -116,6 +116,10 @@ fn annotate_dynamic_sql(
     item: &mut Evidence,
 ) {
     if item.tags.iter().any(|tag| tag == "nosql")
+        || item
+            .tags
+            .iter()
+            .any(|tag| tag == "query-role:structured-filter")
         || item.tags.iter().any(|tag| {
             matches!(
                 tag.as_str(),

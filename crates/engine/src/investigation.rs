@@ -10356,6 +10356,14 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
     {
         return has_known_string_literal(item, "nosql_query");
     }
+    if item.capability == Capability::DatabaseQuery
+        && item
+            .tags
+            .iter()
+            .any(|tag| tag == "query-role:structured-filter")
+    {
+        return true;
+    }
     if item.capability == Capability::LdapQuery {
         return has_known_string_literal(item, "filter")
             || has_known_string_literal(item, "distinguished_name");
