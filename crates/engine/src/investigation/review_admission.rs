@@ -483,18 +483,9 @@ pub(super) fn decision_questions(
             let Some(helper) = helper else {
                 return Vec::new();
             };
-            if facts.iter().any(|fact| {
-                matches!(
-                    fact.role.as_str(),
-                    "helper_definition_context" | "captured_definition_context"
-                ) && fact.symbol == helper
-            }) {
-                Vec::new()
-            } else {
-                vec![format!(
-                    "What exact transitions does helper `{helper}` allow for this resource, and does its false result terminate execution before the shown state mutation?"
-                )]
-            }
+            vec![format!(
+                "What exact current-to-next transitions does helper `{helper}` allow for this resource, and how does it reject a disallowed edge before persistence?"
+            )]
         }
         Some(OperationReviewFamily::SharedStateLimit) => {
             let helper = preferred_capture(evidence, &["persistence_helper"]);

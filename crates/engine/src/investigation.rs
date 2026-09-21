@@ -5082,8 +5082,13 @@ fn observation_decision_facts(
             .get("state_resource")
             .map(|capture| capture.text.as_str())
             .unwrap_or("unknown resource");
+        let boundary = if item.rule_id.starts_with("csharp-") {
+            "ASP.NET Core"
+        } else {
+            "Next.js"
+        };
         established.push(format!(
-            "The bounded Next.js classifier established that request-body field `{request_field}` supplies next-state expression `{next_state}` to a persisted state field for resource `{resource}` at {}:{}. This establishes the exact mutation relationship; it does not prove which current-to-next transitions policy allows.",
+            "The bounded {boundary} classifier established that request field `{request_field}` supplies next-state expression `{next_state}` to the state-changing operation for resource `{resource}` at {}:{}. This establishes the exact operation relationship; it does not prove which current-to-next transitions policy allows.",
             item.location.path, item.location.start.line
         ));
     }
@@ -13071,7 +13076,8 @@ fn review_definition_owned_by_candidate(
             return false;
         };
         if candidate.language == Some(Language::Csharp)
-            && csharp_qualified_helper_is_owned(sources, candidate, name, symbol)
+            && (csharp_qualified_helper_is_owned(sources, candidate, name, symbol)
+                || csharp_typed_instance_helper_is_owned(sources, candidate, name, symbol))
         {
             return true;
         }
@@ -13083,6 +13089,64 @@ fn review_definition_owned_by_candidate(
         }
         relative_review_import_paths(candidate, name, sources)
             .contains(symbol.location.path.as_str())
+    })
+}
+
+fn csharp_typed_instance_helper_is_owned(
+    sources: &RepositorySources,
+    candidate: &SourceFile,
+    name: &str,
+    symbol: &OutlineSymbol,
+) -> bool {
+    let receivers = candidate
+        .source
+        .match_indices(&format!(".{name}("))
+        .filter_map(|(at, _)| {
+            let prefix = &candidate.source[..at];
+            let start = prefix
+                .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .map_or(0, |index| index + 1);
+            let receiver = &prefix[start..];
+            is_plain_identifier(receiver).then(|| receiver.to_string())
+        })
+        .collect::<BTreeSet<_>>();
+    if receivers.len() != 1 {
+        return false;
+    }
+    let receiver = receivers.first().expect("one exact receiver");
+    let types = candidate
+        .source
+        .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>()
+        .windows(2)
+        .filter_map(|pair| (pair[1] == receiver.as_str()).then_some(pair[0]))
+        .filter(|type_name| type_name.chars().next().is_some_and(char::is_uppercase))
+        .collect::<BTreeSet<_>>();
+    if types.len() != 1 {
+        return false;
+    }
+    let type_name = types.first().expect("one exact receiver type");
+    let Ok(definition) = sources.file(&symbol.location.path) else {
+        return false;
+    };
+    let declares_type = ["class", "record", "struct"]
+        .iter()
+        .any(|kind| definition.source.contains(&format!("{kind} {type_name}")));
+    if !declares_type {
+        return false;
+    }
+    let namespace = definition.source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("namespace ")
+            .map(|value| value.trim_end_matches([';', '{']).trim())
+    });
+    namespace.is_none_or(|namespace| {
+        candidate.source.contains(&format!("using {namespace};"))
+            || candidate
+                .source
+                .contains(&format!("{namespace}.{type_name}"))
+            || candidate.source.contains(&format!("namespace {namespace}"))
     })
 }
 
@@ -15747,8 +15811,7 @@ fn textual_definition_end_with_limit(
                 _ => {}
             }
         }
-        let brace_on_next_line = line_index == start_line_index
-            && depth <= 0
+        let brace_on_next_line = depth <= 0
             && spans
                 .get(line_index + 1)
                 .is_some_and(|(next_start, next_end)| {

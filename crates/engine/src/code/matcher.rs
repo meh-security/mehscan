@@ -1051,6 +1051,15 @@ pub(crate) fn scan_source(
         csharp_handoff_context,
         &mut evidence,
     );
+    super::csharp_business::add_business_policy_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
     // Standalone source admission is intentionally last among C# semantic
     // passes so it can see every supported impact sink in the symbol.
     super::csharp_standalone::add_standalone_sources(
