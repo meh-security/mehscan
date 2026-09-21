@@ -17,6 +17,24 @@ use super::reachability;
 
 const BROWSER_ENGINE: &str = "ast-grep 0.45.1 + bounded-browser-boundary";
 
+pub(crate) fn accepts_angular_trust_bypass(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    receiver: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    let sanitizer_types =
+        imported_named_bindings(root, &["@angular/platform-browser"], "DomSanitizer");
+    if sanitizer_types.is_empty() {
+        return false;
+    }
+    let receiver = normalized(&receiver.text());
+    let name = receiver.rsplit('.').next().unwrap_or(&receiver);
+    let source = normalized(&root.text());
+    sanitizer_types.iter().any(|sanitizer_type| {
+        source.contains(&format!("{name}:{sanitizer_type}"))
+            || source.contains(&format!("{name}=inject({sanitizer_type})"))
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn add_browser_observations<'tree>(
     path: &str,
@@ -50,6 +68,7 @@ pub(crate) fn add_browser_observations<'tree>(
         "unsafeHTML",
     );
     let vue_factories = imported_named_bindings(root, &["vue"], "h");
+    let jquery_factories = imported_default_or_required_bindings(root, &["jquery"]);
     let solid_runtime = imports_module(root, "solid-js");
     let react_state = untrusted_react_state_fields(root, &response_data);
 
@@ -231,6 +250,33 @@ pub(crate) fn add_browser_observations<'tree>(
                     &["browser", "dom", "html", "xss"],
                     Confidence::High,
                     canonical,
+                    comments,
+                    conditional,
+                    literals,
+                    evidence,
+                );
+            }
+
+            if let Some(content) = jquery_html_sink(root, &node, &jquery_factories) {
+                push_observation(
+                    path,
+                    language,
+                    &node,
+                    &content,
+                    EvidenceKind::Sink,
+                    Capability::HtmlOutput,
+                    &format!("{}-jquery-html-output", language_prefix(language)),
+                    "content",
+                    "jQuery HTML insertion",
+                    &[
+                        "browser",
+                        "jquery",
+                        "trusted-markup",
+                        "explicit-raw-html",
+                        "xss",
+                    ],
+                    Confidence::High,
+                    "import-owned jQuery HTML insertion API",
                     comments,
                     conditional,
                     literals,
@@ -797,7 +843,7 @@ fn storage_source<'tree>(
 }
 
 fn shadowed_browser_globals(root: &Node<'_, StrDoc<SupportLang>>) -> BTreeSet<String> {
-    const GLOBALS: [&str; 9] = [
+    const GLOBALS: [&str; 10] = [
         "window",
         "document",
         "location",
@@ -807,6 +853,7 @@ fn shadowed_browser_globals(root: &Node<'_, StrDoc<SupportLang>>) -> BTreeSet<St
         "sessionStorage",
         "onmessage",
         "addEventListener",
+        "Document",
     ];
     root.dfs()
         .filter_map(|node| match node.kind().as_ref() {
@@ -1195,6 +1242,9 @@ fn html_call_sink<'tree>(
     ) {
         return Some((arguments.first()?.clone(), "Document.write"));
     }
+    if callee == "Document.parseHTMLUnsafe" {
+        return Some((arguments.first()?.clone(), "Document.parseHTMLUnsafe"));
+    }
     let (receiver, method) = callee.rsplit_once('.')?;
     let receiver = receiver.trim_end_matches('!');
     if method == "insertAdjacentHTML"
@@ -1206,7 +1256,84 @@ fn html_call_sink<'tree>(
     {
         return Some((arguments.get(1)?.clone(), "Element.insertAdjacentHTML"));
     }
+    if method == "setHTMLUnsafe"
+        && (receiver.starts_with("document.")
+            || receiver.starts_with("window.document.")
+            || proved_dom_expression(receiver)
+            || bindings.contains(receiver)
+            || react_refs.contains(receiver)
+            || receiver.strip_suffix(".shadowRoot").is_some_and(|host| {
+                proved_dom_expression(host) || bindings.contains(host) || react_refs.contains(host)
+            }))
+    {
+        return Some((arguments.first()?.clone(), "Element.setHTMLUnsafe"));
+    }
     None
+}
+
+fn jquery_html_sink<'tree>(
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    call: &Node<'tree, StrDoc<SupportLang>>,
+    factories: &BTreeSet<String>,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    let callee = normalized(&call.field("function")?.text());
+    let (receiver, method) = callee.rsplit_once('.')?;
+    if !matches!(
+        method,
+        "html"
+            | "append"
+            | "prepend"
+            | "before"
+            | "after"
+            | "replaceWith"
+            | "wrap"
+            | "wrapAll"
+            | "wrapInner"
+    ) || !(factories
+        .iter()
+        .any(|factory| receiver.starts_with(&format!("{factory}(")))
+        || latest_jquery_binding_is_owned(root, call, receiver, factories))
+    {
+        return None;
+    }
+    call.field("arguments")?
+        .children()
+        .find(|child| child.is_named())
+}
+
+fn latest_jquery_binding_is_owned(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    call: &Node<'_, StrDoc<SupportLang>>,
+    receiver: &str,
+    factories: &BTreeSet<String>,
+) -> bool {
+    let call_scope = nearest_function_range(call);
+    root.dfs()
+        .filter(|node| {
+            matches!(
+                node.kind().as_ref(),
+                "variable_declarator" | "assignment_expression"
+            ) && node.range().start < call.range().start
+                && nearest_function_range(node) == call_scope
+        })
+        .filter_map(|node| {
+            let target = node.field("name").or_else(|| node.field("left"))?;
+            (normalized(&target.text()) == receiver).then(|| {
+                (
+                    node.range().start,
+                    node.field("value")
+                        .or_else(|| node.field("right"))
+                        .map(|value| normalized(&value.text())),
+                )
+            })
+        })
+        .max_by_key(|(offset, _)| *offset)
+        .and_then(|(_, value)| value)
+        .is_some_and(|value| {
+            factories
+                .iter()
+                .any(|factory| value.starts_with(&format!("{factory}(")))
+        })
 }
 
 fn url_attribute_call_sink<'tree>(
@@ -1363,6 +1490,45 @@ fn imported_named_bindings(
                     }
                     .to_string(),
                 );
+            }
+        }
+    }
+    bindings
+}
+
+fn imported_default_or_required_bindings(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    modules: &[&str],
+) -> BTreeSet<String> {
+    let mut bindings = BTreeSet::new();
+    for node in root.dfs() {
+        if node.kind().as_ref() == "import_statement" {
+            let text = node.text();
+            let Some((clause, module)) = text
+                .trim()
+                .strip_prefix("import ")
+                .and_then(|rest| rest.rsplit_once(" from "))
+            else {
+                continue;
+            };
+            let Some(module) = exact_quoted(module.trim().trim_end_matches(';')) else {
+                continue;
+            };
+            if modules.contains(&module)
+                && let Some(binding) = clause.split(',').next().map(str::trim).filter(|binding| {
+                    !binding.is_empty() && !binding.starts_with('{') && !binding.starts_with('*')
+                })
+            {
+                bindings.insert(binding.to_string());
+            }
+        } else if node.kind().as_ref() == "variable_declarator"
+            && let (Some(name), Some(value)) = (node.field("name"), node.field("value"))
+        {
+            let value = normalized(&value.text());
+            if modules.iter().any(|module| {
+                value == format!("require('{module}')") || value == format!("require(\"{module}\")")
+            }) {
+                bindings.insert(normalized(&name.text()));
             }
         }
     }

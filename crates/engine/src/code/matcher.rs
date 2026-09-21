@@ -380,6 +380,16 @@ pub(crate) fn scan_source(
                 {
                     continue;
                 }
+                if compiled_rule.rule.id.ends_with("angular-html-trust-bypass")
+                    && matched
+                        .get_env()
+                        .get_match("SANITIZER")
+                        .is_some_and(|receiver| {
+                            !super::node_browser::accepts_angular_trust_bypass(&root, receiver)
+                        })
+                {
+                    continue;
+                }
                 if language == Language::Csharp
                     && !compiled_rule.rule.symbols.is_empty()
                     && !call_site(matched.get_node().clone()).is_some_and(|call| {

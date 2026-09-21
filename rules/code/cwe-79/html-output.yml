@@ -43,6 +43,10 @@
         captures: { content: HTML }
       - pattern: new MarkupString($HTML)
         captures: { content: HTML }
+      - pattern: MvcHtmlString.Create($HTML)
+        captures: { content: HTML }
+      - pattern: HtmlString.Create($HTML)
+        captures: { content: HTML }
       - pattern: $BUILDER.AppendHtml($HTML)
         captures: { content: HTML }
   tags: [http, response, html, xss, aspnet-core, razor, blazor, trusted-markup]
@@ -191,10 +195,6 @@
         captures: { template: TEMPLATE, content: DATA }
       - pattern: HttpResponse($HTML)
         captures: { content: HTML }
-      - pattern: mark_safe($HTML)
-        captures: { content: HTML }
-      - pattern: django.utils.safestring.mark_safe($HTML)
-        captures: { content: HTML }
   tags: [http, response, html, xss, django, fastapi, flask, trusted-markup]
   ai: *html_guidance
   provenance:
@@ -202,6 +202,40 @@
     references:
       - https://cwe.mitre.org/data/definitions/79.html
       - https://fastapi.tiangolo.com/advanced/custom-response/#html-response
+
+- id: python-trusted-markup-bypass
+  version: 1
+  title: Python trusted markup construction
+  language: python
+  kind: sink
+  capability: html_output
+  confidence: high
+  cwe: [CWE-79]
+  match:
+    any:
+      - pattern: mark_safe($HTML)
+        captures: { content: HTML }
+      - pattern: django.utils.safestring.mark_safe($HTML)
+        captures: { content: HTML }
+      - pattern: Markup($HTML)
+        captures: { content: HTML }
+      - pattern: markupsafe.Markup($HTML)
+        captures: { content: HTML }
+  symbols:
+    - canonical: django.utils.safestring.mark_safe
+      captures: { content: 0 }
+    - canonical: markupsafe.Markup
+      captures: { content: 0 }
+    - canonical: flask.Markup
+      captures: { content: 0 }
+  tags: [html, xss, trusted-markup, explicit-raw-html, exact-symbol-ownership]
+  ai: *html_guidance
+  provenance:
+    note: Exact Django and MarkupSafe trusted-markup constructors bypass normal template escaping and retain the marked operand for review.
+    references:
+      - https://cwe.mitre.org/data/definitions/79.html
+      - https://docs.djangoproject.com/en/stable/ref/utils/#django.utils.safestring.mark_safe
+      - https://markupsafe.palletsprojects.com/
 
 - id: go-html-output
   version: 1

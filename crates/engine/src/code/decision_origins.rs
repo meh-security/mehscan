@@ -32,6 +32,9 @@ pub(crate) fn annotate(
         if item.capability == Capability::Deserialization {
             annotate_deserialization_semantics(item);
         }
+        if item.capability == Capability::HtmlOutput {
+            annotate_html_semantics(source, item);
+        }
 
         if has_marker(item) {
             continue;
@@ -798,6 +801,50 @@ fn explicit_html_trust_boundary(item: &Evidence) -> bool {
     )
 }
 
+fn annotate_html_semantics(source: &str, item: &mut Evidence) {
+    if !explicit_html_trust_boundary(item) {
+        return;
+    }
+    let operation = source
+        .get(
+            item.location.start.byte_offset.min(source.len())
+                ..item.location.end.byte_offset.min(source.len()),
+        )
+        .unwrap_or_default();
+    let interpretation = if operation.contains("bypassSecurityTrustScript")
+        || operation.contains("template.JS(")
+        || operation.contains("template.JSStr(")
+    {
+        "browser-interpretation:script"
+    } else if operation.contains("bypassSecurityTrustResourceUrl") {
+        "browser-interpretation:resource-url"
+    } else if operation.contains("bypassSecurityTrustUrl") || operation.contains("template.URL(") {
+        "browser-interpretation:url"
+    } else if operation.contains("template.CSS(") {
+        "browser-interpretation:style"
+    } else {
+        "browser-interpretation:html-markup"
+    };
+    push_tag(&mut item.tags, interpretation);
+
+    let boundary = if item.tags.iter().any(|tag| tag == "trusted-content-bypass") {
+        "html-boundary:framework-trust-bypass"
+    } else if item.rule_id.contains("browser-dom-html-output")
+        || item.rule_id.contains("jquery-html-output")
+        || item.rule_id.contains("react-dangerous-html-output")
+        || item.rule_id.contains("lit-unsafe-html-output")
+        || item.rule_id.contains("vue-inner-html-output")
+        || item.rule_id.contains("solid-inner-html-output")
+    {
+        "html-boundary:dom-insertion"
+    } else if item.tags.iter().any(|tag| tag == "trusted-markup") {
+        "html-boundary:trusted-markup"
+    } else {
+        "html-boundary:explicit-html-response"
+    };
+    push_tag(&mut item.tags, boundary);
+}
+
 fn process_operand_is_dynamic(item: &Evidence) -> bool {
     if item.tags.iter().any(|tag| tag == "shell-command-text") {
         return capture_is_dynamic(item, &["shell_command", "arguments", "command"]);
@@ -1133,12 +1180,44 @@ fn capture_is_dynamic(item: &Evidence, roles: &[&str]) -> bool {
     let Some(role) = roles.iter().find(|role| item.captures.contains_key(**role)) else {
         return false;
     };
+    if capture_is_interpolated(item, role) {
+        return true;
+    }
     if fixed_literal_string(item, role).is_some() {
         return false;
     }
     item.captures
         .get(*role)
         .is_some_and(|capture| !is_quoted_literal(capture.text.trim()))
+}
+
+fn capture_is_interpolated(item: &Evidence, role: &str) -> bool {
+    let Some(capture) = item.captures.get(role) else {
+        return false;
+    };
+    let expression = capture.text.trim();
+    let language = item.rule_id.split('-').next().unwrap_or_default();
+    match language {
+        "javascript" | "typescript" | "tsx" => {
+            expression.starts_with('`') && expression.contains("${")
+        }
+        "csharp" => {
+            (expression.starts_with("$\"")
+                || expression.starts_with("$@\"")
+                || expression.starts_with("@$\""))
+                && expression.contains('{')
+        }
+        "python" => {
+            let lower = expression.to_ascii_lowercase();
+            ["f\"", "f'", "fr\"", "fr'", "rf\"", "rf'"]
+                .iter()
+                .any(|prefix| lower.starts_with(prefix))
+                && expression.contains('{')
+        }
+        "kotlin" => expression.starts_with('"') && expression.contains('$'),
+        "php" => expression.starts_with('"') && expression.contains('$'),
+        _ => false,
+    }
 }
 
 fn fixed_literal_string<'a>(item: &'a Evidence, role: &str) -> Option<&'a str> {
