@@ -1,6 +1,6 @@
 [package]
 name = "mehscan-engine"
-version = "0.5.1"
+version = "0.5.2"
 description = "Deterministic source analysis and bounded security relationships for Mehscan"
 edition.workspace = true
 rust-version.workspace = true
