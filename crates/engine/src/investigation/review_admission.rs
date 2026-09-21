@@ -42,6 +42,7 @@ enum OperationReviewFamily {
     FailOpen,
     AuthoritativeValue,
     StateTransition,
+    SharedStateLimit,
 }
 
 /// Admit bounded review work for sensitive server mutations even when no
@@ -337,6 +338,11 @@ pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewCo
             security_question: "Does this exact resource state change enforce an allowed transition from the persisted current state to the requested next state, with rejection before mutation?",
             title: "Review resource state transition",
         }),
+        OperationReviewFamily::SharedStateLimit => Some(OperationReviewContract {
+            relationship: "bounded_shared_state_limit_enforcement_review",
+            security_question: "Are the shown shared-state limit check and resulting write enforced atomically for the same persisted value, and does the check implement the applicable business limit?",
+            title: "Review shared-state limit enforcement",
+        }),
     }
 }
 
@@ -350,6 +356,9 @@ fn operation_review_family(evidence: &[Evidence]) -> Option<OperationReviewFamil
     }
     if invariant == Some("state-transition-enforcement") {
         return Some(OperationReviewFamily::StateTransition);
+    }
+    if invariant == Some("shared-state-limit-enforcement") {
+        return Some(OperationReviewFamily::SharedStateLimit);
     }
     if invariant == Some("action-resource-authorization")
         || evidence.iter().any(|item| {
@@ -487,6 +496,24 @@ pub(super) fn decision_questions(
                 )]
             }
         }
+        Some(OperationReviewFamily::SharedStateLimit) => {
+            let helper = preferred_capture(evidence, &["persistence_helper"]);
+            let Some(helper) = helper else {
+                return Vec::new();
+            };
+            if facts.iter().any(|fact| {
+                matches!(
+                    fact.role.as_str(),
+                    "helper_definition_context" | "captured_definition_context"
+                ) && fact.symbol == helper
+            }) {
+                Vec::new()
+            } else {
+                vec![format!(
+                    "What database operation does exact helper `{helper}` execute, and does it combine the limit predicate and state change in one conditional write, locked transaction, or other adapter-established atomic operation?"
+                )]
+            }
+        }
         _ => Vec::new(),
     }
 }
@@ -497,6 +524,7 @@ pub(super) fn preferred_lookup_symbol(evidence: &[Evidence]) -> Option<String> {
         &[
             "authority_helper",
             "transition_helper",
+            "persistence_helper",
             "input_type",
             "model",
             "entity",

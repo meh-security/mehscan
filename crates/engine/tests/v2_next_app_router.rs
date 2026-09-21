@@ -183,6 +183,36 @@ fn models_next_app_router_boundaries_postgres_js_and_production_test_routes() {
             .iter()
             .any(|item| item.location.path == "src/app/api/orders/guarded-state/route.ts")
     );
+    let shared_limits = result
+        .evidence
+        .iter()
+        .filter(|item| item.rule_id == "typescript-nextjs-read-check-write-race-review")
+        .collect::<Vec<_>>();
+    assert_eq!(shared_limits.len(), 2, "{shared_limits:#?}");
+    assert!(shared_limits.iter().any(|item| {
+        item.location.path == "src/app/api/credits/redeem/route.ts"
+            && item.captures["current_value"].text == "credits[0].balance"
+            && item.captures["requested_delta"].text == "amount"
+            && item.captures["derived_value"].text == "currentBalance - amount"
+            && item.captures["persistence_helper"].text == "updateRow"
+    }));
+    assert!(shared_limits.iter().any(|item| {
+        item.location.path == "src/app/api/inventory/reserve/route.ts"
+            && item.captures["request_field"].text == "quantity"
+            && item.captures["current_value"].text == "rows[0][\"stock\"]"
+            && item.captures["state_resource"].text == "\"inventory\""
+    }));
+    assert!(result.evidence.iter().any(|item| {
+        item.rule_id == "typescript-nextjs-atomic-shared-state-limit-control"
+            && item.location.path == "src/app/api/inventory/atomic-reserve/route.ts"
+            && item.captures["state_field"].text == "stock"
+            && item.captures["request_field"].text == "quantity"
+    }));
+    assert!(
+        !shared_limits
+            .iter()
+            .any(|item| { item.location.path == "src/app/api/inventory/atomic-reserve/route.ts" })
+    );
     assert!(!result.evidence.iter().any(|item| {
         item.rule_id == "typescript-nextjs-whole-body-persistence"
             && item.location.path == "src/app/api/safe-profile/route.ts"
@@ -300,5 +330,27 @@ fn packages_only_missing_financial_authority_as_investigation() {
     assert!(policy.investigation.lookup_requests.iter().any(|lookup| {
         lookup.operation == "references"
             && lookup.arguments.get("symbol") == Some(&"canTransitionOrder".to_string())
+    }));
+
+    let shared_limits = job
+        .observation_reviews
+        .iter()
+        .filter(|review| {
+            review.review_basis.as_ref().is_some_and(|basis| {
+                basis.relationship == "bounded_shared_state_limit_enforcement_review"
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(shared_limits.len(), 2, "{shared_limits:#?}");
+    assert!(shared_limits.iter().all(|review| {
+        review.investigation.readiness == ReviewReadiness::Investigation
+            && review.investigation.lookup_requests.iter().any(|lookup| {
+                lookup.operation == "references"
+                    && lookup.arguments.get("symbol") == Some(&"updateRow".to_string())
+            })
+            && review.decision_facts.established.iter().any(|fact| {
+                fact.contains("read-check-derive-write sequence")
+                    && fact.contains("database atomicity remains unresolved")
+            })
     }));
 }

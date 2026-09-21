@@ -229,6 +229,15 @@ request-supplied state remains decision-ready when no such enforcement is
 shown; when a referenced policy helper is missing, retrieve its exact
 definition before deciding.
 
+For shared-state limits, keep the loaded persisted value, caller-requested
+delta, local limit check, derived value and write separate. A comparison that
+rejects insufficient balance or capacity can implement the business rule while
+still racing with another request. Treat concurrency as enforced only when the
+supplied adapter facts establish one conditional write, compare-and-swap, or an
+applicable row lock inside a transaction. Names such as `transaction`, `lock`
+or `atomic` are retrieval leads, not proof. Conversely, atomicity does not prove
+that the chosen numeric limit is the correct business policy.
+
 ### Generated and framework-registered routes
 
 For any authorization or resource-access review involving routes, handlers,

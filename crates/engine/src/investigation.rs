@@ -4226,6 +4226,8 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "For bounded state-transition review, keep the persisted current state, requested next state, affected resource, allowed-transition policy and terminating rejection separate. Status names, enums, validation calls, or a transition helper name do not prove that the exact current-to-next edge is allowed. An explicit applicable map plus rejection before mutation is a local control; direct persistence of a request-supplied state is decision-ready when no such enforcement is shown."
                 .to_string(),
+            "For bounded shared-state limit review, keep the loaded persisted value, caller-requested delta, business-limit check, derived value and persistence effect separate. A correct local comparison does not prove concurrency safety, and a transaction or atomic helper name does not prove adapter semantics. Require an exact conditional write, applicable row lock inside a transaction, compare-and-swap, or other supplied database contract before treating the read-check-write sequence as atomic."
+                .to_string(),
             "In HTTP route context, unknown means enforcement was not classified; guard names remain useful exact attachments but do not prove protection. explicitly_public and denied represent canonical local framework policy, while authenticated and role_restricted still do not by themselves prove owner, tenant, or object authorization."
                 .to_string(),
             "Apply an authorization default or activation fact only within its supplied framework scope. For a custom check to protect a dangerous operation, the supplied facts must show the trusted server-side subject, relevant action or resource, and a rejection path that stops execution; otherwise retain it as context rather than dismissing the sink."
@@ -5027,6 +5029,36 @@ fn observation_decision_facts(
             .unwrap_or_default();
         established.push(format!(
             "The bounded Next.js classifier established that request-body field `{request_field}` supplies expression `{supplied}` to financial effect field `{effect_field}`{resource} at {}:{}. This is an explicit value relationship, not a claim about arbitrary dataflow; a separate authoritative value protects it only if supplied facts show comparison, rejection, and use for this exact effect.",
+            item.location.path, item.location.start.line
+        ));
+    }
+    for item in evidence.iter().filter(|item| {
+        item.tags
+            .iter()
+            .any(|tag| tag == "review-invariant:shared-state-limit-enforcement")
+    }) {
+        let current = item
+            .captures
+            .get("current_value")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown current value");
+        let delta = item
+            .captures
+            .get("requested_delta")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown requested delta");
+        let derived = item
+            .captures
+            .get("derived_value")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown derived value");
+        let resource = item
+            .captures
+            .get("state_resource")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown resource");
+        established.push(format!(
+            "The bounded Next.js classifier established a read-check-derive-write sequence for resource `{resource}`: loaded value `{current}`, caller-requested delta `{delta}`, and derived value `{derived}` reach the persisted effect at {}:{}. The supplied local limit check is established separately; database atomicity remains unresolved until exact adapter semantics are supplied.",
             item.location.path, item.location.start.line
         ));
     }

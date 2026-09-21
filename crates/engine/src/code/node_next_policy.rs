@@ -1243,7 +1243,6 @@ fn add_business_policy_reviews<'tree>(
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
     evidence: &mut Vec<Evidence>,
 ) {
-    let text = compact(&function.text());
     let request_values = request_body_values(function, path);
     let server_values = server_financial_values(function, path);
     for call in function.dfs().filter_map(call_site) {
@@ -1348,42 +1347,28 @@ fn add_business_policy_reviews<'tree>(
         literals,
         evidence,
     );
-    if text.contains("currentBalance<amount")
-        && text.contains("newBalance=currentBalance-amount")
-        && text.contains("updateRow(\"credits\"")
-        && !text.to_ascii_lowercase().contains("transaction(")
-        && !text.to_ascii_lowercase().contains("forupdate")
-        && let Some(call) = function.dfs().filter_map(call_site).find(|call| {
-            call.callee.rsplit('.').next() == Some("updateRow")
-                && compact(&call.node.text()).contains("balance:newBalance")
-        })
-    {
-        push_fact(
-            path,
-            language,
-            "nextjs-read-check-write-race-review",
-            &call.node,
-            EvidenceKind::SensitiveOperation,
-            Capability::ResourceAccess,
-            vec!["CWE-362"],
-            vec![
-                "nextjs",
-                "business-logic",
-                "read-check-write",
-                "transaction-or-lock-not-observed",
-                "database-atomicity-may-own-control",
-                "recommendation:review-then-fix-application",
-            ],
-            Confidence::Medium,
-            BTreeMap::from([("balance_write".to_string(), capture(path, &call.node))]),
-            vec![route.clone()],
-            Vec::new(),
-            comments,
-            conditional,
-            literals,
-            evidence,
-        );
-    }
+    add_shared_state_limit_review(
+        path,
+        function,
+        language,
+        route,
+        &request_values,
+        comments,
+        conditional,
+        literals,
+        evidence,
+    );
+    add_atomic_shared_state_controls(
+        path,
+        function,
+        language,
+        route,
+        &request_values,
+        comments,
+        conditional,
+        literals,
+        evidence,
+    );
 }
 
 #[derive(Clone)]
@@ -1410,6 +1395,401 @@ struct TransitionPolicy<'tree> {
     current_state: Node<'tree, StrDoc<SupportLang>>,
     helper: Option<(String, Capture)>,
     explicit_map: bool,
+}
+
+struct SharedStateValue<'tree> {
+    value: Node<'tree, StrDoc<SupportLang>>,
+    load_helper: Option<(String, Capture)>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_atomic_shared_state_controls<'tree>(
+    path: &str,
+    function: &Node<'tree, StrDoc<SupportLang>>,
+    language: Language,
+    route: &HttpRouteContext,
+    request_values: &BTreeMap<String, RequestValueBinding>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    let Some(root) = function.ancestors().last() else {
+        return;
+    };
+    let source = root.text();
+    let Some(postgres_import) = default_import_name(&source, "postgres") else {
+        return;
+    };
+    let clients = root
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "variable_declarator")
+        .filter_map(|declaration| {
+            let name = declaration.field("name")?;
+            let value = declaration.field("value")?;
+            let call = call_site(value)?;
+            (name.kind().as_ref() == "identifier" && call.callee == postgres_import)
+                .then(|| name.text().trim().to_string())
+        })
+        .collect::<Vec<_>>();
+    let candidates = function
+        .dfs()
+        .filter(|node| {
+            let text = node.text();
+            let text = text.trim_start();
+            clients
+                .iter()
+                .any(|client| text.starts_with(&format!("{client}`")))
+                && !node
+                    .children()
+                    .filter(|child| child.is_named())
+                    .any(|child| {
+                        let child = child.text();
+                        let child = child.trim_start();
+                        clients
+                            .iter()
+                            .any(|client| child.starts_with(&format!("{client}`")))
+                    })
+        })
+        .filter_map(|node| {
+            let query = compact(&node.text()).to_ascii_lowercase();
+            if !query.contains("update") || !query.contains("set") || !query.contains("where") {
+                return None;
+            }
+            request_values.iter().find_map(|(binding, origin)| {
+                let delta = binding.strip_suffix(".*").unwrap_or(binding);
+                let normalized_delta = delta.to_ascii_lowercase();
+                SHARED_STATE_FIELDS.iter().find_map(|field| {
+                    let assignment = format!("{field}={field}-${{{normalized_delta}}}");
+                    let predicate = format!("{field}>=${{{normalized_delta}}}");
+                    (query.contains(&assignment) && query.contains(&predicate)).then(|| {
+                        let mut request_field = origin.capture.clone();
+                        request_field.text = origin.field.clone();
+                        (
+                            node.clone(),
+                            field.to_string(),
+                            delta.to_string(),
+                            request_field,
+                        )
+                    })
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    for (node, field, delta, origin) in candidates {
+        push_fact(
+            path,
+            language,
+            "nextjs-atomic-shared-state-limit-control",
+            &node,
+            EvidenceKind::Validation,
+            Capability::ResourceAccess,
+            vec!["CWE-362"],
+            vec![
+                "nextjs",
+                "postgresql",
+                "business-logic",
+                "shared-state-limit",
+                "single-conditional-update",
+                "limit-predicate-same-statement",
+            ],
+            Confidence::High,
+            BTreeMap::from([
+                ("atomic_effect".to_string(), capture(path, &node)),
+                (
+                    "state_field".to_string(),
+                    Capture {
+                        text: field,
+                        location: location(path, &node),
+                    },
+                ),
+                (
+                    "requested_delta".to_string(),
+                    Capture {
+                        text: delta,
+                        location: origin.location.clone(),
+                    },
+                ),
+                ("request_field".to_string(), origin),
+            ]),
+            vec![route.clone()],
+            Vec::new(),
+            comments,
+            conditional,
+            literals,
+            evidence,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_shared_state_limit_review<'tree>(
+    path: &str,
+    function: &Node<'tree, StrDoc<SupportLang>>,
+    language: Language,
+    route: &HttpRouteContext,
+    request_values: &BTreeMap<String, RequestValueBinding>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    let current_values = shared_state_values(function, path);
+    for declaration in function
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "variable_declarator")
+        .filter(|node| belongs_to_function(node, function))
+    {
+        let (Some(name), Some(computation)) =
+            (declaration.field("name"), declaration.field("value"))
+        else {
+            continue;
+        };
+        if name.kind().as_ref() != "identifier"
+            || computation.kind().as_ref() != "binary_expression"
+        {
+            continue;
+        }
+        let (Some(current), Some(delta)) = (computation.field("left"), computation.field("right"))
+        else {
+            continue;
+        };
+        let derived_name = name.text().trim().to_string();
+        let current_text = current.text();
+        let current_name = current_text.trim();
+        if compact(&computation.text())
+            != format!("{}-{}", compact(&current.text()), compact(&delta.text()))
+            || !plain_identifier(current_name)
+        {
+            continue;
+        }
+        let Some(delta_origin) = request_value_origin(&delta, request_values) else {
+            continue;
+        };
+        let Some(current_value) = current_values.get(current_name) else {
+            continue;
+        };
+        let Some(limit_check) = shared_state_limit_check(
+            function,
+            declaration.range().start,
+            current_name,
+            delta.text().trim(),
+        ) else {
+            continue;
+        };
+        for call in function
+            .dfs()
+            .filter_map(call_site)
+            .filter(|call| call.node.range().start > declaration.range().end)
+        {
+            let Some((field, value, resource)) = shared_state_effect(path, &call, evidence) else {
+                continue;
+            };
+            if compact(&value.text()) != derived_name {
+                continue;
+            }
+            let persistence_name = call
+                .callee
+                .rsplit('.')
+                .next()
+                .unwrap_or(call.callee.as_str())
+                .trim()
+                .to_string();
+            let mut persistence = capture(path, &call.node);
+            persistence.text = persistence_name;
+            let mut captures = BTreeMap::from([
+                ("shared_state_effect".to_string(), capture(path, &call.node)),
+                ("state_resource".to_string(), capture(path, &resource)),
+                ("state_field".to_string(), capture(path, &field)),
+                (
+                    "current_value".to_string(),
+                    capture(path, &current_value.value),
+                ),
+                ("requested_delta".to_string(), capture(path, &delta)),
+                ("request_field".to_string(), delta_origin.clone()),
+                ("derived_value".to_string(), capture(path, &computation)),
+                ("limit_check".to_string(), capture(path, &limit_check)),
+                ("persistence_helper".to_string(), persistence),
+            ]);
+            if let Some((_name, helper)) = &current_value.load_helper {
+                captures.insert("state_load_helper".to_string(), helper.clone());
+            }
+            push_fact(
+                path,
+                language,
+                "nextjs-read-check-write-race-review",
+                &call.node,
+                EvidenceKind::SensitiveOperation,
+                Capability::ResourceAccess,
+                vec!["CWE-362"],
+                vec![
+                    "nextjs",
+                    "business-logic",
+                    "shared-state-limit",
+                    "read-check-derive-write",
+                    "review-invariant:shared-state-limit-enforcement",
+                    "database-atomicity-unresolved",
+                    "recommendation:review-then-fix-application",
+                ],
+                Confidence::High,
+                captures,
+                vec![route.clone()],
+                Vec::new(),
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+        }
+    }
+}
+
+fn shared_state_values<'tree>(
+    function: &Node<'tree, StrDoc<SupportLang>>,
+    path: &str,
+) -> BTreeMap<String, SharedStateValue<'tree>> {
+    let declarations = function
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "variable_declarator")
+        .filter(|node| belongs_to_function(node, function))
+        .collect::<Vec<_>>();
+    declarations
+        .iter()
+        .filter_map(|declaration| {
+            let name = declaration.field("name")?;
+            let value = declaration.field("value")?;
+            if name.kind().as_ref() != "identifier" || !shared_state_member(&value) {
+                return None;
+            }
+            let root = root_identifier(value.text().trim())?;
+            let load = declarations.iter().find(|candidate| {
+                candidate.range().start < declaration.range().start
+                    && candidate
+                        .field("name")
+                        .is_some_and(|candidate_name| candidate_name.text().trim() == root)
+            })?;
+            let load_value = load.field("value")?;
+            if is_request_json_call(&load_value) {
+                return None;
+            }
+            let call = load_value.dfs().find_map(call_site)?;
+            let helper_name = call.callee.rsplit('.').next()?.trim().to_string();
+            let mut helper = capture(path, &call.node);
+            helper.text = helper_name.clone();
+            let binding = name.text().trim().to_string();
+            Some((
+                binding.clone(),
+                SharedStateValue {
+                    value,
+                    load_helper: Some((helper_name, helper)),
+                },
+            ))
+        })
+        .collect()
+}
+
+fn shared_state_limit_check<'tree>(
+    function: &Node<'tree, StrDoc<SupportLang>>,
+    before: usize,
+    current: &str,
+    delta: &str,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    function
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "if_statement")
+        .filter(|node| belongs_to_function(node, function) && node.range().start < before)
+        .find(|branch| {
+            let Some(condition) = branch.field("condition") else {
+                return false;
+            };
+            let condition_text = compact(&condition.text());
+            let compares_values = expression_mentions(&condition, current)
+                && expression_mentions(&condition, delta)
+                && ['<', '>']
+                    .iter()
+                    .any(|operator| condition_text.contains(*operator));
+            let terminates = branch.field("consequence").is_some_and(|consequence| {
+                consequence.dfs().any(|node| {
+                    matches!(node.kind().as_ref(), "return_statement" | "throw_statement")
+                })
+            });
+            compares_values && terminates
+        })
+}
+
+fn expression_mentions(node: &Node<'_, StrDoc<SupportLang>>, expression: &str) -> bool {
+    let expression = compact(expression);
+    node.dfs()
+        .any(|candidate| compact(&candidate.text()) == expression)
+}
+
+fn shared_state_effect<'tree>(
+    path: &str,
+    call: &CallSite<'tree>,
+    evidence: &[Evidence],
+) -> Option<(
+    Node<'tree, StrDoc<SupportLang>>,
+    Node<'tree, StrDoc<SupportLang>>,
+    Node<'tree, StrDoc<SupportLang>>,
+)> {
+    if !owned_persistence_call(path, call, evidence) {
+        return None;
+    }
+    let object = call.arguments.iter().find(|argument| {
+        matches!(argument.kind().as_ref(), "object" | "object_expression")
+            && object_field(argument, &SHARED_STATE_FIELDS).is_some()
+    })?;
+    let (field, value) = object_field(object, &SHARED_STATE_FIELDS)?;
+    let resource = call
+        .arguments
+        .iter()
+        .find(|argument| quoted_shared_state_resource(argument.text().trim()))?
+        .clone();
+    Some((field, value, resource))
+}
+
+const SHARED_STATE_FIELDS: [&str; 7] = [
+    "balance",
+    "credits",
+    "inventory",
+    "quota",
+    "remaining",
+    "stock",
+    "usage",
+];
+
+fn shared_state_member(value: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    let value = compact(&value.text());
+    SHARED_STATE_FIELDS.iter().any(|field| {
+        value.ends_with(&format!(".{field}"))
+            || value.ends_with(&format!("['{field}']"))
+            || value.ends_with(&format!("[\"{field}\"]"))
+    })
+}
+
+fn root_identifier(value: &str) -> Option<String> {
+    let root = value
+        .split(['.', '['])
+        .next()
+        .map(str::trim)
+        .filter(|root| plain_identifier(root))?;
+    Some(root.to_string())
+}
+
+fn quoted_shared_state_resource(value: &str) -> bool {
+    let value = value.trim_matches(['\'', '"']).to_ascii_lowercase();
+    [
+        "balance",
+        "credit",
+        "inventory",
+        "quota",
+        "reservation",
+        "seat",
+        "stock",
+        "usage",
+    ]
+    .iter()
+    .any(|marker| value.contains(marker))
 }
 
 #[allow(clippy::too_many_arguments)]
