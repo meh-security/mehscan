@@ -4216,6 +4216,12 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "For review-invariant:credential-lifecycle, decide whether the exact credential or authenticator state transition requires and enforces appropriate proof of the subject, current credential, recovery authority, or step-up authentication. A valid session alone may be insufficient for a high-impact change; issue requires a concrete bypass or missing required proof, while not_issue requires the applicable proof and enforced transition to be shown."
                 .to_string(),
+            "For bounded object-binding review, identify the exact request-controlled object, binding or copy operation, persisted target, and writable security-sensitive fields. Apply an allowlist, exclusion, DTO boundary, serializer field list, bind-never policy, explicit mapping, or field-level authorization only when supplied executable facts cover that exact operation and field; a typed request object or validation annotation alone is not a write allowlist."
+                .to_string(),
+            "For bounded request-integrity review, require browser-managed victim authority and the exact state-changing operation. Apply a CSRF token or strict origin policy only when its attachment and rejection behavior cover that route; authentication and assumed SameSite behavior are not substitutes."
+                .to_string(),
+            "For bounded fail-open review, follow the shown decision result, branch, catch, response, or callback to the protected effect. Logging, telemetry, sending a response, setting a status, or issuing a challenge is not enforcement when supplied code continues; a return or throw protects only the branch and operation it actually terminates."
+                .to_string(),
             "In HTTP route context, unknown means enforcement was not classified; guard names remain useful exact attachments but do not prove protection. explicitly_public and denied represent canonical local framework policy, while authenticated and role_restricted still do not by themselves prove owner, tenant, or object authorization."
                 .to_string(),
             "Apply an authorization default or activation fact only within its supplied framework scope. For a custom check to protect a dangerous operation, the supplied facts must show the trusted server-side subject, relevant action or resource, and a rejection path that stops execution; otherwise retain it as context rather than dismissing the sink."
@@ -4378,11 +4384,13 @@ fn observation_review_investigation(
     truncation: &ReviewContextTruncation,
 ) -> ReviewInvestigationPlan {
     let anchor = evidence.first().map(|item| &item.location);
-    let lookup_symbol = review_lookup_symbol(
-        evidence
-            .iter()
-            .flat_map(|item| item.captures.values().map(|capture| capture.text.as_str())),
-    );
+    let lookup_symbol = review_admission::preferred_lookup_symbol(evidence).or_else(|| {
+        review_lookup_symbol(
+            evidence
+                .iter()
+                .flat_map(|item| item.captures.values().map(|capture| capture.text.as_str())),
+        )
+    });
     let Some(anchor) = anchor else {
         let mut missing_facts = decision_facts.unresolved.clone();
         if truncation.decision_critical {
@@ -12274,6 +12282,11 @@ fn observation_review_questions(
         questions
             .push("Does this bounded observation establish a concrete security issue?".to_string());
     }
+    for question in review_admission::decision_questions(evidence, facts) {
+        if !questions.contains(&question) {
+            questions.push(question);
+        }
+    }
     questions
 }
 
@@ -18740,6 +18753,26 @@ mod tests {
             Capability::Authentication
         );
         assert_eq!(credential.evidence[0].cwe_candidates, ["CWE-620"]);
+        assert_eq!(
+            review_admission::review_contract(&credential.evidence)
+                .expect("credential contract")
+                .relationship,
+            "bounded_credential_lifecycle_review"
+        );
+        let authorization = groups
+            .iter()
+            .find(|group| group.path == "routes.ts")
+            .expect("authorization marker");
+        assert_eq!(
+            authorization.evidence[0].captures["operation"].text,
+            "PATCH route"
+        );
+        assert_eq!(
+            review_admission::review_contract(&authorization.evidence)
+                .expect("authorization contract")
+                .relationship,
+            "bounded_action_resource_authorization_review"
+        );
         assert!(groups.iter().all(|group| {
             group.evidence.iter().all(|evidence| {
                 evidence

@@ -189,6 +189,26 @@ authorization test to credential lifecycle, injection, deserialization,
 redirect, SSRF, trusted-HTML, template, or process-execution reviews; use each
 review's named operand and invariant.
 
+Operation-policy reviews also keep object binding, request integrity, and
+fail-open behavior separate. For object binding, identify the exact
+request-controlled object, binding/copy operation, persisted target and writable
+security-sensitive fields; an interface, DTO name, validation annotation, or
+unrelated explicit setter is not an allowlist. Apply exclusions, serializer
+fields, bind-never metadata, explicit mapping, or field-level authorization only
+when the supplied executable configuration covers that exact operation and
+field. Do not report automatic binding merely because a handler accepts a typed
+request object; require the supplied persistence or model-write boundary.
+
+For CSRF/request integrity, require browser-managed victim authority plus an
+applicable state-changing operation. Apply a token or strict origin check only
+when its attachment and rejection behavior cover the exact route; authentication
+and SameSite assumptions are not substitutes. For fail-open review, follow the
+shown decision result, branch, catch, response, or callback to the protected
+effect. Logging, telemetry, sending a response, setting a status, or calling a
+challenge helper is not enforcement when the supplied code continues. A local
+terminating return or throw protects only the branch and operation it actually
+stops.
+
 ### Generated and framework-registered routes
 
 For any authorization or resource-access review involving routes, handlers,

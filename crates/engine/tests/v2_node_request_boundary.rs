@@ -161,6 +161,12 @@ fn models_node_session_cookie_csrf_rotation_and_password_policy_without_comment_
         1
     );
     assert_eq!(csrf_review.open_questions.len(), 1);
+    assert!(
+        csrf_review
+            .review_basis
+            .as_ref()
+            .is_some_and(|basis| { basis.relationship == "bounded_request_integrity_review" })
+    );
     let cookie_review = boundary_reviews
         .iter()
         .find(|review| {

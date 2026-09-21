@@ -27,10 +27,19 @@ struct ReviewAdmissionDescriptor {
     tags: Vec<String>,
 }
 
-pub(super) struct MarkerReviewContract {
+pub(super) struct OperationReviewContract {
     pub(super) relationship: &'static str,
     pub(super) security_question: &'static str,
     pub(super) title: &'static str,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OperationReviewFamily {
+    Authorization,
+    CredentialLifecycle,
+    ObjectBinding,
+    RequestIntegrity,
+    FailOpen,
 }
 
 /// Admit bounded review work for sensitive server mutations even when no
@@ -289,24 +298,173 @@ pub(super) fn is_marker(evidence: &Evidence) -> bool {
         .any(|tag| tag == "review-admission-marker")
 }
 
-pub(super) fn review_contract(evidence: &[Evidence]) -> Option<MarkerReviewContract> {
+pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewContract> {
+    match operation_review_family(evidence)? {
+        OperationReviewFamily::Authorization => Some(OperationReviewContract {
+            relationship: "bounded_action_resource_authorization_review",
+            security_question: "Does the supplied operation, subject, selected resource, and applicable policy establish effective authorization for this exact action?",
+            title: "Review action and resource authorization",
+        }),
+        OperationReviewFamily::CredentialLifecycle => Some(OperationReviewContract {
+            relationship: "bounded_credential_lifecycle_review",
+            security_question: "Does the supplied credential or authenticator transition enforce the required subject proof, recovery authority, current credential, or step-up authentication?",
+            title: "Review credential lifecycle state transition",
+        }),
+        OperationReviewFamily::ObjectBinding => Some(OperationReviewContract {
+            relationship: "bounded_object_binding_review",
+            security_question: "Which request-controlled fields can this exact binding or copy operation persist, and do explicit allowlists, exclusions, DTO boundaries, or field-level authorization prevent security-sensitive assignment?",
+            title: "Review persisted object binding",
+        }),
+        OperationReviewFamily::RequestIntegrity => Some(OperationReviewContract {
+            relationship: "bounded_request_integrity_review",
+            security_question: "Can a cross-site request invoke this exact state-changing operation with victim authority, or does an applicable request-bound token or strict origin control reject it first?",
+            title: "Review request integrity for state change",
+        }),
+        OperationReviewFamily::FailOpen => Some(OperationReviewContract {
+            relationship: "bounded_fail_open_policy_review",
+            security_question: "Does the shown failed security or validation decision terminate the protected operation, or can execution continue to the sensitive effect?",
+            title: "Review non-enforcing security decision",
+        }),
+    }
+}
+
+fn operation_review_family(evidence: &[Evidence]) -> Option<OperationReviewFamily> {
     let invariant = evidence
         .iter()
         .flat_map(|item| item.tags.iter())
-        .find_map(|tag| tag.strip_prefix("review-invariant:"))?;
-    match invariant {
-        "action-resource-authorization" => Some(MarkerReviewContract {
-            relationship: "bounded_server_mutation_review_marker",
-            security_question: "Does the supplied boundary, handler/helper, subject, selected resource, and policy context establish effective authorization for this server mutation?",
-            title: "Review authorization for bounded server mutation",
-        }),
-        "credential-lifecycle" => Some(MarkerReviewContract {
-            relationship: "bounded_credential_lifecycle_review_marker",
-            security_question: "Does the supplied boundary and transition enforce the subject proof, current credential, recovery authority, or step-up authentication required for this credential lifecycle change?",
-            title: "Review credential lifecycle state transition",
-        }),
-        _ => None,
+        .find_map(|tag| tag.strip_prefix("review-invariant:"));
+    if invariant == Some("action-resource-authorization")
+        || evidence.iter().any(|item| {
+            item.cwe_candidates.iter().any(|cwe| cwe == "CWE-862")
+                && (item.rule_id.contains("generated-crud-review")
+                    || item.tags.iter().any(|tag| {
+                        matches!(
+                            tag.as_str(),
+                            "allow-anonymous"
+                                | "needs-verification"
+                                | "verify-public-intent-and-operation-authorization"
+                                | "verify-field-authority"
+                        )
+                    }))
+        })
+    {
+        return Some(OperationReviewFamily::Authorization);
     }
+    if invariant == Some("credential-lifecycle") {
+        return Some(OperationReviewFamily::CredentialLifecycle);
+    }
+    if evidence.iter().any(|item| {
+        matches!(
+            item.kind,
+            EvidenceKind::Sink | EvidenceKind::SensitiveOperation
+        ) && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-915")
+            && item.tags.iter().any(|tag| tag == "mass-assignment")
+    }) {
+        return Some(OperationReviewFamily::ObjectBinding);
+    }
+    if evidence.iter().any(|item| {
+        matches!(
+            item.kind,
+            EvidenceKind::Sink
+                | EvidenceKind::SensitiveOperation
+                | EvidenceKind::SecurityConfiguration
+        ) && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-352")
+            && item.tags.iter().any(|tag| tag == "csrf")
+    }) {
+        return Some(OperationReviewFamily::RequestIntegrity);
+    }
+    if evidence.iter().any(|item| {
+        item.tags.iter().any(|tag| {
+            matches!(
+                tag.as_str(),
+                "rejection-response-falls-through" | "mismatch-not-rejected"
+            )
+        })
+    }) {
+        return Some(OperationReviewFamily::FailOpen);
+    }
+    None
+}
+
+pub(super) fn decision_questions(
+    evidence: &[Evidence],
+    facts: &[ReviewNeighborhoodFact],
+) -> Vec<String> {
+    match operation_review_family(evidence) {
+        Some(OperationReviewFamily::Authorization | OperationReviewFamily::CredentialLifecycle)
+            if evidence.iter().any(is_marker) =>
+        {
+            let missing_helpers = evidence
+                .iter()
+                .flat_map(|item| item.captures.iter())
+                .filter(|(name, _)| name.starts_with("related_handler_"))
+                .map(|(_, capture)| capture.text.as_str())
+                .filter(|handler| {
+                    !facts.iter().any(|fact| {
+                        fact.role == "review_admission_helper_context" && fact.symbol == *handler
+                    })
+                })
+                .collect::<BTreeSet<_>>();
+            if missing_helpers.is_empty() {
+                Vec::new()
+            } else {
+                vec![format!(
+                    "What do the exact referenced mutation helpers {} enforce for this operation, including rejection behavior and the affected subject, action, resource, or credential transition?",
+                    missing_helpers
+                        .into_iter()
+                        .map(|handler| format!("`{handler}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )]
+            }
+        }
+        Some(OperationReviewFamily::ObjectBinding)
+            if !evidence.iter().any(|item| {
+                item.tags
+                    .iter()
+                    .any(|tag| tag.starts_with("sensitive-fields:"))
+            }) =>
+        {
+            let input_type = preferred_capture(evidence, &["input_type", "model", "entity"]);
+            vec![match input_type {
+                Some(input_type) => format!(
+                    "Which persisted fields can request-bound `{input_type}` supply through this exact binding operation, which are security-sensitive, and does an applicable executable allowlist, exclusion, DTO mapping, or field-level authorization prevent them from being written?"
+                ),
+                None => "Which persisted fields can the request-bound object supply through this exact binding operation, which are security-sensitive, and does an applicable executable allowlist, exclusion, DTO mapping, or field-level authorization prevent them from being written?".to_string(),
+            }]
+        }
+        _ => Vec::new(),
+    }
+}
+
+pub(super) fn preferred_lookup_symbol(evidence: &[Evidence]) -> Option<String> {
+    preferred_capture(
+        evidence,
+        &["input_type", "model", "entity", "related_handler_1"],
+    )
+    .or_else(|| {
+        evidence
+            .iter()
+            .flat_map(|item| item.tags.iter())
+            .find_map(|tag| {
+                ["model:", "entity:", "resource:"]
+                    .iter()
+                    .find_map(|prefix| tag.strip_prefix(prefix))
+            })
+            .filter(|symbol| is_helpful_reference_identifier(symbol))
+            .map(str::to_string)
+    })
+}
+
+fn preferred_capture(evidence: &[Evidence], names: &[&str]) -> Option<String> {
+    names.iter().find_map(|name| {
+        evidence
+            .iter()
+            .filter_map(|item| item.captures.get(*name))
+            .map(|capture| capture.text.trim())
+            .find(|value| is_helpful_reference_identifier(value))
+            .map(str::to_string)
+    })
 }
 
 pub(super) fn helper_facts(
@@ -505,7 +663,9 @@ fn javascript_server_mutation_marker(
     }
 
     if javascript_http_mutation_route(line) {
-        return marker_from_inline_boundary(file, spans, line_index, "http-mutation-route");
+        let symbol =
+            http_mutation_symbol(line).unwrap_or_else(|| "HTTP mutation route".to_string());
+        return marker_from_inline_boundary(file, spans, line_index, &symbol);
     }
 
     if (file.source.contains("'use server'") || file.source.contains("\"use server\""))
@@ -639,13 +799,13 @@ fn marker_from_inline_boundary(
     let end_index = textual_definition_end_with_limit(&file.source, spans, line_index, 120);
     let excerpt = &file.source[spans[line_index].0..spans[end_index].1];
     let mut handlers = terminal_call_identifiers(excerpt, "");
-    if let Some(handler) =
-        terminal_route_handler(&file.source[spans[line_index].0..spans[line_index].1])
-        && !handlers.contains(&handler)
-    {
-        handlers.insert(0, handler);
-    }
     let boundary_line = &file.source[spans[line_index].0..spans[line_index].1];
+    let route_handler = terminal_route_handler(boundary_line);
+    if let Some(handler) = route_handler.as_ref()
+        && !handlers.contains(handler)
+    {
+        handlers.insert(0, handler.clone());
+    }
     let declared = authorization_definition_identifier(boundary_line);
     let prefer_declared = boundary_line.trim_start().starts_with("export ")
         || boundary_line.contains(" = validatedAction")
@@ -654,7 +814,7 @@ fn marker_from_inline_boundary(
     let symbol = if prefer_declared {
         declared.or_else(|| handlers.first().cloned())
     } else {
-        handlers.first().cloned().or(declared)
+        route_handler
     }
     .unwrap_or_else(|| fallback_symbol.to_string());
     if is_authorization_bootstrap_operation(&symbol)
@@ -706,7 +866,6 @@ fn mutation_effect(text: &str) -> Option<String> {
 
 fn terminal_call_identifiers(text: &str, enclosing: &str) -> Vec<String> {
     let mut called = BTreeSet::new();
-    let mut fallback = BTreeSet::new();
     for prefix in text.split('(').take(64) {
         let token = prefix
             .trim_end()
@@ -727,23 +886,29 @@ fn terminal_call_identifiers(text: &str, enclosing: &str) -> Vec<String> {
             && !is_generic_mutation_reference(&lower)
             && is_helpful_reference_identifier(token)
             && mutation_name(&lower)
+            && is_mutation_helper_identifier(token)
         {
             called.insert(token.to_string());
         }
     }
-    for token in text.split(|character: char| {
-        !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
-    }) {
-        let lower = token.to_ascii_lowercase();
-        if token != enclosing
-            && !is_generic_mutation_reference(&lower)
-            && is_helpful_reference_identifier(token)
-            && mutation_name(&lower)
-        {
-            fallback.insert(token.to_string());
-        }
-    }
-    called.into_iter().chain(fallback).take(6).collect()
+    called.into_iter().take(6).collect()
+}
+
+fn is_mutation_helper_identifier(token: &str) -> bool {
+    let lower = token.to_ascii_lowercase();
+    token
+        .chars()
+        .next()
+        .is_some_and(|character| !character.is_ascii_uppercase())
+        && !matches!(
+            lower.as_str(),
+            "createform"
+                | "createformbuilder"
+                | "createquerybuilder"
+                | "createvalidator"
+                | "createview"
+        )
+        && !lower.contains("schema")
 }
 
 fn authorization_definition_identifier(line: &str) -> Option<String> {
@@ -841,6 +1006,15 @@ fn javascript_http_mutation_route(line: &str) -> bool {
                 .iter()
                 .any(|verb| compact.contains(&format!("{receiver}.{verb}(")))
         })
+}
+
+fn http_mutation_symbol(line: &str) -> Option<String> {
+    let compact = line.split_whitespace().collect::<String>();
+    let lower = compact.to_ascii_lowercase();
+    ["post", "put", "patch", "delete"]
+        .into_iter()
+        .find(|verb| lower.contains(&format!(".{verb}(")))
+        .map(|verb| format!("{} route", verb.to_ascii_uppercase()))
 }
 
 fn is_authorization_bootstrap_operation(symbol: &str) -> bool {
