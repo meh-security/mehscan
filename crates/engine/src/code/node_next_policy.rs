@@ -6,6 +6,7 @@ use ast_grep_language::SupportLang;
 use mehscan_core::{
     Capability, Capture, Confidence, Evidence, EvidenceContext, EvidenceKind, HttpRouteAccess,
     HttpRouteContext, Language, Location, Position, Provenance, Resolution, RuntimeEnvironment,
+    SymbolConfidence,
 };
 
 use super::comments::CommentRanges;
@@ -1243,39 +1244,98 @@ fn add_business_policy_reviews<'tree>(
     evidence: &mut Vec<Evidence>,
 ) {
     let text = compact(&function.text());
-    if text.contains("request.json()")
-        && text.contains("amount:price")
-        && (text.contains("status:\"paid\"") || text.contains("status:'paid'"))
-        && let Some(call) = function.dfs().filter_map(call_site).find(|call| {
-            call.callee.rsplit('.').next() == Some("insertRow")
-                && compact(&call.node.text()).contains("amount:price")
-        })
-    {
-        push_fact(
-            path,
-            language,
-            "nextjs-client-controlled-financial-amount-review",
-            &call.node,
-            EvidenceKind::SensitiveOperation,
-            Capability::ResourceAccess,
-            vec!["CWE-840"],
-            vec![
+    let request_values = request_financial_values(function, path);
+    let server_values = server_financial_values(function, path);
+    for call in function.dfs().filter_map(call_site) {
+        let Some(effect) = financial_effect(path, &call, evidence) else {
+            continue;
+        };
+        if let Some(origin) = request_financial_origin(&effect.value, &request_values) {
+            let authority_helper = financial_authority_helper(function, path, &call);
+            let mut captures = BTreeMap::from([
+                ("financial_effect".to_string(), capture(path, &call.node)),
+                ("supplied_value".to_string(), capture(path, &effect.value)),
+                ("request_field".to_string(), origin),
+                ("effect_field".to_string(), capture(path, &effect.key)),
+            ]);
+            if let Some(resource) = effect.resource {
+                captures.insert("financial_resource".to_string(), capture(path, &resource));
+            }
+            if let Some(status) = effect.status {
+                captures.insert("financial_status".to_string(), capture(path, &status));
+            }
+            let mut tags = vec![
                 "nextjs",
                 "business-logic",
                 "financial-operation",
-                "client-controlled-amount",
-                "server-owned-price-lookup-not-observed",
+                "client-controlled-value",
+                "review-invariant:authoritative-value-binding",
                 "recommendation:fix-application",
-            ],
-            Confidence::High,
-            BTreeMap::from([("financial_write".to_string(), capture(path, &call.node))]),
-            vec![route.clone()],
-            Vec::new(),
-            comments,
-            conditional,
-            literals,
-            evidence,
-        );
+            ];
+            if let Some((_helper, helper_capture)) = authority_helper {
+                tags.push("related-authority-helper-observed");
+                captures.insert("authority_helper".to_string(), helper_capture);
+            } else {
+                tags.push("authoritative-value-binding-not-observed");
+            }
+            push_fact(
+                path,
+                language,
+                "nextjs-client-controlled-financial-amount-review",
+                &call.node,
+                EvidenceKind::SensitiveOperation,
+                Capability::ResourceAccess,
+                vec!["CWE-840"],
+                tags,
+                Confidence::High,
+                captures,
+                vec![route.clone()],
+                Vec::new(),
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+        } else if let Some((_helper, authority)) =
+            server_financial_origin(&effect.value, &server_values)
+        {
+            let mut captures = BTreeMap::from([
+                ("financial_effect".to_string(), capture(path, &call.node)),
+                (
+                    "authoritative_value".to_string(),
+                    capture(path, &effect.value),
+                ),
+                ("authority_helper".to_string(), authority),
+                ("effect_field".to_string(), capture(path, &effect.key)),
+            ]);
+            if let Some(resource) = effect.resource {
+                captures.insert("financial_resource".to_string(), capture(path, &resource));
+            }
+            push_fact(
+                path,
+                language,
+                "nextjs-authoritative-financial-value-binding-control",
+                &call.node,
+                EvidenceKind::Validation,
+                Capability::ResourceAccess,
+                vec!["CWE-840"],
+                vec![
+                    "nextjs",
+                    "business-logic",
+                    "financial-operation",
+                    "authoritative-value-binding",
+                    "server-loaded-value",
+                ],
+                Confidence::High,
+                captures,
+                vec![route.clone()],
+                Vec::new(),
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+        }
     }
     if text.contains("currentBalance<amount")
         && text.contains("newBalance=currentBalance-amount")
@@ -1313,6 +1373,362 @@ fn add_business_policy_reviews<'tree>(
             evidence,
         );
     }
+}
+
+#[derive(Clone)]
+struct FinancialValueBinding {
+    field: String,
+    capture: Capture,
+}
+
+struct FinancialEffect<'tree> {
+    key: Node<'tree, StrDoc<SupportLang>>,
+    value: Node<'tree, StrDoc<SupportLang>>,
+    resource: Option<Node<'tree, StrDoc<SupportLang>>>,
+    status: Option<Node<'tree, StrDoc<SupportLang>>>,
+}
+
+fn request_financial_values(
+    function: &Node<'_, StrDoc<SupportLang>>,
+    path: &str,
+) -> BTreeMap<String, FinancialValueBinding> {
+    let mut bindings = BTreeMap::new();
+    let mut request_objects = BTreeMap::new();
+    for declaration in function
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "variable_declarator")
+        .filter(|node| belongs_to_function(node, function))
+    {
+        let (Some(pattern), Some(value)) = (declaration.field("name"), declaration.field("value"))
+        else {
+            continue;
+        };
+        if !is_request_json_call(&value) {
+            continue;
+        }
+        if pattern.kind().as_ref() == "identifier" {
+            request_objects.insert(pattern.text().trim().to_string(), capture(path, &pattern));
+            continue;
+        }
+        if pattern.kind().as_ref() != "object_pattern" {
+            continue;
+        }
+        for property in pattern.children().filter(|child| child.is_named()) {
+            if let Some((field, local, node)) = object_pattern_binding(&property) {
+                bindings.insert(
+                    local,
+                    FinancialValueBinding {
+                        field,
+                        capture: capture(path, &node),
+                    },
+                );
+            }
+        }
+    }
+    for declaration in function
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "variable_declarator")
+        .filter(|node| belongs_to_function(node, function))
+    {
+        let (Some(name), Some(value)) = (declaration.field("name"), declaration.field("value"))
+        else {
+            continue;
+        };
+        if name.kind().as_ref() != "identifier" {
+            continue;
+        }
+        let expression = compact(&value.text());
+        if let Some((_, field)) = request_objects
+            .keys()
+            .find_map(|object| member_field(&expression, object).map(|field| (object, field)))
+        {
+            bindings.insert(
+                name.text().trim().to_string(),
+                FinancialValueBinding {
+                    field,
+                    capture: capture(path, &value),
+                },
+            );
+        }
+    }
+    for (object, object_capture) in request_objects {
+        bindings.insert(
+            format!("{object}.*"),
+            FinancialValueBinding {
+                field: "*".to_string(),
+                capture: object_capture,
+            },
+        );
+    }
+    bindings
+}
+
+fn server_financial_values(
+    function: &Node<'_, StrDoc<SupportLang>>,
+    path: &str,
+) -> BTreeMap<String, (String, Capture)> {
+    function
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "variable_declarator")
+        .filter(|node| belongs_to_function(node, function))
+        .filter_map(|declaration| {
+            let name = declaration.field("name")?;
+            let value = declaration.field("value")?;
+            if name.kind().as_ref() != "identifier" || is_request_json_call(&value) {
+                return None;
+            }
+            let call = value.dfs().find_map(call_site)?;
+            let helper = authority_helper_name(&call.callee)?;
+            let mut helper_capture = capture(path, &call.node);
+            helper_capture.text = helper.clone();
+            Some((name.text().trim().to_string(), (helper, helper_capture)))
+        })
+        .collect()
+}
+
+fn financial_effect<'tree>(
+    path: &str,
+    call: &CallSite<'tree>,
+    evidence: &[Evidence],
+) -> Option<FinancialEffect<'tree>> {
+    let operation = call.callee.rsplit('.').next()?.to_ascii_lowercase();
+    if !matches!(
+        operation.as_str(),
+        "create" | "insert" | "insertrow" | "save" | "update" | "upsert"
+    ) {
+        return None;
+    }
+    let owned_persistence = evidence.iter().any(|item| {
+        item.location.path == path
+            && item.location.start.byte_offset == call.node.range().start
+            && item.location.end.byte_offset == call.node.range().end
+            && item.kind == EvidenceKind::Sink
+            && item.capability == Capability::DatabaseQuery
+            && item.symbol_resolution.as_ref().is_some_and(|resolution| {
+                matches!(
+                    resolution.confidence,
+                    SymbolConfidence::Exact | SymbolConfidence::High
+                )
+            })
+    });
+    if !owned_persistence {
+        return None;
+    }
+    let object = call.arguments.iter().find(|argument| {
+        matches!(argument.kind().as_ref(), "object" | "object_expression")
+            && object_field(argument, &FINANCIAL_VALUE_FIELDS).is_some()
+    })?;
+    let (key, value) = object_field(object, &FINANCIAL_VALUE_FIELDS)?;
+    let status = object_field(object, &["status", "paymentStatus"])
+        .and_then(|(_, status)| financial_completion_status(&status).then_some(status));
+    let resource = call
+        .arguments
+        .iter()
+        .find(|argument| quoted_financial_resource(argument.text().trim()))
+        .cloned();
+    let operation_is_financial = ["payment", "purchase", "order", "invoice", "charge"]
+        .iter()
+        .any(|marker| call.callee.to_ascii_lowercase().contains(marker));
+    (status.is_some() || resource.is_some() || operation_is_financial).then_some(FinancialEffect {
+        key,
+        value,
+        resource,
+        status,
+    })
+}
+
+const FINANCIAL_VALUE_FIELDS: [&str; 7] = [
+    "amount",
+    "paidAmount",
+    "price",
+    "subtotal",
+    "total",
+    "totalAmount",
+    "unitAmount",
+];
+
+fn object_field<'tree>(
+    object: &Node<'tree, StrDoc<SupportLang>>,
+    names: &[&str],
+) -> Option<(
+    Node<'tree, StrDoc<SupportLang>>,
+    Node<'tree, StrDoc<SupportLang>>,
+)> {
+    object
+        .children()
+        .filter(|child| child.is_named())
+        .find_map(|property| {
+            if matches!(
+                property.kind().as_ref(),
+                "shorthand_property_identifier" | "shorthand_property_identifier_pattern"
+            ) && names.contains(&property.text().trim())
+            {
+                return Some((property.clone(), property));
+            }
+            if property.kind().as_ref() != "pair" {
+                return None;
+            }
+            let key = property.field("key")?;
+            let name = key.text();
+            names
+                .contains(&name.trim_matches(['\'', '"']))
+                .then(|| property.field("value").map(|value| (key, value)))
+                .flatten()
+        })
+}
+
+fn request_financial_origin(
+    value: &Node<'_, StrDoc<SupportLang>>,
+    bindings: &BTreeMap<String, FinancialValueBinding>,
+) -> Option<Capture> {
+    let expression = compact(&value.text());
+    if let Some(binding) = bindings.get(&expression) {
+        let mut origin = binding.capture.clone();
+        origin.text = binding.field.clone();
+        return Some(origin);
+    }
+    bindings.iter().find_map(|(binding, origin)| {
+        let object = binding.strip_suffix(".*")?;
+        let field = member_field(&expression, object)?;
+        let mut capture = origin.capture.clone();
+        capture.text = field;
+        Some(capture)
+    })
+}
+
+fn server_financial_origin(
+    value: &Node<'_, StrDoc<SupportLang>>,
+    bindings: &BTreeMap<String, (String, Capture)>,
+) -> Option<(String, Capture)> {
+    let expression = compact(&value.text());
+    bindings.iter().find_map(|(binding, authority)| {
+        (expression == *binding || member_field(&expression, binding).is_some())
+            .then(|| authority.clone())
+    })
+}
+
+fn financial_authority_helper(
+    function: &Node<'_, StrDoc<SupportLang>>,
+    path: &str,
+    effect: &CallSite<'_>,
+) -> Option<(String, Capture)> {
+    let mut helpers = function
+        .dfs()
+        .filter_map(call_site)
+        .filter(|call| call.node.range().start < effect.node.range().start)
+        .filter_map(|call| authority_helper_name(&call.callee).map(|name| (name, call.node)))
+        .collect::<Vec<_>>();
+    helpers.sort_by(|left, right| left.0.cmp(&right.0));
+    helpers.dedup_by(|left, right| left.0 == right.0);
+    let [(name, node)] = helpers.as_slice() else {
+        return None;
+    };
+    Some((
+        name.clone(),
+        Capture {
+            text: name.clone(),
+            location: location(path, node),
+        },
+    ))
+}
+
+fn authority_helper_name(callee: &str) -> Option<String> {
+    let name = callee.rsplit('.').next()?.trim();
+    let lower = name.to_ascii_lowercase();
+    [
+        "catalog", "order", "plan", "price", "pricing", "product", "quote",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+    .then(|| name.to_string())
+}
+
+fn object_pattern_binding<'tree>(
+    property: &Node<'tree, StrDoc<SupportLang>>,
+) -> Option<(String, String, Node<'tree, StrDoc<SupportLang>>)> {
+    if matches!(
+        property.kind().as_ref(),
+        "shorthand_property_identifier_pattern" | "shorthand_property_identifier"
+    ) {
+        let name = property.text().trim().to_string();
+        return Some((name.clone(), name, property.clone()));
+    }
+    if property.kind().as_ref() != "pair" {
+        return None;
+    }
+    let key = property.field("key")?;
+    let mut value = property.field("value")?;
+    if value.kind().as_ref() == "assignment_pattern" {
+        value = value.field("left")?;
+    }
+    (value.kind().as_ref() == "identifier").then(|| {
+        (
+            key.text().trim_matches(['\'', '"']).to_string(),
+            value.text().trim().to_string(),
+            value,
+        )
+    })
+}
+
+fn is_request_json_call(value: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    let value = compact(&value.text());
+    value.ends_with("request.json()") || value.ends_with("req.json()")
+}
+
+fn member_field(expression: &str, object: &str) -> Option<String> {
+    expression
+        .strip_prefix(&format!("{object}."))
+        .filter(|field| plain_identifier(field))
+        .map(str::to_string)
+        .or_else(|| {
+            let field = expression
+                .strip_prefix(&format!("{object}["))?
+                .strip_suffix(']')?;
+            let field = field.trim_matches(['\'', '"']);
+            plain_identifier(field).then(|| field.to_string())
+        })
+}
+
+fn quoted_financial_resource(value: &str) -> bool {
+    let value = value.trim_matches(['\'', '"']).to_ascii_lowercase();
+    [
+        "charge",
+        "invoice",
+        "order",
+        "payment",
+        "purchase",
+        "transaction",
+    ]
+    .iter()
+    .any(|marker| value.contains(marker))
+}
+
+fn financial_completion_status(value: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    matches!(
+        value
+            .text()
+            .trim_matches(['\'', '"'])
+            .to_ascii_lowercase()
+            .as_str(),
+        "charged" | "completed" | "paid" | "succeeded"
+    )
+}
+
+fn belongs_to_function(
+    node: &Node<'_, StrDoc<SupportLang>>,
+    function: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    node.ancestors()
+        .find(is_function)
+        .is_some_and(|owner| owner.range() == function.range())
+}
+
+fn plain_identifier(value: &str) -> bool {
+    let mut characters = value.chars();
+    characters
+        .next()
+        .is_some_and(|character| character == '_' || character.is_ascii_alphabetic())
+        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
 fn direct_request_body_bindings(function: &Node<'_, StrDoc<SupportLang>>) -> Vec<String> {

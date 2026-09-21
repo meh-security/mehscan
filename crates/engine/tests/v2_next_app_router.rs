@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use mehscan_core::{Capability, EvidenceKind, SecurityPathState};
+use mehscan_core::{Capability, EvidenceKind, ReviewReadiness, SecurityPathState};
 
 fn fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -112,6 +112,48 @@ fn models_next_app_router_boundaries_postgres_js_and_production_test_routes() {
             "missing {rule}"
         );
     }
+    let financial = result
+        .evidence
+        .iter()
+        .filter(|item| {
+            item.rule_id == "typescript-nextjs-client-controlled-financial-amount-review"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(financial.len(), 3, "{financial:#?}");
+    assert!(financial.iter().any(|item| {
+        item.location.path == "src/app/api/checkout/route.ts"
+            && item.captures["request_field"].text == "price"
+            && item.captures["effect_field"].text == "amount"
+            && item.captures["financial_resource"].text == "\"orders\""
+            && !item.captures.contains_key("authority_helper")
+    }));
+    assert!(financial.iter().any(|item| {
+        item.location.path == "src/app/api/quoted-checkout/route.ts"
+            && item.captures["request_field"].text == "submittedPrice"
+            && item.captures["authority_helper"].text == "lookupPrice"
+    }));
+    assert!(financial.iter().any(|item| {
+        item.location.path == "src/app/api/body-checkout/route.ts"
+            && item.captures["request_field"].text == "total"
+            && item.captures["supplied_value"].text == "submittedTotal"
+            && item.captures["financial_resource"].text == "\"payments\""
+    }));
+    assert!(result.evidence.iter().any(|item| {
+        item.rule_id == "typescript-nextjs-authoritative-financial-value-binding-control"
+            && item.location.path == "src/app/api/safe-checkout/route.ts"
+            && item.captures["authoritative_value"].text == "catalogPlan.price"
+            && item.captures["authority_helper"].text == "loadPlan"
+    }));
+    assert!(
+        !financial
+            .iter()
+            .any(|item| item.location.path == "src/app/api/safe-checkout/route.ts")
+    );
+    assert!(
+        !financial
+            .iter()
+            .any(|item| item.location.path == "src/app/api/financial-lookalike/route.ts")
+    );
     assert!(!result.evidence.iter().any(|item| {
         item.rule_id == "typescript-nextjs-whole-body-persistence"
             && item.location.path == "src/app/api/safe-profile/route.ts"
@@ -142,5 +184,55 @@ fn models_next_app_router_boundaries_postgres_js_and_production_test_routes() {
                 .steps
                 .last()
                 .is_some_and(|step| step.location.path == "src/app/api/upload/route.ts")
+    }));
+}
+
+#[test]
+fn packages_only_missing_financial_authority_as_investigation() {
+    let job =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture_root(), Some(8), false)
+            .expect("review job should build");
+    let reviews = job
+        .observation_reviews
+        .iter()
+        .filter(|review| {
+            review.evidence.iter().any(|item| {
+                item.rule_id == "typescript-nextjs-client-controlled-financial-amount-review"
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(reviews.len(), 3, "{reviews:#?}");
+
+    let direct = reviews
+        .iter()
+        .find(|review| review.evidence[0].location.path.contains("/checkout/"))
+        .expect("direct client amount review");
+    assert_eq!(direct.investigation.readiness, ReviewReadiness::Assessment);
+    assert!(direct.decision_facts.unresolved.is_empty());
+    assert!(direct.decision_facts.established.iter().any(|fact| {
+        fact.contains("request-body field `price`")
+            && fact.contains("financial effect field `amount`")
+    }));
+
+    let quoted = reviews
+        .iter()
+        .find(|review| review.evidence[0].location.path.contains("quoted-checkout"))
+        .expect("unresolved quoted amount review");
+    assert_eq!(
+        quoted
+            .review_basis
+            .as_ref()
+            .expect("operation review contract")
+            .relationship,
+        "bounded_authoritative_value_binding_review"
+    );
+    assert_eq!(
+        quoted.investigation.readiness,
+        ReviewReadiness::Investigation
+    );
+    assert_eq!(quoted.decision_facts.unresolved.len(), 1);
+    assert!(quoted.investigation.lookup_requests.iter().any(|lookup| {
+        lookup.operation == "references"
+            && lookup.arguments.get("symbol") == Some(&"lookupPrice".to_string())
     }));
 }

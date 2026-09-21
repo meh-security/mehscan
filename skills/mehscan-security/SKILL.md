@@ -209,6 +209,17 @@ challenge helper is not enforcement when the supplied code continues. A local
 terminating return or throw protects only the branch and operation it actually
 stops.
 
+For authoritative-value binding, keep the caller-supplied value, selected
+resource, server-loaded or quoted value, units/currency, version and financial
+effect separate. A variable named `price`, a catalog lookup, or a payment SDK
+call does not prove that the exact write or charge uses the applicable
+authoritative value. Direct persistence of an established request field as a
+paid amount is decision-ready unless supplied facts show comparison, rejection,
+and use of the server value for that effect. A server-loaded value used directly
+at the effect is affirmative local control for amount integrity, while product
+selection, discounts, staleness and cross-service authority remain separate
+questions when the supplied code does not establish them.
+
 ### Generated and framework-registered routes
 
 For any authorization or resource-access review involving routes, handlers,

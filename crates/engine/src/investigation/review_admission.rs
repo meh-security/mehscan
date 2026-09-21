@@ -40,6 +40,7 @@ enum OperationReviewFamily {
     ObjectBinding,
     RequestIntegrity,
     FailOpen,
+    AuthoritativeValue,
 }
 
 /// Admit bounded review work for sensitive server mutations even when no
@@ -325,6 +326,11 @@ pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewCo
             security_question: "Does the shown failed security or validation decision terminate the protected operation, or can execution continue to the sensitive effect?",
             title: "Review non-enforcing security decision",
         }),
+        OperationReviewFamily::AuthoritativeValue => Some(OperationReviewContract {
+            relationship: "bounded_authoritative_value_binding_review",
+            security_question: "Does this financial effect use the applicable server-authoritative value for the selected resource and version, rather than a caller-supplied amount?",
+            title: "Review authoritative financial value binding",
+        }),
     }
 }
 
@@ -333,6 +339,9 @@ fn operation_review_family(evidence: &[Evidence]) -> Option<OperationReviewFamil
         .iter()
         .flat_map(|item| item.tags.iter())
         .find_map(|tag| tag.strip_prefix("review-invariant:"));
+    if invariant == Some("authoritative-value-binding") {
+        return Some(OperationReviewFamily::AuthoritativeValue);
+    }
     if invariant == Some("action-resource-authorization")
         || evidence.iter().any(|item| {
             item.cwe_candidates.iter().any(|cwe| cwe == "CWE-862")
@@ -433,6 +442,24 @@ pub(super) fn decision_questions(
                 None => "Which persisted fields can the request-bound object supply through this exact binding operation, which are security-sensitive, and does an applicable executable allowlist, exclusion, DTO mapping, or field-level authorization prevent them from being written?".to_string(),
             }]
         }
+        Some(OperationReviewFamily::AuthoritativeValue) => {
+            let helper = preferred_capture(evidence, &["authority_helper"]);
+            let Some(helper) = helper else {
+                return Vec::new();
+            };
+            if facts.iter().any(|fact| {
+                matches!(
+                    fact.role.as_str(),
+                    "helper_definition_context" | "captured_definition_context"
+                ) && fact.symbol == helper
+            }) {
+                Vec::new()
+            } else {
+                vec![format!(
+                    "Does exact helper `{helper}` produce the applicable server-authoritative price, quote, order amount, or catalog value for this financial effect, and where is the caller-supplied value compared and rejected before persistence?"
+                )]
+            }
+        }
         _ => Vec::new(),
     }
 }
@@ -440,7 +467,13 @@ pub(super) fn decision_questions(
 pub(super) fn preferred_lookup_symbol(evidence: &[Evidence]) -> Option<String> {
     preferred_capture(
         evidence,
-        &["input_type", "model", "entity", "related_handler_1"],
+        &[
+            "authority_helper",
+            "input_type",
+            "model",
+            "entity",
+            "related_handler_1",
+        ],
     )
     .or_else(|| {
         evidence

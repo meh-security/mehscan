@@ -4222,6 +4222,8 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "For bounded fail-open review, follow the shown decision result, branch, catch, response, or callback to the protected effect. Logging, telemetry, sending a response, setting a status, or issuing a challenge is not enforcement when supplied code continues; a return or throw protects only the branch and operation it actually terminates."
                 .to_string(),
+            "For bounded authoritative-value review, keep the caller-supplied value, selected resource, server-loaded or quoted value, units/currency, version and financial effect distinct. A variable named price, a catalog lookup, or a payment SDK call is not proof that the exact effect uses the applicable authoritative value. Direct persistence of a request field as a paid amount is decision-ready when supplied evidence establishes that relationship; do not dismiss it merely because a separate price source might exist."
+                .to_string(),
             "In HTTP route context, unknown means enforcement was not classified; guard names remain useful exact attachments but do not prove protection. explicitly_public and denied represent canonical local framework policy, while authenticated and role_restricted still do not by themselves prove owner, tenant, or object authorization."
                 .to_string(),
             "Apply an authorization default or activation fact only within its supplied framework scope. For a custom check to protect a dangerous operation, the supplied facts must show the trusted server-side subject, relevant action or resource, and a rejection path that stops execution; otherwise retain it as context rather than dismissing the sink."
@@ -4994,6 +4996,36 @@ fn observation_decision_facts(
             .unwrap_or("security");
         established.push(format!(
             "The bounded classifier established `{operation}` as a server mutation boundary with a mutation-shaped `{effect}` effect. This admits review of `{invariant}` even without an ordinary sink rule; it does not by itself prove that invariant is violated."
+        ));
+    }
+    for item in evidence.iter().filter(|item| {
+        item.tags
+            .iter()
+            .any(|tag| tag == "review-invariant:authoritative-value-binding")
+    }) {
+        let supplied = item
+            .captures
+            .get("supplied_value")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown value");
+        let request_field = item
+            .captures
+            .get("request_field")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown request field");
+        let effect_field = item
+            .captures
+            .get("effect_field")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("financial value");
+        let resource = item
+            .captures
+            .get("financial_resource")
+            .map(|capture| format!(" for resource {}", capture.text))
+            .unwrap_or_default();
+        established.push(format!(
+            "The bounded Next.js classifier established that request-body field `{request_field}` supplies expression `{supplied}` to financial effect field `{effect_field}`{resource} at {}:{}. This is an explicit value relationship, not a claim about arbitrary dataflow; a separate authoritative value protects it only if supplied facts show comparison, rejection, and use for this exact effect.",
+            item.location.path, item.location.start.line
         ));
     }
     for item in evidence
