@@ -16,24 +16,24 @@ use mehscan_core::{
     FindingRelatedLocation, FindingRemediation, FindingReport, FindingReportScan,
     FindingReportSummary, FindingReportTool, FindingReportTriage, FindingStatus,
     InvestigationAnchor, InvestigationJob, InvestigationLimits, InvestigationUnit,
-    InvestigationUnitProvenance, Language, LiteralState, LiteralValue, Location,
-    NativeCallArgument, NativeCallSite, NativeSyntaxAnchor, NativeSyntaxContext,
-    NativeSyntaxResults, ObservationReview, ObservationReviewBasis, OutlineSymbol,
-    PATH_REVIEW_BUNDLE_SCHEMA_VERSION, PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, PathReview,
-    PathReviewBasis, PathReviewBundle, PathReviewBundleCategory, PathReviewBundleIssueGroup,
-    PathReviewBundleManifest, PathReviewBundleManifestEntry, PathReviewBundlePayload,
-    PathReviewBundleResponseSet, PathReviewBundleRunReport, PathReviewBundleSet,
-    PathReviewBundleTriageReport, PathReviewEvidenceBasis, PathReviewIssueGroup, PathReviewJob,
-    PathReviewTask, PathReviewTaskPage, PathReviewTaskPayload, PathReviewTriageProgress,
-    PathReviewTriageReport, PathReviewTriageResponseSet, Position, Provenance, QueryProvenance,
-    QueryResponse, REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, RelationContract, RelationshipFunnel,
-    RelationshipFunnelCapability, ReportedFinding, ReportedSeverity, Resolution,
-    ResourcePolicyState, ReviewConfidence, ReviewConfidencePolicy, ReviewContextTruncation,
-    ReviewDecision, ReviewDecisionFacts, ReviewInvestigationPlan, ReviewLookupRequest,
-    ReviewNeighborhoodFact, ReviewNeighborhoodJob, ReviewReadiness, ReviewTriageContract,
-    ReviewTriageReport, ReviewTriageResponseSet, Rule, RuntimeEnvironment, SCHEMA_VERSION,
-    SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
-    StructuralMatch, TextReference,
+    InvestigationUnitProvenance, LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, Language,
+    LiteralState, LiteralValue, Location, NativeCallArgument, NativeCallSite, NativeSyntaxAnchor,
+    NativeSyntaxContext, NativeSyntaxResults, ObservationReview, ObservationReviewBasis,
+    OutlineSymbol, PATH_REVIEW_BUNDLE_SCHEMA_VERSION, PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+    PathReview, PathReviewBasis, PathReviewBundle, PathReviewBundleCategory,
+    PathReviewBundleIssueGroup, PathReviewBundleManifest, PathReviewBundleManifestEntry,
+    PathReviewBundlePayload, PathReviewBundleResponseSet, PathReviewBundleRunReport,
+    PathReviewBundleSet, PathReviewBundleTriageReport, PathReviewEvidenceBasis,
+    PathReviewIssueGroup, PathReviewJob, PathReviewTask, PathReviewTaskPage, PathReviewTaskPayload,
+    PathReviewTriageProgress, PathReviewTriageReport, PathReviewTriageResponseSet, Position,
+    Provenance, QueryProvenance, QueryResponse, REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+    RelationContract, RelationshipFunnel, RelationshipFunnelCapability, ReportedFinding,
+    ReportedSeverity, Resolution, ResourcePolicyState, ReviewConfidence, ReviewConfidencePolicy,
+    ReviewContextTruncation, ReviewDecision, ReviewDecisionFacts, ReviewInvestigationPlan,
+    ReviewInvestigationTrace, ReviewLookupOutcome, ReviewLookupRequest, ReviewNeighborhoodFact,
+    ReviewNeighborhoodJob, ReviewReadiness, ReviewTriageContract, ReviewTriageReport,
+    ReviewTriageResponseSet, Rule, RuntimeEnvironment, SCHEMA_VERSION, SecurityPathState,
+    SecurityPathStepKind, Severity, SeveritySource, SourceSlice, StructuralMatch, TextReference,
 };
 
 mod review_admission;
@@ -1074,7 +1074,7 @@ pub fn validate_path_review_triage(
     }
     let issue_groups = path_review_issue_groups(job, responses);
     Ok(PathReviewTriageReport {
-        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
+        schema_version: responses.schema_version.clone(),
         job_fingerprint: job.fingerprint.clone(),
         issue_count: responses
             .results
@@ -1288,7 +1288,7 @@ pub fn validate_path_review_bundle_response(
     bundle: &PathReviewBundle,
     responses: &PathReviewBundleResponseSet,
 ) -> Result<PathReviewBundleTriageReport, EngineError> {
-    if responses.schema_version != PATH_REVIEW_BUNDLE_SCHEMA_VERSION {
+    if !supported_path_review_response_schema(&responses.schema_version) {
         return Err(EngineError(format!(
             "unsupported path-review bundle response schema {:?}",
             responses.schema_version
@@ -1324,6 +1324,24 @@ pub fn validate_path_review_bundle_response(
             &result.summary,
             &result.checks,
         )?;
+        if responses.schema_version == PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION {
+            let trace = result.investigation.as_ref().ok_or_else(|| {
+                EngineError(format!(
+                    "path-review response schema {} requires an investigation trace for {:?}",
+                    PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, result.review_id
+                ))
+            })?;
+            let (plan, supplied_artifact_ids) =
+                bundle_review_investigation_context(bundle, &result.review_id)?;
+            validate_review_investigation_trace(
+                &result.review_id,
+                result.decision,
+                &result.checks,
+                plan,
+                &supplied_artifact_ids,
+                trace,
+            )?;
+        }
         let expected_confidence = bundle_review_confidence_policy(bundle, &result.review_id)
             .map(|policy| confidence_for_decision(policy, result.decision))
             .ok_or_else(|| {
@@ -1361,7 +1379,7 @@ pub fn validate_path_review_bundle_response(
         )));
     }
     Ok(PathReviewBundleTriageReport {
-        schema_version: PATH_REVIEW_BUNDLE_SCHEMA_VERSION.to_string(),
+        schema_version: responses.schema_version.clone(),
         bundle_fingerprint: bundle.bundle_fingerprint.clone(),
         complete: true,
         issue_count: responses
@@ -1561,6 +1579,18 @@ fn finding_report_from_run(
     include_dismissed: bool,
     run: PathReviewBundleRunReport,
 ) -> Result<FindingReport, EngineError> {
+    let response_schema_versions = bundle_responses
+        .iter()
+        .map(|(_, responses)| responses.schema_version.as_str())
+        .collect::<BTreeSet<_>>();
+    let response_schema_version = if response_schema_versions.is_empty() {
+        PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string()
+    } else {
+        response_schema_versions
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join("+")
+    };
     let mut records = BTreeMap::<String, ReportAccumulator>::new();
     let mut dismissed = Vec::new();
 
@@ -1645,7 +1675,7 @@ fn finding_report_from_run(
             scope: Vec::new(),
         },
         triage: FindingReportTriage {
-            response_schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
+            response_schema_version,
             reviewer,
         },
         summary: FindingReportSummary {
@@ -2624,6 +2654,362 @@ fn bundle_unresolved_facts<'a>(
     .ok_or_else(|| EngineError(format!("bundle is missing review {review_id:?}")))
 }
 
+fn job_unresolved_facts<'a>(
+    job: &'a PathReviewJob,
+    review_id: &str,
+) -> Result<&'a [String], EngineError> {
+    job.reviews
+        .iter()
+        .find(|review| review.id == review_id)
+        .map(|review| review.decision_facts.unresolved.as_slice())
+        .or_else(|| {
+            job.observation_reviews
+                .iter()
+                .find(|review| review.id == review_id)
+                .map(|review| review.decision_facts.unresolved.as_slice())
+        })
+        .ok_or_else(|| EngineError(format!("job is missing review {review_id:?}")))
+}
+
+fn supported_path_review_response_schema(schema_version: &str) -> bool {
+    matches!(
+        schema_version,
+        PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
+            | LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
+    )
+}
+
+fn bundle_review_investigation_context<'a>(
+    bundle: &'a PathReviewBundle,
+    review_id: &str,
+) -> Result<(&'a ReviewInvestigationPlan, BTreeSet<String>), EngineError> {
+    match &bundle.payload {
+        PathReviewBundlePayload::SecurityPath { reviews } => reviews
+            .iter()
+            .find(|review| review.id == review_id)
+            .map(|review| {
+                (
+                    &review.investigation,
+                    path_review_supplied_artifact_ids(review),
+                )
+            }),
+        PathReviewBundlePayload::Observation { reviews } => reviews
+            .iter()
+            .find(|review| review.id == review_id)
+            .map(|review| {
+                (
+                    &review.investigation,
+                    observation_review_supplied_artifact_ids(review),
+                )
+            }),
+    }
+    .ok_or_else(|| EngineError(format!("bundle is missing review {review_id:?}")))
+}
+
+fn job_review_investigation_context<'a>(
+    job: &'a PathReviewJob,
+    review_id: &str,
+) -> Result<(&'a ReviewInvestigationPlan, BTreeSet<String>), EngineError> {
+    job.reviews
+        .iter()
+        .find(|review| review.id == review_id)
+        .map(|review| {
+            (
+                &review.investigation,
+                path_review_supplied_artifact_ids(review),
+            )
+        })
+        .or_else(|| {
+            job.observation_reviews
+                .iter()
+                .find(|review| review.id == review_id)
+                .map(|review| {
+                    (
+                        &review.investigation,
+                        observation_review_supplied_artifact_ids(review),
+                    )
+                })
+        })
+        .ok_or_else(|| EngineError(format!("job is missing review {review_id:?}")))
+}
+
+fn path_review_supplied_artifact_ids(review: &PathReview) -> BTreeSet<String> {
+    std::iter::once(review.candidate.source.id.clone())
+        .chain(std::iter::once(review.candidate.sink.id.clone()))
+        .chain(
+            review
+                .candidate
+                .protections
+                .iter()
+                .map(|evidence| evidence.id.clone()),
+        )
+        .chain(
+            review
+                .candidate
+                .steps
+                .iter()
+                .filter_map(|step| step.evidence_id.clone()),
+        )
+        .chain(
+            review
+                .facts
+                .iter()
+                .filter_map(|fact| fact.evidence_id.clone()),
+        )
+        .collect()
+}
+
+fn observation_review_supplied_artifact_ids(review: &ObservationReview) -> BTreeSet<String> {
+    review
+        .evidence
+        .iter()
+        .map(|evidence| evidence.id.clone())
+        .chain(
+            review
+                .facts
+                .iter()
+                .filter_map(|fact| fact.evidence_id.clone()),
+        )
+        .collect()
+}
+
+fn validate_review_investigation_trace(
+    review_id: &str,
+    decision: ReviewDecision,
+    checks: &[String],
+    plan: &ReviewInvestigationPlan,
+    supplied_artifact_ids: &BTreeSet<String>,
+    trace: &ReviewInvestigationTrace,
+) -> Result<(), EngineError> {
+    let mut attempted_requests = BTreeSet::new();
+    let mut available_artifact_ids = supplied_artifact_ids.clone();
+    for attempt in &trace.lookup_attempts {
+        let request = plan
+            .lookup_requests
+            .get(attempt.request_index)
+            .ok_or_else(|| {
+                EngineError(format!(
+                    "investigation trace for {review_id:?} references unknown lookup request {}",
+                    attempt.request_index
+                ))
+            })?;
+        if !attempted_requests.insert(attempt.request_index) {
+            return Err(EngineError(format!(
+                "investigation trace for {review_id:?} repeats lookup request {}",
+                attempt.request_index
+            )));
+        }
+        validate_trace_line(review_id, "lookup detail", &attempt.detail, 500)?;
+        if attempt.outcome == ReviewLookupOutcome::Answered && attempt.artifacts.is_empty() {
+            return Err(EngineError(format!(
+                "answered lookup request {} for {review_id:?} requires a retrieved artifact",
+                attempt.request_index
+            )));
+        }
+        for artifact in &attempt.artifacts {
+            validate_trace_line(review_id, "artifact ID", &artifact.artifact_id, 120)?;
+            if artifact.excerpt.trim().is_empty()
+                || artifact.excerpt.chars().count() > 4_000
+                || artifact.excerpt.contains('\0')
+            {
+                return Err(EngineError(format!(
+                    "retrieved artifact {:?} for {review_id:?} requires a non-empty excerpt of at most 4000 characters",
+                    artifact.artifact_id
+                )));
+            }
+            if !available_artifact_ids.insert(artifact.artifact_id.clone()) {
+                return Err(EngineError(format!(
+                    "investigation trace for {review_id:?} contains duplicate artifact ID {:?}",
+                    artifact.artifact_id
+                )));
+            }
+            validate_retrieved_artifact_locator(review_id, request, artifact)?;
+        }
+    }
+
+    let mut citations = BTreeSet::new();
+    let mut referenced_artifact_ids = BTreeSet::new();
+    for citation in &trace.citations {
+        validate_trace_line(review_id, "citation claim", &citation.claim, 500)?;
+        if !available_artifact_ids.contains(&citation.artifact_id) {
+            return Err(EngineError(format!(
+                "citation for {review_id:?} references unknown artifact {:?}",
+                citation.artifact_id
+            )));
+        }
+        if !citations.insert((citation.artifact_id.as_str(), citation.claim.trim())) {
+            return Err(EngineError(format!(
+                "investigation trace for {review_id:?} contains a duplicate citation"
+            )));
+        }
+        referenced_artifact_ids.insert(citation.artifact_id.as_str());
+    }
+
+    for inference in &trace.reviewer_inferences {
+        validate_trace_line(review_id, "reviewer inference", &inference.claim, 500)?;
+        if inference.artifact_ids.is_empty() {
+            return Err(EngineError(format!(
+                "reviewer inference for {review_id:?} must cite at least one artifact"
+            )));
+        }
+        let mut cited = BTreeSet::new();
+        for artifact_id in &inference.artifact_ids {
+            if !available_artifact_ids.contains(artifact_id) {
+                return Err(EngineError(format!(
+                    "reviewer inference for {review_id:?} references unknown artifact {artifact_id:?}"
+                )));
+            }
+            if !cited.insert(artifact_id) {
+                return Err(EngineError(format!(
+                    "reviewer inference for {review_id:?} repeats artifact {artifact_id:?}"
+                )));
+            }
+            referenced_artifact_ids.insert(artifact_id.as_str());
+        }
+    }
+
+    for attempt in trace
+        .lookup_attempts
+        .iter()
+        .filter(|attempt| attempt.outcome == ReviewLookupOutcome::Answered)
+    {
+        if !attempt
+            .artifacts
+            .iter()
+            .any(|artifact| referenced_artifact_ids.contains(artifact.artifact_id.as_str()))
+        {
+            return Err(EngineError(format!(
+                "answered lookup request {} for {review_id:?} must cite a retrieved artifact",
+                attempt.request_index
+            )));
+        }
+    }
+
+    let mut recorded_blockers = BTreeSet::new();
+    for blocker in &trace.blockers {
+        validate_trace_line(review_id, "investigation blocker", blocker, 700)?;
+        let Some(expected) = plan
+            .blockers
+            .iter()
+            .find(|expected| expected.trim() == blocker.trim())
+        else {
+            return Err(EngineError(format!(
+                "investigation trace for {review_id:?} contains a blocker not supplied by the review"
+            )));
+        };
+        if !recorded_blockers.insert(expected.as_str()) {
+            return Err(EngineError(format!(
+                "investigation trace for {review_id:?} contains a duplicate blocker"
+            )));
+        }
+    }
+
+    if decision == ReviewDecision::NeedsReview {
+        for check in checks {
+            let matching_requests = plan
+                .lookup_requests
+                .iter()
+                .enumerate()
+                .filter(|(_, request)| {
+                    request
+                        .questions
+                        .iter()
+                        .any(|question| question.trim() == check.trim())
+                })
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            if !matching_requests.is_empty() {
+                if !matching_requests
+                    .iter()
+                    .any(|index| attempted_requests.contains(index))
+                {
+                    return Err(EngineError(format!(
+                        "needs_review for {review_id:?} must attempt a supplied lookup for check {check:?}"
+                    )));
+                }
+                continue;
+            }
+            let matching_blocker = plan.blockers.iter().find(|blocker| blocker.contains(check));
+            if !matching_blocker.is_some_and(|blocker| {
+                recorded_blockers
+                    .iter()
+                    .any(|recorded| recorded.trim() == blocker.trim())
+            }) {
+                return Err(EngineError(format!(
+                    "needs_review for {review_id:?} must record the supplied blocker for check {check:?}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_trace_line(
+    review_id: &str,
+    field: &str,
+    value: &str,
+    max_chars: usize,
+) -> Result<(), EngineError> {
+    let value = value.trim();
+    if value.is_empty() || value.chars().count() > max_chars || value.chars().any(char::is_control)
+    {
+        return Err(EngineError(format!(
+            "{field} for {review_id:?} must be one non-empty line of at most {max_chars} characters"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_retrieved_artifact_locator(
+    review_id: &str,
+    request: &ReviewLookupRequest,
+    artifact: &mehscan_core::ReviewRetrievedArtifact,
+) -> Result<(), EngineError> {
+    if artifact.location.path.trim().is_empty()
+        || artifact.location.start.line == 0
+        || artifact.location.end.line < artifact.location.start.line
+        || artifact.location.end.byte_offset < artifact.location.start.byte_offset
+    {
+        return Err(EngineError(format!(
+            "retrieved artifact {:?} for {review_id:?} has an invalid source location",
+            artifact.artifact_id
+        )));
+    }
+    if request.operation != "source" {
+        if request.operation == "references"
+            && request
+                .arguments
+                .get("symbol")
+                .is_some_and(|symbol| !artifact.excerpt.contains(symbol))
+        {
+            return Err(EngineError(format!(
+                "retrieved artifact {:?} for {review_id:?} does not contain its requested reference symbol",
+                artifact.artifact_id
+            )));
+        }
+        return Ok(());
+    }
+    let path = request.arguments.get("path");
+    let start_line = request
+        .arguments
+        .get("start-line")
+        .and_then(|value| value.parse::<usize>().ok());
+    let end_line = request
+        .arguments
+        .get("end-line")
+        .and_then(|value| value.parse::<usize>().ok());
+    if path != Some(&artifact.location.path)
+        || start_line.is_none_or(|line| artifact.location.start.line < line)
+        || end_line.is_none_or(|line| artifact.location.end.line > line)
+    {
+        return Err(EngineError(format!(
+            "retrieved artifact {:?} for {review_id:?} is outside its requested source locator",
+            artifact.artifact_id
+        )));
+    }
+    Ok(())
+}
+
 fn review_run_quality_warnings(
     bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
 ) -> Vec<String> {
@@ -3108,7 +3494,7 @@ pub fn validate_path_review_progress(
 ) -> Result<PathReviewTriageProgress, EngineError> {
     let missing_review_ids = validate_path_review_response_subset(job, responses)?;
     Ok(PathReviewTriageProgress {
-        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
+        schema_version: responses.schema_version.clone(),
         job_fingerprint: job.fingerprint.clone(),
         submitted_count: responses.results.len(),
         remaining_count: missing_review_ids.len(),
@@ -3137,7 +3523,7 @@ fn validate_path_review_response_subset(
     job: &PathReviewJob,
     responses: &PathReviewTriageResponseSet,
 ) -> Result<Vec<String>, EngineError> {
-    if responses.schema_version != PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION {
+    if !supported_path_review_response_schema(&responses.schema_version) {
         return Err(EngineError(format!(
             "unsupported path-review triage response schema {:?}",
             responses.schema_version
@@ -3178,6 +3564,24 @@ fn validate_path_review_response_subset(
             &result.summary,
             &result.checks,
         )?;
+        if responses.schema_version == PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION {
+            let trace = result.investigation.as_ref().ok_or_else(|| {
+                EngineError(format!(
+                    "path-review response schema {} requires an investigation trace for {:?}",
+                    PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, result.review_id
+                ))
+            })?;
+            let (plan, supplied_artifact_ids) =
+                job_review_investigation_context(job, &result.review_id)?;
+            validate_review_investigation_trace(
+                &result.review_id,
+                result.decision,
+                &result.checks,
+                plan,
+                &supplied_artifact_ids,
+                trace,
+            )?;
+        }
         let policy = job
             .reviews
             .iter()
@@ -3196,6 +3600,19 @@ fn validate_path_review_response_subset(
                 "confidence for {:?} must be {:?} for the selected {:?} decision",
                 result.review_id, expected_confidence, result.decision
             )));
+        }
+        if responses.schema_version == PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
+            && result.decision == ReviewDecision::NeedsReview
+        {
+            let unresolved = job_unresolved_facts(job, &result.review_id)?;
+            for check in &result.checks {
+                if !unresolved.iter().any(|fact| fact.trim() == check.trim()) {
+                    return Err(EngineError(format!(
+                        "needs_review check for {:?} must copy an exact supplied decision_facts.unresolved entry",
+                        result.review_id
+                    )));
+                }
+            }
         }
     }
     Ok(expected_ids
@@ -3476,6 +3893,7 @@ fn path_review_triage_contract() -> ReviewTriageContract {
             "confidence".to_string(),
             "summary".to_string(),
             "checks".to_string(),
+            "investigation".to_string(),
         ],
         decisions: vec![
             "issue".to_string(),
@@ -3484,7 +3902,7 @@ fn path_review_triage_contract() -> ReviewTriageContract {
         ],
         confidence_levels: vec!["high".to_string(), "medium".to_string(), "low".to_string()],
         instructions: vec![
-            "Return one JSON object with schema_version `1.0`, bundle_fingerprint copied exactly from this request, and a results array. Each results entry must contain review_id, decision, confidence, summary, and checks; use an empty checks array for issue and not_issue."
+            "Return one JSON object with schema_version `1.1`, bundle_fingerprint copied exactly from this request, and a results array. Each results entry must contain review_id, decision, confidence, summary, checks, and investigation; use an empty checks array for issue and not_issue."
                 .to_string(),
             "Treat the candidate as a bounded review lead, not a vulnerability verdict."
                 .to_string(),
@@ -3535,6 +3953,10 @@ fn path_review_triage_contract() -> ReviewTriageContract {
             "Use investigation.readiness as workflow metadata, not as a verdict. For investigation readiness, execute the supplied bounded lookup requests when available before deciding; for blocked readiness, preserve the named blockers and do not invent unavailable deployment or runtime facts."
                 .to_string(),
             "A lookup request is a concrete repository query, not evidence that its expected producer or control exists. Apply only returned artifacts that match the exact operand, owner, operation, action, and resource in this review."
+                .to_string(),
+            "Record each executed lookup by its zero-based request_index in investigation.lookup_attempts. Preserve returned source as bounded artifacts with distinct IDs and exact locations; cite those IDs for claims and keep reviewer_inferences separate from deterministic scan facts."
+                .to_string(),
+            "For needs_review, every retained check with a supplied lookup must have a matching lookup attempt, including an honest no_relevant_result, unavailable, truncated, budget_exhausted, or failed outcome. A deployment-only check must copy its supplied blocker into investigation.blockers."
                 .to_string(),
             "Apply this decision procedure: issue requires established dangerous behavior plus attacker influence or a concrete policy failure and no demonstrated effective applicable control; not_issue requires affirmative safe purpose, non-attacker input, non-executable behavior, or an effective applicable control; needs_review requires a supplied unresolved fact that can change issue versus not_issue."
                 .to_string(),
@@ -16275,6 +16697,9 @@ fn path_review_fingerprint(
         let decision_facts = serde_json::to_string(&review.decision_facts)
             .expect("path decision facts must remain JSON serializable");
         hash_review_text(&mut hash, &decision_facts);
+        let investigation = serde_json::to_string(&review.investigation)
+            .expect("path investigation plan must remain JSON serializable");
+        hash_review_text(&mut hash, &investigation);
         let truncation = serde_json::to_string(&review.truncation)
             .expect("path truncation must remain JSON serializable");
         hash_review_text(&mut hash, &truncation);
@@ -16309,6 +16734,9 @@ fn path_review_fingerprint(
         let decision_facts = serde_json::to_string(&review.decision_facts)
             .expect("observation decision facts must remain JSON serializable");
         hash_review_text(&mut hash, &decision_facts);
+        let investigation = serde_json::to_string(&review.investigation)
+            .expect("observation investigation plan must remain JSON serializable");
+        hash_review_text(&mut hash, &investigation);
         let truncation = serde_json::to_string(&review.truncation)
             .expect("observation truncation must remain JSON serializable");
         hash_review_text(&mut hash, &truncation);
@@ -17706,6 +18134,10 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use mehscan_core::{
+        ReviewArtifactCitation, ReviewLookupAttempt, ReviewRetrievedArtifact, ReviewerInference,
+    };
+
     use super::*;
 
     #[test]
@@ -17762,6 +18194,106 @@ mod tests {
         assert_eq!(external.missing_facts, [external_question]);
         assert!(external.lookup_requests.is_empty());
         assert_eq!(external.blockers.len(), 1);
+    }
+
+    #[test]
+    fn investigation_trace_requires_decisive_attempts_and_valid_artifacts() {
+        let anchor = Location {
+            path: "src/handler.ts".to_string(),
+            start: Position {
+                line: 120,
+                column: 5,
+                byte_offset: 400,
+            },
+            end: Position {
+                line: 120,
+                column: 25,
+                byte_offset: 420,
+            },
+        };
+        let question = "Can caller input influence the command passed to this shell?".to_string();
+        let plan = review_investigation_plan(
+            std::slice::from_ref(&question),
+            &ReviewContextTruncation::default(),
+            &anchor,
+            Some("command"),
+        );
+        let supplied = BTreeSet::from(["evidence-sink".to_string()]);
+        let missing_attempt = validate_review_investigation_trace(
+            "review-1",
+            ReviewDecision::NeedsReview,
+            std::slice::from_ref(&question),
+            &plan,
+            &supplied,
+            &ReviewInvestigationTrace::default(),
+        )
+        .expect_err("actionable needs_review must not abandon its lookup");
+        assert!(missing_attempt.to_string().contains("must attempt"));
+
+        let trace = ReviewInvestigationTrace {
+            lookup_attempts: vec![ReviewLookupAttempt {
+                request_index: 0,
+                outcome: ReviewLookupOutcome::Answered,
+                artifacts: vec![ReviewRetrievedArtifact {
+                    artifact_id: "lookup-source-1".to_string(),
+                    location: Location {
+                        path: "src/handler.ts".to_string(),
+                        start: Position {
+                            line: 90,
+                            column: 1,
+                            byte_offset: 250,
+                        },
+                        end: Position {
+                            line: 130,
+                            column: 1,
+                            byte_offset: 500,
+                        },
+                    },
+                    excerpt: "const command = request.query.command;".to_string(),
+                }],
+                detail: "Expanded the exact source window around the shell call.".to_string(),
+            }],
+            citations: vec![ReviewArtifactCitation {
+                artifact_id: "lookup-source-1".to_string(),
+                claim: "The retrieved assignment is relevant to command origin.".to_string(),
+            }],
+            reviewer_inferences: vec![ReviewerInference {
+                claim: "The request field may supply the command operand.".to_string(),
+                artifact_ids: vec!["lookup-source-1".to_string()],
+            }],
+            blockers: Vec::new(),
+        };
+        validate_review_investigation_trace(
+            "review-1",
+            ReviewDecision::NeedsReview,
+            std::slice::from_ref(&question),
+            &plan,
+            &supplied,
+            &trace,
+        )
+        .expect("a cited artifact from the requested source window should validate");
+
+        let external_question =
+            "What is the effective deployed proxy, gateway, or application control?".to_string();
+        let blocked_plan = review_investigation_plan(
+            std::slice::from_ref(&external_question),
+            &ReviewContextTruncation::default(),
+            &anchor,
+            None,
+        );
+        let blocked_trace = ReviewInvestigationTrace {
+            blockers: blocked_plan.blockers.clone(),
+            ..ReviewInvestigationTrace::default()
+        };
+        validate_review_investigation_trace(
+            "review-2",
+            ReviewDecision::NeedsReview,
+            std::slice::from_ref(&external_question),
+            &blocked_plan,
+            &BTreeSet::new(),
+            &blocked_trace,
+        )
+        .expect("an exact supplied external blocker should preserve needs_review");
     }
 
     #[test]
@@ -19963,6 +20495,7 @@ mod tests {
             summary: "Source-embedded signing material can be reused to forge credentials."
                 .to_string(),
             checks: Vec::new(),
+            investigation: None,
         };
         let mut bundle = bundles.bundles.into_iter().next().expect("identity bundle");
         bundle.payload = PathReviewBundlePayload::Observation {

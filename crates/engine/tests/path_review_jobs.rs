@@ -320,6 +320,7 @@ fn validates_one_compact_result_per_path_review() {
                 checks: vec![
                     "Confirm the supplied value reaches the process at runtime.".to_string(),
                 ],
+                investigation: Default::default(),
             })
             .collect(),
     };
@@ -413,6 +414,7 @@ fn emits_independent_tasks_and_validates_resumable_progress() {
             summary: "The first independently transported task still needs one runtime check."
                 .to_string(),
             checks: vec!["Confirm the shown operation executes at runtime.".to_string()],
+            investigation: Default::default(),
         }],
     };
     let progress = mehscan_engine::investigation::validate_path_review_progress(&job, &responses)
@@ -533,6 +535,7 @@ fn emits_semantic_bundles_and_retries_incomplete_bundle_responses() {
                 summary: "The supplied evidence supports one complete compact decision."
                     .to_string(),
                 checks: unresolved.into_iter().collect(),
+                investigation: Default::default(),
             }
         })
         .collect::<Vec<_>>();
@@ -941,6 +944,7 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
                             .cloned()
                             .into_iter()
                             .collect(),
+                        investigation: Default::default(),
                     }
                 })
                 .collect();
@@ -1482,6 +1486,7 @@ fn keeps_distinct_sink_instances_in_one_symbol_without_hiding_results() {
                 confidence: review.confidence_policy.issue,
                 summary: "Attacker-controlled HTML reaches an unencoded response sink.".to_string(),
                 checks: Vec::new(),
+                investigation: Default::default(),
             })
             .collect(),
     };
@@ -1553,6 +1558,7 @@ fn consolidates_multiple_sources_at_one_exact_sink_and_invariant() {
                         review.id
                     ),
                     checks: Vec::new(),
+                    investigation: Default::default(),
                 })
                 .collect();
             let response = PathReviewBundleResponseSet {

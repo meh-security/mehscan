@@ -549,7 +549,73 @@ pub struct PathReviewJob {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.0";
+pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.1";
+pub const LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.0";
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewLookupOutcome {
+    Answered,
+    NoRelevantResult,
+    Unavailable,
+    Truncated,
+    BudgetExhausted,
+    Failed,
+}
+
+/// One source artifact returned by a requested bounded lookup. The excerpt is
+/// reviewer-supplied response evidence and remains distinct from deterministic
+/// scan evidence.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewRetrievedArtifact {
+    pub artifact_id: String,
+    pub location: Location,
+    pub excerpt: String,
+}
+
+/// Records execution of one `investigation.lookup_requests` entry by its
+/// zero-based position in the review request.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewLookupAttempt {
+    pub request_index: usize,
+    pub outcome: ReviewLookupOutcome,
+    #[serde(default)]
+    pub artifacts: Vec<ReviewRetrievedArtifact>,
+    pub detail: String,
+}
+
+/// Connects a supplied evidence ID or retrieved artifact ID to a concrete
+/// claim used by the reviewer.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewArtifactCitation {
+    pub artifact_id: String,
+    pub claim: String,
+}
+
+/// Reviewer reasoning is retained explicitly and never promoted into scanner
+/// facts. Every inference must cite one or more supplied or retrieved artifacts.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewerInference {
+    pub claim: String,
+    pub artifact_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewInvestigationTrace {
+    #[serde(default)]
+    pub lookup_attempts: Vec<ReviewLookupAttempt>,
+    #[serde(default)]
+    pub citations: Vec<ReviewArtifactCitation>,
+    #[serde(default)]
+    pub reviewer_inferences: Vec<ReviewerInference>,
+    #[serde(default)]
+    pub blockers: Vec<String>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -559,6 +625,8 @@ pub struct PathReviewTriageResult {
     pub confidence: ReviewConfidence,
     pub summary: String,
     pub checks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub investigation: Option<ReviewInvestigationTrace>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

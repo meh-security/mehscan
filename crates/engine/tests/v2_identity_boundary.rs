@@ -109,6 +109,7 @@ fn keeps_distinct_cookie_invariants_at_one_sink_as_separate_issue_groups() {
                         summary: "The supplied evidence establishes this exact cookie weakness."
                             .to_string(),
                         checks: Vec::new(),
+                        investigation: Default::default(),
                     })
                     .collect(),
                 PathReviewBundlePayload::Observation { reviews } => reviews
@@ -120,6 +121,7 @@ fn keeps_distinct_cookie_invariants_at_one_sink_as_separate_issue_groups() {
                         summary: "The supplied evidence establishes this exact observed weakness."
                             .to_string(),
                         checks: Vec::new(),
+                        investigation: Default::default(),
                     })
                     .collect(),
             };

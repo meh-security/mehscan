@@ -540,22 +540,84 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             {
                 return Err("bundle must contain a fingerprint and distinct review IDs".to_string());
             }
+            let position_schema = serde_json::json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["line", "column", "byte_offset"],
+                "properties": {
+                    "line": {"type": "integer", "minimum": 0},
+                    "column": {"type": "integer", "minimum": 0},
+                    "byte_offset": {"type": "integer", "minimum": 0}
+                }
+            });
+            let location_schema = serde_json::json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["path", "start", "end"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "start": position_schema,
+                    "end": position_schema
+                }
+            });
+            let artifact_schema = serde_json::json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["artifact_id", "location", "excerpt"],
+                "properties": {
+                    "artifact_id": {"type": "string", "minLength": 1, "maxLength": 120},
+                    "location": location_schema,
+                    "excerpt": {"type": "string", "minLength": 1, "maxLength": 4000}
+                }
+            });
+            let lookup_attempt_schema = serde_json::json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["request_index", "outcome", "artifacts", "detail"],
+                "properties": {
+                    "request_index": {"type": "integer", "minimum": 0},
+                    "outcome": {"type": "string", "enum": ["answered", "no_relevant_result", "unavailable", "truncated", "budget_exhausted", "failed"]},
+                    "artifacts": {"type": "array", "items": artifact_schema},
+                    "detail": {"type": "string", "minLength": 1, "maxLength": 500}
+                }
+            });
+            let investigation_schema = serde_json::json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["lookup_attempts", "citations", "reviewer_inferences", "blockers"],
+                "properties": {
+                    "lookup_attempts": {"type": "array", "items": lookup_attempt_schema},
+                    "citations": {"type": "array", "items": {
+                        "type": "object", "additionalProperties": false,
+                        "required": ["artifact_id", "claim"],
+                        "properties": {
+                            "artifact_id": {"type": "string"},
+                            "claim": {"type": "string", "minLength": 1, "maxLength": 500}
+                        }
+                    }},
+                    "reviewer_inferences": {"type": "array", "items": {
+                        "type": "object", "additionalProperties": false,
+                        "required": ["claim", "artifact_ids"],
+                        "properties": {
+                            "claim": {"type": "string", "minLength": 1, "maxLength": 500},
+                            "artifact_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+                        }
+                    }},
+                    "blockers": {"type": "array", "items": {"type": "string"}}
+                }
+            });
             let schema = serde_json::json!({
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object", "additionalProperties": false,
                 "required": ["schema_version", "bundle_fingerprint", "results"],
                 "properties": {
-                    "schema_version": {"type": "string", "const": "1.0"},
+                    "schema_version": {"type": "string", "const": mehscan_core::PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION},
                     "bundle_fingerprint": {"type": "string", "const": bundle.bundle_fingerprint},
                     "results": {"type": "array", "minItems": ids.len(), "maxItems": ids.len(), "items": {
                         "type": "object", "additionalProperties": false,
-                        "required": ["review_id", "decision", "confidence", "summary", "checks"],
+                        "required": ["review_id", "decision", "confidence", "summary", "checks", "investigation"],
                         "properties": {
                             "review_id": {"type": "string", "enum": ids},
                             "decision": {"type": "string", "enum": ["issue", "not_issue", "needs_review"]},
                             "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
                             "summary": {"type": "string", "maxLength": 450},
-                            "checks": {"type": "array", "items": {"type": "string"}}
+                            "checks": {"type": "array", "items": {"type": "string"}},
+                            "investigation": investigation_schema
                         }
                     }}
                 }
@@ -1684,7 +1746,7 @@ USAGE:
   mehscan investigate native-call-sites [ROOT] --callee NAME [--path FILE] [--limit N]
   mehscan investigate structural [ROOT] --language LANG --pattern PATTERN [--path FILE] [--limit N]
 
-Review jobs package bounded security-path candidates and non-path observation neighborhoods with source excerpts, relevant configuration facts, open questions, a stable fingerprint, and a compact cross-language response contract. Each security path includes compact rule-derived review_basis semantics. Context-only source, guard, sanitizer, validation, literal, and resource observations do not become standalone verdict jobs. review-bundles scans once, groups the complete admitted review set by review kind and capability, retains the CWE union as category metadata, and writes self-contained requests with readable semantic filenames under DIR/requests plus manifest.json; requests default to independent ceilings of 512 KiB and 20 reviews, while --max-reviews accepts 1-100 for controlled experiments or retry tuning. A bundle response is accepted or retried as a whole by review-bundle-triage. review-bundle-summary validates every manifest response by default; --allow-partial true summarizes available complete responses and reports incomplete triage coverage. It deduplicates issue decisions across path and observation streams by capability, exact sink range, and rule-defined security invariant. review-tasks and review-progress remain available as low-level diagnostics. Complete paths are ordered first, followed by production observation neighborhoods. Teaching/code-fix source payloads are excluded by default and can be admitted explicitly with --include-review-material true. Review pages contain at most 100 items and expose next_offset for stable continuation with --offset. The funnel summarizes linked and unlinked compatible source/sink observations for AI routing. C# project summaries can produce security paths for unique exact-parameter controller-to-service and controller-to-service-to-repository handoffs; unresolved neighborhoods remain review facts. Triage commands must repeat the exact page offset and material policy. Query limits default to 200 and cannot exceed 1000. Investigation units default to 25 and cannot exceed 100. Source retrieval is capped at 400 lines and 64 KiB. Native call-sites is a C/C++ syntax inventory only: it does not resolve types, overloads, aliases, macros, control flow, call graphs, or value flow and never changes scan evidence or review admission. Structural queries support every scanner language as bounded ephemeral syntax lookup; repository-wide queries skip and report malformed files, while an explicitly requested malformed file fails clearly. Structural patterns are never persisted as rules or promoted to findings."#
+Review jobs package bounded security-path candidates and non-path observation neighborhoods with source excerpts, relevant configuration facts, open questions, a stable fingerprint, and a compact cross-language response contract. Each security path includes compact rule-derived review_basis semantics. Context-only source, guard, sanitizer, validation, literal, and resource observations do not become standalone verdict jobs. review-bundles scans once, groups the complete admitted review set by review kind and capability, retains the CWE union as category metadata, and writes self-contained requests with readable semantic filenames under DIR/requests plus manifest.json; requests default to independent ceilings of 512 KiB and 20 reviews, while --max-reviews accepts 1-100 for controlled experiments or retry tuning. A bundle response is accepted or retried as a whole by review-bundle-triage. Response schema 1.1 records bounded lookup attempts, retrieved artifacts, citations, reviewer inference, and exact blockers; legacy 1.0 responses remain readable. review-bundle-summary validates every manifest response by default; --allow-partial true summarizes available complete responses and reports incomplete triage coverage. It deduplicates issue decisions across path and observation streams by capability, exact sink range, and rule-defined security invariant. review-tasks and review-progress remain available as low-level diagnostics. Complete paths are ordered first, followed by production observation neighborhoods. Teaching/code-fix source payloads are excluded by default and can be admitted explicitly with --include-review-material true. Review pages contain at most 100 items and expose next_offset for stable continuation with --offset. The funnel summarizes linked and unlinked compatible source/sink observations for AI routing. C# project summaries can produce security paths for unique exact-parameter controller-to-service and controller-to-service-to-repository handoffs; unresolved neighborhoods remain review facts. Triage commands must repeat the exact page offset and material policy. Query limits default to 200 and cannot exceed 1000. Investigation units default to 25 and cannot exceed 100. Source retrieval is capped at 400 lines and 64 KiB. Native call-sites is a C/C++ syntax inventory only: it does not resolve types, overloads, aliases, macros, control flow, call graphs, or value flow and never changes scan evidence or review admission. Structural queries support every scanner language as bounded ephemeral syntax lookup; repository-wide queries skip and report malformed files, while an explicitly requested malformed file fails clearly. Structural patterns are never persisted as rules or promoted to findings."#
     );
 }
 
