@@ -4374,9 +4374,22 @@ fn merge_scheduled_review_work(
         ids.sort();
         ids.dedup();
     }
+    let deferred = scheduled
+        .deferred_review_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let missing = scheduled
+        .missing_review_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
     if scheduled.scheduled_bundle_count < completed.completed_bundle_count
         || scheduled.admitted_review_count < scheduled.scheduled_review_count
+        || scheduled.admitted_review_count
+            != scheduled.scheduled_review_count + scheduled.deferred_review_ids.len()
         || scheduled.scheduled_review_count < completed.completed_review_count
+        || !deferred.is_disjoint(&missing)
         || (scheduled.completed_bundle_count != 0
             && scheduled.completed_bundle_count != completed.completed_bundle_count)
         || (scheduled.completed_review_count != 0

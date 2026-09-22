@@ -1161,10 +1161,7 @@ fn read_complete_bundle_responses(
         .sum::<usize>();
     missing_review_ids.sort();
     missing_review_ids.dedup();
-    let mut deferred_review_ids = manifest.deferred_review_ids.clone();
-    deferred_review_ids.extend(missing_review_ids.iter().cloned());
-    deferred_review_ids.sort();
-    deferred_review_ids.dedup();
+    let deferred_review_ids = manifest.deferred_review_ids.clone();
     let work = mehscan_core::ReviewWorkSummary {
         complete: missing_review_ids.is_empty()
             && deferred_review_ids.is_empty()

@@ -404,7 +404,7 @@ fn partial_triage_reports_coverage_and_rejects_invalid_present_responses() {
             work["missing_review_ids"].as_array().unwrap().len(),
             manifest["review_count"].as_u64().unwrap() as usize - 1
         );
-        assert_eq!(work["deferred_review_ids"], work["missing_review_ids"]);
+        assert_eq!(work["deferred_review_ids"], serde_json::json!([]));
         assert_eq!(work["invalid_review_ids"], serde_json::json!([]));
         if operation == "summary" {
             assert_eq!(value["review_count"], 1);
