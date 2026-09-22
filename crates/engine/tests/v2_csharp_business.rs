@@ -84,6 +84,7 @@ fn packages_csharp_state_transitions_with_exact_policy_helpers() {
             && fact.location.path == "OrderService.cs"
             && fact.excerpt.contains("order.AdvanceTo(target)")
     }));
+    assert!(guarded.facts.iter().all(|fact| fact.evidence_id.is_some()));
 }
 
 #[test]

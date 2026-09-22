@@ -984,6 +984,7 @@ fn build_path_review_jobs_internal(
         let investigation =
             path_review_investigation(&candidate, &review_basis, &decision_facts, &truncation);
         let confidence_policy = path_confidence_policy(&candidate, &decision_facts, &truncation);
+        assign_review_fact_artifact_ids(&mut facts);
         reviews.push(PathReview {
             id: candidate.id.replacen("path-", "review-", 1),
             language,
@@ -8643,6 +8644,7 @@ fn build_observation_reviews(
         );
         let confidence_policy =
             observation_confidence_policy(&selected_evidence, &decision_facts, &truncation);
+        assign_review_fact_artifact_ids(&mut facts);
         reviews.push(ObservationReview {
             id: review_id,
             language: languages.get(group.path.as_str()).copied(),
@@ -17906,6 +17908,20 @@ fn sort_review_facts(facts: &mut Vec<ReviewNeighborhoodFact>) {
             && left.symbol == right.symbol
             && left.excerpt == right.excerpt
     });
+}
+
+fn assign_review_fact_artifact_ids(facts: &mut [ReviewNeighborhoodFact]) {
+    for fact in facts.iter_mut().filter(|fact| fact.evidence_id.is_none()) {
+        let identity = serde_json::to_string(&(
+            &fact.role,
+            &fact.symbol,
+            &fact.location,
+            &fact.excerpt,
+            &fact.provenance,
+        ))
+        .expect("review facts must remain JSON serializable");
+        fact.evidence_id = Some(stable_review_hash("fact-artifact", &identity));
+    }
 }
 
 fn path_review_fingerprint(
