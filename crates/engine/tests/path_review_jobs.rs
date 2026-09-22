@@ -902,6 +902,57 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
         }),
         "a dynamic service authority must remain reviewable"
     );
+    assert!(
+        scan.evidence.iter().any(|evidence| {
+            evidence.location.path == "routes/browser-request.ts"
+                && evidence.enclosing_symbol.as_deref() == Some("fixedBrowserRequest")
+                && evidence.capability == mehscan_core::Capability::OutboundNetworkRequest
+        }),
+        "fixed same-origin browser transport must remain deterministic evidence",
+    );
+    for endpoint in ["generatorUrl", "multilineUrl", "suffixUrl"] {
+        assert!(scan.evidence.iter().any(|evidence| {
+            evidence.location.path == "routes/browser-request.ts"
+                && evidence
+                    .captures
+                    .get("endpoint")
+                    .is_some_and(|capture| capture.text == endpoint)
+        }));
+    }
+    let browser_request_anchors = anchored
+        .iter()
+        .filter(|evidence| {
+            evidence.location.path == "routes/browser-request.ts"
+                && evidence.capability == mehscan_core::Capability::OutboundNetworkRequest
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        browser_request_anchors.iter().all(|evidence| {
+            evidence.enclosing_symbol.as_deref() != Some("fixedBrowserRequest")
+                && evidence.captures.get("endpoint").is_none_or(|capture| {
+                    capture.text != "generatorUrl"
+                        && capture.text != "multilineUrl"
+                        && capture.text != "suffixUrl"
+                })
+        }),
+        "fixed imported same-origin transport must not require AI review",
+    );
+    assert!(
+        browser_request_anchors.iter().any(|evidence| {
+            evidence.enclosing_symbol.as_deref() == Some("dynamicBrowserRequest")
+        })
+    );
+    for endpoint in [
+        "externalUrl",
+        "replaceableUrl.replace('<host>', destination)",
+    ] {
+        assert!(browser_request_anchors.iter().any(|evidence| {
+            evidence
+                .captures
+                .get("endpoint")
+                .is_some_and(|capture| capture.text == endpoint)
+        }));
+    }
     let setup_evidence = scan
         .evidence
         .iter()

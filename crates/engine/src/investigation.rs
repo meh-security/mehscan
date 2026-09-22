@@ -11632,11 +11632,13 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
         .any(|tag| tag == "review-origin:decision-critical")
     {
         return match item.capability {
-            Capability::OutboundNetworkRequest => item
-                .context
-                .literals
-                .get("endpoint")
-                .is_some_and(has_fixed_http_authority),
+            Capability::OutboundNetworkRequest => {
+                item.context
+                    .literals
+                    .get("endpoint")
+                    .is_some_and(has_fixed_http_authority)
+                    || is_fixed_imported_browser_outbound_request(item, sources)
+            }
             Capability::Redirect => item
                 .context
                 .literals
@@ -12141,6 +12143,351 @@ fn is_fixed_imported_browser_navigation(item: &Evidence, sources: &RepositorySou
     exported_object_has_fixed_string_property(&module_file.source, exported, property)
 }
 
+/// Omits a browser transport review only when a local endpoint variable is
+/// assembled from repository-owned imported object properties that resolve to
+/// a same-origin relative path. Dynamic path and query substitutions are
+/// allowed after that fixed prefix because they cannot change the browser
+/// origin. Reassigned variables, absolute URLs and unresolved imports remain
+/// reviewable.
+fn is_fixed_imported_browser_outbound_request(
+    item: &Evidence,
+    sources: &RepositorySources,
+) -> bool {
+    if item.kind != EvidenceKind::Sink
+        || item.capability != Capability::OutboundNetworkRequest
+        || item.context.runtime_environment != Some(RuntimeEnvironment::Browser)
+    {
+        return false;
+    }
+    let Some(endpoint) = item
+        .captures
+        .get("endpoint")
+        .map(|capture| capture.text.trim())
+    else {
+        return false;
+    };
+    let Some((binding, replaced_placeholder)) = fixed_browser_endpoint_binding(endpoint) else {
+        return false;
+    };
+    let Ok(file) = sources.file(&item.location.path) else {
+        return false;
+    };
+    let Some(scope) = javascript_enclosing_prefix(file, item) else {
+        return false;
+    };
+    let Some(expression) = unique_local_javascript_assignment(scope, binding) else {
+        return false;
+    };
+    let Some(resolved) =
+        resolve_browser_string_expression(expression, file, sources, 0, String::new())
+    else {
+        return false;
+    };
+    if let Some(placeholder) = replaced_placeholder {
+        let Some(position) = resolved.find(placeholder) else {
+            return false;
+        };
+        if position == 0 || !relative_prefix_locks_browser_origin(&resolved[..position]) {
+            return false;
+        }
+    }
+    same_origin_relative_url(&resolved)
+}
+
+fn fixed_browser_endpoint_binding(endpoint: &str) -> Option<(&str, Option<&str>)> {
+    if is_plain_identifier(endpoint) {
+        return Some((endpoint, None));
+    }
+    if let Some((binding, call)) = endpoint.split_once(".replace(")
+        && is_plain_identifier(binding.trim())
+    {
+        let placeholder = call.split_once(',')?.0.trim();
+        let placeholder = first_quoted_value(placeholder)?;
+        if placeholder.starts_with('<') && placeholder.ends_with('>') {
+            return Some((binding.trim(), Some(placeholder)));
+        }
+    }
+    let template = endpoint.strip_prefix("`${")?.strip_suffix('`')?;
+    let (binding, suffix) = template.split_once('}')?;
+    if is_plain_identifier(binding)
+        && matches!(suffix.chars().next(), Some('/' | '?' | '#'))
+        && !suffix.starts_with("//")
+        && !suffix.starts_with("/\\")
+    {
+        return Some((binding, None));
+    }
+    None
+}
+
+fn unique_local_javascript_assignment<'a>(scope: &'a str, binding: &str) -> Option<&'a str> {
+    let mut assignments = Vec::new();
+    for keyword in ["const", "let", "var"] {
+        let declaration = format!("{keyword} {binding}");
+        for (start, _) in scope.match_indices(&declaration) {
+            let tail = &scope[start + declaration.len()..];
+            if !tail
+                .chars()
+                .next()
+                .is_some_and(|boundary| boundary.is_whitespace() || matches!(boundary, ':' | '='))
+            {
+                continue;
+            }
+            let (_, expression) = tail.split_once('=')?;
+            assignments.push(javascript_initializer(expression)?);
+        }
+    }
+    let [expression] = assignments.as_slice() else {
+        return None;
+    };
+    if scope.lines().any(|line| {
+        let line = line.trim();
+        line.strip_prefix(binding).is_some_and(|tail| {
+            let tail = tail.trim_start();
+            ["=", "+=", "-=", "*=", "/=", "%=", "&&=", "||=", "??="]
+                .iter()
+                .any(|operator| tail.starts_with(operator))
+                && !["const", "let", "var"]
+                    .iter()
+                    .any(|keyword| line.starts_with(&format!("{keyword} {binding}")))
+        })
+    }) {
+        return None;
+    }
+    Some(expression)
+}
+
+fn javascript_initializer(value: &str) -> Option<&str> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut nesting = 0usize;
+    for (index, character) in value.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quote.is_some() {
+            escaped = true;
+            continue;
+        }
+        if let Some(active) = quote {
+            if character == active {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '\'' | '"' | '`' => quote = Some(character),
+            '(' | '[' | '{' => nesting += 1,
+            ')' | ']' | '}' => nesting = nesting.checked_sub(1)?,
+            ';' if nesting == 0 => return Some(value[..index].trim()),
+            '\n' if nesting == 0 => {
+                let before = value[..index].trim_end();
+                let after = value[index + 1..].trim_start();
+                if before.is_empty() {
+                    continue;
+                }
+                if !before.ends_with('+') && !after.starts_with('+') {
+                    return Some(before);
+                }
+            }
+            _ => {}
+        }
+    }
+    let value = value.trim();
+    (!value.is_empty() && quote.is_none() && nesting == 0).then_some(value)
+}
+
+fn resolve_browser_string_expression(
+    expression: &str,
+    file: &SourceFile,
+    sources: &RepositorySources,
+    depth: usize,
+    mut resolved: String,
+) -> Option<String> {
+    if depth > 3 {
+        return None;
+    }
+    for term in split_top_level_plus(expression)? {
+        let term = term.trim();
+        if let Some(value) = quoted_literal_value(term) {
+            resolved.push_str(value);
+            continue;
+        }
+        if let Some(template) = term
+            .strip_prefix('`')
+            .and_then(|term| term.strip_suffix('`'))
+        {
+            let prefix = template.split("${").next().unwrap_or(template);
+            resolved.push_str(prefix);
+            if template.contains("${") {
+                if !relative_prefix_locks_browser_origin(&resolved) {
+                    return None;
+                }
+                resolved.push_str("<dynamic>");
+            }
+            continue;
+        }
+        if let Some((property_access, replacement)) = term
+            .strip_suffix(')')
+            .and_then(|term| term.split_once(".replace("))
+        {
+            let (binding, property) = property_access.split_once('.')?;
+            let (placeholder, _) = replacement.split_once(',')?;
+            let placeholder = quoted_literal_value(placeholder)?;
+            if resolved.is_empty() || placeholder.is_empty() {
+                return None;
+            }
+            let value = resolve_imported_object_string_property(
+                file,
+                binding.trim(),
+                property.trim(),
+                sources,
+                depth + 1,
+            )?;
+            if !value.contains(placeholder) || !same_origin_relative_url(&resolved) {
+                return None;
+            }
+            resolved.push_str(&value);
+            continue;
+        }
+        if is_plain_identifier(term) && relative_prefix_locks_browser_origin(&resolved) {
+            resolved.push_str("<dynamic>");
+            continue;
+        }
+        let (binding, property) = term.split_once('.')?;
+        if !is_plain_identifier(binding.trim()) || !is_plain_identifier(property.trim()) {
+            return None;
+        }
+        let value = resolve_imported_object_string_property(
+            file,
+            binding.trim(),
+            property.trim(),
+            sources,
+            depth + 1,
+        )?;
+        resolved.push_str(&value);
+    }
+    Some(resolved)
+}
+
+fn resolve_imported_object_string_property(
+    importing_file: &SourceFile,
+    binding: &str,
+    property: &str,
+    sources: &RepositorySources,
+    depth: usize,
+) -> Option<String> {
+    if depth > 3 || javascript_binding_shadowed_before_use_source(&importing_file.source, binding) {
+        return None;
+    }
+    let (exported, module) = relative_named_import(&importing_file.source, binding)?;
+    let module_path = resolve_relative_typescript_module(&importing_file.path, module, sources)?;
+    let module_file = sources.file(&module_path).ok()?;
+    let expression = exported_object_property_expression(&module_file.source, exported, property)?;
+    if sources.files.values().any(|candidate| {
+        candidate.source.lines().any(|line| {
+            compact_has_property_assignment(&line.split_whitespace().collect::<String>(), property)
+        })
+    }) {
+        return None;
+    }
+    if let Some(value) = quoted_literal_value(expression) {
+        return Some(value.to_string());
+    }
+    let (next_binding, next_property) = expression.split_once('.')?;
+    resolve_imported_object_string_property(
+        module_file,
+        next_binding.trim(),
+        next_property.trim(),
+        sources,
+        depth + 1,
+    )
+}
+
+fn javascript_binding_shadowed_before_use_source(source: &str, binding: &str) -> bool {
+    ["const", "let", "var"].iter().any(|keyword| {
+        source.lines().any(|line| {
+            let declaration = format!("{keyword} {binding}");
+            line.trim().strip_prefix(&declaration).is_some_and(|tail| {
+                tail.starts_with(char::is_whitespace)
+                    || tail.starts_with('=')
+                    || tail.starts_with(':')
+            })
+        })
+    })
+}
+
+fn split_top_level_plus(expression: &str) -> Option<Vec<&str>> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut nesting = 0usize;
+    for (index, character) in expression.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quote.is_some() {
+            escaped = true;
+            continue;
+        }
+        if let Some(active) = quote {
+            if character == active {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '\'' | '"' | '`' => quote = Some(character),
+            '(' | '[' | '{' => nesting += 1,
+            ')' | ']' | '}' => nesting = nesting.checked_sub(1)?,
+            '+' if nesting == 0 => {
+                parts.push(&expression[start..index]);
+                start = index + character.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    if quote.is_some() || nesting != 0 {
+        return None;
+    }
+    parts.push(&expression[start..]);
+    (!parts.iter().any(|part| part.trim().is_empty())).then_some(parts)
+}
+
+fn quoted_literal_value(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if value.len() < 2 {
+        return None;
+    }
+    let first = value.chars().next()?;
+    let last = value.chars().last()?;
+    (matches!(first, '\'' | '"') && first == last).then_some(&value[1..value.len() - 1])
+}
+
+fn same_origin_relative_url(value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty()
+        || value.starts_with("//")
+        || value.starts_with("/\\")
+        || value.starts_with('\\')
+    {
+        return false;
+    }
+    let authority_candidate = value
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(value)
+        .to_ascii_lowercase();
+    !authority_candidate.contains(':')
+}
+
+fn relative_prefix_locks_browser_origin(value: &str) -> bool {
+    same_origin_relative_url(value)
+        && (value.starts_with('.') || value.starts_with('/') || value.contains('/'))
+}
+
 fn fixed_service_navigation_assignment(
     item: &Evidence,
     sources: &RepositorySources,
@@ -12264,10 +12611,18 @@ fn javascript_enclosing_prefix<'a>(file: &'a SourceFile, item: &Evidence) -> Opt
         return None;
     }
     let prefix = &file.source[..end];
-    let symbol = item.enclosing_symbol.as_deref()?;
-    let start = prefix
-        .rfind(&format!("{symbol} ("))
-        .or_else(|| prefix.rfind(&format!("{symbol}(")))?;
+    let start = if let Some(symbol) = item.enclosing_symbol.as_deref() {
+        prefix
+            .rfind(&format!("{symbol} ("))
+            .or_else(|| prefix.rfind(&format!("{symbol}(")))?
+    } else {
+        // Tree-sitter does not currently name JavaScript/TypeScript generator
+        // functions. Keep the fallback limited to their explicit declaration
+        // syntax so unrelated top-level assignments cannot satisfy a review.
+        prefix
+            .rfind("function* ")
+            .or_else(|| prefix.rfind("function *"))?
+    };
     Some(&prefix[start..])
 }
 
@@ -12383,18 +12738,22 @@ fn resolve_relative_typescript_module(
 }
 
 fn exported_object_has_fixed_string_property(source: &str, object: &str, property: &str) -> bool {
+    exported_object_property_expression(source, object, property).is_some_and(is_quoted_literal)
+}
+
+fn exported_object_property_expression<'a>(
+    source: &'a str,
+    object: &str,
+    property: &str,
+) -> Option<&'a str> {
     let declaration = format!("export const {object}");
-    let Some(start) = source.find(&declaration) else {
-        return false;
-    };
+    let start = source.find(&declaration)?;
     let tail = &source[start + declaration.len()..];
-    let Some(open) = tail.find('{') else {
-        return false;
-    };
-    let Some(close) = tail[open + 1..].find('}') else {
-        return false;
-    };
-    let body = &tail[open + 1..open + 1 + close];
+    let assignment = top_level_assignment_index(tail)?;
+    let initializer = &tail[assignment + 1..];
+    let open = initializer.find('{')?;
+    let close = matching_delimiter(initializer, open, b'{', b'}')?;
+    let body = &initializer[open + 1..close];
     let values = body
         .lines()
         .filter_map(|line| {
@@ -12402,7 +12761,37 @@ fn exported_object_has_fixed_string_property(source: &str, object: &str, propert
             (name.trim() == property).then_some(value.trim())
         })
         .collect::<Vec<_>>();
-    matches!(values.as_slice(), [value] if is_quoted_literal(value))
+    matches!(values.as_slice(), [value] if !value.is_empty()).then_some(values[0])
+}
+
+fn top_level_assignment_index(value: &str) -> Option<usize> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut nesting = 0usize;
+    for (index, character) in value.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quote.is_some() {
+            escaped = true;
+            continue;
+        }
+        if let Some(active) = quote {
+            if character == active {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '\'' | '"' | '`' => quote = Some(character),
+            '(' | '[' | '{' | '<' => nesting += 1,
+            ')' | ']' | '}' | '>' => nesting = nesting.checked_sub(1)?,
+            '=' if nesting == 0 => return Some(index),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn javascript_binding_shadowed_before_use(
