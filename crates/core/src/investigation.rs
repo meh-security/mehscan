@@ -586,7 +586,8 @@ pub struct ReviewPipelineCoverage {
     pub blocked_review_count: usize,
 }
 
-pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.2";
+pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.3";
+pub const BOUNDED_ESCALATION_RESPONSE_SCHEMA_VERSION: &str = "1.2";
 pub const INVESTIGATION_TRACE_RESPONSE_SCHEMA_VERSION: &str = "1.1";
 pub const LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.0";
 
@@ -816,6 +817,20 @@ pub struct PathReviewBundleResponseSet {
     pub schema_version: String,
     pub bundle_fingerprint: String,
     pub results: Vec<PathReviewTriageResult>,
+    /// Present only when the CLI replaces one invalid result and validates the
+    /// complete repaired response. A repaired response cannot be repaired again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair: Option<ReviewRepairTrace>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewRepairTrace {
+    pub review_id: String,
+    pub prior_response_fingerprint: String,
+    pub prior_result_fingerprint: String,
+    pub replacement_result_fingerprint: String,
+    pub validation_error: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -879,6 +894,8 @@ pub struct PathReviewBundleRunReport {
     pub response_fingerprint: String,
     #[serde(default)]
     pub work: ReviewWorkSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repairs: Vec<ReviewRepairTrace>,
     pub bundle_count: usize,
     pub review_count: usize,
     pub issue_count: usize,

@@ -129,6 +129,7 @@ fn keeps_distinct_cookie_invariants_at_one_sink_as_separate_issue_groups() {
                 schema_version: "1.0".to_string(),
                 bundle_fingerprint: bundle.bundle_fingerprint.clone(),
                 results,
+                repair: None,
             };
             (bundle, response)
         })

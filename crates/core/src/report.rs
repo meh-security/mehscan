@@ -30,6 +30,8 @@ pub struct FindingReportTriage {
     pub response_fingerprint: String,
     #[serde(default)]
     pub work: crate::ReviewWorkSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repairs: Vec<crate::ReviewRepairTrace>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reviewer: Option<String>,
 }
@@ -202,16 +204,18 @@ impl FindingReport {
             self.summary.needs_review_decisions,
             self.summary.not_issue_decisions
         ));
-        if self.triage.work.scheduled_review_count > 0
+        if !self.triage.repairs.is_empty()
+            || self.triage.work.scheduled_review_count > 0
             || !self.triage.work.missing_review_ids.is_empty()
             || !self.triage.work.invalid_review_ids.is_empty()
         {
             output.push_str(&format!(
-                "| Review work | {}/{} scheduled completed; {} admitted | {} accepted investigation traces; {} deferred, {} blocked, {} truncated, {} missing, {} invalid |\n",
+                "| Review work | {}/{} scheduled completed; {} admitted | {} accepted investigation traces; {} repaired, {} deferred, {} blocked, {} truncated, {} missing, {} invalid |\n",
                 self.triage.work.completed_review_count,
                 self.triage.work.scheduled_review_count,
                 self.triage.work.admitted_review_count,
                 self.triage.work.accepted_investigation_count,
+                self.triage.repairs.len(),
                 self.triage.work.deferred_review_ids.len(),
                 self.triage.work.blocked_review_ids.len(),
                 self.triage.work.truncated_review_ids.len(),
@@ -736,6 +740,7 @@ mod tests {
                 response_schema_version: "1.0".to_string(),
                 response_fingerprint: "review-run-response-test".to_string(),
                 work: crate::ReviewWorkSummary::default(),
+                repairs: Vec::new(),
                 reviewer: Some("reviewer-1".to_string()),
             },
             summary: FindingReportSummary {
@@ -814,6 +819,7 @@ mod tests {
                 response_schema_version: "1.0".to_string(),
                 response_fingerprint: "review-run-response-test".to_string(),
                 work: crate::ReviewWorkSummary::default(),
+                repairs: Vec::new(),
                 reviewer: None,
             },
             summary: FindingReportSummary {

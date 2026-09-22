@@ -241,12 +241,54 @@ fn retrieved_policy_evidence_changes_the_same_incomplete_review_outcome() {
                     blockers: Vec::new(),
                 }),
             }],
+            repair: None,
         };
         let report =
             mehscan_engine::investigation::validate_path_review_bundle_response(bundle, &response)
                 .expect("each evidence-supported outcome should validate");
         assert_eq!(report.results[0].decision, decision);
         fingerprints.push(report.response_fingerprint);
+        if decision == ReviewDecision::NotIssue {
+            let valid_repair = mehscan_engine::investigation::repair_path_review_bundle_response(
+                bundle,
+                &response,
+                &review.id,
+                response.results[0].clone(),
+            )
+            .expect_err("a valid security decision must not enter the repair path");
+            assert!(valid_repair.to_string().contains("must not be repaired"));
+            let mut failed = response.clone();
+            failed.results[0].confidence = match failed.results[0].confidence {
+                mehscan_core::ReviewConfidence::High => mehscan_core::ReviewConfidence::Low,
+                _ => mehscan_core::ReviewConfidence::High,
+            };
+            let repaired = mehscan_engine::investigation::repair_path_review_bundle_response(
+                bundle,
+                &failed,
+                &review.id,
+                response.results[0].clone(),
+            )
+            .expect("one invalid result should accept one exact validated replacement");
+            let repair = repaired.repair.as_ref().expect("repair history");
+            assert_eq!(repair.review_id, review.id);
+            assert!(repair.validation_error.contains("confidence"));
+            mehscan_engine::investigation::validate_path_review_bundle_response(bundle, &repaired)
+                .expect("the complete repaired response should validate");
+            let run = mehscan_engine::investigation::summarize_path_review_bundle_run(&[(
+                (*bundle).clone(),
+                repaired.clone(),
+            )])
+            .expect("the canonical run summary should preserve repair history");
+            assert_eq!(run.repairs, vec![repair.clone()]);
+            let second_repair = mehscan_engine::investigation::repair_path_review_bundle_response(
+                bundle,
+                &repaired,
+                &review.id,
+                response.results[0].clone(),
+            )
+            .expect_err("repair history must prevent a second repair attempt");
+            assert!(second_repair.to_string().contains("only once"));
+        }
     }
     fingerprints.sort();
     fingerprints.dedup();

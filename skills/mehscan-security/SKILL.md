@@ -331,6 +331,12 @@ from the supplied unresolved set. Validate each response:
 mehscan investigate review-bundle-triage --bundle REQUEST --responses RESPONSE
 ```
 
+Do not ask the reviewer to emit repair metadata. When one parseable result
+fails contract validation, generate one replacement result for that exact ID
+and use `review-bundle-repair`; the CLI records the failed and replacement
+identities and revalidates the complete response. Never repair a valid response
+to change its security decision, and never repair an already repaired response.
+
 When the review runner supports structured output, generate a request-specific
 schema with `mehscan investigate review-response-schema --bundle REQUEST --output SCHEMA`.
 Older versions can use the packaged `scripts/new-review-response-schema.ps1` helper.

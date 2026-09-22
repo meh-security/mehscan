@@ -10,11 +10,11 @@ use ast_grep_outline::combined_extractor::CombinedExtractors;
 use ast_grep_outline::extractor::parse_outline_rules;
 use ast_grep_outline::model::{OutlineEntry, OutlineItem, OutlineMember, SymbolType};
 use mehscan_core::{
-    CandidateReport, Capability, Capture, Confidence, DismissedReview, EnclosingSymbolResult,
-    Evidence, EvidenceContext, EvidenceFilter, EvidenceKind, EvidenceResults,
-    FINDING_REPORT_SCHEMA_VERSION, FileOutline, FindingFlow, FindingProvenance,
-    FindingRelatedLocation, FindingRemediation, FindingReport, FindingReportScan,
-    FindingReportSummary, FindingReportTool, FindingReportTriage, FindingStatus,
+    BOUNDED_ESCALATION_RESPONSE_SCHEMA_VERSION, CandidateReport, Capability, Capture, Confidence,
+    DismissedReview, EnclosingSymbolResult, Evidence, EvidenceContext, EvidenceFilter,
+    EvidenceKind, EvidenceResults, FINDING_REPORT_SCHEMA_VERSION, FileOutline, FindingFlow,
+    FindingProvenance, FindingRelatedLocation, FindingRemediation, FindingReport,
+    FindingReportScan, FindingReportSummary, FindingReportTool, FindingReportTriage, FindingStatus,
     INVESTIGATION_TRACE_RESPONSE_SCHEMA_VERSION, InvestigationAnchor, InvestigationJob,
     InvestigationLimits, InvestigationUnit, InvestigationUnitProvenance,
     LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, Language, LiteralState, LiteralValue,
@@ -33,9 +33,9 @@ use mehscan_core::{
     ReviewContextTruncation, ReviewDecision, ReviewDecisionFacts, ReviewInvestigationBudget,
     ReviewInvestigationPlan, ReviewInvestigationTrace, ReviewLookupOutcome, ReviewLookupRequest,
     ReviewNeighborhoodFact, ReviewNeighborhoodJob, ReviewPipelineCoverage, ReviewReadiness,
-    ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet, ReviewWorkSummary, Rule,
-    RuntimeEnvironment, SCHEMA_VERSION, SecurityPathState, SecurityPathStepKind, Severity,
-    SeveritySource, SourceSlice, StructuralMatch, TextReference,
+    ReviewRepairTrace, ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet,
+    ReviewWorkSummary, Rule, RuntimeEnvironment, SCHEMA_VERSION, SecurityPathState,
+    SecurityPathStepKind, Severity, SeveritySource, SourceSlice, StructuralMatch, TextReference,
 };
 
 mod review_admission;
@@ -1105,6 +1105,7 @@ pub fn validate_path_review_triage(
             &responses.schema_version,
             &responses.job_fingerprint,
             &responses.results,
+            None,
         ),
         issue_count: responses
             .results
@@ -1523,6 +1524,7 @@ pub fn validate_path_review_bundle_response(
             missing.join(", ")
         )));
     }
+    validate_review_repair_trace(bundle, responses)?;
     Ok(PathReviewBundleTriageReport {
         schema_version: responses.schema_version.clone(),
         bundle_fingerprint: bundle.bundle_fingerprint.clone(),
@@ -1530,6 +1532,7 @@ pub fn validate_path_review_bundle_response(
             &responses.schema_version,
             &responses.bundle_fingerprint,
             &responses.results,
+            responses.repair.as_ref(),
         ),
         complete: true,
         issue_count: responses
@@ -1549,6 +1552,162 @@ pub fn validate_path_review_bundle_response(
             .count(),
         results: responses.results.clone(),
     })
+}
+
+fn validate_review_repair_trace(
+    bundle: &PathReviewBundle,
+    responses: &PathReviewBundleResponseSet,
+) -> Result<(), EngineError> {
+    let Some(repair) = &responses.repair else {
+        return Ok(());
+    };
+    if responses.schema_version != PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION {
+        return Err(EngineError(format!(
+            "repair history requires path-review response schema {}",
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
+        )));
+    }
+    if !bundle.review_ids.contains(&repair.review_id) {
+        return Err(EngineError(format!(
+            "repair history references unknown review {:?}",
+            repair.review_id
+        )));
+    }
+    validate_trace_line(
+        &repair.review_id,
+        "repair validation error",
+        &repair.validation_error,
+        500,
+    )?;
+    for (field, value, prefix) in [
+        (
+            "prior response fingerprint",
+            repair.prior_response_fingerprint.as_str(),
+            "review-response-",
+        ),
+        (
+            "prior result fingerprint",
+            repair.prior_result_fingerprint.as_str(),
+            "review-result-",
+        ),
+        (
+            "replacement result fingerprint",
+            repair.replacement_result_fingerprint.as_str(),
+            "review-result-",
+        ),
+    ] {
+        let suffix = value.strip_prefix(prefix).unwrap_or_default();
+        if suffix.len() != 16 || !suffix.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(EngineError(format!(
+                "{field} for {:?} is invalid",
+                repair.review_id
+            )));
+        }
+    }
+    let replacement = responses
+        .results
+        .iter()
+        .find(|result| result.review_id == repair.review_id)
+        .expect("validated complete response must contain repaired review");
+    if review_result_fingerprint(replacement) != repair.replacement_result_fingerprint {
+        return Err(EngineError(format!(
+            "replacement result fingerprint for {:?} does not match the validated result",
+            repair.review_id
+        )));
+    }
+    if repair.prior_result_fingerprint == repair.replacement_result_fingerprint {
+        return Err(EngineError(format!(
+            "repair history for {:?} does not change the targeted result",
+            repair.review_id
+        )));
+    }
+    Ok(())
+}
+
+/// Replaces exactly one result in a parseable invalid response, records the
+/// failed execution identity, and accepts the output only when the complete
+/// repaired response validates. A second repair is rejected.
+pub fn repair_path_review_bundle_response(
+    bundle: &PathReviewBundle,
+    failed: &PathReviewBundleResponseSet,
+    review_id: &str,
+    replacement: PathReviewTriageResult,
+) -> Result<PathReviewBundleResponseSet, EngineError> {
+    if failed.repair.is_some() {
+        return Err(EngineError(
+            "a path-review bundle response can be repaired only once".to_string(),
+        ));
+    }
+    if failed.bundle_fingerprint != bundle.bundle_fingerprint {
+        return Err(EngineError(
+            "failed path-review response does not match the bundle fingerprint".to_string(),
+        ));
+    }
+    if !supported_path_review_response_schema(&failed.schema_version) {
+        return Err(EngineError(format!(
+            "unsupported failed path-review response schema {:?}",
+            failed.schema_version
+        )));
+    }
+    if replacement.review_id != review_id {
+        return Err(EngineError(format!(
+            "replacement result ID {:?} does not match targeted review {review_id:?}",
+            replacement.review_id
+        )));
+    }
+    let prior_error = match validate_path_review_bundle_response(bundle, failed) {
+        Ok(_) => {
+            return Err(EngineError(
+                "a valid path-review response must not be repaired".to_string(),
+            ));
+        }
+        Err(error) => error,
+    };
+    let prior_result = failed
+        .results
+        .iter()
+        .find(|result| result.review_id == review_id)
+        .ok_or_else(|| {
+            EngineError(format!(
+                "failed response does not contain targeted review {review_id:?}"
+            ))
+        })?;
+    let prior_response_fingerprint = review_response_fingerprint(
+        &failed.schema_version,
+        &failed.bundle_fingerprint,
+        &failed.results,
+        None,
+    );
+    let prior_result_fingerprint = review_result_fingerprint(prior_result);
+    let replacement_result_fingerprint = review_result_fingerprint(&replacement);
+    let mut results = failed.results.clone();
+    let target = results
+        .iter_mut()
+        .find(|result| result.review_id == review_id)
+        .expect("targeted prior result was found above");
+    *target = replacement;
+    let validation_error = prior_error
+        .to_string()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(500)
+        .collect::<String>();
+    let repaired = PathReviewBundleResponseSet {
+        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
+        bundle_fingerprint: bundle.bundle_fingerprint.clone(),
+        results,
+        repair: Some(ReviewRepairTrace {
+            review_id: review_id.to_string(),
+            prior_response_fingerprint,
+            prior_result_fingerprint,
+            replacement_result_fingerprint,
+            validation_error,
+        }),
+    };
+    validate_path_review_bundle_response(bundle, &repaired)?;
+    Ok(repaired)
 }
 
 /// Validates a complete semantic-bundle run and deduplicates issue decisions
@@ -1678,11 +1837,17 @@ fn summarize_path_review_bundle_run_with_fingerprint(
     let quality_warnings = review_run_quality_warnings(bundle_responses);
     let response_fingerprint = review_run_response_fingerprint(&job_fingerprint, bundle_responses);
     let work = completed_review_work(bundle_responses);
+    let mut repairs = bundle_responses
+        .iter()
+        .filter_map(|(_, response)| response.repair.clone())
+        .collect::<Vec<_>>();
+    repairs.sort_by(|left, right| left.review_id.cmp(&right.review_id));
     Ok(PathReviewBundleRunReport {
         schema_version: PATH_REVIEW_BUNDLE_SCHEMA_VERSION.to_string(),
         job_fingerprint,
         response_fingerprint,
         work,
+        repairs,
         bundle_count: bundle_responses.len(),
         review_count: results.len(),
         issue_count,
@@ -1867,6 +2032,7 @@ fn finding_report_from_run(
             response_schema_version,
             response_fingerprint: run.response_fingerprint.clone(),
             work: run.work.clone(),
+            repairs: run.repairs.clone(),
             reviewer,
         },
         summary: FindingReportSummary {
@@ -2866,6 +3032,7 @@ fn supported_path_review_response_schema(schema_version: &str) -> bool {
     matches!(
         schema_version,
         PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
+            | BOUNDED_ESCALATION_RESPONSE_SCHEMA_VERSION
             | INVESTIGATION_TRACE_RESPONSE_SCHEMA_VERSION
             | LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
     )
@@ -3814,10 +3981,17 @@ fn stable_review_hash(prefix: &str, input: &str) -> String {
     format!("{prefix}-{hash:016x}")
 }
 
+fn review_result_fingerprint(result: &PathReviewTriageResult) -> String {
+    let serialized =
+        serde_json::to_string(result).expect("review triage results must remain JSON serializable");
+    stable_review_hash("review-result", &serialized)
+}
+
 fn review_response_fingerprint(
     schema_version: &str,
     request_fingerprint: &str,
     results: &[PathReviewTriageResult],
+    repair: Option<&ReviewRepairTrace>,
 ) -> String {
     let mut results = results.to_vec();
     for result in &mut results {
@@ -3848,7 +4022,7 @@ fn review_response_fingerprint(
         }
     }
     results.sort_by(|left, right| left.review_id.cmp(&right.review_id));
-    let serialized = serde_json::to_string(&(schema_version, request_fingerprint, results))
+    let serialized = serde_json::to_string(&(schema_version, request_fingerprint, results, repair))
         .expect("validated review responses must remain JSON serializable");
     stable_review_hash("review-response", &serialized)
 }
@@ -3866,6 +4040,7 @@ fn review_run_response_fingerprint(
                     &response.schema_version,
                     &response.bundle_fingerprint,
                     &response.results,
+                    response.repair.as_ref(),
                 ),
             )
         })
@@ -4023,6 +4198,7 @@ pub fn validate_path_review_progress(
             &responses.schema_version,
             &responses.job_fingerprint,
             &responses.results,
+            None,
         ),
         submitted_count: responses.results.len(),
         remaining_count: missing_review_ids.len(),
@@ -4498,6 +4674,8 @@ fn path_review_triage_contract() -> ReviewTriageContract {
             "Record each executed supplied lookup by its zero-based request_index in investigation.lookup_attempts. If one attempted lookup reveals the exact next decisive file or identifier, schema 1.2 permits one follow-on source or references escalation instead of request_index; retain the exact supplied missing-fact question, use the smallest locator, and do not perform generic exploration. Preserve returned source as bounded artifacts with distinct IDs and exact locations; cite those IDs for claims and keep reviewer_inferences separate from deterministic scan facts."
                 .to_string(),
             "For needs_review, every retained check with a supplied lookup must have a matching lookup attempt, including an honest no_relevant_result, unavailable, truncated, budget_exhausted, or failed outcome. A deployment-only check must copy its supplied blocker into investigation.blockers."
+                .to_string(),
+            "Do not emit repair metadata. The runner may replace one structurally parseable invalid result exactly once, records both result identities and the original validation error, and revalidates the complete bundle. Repair is for contract failure only, never for changing a valid security decision."
                 .to_string(),
             "Apply this decision procedure: issue requires established dangerous behavior plus attacker influence or a concrete policy failure and no demonstrated effective applicable control; not_issue requires affirmative safe purpose, non-attacker input, non-executable behavior, or an effective applicable control; needs_review requires a supplied unresolved fact that can change issue versus not_issue."
                 .to_string(),
@@ -19295,18 +19473,19 @@ mod tests {
                 blockers: Vec::new(),
             }),
         };
-        let original = review_response_fingerprint("1.1", "bundle-1", &[result.clone()]);
+        let original = review_response_fingerprint("1.1", "bundle-1", &[result.clone()], None);
 
         let mut reordered = result.clone();
         reordered.checks.reverse();
-        let reordered_fingerprint = review_response_fingerprint("1.1", "bundle-1", &[reordered]);
+        let reordered_fingerprint =
+            review_response_fingerprint("1.1", "bundle-1", &[reordered], None);
         assert_eq!(original, reordered_fingerprint);
 
         let mut changed = result;
         changed.investigation.as_mut().unwrap().lookup_attempts[0].artifacts[0]
             .excerpt
             .push_str(" // changed");
-        let changed_fingerprint = review_response_fingerprint("1.1", "bundle-1", &[changed]);
+        let changed_fingerprint = review_response_fingerprint("1.1", "bundle-1", &[changed], None);
         assert_ne!(original, changed_fingerprint);
     }
 

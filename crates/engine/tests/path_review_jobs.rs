@@ -560,6 +560,7 @@ fn emits_semantic_bundles_and_retries_incomplete_bundle_responses() {
         schema_version: "1.0".to_string(),
         bundle_fingerprint: bundle.bundle_fingerprint.clone(),
         results: results.clone(),
+        repair: None,
     };
     let report =
         mehscan_engine::investigation::validate_path_review_bundle_response(bundle, &response)
@@ -1037,6 +1038,7 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
                 schema_version: "1.0".to_string(),
                 bundle_fingerprint: bundle.bundle_fingerprint.clone(),
                 results,
+                repair: None,
             };
             (bundle, responses)
         })
@@ -1654,6 +1656,7 @@ fn consolidates_multiple_sources_at_one_exact_sink_and_invariant() {
                 schema_version: "1.0".to_string(),
                 bundle_fingerprint: bundle.bundle_fingerprint.clone(),
                 results,
+                repair: None,
             };
             (bundle, response)
         })
