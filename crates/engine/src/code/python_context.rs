@@ -28,6 +28,7 @@ const ORM_ACCESS_RULE_ID: &str = "python-django-orm-resource-access";
 const ORM_OWNER_CONTROL_RULE_ID: &str = "python-django-orm-owner-scoped-control";
 const SENSITIVE_MUTATION_RULE_ID: &str = "python-django-sensitive-field-mutation";
 const SERIALIZER_WRITE_RULE_ID: &str = "python-drf-sensitive-serializer-write";
+const REQUEST_CREDENTIAL_LOGGING_RULE_ID: &str = "python-request-credential-logging";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PythonRoute {
@@ -207,6 +208,7 @@ impl PythonProjectContext {
         );
         push_disabled_tls_observations(path, root, comments, conditional, literals, evidence);
         push_django_orm_observations(path, root, comments, conditional, literals, evidence);
+        push_request_credential_logging(path, root, comments, conditional, literals, evidence);
         push_sensitive_field_mutations(path, root, comments, conditional, literals, evidence);
         push_sensitive_serializer_writes(
             path,
@@ -325,6 +327,303 @@ impl PythonProjectContext {
             }
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_request_credential_logging<'tree>(
+    path: &str,
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    for call in root.dfs().filter(|node| {
+        node.kind().as_ref() == "call"
+            && node
+                .field("function")
+                .is_some_and(|callee| python_logging_call(callee.text().trim()))
+    }) {
+        if comments.is_in_comment(call.range()) {
+            continue;
+        }
+        let Some(function) = call
+            .ancestors()
+            .find(|ancestor| ancestor.kind().as_ref() == "function_definition")
+        else {
+            continue;
+        };
+        let arguments = python_call_arguments(&call);
+        if arguments.is_empty() {
+            continue;
+        }
+        let Some(origin) = python_logged_credential_origin(&function, &call, &arguments) else {
+            continue;
+        };
+        let message = call
+            .children()
+            .find(|child| child.kind().as_ref() == "argument_list")
+            .unwrap_or_else(|| arguments[0].clone());
+        let message_location = location(path, &message);
+        let origin_location = location(path, &origin);
+        evidence.push(Evidence {
+            id: evidence_id(
+                path,
+                REQUEST_CREDENTIAL_LOGGING_RULE_ID,
+                call.range().start,
+                call.range().end,
+            ),
+            kind: EvidenceKind::SensitiveOperation,
+            capability: Capability::Logging,
+            location: location(path, &call),
+            enclosing_symbol: enclosing_symbol(&call),
+            captures: BTreeMap::from([
+                (
+                    "message".to_string(),
+                    Capture {
+                        text: message.text().into_owned(),
+                        location: message_location,
+                    },
+                ),
+                (
+                    "credential_origin".to_string(),
+                    Capture {
+                        text: origin.text().into_owned(),
+                        location: origin_location,
+                    },
+                ),
+            ]),
+            cwe_candidates: vec!["CWE-532".to_string()],
+            tags: vec![
+                "logging".to_string(),
+                "credential".to_string(),
+                "request-derived".to_string(),
+                "plaintext-value".to_string(),
+                "bounded-local-origin".to_string(),
+            ],
+            confidence: Confidence::High,
+            provenance: Provenance {
+                resolution: Resolution::Ast,
+                engine: "mehscan bounded-python-credential-logging 1".to_string(),
+                rule_version: 1,
+            },
+            context: EvidenceContext {
+                comment: false,
+                reachability: Some(reachability::classify(&call, literals)),
+                availability: Some(conditional.availability_for(call.range())),
+                literals: BTreeMap::from([("message".to_string(), literals.evaluate(&message))]),
+                ..EvidenceContext::default()
+            },
+            symbol_resolution: None,
+            rule_id: REQUEST_CREDENTIAL_LOGGING_RULE_ID.to_string(),
+            related_evidence: Vec::new(),
+        });
+    }
+}
+
+fn python_logging_call(callee: &str) -> bool {
+    let callee = callee.to_ascii_lowercase();
+    if callee == "print" {
+        return true;
+    }
+    let Some((receiver, method)) = callee.rsplit_once('.') else {
+        return false;
+    };
+    let receiver = receiver.rsplit('.').next().unwrap_or(receiver);
+    matches!(receiver, "logger" | "log" | "logging" | "_logger")
+        && matches!(
+            method,
+            "debug" | "info" | "warning" | "warn" | "error" | "critical" | "exception" | "log"
+        )
+}
+
+fn python_logged_credential_origin<'tree>(
+    function: &Node<'tree, StrDoc<SupportLang>>,
+    call: &Node<'tree, StrDoc<SupportLang>>,
+    arguments: &[Node<'tree, StrDoc<SupportLang>>],
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    if let Some(argument) = arguments
+        .iter()
+        .find(|argument| python_direct_request_credential(argument.text().as_ref()))
+    {
+        return Some(argument.clone());
+    }
+
+    let mut credential_origins =
+        BTreeMap::<String, (Node<'tree, StrDoc<SupportLang>>, usize)>::new();
+    let mut request_containers = BTreeSet::new();
+    let mut assignments = function
+        .dfs()
+        .filter(|node| {
+            node.kind().as_ref() == "assignment"
+                && node.range().end < call.range().start
+                && node
+                    .ancestors()
+                    .find(|ancestor| ancestor.kind().as_ref() == "function_definition")
+                    .is_some_and(|owner| owner.range() == function.range())
+        })
+        .collect::<Vec<_>>();
+    assignments.sort_by_key(|assignment| assignment.range().start);
+    for assignment in assignments {
+        let (Some(left), Some(right)) = (assignment.field("left"), assignment.field("right"))
+        else {
+            continue;
+        };
+        if left.kind().as_ref() != "identifier" {
+            continue;
+        }
+        let binding = left.text().into_owned();
+        let value = right.text().into_owned();
+        credential_origins.remove(&binding);
+        request_containers.remove(&binding);
+
+        if python_direct_request_credential(&value) {
+            credential_origins.insert(binding, (right, 0));
+            continue;
+        }
+        let identifiers = python_identifier_references(&right);
+        if python_request_container(&value) {
+            request_containers.insert(binding);
+            continue;
+        }
+        if identifiers
+            .iter()
+            .any(|identifier| request_containers.contains(identifier))
+            && python_sensitive_credential_name(&value)
+        {
+            credential_origins.insert(binding, (right, 0));
+            continue;
+        }
+        if let Some((origin, depth)) = identifiers
+            .iter()
+            .filter_map(|identifier| credential_origins.get(identifier))
+            .min_by_key(|(_, depth)| *depth)
+            .cloned()
+            && depth < 2
+            && python_preserves_credential_value(&right)
+        {
+            credential_origins.insert(binding, (origin, depth + 1));
+        }
+    }
+
+    credential_origins
+        .iter()
+        .filter(|(binding, _)| {
+            arguments
+                .iter()
+                .any(|argument| python_logs_full_credential_binding(argument, binding))
+        })
+        .map(|(_, origin)| origin)
+        .min_by_key(|(_, depth)| *depth)
+        .map(|(origin, _)| origin.clone())
+}
+
+fn python_logs_full_credential_binding(
+    argument: &Node<'_, StrDoc<SupportLang>>,
+    binding: &str,
+) -> bool {
+    argument.dfs().any(|candidate| {
+        if candidate.kind().as_ref() != "identifier" || candidate.text().trim() != binding {
+            return false;
+        }
+        !candidate
+            .parent()
+            .is_some_and(|parent| python_bounded_prefix_slice(parent.text().trim(), binding))
+    })
+}
+
+fn python_bounded_prefix_slice(value: &str, binding: &str) -> bool {
+    let compact = value.split_whitespace().collect::<String>();
+    let Some(length) = compact
+        .strip_prefix(&format!("{binding}[:"))
+        .and_then(|suffix| suffix.strip_suffix(']'))
+        .and_then(|length| length.parse::<usize>().ok())
+    else {
+        return false;
+    };
+    length <= 8
+}
+
+fn python_preserves_credential_value(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    matches!(
+        node.kind().as_ref(),
+        "identifier"
+            | "dictionary"
+            | "list"
+            | "tuple"
+            | "set"
+            | "string"
+            | "concatenated_string"
+            | "binary_operator"
+            | "subscript"
+    )
+}
+
+fn python_identifier_references(node: &Node<'_, StrDoc<SupportLang>>) -> BTreeSet<String> {
+    node.dfs()
+        .filter(|candidate| candidate.kind().as_ref() == "identifier")
+        .map(|candidate| candidate.text().into_owned())
+        .collect()
+}
+
+fn python_request_container(value: &str) -> bool {
+    let compact = value
+        .split_whitespace()
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let compact = compact.strip_prefix("await").unwrap_or(&compact);
+    [
+        "request.data",
+        "request.json",
+        "request.get_json(",
+        "request.form",
+        "request.post",
+        "request.body",
+    ]
+    .iter()
+    .any(|origin| compact.starts_with(origin))
+}
+
+fn python_direct_request_credential(value: &str) -> bool {
+    let compact = value
+        .split_whitespace()
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let compact = compact.strip_prefix("await").unwrap_or(&compact);
+    [
+        "request.meta",
+        "request.headers",
+        "request.cookies",
+        "request.authorization",
+        "request.auth",
+        "request.data",
+        "request.json",
+        "request.get_json(",
+        "request.form",
+        "request.post",
+    ]
+    .iter()
+    .any(|origin| compact.contains(origin))
+        && python_sensitive_credential_name(&compact)
+}
+
+fn python_sensitive_credential_name(value: &str) -> bool {
+    let normalized = value.to_ascii_lowercase().replace('-', "_");
+    [
+        "authorization",
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "session_key",
+        "sessionid",
+        "access_key",
+        "private_key",
+    ]
+    .iter()
+    .any(|name| normalized.contains(name))
 }
 
 fn sensitive_field(name: &str) -> bool {

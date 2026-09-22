@@ -5885,6 +5885,9 @@ fn observation_decision_facts(
     let rust_policy = rust_observation_policy(evidence, facts);
     let rust_dynamic_html_parameter = rust_dynamic_html_parameter(evidence, facts);
     let javascript_policy = javascript_observation_policy(evidence, facts);
+    let python_request_credential_logging = evidence
+        .iter()
+        .find(|item| item.rule_id == "python-request-credential-logging");
     let embedded_signing_key = observation_has_source_embedded_signing_key(evidence, facts);
     let matched_python_jwt_verification = evidence
         .iter()
@@ -6160,6 +6163,21 @@ fn observation_decision_facts(
     if let Some(policy) = &java_policy {
         established.push(policy.established.to_string());
     }
+    if let Some(item) = python_request_credential_logging {
+        let origin = item
+            .captures
+            .get("credential_origin")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("request credential");
+        let message = item
+            .captures
+            .get("message")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("log arguments");
+        established.push(format!(
+            "The bounded Python classifier established that request-derived credential expression `{origin}` reaches the exact log arguments `{message}` through at most two same-function assignments."
+        ));
+    }
     if let Some(policy) = &csharp_policy {
         established.push(policy.established.clone());
     }
@@ -6242,7 +6260,11 @@ fn observation_decision_facts(
                 .control
                 .to_string(),
         ]
-    } else if java_policy.is_some() || embedded_signing_key || matched_python_jwt_verification {
+    } else if java_policy.is_some()
+        || python_request_credential_logging.is_some()
+        || embedded_signing_key
+        || matched_python_jwt_verification
+    {
         Vec::new()
     } else if resource_policy_applies
         && resource_policy.is_some_and(|policy| policy.state == ResourcePolicyState::OwnerScoped)
@@ -6273,6 +6295,7 @@ fn observation_decision_facts(
         || server_generated_output_path
         || direct_stored_html_trust_bypass
         || java_policy.is_some()
+        || python_request_credential_logging.is_some()
         || bounded_request_origin.is_some()
     {
         Vec::new()
@@ -13702,11 +13725,15 @@ fn observation_review_questions(
     let direct_request_resource_selector =
         observation_has_direct_request_resource_selector(evidence);
     let java_decision_ready = java_observation_policy(evidence, facts).is_some();
+    let python_request_credential_logging = evidence
+        .iter()
+        .any(|item| item.rule_id == "python-request-credential-logging");
     let decision_ready_policy = evidence
         .iter()
         .any(|item| explicit_cookie_omission(&item.rule_id).is_some())
         || observation_has_source_embedded_signing_key(evidence, facts)
-        || java_decision_ready;
+        || java_decision_ready
+        || python_request_credential_logging;
     let has_source = evidence
         .iter()
         .any(|item| item.kind == EvidenceKind::Source);
