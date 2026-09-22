@@ -257,6 +257,10 @@ Apply its framework-neutral operation matrix first, then only the section for
 the detected framework. The same method/path/action, control scope, registration
 order, and resource must line up; authentication or a sibling-route guard is not
 object authorization for the reviewed operation.
+For a claimed cross-user mutation, verify that the selected object is written
+to shared protected state. A value stored only in the caller's session or
+returned as lesson feedback is a different effect; a separate unauthorized
+read or disclosure still needs its own source-backed decision.
 
 When a Mehscan rule or review fact explicitly labels a registration as generated
 CRUD, do not decide from the generator excerpt alone. Treat the label as proof
@@ -368,11 +372,14 @@ Older versions can use the packaged `scripts/new-review-response-schema.ps1` hel
 It constrains the fingerprint, allowed IDs and exact result count; it cannot
 enforce unique IDs or semantic correctness. The CLI validator remains required.
 
-Treat each request file as one independent review invocation. Do not process a
-directory or sequence of bundles in one context: large multi-bundle tasks can
-encourage repeated verdict templates even when individual request files are
-small. The generation default remains 20 reviews per bundle; lower
-`--max-reviews` only for a measured retry or evaluation.
+Treat each request file as one independent review invocation. Separate model
+processes may review different request files concurrently; cap concurrency to
+the available budget. Do not put a directory or sequence of bundles into one
+model context. The CLI's 20-review default is a transport ceiling, not a review
+quality target. Start with a smaller measured ceiling such as five reviews and
+inspect manifest bytes and shared source context before increasing it. Keep
+reviews of the same affected file together when they fit the chosen limits;
+larger bundles need a quality and cost check on that category.
 
 Within one review, execute supplied lookup requests in order and stop when the
 returned evidence resolves the decision-critical question. Do not spend a
@@ -391,9 +398,9 @@ new bundle fingerprints. Never rebind singleton responses into an older bundle
 or describe this targeted audit as a complete run. Isolation reduces scope
 contamination; it does not supply missing facts or eliminate reasoning errors.
 
-Use the default capable review configuration for the first pass. Route review
-effort by payload completeness and decision quality, not by provider, model
-name, CWE, or rule:
+Use Luna 6 at medium effort as the default reviewer, with a separate process
+for each bundle. Route difficult reviews by payload completeness and decision
+quality, not by CWE or rule:
 
 - decision-critical truncation means regenerate or gather context;
 - non-empty `decision_facts.unresolved` means retain the exact `needs_review`
@@ -402,15 +409,17 @@ name, CWE, or rule:
   exact deterministic `confidence_policy`;
 - reject capability drift, operands absent from the payload, re-asking supplied
   facts, and generic repeated summaries, then retry once with fresh context;
-- use a stronger independent reviewer only when a complete payload still
-  receives a repeated, contract-valid but evidence-inconsistent decision;
-- reserve the highest-cost or deepest review configuration for a high-impact
-  disagreement that remains after those checks.
+- when a complete payload still receives a contract-valid but
+  evidence-inconsistent decision, revalidate the exact affected review with
+  Sol 6 in an independent process; do not merely increase Luna's effort;
+- if Luna and Sol disagree, inspect the cited source and fix missing or
+  misleading facts before treating either verdict as final. Reserve deeper
+  Sol review for a high-impact disagreement that remains after that check.
 
 Before handing off a final report, resolve each `needs_review` check with its
 named source or deployment fact when available. If that fact is already in the
 payload but the first reviewer still defers or contradicts it, use one
-independent stronger review for that exact ID. Keep a genuinely missing fact
+independent Sol 6 review for that exact ID. Keep a genuinely missing fact
 under review required with its verification action; do not turn it into a
 finding by assigning an uncalibrated numeric confidence threshold. Confirmed
 findings alone enter the finding SARIF.

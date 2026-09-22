@@ -4028,30 +4028,72 @@ fn split_path_bundle(
 fn split_observation_bundle(
     job: &PathReviewJob,
     category: PathReviewBundleCategory,
-    reviews: Vec<ObservationReview>,
+    mut reviews: Vec<ObservationReview>,
     max_input_bytes: usize,
     max_reviews_per_bundle: usize,
 ) -> Result<Vec<PathReviewBundle>, EngineError> {
+    reviews.sort_by(|left, right| {
+        let left_anchor = observation_actionable_anchor(left);
+        let right_anchor = observation_actionable_anchor(right);
+        left_anchor
+            .map(|item| item.location.path.as_str())
+            .cmp(&right_anchor.map(|item| item.location.path.as_str()))
+            .then_with(|| {
+                left_anchor
+                    .map(|item| item.location.start.byte_offset)
+                    .cmp(&right_anchor.map(|item| item.location.start.byte_offset))
+            })
+            .then_with(|| left.id.cmp(&right.id))
+    });
     let mut chunks = Vec::<Vec<ObservationReview>>::new();
     let mut current = Vec::new();
+    let mut file_blocks = Vec::<Vec<ObservationReview>>::new();
     for review in reviews {
-        let mut trial = current.clone();
-        trial.push(review.clone());
-        let trial_review_count = trial.len();
-        let bundle = make_observation_bundle(job, category.clone(), trial, 9_999, 9_999);
-        if (trial_review_count > max_reviews_per_bundle
-            || serialized_bundle_bytes(&bundle)? > max_input_bytes)
-            && !current.is_empty()
+        let path =
+            observation_actionable_anchor(&review).map(|anchor| anchor.location.path.as_str());
+        if let Some(block) = file_blocks.last_mut()
+            && block
+                .last()
+                .and_then(observation_actionable_anchor)
+                .map(|anchor| anchor.location.path.as_str())
+                == path
         {
-            chunks.push(std::mem::take(&mut current));
+            block.push(review);
+        } else {
+            file_blocks.push(vec![review]);
         }
-        current.push(review);
-        let single = make_observation_bundle(job, category.clone(), current.clone(), 9_999, 9_999);
-        if current.len() == 1 && serialized_bundle_bytes(&single)? > max_input_bytes {
-            return Err(EngineError(format!(
-                "review {:?} exceeds the bundle byte limit {max_input_bytes}; increase --max-bytes",
-                current[0].id
-            )));
+    }
+    for block in file_blocks {
+        if !current.is_empty() && block.len() <= max_reviews_per_bundle {
+            let mut trial = current.clone();
+            trial.extend(block.iter().cloned());
+            let bundle = make_observation_bundle(job, category.clone(), trial, 9_999, 9_999);
+            if bundle.review_ids.len() > max_reviews_per_bundle
+                || serialized_bundle_bytes(&bundle)? > max_input_bytes
+            {
+                chunks.push(std::mem::take(&mut current));
+            }
+        }
+        for review in block {
+            let mut trial = current.clone();
+            trial.push(review.clone());
+            let trial_review_count = trial.len();
+            let bundle = make_observation_bundle(job, category.clone(), trial, 9_999, 9_999);
+            if (trial_review_count > max_reviews_per_bundle
+                || serialized_bundle_bytes(&bundle)? > max_input_bytes)
+                && !current.is_empty()
+            {
+                chunks.push(std::mem::take(&mut current));
+            }
+            current.push(review);
+            let single =
+                make_observation_bundle(job, category.clone(), current.clone(), 9_999, 9_999);
+            if current.len() == 1 && serialized_bundle_bytes(&single)? > max_input_bytes {
+                return Err(EngineError(format!(
+                    "review {:?} exceeds the bundle byte limit {max_input_bytes}; increase --max-bytes",
+                    current[0].id
+                )));
+            }
         }
     }
     if !current.is_empty() {
@@ -5047,6 +5089,8 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Before claiming injection, check that the producer's representation matches the consumer operation (for example object properties versus array indexing after JSON decoding). An incompatible access does not establish delivery to the sink."
                 .to_string(),
+            "For injection into constructed SQL, HTML, commands, or URLs, evaluate the exact interpreted operand rather than its containing object or an adjacent interpolation. Attacker selection of an integer, enum, date formatted by a fixed formatter, or fixed-format generated value does not by itself permit grammar-changing text; conversely, an unconstrained string can. Resolve each relevant operand's type or producer before treating a request-associated object as proof of injection."
+                .to_string(),
             "Injection does not require unsafe input on every execution path. For shown code equivalent to `if (enabled) value = request.field; sink(value)`, the enabled branch establishes a conditional weakness unless supplied facts disprove that branch; an uninitialized value or failure in the other branch does not protect it. The condition need not be attacker-controlled. Likewise, when a shown decoded request object supplies the selected property value, a dynamic property selector need not itself be attacker-controlled; do not confuse the selector's origin with the selected value's origin."
                 .to_string(),
             "An intervening unknown helper is neither a sanitizer nor proof that the old value survives. Check supplied argument/reference/alias and mutation semantics, including calls inside compound assignment; do not assume pass-by-value in PHP or unchanged mutable objects in other languages. A neighboring helper declaration answers this only when its exact callable and owner match. If the bounded relationship is not established and unresolved is empty, dismiss that relationship without claiming safe output."
@@ -5061,7 +5105,7 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "For authorization, distinguish boundary attachment, authentication, coarse role or permission checks, and authorization of the same action and resource. A custom guard, middleware, dependency, policy, or voter name is attachment inventory only until its supplied definition and rejection behavior establish what it enforces."
                 .to_string(),
-            "For every routed authorization review, align the exact server boundary, method/path or resolver action, sensitive effect, attached control scope, framework inheritance or registration order, and selected resource before deciding. Authentication proves identity only; a sibling method/path guard, coarse role, or unrelated policy does not authorize the reviewed action and object. Explicit public overrides and ignored or fail-open decisions must be applied to the exact operation they affect."
+            "For every routed authorization review, align the exact server boundary, method/path or resolver action, sensitive effect, attached control scope, framework inheritance or registration order, and selected resource before deciding. Authentication proves identity only; a sibling method/path guard, coarse role, or unrelated policy does not authorize the reviewed action and object. Explicit public overrides and ignored or fail-open decisions must be applied to the exact operation they affect. For a claimed cross-user write, distinguish shared-resource mutation from an object written only to the caller's session or response; assess any separate cross-user read or disclosure on its own evidence."
                 .to_string(),
             "Evidence tagged review-admission-marker means deterministic facts established a security-relevant boundary and effect, but the normal sink/path vocabulary could not represent the complete review invariant. Do not dismiss it merely because no conventional sink or deterministic vulnerability path fired. Judge only the named review-invariant tag from the supplied facts; the marker admits review and is not itself proof of a weakness."
                 .to_string(),
@@ -5100,6 +5144,8 @@ fn path_review_triage_contract() -> ReviewTriageContract {
             "A lookup request is a concrete repository query, not evidence that its expected producer or control exists. Apply only returned artifacts that match the exact operand, owner, operation, action, and resource in this review."
                 .to_string(),
             "Record each executed supplied lookup by its zero-based request_index in investigation.lookup_attempts. If one attempted lookup reveals the exact next decisive file or identifier, the response permits one follow-on source or references escalation instead of request_index; retain the exact supplied missing-fact question, use the smallest locator, and do not perform generic exploration. Preserve returned source as bounded artifacts with distinct IDs and exact locations; cite those IDs for claims and keep reviewer_inferences separate from deterministic scan facts."
+                .to_string(),
+            "Each lookup attempt must identify exactly one supplied request_index or one allowed escalation. An answered attempt must return at least one artifact and cite at least one artifact from that same attempt. A source artifact's path and lines must stay within the requested source window; an escalated path or symbol must come from an earlier returned artifact. Every reviewer-origin lead artifact ID must also be explicitly cited."
                 .to_string(),
             "If supplied or retrieved source establishes a concrete dangerous operation or security invariant that is distinct from the admitted question, retain at most three reviewer_origin_leads with a precise question, security relevance, explanation of the distinction, exact source location and explicitly cited artifact IDs. A keyword, comment, helper name or generic concern is not a lead. Leads are unvalidated follow-up work: do not use them to change this review's verdict and do not describe them as scanner findings or deterministic coverage."
                 .to_string(),
@@ -8556,6 +8602,16 @@ fn build_observation_reviews(
             .unwrap_or(first_line);
         let mut start_line = first_line.saturating_sub(context_lines).max(1);
         let mut end_line = last_line.saturating_add(context_lines);
+        if file.language == Some(Language::Java)
+            && group
+                .evidence
+                .iter()
+                .any(|item| item.capability == Capability::DatabaseQuery)
+        {
+            // A nearby route parameter or local normalization often precedes
+            // a Java SQL sink by more than the generic context margin.
+            start_line = start_line.min(first_line.saturating_sub(14).max(1));
+        }
         let anchor = group
             .anchor_evidence_ids
             .iter()
@@ -8869,6 +8925,25 @@ fn build_observation_reviews(
                 exact_csharp_caller_facts(sources, &group.path, &group.symbol, 2);
             context_truncated |= callers_truncated;
             facts.append(&mut callers);
+            let (mut assigned_helpers, assigned_helpers_truncated) =
+                csharp_sql_assigned_helper_facts(sources, &review_context, &group, &facts, 2);
+            context_truncated |= assigned_helpers_truncated;
+            facts.append(&mut assigned_helpers);
+            let (mut operand_types, operand_types_truncated) =
+                csharp_sql_caller_type_facts(sources, &review_context, &group, &facts, 2);
+            context_truncated |= operand_types_truncated;
+            facts.append(&mut operand_types);
+        }
+        if languages.get(group.path.as_str()) == Some(&Language::Java)
+            && group
+                .evidence
+                .iter()
+                .any(|item| item.rule_id == "java-spring-data-request-entity-mass-assignment")
+        {
+            let (mut entity_facts, entity_truncated) =
+                java_request_entity_writer_facts(sources, &review_context, &group);
+            context_truncated |= entity_truncated;
+            facts.append(&mut entity_facts);
         }
         if let Some(language) = languages.get(group.path.as_str()).copied()
             && language != Language::Csharp
@@ -9439,6 +9514,291 @@ fn exact_csharp_caller_facts(
         }
     }
     (facts, false)
+}
+
+/// A caller can assign a SQL-interpolated model member from a named helper.
+/// Follow only that exact assignment and an owner-resolved helper definition;
+/// this is context for the reviewer, not a cross-file flow assertion.
+fn csharp_sql_assigned_helper_facts(
+    sources: &RepositorySources,
+    context: &ReviewContextIndex,
+    group: &ObservationGroup,
+    existing: &[ReviewNeighborhoodFact],
+    limit: usize,
+) -> (Vec<ReviewNeighborhoodFact>, bool) {
+    let members = group
+        .evidence
+        .iter()
+        .filter(|item| item.capability == Capability::DatabaseQuery)
+        .filter_map(|item| item.captures.get("dynamic_operands"))
+        .flat_map(|capture| capture.text.split(','))
+        .filter_map(|operand| {
+            let (_, member) = operand.trim().rsplit_once('.')?;
+            let member = member.split(':').next()?.trim();
+            is_plain_identifier(member).then(|| member.to_string())
+        })
+        .collect::<BTreeSet<_>>();
+    if members.is_empty() {
+        return (Vec::new(), false);
+    }
+    let mut paths = BTreeSet::from([group.path.as_str()]);
+    let mut references = BTreeSet::new();
+    for caller in existing
+        .iter()
+        .filter(|fact| fact.role == "exact_caller_context")
+    {
+        paths.insert(caller.location.path.as_str());
+        let lines = caller.excerpt.lines().collect::<Vec<_>>();
+        for (index, line) in lines.iter().enumerate() {
+            let line = line.trim();
+            for member in &members {
+                let Some(rhs) = line
+                    .strip_prefix(member)
+                    .and_then(|rest| rest.trim_start().strip_prefix('='))
+                else {
+                    continue;
+                };
+                let rhs = if rhs.trim().is_empty() {
+                    lines.get(index + 1).copied().unwrap_or_default()
+                } else {
+                    rhs
+                };
+                let Some(open) = rhs.find('(') else {
+                    continue;
+                };
+                let method = rhs[..open]
+                    .trim_end()
+                    .rsplit(|character: char| {
+                        !(character.is_ascii_alphanumeric() || character == '_')
+                    })
+                    .next()
+                    .unwrap_or_default();
+                if is_helpful_reference_identifier(method) {
+                    references.insert(method.to_string());
+                }
+            }
+        }
+    }
+    if references.is_empty() {
+        return (Vec::new(), false);
+    }
+    observation_helper_definition_facts(sources, context, &paths, &references, existing, limit)
+}
+
+/// Supply a unique type instantiated by an exact caller when its name matches
+/// the owner of a SQL interpolation. The reviewer still decides whether the
+/// caller's value is the same instance used at the sink.
+fn csharp_sql_caller_type_facts(
+    sources: &RepositorySources,
+    context: &ReviewContextIndex,
+    group: &ObservationGroup,
+    existing: &[ReviewNeighborhoodFact],
+    limit: usize,
+) -> (Vec<ReviewNeighborhoodFact>, bool) {
+    let owners = group
+        .evidence
+        .iter()
+        .filter(|item| item.capability == Capability::DatabaseQuery)
+        .filter_map(|item| item.captures.get("dynamic_operands"))
+        .flat_map(|capture| capture.text.split(','))
+        .filter_map(|operand| {
+            operand
+                .trim()
+                .split_once('.')
+                .map(|(owner, _)| owner.to_ascii_lowercase())
+        })
+        .collect::<BTreeSet<_>>();
+    let mut facts = Vec::new();
+    for caller in existing
+        .iter()
+        .filter(|fact| fact.role == "exact_caller_context")
+    {
+        for tail in caller.excerpt.split("new ").skip(1) {
+            let type_name = tail
+                .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .next()
+                .unwrap_or_default();
+            if !owners.contains(&type_name.to_ascii_lowercase()) {
+                continue;
+            }
+            let Some(symbols) = context.definitions.get(type_name) else {
+                continue;
+            };
+            let definitions = symbols
+                .iter()
+                .filter(|symbol| {
+                    ["class", "record", "struct"]
+                        .iter()
+                        .any(|kind| symbol.signature.contains(&format!("{kind} {type_name}")))
+                })
+                .collect::<Vec<_>>();
+            if definitions.len() != 1 {
+                continue;
+            }
+            let symbol = definitions[0];
+            if facts_cover_location(existing, &symbol.location)
+                || facts_cover_location(&facts, &symbol.location)
+            {
+                continue;
+            }
+            if facts.len() == limit {
+                return (facts, true);
+            }
+            let Ok(file) = sources.file(&symbol.location.path) else {
+                continue;
+            };
+            let end_line = symbol
+                .location
+                .end
+                .line
+                .min(symbol.location.start.line + 39);
+            let Ok((slice, truncated)) = source_slice(file, symbol.location.start.line, end_line)
+            else {
+                continue;
+            };
+            facts.push(ReviewNeighborhoodFact {
+                role: "caller_instantiated_sql_operand_type_context".to_string(),
+                symbol: type_name.to_string(),
+                location: slice.location,
+                excerpt: slice.text,
+                evidence_id: None,
+                provenance: textual_provenance(
+                    "unique C# type instantiated in exact caller with name matching interpolated operand owner; lexical context, not flow proof 1",
+                ),
+            });
+            if truncated || end_line < symbol.location.end.line {
+                return (facts, true);
+            }
+        }
+    }
+    (facts, false)
+}
+
+/// For direct request-entity persistence, expose the exact same-package entity
+/// and the declared receiver's save method. These are bounded lexical facts;
+/// the reviewer still checks binding semantics and the sensitive write.
+fn java_request_entity_writer_facts(
+    sources: &RepositorySources,
+    context: &ReviewContextIndex,
+    group: &ObservationGroup,
+) -> (Vec<ReviewNeighborhoodFact>, bool) {
+    let Some(sink) = group
+        .evidence
+        .iter()
+        .find(|item| item.rule_id == "java-spring-data-request-entity-mass-assignment")
+    else {
+        return (Vec::new(), false);
+    };
+    let Some(type_name) = sink
+        .captures
+        .get("input_type")
+        .map(|capture| capture.text.as_str())
+    else {
+        return (Vec::new(), false);
+    };
+    if !is_plain_identifier(type_name) {
+        return (Vec::new(), false);
+    }
+    let directory = group
+        .path
+        .rsplit_once('/')
+        .map(|(dir, _)| dir)
+        .unwrap_or("");
+    let sibling = |name: &str| {
+        if directory.is_empty() {
+            format!("{name}.java")
+        } else {
+            format!("{directory}/{name}.java")
+        }
+    };
+    let mut facts = Vec::new();
+    let mut truncated = false;
+    let type_path = sibling(type_name);
+    if let Ok(file) = sources.file(&type_path) {
+        let line_count = file.source.lines().count();
+        let end = line_count.min(80);
+        if let Ok((slice, slice_truncated)) = source_slice(file, 1, end) {
+            facts.push(ReviewNeighborhoodFact {
+                role: "request_entity_type_context".into(),
+                symbol: type_name.into(),
+                location: slice.location,
+                excerpt: slice.text,
+                evidence_id: None,
+                provenance: textual_provenance(
+                    "exact same-package Java request entity type; lexical fields and annotations, not binding proof 1",
+                ),
+            });
+            truncated |= slice_truncated || end < line_count;
+        }
+    }
+    let Ok(caller) = sources.file(&group.path) else {
+        return (facts, truncated);
+    };
+    let Some(operation) = caller
+        .source
+        .get(sink.location.start.byte_offset..sink.location.end.byte_offset)
+    else {
+        return (facts, truncated);
+    };
+    let Some(receiver) = operation
+        .split_once(".save(")
+        .map(|(receiver, _)| receiver.trim())
+    else {
+        return (facts, truncated);
+    };
+    if !is_plain_identifier(receiver) {
+        return (facts, truncated);
+    }
+    let declaration_suffix = format!(" {receiver};");
+    let Some(owner) = caller.source[..sink.location.start.byte_offset]
+        .lines()
+        .rev()
+        .map(str::trim)
+        .filter(|line| !line.starts_with("//"))
+        .find_map(|line| {
+            line.strip_suffix(&declaration_suffix)?
+                .split_whitespace()
+                .last()
+                .filter(|name| is_plain_identifier(name))
+        })
+    else {
+        return (facts, truncated);
+    };
+    let owner_path = sibling(owner);
+    let Some(symbols) = context.definitions.get("save") else {
+        return (facts, truncated);
+    };
+    let matching = symbols
+        .iter()
+        .filter(|symbol| symbol.location.path == owner_path)
+        .filter(|symbol| symbol.signature.contains("save(") && symbol.signature.contains(type_name))
+        .collect::<Vec<_>>();
+    if matching.len() != 1 {
+        return (facts, truncated);
+    }
+    let symbol = matching[0];
+    let Ok(file) = sources.file(&owner_path) else {
+        return (facts, truncated);
+    };
+    let end = symbol
+        .location
+        .end
+        .line
+        .min(symbol.location.start.line + 39);
+    if let Ok((slice, slice_truncated)) = source_slice(file, symbol.location.start.line, end) {
+        facts.push(ReviewNeighborhoodFact {
+            role: "request_entity_exact_writer_context".into(),
+            symbol: format!("{owner}.save"),
+            location: slice.location,
+            excerpt: slice.text,
+            evidence_id: None,
+            provenance: textual_provenance(
+                "exact Java save receiver declared in request handler with same-package owner; lexical target, not flow proof 1",
+            ),
+        });
+        truncated |= slice_truncated || end < symbol.location.end.line;
+    }
+    (facts, truncated)
 }
 
 impl BoundedCallerIndex {
@@ -14961,11 +15321,20 @@ fn csharp_typed_instance_helper_is_owned(
     let receiver = receivers.first().expect("one exact receiver");
     let types = candidate
         .source
-        .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-        .filter(|token| !token.is_empty())
-        .collect::<Vec<_>>()
-        .windows(2)
-        .filter_map(|pair| (pair[1] == receiver.as_str()).then_some(pair[0]))
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .filter_map(|line| {
+            let at = line.find(receiver)?;
+            let before = line[..at].trim_end();
+            let after = line[at + receiver.len()..].trim_start();
+            if before.contains(['=', '('])
+                || !line[..at].chars().last().is_some_and(char::is_whitespace)
+                || !after.starts_with([';', '=', ','])
+            {
+                return None;
+            }
+            before.split_whitespace().last()?.rsplit('.').next()
+        })
         .filter(|type_name| type_name.chars().next().is_some_and(char::is_uppercase))
         .collect::<BTreeSet<_>>();
     if types.len() != 1 {

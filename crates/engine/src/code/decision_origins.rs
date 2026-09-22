@@ -401,7 +401,11 @@ fn query_is_fixed_local_alias(
     else {
         return false;
     };
-    for statement in bounded_statements(prefix).into_iter().rev().take(96) {
+    for statement in bounded_statements(prefix, language)
+        .into_iter()
+        .rev()
+        .take(96)
+    {
         let trimmed = statement.trim();
         if mutation_value(trimmed, name, language).is_some() {
             return false;
@@ -430,14 +434,18 @@ fn bounded_query_composition(
     }
     let scope_start = callable_start(root, query_capture).unwrap_or(0);
     let prefix = source.get(scope_start..item.location.start.byte_offset.min(source.len()))?;
-    for statement in bounded_statements(prefix).into_iter().rev().take(96) {
+    for statement in bounded_statements(prefix, language)
+        .into_iter()
+        .rev()
+        .take(96)
+    {
         let trimmed = statement.trim();
         if let Some(value) = mutation_value(trimmed, name, language) {
-            if value_is_dynamic(value) {
-                return Some((
-                    "bounded-local-builder",
-                    expression_references(language, value),
-                ));
+            if value_is_dynamic(value) || expression_is_composed(language, value) {
+                let references = expression_references(language, value);
+                if !references.is_empty() {
+                    return Some(("bounded-local-builder", references));
+                }
             }
             continue;
         }
@@ -521,7 +529,7 @@ fn split_arguments(source: &str) -> Vec<&str> {
     arguments
 }
 
-fn bounded_statements(source: &str) -> Vec<&str> {
+fn bounded_statements(source: &str, language: Language) -> Vec<&str> {
     let bytes = source.as_bytes();
     let mut statements = Vec::new();
     let mut start = 0;
@@ -540,7 +548,9 @@ fn bounded_statements(source: &str) -> Vec<&str> {
         }
         match byte {
             b'\'' | b'"' | b'`' => quote = Some(byte),
-            b';' | b'\n' => {
+            b';' | b'\n'
+                if !matches!(language, Language::Csharp | Language::Java) || byte == b';' =>
+            {
                 if let Some(statement) = source.get(start..index)
                     && !statement.trim().is_empty()
                 {
@@ -692,6 +702,7 @@ fn assignment_value(line: &str) -> Option<&str> {
 
 fn expression_references(language: Language, expression: &str) -> Vec<String> {
     let focused = match language {
+        Language::Csharp => csharp_interpolation_references(expression),
         Language::Kotlin | Language::Javascript | Language::Typescript | Language::Tsx => {
             dollar_references(expression)
         }
@@ -710,7 +721,56 @@ fn expression_references(language: Language, expression: &str) -> Vec<String> {
     if !focused.is_empty() {
         return focused;
     }
-    identifier_tokens(expression)
+    identifier_tokens(&without_quoted_literals(expression))
+}
+
+fn csharp_interpolation_references(expression: &str) -> Vec<String> {
+    if !["$\"", "$@\"", "@$\""]
+        .iter()
+        .any(|prefix| expression.contains(prefix))
+    {
+        return Vec::new();
+    }
+    let mut references = Vec::new();
+    let mut rest = expression;
+    while let Some((_, after_open)) = rest.split_once('{') {
+        let Some((inside, after_close)) = after_open.split_once('}') else {
+            break;
+        };
+        let operand = inside.split([':', ',']).next().unwrap_or_default().trim();
+        if !operand.is_empty()
+            && operand.split('.').all(plain_identifier)
+            && !references.iter().any(|existing| existing == operand)
+        {
+            references.push(operand.to_string());
+        }
+        rest = after_close;
+    }
+    references
+}
+
+fn without_quoted_literals(expression: &str) -> String {
+    let mut output = String::with_capacity(expression.len());
+    let mut quote = None;
+    let mut escaped = false;
+    for character in expression.chars() {
+        if let Some(delimiter) = quote {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == delimiter {
+                quote = None;
+            }
+            output.push(' ');
+        } else if matches!(character, '\'' | '"' | '`') {
+            quote = Some(character);
+            output.push(' ');
+        } else {
+            output.push(character);
+        }
+    }
+    output
 }
 
 fn dollar_references(expression: &str) -> Vec<String> {
@@ -1310,5 +1370,33 @@ fn language_tag(language: Language) -> &'static str {
         Language::Rust => "rust",
         Language::Tsx => "tsx",
         Language::Typescript => "typescript",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sql_composition_references_exclude_literal_keywords_and_keep_members() {
+        let source = "sql += \";\\nINSERT INTO Shipments (\" +\n    \"OrderId, ShipperId, TrackingNumber\" +\n    $\"'{shipment.OrderId}','{shipment.ShipperId}','{shipment.TrackingNumber}')\";\ncommand.CommandText = sql;";
+        let builder = bounded_statements(source, Language::Csharp)
+            .into_iter()
+            .find(|statement| statement.trim_start().starts_with("sql +="))
+            .unwrap();
+        let value = mutation_value(builder.trim(), "sql", Language::Csharp).unwrap();
+        assert!(expression_is_composed(Language::Csharp, value));
+        assert_eq!(
+            expression_references(Language::Csharp, value),
+            vec![
+                "shipment.OrderId",
+                "shipment.ShipperId",
+                "shipment.TrackingNumber"
+            ]
+        );
+        assert_eq!(
+            expression_references(Language::Java, "\"INSERT INTO Shipments\" + requestValue"),
+            vec!["requestValue"]
+        );
     }
 }

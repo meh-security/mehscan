@@ -1121,6 +1121,9 @@ fn terminal_route_handlers(line: &str) -> Vec<String> {
     arguments
         .into_iter()
         .skip(usize::from(!chained))
+        .filter(|argument| {
+            !argument.contains("=>") && !argument.trim_start().starts_with("function")
+        })
         .filter_map(|argument| {
             let last_call = argument
                 .split('(')
@@ -1189,6 +1192,7 @@ mod route_handler_tests {
             ),
             vec!["appendUserId", "quantityCheckBeforeBasketItemUpdate"]
         );
+        assert!(terminal_route_handlers("fastify.patch('/tasks/:id', async (request) => { return tasks.update(request.body) })").is_empty());
         assert_eq!(
             terminal_route_handlers(
                 "router.route('/items/:id')\n  .put(\n    authenticateToken,\n    handlers.updateItem\n  )"
