@@ -30,7 +30,7 @@ class AccountView(APIView):
     def post(self, request, account_id=None, user=None):
         account = Account.objects.get(id=account_id, owner=user)
         payload = request.data
-        account.balance += payload["amount"]
+        account.balance += float(payload["amount"])
         account.save()
         return Response({"balance": account.balance})
 

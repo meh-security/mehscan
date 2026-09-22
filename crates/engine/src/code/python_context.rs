@@ -834,13 +834,13 @@ fn python_value_is_request_controlled(node: &Node<'_, StrDoc<SupportLang>>, valu
     {
         return true;
     }
-    let Some(identifier) = value
+    let identifiers = value
         .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
-        .next()
         .filter(|identifier| !identifier.is_empty())
-    else {
+        .collect::<BTreeSet<_>>();
+    if identifiers.is_empty() {
         return false;
-    };
+    }
     let Some(function) = node
         .ancestors()
         .find(|ancestor| ancestor.kind().as_ref() == "function_definition")
@@ -852,7 +852,7 @@ fn python_value_is_request_controlled(node: &Node<'_, StrDoc<SupportLang>>, valu
             && candidate.range().end < node.range().start
             && candidate
                 .field("left")
-                .is_some_and(|left| left.text().trim() == identifier)
+                .is_some_and(|left| identifiers.contains(left.text().trim()))
             && candidate.field("right").is_some_and(|right| {
                 let text = right.text();
                 text.contains("request.data")
