@@ -261,15 +261,22 @@ data flow. A confirmed issue must name a concrete uncovered operation and its
 security impact.
 
 When `decision_facts.unresolved` names an exact missing syntactic artifact that
-can change the decision, use the investigation API before leaving it unresolved.
-Prefer `source`, `enclosing`, `symbol`, `imports`, and `references` for ordinary
-navigation. For an exact AST shape, `mehscan investigate structural ROOT
+can change the decision, execute the review's supplied `source` or `references`
+lookup before leaving it unresolved. Record only those typed requests and the
+one permitted follow-on `source` or `references` lookup in the validated bundle
+response.
+
+For manual scanner-gap diagnosis outside a bundle response, `enclosing`,
+`symbol`, `imports`, and `references` remain available for navigation. For an
+exact AST shape, `mehscan investigate structural ROOT
 --language LANG --pattern PATTERN [--path FILE] [--limit N]` is available for
 every supported language. Scope it to the named file whenever possible and use
 the smallest pattern that answers the existing question. A structural match is
 ephemeral syntax inventory: it cannot create a finding, establish data flow,
 runtime binding, reachability, or make a control applicable to a different
-operation. Empty, truncated, or parse-failed results do not prove absence.
+operation. Empty, truncated, or parse-failed results do not prove absence. Do
+not attach artifacts from these untyped diagnostic operations to a bundle
+response or present them as an executed supplied lookup.
 
 Before claiming injection, match the producer's representation to the consumer
 operation. For example, PHP's default object-mode `json_decode` does not make
