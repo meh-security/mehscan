@@ -5307,6 +5307,7 @@ fn path_decision_facts(
         &review_basis.source.tags,
         facts,
     );
+    let enabled_execution_configuration = path_enabled_execution_configuration(facts);
     let mut established = vec![
         format!(
             "The deterministic engine admitted a bounded relationship from source rule {} to sink rule {}.",
@@ -5347,6 +5348,12 @@ fn path_decision_facts(
             "No effective protection evidence is linked to this exact bounded value relationship."
                 .to_string(),
         );
+    }
+    if let Some(configuration) = enabled_execution_configuration {
+        established.push(format!(
+            "The repository contains an exact checked-in configuration that enables this execution branch at {}:{}; other disabled profiles do not make the enabled profile unreachable.",
+            configuration.location.path, configuration.location.start.line
+        ));
     }
     if let Some(control) = java_resource_control {
         established.push(format!(
@@ -5578,9 +5585,9 @@ fn path_decision_blockers(
                     && !has_persisted_origin
                     && !has_response_origin
                     && !operator_configured_local_asset)
-                || question.starts_with(
+                || (question.starts_with(
                     "What exact configuration value is effective for the conditional branch",
-                )
+                ) && path_enabled_execution_configuration(facts).is_none())
                 || (candidate.sink.rule_id == "python-source-file-content-write"
                     && question.starts_with(
                         "Does an exact Python import or loader reference the request-overwritten source file",
@@ -5673,6 +5680,43 @@ fn path_execution_configuration_gate(facts: &[ReviewNeighborhoodFact]) -> bool {
                     .iter()
                     .any(|symbol| contains_identifier(line, symbol))
         })
+}
+
+fn path_enabled_execution_configuration(
+    facts: &[ReviewNeighborhoodFact],
+) -> Option<&ReviewNeighborhoodFact> {
+    let configuration_symbols = facts
+        .iter()
+        .filter(|fact| fact.role == "configuration_context")
+        .map(|fact| fact.symbol.as_str())
+        .filter(|symbol| !symbol.is_empty() && symbol.len() <= 120)
+        .collect::<BTreeSet<_>>();
+    let gated_symbols = configuration_symbols
+        .into_iter()
+        .filter(|symbol| {
+            facts
+                .iter()
+                .filter(|fact| matches!(fact.role.as_str(), "source_context" | "sink_context"))
+                .flat_map(|fact| fact.excerpt.lines())
+                .any(|line| contains_identifier(line, symbol))
+        })
+        .collect::<BTreeSet<_>>();
+    facts.iter().find(|fact| {
+        fact.role == "configuration_context"
+            && gated_symbols.contains(fact.symbol.as_str())
+            && fact.excerpt.lines().any(|line| {
+                let Some((_, value)) = line.split_once(':').or_else(|| line.split_once('=')) else {
+                    return false;
+                };
+                value
+                    .split(['#', ';'])
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .trim_matches(['\'', '"'])
+                    .eq_ignore_ascii_case("true")
+            })
+    })
 }
 
 fn observation_decision_facts(
@@ -17819,7 +17863,7 @@ fn configuration_facts(
             let lower = line.to_ascii_lowercase();
             let Some(token) = tokens
                 .iter()
-                .find(|token| contains_identifier(&lower, token))
+                .find(|token| configuration_line_matches_token(&lower, token))
             else {
                 continue;
             };
@@ -17860,6 +17904,28 @@ fn configuration_facts(
         }
     }
     (facts, truncated)
+}
+
+fn configuration_line_matches_token(line: &str, token: &str) -> bool {
+    if contains_identifier(line, token) {
+        return true;
+    }
+    let normalized_token = normalize_configuration_identifier(token);
+    normalized_token.len() >= 4
+        && line
+            .split(|character: char| {
+                !(character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+            })
+            .filter(|candidate| !candidate.is_empty())
+            .any(|candidate| normalize_configuration_identifier(candidate) == normalized_token)
+}
+
+fn normalize_configuration_identifier(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 fn looks_like_configuration_reference(line: &str) -> bool {
@@ -20861,7 +20927,8 @@ mod tests {
     #[test]
     fn review_configuration_context_excludes_tests_and_teaching_material() {
         let route = "const mode = process.env.MODE\n";
-        let production = "mode: production\nmodels: generated\ndisallowed: false\n";
+        let production =
+            "mode: production\nenableShellInjection: true\nmodels: generated\ndisallowed: false\n";
         let test = "httpMock.verify()\n";
         let teaching = "explanation: verify the database lookup\n";
         let sources = RepositorySources {
@@ -20902,7 +20969,11 @@ mod tests {
             ]),
         };
         let paths = BTreeSet::from(["routes/live.ts"]);
-        let tokens = BTreeSet::from(["mode".to_string(), "verify".to_string()]);
+        let tokens = BTreeSet::from([
+            "mode".to_string(),
+            "verify".to_string(),
+            "enable_shell_injection".to_string(),
+        ]);
 
         let (facts, truncated) = configuration_facts(&sources, &paths, &tokens, 8);
         assert!(!truncated);
@@ -20916,8 +20987,12 @@ mod tests {
                 .iter()
                 .filter(|fact| fact.location.path == "config/app.yml")
                 .count(),
-            1
+            2
         );
+        assert!(facts.iter().any(|fact| {
+            fact.symbol == "enable_shell_injection"
+                && fact.excerpt.contains("enableShellInjection: true")
+        }));
         assert!(!facts.iter().any(|fact| {
             fact.location.path.ends_with(".spec.ts") || fact.location.path.contains("/codefixes/")
         }));
@@ -21488,8 +21563,41 @@ mod tests {
         };
         assert!(path_execution_configuration_gate(&[
             configuration.clone(),
-            guarded_sink,
+            guarded_sink.clone(),
         ]));
+        assert!(
+            path_enabled_execution_configuration(&[
+                ReviewNeighborhoodFact {
+                    excerpt: "enableShellInjection: true".to_string(),
+                    ..configuration.clone()
+                },
+                ReviewNeighborhoodFact {
+                    role: "configuration_context".to_string(),
+                    symbol: "unrelated_debug_mode".to_string(),
+                    location: location.clone(),
+                    excerpt: "unrelatedDebugMode: true".to_string(),
+                    evidence_id: None,
+                    provenance: textual_provenance("test"),
+                },
+                guarded_sink.clone(),
+            ])
+            .is_some_and(|fact| fact.symbol == "enable_shell_injection")
+        );
+        assert!(
+            path_enabled_execution_configuration(&[
+                configuration.clone(),
+                ReviewNeighborhoodFact {
+                    role: "configuration_context".to_string(),
+                    symbol: "unrelated_debug_mode".to_string(),
+                    location: location.clone(),
+                    excerpt: "unrelatedDebugMode: true".to_string(),
+                    evidence_id: None,
+                    provenance: textual_provenance("test"),
+                },
+                guarded_sink,
+            ])
+            .is_none()
+        );
 
         let unrelated = ReviewNeighborhoodFact {
             role: "sink_context".to_string(),
