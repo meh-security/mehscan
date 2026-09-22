@@ -32,6 +32,8 @@ pub struct FindingReportTriage {
     pub work: crate::ReviewWorkSummary,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub repairs: Vec<crate::ReviewRepairTrace>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub family_measurements: Vec<crate::ReviewFamilyMeasurement>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reviewer: Option<String>,
 }
@@ -224,6 +226,29 @@ impl FindingReport {
                 self.triage.work.missing_review_ids.len(),
                 self.triage.work.invalid_review_ids.len()
             ));
+        }
+
+        if !self.triage.family_measurements.is_empty() {
+            output.push_str("\n## Investigation measurements\n\n");
+            output.push_str("| Family | Scheduled | Completed | Resolved | Issue / Not issue / Needs review | Lookups (answered / unsuccessful) | Returned bytes | Leads |\n");
+            output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+            for measurement in &self.triage.family_measurements {
+                output.push_str(&format!(
+                    "| {} | {} | {} | {} | {} / {} / {} | {} ({} / {}) | {} | {} |\n",
+                    markdown_text(&enum_label(measurement.capability)),
+                    measurement.scheduled_review_count,
+                    measurement.completed_review_count,
+                    measurement.resolved_review_count,
+                    measurement.issue_count,
+                    measurement.not_issue_count,
+                    measurement.needs_review_count,
+                    measurement.lookup_attempt_count,
+                    measurement.answered_lookup_count,
+                    measurement.unsuccessful_lookup_count,
+                    measurement.returned_artifact_bytes,
+                    measurement.reviewer_origin_lead_count,
+                ));
+            }
         }
 
         output.push_str("\n## Scope and limitations\n\nStatic source conclusions do not establish deployed activation or external exploitation. Any isolated execution checks apply only to the controls identified in the scope label. Ignored and unsupported material is outside coverage. Severity defaults are not a validated impact ranking.\n\n");
@@ -764,10 +789,12 @@ mod tests {
                 scope: Vec::new(),
             },
             triage: FindingReportTriage {
-                response_schema_version: "1.0".to_string(),
+                response_schema_version: crate::PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
+                    .to_string(),
                 response_fingerprint: "review-run-response-test".to_string(),
                 work: crate::ReviewWorkSummary::default(),
                 repairs: Vec::new(),
+                family_measurements: Vec::new(),
                 reviewer: Some("reviewer-1".to_string()),
             },
             summary: FindingReportSummary {
@@ -858,10 +885,12 @@ mod tests {
                 scope: Vec::new(),
             },
             triage: FindingReportTriage {
-                response_schema_version: "1.0".to_string(),
+                response_schema_version: crate::PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
+                    .to_string(),
                 response_fingerprint: "review-run-response-test".to_string(),
                 work: crate::ReviewWorkSummary::default(),
                 repairs: Vec::new(),
+                family_measurements: Vec::new(),
                 reviewer: None,
             },
             summary: FindingReportSummary {

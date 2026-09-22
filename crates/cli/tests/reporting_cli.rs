@@ -298,7 +298,7 @@ fn partial_triage_reports_coverage_and_rejects_invalid_present_responses() {
         String::from_utf8_lossy(&schema.stderr)
     );
     let schema: serde_json::Value = serde_json::from_slice(&schema.stdout).unwrap();
-    assert_eq!(schema["properties"]["schema_version"]["const"], "1.4");
+    assert_eq!(schema["properties"]["schema_version"]["const"], "1.1");
     assert!(schema["properties"].get("repair").is_none());
     assert!(
         schema["properties"]["results"]["items"]["properties"]["investigation"]["required"]
@@ -326,18 +326,12 @@ fn partial_triage_reports_coverage_and_rejects_invalid_present_responses() {
     assert!(lookup_attempt["properties"]["escalation"].is_object());
     assert_eq!(lookup_attempt["oneOf"].as_array().map(Vec::len), Some(2));
     let review = &request["reviews"][0];
-    let unresolved = review["decision_facts"]["unresolved"]
-        .as_array()
-        .and_then(|v| v.first());
-    let decision = if unresolved.is_some() {
-        "needs_review"
-    } else {
-        "not_issue"
-    };
-    let response = serde_json::json!({"schema_version":"1.0", "bundle_fingerprint":request["bundle_fingerprint"], "results":[{
+    let decision = "not_issue";
+    let response = serde_json::json!({"schema_version":mehscan_core::PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, "bundle_fingerprint":request["bundle_fingerprint"], "results":[{
         "review_id":request["review_ids"][0], "decision":decision, "confidence":review["confidence_policy"][decision],
         "summary":"The supplied bounded evidence was reviewed for this selected source operation.",
-        "checks": unresolved.into_iter().collect::<Vec<_>>()
+        "checks": [],
+        "investigation": {"lookup_attempts":[], "citations":[], "reviewer_inferences":[], "reviewer_origin_leads":[], "blockers":[]}
     }]});
     std::fs::write(&response_path, response.to_string()).unwrap();
     for operation in ["report", "summary"] {
@@ -368,6 +362,25 @@ fn partial_triage_reports_coverage_and_rejects_invalid_present_responses() {
         assert_eq!(work["complete"], false);
         assert_eq!(work["scheduled_review_count"], manifest["review_count"]);
         assert_eq!(work["completed_review_count"], 1);
+        let measurements = if operation == "summary" {
+            value["family_measurements"].as_array().unwrap()
+        } else {
+            value["triage"]["family_measurements"].as_array().unwrap()
+        };
+        assert_eq!(
+            measurements
+                .iter()
+                .map(|measurement| measurement["scheduled_review_count"].as_u64().unwrap())
+                .sum::<u64>(),
+            manifest["review_count"].as_u64().unwrap()
+        );
+        assert_eq!(
+            measurements
+                .iter()
+                .map(|measurement| measurement["completed_review_count"].as_u64().unwrap())
+                .sum::<u64>(),
+            1
+        );
         assert_eq!(
             work["missing_review_ids"].as_array().unwrap().len(),
             manifest["review_count"].as_u64().unwrap() as usize - 1

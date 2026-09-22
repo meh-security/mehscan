@@ -281,6 +281,11 @@ fn retrieved_policy_evidence_changes_the_same_incomplete_review_outcome() {
             )])
             .expect("the canonical run summary should preserve repair history");
             assert_eq!(run.repairs, vec![repair.clone()]);
+            assert_eq!(run.family_measurements.len(), 1);
+            assert_eq!(run.family_measurements[0].completed_review_count, 1);
+            assert_eq!(run.family_measurements[0].resolved_review_count, 1);
+            assert_eq!(run.family_measurements[0].lookup_attempt_count, 1);
+            assert!(run.family_measurements[0].returned_artifact_bytes > 0);
             let second_repair = mehscan_engine::investigation::repair_path_review_bundle_response(
                 bundle,
                 &repaired,

@@ -2,8 +2,9 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use mehscan_core::{
-    EvidenceKind, PathReviewBundlePayload, PathReviewBundleResponseSet,
-    PathReviewTriageResponseSet, PathReviewTriageResult, ReviewConfidence, ReviewDecision,
+    EvidenceKind, PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, PathReviewBundlePayload,
+    PathReviewBundleResponseSet, PathReviewTriageResponseSet, PathReviewTriageResult,
+    ReviewConfidence, ReviewDecision,
 };
 
 fn process_fixture_root() -> PathBuf {
@@ -323,28 +324,25 @@ fn validates_one_compact_result_per_path_review() {
     )
     .expect("path reviews should build");
     let responses = PathReviewTriageResponseSet {
-        schema_version: "1.0".to_string(),
+        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
         job_fingerprint: job.fingerprint.clone(),
         results: job
             .reviews
             .iter()
             .map(|review| PathReviewTriageResult {
                 review_id: review.id.clone(),
-                decision: ReviewDecision::NeedsReview,
-                confidence: ReviewConfidence::Medium,
-                summary: "The bounded path is credible, but runtime behavior remains unresolved."
-                    .to_string(),
-                checks: vec![
-                    "Confirm the supplied value reaches the process at runtime.".to_string(),
-                ],
-                investigation: Default::default(),
+                decision: ReviewDecision::Issue,
+                confidence: review.confidence_policy.issue,
+                summary: "The supplied bounded path supports this issue decision.".to_string(),
+                checks: Vec::new(),
+                investigation: Some(Default::default()),
             })
             .collect(),
     };
     let report = mehscan_engine::investigation::validate_path_review_triage(&job, &responses)
         .expect("responses should validate");
-    assert_eq!(report.needs_review_count, 2);
-    assert_eq!(report.issue_count, 0);
+    assert_eq!(report.needs_review_count, 0);
+    assert_eq!(report.issue_count, 2);
     assert_eq!(report.not_issue_count, 0);
 }
 
@@ -422,16 +420,16 @@ fn emits_independent_tasks_and_validates_resumable_progress() {
     }));
 
     let responses = PathReviewTriageResponseSet {
-        schema_version: "1.0".to_string(),
+        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
         job_fingerprint: job.fingerprint.clone(),
         results: vec![PathReviewTriageResult {
             review_id: tasks.tasks[0].review_id.clone(),
-            decision: ReviewDecision::NeedsReview,
-            confidence: ReviewConfidence::Medium,
-            summary: "The first independently transported task still needs one runtime check."
+            decision: ReviewDecision::Issue,
+            confidence: job.reviews[0].confidence_policy.issue,
+            summary: "The first independently transported task supports this issue decision."
                 .to_string(),
-            checks: vec!["Confirm the shown operation executes at runtime.".to_string()],
-            investigation: Default::default(),
+            checks: Vec::new(),
+            investigation: Some(Default::default()),
         }],
     };
     let progress = mehscan_engine::investigation::validate_path_review_progress(&job, &responses)
@@ -523,41 +521,37 @@ fn emits_semantic_bundles_and_retries_incomplete_bundle_responses() {
         .review_ids
         .iter()
         .map(|review_id| {
-            let unresolved = match &bundle.payload {
-                PathReviewBundlePayload::SecurityPath { reviews } => reviews
-                    .iter()
-                    .find(|review| review.id == *review_id)
-                    .expect("review should exist")
-                    .decision_facts
-                    .unresolved
-                    .first()
-                    .cloned(),
-                PathReviewBundlePayload::Observation { reviews } => reviews
-                    .iter()
-                    .find(|review| review.id == *review_id)
-                    .expect("review should exist")
-                    .decision_facts
-                    .unresolved
-                    .first()
-                    .cloned(),
+            let confidence = match &bundle.payload {
+                PathReviewBundlePayload::SecurityPath { reviews } => {
+                    reviews
+                        .iter()
+                        .find(|review| review.id == *review_id)
+                        .expect("review should exist")
+                        .confidence_policy
+                        .issue
+                }
+                PathReviewBundlePayload::Observation { reviews } => {
+                    reviews
+                        .iter()
+                        .find(|review| review.id == *review_id)
+                        .expect("review should exist")
+                        .confidence_policy
+                        .issue
+                }
             };
             PathReviewTriageResult {
                 review_id: review_id.clone(),
-                decision: if unresolved.is_some() {
-                    ReviewDecision::NeedsReview
-                } else {
-                    ReviewDecision::Issue
-                },
-                confidence: ReviewConfidence::Medium,
+                decision: ReviewDecision::Issue,
+                confidence,
                 summary: "The supplied evidence supports one complete compact decision."
                     .to_string(),
-                checks: unresolved.into_iter().collect(),
-                investigation: Default::default(),
+                checks: Vec::new(),
+                investigation: Some(Default::default()),
             }
         })
         .collect::<Vec<_>>();
     let response = PathReviewBundleResponseSet {
-        schema_version: "1.0".to_string(),
+        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
         bundle_fingerprint: bundle.bundle_fingerprint.clone(),
         results: results.clone(),
         repair: None,
@@ -592,7 +586,7 @@ fn emits_semantic_bundles_and_retries_incomplete_bundle_responses() {
         &invented_check,
     )
     .expect_err("needs_review must use a supplied unresolved fact");
-    assert!(error.to_string().contains("decision_facts.unresolved"));
+    assert!(error.to_string().contains("needs_review"));
 
     let mut wrong_confidence = response.clone();
     wrong_confidence.results[0].confidence =
@@ -1001,41 +995,22 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
             let results = bundle
                 .review_ids
                 .iter()
-                .map(|review_id| {
-                    let unresolved = match &bundle.payload {
-                        PathReviewBundlePayload::SecurityPath { reviews } => reviews
-                            .iter()
-                            .find(|review| review.id == *review_id)
-                            .and_then(|review| review.decision_facts.unresolved.first()),
-                        PathReviewBundlePayload::Observation { reviews } => reviews
-                            .iter()
-                            .find(|review| review.id == *review_id)
-                            .and_then(|review| review.decision_facts.unresolved.first()),
-                    };
-                    let needs_review = !path_bundle && unresolved.is_some();
-                    PathReviewTriageResult {
-                        review_id: review_id.clone(),
-                        decision: if path_bundle {
-                            ReviewDecision::Issue
-                        } else if needs_review {
-                            ReviewDecision::NeedsReview
-                        } else {
-                            ReviewDecision::NotIssue
-                        },
-                        confidence: ReviewConfidence::Medium,
-                        summary: "The supplied bounded evidence supports this compact decision."
-                            .to_string(),
-                        checks: unresolved
-                            .filter(|_| needs_review)
-                            .cloned()
-                            .into_iter()
-                            .collect(),
-                        investigation: Default::default(),
-                    }
+                .map(|review_id| PathReviewTriageResult {
+                    review_id: review_id.clone(),
+                    decision: if path_bundle {
+                        ReviewDecision::Issue
+                    } else {
+                        ReviewDecision::NotIssue
+                    },
+                    confidence: ReviewConfidence::Medium,
+                    summary: "The supplied bounded evidence supports this compact decision."
+                        .to_string(),
+                    checks: Vec::new(),
+                    investigation: Some(Default::default()),
                 })
                 .collect();
             let responses = PathReviewBundleResponseSet {
-                schema_version: "1.0".to_string(),
+                schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
                 bundle_fingerprint: bundle.bundle_fingerprint.clone(),
                 results,
                 repair: None,
@@ -1566,7 +1541,7 @@ fn keeps_distinct_sink_instances_in_one_symbol_without_hiding_results() {
     assert_eq!(job.reviews.len(), 2);
     assert!(job.observation_reviews.is_empty());
     let responses = PathReviewTriageResponseSet {
-        schema_version: "1.0".to_string(),
+        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
         job_fingerprint: job.fingerprint.clone(),
         results: job
             .reviews
@@ -1577,7 +1552,7 @@ fn keeps_distinct_sink_instances_in_one_symbol_without_hiding_results() {
                 confidence: review.confidence_policy.issue,
                 summary: "Attacker-controlled HTML reaches an unencoded response sink.".to_string(),
                 checks: Vec::new(),
-                investigation: Default::default(),
+                investigation: Some(Default::default()),
             })
             .collect(),
     };
@@ -1649,11 +1624,11 @@ fn consolidates_multiple_sources_at_one_exact_sink_and_invariant() {
                         review.id
                     ),
                     checks: Vec::new(),
-                    investigation: Default::default(),
+                    investigation: Some(Default::default()),
                 })
                 .collect();
             let response = PathReviewBundleResponseSet {
-                schema_version: "1.0".to_string(),
+                schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
                 bundle_fingerprint: bundle.bundle_fingerprint.clone(),
                 results,
                 repair: None,

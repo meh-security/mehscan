@@ -586,11 +586,7 @@ pub struct ReviewPipelineCoverage {
     pub blocked_review_count: usize,
 }
 
-pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.4";
-pub const TARGETED_REPAIR_RESPONSE_SCHEMA_VERSION: &str = "1.3";
-pub const BOUNDED_ESCALATION_RESPONSE_SCHEMA_VERSION: &str = "1.2";
-pub const INVESTIGATION_TRACE_RESPONSE_SCHEMA_VERSION: &str = "1.1";
-pub const LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.0";
+pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.1";
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -618,8 +614,8 @@ pub struct ReviewRetrievedArtifact {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewLookupAttempt {
-    /// Zero-based supplied request index. Schema 1.2 permits this to be absent
-    /// only when `escalation` records one concrete follow-on lookup.
+    /// Zero-based supplied request index. It may be absent only when
+    /// `escalation` records one concrete follow-on lookup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_index: Option<usize>,
     /// One bounded follow-on lookup discovered while executing a supplied
@@ -896,6 +892,29 @@ pub struct ReviewWorkSummary {
     pub invalid_review_ids: Vec<String>,
 }
 
+/// Low-cost review utility measurements derived from validated requests and
+/// responses. These fields do not estimate model tokens, latency, or cost.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewFamilyMeasurement {
+    pub capability: Capability,
+    pub scheduled_review_count: usize,
+    pub completed_review_count: usize,
+    pub resolved_review_count: usize,
+    pub issue_count: usize,
+    pub not_issue_count: usize,
+    pub needs_review_count: usize,
+    pub lookup_attempt_count: usize,
+    pub answered_lookup_count: usize,
+    pub no_relevant_result_lookup_count: usize,
+    pub unavailable_lookup_count: usize,
+    pub truncated_lookup_count: usize,
+    pub budget_exhausted_lookup_count: usize,
+    pub failed_lookup_count: usize,
+    pub unsuccessful_lookup_count: usize,
+    pub returned_artifact_bytes: usize,
+    pub reviewer_origin_lead_count: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PathReviewBundleIssueGroup {
     pub id: String,
@@ -921,6 +940,8 @@ pub struct PathReviewBundleRunReport {
     pub repairs: Vec<ReviewRepairTrace>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reviewer_origin_leads: Vec<ReviewerOriginLeadRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub family_measurements: Vec<ReviewFamilyMeasurement>,
     pub bundle_count: usize,
     pub review_count: usize,
     pub issue_count: usize,

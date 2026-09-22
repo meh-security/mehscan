@@ -10,15 +10,14 @@ use ast_grep_outline::combined_extractor::CombinedExtractors;
 use ast_grep_outline::extractor::parse_outline_rules;
 use ast_grep_outline::model::{OutlineEntry, OutlineItem, OutlineMember, SymbolType};
 use mehscan_core::{
-    BOUNDED_ESCALATION_RESPONSE_SCHEMA_VERSION, CandidateReport, Capability, Capture, Confidence,
-    DismissedReview, EnclosingSymbolResult, Evidence, EvidenceContext, EvidenceFilter,
-    EvidenceKind, EvidenceResults, FINDING_REPORT_SCHEMA_VERSION, FileOutline, FindingFlow,
-    FindingProvenance, FindingRelatedLocation, FindingRemediation, FindingReport,
-    FindingReportScan, FindingReportSummary, FindingReportTool, FindingReportTriage, FindingStatus,
-    INVESTIGATION_TRACE_RESPONSE_SCHEMA_VERSION, InvestigationAnchor, InvestigationJob,
-    InvestigationLimits, InvestigationUnit, InvestigationUnitProvenance,
-    LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, Language, LiteralState, LiteralValue,
-    Location, NativeCallArgument, NativeCallSite, NativeSyntaxAnchor, NativeSyntaxContext,
+    CandidateReport, Capability, Capture, Confidence, DismissedReview, EnclosingSymbolResult,
+    Evidence, EvidenceContext, EvidenceFilter, EvidenceKind, EvidenceResults,
+    FINDING_REPORT_SCHEMA_VERSION, FileOutline, FindingFlow, FindingProvenance,
+    FindingRelatedLocation, FindingRemediation, FindingReport, FindingReportScan,
+    FindingReportSummary, FindingReportTool, FindingReportTriage, FindingStatus,
+    InvestigationAnchor, InvestigationJob, InvestigationLimits, InvestigationUnit,
+    InvestigationUnitProvenance, Language, LiteralState, LiteralValue, Location,
+    NativeCallArgument, NativeCallSite, NativeSyntaxAnchor, NativeSyntaxContext,
     NativeSyntaxResults, ObservationReview, ObservationReviewBasis, OutlineSymbol,
     PATH_REVIEW_BUNDLE_SCHEMA_VERSION, PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, PathReview,
     PathReviewBasis, PathReviewBundle, PathReviewBundleCategory, PathReviewBundleIssueGroup,
@@ -30,13 +29,13 @@ use mehscan_core::{
     Provenance, QueryProvenance, QueryResponse, REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
     RelationContract, RelationshipFunnel, RelationshipFunnelCapability, ReportedFinding,
     ReportedSeverity, Resolution, ResourcePolicyState, ReviewConfidence, ReviewConfidencePolicy,
-    ReviewContextTruncation, ReviewDecision, ReviewDecisionFacts, ReviewInvestigationBudget,
-    ReviewInvestigationPlan, ReviewInvestigationTrace, ReviewLookupOutcome, ReviewLookupRequest,
-    ReviewNeighborhoodFact, ReviewNeighborhoodJob, ReviewPipelineCoverage, ReviewReadiness,
-    ReviewRepairTrace, ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet,
-    ReviewWorkSummary, ReviewerOriginLeadRecord, Rule, RuntimeEnvironment, SCHEMA_VERSION,
-    SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
-    StructuralMatch, TARGETED_REPAIR_RESPONSE_SCHEMA_VERSION, TextReference,
+    ReviewContextTruncation, ReviewDecision, ReviewDecisionFacts, ReviewFamilyMeasurement,
+    ReviewInvestigationBudget, ReviewInvestigationPlan, ReviewInvestigationTrace,
+    ReviewLookupOutcome, ReviewLookupRequest, ReviewNeighborhoodFact, ReviewNeighborhoodJob,
+    ReviewPipelineCoverage, ReviewReadiness, ReviewRepairTrace, ReviewTriageContract,
+    ReviewTriageReport, ReviewTriageResponseSet, ReviewWorkSummary, ReviewerOriginLeadRecord, Rule,
+    RuntimeEnvironment, SCHEMA_VERSION, SecurityPathState, SecurityPathStepKind, Severity,
+    SeveritySource, SourceSlice, StructuralMatch, TextReference,
 };
 
 mod review_admission;
@@ -1562,10 +1561,10 @@ fn validate_review_repair_trace(
     let Some(repair) = &responses.repair else {
         return Ok(());
     };
-    if !path_review_schema_has_targeted_repair(&responses.schema_version) {
+    if responses.schema_version != PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION {
         return Err(EngineError(format!(
-            "repair history requires path-review response schema {} or newer",
-            TARGETED_REPAIR_RESPONSE_SCHEMA_VERSION
+            "repair history requires path-review response schema {}",
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
         )));
     }
     if !bundle.review_ids.contains(&repair.review_id) {
@@ -1610,13 +1609,7 @@ fn validate_review_repair_trace(
         .iter()
         .find(|result| result.review_id == repair.review_id)
         .expect("validated complete response must contain repaired review");
-    let replacement_fingerprint =
-        if responses.schema_version == TARGETED_REPAIR_RESPONSE_SCHEMA_VERSION {
-            legacy_review_result_fingerprint(replacement)
-        } else {
-            review_result_fingerprint(replacement)
-        };
-    if replacement_fingerprint != repair.replacement_result_fingerprint {
+    if review_result_fingerprint(replacement) != repair.replacement_result_fingerprint {
         return Err(EngineError(format!(
             "replacement result fingerprint for {:?} does not match the validated result",
             repair.review_id
@@ -1761,8 +1754,30 @@ pub fn summarize_path_review_bundle_manifest_run_with_work(
     bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
     scheduled_work: ReviewWorkSummary,
 ) -> Result<PathReviewBundleRunReport, EngineError> {
-    let mut report = summarize_path_review_bundle_manifest_run(manifest, bundle_responses)?;
+    if manifest.bundle_count != manifest.bundles.len() {
+        return Err(EngineError(
+            "bundle manifest count does not match its entries".to_string(),
+        ));
+    }
+    let manifest_bundles = manifest
+        .bundles
+        .iter()
+        .map(|entry| entry.bundle_fingerprint.as_str())
+        .collect::<BTreeSet<_>>();
+    if bundle_responses.iter().any(|(bundle, _)| {
+        bundle.job_fingerprint != manifest.job_fingerprint
+            || !manifest_bundles.contains(bundle.bundle_fingerprint.as_str())
+    }) {
+        return Err(EngineError(
+            "completed bundle response does not belong to the manifest".to_string(),
+        ));
+    }
+    let mut report = summarize_path_review_bundle_run_with_fingerprint(
+        bundle_responses,
+        manifest.job_fingerprint.clone(),
+    )?;
     report.work = merge_scheduled_review_work(&report.work, scheduled_work)?;
+    apply_manifest_family_schedule(manifest, &mut report.family_measurements);
     Ok(report)
 }
 
@@ -1867,6 +1882,7 @@ fn summarize_path_review_bundle_run_with_fingerprint(
             .cmp(&right.origin_review_id)
             .then_with(|| left.lead.question.cmp(&right.lead.question))
     });
+    let family_measurements = review_family_measurements(bundle_responses);
     Ok(PathReviewBundleRunReport {
         schema_version: PATH_REVIEW_BUNDLE_SCHEMA_VERSION.to_string(),
         job_fingerprint,
@@ -1874,6 +1890,7 @@ fn summarize_path_review_bundle_run_with_fingerprint(
         work,
         repairs,
         reviewer_origin_leads,
+        family_measurements,
         bundle_count: bundle_responses.len(),
         review_count: results.len(),
         issue_count,
@@ -1884,6 +1901,110 @@ fn summarize_path_review_bundle_run_with_fingerprint(
         quality_warnings,
         results,
     })
+}
+
+fn review_family_measurements(
+    bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
+) -> Vec<ReviewFamilyMeasurement> {
+    let mut measurements = BTreeMap::<Capability, ReviewFamilyMeasurement>::new();
+    for (bundle, response) in bundle_responses {
+        let measurement = measurements
+            .entry(bundle.category.capability)
+            .or_insert_with(|| empty_family_measurement(bundle.category.capability));
+        measurement.scheduled_review_count += response.results.len();
+        measurement.completed_review_count += response.results.len();
+        for result in &response.results {
+            match result.decision {
+                ReviewDecision::Issue => {
+                    measurement.issue_count += 1;
+                    measurement.resolved_review_count += 1;
+                }
+                ReviewDecision::NotIssue => {
+                    measurement.not_issue_count += 1;
+                    measurement.resolved_review_count += 1;
+                }
+                ReviewDecision::NeedsReview => measurement.needs_review_count += 1,
+            }
+            if let Some(trace) = &result.investigation {
+                measurement.lookup_attempt_count += trace.lookup_attempts.len();
+                for attempt in &trace.lookup_attempts {
+                    match attempt.outcome {
+                        ReviewLookupOutcome::Answered => measurement.answered_lookup_count += 1,
+                        ReviewLookupOutcome::NoRelevantResult => {
+                            measurement.no_relevant_result_lookup_count += 1;
+                            measurement.unsuccessful_lookup_count += 1;
+                        }
+                        ReviewLookupOutcome::Unavailable => {
+                            measurement.unavailable_lookup_count += 1;
+                            measurement.unsuccessful_lookup_count += 1;
+                        }
+                        ReviewLookupOutcome::Truncated => {
+                            measurement.truncated_lookup_count += 1;
+                            measurement.unsuccessful_lookup_count += 1;
+                        }
+                        ReviewLookupOutcome::BudgetExhausted => {
+                            measurement.budget_exhausted_lookup_count += 1;
+                            measurement.unsuccessful_lookup_count += 1;
+                        }
+                        ReviewLookupOutcome::Failed => {
+                            measurement.failed_lookup_count += 1;
+                            measurement.unsuccessful_lookup_count += 1;
+                        }
+                    }
+                }
+                measurement.returned_artifact_bytes += trace
+                    .lookup_attempts
+                    .iter()
+                    .flat_map(|attempt| &attempt.artifacts)
+                    .map(|artifact| artifact.excerpt.len())
+                    .sum::<usize>();
+                measurement.reviewer_origin_lead_count += trace.reviewer_origin_leads.len();
+            }
+        }
+    }
+    measurements.into_values().collect()
+}
+
+fn empty_family_measurement(capability: Capability) -> ReviewFamilyMeasurement {
+    ReviewFamilyMeasurement {
+        capability,
+        scheduled_review_count: 0,
+        completed_review_count: 0,
+        resolved_review_count: 0,
+        issue_count: 0,
+        not_issue_count: 0,
+        needs_review_count: 0,
+        lookup_attempt_count: 0,
+        answered_lookup_count: 0,
+        no_relevant_result_lookup_count: 0,
+        unavailable_lookup_count: 0,
+        truncated_lookup_count: 0,
+        budget_exhausted_lookup_count: 0,
+        failed_lookup_count: 0,
+        unsuccessful_lookup_count: 0,
+        returned_artifact_bytes: 0,
+        reviewer_origin_lead_count: 0,
+    }
+}
+
+fn apply_manifest_family_schedule(
+    manifest: &PathReviewBundleManifest,
+    measurements: &mut Vec<ReviewFamilyMeasurement>,
+) {
+    let mut by_capability = std::mem::take(measurements)
+        .into_iter()
+        .map(|measurement| (measurement.capability, measurement))
+        .collect::<BTreeMap<_, _>>();
+    for measurement in by_capability.values_mut() {
+        measurement.scheduled_review_count = 0;
+    }
+    for entry in &manifest.bundles {
+        let measurement = by_capability
+            .entry(entry.category.capability)
+            .or_insert_with(|| empty_family_measurement(entry.category.capability));
+        measurement.scheduled_review_count += entry.review_count;
+    }
+    *measurements = by_capability.into_values().collect();
 }
 
 /// Joins strict AI verdicts back to deterministic review evidence. The result
@@ -2059,6 +2180,7 @@ fn finding_report_from_run(
             response_fingerprint: run.response_fingerprint.clone(),
             work: run.work.clone(),
             repairs: run.repairs.clone(),
+            family_measurements: run.family_measurements.clone(),
             reviewer,
         },
         summary: FindingReportSummary {
@@ -3056,38 +3178,11 @@ fn job_unresolved_facts<'a>(
 }
 
 fn supported_path_review_response_schema(schema_version: &str) -> bool {
-    matches!(
-        schema_version,
-        PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
-            | TARGETED_REPAIR_RESPONSE_SCHEMA_VERSION
-            | BOUNDED_ESCALATION_RESPONSE_SCHEMA_VERSION
-            | INVESTIGATION_TRACE_RESPONSE_SCHEMA_VERSION
-            | LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
-    )
-}
-
-fn path_review_schema_has_investigation_trace(schema_version: &str) -> bool {
-    schema_version != LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
-}
-
-fn path_review_schema_has_bounded_escalation(schema_version: &str) -> bool {
-    matches!(
-        schema_version,
-        PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
-            | TARGETED_REPAIR_RESPONSE_SCHEMA_VERSION
-            | BOUNDED_ESCALATION_RESPONSE_SCHEMA_VERSION
-    )
-}
-
-fn path_review_schema_has_targeted_repair(schema_version: &str) -> bool {
-    matches!(
-        schema_version,
-        PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION | TARGETED_REPAIR_RESPONSE_SCHEMA_VERSION
-    )
-}
-
-fn path_review_schema_has_reviewer_origin_leads(schema_version: &str) -> bool {
     schema_version == PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
+}
+
+fn path_review_schema_has_investigation_trace(_schema_version: &str) -> bool {
+    true
 }
 
 fn bundle_review_investigation_context<'a>(
@@ -3192,7 +3287,7 @@ fn observation_review_supplied_artifacts(review: &ObservationReview) -> BTreeMap
 }
 
 fn validate_review_investigation_trace(
-    schema_version: &str,
+    _schema_version: &str,
     review_id: &str,
     decision: ReviewDecision,
     checks: &[String],
@@ -3226,12 +3321,6 @@ fn validate_review_investigation_trace(
                 request
             }
             (None, Some(request)) => {
-                if !path_review_schema_has_bounded_escalation(schema_version) {
-                    return Err(EngineError(format!(
-                        "investigation trace for {review_id:?} requires response schema {} for an escalated lookup",
-                        BOUNDED_ESCALATION_RESPONSE_SCHEMA_VERSION
-                    )));
-                }
                 if attempted_requests.is_empty() {
                     return Err(EngineError(format!(
                         "investigation trace for {review_id:?} must execute a supplied lookup before escalating"
@@ -3340,14 +3429,6 @@ fn validate_review_investigation_trace(
         }
     }
 
-    if !trace.reviewer_origin_leads.is_empty()
-        && !path_review_schema_has_reviewer_origin_leads(schema_version)
-    {
-        return Err(EngineError(format!(
-            "reviewer-origin leads for {review_id:?} require response schema {}",
-            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
-        )));
-    }
     if trace.reviewer_origin_leads.len() > 3 {
         return Err(EngineError(format!(
             "investigation trace for {review_id:?} exceeds the three-lead limit"
@@ -4122,50 +4203,6 @@ fn review_result_fingerprint(result: &PathReviewTriageResult) -> String {
     stable_review_hash("review-result", &serialized)
 }
 
-#[derive(serde::Serialize)]
-struct LegacyReviewInvestigationTrace<'a> {
-    lookup_attempts: &'a [mehscan_core::ReviewLookupAttempt],
-    citations: &'a [mehscan_core::ReviewArtifactCitation],
-    reviewer_inferences: &'a [mehscan_core::ReviewerInference],
-    blockers: &'a [String],
-}
-
-#[derive(serde::Serialize)]
-struct LegacyPathReviewTriageResult<'a> {
-    review_id: &'a str,
-    decision: ReviewDecision,
-    confidence: ReviewConfidence,
-    summary: &'a str,
-    checks: &'a [String],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    investigation: Option<LegacyReviewInvestigationTrace<'a>>,
-}
-
-fn legacy_review_result(result: &PathReviewTriageResult) -> LegacyPathReviewTriageResult<'_> {
-    LegacyPathReviewTriageResult {
-        review_id: &result.review_id,
-        decision: result.decision,
-        confidence: result.confidence,
-        summary: &result.summary,
-        checks: &result.checks,
-        investigation: result
-            .investigation
-            .as_ref()
-            .map(|trace| LegacyReviewInvestigationTrace {
-                lookup_attempts: &trace.lookup_attempts,
-                citations: &trace.citations,
-                reviewer_inferences: &trace.reviewer_inferences,
-                blockers: &trace.blockers,
-            }),
-    }
-}
-
-fn legacy_review_result_fingerprint(result: &PathReviewTriageResult) -> String {
-    let serialized = serde_json::to_string(&legacy_review_result(result))
-        .expect("legacy review triage results must remain JSON serializable");
-    stable_review_hash("review-result", &serialized)
-}
-
 fn review_response_fingerprint(
     schema_version: &str,
     request_fingerprint: &str,
@@ -4211,17 +4248,8 @@ fn review_response_fingerprint(
         }
     }
     results.sort_by(|left, right| left.review_id.cmp(&right.review_id));
-    let serialized = if path_review_schema_has_reviewer_origin_leads(schema_version) {
-        serde_json::to_string(&(schema_version, request_fingerprint, results, repair))
-    } else {
-        let legacy_results = results.iter().map(legacy_review_result).collect::<Vec<_>>();
-        if path_review_schema_has_targeted_repair(schema_version) {
-            serde_json::to_string(&(schema_version, request_fingerprint, legacy_results, repair))
-        } else {
-            serde_json::to_string(&(schema_version, request_fingerprint, legacy_results))
-        }
-    }
-    .expect("validated review responses must remain JSON serializable");
+    let serialized = serde_json::to_string(&(schema_version, request_fingerprint, results, repair))
+        .expect("validated review responses must remain JSON serializable");
     stable_review_hash("review-response", &serialized)
 }
 
@@ -4869,7 +4897,7 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "A lookup request is a concrete repository query, not evidence that its expected producer or control exists. Apply only returned artifacts that match the exact operand, owner, operation, action, and resource in this review."
                 .to_string(),
-            "Record each executed supplied lookup by its zero-based request_index in investigation.lookup_attempts. If one attempted lookup reveals the exact next decisive file or identifier, schema 1.2 permits one follow-on source or references escalation instead of request_index; retain the exact supplied missing-fact question, use the smallest locator, and do not perform generic exploration. Preserve returned source as bounded artifacts with distinct IDs and exact locations; cite those IDs for claims and keep reviewer_inferences separate from deterministic scan facts."
+            "Record each executed supplied lookup by its zero-based request_index in investigation.lookup_attempts. If one attempted lookup reveals the exact next decisive file or identifier, the response permits one follow-on source or references escalation instead of request_index; retain the exact supplied missing-fact question, use the smallest locator, and do not perform generic exploration. Preserve returned source as bounded artifacts with distinct IDs and exact locations; cite those IDs for claims and keep reviewer_inferences separate from deterministic scan facts."
                 .to_string(),
             "If supplied or retrieved source establishes a concrete dangerous operation or security invariant that is distinct from the admitted question, retain at most three reviewer_origin_leads with a precise question, security relevance, explanation of the distinction, exact source location and explicitly cited artifact IDs. A keyword, comment, helper name or generic concern is not a lead. Leads are unvalidated follow-up work: do not use them to change this review's verdict and do not describe them as scanner findings or deterministic coverage."
                 .to_string(),
@@ -19496,17 +19524,6 @@ mod tests {
             &trace,
         )
         .expect("a cited artifact from the requested source window should validate");
-        validate_review_investigation_trace(
-            INVESTIGATION_TRACE_RESPONSE_SCHEMA_VERSION,
-            "review-1",
-            ReviewDecision::NeedsReview,
-            std::slice::from_ref(&question),
-            &plan,
-            &supplied,
-            &trace,
-        )
-        .expect("schema 1.1 investigation traces should remain readable");
-
         let mut lead_trace = trace.clone();
         lead_trace.reviewer_origin_leads = vec![ReviewerOriginLead {
             question: "Can the adjacent audit write expose an authorization credential?"
@@ -19628,16 +19645,6 @@ mod tests {
             &escalated_trace,
         )
         .expect("one exact follow-on source lookup should validate");
-        validate_review_investigation_trace(
-            BOUNDED_ESCALATION_RESPONSE_SCHEMA_VERSION,
-            "review-1",
-            ReviewDecision::NotIssue,
-            &[],
-            &plan,
-            &supplied,
-            &escalated_trace,
-        )
-        .expect("schema 1.2 bounded escalations should remain readable");
         escalated_trace.lookup_attempts.push(ReviewLookupAttempt {
             request_index: None,
             escalation: Some(escalation),
@@ -19724,19 +19731,33 @@ mod tests {
                 blockers: Vec::new(),
             }),
         };
-        let original = review_response_fingerprint("1.1", "bundle-1", &[result.clone()], None);
+        let original = review_response_fingerprint(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+            "bundle-1",
+            &[result.clone()],
+            None,
+        );
 
         let mut reordered = result.clone();
         reordered.checks.reverse();
-        let reordered_fingerprint =
-            review_response_fingerprint("1.1", "bundle-1", &[reordered], None);
+        let reordered_fingerprint = review_response_fingerprint(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+            "bundle-1",
+            &[reordered],
+            None,
+        );
         assert_eq!(original, reordered_fingerprint);
 
         let mut changed = result;
         changed.investigation.as_mut().unwrap().lookup_attempts[0].artifacts[0]
             .excerpt
             .push_str(" // changed");
-        let changed_fingerprint = review_response_fingerprint("1.1", "bundle-1", &[changed], None);
+        let changed_fingerprint = review_response_fingerprint(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+            "bundle-1",
+            &[changed],
+            None,
+        );
         assert_ne!(original, changed_fingerprint);
     }
 
