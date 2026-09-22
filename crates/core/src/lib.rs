@@ -50,8 +50,9 @@ pub use finding_sarif::{
     FindingSarifRun, FindingSarifRunProperties, FindingSarifTool,
 };
 pub use investigation::{
-    EnclosingSymbolResult, EvidenceFilter, EvidenceResults, FileOutline, InvestigationAnchor,
-    InvestigationJob, InvestigationLimits, InvestigationUnit, InvestigationUnitProvenance,
+    EnclosingSymbolResult, EvidenceFilter, EvidenceResults, FileOutline,
+    INVESTIGATION_TRACE_RESPONSE_SCHEMA_VERSION, InvestigationAnchor, InvestigationJob,
+    InvestigationLimits, InvestigationUnit, InvestigationUnitProvenance,
     LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, NativeCallArgument, NativeCallSite,
     NativeSyntaxAnchor, NativeSyntaxContext, NativeSyntaxResults, ObservationReview,
     ObservationReviewBasis, OutlineSymbol, PATH_REVIEW_BUNDLE_SCHEMA_VERSION,

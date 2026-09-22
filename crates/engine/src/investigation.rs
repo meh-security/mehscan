@@ -15,26 +15,26 @@ use mehscan_core::{
     FINDING_REPORT_SCHEMA_VERSION, FileOutline, FindingFlow, FindingProvenance,
     FindingRelatedLocation, FindingRemediation, FindingReport, FindingReportScan,
     FindingReportSummary, FindingReportTool, FindingReportTriage, FindingStatus,
-    InvestigationAnchor, InvestigationJob, InvestigationLimits, InvestigationUnit,
-    InvestigationUnitProvenance, LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, Language,
-    LiteralState, LiteralValue, Location, NativeCallArgument, NativeCallSite, NativeSyntaxAnchor,
-    NativeSyntaxContext, NativeSyntaxResults, ObservationReview, ObservationReviewBasis,
-    OutlineSymbol, PATH_REVIEW_BUNDLE_SCHEMA_VERSION, PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
-    PathReview, PathReviewBasis, PathReviewBundle, PathReviewBundleCategory,
-    PathReviewBundleIssueGroup, PathReviewBundleManifest, PathReviewBundleManifestEntry,
-    PathReviewBundlePayload, PathReviewBundleResponseSet, PathReviewBundleRunReport,
-    PathReviewBundleSet, PathReviewBundleTriageReport, PathReviewEvidenceBasis,
-    PathReviewIssueGroup, PathReviewJob, PathReviewTask, PathReviewTaskPage, PathReviewTaskPayload,
-    PathReviewTriageProgress, PathReviewTriageReport, PathReviewTriageResponseSet,
-    PathReviewTriageResult, Position, Provenance, QueryProvenance, QueryResponse,
-    REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, RelationContract, RelationshipFunnel,
-    RelationshipFunnelCapability, ReportedFinding, ReportedSeverity, Resolution,
-    ResourcePolicyState, ReviewConfidence, ReviewConfidencePolicy, ReviewContextTruncation,
-    ReviewDecision, ReviewDecisionFacts, ReviewInvestigationPlan, ReviewInvestigationTrace,
-    ReviewLookupOutcome, ReviewLookupRequest, ReviewNeighborhoodFact, ReviewNeighborhoodJob,
-    ReviewPipelineCoverage, ReviewReadiness, ReviewTriageContract, ReviewTriageReport,
-    ReviewTriageResponseSet, ReviewWorkSummary, Rule, RuntimeEnvironment, SCHEMA_VERSION,
-    SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
+    INVESTIGATION_TRACE_RESPONSE_SCHEMA_VERSION, InvestigationAnchor, InvestigationJob,
+    InvestigationLimits, InvestigationUnit, InvestigationUnitProvenance,
+    LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, Language, LiteralState, LiteralValue,
+    Location, NativeCallArgument, NativeCallSite, NativeSyntaxAnchor, NativeSyntaxContext,
+    NativeSyntaxResults, ObservationReview, ObservationReviewBasis, OutlineSymbol,
+    PATH_REVIEW_BUNDLE_SCHEMA_VERSION, PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, PathReview,
+    PathReviewBasis, PathReviewBundle, PathReviewBundleCategory, PathReviewBundleIssueGroup,
+    PathReviewBundleManifest, PathReviewBundleManifestEntry, PathReviewBundlePayload,
+    PathReviewBundleResponseSet, PathReviewBundleRunReport, PathReviewBundleSet,
+    PathReviewBundleTriageReport, PathReviewEvidenceBasis, PathReviewIssueGroup, PathReviewJob,
+    PathReviewTask, PathReviewTaskPage, PathReviewTaskPayload, PathReviewTriageProgress,
+    PathReviewTriageReport, PathReviewTriageResponseSet, PathReviewTriageResult, Position,
+    Provenance, QueryProvenance, QueryResponse, REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+    RelationContract, RelationshipFunnel, RelationshipFunnelCapability, ReportedFinding,
+    ReportedSeverity, Resolution, ResourcePolicyState, ReviewConfidence, ReviewConfidencePolicy,
+    ReviewContextTruncation, ReviewDecision, ReviewDecisionFacts, ReviewInvestigationPlan,
+    ReviewInvestigationTrace, ReviewLookupOutcome, ReviewLookupRequest, ReviewNeighborhoodFact,
+    ReviewNeighborhoodJob, ReviewPipelineCoverage, ReviewReadiness, ReviewTriageContract,
+    ReviewTriageReport, ReviewTriageResponseSet, ReviewWorkSummary, Rule, RuntimeEnvironment,
+    SCHEMA_VERSION, SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
     StructuralMatch, TextReference,
 };
 
@@ -1354,7 +1354,7 @@ pub fn validate_path_review_bundle_response(
             &result.summary,
             &result.checks,
         )?;
-        if responses.schema_version == PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION {
+        if path_review_schema_has_investigation_trace(&responses.schema_version) {
             let trace = result.investigation.as_ref().ok_or_else(|| {
                 EngineError(format!(
                     "path-review response schema {} requires an investigation trace for {:?}",
@@ -1364,6 +1364,7 @@ pub fn validate_path_review_bundle_response(
             let (plan, supplied_artifact_ids) =
                 bundle_review_investigation_context(bundle, &result.review_id)?;
             validate_review_investigation_trace(
+                &responses.schema_version,
                 &result.review_id,
                 result.decision,
                 &result.checks,
@@ -2751,8 +2752,13 @@ fn supported_path_review_response_schema(schema_version: &str) -> bool {
     matches!(
         schema_version,
         PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
+            | INVESTIGATION_TRACE_RESPONSE_SCHEMA_VERSION
             | LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
     )
+}
+
+fn path_review_schema_has_investigation_trace(schema_version: &str) -> bool {
+    schema_version != LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
 }
 
 fn bundle_review_investigation_context<'a>(
@@ -2850,6 +2856,7 @@ fn observation_review_supplied_artifact_ids(review: &ObservationReview) -> BTree
 }
 
 fn validate_review_investigation_trace(
+    schema_version: &str,
     review_id: &str,
     decision: ReviewDecision,
     checks: &[String],
@@ -2857,29 +2864,59 @@ fn validate_review_investigation_trace(
     supplied_artifact_ids: &BTreeSet<String>,
     trace: &ReviewInvestigationTrace,
 ) -> Result<(), EngineError> {
+    const MAX_ESCALATED_LOOKUPS: usize = 1;
+    const MAX_RETURNED_ARTIFACT_BYTES: usize = 16 * 1024;
     let mut attempted_requests = BTreeSet::new();
+    let mut escalated_lookups = 0usize;
+    let mut returned_artifact_bytes = 0usize;
+    let mut retrieved_locator_text = String::new();
     let mut available_artifact_ids = supplied_artifact_ids.clone();
     for attempt in &trace.lookup_attempts {
-        let request = plan
-            .lookup_requests
-            .get(attempt.request_index)
-            .ok_or_else(|| {
-                EngineError(format!(
-                    "investigation trace for {review_id:?} references unknown lookup request {}",
-                    attempt.request_index
-                ))
-            })?;
-        if !attempted_requests.insert(attempt.request_index) {
-            return Err(EngineError(format!(
-                "investigation trace for {review_id:?} repeats lookup request {}",
-                attempt.request_index
-            )));
-        }
+        let request = match (attempt.request_index, attempt.escalation.as_ref()) {
+            (Some(request_index), None) => {
+                let request = plan.lookup_requests.get(request_index).ok_or_else(|| {
+                    EngineError(format!(
+                        "investigation trace for {review_id:?} references unknown lookup request {request_index}"
+                    ))
+                })?;
+                if !attempted_requests.insert(request_index) {
+                    return Err(EngineError(format!(
+                        "investigation trace for {review_id:?} repeats lookup request {request_index}"
+                    )));
+                }
+                request
+            }
+            (None, Some(request)) => {
+                if schema_version != PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION {
+                    return Err(EngineError(format!(
+                        "investigation trace for {review_id:?} requires response schema {} for an escalated lookup",
+                        PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
+                    )));
+                }
+                if attempted_requests.is_empty() {
+                    return Err(EngineError(format!(
+                        "investigation trace for {review_id:?} must execute a supplied lookup before escalating"
+                    )));
+                }
+                escalated_lookups += 1;
+                if escalated_lookups > MAX_ESCALATED_LOOKUPS {
+                    return Err(EngineError(format!(
+                        "investigation trace for {review_id:?} exceeds the one-lookup escalation budget"
+                    )));
+                }
+                validate_escalated_lookup(review_id, plan, request, &retrieved_locator_text)?;
+                request
+            }
+            _ => {
+                return Err(EngineError(format!(
+                    "investigation trace for {review_id:?} lookup attempt must identify exactly one supplied request_index or escalation"
+                )));
+            }
+        };
         validate_trace_line(review_id, "lookup detail", &attempt.detail, 500)?;
         if attempt.outcome == ReviewLookupOutcome::Answered && attempt.artifacts.is_empty() {
             return Err(EngineError(format!(
-                "answered lookup request {} for {review_id:?} requires a retrieved artifact",
-                attempt.request_index
+                "answered lookup for {review_id:?} requires a retrieved artifact"
             )));
         }
         for artifact in &attempt.artifacts {
@@ -2899,7 +2936,16 @@ fn validate_review_investigation_trace(
                     artifact.artifact_id
                 )));
             }
+            returned_artifact_bytes =
+                returned_artifact_bytes.saturating_add(artifact.excerpt.len());
+            if returned_artifact_bytes > MAX_RETURNED_ARTIFACT_BYTES {
+                return Err(EngineError(format!(
+                    "investigation trace for {review_id:?} exceeds the {MAX_RETURNED_ARTIFACT_BYTES}-byte returned-artifact budget"
+                )));
+            }
             validate_retrieved_artifact_locator(review_id, request, artifact)?;
+            retrieved_locator_text.push_str(&artifact.excerpt);
+            retrieved_locator_text.push('\n');
         }
     }
 
@@ -2955,8 +3001,7 @@ fn validate_review_investigation_trace(
             .any(|artifact| referenced_artifact_ids.contains(artifact.artifact_id.as_str()))
         {
             return Err(EngineError(format!(
-                "answered lookup request {} for {review_id:?} must cite a retrieved artifact",
-                attempt.request_index
+                "answered lookup for {review_id:?} must cite a retrieved artifact"
             )));
         }
     }
@@ -3015,6 +3060,87 @@ fn validate_review_investigation_trace(
                     "needs_review for {review_id:?} must record the supplied blocker for check {check:?}"
                 )));
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_escalated_lookup(
+    review_id: &str,
+    plan: &ReviewInvestigationPlan,
+    request: &ReviewLookupRequest,
+    retrieved_locator_text: &str,
+) -> Result<(), EngineError> {
+    validate_trace_line(review_id, "escalation purpose", &request.purpose, 500)?;
+    if request.questions.is_empty()
+        || request.questions.iter().any(|question| {
+            !plan
+                .missing_facts
+                .iter()
+                .any(|missing| missing.trim() == question.trim())
+        })
+    {
+        return Err(EngineError(format!(
+            "escalated lookup for {review_id:?} must retain one or more exact supplied missing facts"
+        )));
+    }
+    match request.operation.as_str() {
+        "source" => {
+            let path = request.arguments.get("path");
+            let start = request
+                .arguments
+                .get("start-line")
+                .and_then(|value| value.parse::<usize>().ok());
+            let end = request
+                .arguments
+                .get("end-line")
+                .and_then(|value| value.parse::<usize>().ok());
+            if request.arguments.len() != 3
+                || path.is_none_or(|path| path.trim().is_empty())
+                || start.is_none_or(|line| line == 0)
+                || end
+                    .is_none_or(|line| line < start.unwrap_or(1) || line - start.unwrap_or(1) > 400)
+            {
+                return Err(EngineError(format!(
+                    "escalated source lookup for {review_id:?} requires an exact path and a window of at most 400 lines"
+                )));
+            }
+            let path = path.expect("validated source path");
+            let filename = Path::new(path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(path);
+            if !retrieved_locator_text.contains(path) && !retrieved_locator_text.contains(filename)
+            {
+                return Err(EngineError(format!(
+                    "escalated source lookup for {review_id:?} must use a path exposed by an earlier retrieved artifact"
+                )));
+            }
+        }
+        "references" => {
+            let symbol = request.arguments.get("symbol");
+            let limit = request
+                .arguments
+                .get("limit")
+                .and_then(|value| value.parse::<usize>().ok());
+            if request.arguments.len() != 2
+                || symbol.is_none_or(|symbol| !is_plain_identifier(symbol))
+                || limit.is_none_or(|limit| limit == 0 || limit > DEFAULT_RESULT_LIMIT)
+            {
+                return Err(EngineError(format!(
+                    "escalated reference lookup for {review_id:?} requires an exact identifier and limit of at most {DEFAULT_RESULT_LIMIT}"
+                )));
+            }
+            if !retrieved_locator_text.contains(symbol.expect("validated reference symbol")) {
+                return Err(EngineError(format!(
+                    "escalated reference lookup for {review_id:?} must use an identifier exposed by an earlier retrieved artifact"
+                )));
+            }
+        }
+        operation => {
+            return Err(EngineError(format!(
+                "escalated lookup for {review_id:?} uses unsupported operation {operation:?}; expected source or references"
+            )));
         }
     }
     Ok(())
@@ -3844,7 +3970,7 @@ fn validate_path_review_response_subset(
             &result.summary,
             &result.checks,
         )?;
-        if responses.schema_version == PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION {
+        if path_review_schema_has_investigation_trace(&responses.schema_version) {
             let trace = result.investigation.as_ref().ok_or_else(|| {
                 EngineError(format!(
                     "path-review response schema {} requires an investigation trace for {:?}",
@@ -3854,6 +3980,7 @@ fn validate_path_review_response_subset(
             let (plan, supplied_artifact_ids) =
                 job_review_investigation_context(job, &result.review_id)?;
             validate_review_investigation_trace(
+                &responses.schema_version,
                 &result.review_id,
                 result.decision,
                 &result.checks,
@@ -3881,7 +4008,7 @@ fn validate_path_review_response_subset(
                 result.review_id, expected_confidence, result.decision
             )));
         }
-        if responses.schema_version == PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
+        if path_review_schema_has_investigation_trace(&responses.schema_version)
             && result.decision == ReviewDecision::NeedsReview
         {
             let unresolved = job_unresolved_facts(job, &result.review_id)?;
@@ -4246,7 +4373,7 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "A lookup request is a concrete repository query, not evidence that its expected producer or control exists. Apply only returned artifacts that match the exact operand, owner, operation, action, and resource in this review."
                 .to_string(),
-            "Record each executed lookup by its zero-based request_index in investigation.lookup_attempts. Preserve returned source as bounded artifacts with distinct IDs and exact locations; cite those IDs for claims and keep reviewer_inferences separate from deterministic scan facts."
+            "Record each executed supplied lookup by its zero-based request_index in investigation.lookup_attempts. If one attempted lookup reveals the exact next decisive file or identifier, schema 1.2 permits one follow-on source or references escalation instead of request_index; retain the exact supplied missing-fact question, use the smallest locator, and do not perform generic exploration. Preserve returned source as bounded artifacts with distinct IDs and exact locations; cite those IDs for claims and keep reviewer_inferences separate from deterministic scan facts."
                 .to_string(),
             "For needs_review, every retained check with a supplied lookup must have a matching lookup attempt, including an honest no_relevant_result, unavailable, truncated, budget_exhausted, or failed outcome. A deployment-only check must copy its supplied blocker into investigation.blockers."
                 .to_string(),
@@ -18746,6 +18873,7 @@ mod tests {
         );
         let supplied = BTreeSet::from(["evidence-sink".to_string()]);
         let missing_attempt = validate_review_investigation_trace(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
             "review-1",
             ReviewDecision::NeedsReview,
             std::slice::from_ref(&question),
@@ -18758,7 +18886,8 @@ mod tests {
 
         let trace = ReviewInvestigationTrace {
             lookup_attempts: vec![ReviewLookupAttempt {
-                request_index: 0,
+                request_index: Some(0),
+                escalation: None,
                 outcome: ReviewLookupOutcome::Answered,
                 artifacts: vec![ReviewRetrievedArtifact {
                     artifact_id: "lookup-source-1".to_string(),
@@ -18790,6 +18919,7 @@ mod tests {
             blockers: Vec::new(),
         };
         validate_review_investigation_trace(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
             "review-1",
             ReviewDecision::NeedsReview,
             std::slice::from_ref(&question),
@@ -18798,6 +18928,119 @@ mod tests {
             &trace,
         )
         .expect("a cited artifact from the requested source window should validate");
+        validate_review_investigation_trace(
+            INVESTIGATION_TRACE_RESPONSE_SCHEMA_VERSION,
+            "review-1",
+            ReviewDecision::NeedsReview,
+            std::slice::from_ref(&question),
+            &plan,
+            &supplied,
+            &trace,
+        )
+        .expect("schema 1.1 investigation traces should remain readable");
+
+        let escalation = ReviewLookupRequest {
+            operation: "source".to_string(),
+            arguments: BTreeMap::from([
+                ("path".to_string(), "src/policy.ts".to_string()),
+                ("start-line".to_string(), "1".to_string()),
+                ("end-line".to_string(), "40".to_string()),
+            ]),
+            questions: vec![question.clone()],
+            purpose: "Inspect the exact policy file named by the initial source lookup."
+                .to_string(),
+        };
+        let mut escalated_trace = ReviewInvestigationTrace {
+            lookup_attempts: vec![
+                ReviewLookupAttempt {
+                    request_index: Some(0),
+                    escalation: None,
+                    outcome: ReviewLookupOutcome::Answered,
+                    artifacts: vec![ReviewRetrievedArtifact {
+                        artifact_id: "initial-handler".to_string(),
+                        location: Location {
+                            path: "src/handler.ts".to_string(),
+                            start: Position {
+                                line: 120,
+                                column: 1,
+                                byte_offset: 400,
+                            },
+                            end: Position {
+                                line: 120,
+                                column: 45,
+                                byte_offset: 444,
+                            },
+                        },
+                        excerpt: "const command = loadPolicy('src/policy.ts');".to_string(),
+                    }],
+                    detail: "The handler exposed the exact policy file but not its body."
+                        .to_string(),
+                },
+                ReviewLookupAttempt {
+                    request_index: None,
+                    escalation: Some(escalation.clone()),
+                    outcome: ReviewLookupOutcome::Answered,
+                    artifacts: vec![ReviewRetrievedArtifact {
+                        artifact_id: "escalated-policy".to_string(),
+                        location: Location {
+                            path: "src/policy.ts".to_string(),
+                            start: Position {
+                                line: 1,
+                                column: 1,
+                                byte_offset: 0,
+                            },
+                            end: Position {
+                                line: 2,
+                                column: 1,
+                                byte_offset: 32,
+                            },
+                        },
+                        excerpt: "export const command = fixedValue;".to_string(),
+                    }],
+                    detail: "Retrieved the exact policy named by the handler.".to_string(),
+                },
+            ],
+            citations: vec![
+                ReviewArtifactCitation {
+                    artifact_id: "initial-handler".to_string(),
+                    claim: "The handler names the exact policy file.".to_string(),
+                },
+                ReviewArtifactCitation {
+                    artifact_id: "escalated-policy".to_string(),
+                    claim: "The policy supplies a fixed command value.".to_string(),
+                },
+            ],
+            reviewer_inferences: Vec::new(),
+            blockers: Vec::new(),
+        };
+        validate_review_investigation_trace(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+            "review-1",
+            ReviewDecision::NotIssue,
+            &[],
+            &plan,
+            &supplied,
+            &escalated_trace,
+        )
+        .expect("one exact follow-on source lookup should validate");
+        escalated_trace.lookup_attempts.push(ReviewLookupAttempt {
+            request_index: None,
+            escalation: Some(escalation),
+            outcome: ReviewLookupOutcome::NoRelevantResult,
+            artifacts: Vec::new(),
+            detail: "A second escalation must exceed the bounded budget.".to_string(),
+        });
+        let error = validate_review_investigation_trace(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+            "review-1",
+            ReviewDecision::NotIssue,
+            &[],
+            &plan,
+            &supplied,
+            &escalated_trace,
+        )
+        .expect_err("a second escalated lookup must be rejected");
+        assert!(error.to_string().contains("one-lookup escalation budget"));
 
         let external_question =
             "What is the effective deployed proxy, gateway, or application control?".to_string();
@@ -18812,6 +19055,7 @@ mod tests {
             ..ReviewInvestigationTrace::default()
         };
         validate_review_investigation_trace(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
             "review-2",
             ReviewDecision::NeedsReview,
             std::slice::from_ref(&external_question),
@@ -18849,7 +19093,8 @@ mod tests {
             checks: vec!["check-b".to_string(), "check-a".to_string()],
             investigation: Some(ReviewInvestigationTrace {
                 lookup_attempts: vec![ReviewLookupAttempt {
-                    request_index: 0,
+                    request_index: Some(0),
+                    escalation: None,
                     outcome: ReviewLookupOutcome::Answered,
                     artifacts: vec![artifact],
                     detail: "Retrieved the bounded source window.".to_string(),

@@ -298,7 +298,7 @@ fn partial_triage_reports_coverage_and_rejects_invalid_present_responses() {
         String::from_utf8_lossy(&schema.stderr)
     );
     let schema: serde_json::Value = serde_json::from_slice(&schema.stdout).unwrap();
-    assert_eq!(schema["properties"]["schema_version"]["const"], "1.1");
+    assert_eq!(schema["properties"]["schema_version"]["const"], "1.2");
     assert!(
         schema["properties"]["results"]["items"]["required"]
             .as_array()
@@ -313,6 +313,10 @@ fn partial_triage_reports_coverage_and_rejects_invalid_present_responses() {
         schema["properties"]["results"]["items"]["properties"]["review_id"]["enum"],
         request["review_ids"]
     );
+    let lookup_attempt = &schema["properties"]["results"]["items"]["properties"]["investigation"]["properties"]
+        ["lookup_attempts"]["items"];
+    assert!(lookup_attempt["properties"]["escalation"].is_object());
+    assert_eq!(lookup_attempt["oneOf"].as_array().map(Vec::len), Some(2));
     let review = &request["reviews"][0];
     let unresolved = review["decision_facts"]["unresolved"]
         .as_array()

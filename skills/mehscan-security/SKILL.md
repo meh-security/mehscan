@@ -347,6 +347,10 @@ Within one review, execute supplied lookup requests in order and stop when the
 returned evidence resolves the decision-critical question. Do not spend a
 secondary reference lookup after an earlier exact source lookup already proves
 the issue or applicable control. Record only lookups that were actually run.
+If an attempted lookup exposes the exact next decisive file or identifier,
+response schema 1.2 permits one follow-on `source` or `references` escalation.
+Copy the supplied missing-fact question, use the smallest exact locator and
+record its outcome. Do not use this allowance for generic repository search.
 
 If a fresh complete-bundle retry still borrows facts across review IDs, regenerate
 the same authorized root with `--max-reviews 1` and the same context/material

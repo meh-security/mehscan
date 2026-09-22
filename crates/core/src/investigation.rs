@@ -563,7 +563,8 @@ pub struct ReviewPipelineCoverage {
     pub blocked_review_count: usize,
 }
 
-pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.1";
+pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.2";
+pub const INVESTIGATION_TRACE_RESPONSE_SCHEMA_VERSION: &str = "1.1";
 pub const LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.0";
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -588,12 +589,18 @@ pub struct ReviewRetrievedArtifact {
     pub excerpt: String,
 }
 
-/// Records execution of one `investigation.lookup_requests` entry by its
-/// zero-based position in the review request.
+/// Records execution of one supplied lookup or one bounded follow-on lookup.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewLookupAttempt {
-    pub request_index: usize,
+    /// Zero-based supplied request index. Schema 1.2 permits this to be absent
+    /// only when `escalation` records one concrete follow-on lookup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_index: Option<usize>,
+    /// One bounded follow-on lookup discovered while executing a supplied
+    /// request. It remains reviewer evidence and never becomes scan evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub escalation: Option<ReviewLookupRequest>,
     pub outcome: ReviewLookupOutcome,
     #[serde(default)]
     pub artifacts: Vec<ReviewRetrievedArtifact>,

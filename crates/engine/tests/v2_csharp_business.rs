@@ -155,7 +155,8 @@ fn retrieved_policy_evidence_changes_the_same_incomplete_review_outcome() {
             let artifact_id = "retrieved-transition-policy".to_string();
             (
                 ReviewLookupAttempt {
-                    request_index: source_request,
+                    request_index: Some(source_request),
+                    escalation: None,
                     outcome: ReviewLookupOutcome::Answered,
                     artifacts: vec![ReviewRetrievedArtifact {
                         artifact_id: artifact_id.clone(),
@@ -198,7 +199,8 @@ fn retrieved_policy_evidence_changes_the_same_incomplete_review_outcome() {
         } else {
             (
                 ReviewLookupAttempt {
-                    request_index: source_request,
+                    request_index: Some(source_request),
+                    escalation: None,
                     outcome: ReviewLookupOutcome::NoRelevantResult,
                     artifacts: Vec::new(),
                     detail: "The bounded source lookup did not return the transition policy."
