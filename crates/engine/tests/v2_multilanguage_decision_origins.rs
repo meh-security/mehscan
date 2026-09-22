@@ -155,7 +155,10 @@ function findUser(name) { return db.query(`SELECT * FROM users WHERE name='${nam
             .iter()
             .any(|fact| fact.excerpt.contains("unrelatedController"))
     );
-    assert_eq!(review.decision_facts.unresolved.len(), 1);
+    assert!(review.decision_facts.unresolved.is_empty());
+    assert!(review.decision_facts.established.iter().any(|fact| {
+        fact.contains("bounded exact caller chain") && fact.contains("request data")
+    }));
 
     let native = reviews
         .observation_reviews
@@ -172,6 +175,7 @@ function findUser(name) { return db.query(`SELECT * FROM users WHERE name='${nam
     assert!(native.facts.iter().any(|fact| {
         fact.role == "upstream_caller_context" && fact.excerpt.contains("native_controller")
     }));
+    assert!(native.decision_facts.unresolved.is_empty());
 
     std::fs::remove_dir_all(root).unwrap();
 }

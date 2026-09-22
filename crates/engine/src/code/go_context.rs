@@ -551,6 +551,15 @@ impl GoProjectContext {
                     if !emitted_resource_filters.insert(resource_key) {
                         continue;
                     }
+                    let mut tags = vec![
+                        "database",
+                        "resource-access",
+                        "project-summary",
+                        "authorization-context-required",
+                    ];
+                    if summary.mutates_resource {
+                        tags.push("resource-mutation");
+                    }
                     push(
                         path,
                         &call.node,
@@ -568,12 +577,7 @@ impl GoProjectContext {
                             ),
                         ]),
                         &["CWE-639"],
-                        &[
-                            "database",
-                            "resource-access",
-                            "project-summary",
-                            "authorization-context-required",
-                        ],
+                        &tags,
                         Confidence::High,
                         comments,
                         conditional,

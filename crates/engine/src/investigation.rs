@@ -4111,6 +4111,8 @@ fn make_bundle(
         part,
         review_ids.join("\0")
     );
+    let triage_contract =
+        path_review_triage_contract_for_bundle(&job.triage_contract, &category, &payload);
     PathReviewBundle {
         schema_version: PATH_REVIEW_BUNDLE_SCHEMA_VERSION.to_string(),
         bundle_fingerprint: stable_review_hash("review-bundle", &identity),
@@ -4119,9 +4121,136 @@ fn make_bundle(
         category,
         part,
         part_count,
-        triage_contract: job.triage_contract.clone(),
+        triage_contract,
         review_ids,
         payload,
+    }
+}
+
+/// Keep the low-level review job contract complete, but avoid repeating
+/// unrelated framework and invariant guidance in every model request. Bundle
+/// categories are homogeneous, and marker tags identify the few families that
+/// share a broad capability such as ResourceAccess.
+fn path_review_triage_contract_for_bundle(
+    contract: &ReviewTriageContract,
+    category: &PathReviewBundleCategory,
+    payload: &PathReviewBundlePayload,
+) -> ReviewTriageContract {
+    let observation_evidence = match payload {
+        PathReviewBundlePayload::Observation { reviews } => reviews
+            .iter()
+            .flat_map(|review| review.evidence.iter())
+            .collect::<Vec<_>>(),
+        PathReviewBundlePayload::SecurityPath { .. } => Vec::new(),
+    };
+    let has_tag = |tag: &str| {
+        observation_evidence
+            .iter()
+            .any(|item| item.tags.iter().any(|candidate| candidate == tag))
+    };
+    let has_tag_prefix = |prefix: &str| {
+        observation_evidence
+            .iter()
+            .any(|item| item.tags.iter().any(|tag| tag.starts_with(prefix)))
+    };
+    let has_security_configuration = observation_evidence
+        .iter()
+        .any(|item| item.kind == EvidenceKind::SecurityConfiguration);
+    let interpreted_boundary = matches!(
+        category.capability,
+        Capability::ProcessExecution
+            | Capability::LdapQuery
+            | Capability::XpathQuery
+            | Capability::DynamicCodeExecution
+            | Capability::TemplateEvaluation
+            | Capability::DatabaseQuery
+            | Capability::OutboundNetworkRequest
+            | Capability::Redirect
+            | Capability::HtmlOutput
+            | Capability::Deserialization
+    ) || has_tag("review-origin:decision-critical");
+    let authorization = matches!(
+        category.capability,
+        Capability::Authorization | Capability::ResourceAccess
+    ) || has_tag("review-invariant:action-resource-authorization");
+    let marker = has_tag("review-admission-marker") || has_tag_prefix("review-invariant:");
+    let credential = has_tag("review-invariant:credential-lifecycle");
+    let object_binding = has_tag("review-invariant:object-binding");
+    let request_integrity = has_tag("review-invariant:request-integrity");
+    let fail_open = has_tag("review-invariant:fail-open");
+    let authoritative_value = has_tag("review-invariant:authoritative-value-binding");
+    let state_transition = has_tag("review-invariant:state-transition-enforcement");
+    let shared_state = has_tag("review-invariant:shared-state-limit-enforcement");
+    let configuration = has_security_configuration
+        || matches!(
+            category.capability,
+            Capability::CookieConfiguration | Capability::CorsConfiguration
+        );
+
+    let instructions = contract
+        .instructions
+        .iter()
+        .filter(|instruction| {
+            let text = instruction.as_str();
+            if text.starts_with("Before claiming injection,")
+                || text.starts_with("Injection does not require")
+                || text.starts_with("An intervening unknown helper")
+                || text.starts_with("Server metadata, session fields")
+                || text.starts_with("For an observation whose evidence marks")
+            {
+                return interpreted_boundary;
+            }
+            if text.starts_with("For authorization,")
+                || text.starts_with("For every routed authorization review")
+                || text.starts_with("For review-invariant:action-resource-authorization")
+                || text.starts_with("In HTTP route context,")
+                || text.starts_with("Apply an authorization default")
+                || text.starts_with("For generated CRUD")
+                || text.starts_with("For resource-access review,")
+            {
+                return authorization;
+            }
+            if text.starts_with("Evidence tagged review-admission-marker") {
+                return marker;
+            }
+            if text.starts_with("For review-invariant:credential-lifecycle") {
+                return credential;
+            }
+            if text.starts_with("For bounded object-binding review") {
+                return object_binding;
+            }
+            if text.starts_with("For bounded request-integrity review") {
+                return request_integrity;
+            }
+            if text.starts_with("For bounded fail-open review") {
+                return fail_open;
+            }
+            if text.starts_with("For bounded authoritative-value review") {
+                return authoritative_value;
+            }
+            if text.starts_with("For bounded state-transition review") {
+                return state_transition;
+            }
+            if text.starts_with("For bounded shared-state limit review") {
+                return shared_state;
+            }
+            if text.starts_with("Configuration facts are")
+                || text.starts_with("Distinguish application-owned controls")
+            {
+                return configuration;
+            }
+            if text.starts_with("When the reviewed invariant requires rejection") {
+                return fail_open || marker;
+            }
+            true
+        })
+        .cloned()
+        .collect();
+    ReviewTriageContract {
+        response_fields: contract.response_fields.clone(),
+        decisions: contract.decisions.clone(),
+        confidence_levels: contract.confidence_levels.clone(),
+        instructions,
     }
 }
 
@@ -5786,6 +5915,8 @@ fn observation_decision_facts(
     let direct_request_resource_selector =
         observation_has_direct_request_resource_selector(evidence);
     let decision_critical_origin = decision_critical_origin(evidence);
+    let bounded_request_origin = decision_critical_origin
+        .and_then(|origin| decision_critical_request_origin_fact(origin, facts));
     let resource_policy = evidence.iter().find_map(|item| {
         item.context
             .resource_policy
@@ -6021,7 +6152,9 @@ fn observation_decision_facts(
                 .to_string(),
         );
     }
-    if let Some(origin) = decision_critical_origin {
+    if let Some(origin_fact) = &bounded_request_origin {
+        established.push(origin_fact.clone());
+    } else if let Some(origin) = decision_critical_origin {
         established.push(origin.established_fact());
     }
     if let Some(policy) = &java_policy {
@@ -6140,6 +6273,7 @@ fn observation_decision_facts(
         || server_generated_output_path
         || direct_stored_html_trust_bypass
         || java_policy.is_some()
+        || bounded_request_origin.is_some()
     {
         Vec::new()
     } else if let Some(sink) = evidence.iter().find(|item| {
@@ -9424,6 +9558,102 @@ fn exact_request_source_argument(language: Language, argument: &str) -> bool {
     }
 }
 
+/// Reconcile a decision-critical interpreted operand with request origin only
+/// when the already-supplied bounded caller neighborhood shows the request
+/// extraction. This deliberately consumes exact caller ownership produced by
+/// the context index; it is not a new cross-file flow analysis.
+fn decision_critical_request_origin_fact(
+    origin: DecisionCriticalOrigin<'_>,
+    facts: &[ReviewNeighborhoodFact],
+) -> Option<String> {
+    if origin.affirmatively_constrained {
+        return None;
+    }
+    let fact = facts.iter().find(|fact| {
+        if !matches!(
+            fact.role.as_str(),
+            "source_context"
+                | "reference_use_context"
+                | "exact_caller_context"
+                | "upstream_caller_context"
+                | "helper_definition_context"
+        ) {
+            return false;
+        }
+        if fact
+            .provenance
+            .engine
+            .contains("bounded exact request-source argument")
+        {
+            return true;
+        }
+        let compact = fact
+            .excerpt
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        let lower = compact.to_ascii_lowercase();
+        match origin.language {
+            "C" | "C++" => {
+                compact.contains("getenv(\"QUERY_STRING\")")
+                    || compact.contains("getenv('QUERY_STRING')")
+            }
+            "C#" => {
+                lower.contains("[fromquery]")
+                    || lower.contains("[frombody]")
+                    || lower.contains("request.query[")
+                    || lower.contains("request.form[")
+            }
+            "Java" => {
+                lower.contains("@requestparam")
+                    || lower.contains("@pathvariable")
+                    || lower.contains(".getparameter(")
+                    || lower.contains(".getquerystring(")
+            }
+            "Kotlin" => {
+                lower.contains("call.parameters[")
+                    || lower.contains("call.request.queryparameters[")
+                    || lower.contains("call.receive<")
+            }
+            "JavaScript" | "TypeScript" | "TSX" => [
+                "req.query",
+                "req.body",
+                "req.params",
+                "request.query",
+                "request.body",
+                "request.params",
+            ]
+            .iter()
+            .any(|source| lower.contains(source)),
+            "Python" => {
+                lower.contains("request.args")
+                    || lower.contains("request.form")
+                    || lower.contains("request.json")
+                    || lower.contains("request.get_json(")
+            }
+            "PHP" => {
+                lower.contains("$_get[")
+                    || lower.contains("$_post[")
+                    || lower.contains("$_request[")
+                    || lower.contains("$request->input(")
+                    || lower.contains("$request->query(")
+            }
+            "Go" => lower.contains(".url.query().get(") || lower.contains(".formvalue("),
+            "Rust" => {
+                lower.contains("query<")
+                    || lower.contains("path<")
+                    || lower.contains("form<")
+                    || lower.contains("json<")
+            }
+            _ => false,
+        }
+    })?;
+    Some(format!(
+        "The supplied bounded exact caller chain establishes that request data extracted at {}:{} reaches dynamic operand `{}` at this {} boundary. This is a lexical argument handoff tied to the reviewed callable, not arbitrary repository-wide dataflow.",
+        fact.location.path, fact.location.start.line, origin.operand, origin.style
+    ))
+}
+
 fn starts_member_access(value: &str, prefix: &str) -> bool {
     value == prefix
         || value.strip_prefix(prefix).is_some_and(|suffix| {
@@ -10859,6 +11089,7 @@ fn observation_exclusion_disposition(
     if is_source_free_generic_java_log(item, group)
         || is_unlinked_native_buffer_write_observation(item, sources)
         || is_unlinked_native_api_inventory_observation(item, sources)
+        || is_go_resource_filter_without_observable_effect(item, sources)
     {
         return Some(ReviewAdmissionDisposition::InventoryOnly);
     }
@@ -11140,6 +11371,26 @@ fn is_standard_integer_format_macro(value: &str) -> bool {
 /// Prefer the concrete helper sink and its collected call-site context over a
 /// second file-local summary anchored at the same helper invocation.
 fn is_duplicate_parameter_sink_summary(item: &Evidence, evidence: &[Evidence]) -> bool {
+    if item.rule_id == "go-sql-parameter-query-summary" {
+        let Some(target) = item
+            .captures
+            .get("target")
+            .map(|capture| capture.text.as_str())
+        else {
+            return false;
+        };
+        return evidence.iter().any(|other| {
+            other.id != item.id
+                && other.location.path == item.location.path
+                && other.kind == EvidenceKind::Sink
+                && other.capability == Capability::DatabaseQuery
+                && other.enclosing_symbol.as_deref() == Some(target)
+                && other
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "dynamic-query-composition")
+        });
+    }
     if item.rule_id != "python-file-local-parameter-sink-summary" {
         return false;
     }
@@ -11157,6 +11408,42 @@ fn is_duplicate_parameter_sink_summary(item: &Evidence, evidence: &[Evidence]) -
             && other.enclosing_symbol.as_deref() == Some(helper)
             && other.rule_id != "python-file-local-parameter-sink-summary"
     })
+}
+
+/// A request-selected repository filter is useful context, but a bare read
+/// whose result is discarded establishes neither a sensitive read delivered to
+/// a caller nor an existence oracle. Mutations and calls whose result is
+/// returned, assigned, or consumed remain reviewable.
+fn is_go_resource_filter_without_observable_effect(
+    item: &Evidence,
+    sources: &RepositorySources,
+) -> bool {
+    if item.rule_id != "go-sql-resource-filter-summary"
+        || item.tags.iter().any(|tag| tag == "resource-mutation")
+    {
+        return false;
+    }
+    let Ok(file) = sources.file(&item.location.path) else {
+        return false;
+    };
+    let start = item.location.start.byte_offset.min(file.source.len());
+    let end = item.location.end.byte_offset.min(file.source.len());
+    if start >= end || !file.source.is_char_boundary(start) || !file.source.is_char_boundary(end) {
+        return false;
+    }
+    let line_start = file.source[..start]
+        .rfind('\n')
+        .map_or(0, |index| index + 1);
+    let line_end = file.source[end..]
+        .find('\n')
+        .map_or(file.source.len(), |index| end + index);
+    let prefix = file.source[line_start..start].trim();
+    let suffix = file.source[end..line_end].trim();
+    let statement_prefix = prefix.rsplit(['{', ';']).next().unwrap_or(prefix).trim();
+    statement_prefix.is_empty()
+        && suffix
+            .chars()
+            .all(|character| matches!(character, ';' | '}'))
 }
 
 fn is_local_observation_context(
@@ -13303,6 +13590,7 @@ fn observation_review_questions(
     } else if !has_precise_node_boundary
         && let Some(origin) = decision_critical_origin
         && !origin.affirmatively_constrained
+        && decision_critical_request_origin_fact(origin, facts).is_none()
     {
         questions.push(origin.unresolved_question());
     } else if !has_precise_node_boundary && direct_request_resource_selector {
@@ -20670,6 +20958,55 @@ mod tests {
             instruction.contains("requested artifact is absent from facts")
                 && instruction.contains("instead of asking to inspect it again")
         }));
+    }
+
+    #[test]
+    fn bundle_contract_keeps_only_relevant_security_family_guidance() {
+        let contract = path_review_triage_contract();
+        let payload = PathReviewBundlePayload::Observation {
+            reviews: Vec::new(),
+        };
+        let sql = path_review_triage_contract_for_bundle(
+            &contract,
+            &PathReviewBundleCategory {
+                scope: "test".to_string(),
+                review_kind: "observation".to_string(),
+                capability: Capability::DatabaseQuery,
+                cwe_candidates: vec!["CWE-89".to_string()],
+            },
+            &payload,
+        );
+        assert!(
+            sql.instructions
+                .iter()
+                .any(|instruction| instruction.starts_with("Before claiming injection,"))
+        );
+        assert!(
+            !sql.instructions
+                .iter()
+                .any(|instruction| instruction.starts_with("For generated CRUD"))
+        );
+
+        let authorization = path_review_triage_contract_for_bundle(
+            &contract,
+            &PathReviewBundleCategory {
+                scope: "test".to_string(),
+                review_kind: "observation".to_string(),
+                capability: Capability::Authorization,
+                cwe_candidates: vec!["CWE-862".to_string()],
+            },
+            &payload,
+        );
+        assert!(authorization
+            .instructions
+            .iter()
+            .any(|instruction| instruction.starts_with("For every routed authorization review")));
+        assert!(
+            !authorization
+                .instructions
+                .iter()
+                .any(|instruction| instruction.starts_with("Before claiming injection,"))
+        );
     }
 
     #[test]
