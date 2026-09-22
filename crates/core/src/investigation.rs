@@ -586,7 +586,8 @@ pub struct ReviewPipelineCoverage {
     pub blocked_review_count: usize,
 }
 
-pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.3";
+pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.4";
+pub const TARGETED_REPAIR_RESPONSE_SCHEMA_VERSION: &str = "1.3";
 pub const BOUNDED_ESCALATION_RESPONSE_SCHEMA_VERSION: &str = "1.2";
 pub const INVESTIGATION_TRACE_RESPONSE_SCHEMA_VERSION: &str = "1.1";
 pub const LEGACY_PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.0";
@@ -649,6 +650,26 @@ pub struct ReviewerInference {
     pub artifact_ids: Vec<String>,
 }
 
+/// A source-supported security question discovered while reviewing a different
+/// admitted invariant. It remains an unvalidated reviewer-origin lead and must
+/// never alter the originating verdict or deterministic coverage.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewerOriginLead {
+    pub question: String,
+    pub security_relevance: String,
+    pub distinct_from_review: String,
+    pub location: Location,
+    pub artifact_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewerOriginLeadRecord {
+    pub origin_review_id: String,
+    #[serde(flatten)]
+    pub lead: ReviewerOriginLead,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewInvestigationTrace {
@@ -658,6 +679,8 @@ pub struct ReviewInvestigationTrace {
     pub citations: Vec<ReviewArtifactCitation>,
     #[serde(default)]
     pub reviewer_inferences: Vec<ReviewerInference>,
+    #[serde(default)]
+    pub reviewer_origin_leads: Vec<ReviewerOriginLead>,
     #[serde(default)]
     pub blockers: Vec<String>,
 }
@@ -896,6 +919,8 @@ pub struct PathReviewBundleRunReport {
     pub work: ReviewWorkSummary,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub repairs: Vec<ReviewRepairTrace>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reviewer_origin_leads: Vec<ReviewerOriginLeadRecord>,
     pub bundle_count: usize,
     pub review_count: usize,
     pub issue_count: usize,

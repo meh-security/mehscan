@@ -337,6 +337,14 @@ and use `review-bundle-repair`; the CLI records the failed and replacement
 identities and revalidates the complete response. Never repair a valid response
 to change its security decision, and never repair an already repaired response.
 
+Retain a newly discovered security question in `reviewer_origin_leads` only
+when supplied or retrieved source shows a concrete dangerous operation or
+security invariant distinct from the admitted review. Include the exact source
+location, explicitly cited artifact IDs, the security relevance, and why it is
+separate. A keyword, comment, helper name, generic concern, or restatement of an
+existing check is not a lead. Keep leads out of the originating verdict and
+present them as unvalidated follow-up work rather than scanner findings.
+
 When the review runner supports structured output, generate a request-specific
 schema with `mehscan investigate review-response-schema --bundle REQUEST --output SCHEMA`.
 Older versions can use the packaged `scripts/new-review-response-schema.ps1` helper.

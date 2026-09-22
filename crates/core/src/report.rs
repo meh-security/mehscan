@@ -153,6 +153,8 @@ pub struct FindingReport {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dismissed: Vec<DismissedReview>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reviewer_origin_leads: Vec<crate::ReviewerOriginLeadRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub quality_warnings: Vec<String>,
 }
 
@@ -291,6 +293,31 @@ impl FindingReport {
                     location,
                     enum_label(dismissed.confidence),
                     markdown_description(&dismissed.description)
+                ));
+            }
+        }
+
+        if !self.reviewer_origin_leads.is_empty() {
+            output.push_str("\n## Reviewer-origin leads\n\nThese source-supported questions were discovered during review. They are not validated findings or deterministic scanner coverage.\n\n");
+            for record in &self.reviewer_origin_leads {
+                output.push_str(&format!(
+                    "- {} at {} (from {}): {} Evidence: {}\n",
+                    markdown_description(&record.lead.question),
+                    markdown_code_span(&format!(
+                        "{}:{}:{}",
+                        record.lead.location.path,
+                        record.lead.location.start.line,
+                        record.lead.location.start.column
+                    )),
+                    markdown_code_span(&record.origin_review_id),
+                    markdown_description(&record.lead.security_relevance),
+                    record
+                        .lead
+                        .artifact_ids
+                        .iter()
+                        .map(|artifact_id| markdown_code_span(artifact_id))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
         }
@@ -764,6 +791,18 @@ mod tests {
                 primary_location: Some(finding(FindingStatus::Issue, Vec::new()).primary_location),
                 rule_id: Some("safe-rule".to_string()),
             }],
+            reviewer_origin_leads: vec![crate::ReviewerOriginLeadRecord {
+                origin_review_id: "review-safe".to_string(),
+                lead: crate::ReviewerOriginLead {
+                    question: "Can a separate audit write disclose the session token?".to_string(),
+                    security_relevance:
+                        "The cited audit operation writes a credential-bearing value.".to_string(),
+                    distinct_from_review:
+                        "Credential disclosure is separate from SQL query construction.".to_string(),
+                    location: location("routes/audit.ts", 31),
+                    artifact_ids: vec!["retrieved-audit-write".to_string()],
+                },
+            }],
             quality_warnings: Vec::new(),
         };
 
@@ -779,6 +818,9 @@ mod tests {
         assert!(legacy.primary_location.is_none());
         assert!(legacy.rule_id.is_none());
         assert!(markdown.contains("Confirm the effective query parameterization."));
+        assert!(markdown.contains("## Reviewer-origin leads"));
+        assert!(markdown.contains("`routes/audit.ts:31:3`"));
+        assert!(markdown.contains("not validated findings or deterministic scanner coverage"));
         assert!(markdown.contains("`review-safe` at `routes/search.ts:23:3` (high confidence)"));
         assert!(
             markdown.find("## Review next").expect("review section")
@@ -834,6 +876,7 @@ mod tests {
             findings: vec![first, second],
             review_required: Vec::new(),
             dismissed: Vec::new(),
+            reviewer_origin_leads: Vec::new(),
             quality_warnings: Vec::new(),
         };
 

@@ -70,8 +70,9 @@ pub use investigation::{
     ReviewNeighborhood, ReviewNeighborhoodFact, ReviewNeighborhoodJob,
     ReviewNeighborhoodVerification, ReviewPipelineCoverage, ReviewReadiness, ReviewRepairTrace,
     ReviewRetrievedArtifact, ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet,
-    ReviewTriageResult, ReviewWorkSummary, ReviewerInference, SourceSlice, StructuralMatch,
-    TextReference,
+    ReviewTriageResult, ReviewWorkSummary, ReviewerInference, ReviewerOriginLead,
+    ReviewerOriginLeadRecord, SourceSlice, StructuralMatch,
+    TARGETED_REPAIR_RESPONSE_SCHEMA_VERSION, TextReference,
 };
 pub use location::{Capture, Location, Position};
 pub use protocol::{

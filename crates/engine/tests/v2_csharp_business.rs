@@ -238,6 +238,7 @@ fn retrieved_policy_evidence_changes_the_same_incomplete_review_outcome() {
                     lookup_attempts: vec![attempt],
                     citations,
                     reviewer_inferences,
+                    reviewer_origin_leads: Vec::new(),
                     blockers: Vec::new(),
                 }),
             }],

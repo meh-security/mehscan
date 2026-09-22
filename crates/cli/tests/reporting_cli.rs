@@ -298,8 +298,15 @@ fn partial_triage_reports_coverage_and_rejects_invalid_present_responses() {
         String::from_utf8_lossy(&schema.stderr)
     );
     let schema: serde_json::Value = serde_json::from_slice(&schema.stdout).unwrap();
-    assert_eq!(schema["properties"]["schema_version"]["const"], "1.3");
+    assert_eq!(schema["properties"]["schema_version"]["const"], "1.4");
     assert!(schema["properties"].get("repair").is_none());
+    assert!(
+        schema["properties"]["results"]["items"]["properties"]["investigation"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "reviewer_origin_leads")
+    );
     assert!(
         schema["properties"]["results"]["items"]["required"]
             .as_array()
