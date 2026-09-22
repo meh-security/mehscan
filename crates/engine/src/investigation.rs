@@ -785,6 +785,17 @@ fn build_path_review_jobs_internal(
         {
             facts.extend(python_source_file_consumer_facts(&sources, sink, 4));
         }
+        if candidate.capability == Capability::HtmlOutput
+            && candidate.source.capability == Capability::StoredUserContent
+            && evidence_by_id
+                .get(candidate.source.id.as_str())
+                .is_some_and(|source| source.tags.iter().any(|tag| tag == "local-file"))
+        {
+            let (mut writers, writers_truncated) =
+                local_asset_archive_writer_facts(&sources, &scan.evidence, &candidate, 2);
+            context_truncated |= writers_truncated;
+            facts.append(&mut writers);
+        }
         let candidate_paths = candidate
             .steps
             .iter()
@@ -5543,7 +5554,7 @@ fn path_decision_facts(
     }
     if operator_configured_local_asset {
         established.push(
-            "Exact repository facts establish that this rendered value is loaded from an operator-configured local asset path with a repository literal default; no request-origin writer for the selected asset is supplied."
+            "Exact repository facts show a literal default for the configured local asset read. This does not establish that the asset cannot be overwritten by another request-accessible file writer."
                 .to_string(),
         );
     }
@@ -5702,11 +5713,6 @@ fn path_decision_blockers(
     questions: &[String],
     facts: &[ReviewNeighborhoodFact],
 ) -> Vec<String> {
-    let operator_configured_local_asset = path_has_operator_configured_local_asset_origin(
-        candidate.source.capability,
-        &review_basis.source.tags,
-        facts,
-    );
     let has_persisted_origin = review_basis_establishes_persisted_origin(review_basis)
         || facts.iter().any(|fact| {
             matches!(
@@ -5724,6 +5730,9 @@ fn path_decision_blockers(
     let has_response_origin = facts
         .iter()
         .any(|fact| fact.role == "request_response_origin_context");
+    let has_local_asset_writer_context = facts
+        .iter()
+        .any(|fact| fact.role == "possible_local_asset_writer_context");
     let has_python_source_consumer = facts
         .iter()
         .any(|fact| fact.role == "python_source_file_consumer_context");
@@ -5739,7 +5748,7 @@ fn path_decision_blockers(
                 || (question.contains("producer, persistence, or retrieval context")
                     && !has_persisted_origin
                     && !has_response_origin
-                    && !operator_configured_local_asset)
+                    && !has_local_asset_writer_context)
                 || (question.starts_with(
                     "What exact configuration value is effective for the conditional branch",
                 ) && path_enabled_execution_configuration(facts).is_none())
@@ -5792,6 +5801,58 @@ fn path_has_operator_configured_local_asset_origin(
     });
 
     literal_configuration && fixed_local_read && operator_lifecycle
+}
+
+/// Supply a separately observed archive writer when a path renders local file
+/// bytes. This is a review lead, not a cross-file dataflow assertion: the
+/// reviewer must compare the exact read target, write path, gate, and route.
+fn local_asset_archive_writer_facts(
+    sources: &RepositorySources,
+    evidence: &[Evidence],
+    candidate: &mehscan_core::Candidate,
+    limit: usize,
+) -> (Vec<ReviewNeighborhoodFact>, bool) {
+    let read_language = sources
+        .file(&candidate.source.location.path)
+        .ok()
+        .and_then(|file| file.language);
+    let mut facts = Vec::new();
+    let mut truncated = false;
+    for writer in evidence.iter().filter(|item| {
+        item.kind == EvidenceKind::Sink
+            && item.capability == Capability::FilesystemWrite
+            && item.rule_id.ends_with("archive-raw-path-write")
+    }) {
+        let Ok(file) = sources.file(&writer.location.path) else {
+            continue;
+        };
+        if file.language != read_language {
+            continue;
+        }
+        if facts.len() == limit {
+            truncated = true;
+            break;
+        }
+        let start_line = writer.location.start.line.saturating_sub(9).max(1);
+        let end_line = writer.location.end.line.saturating_add(22);
+        let Ok((slice, clipped)) =
+            review_source_slice(file, start_line, end_line, &writer.location)
+        else {
+            continue;
+        };
+        truncated |= clipped;
+        facts.push(ReviewNeighborhoodFact {
+            role: "possible_local_asset_writer_context".to_string(),
+            symbol: writer.rule_id.clone(),
+            location: slice.location,
+            excerpt: slice.text,
+            evidence_id: None,
+            provenance: textual_provenance(
+                "separate admitted archive-entry filesystem writer; target compatibility and reachability require review 1",
+            ),
+        });
+    }
+    (facts, truncated)
 }
 
 fn review_basis_establishes_persisted_origin(review_basis: &PathReviewBasis) -> bool {
@@ -16133,12 +16194,14 @@ fn express_template_review_facts(
     if limit == 0 || !sink.rule_id.ends_with("html-output") {
         return (Vec::new(), false);
     }
-    let Some(template) = sink
+    let template = sink
         .captures
         .get("template")
         .map(|capture| capture.text.trim().trim_matches(['\'', '"']))
         .filter(|template| valid_template_name(template))
-    else {
+        .map(str::to_string)
+        .or_else(|| nearby_express_render_callback_template(sources, sink));
+    let Some(template) = template else {
         return (Vec::new(), false);
     };
 
@@ -16158,6 +16221,27 @@ fn express_template_review_facts(
         };
         if source.len() > MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES {
             continue;
+        }
+        let bindings = if template_path.ends_with(".hbs") {
+            simple_handlebars_bindings(&source)
+        } else {
+            BTreeSet::new()
+        };
+        if !bindings.is_empty() {
+            truncated |= bindings.len() > 64;
+            facts.push(ReviewNeighborhoodFact {
+                role: "server_template_binding_inventory".to_string(),
+                symbol: template.to_string(),
+                location: location_from_offsets(&template_path, &source, 0, source.len().min(1)),
+                excerpt: format!(
+                    "Simple Handlebars bindings in this exact template: {}. Compare these names with the supplied render locals and their overwrite order; this inventory does not prove every helper or partial safe.",
+                    bindings.into_iter().take(64).collect::<Vec<_>>().join(", ")
+                ),
+                evidence_id: None,
+                provenance: textual_provenance(
+                    "bounded exact server-template binding inventory, non-flow 1",
+                ),
+            });
         }
         let mut matching = line_spans(&source)
             .into_iter()
@@ -16218,6 +16302,64 @@ fn express_template_review_facts(
         facts.push(fact);
     }
     (facts, truncated)
+}
+
+fn nearby_express_render_callback_template(
+    sources: &RepositorySources,
+    sink: &Evidence,
+) -> Option<String> {
+    let file = sources.file(&sink.location.path).ok()?;
+    let (slice, _) = review_source_slice(
+        file,
+        sink.location.start.line.saturating_sub(20).max(1),
+        sink.location.end.line,
+        &sink.location,
+    )
+    .ok()?;
+    let source = slice.text;
+    if !source.contains("res.send(") {
+        return None;
+    }
+    let start = source.rfind("res.render(")? + "res.render(".len();
+    let tail = source[start..].trim_start();
+    let quote = tail.chars().next()?;
+    if !matches!(quote, '\'' | '"') {
+        return None;
+    }
+    let end = tail[1..].find(quote)? + 1;
+    let template = &tail[1..end];
+    let callback = &tail[end + 1..];
+    if !valid_template_name(template)
+        || !callback.contains("=>")
+        || !callback.contains("html")
+        || !callback.contains("res.send(")
+    {
+        return None;
+    }
+    Some(template.to_string())
+}
+
+fn simple_handlebars_bindings(source: &str) -> BTreeSet<String> {
+    let mut bindings = BTreeSet::new();
+    for (start, _) in source.match_indices("{{") {
+        let expression = &source[start + 2..];
+        let Some(close) = expression.find("}}") else {
+            continue;
+        };
+        let expression = expression[..close].trim_start_matches('{').trim();
+        if expression.starts_with(['#', '/', '!', '>', '^']) {
+            continue;
+        }
+        if !expression.is_empty()
+            && expression != "else"
+            && expression.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | '-')
+            })
+        {
+            bindings.insert(expression.to_string());
+        }
+    }
+    bindings
 }
 
 fn valid_template_name(template: &str) -> bool {
@@ -22809,6 +22951,21 @@ mod tests {
             &source.tags,
             &unsafe_facts
         ));
+    }
+
+    #[test]
+    fn handlebars_binding_inventory_uses_exact_template_names() {
+        let names = simple_handlebars_bindings(
+            "<title>{{_title_}}</title>{{#if enabled}}{{user.name}}{{/if}} {{{_logo_}}}",
+        );
+        assert_eq!(
+            names,
+            BTreeSet::from([
+                "_logo_".to_string(),
+                "_title_".to_string(),
+                "user.name".to_string(),
+            ])
+        );
     }
 
     #[test]

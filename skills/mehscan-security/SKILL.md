@@ -397,6 +397,14 @@ name, CWE, or rule:
 - reserve the highest-cost or deepest review configuration for a high-impact
   disagreement that remains after those checks.
 
+Before handing off a final report, resolve each `needs_review` check with its
+named source or deployment fact when available. If that fact is already in the
+payload but the first reviewer still defers or contradicts it, use one
+independent stronger review for that exact ID. Keep a genuinely missing fact
+under review required with its verification action; do not turn it into a
+finding by assigning an uncalibrated numeric confidence threshold. Confirmed
+findings alone enter the finding SARIF.
+
 Record the reviewer configuration and escalation history by exact review or
 payload fingerprint. Do not mark an entire CWE, capability, or rule as
 requiring an expensive reviewer from one disagreement.

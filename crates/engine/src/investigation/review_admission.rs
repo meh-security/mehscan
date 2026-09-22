@@ -1072,11 +1072,22 @@ fn terminal_route_handler(line: &str) -> Option<String> {
         }
     }
     let tail = line.rsplit_once(',')?.1;
-    let candidate = tail
-        .split(|character: char| {
-            !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
+    // Route middleware is commonly module-qualified or wrapped (for example,
+    // security.denyAll() and utils.asyncHandler(basket.update())). Preserve
+    // the invoked handler, not the module alias or the wrapper.
+    tail.split('(')
+        .filter_map(|prefix| {
+            prefix
+                .trim_end()
+                .rsplit(|character: char| {
+                    !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$' | '.'))
+                })
+                .next()
+                .unwrap_or_default()
+                .rsplit('.')
+                .next()
         })
-        .find(|token| {
+        .filter(|token| {
             is_helpful_reference_identifier(token)
                 && !matches!(
                     token.to_ascii_lowercase().as_str(),
@@ -1088,9 +1099,30 @@ fn terminal_route_handler(line: &str) -> Option<String> {
                         | "reply"
                         | "async"
                         | "function"
+                        | "asynchandler"
                 )
-        })?;
-    Some(candidate.to_string())
+        })
+        .last()
+        .map(str::to_string)
+}
+
+#[cfg(test)]
+mod route_handler_tests {
+    use super::terminal_route_handler;
+
+    #[test]
+    fn uses_invoked_handler_instead_of_module_or_wrapper() {
+        assert_eq!(
+            terminal_route_handler("app.delete('/api/Products/:id', security.denyAll())"),
+            Some("denyAll".to_string())
+        );
+        assert_eq!(
+            terminal_route_handler(
+                "app.put('/api/BasketItems/:id', utils.asyncHandler(basketItems.quantityCheckBeforeBasketItemUpdate()))"
+            ),
+            Some("quantityCheckBeforeBasketItemUpdate".to_string())
+        );
+    }
 }
 
 fn javascript_http_mutation_route(line: &str) -> bool {
