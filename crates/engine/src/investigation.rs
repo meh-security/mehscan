@@ -4386,17 +4386,23 @@ fn path_review_investigation(
 
 fn observation_review_investigation(
     evidence: &[Evidence],
+    facts: &[ReviewNeighborhoodFact],
     decision_facts: &ReviewDecisionFacts,
     truncation: &ReviewContextTruncation,
 ) -> ReviewInvestigationPlan {
     let anchor = evidence.first().map(|item| &item.location);
-    let lookup_symbol = review_admission::preferred_lookup_symbol(evidence).or_else(|| {
-        review_lookup_symbol(
-            evidence
-                .iter()
-                .flat_map(|item| item.captures.values().map(|capture| capture.text.as_str())),
-        )
-    });
+    let lookup_symbol = decision_facts
+        .unresolved
+        .iter()
+        .find_map(|question| review_question_lookup_symbol(question))
+        .or_else(|| review_admission::preferred_lookup_symbol(evidence))
+        .or_else(|| {
+            review_lookup_symbol(
+                evidence
+                    .iter()
+                    .flat_map(|item| item.captures.values().map(|capture| capture.text.as_str())),
+            )
+        });
     let Some(anchor) = anchor else {
         let mut missing_facts = decision_facts.unresolved.clone();
         if truncation.decision_critical {
@@ -4420,10 +4426,25 @@ fn observation_review_investigation(
             blockers,
         };
     };
+    let lookup_anchor = lookup_symbol
+        .as_deref()
+        .and_then(|symbol| {
+            facts.iter().find(|fact| {
+                fact.symbol == symbol
+                    && matches!(
+                        fact.role.as_str(),
+                        "review_admission_helper_context"
+                            | "helper_definition_context"
+                            | "captured_definition_context"
+                    )
+            })
+        })
+        .map(|fact| &fact.location)
+        .unwrap_or(anchor);
     review_investigation_plan(
         &decision_facts.unresolved,
         truncation,
-        anchor,
+        lookup_anchor,
         lookup_symbol.as_deref(),
     )
 }
@@ -4472,7 +4493,7 @@ fn review_investigation_plan(
                 ("end-line".to_string(), end_line.to_string()),
             ]),
             questions: repository_questions.clone(),
-            purpose: "Inspect the expanded source around the exact review anchor for the missing producer, control, branch, or consumer fact.".to_string(),
+            purpose: "Inspect expanded source around the exact located helper or review anchor for the missing producer, control, branch, or consumer fact.".to_string(),
         });
         if let Some(symbol) = lookup_symbol {
             lookup_requests.push(ReviewLookupRequest {
@@ -4515,6 +4536,15 @@ fn review_lookup_symbol<'a>(mut values: impl Iterator<Item = &'a str>) -> Option
             ))
         .then(|| identifier.to_string())
     })
+}
+
+fn review_question_lookup_symbol(question: &str) -> Option<String> {
+    question
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .find(|candidate| is_plain_identifier(candidate))
+        .map(str::to_string)
 }
 
 fn review_question_requires_external_context(question: &str) -> bool {
@@ -7876,8 +7906,12 @@ fn build_observation_reviews(
             }
         }
         let truncation = review_truncation(context_truncated, decision_critical_context_truncated);
-        let investigation =
-            observation_review_investigation(&selected_evidence, &decision_facts, &truncation);
+        let investigation = observation_review_investigation(
+            &selected_evidence,
+            &facts,
+            &decision_facts,
+            &truncation,
+        );
         let confidence_policy =
             observation_confidence_policy(&selected_evidence, &decision_facts, &truncation);
         reviews.push(ObservationReview {
