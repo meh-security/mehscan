@@ -72,6 +72,7 @@ fn packages_csharp_state_transitions_with_exact_policy_helpers() {
     assert!(guarded.investigation.lookup_requests.iter().any(|lookup| {
         lookup.operation == "references"
             && lookup.arguments.get("symbol") == Some(&"AdvanceAsync".to_string())
+            && lookup.purpose.starts_with("If the preceding source lookup")
     }));
     assert!(guarded.investigation.lookup_requests.iter().any(|lookup| {
         lookup.operation == "source"

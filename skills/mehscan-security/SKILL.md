@@ -343,6 +343,11 @@ encourage repeated verdict templates even when individual request files are
 small. The generation default remains 20 reviews per bundle; lower
 `--max-reviews` only for a measured retry or evaluation.
 
+Within one review, execute supplied lookup requests in order and stop when the
+returned evidence resolves the decision-critical question. Do not spend a
+secondary reference lookup after an earlier exact source lookup already proves
+the issue or applicable control. Record only lookups that were actually run.
+
 If a fresh complete-bundle retry still borrows facts across review IDs, regenerate
 the same authorized root with `--max-reviews 1` and the same context/material
 policy. Review only the affected IDs as a separately scoped audit before
