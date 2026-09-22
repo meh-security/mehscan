@@ -575,21 +575,30 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "required": ["operation", "arguments", "questions", "purpose"],
                 "properties": {
                     "operation": {"type": "string", "enum": ["source", "references"]},
-                    "arguments": {"type": "object", "additionalProperties": {"type": "string"}},
+                    "arguments": {
+                        "type": "object", "additionalProperties": false,
+                        "required": ["path", "start-line", "end-line", "symbol", "limit"],
+                        "properties": {
+                            "path": {"type": ["string", "null"]},
+                            "start-line": {"type": ["string", "null"]},
+                            "end-line": {"type": ["string", "null"]},
+                            "symbol": {"type": ["string", "null"]},
+                            "limit": {"type": ["string", "null"]}
+                        }
+                    },
                     "questions": {"type": "array", "minItems": 1, "items": {"type": "string"}},
                     "purpose": {"type": "string", "minLength": 1, "maxLength": 500}
                 }
             });
             let lookup_attempt_schema = serde_json::json!({
                 "type": "object", "additionalProperties": false,
-                "required": ["outcome", "artifacts", "detail"],
-                "oneOf": [
-                    {"required": ["request_index"], "not": {"required": ["escalation"]}},
-                    {"required": ["escalation"], "not": {"required": ["request_index"]}}
-                ],
+                // Structured-output providers reject oneOf and require every
+                // declared property. Null keeps the two lookup origins explicit;
+                // triage validation still enforces that exactly one is populated.
+                "required": ["request_index", "escalation", "outcome", "artifacts", "detail"],
                 "properties": {
-                    "request_index": {"type": "integer", "minimum": 0},
-                    "escalation": lookup_request_schema,
+                    "request_index": {"type": ["integer", "null"], "minimum": 0},
+                    "escalation": {"anyOf": [lookup_request_schema, {"type": "null"}]},
                     "outcome": {"type": "string", "enum": ["answered", "no_relevant_result", "unavailable", "truncated", "budget_exhausted", "failed"]},
                     "artifacts": {"type": "array", "items": artifact_schema},
                     "detail": {"type": "string", "minLength": 1, "maxLength": 500}
@@ -603,7 +612,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     "security_relevance": {"type": "string", "minLength": 1, "maxLength": 500},
                     "distinct_from_review": {"type": "string", "minLength": 1, "maxLength": 500},
                     "location": location_schema,
-                    "artifact_ids": {"type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": {"type": "string"}}
+                    "artifact_ids": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "string"}}
                 }
             });
             let investigation_schema = serde_json::json!({

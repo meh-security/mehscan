@@ -323,8 +323,27 @@ fn partial_triage_reports_coverage_and_rejects_invalid_present_responses() {
     );
     let lookup_attempt = &schema["properties"]["results"]["items"]["properties"]["investigation"]["properties"]
         ["lookup_attempts"]["items"];
-    assert!(lookup_attempt["properties"]["escalation"].is_object());
-    assert_eq!(lookup_attempt["oneOf"].as_array().map(Vec::len), Some(2));
+    assert!(lookup_attempt.get("oneOf").is_none());
+    assert_eq!(
+        lookup_attempt["required"],
+        serde_json::json!([
+            "request_index",
+            "escalation",
+            "outcome",
+            "artifacts",
+            "detail"
+        ])
+    );
+    assert_eq!(
+        lookup_attempt["properties"]["request_index"]["type"],
+        serde_json::json!(["integer", "null"])
+    );
+    assert_eq!(
+        lookup_attempt["properties"]["escalation"]["anyOf"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
     let review = &request["reviews"][0];
     let decision = "not_issue";
     let response = serde_json::json!({"schema_version":mehscan_core::PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, "bundle_fingerprint":request["bundle_fingerprint"], "results":[{

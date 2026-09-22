@@ -3188,7 +3188,7 @@ fn path_review_schema_has_investigation_trace(_schema_version: &str) -> bool {
 fn bundle_review_investigation_context<'a>(
     bundle: &'a PathReviewBundle,
     review_id: &str,
-) -> Result<(&'a ReviewInvestigationPlan, BTreeMap<String, Location>), EngineError> {
+) -> Result<(&'a ReviewInvestigationPlan, BTreeMap<String, Vec<Location>>), EngineError> {
     match &bundle.payload {
         PathReviewBundlePayload::SecurityPath { reviews } => reviews
             .iter()
@@ -3215,7 +3215,7 @@ fn bundle_review_investigation_context<'a>(
 fn job_review_investigation_context<'a>(
     job: &'a PathReviewJob,
     review_id: &str,
-) -> Result<(&'a ReviewInvestigationPlan, BTreeMap<String, Location>), EngineError> {
+) -> Result<(&'a ReviewInvestigationPlan, BTreeMap<String, Vec<Location>>), EngineError> {
     job.reviews
         .iter()
         .find(|review| review.id == review_id)
@@ -3239,48 +3239,57 @@ fn job_review_investigation_context<'a>(
         .ok_or_else(|| EngineError(format!("job is missing review {review_id:?}")))
 }
 
-fn path_review_supplied_artifacts(review: &PathReview) -> BTreeMap<String, Location> {
-    let mut artifacts = BTreeMap::from([
-        (
-            review.candidate.source.id.clone(),
-            review.candidate.source.location.clone(),
-        ),
-        (
-            review.candidate.sink.id.clone(),
-            review.candidate.sink.location.clone(),
-        ),
-    ]);
+fn path_review_supplied_artifacts(review: &PathReview) -> BTreeMap<String, Vec<Location>> {
+    let mut artifacts = BTreeMap::<String, Vec<Location>>::new();
+    artifacts
+        .entry(review.candidate.source.id.clone())
+        .or_default()
+        .push(review.candidate.source.location.clone());
+    artifacts
+        .entry(review.candidate.sink.id.clone())
+        .or_default()
+        .push(review.candidate.sink.location.clone());
     for evidence in &review.candidate.protections {
-        artifacts.insert(evidence.id.clone(), evidence.location.clone());
+        artifacts
+            .entry(evidence.id.clone())
+            .or_default()
+            .push(evidence.location.clone());
     }
     for step in &review.candidate.steps {
         if let Some(evidence_id) = &step.evidence_id {
             artifacts
                 .entry(evidence_id.clone())
-                .or_insert_with(|| step.location.clone());
+                .or_default()
+                .push(step.location.clone());
         }
     }
     for fact in &review.facts {
         if let Some(evidence_id) = &fact.evidence_id {
             artifacts
                 .entry(evidence_id.clone())
-                .or_insert_with(|| fact.location.clone());
+                .or_default()
+                .push(fact.location.clone());
         }
     }
     artifacts
 }
 
-fn observation_review_supplied_artifacts(review: &ObservationReview) -> BTreeMap<String, Location> {
-    let mut artifacts = review
-        .evidence
-        .iter()
-        .map(|evidence| (evidence.id.clone(), evidence.location.clone()))
-        .collect::<BTreeMap<_, _>>();
+fn observation_review_supplied_artifacts(
+    review: &ObservationReview,
+) -> BTreeMap<String, Vec<Location>> {
+    let mut artifacts = BTreeMap::<String, Vec<Location>>::new();
+    for evidence in &review.evidence {
+        artifacts
+            .entry(evidence.id.clone())
+            .or_default()
+            .push(evidence.location.clone());
+    }
     for fact in &review.facts {
         if let Some(evidence_id) = &fact.evidence_id {
             artifacts
                 .entry(evidence_id.clone())
-                .or_insert_with(|| fact.location.clone());
+                .or_default()
+                .push(fact.location.clone());
         }
     }
     artifacts
@@ -3292,7 +3301,7 @@ fn validate_review_investigation_trace(
     decision: ReviewDecision,
     checks: &[String],
     plan: &ReviewInvestigationPlan,
-    supplied_artifacts: &BTreeMap<String, Location>,
+    supplied_artifacts: &BTreeMap<String, Vec<Location>>,
     trace: &ReviewInvestigationTrace,
 ) -> Result<(), EngineError> {
     if plan.lookup_requests.len() > plan.budget.max_supplied_lookups {
@@ -3364,15 +3373,16 @@ fn validate_review_investigation_trace(
                     artifact.artifact_id
                 )));
             }
-            if available_artifacts
-                .insert(artifact.artifact_id.clone(), artifact.location.clone())
-                .is_some()
-            {
+            if available_artifacts.contains_key(&artifact.artifact_id) {
                 return Err(EngineError(format!(
                     "investigation trace for {review_id:?} contains duplicate artifact ID {:?}",
                     artifact.artifact_id
                 )));
             }
+            available_artifacts.insert(
+                artifact.artifact_id.clone(),
+                vec![artifact.location.clone()],
+            );
             returned_artifact_bytes =
                 returned_artifact_bytes.saturating_add(artifact.excerpt.len());
             if returned_artifact_bytes > plan.budget.max_returned_bytes {
@@ -3478,7 +3488,7 @@ fn validate_review_investigation_trace(
                     "reviewer-origin lead for {review_id:?} repeats artifact {artifact_id:?}"
                 )));
             }
-            let Some(location) = available_artifacts.get(artifact_id) else {
+            let Some(locations) = available_artifacts.get(artifact_id) else {
                 return Err(EngineError(format!(
                     "reviewer-origin lead for {review_id:?} references unknown artifact {artifact_id:?}"
                 )));
@@ -3488,11 +3498,16 @@ fn validate_review_investigation_trace(
                     "reviewer-origin lead for {review_id:?} must use an explicitly cited artifact"
                 )));
             }
-            location_supported |= location == &lead.location;
+            location_supported |= locations.iter().any(|location| {
+                location.path == lead.location.path
+                    && location.start.byte_offset <= lead.location.start.byte_offset
+                    && location.end.byte_offset >= lead.location.end.byte_offset
+                    && lead.location.start.byte_offset <= lead.location.end.byte_offset
+            });
         }
         if !location_supported {
             return Err(EngineError(format!(
-                "reviewer-origin lead location for {review_id:?} must match one of its cited artifacts"
+                "reviewer-origin lead location for {review_id:?} must be contained by one of its cited artifacts"
             )));
         }
     }
@@ -5157,21 +5172,23 @@ fn review_investigation_plan(
         let end_line = anchor.end.line.saturating_add(80);
         lookup_requests.push(ReviewLookupRequest {
             operation: "source".to_string(),
-            arguments: BTreeMap::from([
+            arguments: [
                 ("path".to_string(), anchor.path.clone()),
                 ("start-line".to_string(), start_line.to_string()),
                 ("end-line".to_string(), end_line.to_string()),
-            ]),
+            ]
+            .into(),
             questions: repository_questions.clone(),
             purpose: "Inspect expanded source around the exact located helper or review anchor for the missing producer, control, branch, or consumer fact.".to_string(),
         });
         if let Some(symbol) = lookup_symbol {
             lookup_requests.push(ReviewLookupRequest {
                 operation: "references".to_string(),
-                arguments: BTreeMap::from([
+                arguments: [
                     ("symbol".to_string(), symbol.to_string()),
                     ("limit".to_string(), DEFAULT_RESULT_LIMIT.to_string()),
-                ]),
+                ]
+                .into(),
                 questions: repository_questions,
                 purpose: format!(
                     "If the preceding source lookup does not resolve the question, find bounded repository references for the exact captured identifier `{symbol}` before inferring its origin or applicable controls."
@@ -19465,7 +19482,7 @@ mod tests {
             &anchor,
             Some("command"),
         );
-        let supplied = BTreeMap::from([("evidence-sink".to_string(), anchor.clone())]);
+        let supplied = BTreeMap::from([("evidence-sink".to_string(), vec![anchor.clone()])]);
         let missing_attempt = validate_review_investigation_trace(
             PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
             "review-1",
@@ -19534,7 +19551,19 @@ mod tests {
             distinct_from_review:
                 "Credential disclosure is separate from command construction and execution."
                     .to_string(),
-            location: lead_trace.lookup_attempts[0].artifacts[0].location.clone(),
+            location: Location {
+                path: "src/handler.ts".to_string(),
+                start: Position {
+                    line: 101,
+                    column: 1,
+                    byte_offset: 320,
+                },
+                end: Position {
+                    line: 101,
+                    column: 42,
+                    byte_offset: 361,
+                },
+            },
             artifact_ids: vec!["lookup-source-1".to_string()],
         }];
         validate_review_investigation_trace(
@@ -19562,11 +19591,12 @@ mod tests {
 
         let escalation = ReviewLookupRequest {
             operation: "source".to_string(),
-            arguments: BTreeMap::from([
+            arguments: [
                 ("path".to_string(), "src/policy.ts".to_string()),
                 ("start-line".to_string(), "1".to_string()),
                 ("end-line".to_string(), "40".to_string()),
-            ]),
+            ]
+            .into(),
             questions: vec![question.clone()],
             purpose: "Inspect the exact policy file named by the initial source lookup."
                 .to_string(),

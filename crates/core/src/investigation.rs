@@ -398,10 +398,71 @@ pub enum ReviewReadiness {
 /// One concrete bounded repository query that can resolve one or more missing
 /// decision facts. `operation` names an existing `mehscan investigate`
 /// operation and `arguments` uses its long-option names without leading `--`.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewLookupArguments {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(
+        default,
+        rename = "start-line",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub start_line: Option<String>,
+    #[serde(default, rename = "end-line", skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<String>,
+}
+
+impl ReviewLookupArguments {
+    pub fn get(&self, name: &str) -> Option<&String> {
+        match name {
+            "path" => self.path.as_ref(),
+            "start-line" => self.start_line.as_ref(),
+            "end-line" => self.end_line.as_ref(),
+            "symbol" => self.symbol.as_ref(),
+            "limit" => self.limit.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        [
+            &self.path,
+            &self.start_line,
+            &self.end_line,
+            &self.symbol,
+            &self.limit,
+        ]
+        .into_iter()
+        .filter(|value| value.is_some())
+        .count()
+    }
+}
+
+impl<const N: usize> From<[(String, String); N]> for ReviewLookupArguments {
+    fn from(arguments: [(String, String); N]) -> Self {
+        let mut result = Self::default();
+        for (name, value) in arguments {
+            match name.as_str() {
+                "path" => result.path = Some(value),
+                "start-line" => result.start_line = Some(value),
+                "end-line" => result.end_line = Some(value),
+                "symbol" => result.symbol = Some(value),
+                "limit" => result.limit = Some(value),
+                _ => {}
+            }
+        }
+        result
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ReviewLookupRequest {
     pub operation: String,
-    pub arguments: BTreeMap<String, String>,
+    pub arguments: ReviewLookupArguments,
     pub questions: Vec<String>,
     pub purpose: String,
 }
