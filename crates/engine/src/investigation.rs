@@ -1017,8 +1017,13 @@ fn build_path_review_jobs_internal(
         let unresolved = path_decision_blockers(&candidate, &review_basis, &open_questions, &facts);
         let decision_facts = path_decision_facts(&candidate, &review_basis, &facts, &unresolved);
         let truncation = review_truncation(context_truncated, decision_critical_context_truncated);
-        let investigation =
-            path_review_investigation(&candidate, &review_basis, &decision_facts, &truncation);
+        let investigation = path_review_investigation(
+            &candidate,
+            &review_basis,
+            &decision_facts,
+            &truncation,
+            &facts,
+        );
         let confidence_policy = path_confidence_policy(&candidate, &decision_facts, &truncation);
         assign_review_fact_artifact_ids(&mut facts);
         reviews.push(PathReview {
@@ -5036,7 +5041,9 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Use not_issue for affirmative disproof or a demonstrated effective protection. For a non-path observation, not_issue may also mean the supplied context establishes only an ordinary API or syntax boundary and no reportable attacker influence or concrete policy failure; use the configured medium confidence and do not claim the wider code is proven safe."
                 .to_string(),
-            "Use only supplied facts; do not invent cross-function, deployment, or runtime behavior."
+            "Use supplied facts and exact artifacts returned by the prescribed bounded lookups; do not invent cross-function, deployment, or runtime behavior."
+                .to_string(),
+            "When a decisive origin or control is missing, follow the supplied investigation lookup for that exact operand and operation. A same-file or same-language producer, route, or writer is a lead until its target, ordering, and reachability match; if bounded inspection cannot establish that link, preserve the named needs_review check rather than dismissing or asserting the issue."
                 .to_string(),
             "Before claiming injection, check that the producer's representation matches the consumer operation (for example object properties versus array indexing after JSON decoding). An incompatible access does not establish delivery to the sink."
                 .to_string(),
@@ -5086,7 +5093,7 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Use needs_review only when decision_facts.unresolved names a concrete missing artifact that can change the decision. Generic possibilities about unknown origin, runtime value, or security impact are reviewer confidence factors, not automatic escalation checks."
                 .to_string(),
-            "Treat every remaining decision_facts.unresolved entry as decision-critical. Do not use issue or not_issue while one remains unless a supplied established fact explicitly answers that exact entry; otherwise use needs_review and copy the entry into checks."
+            "Treat every remaining decision_facts.unresolved entry as decision-critical. Do not use issue or not_issue while one remains unless supplied facts or an exact retrieved artifact explicitly answer that entry; otherwise use needs_review and copy the entry into checks. Cite retrieved artifacts used to resolve it."
                 .to_string(),
             "Use investigation.readiness as workflow metadata, not as a verdict. For investigation readiness, execute supplied bounded lookup requests in order only until the decisive fact is resolved; do not spend a secondary lookup after an earlier artifact already establishes issue or not_issue. For blocked readiness, preserve the named blockers and do not invent unavailable deployment or runtime facts."
                 .to_string(),
@@ -5217,6 +5224,7 @@ fn path_review_investigation(
     review_basis: &PathReviewBasis,
     decision_facts: &ReviewDecisionFacts,
     truncation: &ReviewContextTruncation,
+    facts: &[ReviewNeighborhoodFact],
 ) -> ReviewInvestigationPlan {
     let lookup_symbol = review_lookup_symbol(
         review_basis
@@ -5226,13 +5234,35 @@ fn path_review_investigation(
             .chain(review_basis.sink.captures.values())
             .map(String::as_str),
     );
-    review_investigation_plan(
+    let mut plan = review_investigation_plan(
         candidate.capability,
         &decision_facts.unresolved,
         truncation,
         &candidate.sink.location,
         lookup_symbol.as_deref(),
-    )
+    );
+    if let Some(writer) = facts
+        .iter()
+        .find(|fact| fact.role == "possible_local_asset_writer_context")
+        && decision_facts
+            .unresolved
+            .iter()
+            .any(|question| is_missing_stored_producer_question(question))
+    {
+        plan.lookup_requests.insert(0, ReviewLookupRequest {
+            operation: "source".to_string(),
+            arguments: [
+                ("path".to_string(), writer.location.path.clone()),
+                ("start-line".to_string(), writer.location.start.line.saturating_sub(20).max(1).to_string()),
+                ("end-line".to_string(), writer.location.end.line.saturating_add(30).to_string()),
+            ].into(),
+            questions: decision_facts.unresolved.iter().filter(|question| is_missing_stored_producer_question(question)).cloned().collect(),
+            purpose: "Compare this exact archive write destination and entry-name constraints with the local asset read target; check whether route gates permit the write before treating it as the source's producer.".to_string(),
+        });
+        plan.lookup_requests
+            .truncate(plan.budget.max_supplied_lookups);
+    }
+    plan
 }
 
 fn observation_review_investigation(
@@ -5730,9 +5760,6 @@ fn path_decision_blockers(
     let has_response_origin = facts
         .iter()
         .any(|fact| fact.role == "request_response_origin_context");
-    let has_local_asset_writer_context = facts
-        .iter()
-        .any(|fact| fact.role == "possible_local_asset_writer_context");
     let has_python_source_consumer = facts
         .iter()
         .any(|fact| fact.role == "python_source_file_consumer_context");
@@ -5745,10 +5772,9 @@ fn path_decision_blockers(
                     || question.contains("which application, framework, proxy")))
                 || (question.contains("Which code can write this browser-storage key")
                     && !has_browser_storage_chain)
-                || (question.contains("producer, persistence, or retrieval context")
+                || (is_missing_stored_producer_question(question)
                     && !has_persisted_origin
-                    && !has_response_origin
-                    && !has_local_asset_writer_context)
+                    && !has_response_origin)
                 || (question.starts_with(
                     "What exact configuration value is effective for the conditional branch",
                 ) && path_enabled_execution_configuration(facts).is_none())
@@ -5758,8 +5784,25 @@ fn path_decision_blockers(
                     )
                     && !has_python_source_consumer)
         })
-        .cloned()
+        .map(|question| {
+            if is_missing_stored_producer_question(question)
+                && review_basis.source.tags.iter().any(|tag| tag == "local-file")
+            {
+                format!(
+                    "Can a request-accessible writer produce the exact local asset read at {}:{} before it reaches this output? Compare its destination, filename constraints, configuration, route gate, and read target.",
+                    candidate.source.location.path, candidate.source.location.start.line
+                )
+            } else {
+                question.clone()
+            }
+        })
         .collect()
+}
+
+fn is_missing_stored_producer_question(question: &str) -> bool {
+    question.contains("producer, persistence, or retrieval context")
+        || question.contains("producer/write handler and persistence validator")
+        || question.starts_with("Can a request-accessible writer produce the exact local asset")
 }
 
 fn path_has_operator_configured_local_asset_origin(
@@ -5804,8 +5847,8 @@ fn path_has_operator_configured_local_asset_origin(
 }
 
 /// Supply a separately observed archive writer when a path renders local file
-/// bytes. This is a review lead, not a cross-file dataflow assertion: the
-/// reviewer must compare the exact read target, write path, gate, and route.
+/// bytes. It remains a review lead until the reviewer compares the exact read
+/// target, write path, gate, and route; proximity alone cannot establish origin.
 fn local_asset_archive_writer_facts(
     sources: &RepositorySources,
     evidence: &[Evidence],
@@ -5848,7 +5891,7 @@ fn local_asset_archive_writer_facts(
             excerpt: slice.text,
             evidence_id: None,
             provenance: textual_provenance(
-                "separate admitted archive-entry filesystem writer; target compatibility and reachability require review 1",
+                "separate admitted archive-entry filesystem writer; target compatibility and reachability are unverified 1",
             ),
         });
     }
@@ -16309,34 +16352,79 @@ fn nearby_express_render_callback_template(
     sink: &Evidence,
 ) -> Option<String> {
     let file = sources.file(&sink.location.path).ok()?;
-    let (slice, _) = review_source_slice(
-        file,
-        sink.location.start.line.saturating_sub(20).max(1),
-        sink.location.end.line,
-        &sink.location,
-    )
-    .ok()?;
-    let source = slice.text;
-    if !source.contains("res.send(") {
+    render_callback_template_at(&file.source, sink.location.start.byte_offset)
+}
+
+fn render_callback_template_at(source: &str, sink_start: usize) -> Option<String> {
+    let sink_start = sink_start.min(source.len());
+    let mut window_start = sink_start.saturating_sub(16 * 1024);
+    while !source.is_char_boundary(window_start) {
+        window_start += 1;
+    }
+    for (start, _) in source[window_start..sink_start].rmatch_indices("res.render(") {
+        let open = window_start + start + "res.render".len();
+        let Some(close) = balanced_javascript_call_end(source, open) else {
+            continue;
+        };
+        if close <= sink_start {
+            continue;
+        }
+        let call = &source[open + 1..close];
+        let tail = call.trim_start();
+        let Some(quote) = tail.chars().next() else {
+            continue;
+        };
+        if !matches!(quote, '\'' | '"') {
+            continue;
+        }
+        let Some(end) = tail[1..].find(quote).map(|index| index + 1) else {
+            continue;
+        };
+        let template = &tail[1..end];
+        let callback = &tail[end + 1..];
+        if valid_template_name(template)
+            && (callback.contains("=>") || callback.contains("function"))
+            && callback.contains("html")
+            && callback.contains("res.send(")
+        {
+            return Some(template.to_string());
+        }
+    }
+    None
+}
+
+fn balanced_javascript_call_end(source: &str, open: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if bytes.get(open) != Some(&b'(') {
         return None;
     }
-    let start = source.rfind("res.render(")? + "res.render(".len();
-    let tail = source[start..].trim_start();
-    let quote = tail.chars().next()?;
-    if !matches!(quote, '\'' | '"') {
-        return None;
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, byte) in bytes.iter().enumerate().skip(open).take(16 * 1024) {
+        if let Some(delimiter) = quote {
+            if escaped {
+                escaped = false;
+            } else if *byte == b'\\' {
+                escaped = true;
+            } else if *byte == delimiter {
+                quote = None;
+            }
+            continue;
+        }
+        match *byte {
+            b'\'' | b'"' | b'`' => quote = Some(*byte),
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
     }
-    let end = tail[1..].find(quote)? + 1;
-    let template = &tail[1..end];
-    let callback = &tail[end + 1..];
-    if !valid_template_name(template)
-        || !callback.contains("=>")
-        || !callback.contains("html")
-        || !callback.contains("res.send(")
-    {
-        return None;
-    }
-    Some(template.to_string())
+    None
 }
 
 fn simple_handlebars_bindings(source: &str) -> BTreeSet<String> {
@@ -22966,6 +23054,18 @@ mod tests {
                 "user.name".to_string(),
             ])
         );
+    }
+
+    #[test]
+    fn render_callback_template_must_enclose_the_sink() {
+        let source = "res.render('old', (err, html) => { res.send(html); });\nres.render('current', (err, html) => { res.send(html.slice(0, 5)); });\nres.send(other);";
+        let current = source.find("res.send(html.slice").unwrap();
+        let outside = source.rfind("res.send(other)").unwrap();
+        assert_eq!(
+            render_callback_template_at(source, current),
+            Some("current".to_string())
+        );
+        assert_eq!(render_callback_template_at(source, outside), None);
     }
 
     #[test]

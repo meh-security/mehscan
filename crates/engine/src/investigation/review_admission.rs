@@ -761,7 +761,22 @@ fn javascript_server_mutation_marker(
         return marker_after_boundary(file, spans, line_index, 8);
     }
 
-    if javascript_http_mutation_route(line) {
+    let chained_mutation_route = if line.contains(".route(") {
+        let end = (line_index + 12).min(spans.len().saturating_sub(1));
+        let excerpt = &file.source[spans[line_index].0..spans[end].1];
+        let route_open = excerpt.find(".route(").map(|start| start + ".route".len());
+        route_open
+            .and_then(|open| super::balanced_javascript_call_end(excerpt, open))
+            .is_some_and(|close| {
+                let tail = excerpt[close + 1..].trim_start().to_ascii_lowercase();
+                [".post(", ".put(", ".patch(", ".delete("]
+                    .iter()
+                    .any(|verb| tail.starts_with(verb))
+            })
+    } else {
+        false
+    };
+    if javascript_http_mutation_route(line) || chained_mutation_route {
         let symbol =
             http_mutation_symbol(line).unwrap_or_else(|| "HTTP mutation route".to_string());
         return marker_from_inline_boundary(file, spans, line_index, &symbol);
@@ -899,11 +914,13 @@ fn marker_from_inline_boundary(
     let excerpt = &file.source[spans[line_index].0..spans[end_index].1];
     let mut handlers = terminal_call_identifiers(excerpt, "");
     let boundary_line = &file.source[spans[line_index].0..spans[line_index].1];
-    let route_handler = terminal_route_handler(boundary_line);
-    if let Some(handler) = route_handler.as_ref()
-        && !handlers.contains(handler)
-    {
-        handlers.insert(0, handler.clone());
+    let route_excerpt = excerpt.lines().take(12).collect::<Vec<_>>().join("\n");
+    let route_handlers = terminal_route_handlers(&route_excerpt);
+    let route_handler = route_handlers.last().cloned();
+    for handler in route_handlers.into_iter().rev() {
+        if !handlers.contains(&handler) {
+            handlers.insert(0, handler);
+        }
     }
     let declared = authorization_definition_identifier(boundary_line);
     let prefer_declared = boundary_line.trim_start().starts_with("export ")
@@ -1054,73 +1071,129 @@ fn is_generic_mutation_reference(lower: &str) -> bool {
     )
 }
 
-fn terminal_route_handler(line: &str) -> Option<String> {
+fn terminal_route_handlers(line: &str) -> Vec<String> {
     let lower = line.to_ascii_lowercase();
-    if lower.contains(".route(") {
-        for verb in ["post(", "put(", "patch(", "delete("] {
-            let Some(start) = lower.rfind(verb).map(|start| start + verb.len()) else {
-                continue;
-            };
-            let candidate = line[start..]
-                .split(|character: char| {
-                    !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
-                })
-                .find(|token| is_helpful_reference_identifier(token));
-            if let Some(candidate) = candidate {
-                return Some(candidate.to_string());
+    let (open, chained) = [".post(", ".put(", ".patch(", ".delete("]
+        .iter()
+        .filter_map(|verb| {
+            lower
+                .find(verb)
+                .map(|start| (start + verb.len() - 1, lower[..start].contains(".route(")))
+        })
+        .min_by_key(|(start, _)| *start)
+        .unwrap_or((0, false));
+    if open == 0 || line.as_bytes().get(open) != Some(&b'(') {
+        return Vec::new();
+    }
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut argument_start = open + 1;
+    let mut arguments = Vec::new();
+    for (offset, byte) in line.as_bytes().iter().enumerate().skip(open) {
+        if let Some(delimiter) = quote {
+            if escaped {
+                escaped = false;
+            } else if *byte == b'\\' {
+                escaped = true;
+            } else if *byte == delimiter {
+                quote = None;
             }
+            continue;
+        }
+        match *byte {
+            b'\'' | b'"' | b'`' => quote = Some(*byte),
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    arguments.push(&line[argument_start..offset]);
+                    break;
+                }
+            }
+            b',' if depth == 1 => {
+                arguments.push(&line[argument_start..offset]);
+                argument_start = offset + 1;
+            }
+            _ => {}
         }
     }
-    let tail = line.rsplit_once(',')?.1;
-    // Route middleware is commonly module-qualified or wrapped (for example,
-    // security.denyAll() and utils.asyncHandler(basket.update())). Preserve
-    // the invoked handler, not the module alias or the wrapper.
-    tail.split('(')
-        .filter_map(|prefix| {
-            prefix
-                .trim_end()
-                .rsplit(|character: char| {
-                    !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$' | '.'))
+    arguments
+        .into_iter()
+        .skip(usize::from(!chained))
+        .filter_map(|argument| {
+            let last_call = argument
+                .split('(')
+                .filter_map(|prefix| {
+                    prefix
+                        .trim_end()
+                        .rsplit(|character: char| {
+                            !(character.is_ascii_alphanumeric()
+                                || matches!(character, '_' | '$' | '.'))
+                        })
+                        .next()?
+                        .rsplit('.')
+                        .next()
                 })
-                .next()
-                .unwrap_or_default()
-                .rsplit('.')
-                .next()
+                .filter(|token| {
+                    is_helpful_reference_identifier(token)
+                        && !matches!(
+                            token.to_ascii_lowercase().as_str(),
+                            "async" | "function" | "asynchandler" | "request" | "reply"
+                        )
+                })
+                .last();
+            last_call.map(str::to_string)
         })
-        .filter(|token| {
-            is_helpful_reference_identifier(token)
-                && !matches!(
-                    token.to_ascii_lowercase().as_str(),
-                    "post"
-                        | "put"
-                        | "patch"
-                        | "delete"
-                        | "request"
-                        | "reply"
-                        | "async"
-                        | "function"
-                        | "asynchandler"
-                )
-        })
-        .last()
-        .map(str::to_string)
+        .take(6)
+        .collect()
 }
 
 #[cfg(test)]
 mod route_handler_tests {
-    use super::terminal_route_handler;
+    use super::terminal_route_handlers;
 
     #[test]
     fn uses_invoked_handler_instead_of_module_or_wrapper() {
         assert_eq!(
-            terminal_route_handler("app.delete('/api/Products/:id', security.denyAll())"),
+            terminal_route_handlers("app.delete('/api/Products/:id', security.denyAll())")
+                .last()
+                .cloned(),
             Some("denyAll".to_string())
         );
         assert_eq!(
-            terminal_route_handler(
+            terminal_route_handlers(
                 "app.put('/api/BasketItems/:id', utils.asyncHandler(basketItems.quantityCheckBeforeBasketItemUpdate()))"
-            ),
+            )
+            .last()
+            .cloned(),
             Some("quantityCheckBeforeBasketItemUpdate".to_string())
+        );
+    }
+
+    #[test]
+    fn retains_ordered_route_middleware_and_chained_handlers() {
+        assert_eq!(
+            terminal_route_handlers(
+                "app.post('/benefits', isLoggedIn, isAdmin, benefitsHandler.updateBenefits)"
+            ),
+            vec!["isLoggedIn", "isAdmin", "updateBenefits"]
+        );
+        assert_eq!(
+            terminal_route_handlers("router.route('/items/:id').put(security.denyAll())"),
+            vec!["denyAll"]
+        );
+        assert_eq!(
+            terminal_route_handlers(
+                "app.put('/api/BasketItems/:id', security.appendUserId(), utils.asyncHandler(basketItems.quantityCheckBeforeBasketItemUpdate()))"
+            ),
+            vec!["appendUserId", "quantityCheckBeforeBasketItemUpdate"]
+        );
+        assert_eq!(
+            terminal_route_handlers(
+                "router.route('/items/:id')\n  .put(\n    authenticateToken,\n    handlers.updateItem\n  )"
+            ),
+            vec!["authenticateToken", "updateItem"]
         );
     }
 }

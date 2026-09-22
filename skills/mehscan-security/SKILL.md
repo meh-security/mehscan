@@ -155,6 +155,16 @@ when it protects the same value and operation. Missing application headers,
 CORS, TLS, cookies, or rate limiting may be owned by a gateway or platform and
 normally require an effective-control check.
 
+When the bundle cannot supply a decisive producer or control, use its bounded
+`investigation.lookup_requests` to inspect the exact source, writer, route, or
+configuration. Compare the same operand, target path or resource, relevant
+branch, and route reachability before promoting a nearby fact into evidence.
+For example, an archive writer elsewhere in the repository is a useful lead,
+but is not the origin of a rendered local asset until its destination and
+input constraints can reach that asset. If inspection cannot establish the
+link within the budget, retain the exact `needs_review` check and name the
+artifact that would settle it.
+
 A scanner relationship label does not override contradictory supplied facts.
 Evidence scope is per review ID. Use only that review's candidate, evidence,
 facts, review basis and decision facts. Another review in the same bundle cannot
