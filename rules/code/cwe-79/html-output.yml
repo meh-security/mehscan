@@ -90,12 +90,16 @@
     any:
       - pattern: res.send($HTML)
         captures: { content: HTML }
+      - pattern: res.write($HTML)
+        captures: { content: HTML }
+      - pattern: res.end($HTML)
+        captures: { content: HTML }
       - pattern: res.render($TEMPLATE, $$$DATA)
         captures: { template: TEMPLATE, content: DATA }
   tags: [http, response, html, xss, express]
   ai: *html_guidance
   provenance: &javascript_html_provenance
-    note: Express response rendering mapped to CWE-79 review.
+    note: Express rendering and Node response-body writes mapped to CWE-79 review.
     references:
       - https://cwe.mitre.org/data/definitions/79.html
       - https://expressjs.com/en/4x/api.html#res.send

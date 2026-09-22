@@ -885,7 +885,7 @@ fn build_path_review_jobs_internal(
             && let Some(sink) = evidence_by_id.get(candidate.sink.id.as_str())
         {
             let (mut template_facts, template_truncated) =
-                express_template_review_facts(&sources, sink, 5);
+                express_template_review_facts(&sources, sink, 6);
             context_truncated |= template_truncated;
             facts.append(&mut template_facts);
         }
@@ -8912,7 +8912,7 @@ fn build_observation_reviews(
             item.kind == EvidenceKind::Sink && item.capability == Capability::HtmlOutput
         }) {
             let (mut template, template_truncated) =
-                express_template_review_facts(sources, sink, 5);
+                express_template_review_facts(sources, sink, 6);
             context_truncated |= template_truncated;
             facts.append(&mut template);
         }
@@ -16678,7 +16678,7 @@ fn express_template_review_facts(
             }
         });
         for (start, end) in matching {
-            if facts.len() == limit.saturating_sub(2) {
+            if facts.len() == limit.saturating_sub(3) {
                 truncated = true;
                 break;
             }
@@ -16692,6 +16692,59 @@ fn express_template_review_facts(
                     "exact Express server-template expression, bounded non-flow 1",
                 ),
             });
+        }
+        if facts.len() < limit.saturating_sub(1) {
+            let parent_name = source
+                .lines()
+                .take(8)
+                .find(|line| line.contains("{%") && line.contains("extends"))
+                .and_then(|line| quoted_values(line).into_iter().next())
+                .filter(|name| {
+                    !name.contains("..")
+                        && !Path::new(name).is_absolute()
+                        && name.chars().all(|character| {
+                            character.is_ascii_alphanumeric()
+                                || matches!(character, '_' | '-' | '/' | '.')
+                        })
+                });
+            if let Some(parent_name) = parent_name {
+                let parent_path = Path::new(&template_path)
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""))
+                    .join(parent_name.trim_start_matches("./"));
+                if let Ok(parent_source) =
+                    fs::read_to_string(Path::new(&sources.root).join(&parent_path))
+                    && parent_source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES
+                {
+                    let parent_path = parent_path.to_string_lossy().replace('\\', "/");
+                    let parent_bindings = line_spans(&parent_source)
+                        .into_iter()
+                        .filter(|(start, end)| parent_source[*start..*end].contains("{{"))
+                        .collect::<Vec<_>>();
+                    truncated |= parent_bindings.len() > 2;
+                    for (start, end) in parent_bindings.into_iter().take(2) {
+                        if facts.len() == limit.saturating_sub(1) {
+                            truncated = true;
+                            break;
+                        }
+                        facts.push(ReviewNeighborhoodFact {
+                            role: "server_template_binding_context".to_string(),
+                            symbol: parent_name.to_string(),
+                            location: location_from_offsets(
+                                &parent_path,
+                                &parent_source,
+                                start,
+                                end,
+                            ),
+                            excerpt: bounded_line_text(&parent_source[start..end]),
+                            evidence_id: None,
+                            provenance: textual_provenance(
+                                "exact one-hop inherited server-template expression, bounded non-flow 1",
+                            ),
+                        });
+                    }
+                }
+            }
         }
         break;
     }

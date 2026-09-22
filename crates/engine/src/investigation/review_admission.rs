@@ -78,10 +78,33 @@ fn server_mutation_review_marker_groups(
             continue;
         }
         let spans = line_spans(&file.source);
+        let comment_ranges = file
+            .source
+            .contains("/*")
+            .then(|| StrDoc::try_new(&file.source, parser_language(language)).ok())
+            .flatten()
+            .map(|document| {
+                let ast = AstGrep::doc(document);
+                let root = ast.root();
+                root.dfs()
+                    .filter(|node| node.kind().as_ref().contains("comment"))
+                    .map(|node| node.range())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let mut file_count = 0;
         for line_index in 0..spans.len() {
             if file_count >= MAX_REVIEW_ADMISSION_MARKERS_PER_FILE {
                 break;
+            }
+            let (line_start, line_end) = spans[line_index];
+            let first_content = line_start + file.source[line_start..line_end].len()
+                - file.source[line_start..line_end].trim_start().len();
+            if comment_ranges
+                .iter()
+                .any(|range| range.start <= first_content && first_content < range.end)
+            {
+                continue;
             }
             let Some(marker) = server_mutation_review_marker(file, &spans, line_index) else {
                 continue;
