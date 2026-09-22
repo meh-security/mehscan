@@ -3767,7 +3767,11 @@ fn validate_retrieved_artifact_locator(
         .and_then(|value| value.parse::<usize>().ok());
     if path != Some(&artifact.location.path)
         || start_line.is_none_or(|line| artifact.location.start.line < line)
-        || end_line.is_none_or(|line| artifact.location.end.line > line)
+        || end_line.is_none_or(|line| {
+            artifact.location.end.line > line
+                && !(artifact.location.end.line == line.saturating_add(1)
+                    && artifact.location.end.column == 1)
+        })
     {
         return Err(EngineError(format!(
             "retrieved artifact {:?} for {review_id:?} is outside its requested source locator",
@@ -5424,8 +5428,13 @@ fn review_investigation_plan(
         .collect::<Vec<_>>();
     let mut lookup_requests = Vec::new();
     if !repository_questions.is_empty() {
-        let start_line = anchor.start.line.saturating_sub(80).max(1);
-        let end_line = anchor.end.line.saturating_add(80);
+        let margin = if capability == Capability::HtmlOutput {
+            64
+        } else {
+            80
+        };
+        let start_line = anchor.start.line.saturating_sub(margin).max(1);
+        let end_line = anchor.end.line.saturating_add(margin);
         lookup_requests.push(ReviewLookupRequest {
             operation: "source".to_string(),
             arguments: [
@@ -6432,6 +6441,54 @@ fn observation_decision_facts(
     if let Some(control) = decision_critical_origin.and_then(|origin| origin.effective_control()) {
         effective_controls.push(control);
     }
+    let dynamic_browser_output = evidence.iter().find(|item| {
+        item.kind == EvidenceKind::Sink
+            && item.capability == Capability::HtmlOutput
+            && matches!(
+                item.rule_id.as_str(),
+                "javascript-html-output" | "typescript-html-output" | "tsx-html-output"
+            )
+            && item.captures.get("content").is_some_and(|capture| {
+                let content = capture.text.trim();
+                !content.is_empty()
+                    && !((content.starts_with('"') && content.ends_with('"'))
+                        || (content.starts_with('\'') && content.ends_with('\'')))
+            })
+            && (item.captures.get("template").is_none()
+                || (item.captures.get("content").is_some_and(|capture| {
+                    capture.text.contains("...")
+                        || capture.text.contains("req.")
+                        || capture.text.contains("request.")
+                        || capture.text.lines().any(|line| {
+                            let Some((name, value)) = line.split_once(':') else {
+                                return false;
+                            };
+                            let name = name.trim().trim_start_matches('{').trim();
+                            let value = value.trim_start();
+                            !name.is_empty()
+                                && name.chars().all(|character| {
+                                    character.is_ascii_alphanumeric()
+                                        || matches!(character, '_' | '$')
+                                })
+                                && value.strip_prefix(name).is_some_and(|rest| {
+                                    rest.chars().next().is_none_or(|character| {
+                                        !character.is_ascii_alphanumeric()
+                                            && !matches!(character, '_' | '$')
+                                    })
+                                })
+                        })
+                }) && facts
+                    .iter()
+                    .any(|fact| fact.role == "server_template_binding_context")
+                    && facts.iter().any(|fact| {
+                        fact.role == "template_configuration_context"
+                            && fact
+                                .excerpt
+                                .split_whitespace()
+                                .collect::<String>()
+                                .contains("autoescape:false")
+                    })))
+    });
     let unresolved = if javascript_policy.is_some()
         || rust_policy.is_some()
         || go_policy.is_some()
@@ -6465,6 +6522,12 @@ fn observation_decision_facts(
     } else if let Some(parameter) = rust_dynamic_html_parameter {
         vec![format!(
             "Is runtime parameter `{parameter}` bound to attacker-controlled request data by the registered Actix route or extractor for this exact handler?"
+        )]
+    } else if let Some(sink) = dynamic_browser_output.filter(|_| decision_critical_origin.is_none())
+    {
+        vec![format!(
+            "Does the exact HTML output operand at {}:{} come from request-controlled or mutable stored content, and is that value protected for its browser output context? Inspect the producer and rendered binding or response callback before deciding.",
+            sink.location.path, sink.location.start.line
         )]
     } else if direct_request_resource_selector {
         vec![
