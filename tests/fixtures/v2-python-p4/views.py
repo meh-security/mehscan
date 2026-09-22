@@ -30,7 +30,9 @@ class AccountView(APIView):
     def post(self, request, account_id=None, user=None):
         account = Account.objects.get(id=account_id, owner=user)
         payload = request.data
-        account.balance += float(payload["amount"])
+        if account.balance < account.unit_price:
+            return Response({"error": "insufficient balance"}, status=400)
+        account.balance -= float(account.unit_price * payload["amount"])
         account.save()
         return Response({"balance": account.balance})
 

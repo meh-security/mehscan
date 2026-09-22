@@ -1111,9 +1111,11 @@ fn push_sensitive_field_mutations<'tree>(
         }) {
             continue;
         }
+        let validation = nearby_rejecting_mutation_validation(&assignment, &left, &right);
         push_sensitive_write_evidence(
             path,
             &right,
+            validation.as_ref(),
             SENSITIVE_MUTATION_RULE_ID,
             vec![field.to_string()],
             "direct-model-field-assignment",
@@ -1222,6 +1224,7 @@ fn push_sensitive_serializer_writes<'tree>(
             push_sensitive_write_evidence(
                 path,
                 &input,
+                None,
                 SERIALIZER_WRITE_RULE_ID,
                 fields.clone(),
                 "model-serializer-writable-field-policy",
@@ -1238,6 +1241,7 @@ fn push_sensitive_serializer_writes<'tree>(
 fn push_sensitive_write_evidence<'tree>(
     path: &str,
     input: &Node<'tree, StrDoc<SupportLang>>,
+    validation: Option<&Node<'tree, StrDoc<SupportLang>>>,
     rule_id: &str,
     fields: Vec<String>,
     basis: &str,
@@ -1247,23 +1251,38 @@ fn push_sensitive_write_evidence<'tree>(
     evidence: &mut Vec<Evidence>,
 ) {
     let item_location = location(path, input);
+    let mut captures = BTreeMap::from([(
+        "assigned_fields".to_string(),
+        Capture {
+            text: input.text().into_owned(),
+            location: item_location.clone(),
+        },
+    )]);
+    if let Some(validation) = validation {
+        captures.insert(
+            "nearby_rejecting_validation".to_string(),
+            Capture {
+                text: validation.text().into_owned(),
+                location: location(path, validation),
+            },
+        );
+    }
     evidence.push(Evidence {
         id: evidence_id(path, rule_id, input.range().start, input.range().end),
         kind: EvidenceKind::Sink,
         capability: Capability::ResourceAccess,
         location: item_location.clone(),
         enclosing_symbol: enclosing_symbol(input),
-        captures: BTreeMap::from([(
-            "assigned_fields".to_string(),
-            Capture {
-                text: input.text().into_owned(),
-                location: item_location,
-            },
-        )]),
+        captures,
         cwe_candidates: vec!["CWE-915".to_string()],
         tags: std::iter::once("django".to_string())
             .chain(std::iter::once("sensitive-model-write".to_string()))
             .chain(std::iter::once(format!("basis:{basis}")))
+            .chain(
+                validation
+                    .is_some()
+                    .then_some("nearby-rejecting-validation".to_string()),
+            )
             .chain(fields.into_iter().map(|field| format!("field:{field}")))
             .collect(),
         confidence: Confidence::Medium,
@@ -1276,13 +1295,69 @@ fn push_sensitive_write_evidence<'tree>(
             comment: comments.is_in_comment(input.range()),
             reachability: Some(reachability::classify(input, literals)),
             availability: Some(conditional.availability_for(input.range())),
-            literals: BTreeMap::from([("assigned_fields".to_string(), literals.evaluate(input))]),
+            literals: std::iter::once(("assigned_fields".to_string(), literals.evaluate(input)))
+                .chain(validation.map(|validation| {
+                    (
+                        "nearby_rejecting_validation".to_string(),
+                        literals.evaluate(validation),
+                    )
+                }))
+                .collect(),
             ..EvidenceContext::default()
         },
         symbol_resolution: None,
         rule_id: rule_id.to_string(),
         related_evidence: Vec::new(),
     });
+}
+
+fn nearby_rejecting_mutation_validation<'tree>(
+    assignment: &Node<'tree, StrDoc<SupportLang>>,
+    left: &Node<'tree, StrDoc<SupportLang>>,
+    right: &Node<'tree, StrDoc<SupportLang>>,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    let function = assignment
+        .ancestors()
+        .find(|ancestor| ancestor.kind().as_ref() == "function_definition")?;
+    let left = left.text().into_owned();
+    let right_terms = right
+        .dfs()
+        .filter(|node| matches!(node.kind().as_ref(), "attribute" | "subscript"))
+        .map(|node| node.text().into_owned())
+        .filter(|term| term.len() >= 4)
+        .collect::<BTreeSet<_>>();
+    function
+        .dfs()
+        .filter(|node| {
+            node.kind().as_ref() == "if_statement"
+                && node.range().end < assignment.range().start
+                && assignment
+                    .start_pos()
+                    .line()
+                    .saturating_sub(node.end_pos().line())
+                    <= 40
+                && node
+                    .ancestors()
+                    .find(|ancestor| ancestor.kind().as_ref() == "function_definition")
+                    .is_some_and(|owner| owner.range() == function.range())
+        })
+        .filter_map(|statement| {
+            let condition = statement.field("condition")?;
+            let consequence = statement.field("consequence")?;
+            if !consequence
+                .dfs()
+                .any(|node| matches!(node.kind().as_ref(), "return_statement" | "raise_statement"))
+            {
+                return None;
+            }
+            let condition_text = condition.text();
+            (condition_text.contains(left.as_str())
+                || right_terms
+                    .iter()
+                    .any(|term| condition_text.contains(term.as_str())))
+            .then_some(condition)
+        })
+        .max_by_key(|condition| condition.range().start)
 }
 
 fn django_template_name(path: &str) -> Option<String> {

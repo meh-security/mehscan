@@ -7988,6 +7988,18 @@ fn path_review_basis(
     if !sink.tags.is_empty() {
         deterministic_facts.push(format!("Sink rule semantics: {}.", sink.tags.join(", ")));
     }
+    let nearby_mutation_validation = (sink.rule_id == "python-django-sensitive-field-mutation")
+        .then(|| sink.captures.get("nearby_rejecting_validation"))
+        .flatten();
+    if let (Some(validation), Some(mutation)) = (
+        nearby_mutation_validation,
+        sink.captures.get("assigned_fields"),
+    ) {
+        deterministic_facts.push(format!(
+            "The bounded Python classifier found nearby rejecting condition `{}` before sensitive mutation `{}`. This is comparison context, not proof that the condition constrains the mutation's complete value domain.",
+            validation.text, mutation.text
+        ));
+    }
     let semantic_claims = path_semantic_claims(candidate);
     if !semantic_claims.is_empty() {
         deterministic_facts.push(format!(
@@ -8040,7 +8052,15 @@ fn path_review_basis(
     }
     Ok(PathReviewBasis {
         relationship: "deterministic_bounded_path".to_string(),
-        security_question: if semantic_claims.is_empty() {
+        security_question: if let (Some(validation), Some(mutation)) = (
+            nearby_mutation_validation,
+            sink.captures.get("assigned_fields"),
+        ) {
+            format!(
+                "Does nearby rejecting condition `{}` constrain every caller-controlled operand used by sensitive mutation `{}`, including sign, multiplicity, units and range, before the persisted effect?",
+                validation.text, mutation.text
+            )
+        } else if semantic_claims.is_empty() {
             format!(
                 "Can the bounded source influence the {:?} behavior at runtime without an effective context-appropriate protection?",
                 candidate.capability
@@ -14240,6 +14260,12 @@ fn path_review_questions(
             "Does the application authenticate the SSO cookie with a server-held integrity key or framework data protector before reading the account identifier? Base64 decoding and JSON parsing alone do not establish authenticity."
                 .to_string(),
             "Does the verified cookie identity select the same account for which this access token is issued, with issuer, audience, purpose, and replay protections appropriate to the SSO protocol?"
+                .to_string(),
+        ];
+    }
+    if candidate.sink.rule_id == "python-django-sensitive-field-mutation" {
+        return vec![
+            "Does a rejecting condition constrain every caller-controlled operand used by this sensitive mutation, including sign, multiplicity, units and range, before the persisted effect? Compare the exact captured expressions when a nearby validation is supplied; a check over one unit does not bound a multiplied quantity."
                 .to_string(),
         ];
     }
