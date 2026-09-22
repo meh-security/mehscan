@@ -645,6 +645,53 @@ pub struct ReviewPipelineCoverage {
     pub assessment_review_count: usize,
     pub investigation_ready_review_count: usize,
     pub blocked_review_count: usize,
+    /// Classification of existing high-risk evidence before AI-review
+    /// admission. This is diagnostic accounting only and cannot create a
+    /// finding or review.
+    #[serde(default)]
+    pub admission_audit: ReviewAdmissionAudit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewAdmissionDisposition {
+    PathOwned,
+    ObservationAdmitted,
+    SafelySuppressed,
+    DuplicateSuperseded,
+    InventoryOnly,
+    ContextOnly,
+    ExcludedReviewMaterial,
+    /// A relevant boundary missed every known admission and suppression
+    /// decision. Keeping this explicit prevents diagnostics from describing an
+    /// unexplained loss as a safe exclusion.
+    Unclassified,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewAdmissionAudit {
+    pub classified_boundary_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub counts: Vec<ReviewAdmissionAuditCount>,
+    /// Bounded deterministic examples for non-admitted dispositions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excluded_examples: Vec<ReviewAdmissionAuditExample>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewAdmissionAuditCount {
+    pub capability: Capability,
+    pub disposition: ReviewAdmissionDisposition,
+    pub count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewAdmissionAuditExample {
+    pub evidence_id: String,
+    pub rule_id: String,
+    pub capability: Capability,
+    pub disposition: ReviewAdmissionDisposition,
+    pub location: Location,
 }
 
 pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.1";

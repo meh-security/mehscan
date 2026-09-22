@@ -321,10 +321,17 @@ fn emits_language_neutral_path_review_jobs() {
         .map(|review| {
             serde_json::json!({
                 "review_id": review["id"],
-                "decision": "needs_review",
-                "confidence": "medium",
-                "summary": "The bounded source and sink are shown, but runtime behavior remains unresolved.",
-                "checks": ["Confirm the supplied value reaches the process at runtime."]
+                "decision": "issue",
+                "confidence": review["confidence_policy"]["issue"],
+                "summary": "The supplied bounded path supports this issue decision.",
+                "checks": [],
+                "investigation": {
+                    "lookup_attempts": [],
+                    "citations": [],
+                    "reviewer_inferences": [],
+                    "reviewer_origin_leads": [],
+                    "blockers": []
+                }
             })
         })
         .collect::<Vec<_>>();
@@ -333,7 +340,7 @@ fn emits_language_neutral_path_review_jobs() {
     fs::write(
         &response_path,
         serde_json::to_vec(&serde_json::json!({
-            "schema_version": "1.0",
+            "schema_version": mehscan_core::PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
             "job_fingerprint": json["fingerprint"],
             "results": results
         }))
@@ -348,7 +355,7 @@ fn emits_language_neutral_path_review_jobs() {
     fs::write(
         &partial_path,
         serde_json::to_vec(&serde_json::json!({
-            "schema_version": "1.0",
+            "schema_version": mehscan_core::PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
             "job_fingerprint": json["fingerprint"],
             "results": [results[0].clone()]
         }))
@@ -402,8 +409,8 @@ fn emits_language_neutral_path_review_jobs() {
     assert!(triage.status.success(), "CLI failed: {:?}", triage.stderr);
     let triage_json: serde_json::Value =
         serde_json::from_slice(&triage.stdout).expect("triage should be JSON");
-    assert_eq!(triage_json["needs_review_count"], 3);
-    assert_eq!(triage_json["issue_group_count"], 0);
+    assert_eq!(triage_json["issue_count"], 3);
+    assert_eq!(triage_json["issue_group_count"], 3);
 
     let second = Command::new(env!("CARGO_BIN_EXE_mehscan"))
         .args([
@@ -478,7 +485,12 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
     let manifest: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("manifest should be JSON");
     assert_eq!(manifest["max_reviews_per_bundle"], 20);
-    let first = &manifest["bundles"][0];
+    let first = manifest["bundles"]
+        .as_array()
+        .expect("manifest bundles")
+        .iter()
+        .find(|entry| entry["category"]["review_kind"] == "path")
+        .expect("process fixture should emit a path bundle");
     assert!(first["context_text_bytes"].as_u64().is_some());
     assert!(first["repeated_context_text_bytes"].as_u64().is_some());
     let filename = first["filename"].as_str().expect("filename should exist");
@@ -505,31 +517,19 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
                 .iter()
                 .find(|review| review["id"] == *review_id)
                 .expect("review should exist");
-            let unresolved = review["decision_facts"]["unresolved"]
-                .as_array()
-                .and_then(|questions| questions.first())
-                .and_then(serde_json::Value::as_str);
-            let (decision, confidence, summary, checks) = if let Some(unresolved) = unresolved {
-                (
-                    "needs_review",
-                    review["confidence_policy"]["needs_review"].clone(),
-                    "The supplied evidence leaves one concrete decision fact unresolved.",
-                    vec![unresolved],
-                )
-            } else {
-                (
-                    "not_issue",
-                    review["confidence_policy"]["not_issue"].clone(),
-                    "The bounded observation does not establish a reportable security relationship.",
-                    Vec::new(),
-                )
-            };
             serde_json::json!({
                 "review_id": review_id,
-                "decision": decision,
-                "confidence": confidence,
-                "summary": summary,
-                "checks": checks
+                "decision": "issue",
+                "confidence": review["confidence_policy"]["issue"],
+                "summary": "The supplied bounded path supports this issue decision.",
+                "checks": [],
+                "investigation": {
+                    "lookup_attempts": [],
+                    "citations": [],
+                    "reviewer_inferences": [],
+                    "reviewer_origin_leads": [],
+                    "blockers": []
+                }
             })
         })
         .collect::<Vec<_>>();
@@ -537,7 +537,7 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
     fs::write(
         &response_path,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": "1.0",
+            "schema_version": mehscan_core::PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
             "bundle_fingerprint": bundle["bundle_fingerprint"],
             "results": results
         }))
@@ -562,8 +562,7 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
         serde_json::from_slice(&triage.stdout).expect("triage report should be JSON");
     assert_eq!(report["complete"], true);
     assert_eq!(
-        report["needs_review_count"].as_u64().unwrap_or(0)
-            + report["not_issue_count"].as_u64().unwrap_or(0),
+        report["issue_count"].as_u64().unwrap_or(0),
         first["review_count"].as_u64().expect("review count")
     );
 
@@ -571,7 +570,7 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
         .as_array()
         .expect("manifest bundles")
         .iter()
-        .skip(1)
+        .filter(|entry| entry["filename"] != first["filename"])
     {
         let name = entry["filename"].as_str().expect("bundle filename");
         let request: serde_json::Value = serde_json::from_slice(
@@ -589,33 +588,65 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
                     .iter()
                     .find(|review| review["id"] == *review_id)
                     .expect("review should exist");
-                let unresolved = review["decision_facts"]["unresolved"]
+            let unresolved = review["decision_facts"]["unresolved"]
                     .as_array()
                     .and_then(|questions| questions.first())
-                    .and_then(serde_json::Value::as_str);
-                if let Some(unresolved) = unresolved {
+                .and_then(serde_json::Value::as_str);
+            let lookup_attempts = review["investigation"]["lookup_requests"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .map(|(request_index, _)| {
                     serde_json::json!({
+                        "request_index": request_index,
+                        "outcome": "no_relevant_result",
+                        "artifacts": [],
+                        "detail": "The CLI contract fixture performed the supplied lookup without a relevant result."
+                    })
+                })
+                .collect::<Vec<_>>();
+            let blockers = review["investigation"]["blockers"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            if let Some(unresolved) = unresolved {
+                serde_json::json!({
                         "review_id": review_id,
                         "decision": "needs_review",
                         "confidence": review["confidence_policy"]["needs_review"],
                         "summary": "The supplied evidence leaves one decisive runtime fact unresolved.",
-                        "checks": [unresolved]
-                    })
-                } else {
+                    "checks": [unresolved],
+                    "investigation": {
+                        "lookup_attempts": lookup_attempts,
+                        "citations": [],
+                        "reviewer_inferences": [],
+                        "reviewer_origin_leads": [],
+                        "blockers": blockers
+                    }
+                })
+            } else {
                     serde_json::json!({
                         "review_id": review_id,
                         "decision": "issue",
                         "confidence": review["confidence_policy"]["issue"],
                         "summary": "The supplied evidence establishes the reviewed weakness without an unresolved fact.",
-                        "checks": []
-                    })
+                    "checks": [],
+                    "investigation": {
+                        "lookup_attempts": [],
+                        "citations": [],
+                        "reviewer_inferences": [],
+                        "reviewer_origin_leads": [],
+                        "blockers": []
+                    }
+                })
                 }
             })
             .collect::<Vec<_>>();
         fs::write(
             output_dir.join("responses").join(name),
             serde_json::to_vec_pretty(&serde_json::json!({
-                "schema_version": "1.0",
+                "schema_version": mehscan_core::PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
                 "bundle_fingerprint": request["bundle_fingerprint"],
                 "results": results
             }))

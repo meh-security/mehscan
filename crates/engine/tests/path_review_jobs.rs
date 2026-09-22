@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use mehscan_core::{
     EvidenceKind, PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, PathReviewBundlePayload,
     PathReviewBundleResponseSet, PathReviewTriageResponseSet, PathReviewTriageResult,
-    ReviewConfidence, ReviewDecision,
+    ReviewAdmissionDisposition, ReviewConfidence, ReviewDecision,
 };
 
 fn process_fixture_root() -> PathBuf {
@@ -708,6 +708,55 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
         false,
     )
     .expect("complete review job should build");
+    let audit = &job.review_coverage.admission_audit;
+    assert_eq!(
+        audit.classified_boundary_count,
+        audit.counts.iter().map(|entry| entry.count).sum::<usize>()
+    );
+    assert!(
+        job.review_coverage.recognized_boundary_count >= job.review_coverage.admitted_review_count
+    );
+    for disposition in [
+        ReviewAdmissionDisposition::PathOwned,
+        ReviewAdmissionDisposition::ObservationAdmitted,
+        ReviewAdmissionDisposition::SafelySuppressed,
+        ReviewAdmissionDisposition::ExcludedReviewMaterial,
+    ] {
+        assert!(
+            audit
+                .counts
+                .iter()
+                .any(|entry| entry.disposition == disposition && entry.count > 0),
+            "fixture must exercise {disposition:?} admission accounting"
+        );
+    }
+    assert!(
+        audit
+            .counts
+            .iter()
+            .all(|entry| entry.disposition != ReviewAdmissionDisposition::Unclassified),
+        "known fixture boundaries must not disappear behind an unexplained exclusion"
+    );
+    assert!(audit.excluded_examples.len() <= 64);
+    assert!(audit.excluded_examples.iter().all(|example| {
+        !example.evidence_id.is_empty()
+            && !example.rule_id.is_empty()
+            && !example.location.path.is_empty()
+            && !matches!(
+                example.disposition,
+                ReviewAdmissionDisposition::PathOwned
+                    | ReviewAdmissionDisposition::ObservationAdmitted
+            )
+    }));
+    assert!(audit.excluded_examples.iter().any(|example| {
+        example.disposition == ReviewAdmissionDisposition::SafelySuppressed
+            && example.rule_id == "typescript-html-output"
+            && example.location.path == "routes/production.ts"
+    }));
+    assert!(audit.excluded_examples.iter().any(|example| {
+        example.disposition == ReviewAdmissionDisposition::ExcludedReviewMaterial
+            && example.location.path == "data/static/codefixes/teaching.ts"
+    }));
     assert!(
         job.observation_reviews
             .iter()

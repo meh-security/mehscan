@@ -28,14 +28,16 @@ use mehscan_core::{
     PathReviewTriageReport, PathReviewTriageResponseSet, PathReviewTriageResult, Position,
     Provenance, QueryProvenance, QueryResponse, REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
     RelationContract, RelationshipFunnel, RelationshipFunnelCapability, ReportedFinding,
-    ReportedSeverity, Resolution, ResourcePolicyState, ReviewConfidence, ReviewConfidencePolicy,
-    ReviewContextTruncation, ReviewDecision, ReviewDecisionFacts, ReviewFamilyMeasurement,
-    ReviewInvestigationBudget, ReviewInvestigationPlan, ReviewInvestigationTrace,
-    ReviewLookupOutcome, ReviewLookupRequest, ReviewNeighborhoodFact, ReviewNeighborhoodJob,
-    ReviewPipelineCoverage, ReviewReadiness, ReviewRepairTrace, ReviewTriageContract,
-    ReviewTriageReport, ReviewTriageResponseSet, ReviewWorkSummary, ReviewerOriginLeadRecord, Rule,
-    RuntimeEnvironment, SCHEMA_VERSION, SecurityPathState, SecurityPathStepKind, Severity,
-    SeveritySource, SourceSlice, StructuralMatch, TextReference,
+    ReportedSeverity, Resolution, ResourcePolicyState, ReviewAdmissionAudit,
+    ReviewAdmissionAuditCount, ReviewAdmissionAuditExample, ReviewAdmissionDisposition,
+    ReviewConfidence, ReviewConfidencePolicy, ReviewContextTruncation, ReviewDecision,
+    ReviewDecisionFacts, ReviewFamilyMeasurement, ReviewInvestigationBudget,
+    ReviewInvestigationPlan, ReviewInvestigationTrace, ReviewLookupOutcome, ReviewLookupRequest,
+    ReviewNeighborhoodFact, ReviewNeighborhoodJob, ReviewPipelineCoverage, ReviewReadiness,
+    ReviewRepairTrace, ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet,
+    ReviewWorkSummary, ReviewerOriginLeadRecord, Rule, RuntimeEnvironment, SCHEMA_VERSION,
+    SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
+    StructuralMatch, TextReference,
 };
 
 mod review_admission;
@@ -90,6 +92,7 @@ struct PendingUnit {
     selected_evidence_ids: Vec<String>,
 }
 
+#[derive(Clone)]
 struct ObservationGroup {
     path: String,
     symbol: String,
@@ -583,7 +586,7 @@ fn build_path_review_jobs_internal(
     });
     let excluded_candidates = all_candidates.len().saturating_sub(candidates.len());
     let used_ids = candidate_evidence_ids(&all_candidates, &scan.evidence, &sources);
-    let mut observation_groups =
+    let (mut observation_groups, observation_exclusions) =
         observation_groups(&scan.evidence, &used_ids, &all_candidates, &sources);
     observation_groups.extend(review_admission::marker_groups(&sources, &scan.evidence));
     observation_groups.sort_by(|left, right| {
@@ -610,6 +613,11 @@ fn build_path_review_jobs_internal(
     }
     let all_observation_count = observation_groups.len();
     let recognized_boundary_count = all_candidates.len() + all_observation_count;
+    let excluded_review_material_observation_ids = observation_groups
+        .iter()
+        .filter(|group| group.review_material)
+        .flat_map(|group| group.anchor_evidence_ids.iter().cloned())
+        .collect::<BTreeSet<_>>();
     if !include_review_material {
         observation_groups.retain(|group| !group.review_material);
     }
@@ -625,6 +633,23 @@ fn build_path_review_jobs_internal(
             &review_context,
         )
     });
+    let admitted_candidate_evidence_ids =
+        candidate_evidence_ids(&candidates, &scan.evidence, &sources)
+            .into_iter()
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+    let admitted_observation_ids = observation_groups
+        .iter()
+        .flat_map(|group| group.anchor_evidence_ids.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    let admission_audit = review_admission_audit(
+        &scan.evidence,
+        &used_ids,
+        &admitted_candidate_evidence_ids,
+        &admitted_observation_ids,
+        &excluded_review_material_observation_ids,
+        &observation_exclusions,
+    );
     let candidate_count = candidates.len();
     let observation_total = observation_groups.len();
     let total_reviews = candidate_count + observation_total;
@@ -1033,6 +1058,7 @@ fn build_path_review_jobs_internal(
         recognized_boundary_count,
         admitted_review_count: total_reviews,
         returned_review_count: returned_reviews,
+        admission_audit,
         ..ReviewPipelineCoverage::default()
     };
     for readiness in reviews
@@ -10685,8 +10711,12 @@ fn observation_groups(
     used_ids: &BTreeSet<&str>,
     candidates: &[mehscan_core::Candidate],
     sources: &RepositorySources,
-) -> Vec<ObservationGroup> {
+) -> (
+    Vec<ObservationGroup>,
+    BTreeMap<String, ReviewAdmissionDisposition>,
+) {
     let mut grouped: BTreeMap<(String, String), Vec<Evidence>> = BTreeMap::new();
+    let mut exclusions = BTreeMap::new();
     for item in evidence
         .iter()
         .filter(|item| item.kind != EvidenceKind::Secret)
@@ -10711,34 +10741,26 @@ fn observation_groups(
                 .cmp(&right.location.start.byte_offset)
                 .then_with(|| left.rule_id.cmp(&right.rule_id))
         });
-        let anchors = items
-            .iter()
-            .filter(|item| {
-                !used_ids.contains(item.id.as_str())
-                    && !item.cwe_candidates.is_empty()
-                    && !observation_sink_covered_by_candidate(item, candidates)
-                    && !is_non_actionable_fixed_sink_observation(item, sources)
-                    && !is_non_actionable_safe_purpose_observation(item, sources)
-                    && !is_non_actionable_java_route_control(item)
-                    && !is_non_actionable_affirmative_csharp_cookie_control(item)
-                    && !is_source_free_generic_java_log(item, &items)
-                    && !is_superseded_java_logging_observation(item, &items)
-                    && !is_superseded_csharp_cookie_observation(item, &items)
-                    && !is_context_only_uploaded_filename_check(item, &items)
-                    && !is_non_actionable_csrf_observation(item, sources)
-                    && !is_non_actionable_autoescaped_django_response(item, sources)
-                    && !is_unlinked_native_buffer_write_observation(item, sources)
-                    && !is_unlinked_native_api_inventory_observation(item, sources)
-                    && !is_duplicate_parameter_sink_summary(item, evidence)
-                    && matches!(
-                        item.kind,
-                        EvidenceKind::Sink
-                            | EvidenceKind::SensitiveOperation
-                            | EvidenceKind::SecurityConfiguration
-                    )
-            })
-            .map(|item| item.id.clone())
-            .collect::<Vec<_>>();
+        let mut anchors = Vec::new();
+        for item in &items {
+            if item.cwe_candidates.is_empty()
+                || !matches!(
+                    item.kind,
+                    EvidenceKind::Sink
+                        | EvidenceKind::SensitiveOperation
+                        | EvidenceKind::SecurityConfiguration
+                )
+            {
+                continue;
+            }
+            if let Some(disposition) = observation_exclusion_disposition(
+                item, &items, evidence, used_ids, candidates, sources,
+            ) {
+                exclusions.insert(item.id.clone(), disposition);
+            } else {
+                anchors.push(item.id.clone());
+            }
+        }
         if anchors.is_empty() {
             // Sources, entrypoints, guards, sanitizers, validations, literals,
             // and resources remain available as context, but are not standalone
@@ -10806,7 +10828,144 @@ fn observation_groups(
             .then_with(|| left.path.cmp(&right.path))
             .then_with(|| left.symbol.cmp(&right.symbol))
     });
-    groups
+    (groups, exclusions)
+}
+
+fn observation_exclusion_disposition(
+    item: &Evidence,
+    group: &[Evidence],
+    evidence: &[Evidence],
+    used_ids: &BTreeSet<&str>,
+    candidates: &[mehscan_core::Candidate],
+    sources: &RepositorySources,
+) -> Option<ReviewAdmissionDisposition> {
+    if used_ids.contains(item.id.as_str())
+        || observation_sink_covered_by_candidate(item, candidates)
+        || is_superseded_java_logging_observation(item, group)
+        || is_superseded_csharp_cookie_observation(item, group)
+        || is_duplicate_parameter_sink_summary(item, evidence)
+    {
+        return Some(ReviewAdmissionDisposition::DuplicateSuperseded);
+    }
+    if is_non_actionable_fixed_sink_observation(item, sources)
+        || is_non_actionable_safe_purpose_observation(item, sources)
+        || is_non_actionable_java_route_control(item)
+        || is_non_actionable_affirmative_csharp_cookie_control(item)
+        || is_non_actionable_csrf_observation(item, sources)
+        || is_non_actionable_autoescaped_django_response(item, sources)
+    {
+        return Some(ReviewAdmissionDisposition::SafelySuppressed);
+    }
+    if is_source_free_generic_java_log(item, group)
+        || is_unlinked_native_buffer_write_observation(item, sources)
+        || is_unlinked_native_api_inventory_observation(item, sources)
+    {
+        return Some(ReviewAdmissionDisposition::InventoryOnly);
+    }
+    if is_context_only_uploaded_filename_check(item, group) {
+        return Some(ReviewAdmissionDisposition::ContextOnly);
+    }
+    None
+}
+
+const MAX_ADMISSION_AUDIT_EXAMPLES: usize = 64;
+
+fn review_admission_audit(
+    evidence: &[Evidence],
+    all_candidate_evidence_ids: &BTreeSet<&str>,
+    admitted_candidate_evidence_ids: &BTreeSet<String>,
+    admitted_observation_ids: &BTreeSet<String>,
+    excluded_review_material_observation_ids: &BTreeSet<String>,
+    observation_exclusions: &BTreeMap<String, ReviewAdmissionDisposition>,
+) -> ReviewAdmissionAudit {
+    let mut classified = evidence
+        .iter()
+        .filter(|item| {
+            !item.cwe_candidates.is_empty()
+                && matches!(
+                    item.kind,
+                    EvidenceKind::Sink
+                        | EvidenceKind::SensitiveOperation
+                        | EvidenceKind::SecurityConfiguration
+                )
+        })
+        .map(|item| {
+            let disposition = if admitted_candidate_evidence_ids.contains(&item.id) {
+                ReviewAdmissionDisposition::PathOwned
+            } else if admitted_observation_ids.contains(&item.id) {
+                ReviewAdmissionDisposition::ObservationAdmitted
+            } else if excluded_review_material_observation_ids.contains(&item.id)
+                || (all_candidate_evidence_ids.contains(item.id.as_str())
+                    && is_review_material_path(&item.location.path))
+            {
+                ReviewAdmissionDisposition::ExcludedReviewMaterial
+            } else if all_candidate_evidence_ids.contains(item.id.as_str()) {
+                // Candidate construction can establish a safe closed native
+                // ownership proof or the exact C# query-only redirect helper.
+                // Both remain deterministic evidence without AI-review work.
+                ReviewAdmissionDisposition::SafelySuppressed
+            } else {
+                observation_exclusions
+                    .get(&item.id)
+                    .copied()
+                    .unwrap_or(ReviewAdmissionDisposition::Unclassified)
+            };
+            ReviewAdmissionAuditExample {
+                evidence_id: item.id.clone(),
+                rule_id: item.rule_id.clone(),
+                capability: item.capability,
+                disposition,
+                location: item.location.clone(),
+            }
+        })
+        .collect::<Vec<_>>();
+    classified.sort_by(|left, right| {
+        left.capability
+            .cmp(&right.capability)
+            .then_with(|| left.disposition.cmp(&right.disposition))
+            .then_with(|| left.location.path.cmp(&right.location.path))
+            .then_with(|| left.location.start.line.cmp(&right.location.start.line))
+            .then_with(|| left.rule_id.cmp(&right.rule_id))
+            .then_with(|| left.evidence_id.cmp(&right.evidence_id))
+    });
+
+    let mut count_map = BTreeMap::new();
+    for item in &classified {
+        *count_map
+            .entry((item.capability, item.disposition))
+            .or_insert(0usize) += 1;
+    }
+    let counts = count_map
+        .into_iter()
+        .map(
+            |((capability, disposition), count)| ReviewAdmissionAuditCount {
+                capability,
+                disposition,
+                count,
+            },
+        )
+        .collect::<Vec<_>>();
+
+    let mut sampled_pairs = BTreeSet::new();
+    let excluded_examples = classified
+        .iter()
+        .filter(|item| {
+            !matches!(
+                item.disposition,
+                ReviewAdmissionDisposition::PathOwned
+                    | ReviewAdmissionDisposition::ObservationAdmitted
+            )
+        })
+        .filter(|item| sampled_pairs.insert((item.capability, item.disposition)))
+        .take(MAX_ADMISSION_AUDIT_EXAMPLES)
+        .cloned()
+        .collect();
+
+    ReviewAdmissionAudit {
+        classified_boundary_count: classified.len(),
+        counts,
+        excluded_examples,
+    }
 }
 
 /// A raw C/C++ memory-write API is common audit inventory, not a useful
@@ -13876,9 +14035,10 @@ fn index_review_context_names(
 /// Returns true only when a helper definition has a defensible relationship
 /// to the reviewed file. Same-file definitions are owned directly. For
 /// JavaScript and TypeScript cross-file definitions must be reached through an
-/// exact relative import. C# also permits an exact qualified static helper when
-/// its declaring type and namespace/import are owned. A repository-wide name
-/// match alone is never ownership.
+/// exact relative import. PHP permits an exact imported class whose declared
+/// namespace matches the use statement. C# also permits an exact qualified
+/// static helper when its declaring type and namespace/import are owned. A
+/// repository-wide name match alone is never ownership.
 fn review_definition_owned_by_candidate(
     sources: &RepositorySources,
     candidate_paths: &BTreeSet<&str>,
@@ -13898,6 +14058,11 @@ fn review_definition_owned_by_candidate(
         {
             return true;
         }
+        if candidate.language == Some(Language::Php)
+            && php_imported_definition_is_owned(sources, candidate, name, symbol)
+        {
+            return true;
+        }
         if !matches!(
             candidate.language,
             Some(Language::Javascript | Language::Typescript)
@@ -13906,6 +14071,35 @@ fn review_definition_owned_by_candidate(
         }
         relative_review_import_paths(candidate, name, sources)
             .contains(symbol.location.path.as_str())
+    })
+}
+
+fn php_imported_definition_is_owned(
+    sources: &RepositorySources,
+    candidate: &SourceFile,
+    name: &str,
+    symbol: &OutlineSymbol,
+) -> bool {
+    if symbol.name != name {
+        return false;
+    }
+    let Ok(definition) = sources.file(&symbol.location.path) else {
+        return false;
+    };
+    let Some(namespace) = definition.source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("namespace ")
+            .map(|value| value.trim_end_matches(';').trim())
+            .filter(|value| !value.is_empty())
+    }) else {
+        return false;
+    };
+    let qualified = format!("{namespace}\\{name}");
+    candidate.source.lines().any(|line| {
+        line.trim()
+            .strip_prefix("use ")
+            .map(|value| value.trim_end_matches(';').trim())
+            == Some(qualified.as_str())
     })
 }
 
@@ -20792,6 +20986,54 @@ mod tests {
             }),
             "facts: {facts:#?}"
         );
+    }
+
+    #[test]
+    fn review_context_owns_exact_imported_php_security_form() {
+        let controller = "<?php\nnamespace App\\Controller;\nuse App\\Form\\ChangePasswordType;\nfinal class UserController { public function changePassword() { $this->createForm(ChangePasswordType::class); } }\n";
+        let form = "<?php\nnamespace App\\Form;\nfinal class ChangePasswordType extends AbstractType\n{\n    public function buildForm($builder): void\n    {\n        $builder->add('currentPassword', PasswordType::class, ['constraints' => [new UserPassword()]]);\n    }\n}\n";
+        let noise = "<?php\nnamespace Other\\Form;\nfinal class ChangePasswordType extends AbstractType\n{\n    public function buildForm($builder): void { $builder->add('newPassword'); }\n}\n";
+        let sources = RepositorySources {
+            root: "fixture".to_string(),
+            files: BTreeMap::from([
+                (
+                    "src/Controller/UserController.php".to_string(),
+                    SourceFile {
+                        path: "src/Controller/UserController.php".to_string(),
+                        language: Some(Language::Php),
+                        source: controller.to_string(),
+                    },
+                ),
+                (
+                    "src/Form/ChangePasswordType.php".to_string(),
+                    SourceFile {
+                        path: "src/Form/ChangePasswordType.php".to_string(),
+                        language: Some(Language::Php),
+                        source: form.to_string(),
+                    },
+                ),
+                (
+                    "vendor/Other/ChangePasswordType.php".to_string(),
+                    SourceFile {
+                        path: "vendor/Other/ChangePasswordType.php".to_string(),
+                        language: Some(Language::Php),
+                        source: noise.to_string(),
+                    },
+                ),
+            ]),
+        };
+        let references = BTreeSet::from(["ChangePasswordType".to_string()]);
+        let index = ReviewContextIndex::build(&sources, &references).expect("context index");
+        let paths = BTreeSet::from(["src/Controller/UserController.php"]);
+        let (facts, truncated) =
+            observation_helper_definition_facts(&sources, &index, &paths, &references, &[], 4);
+
+        assert!(!truncated);
+        assert_eq!(facts.len(), 1, "facts: {facts:#?}");
+        assert_eq!(facts[0].symbol, "ChangePasswordType");
+        assert_eq!(facts[0].location.path, "src/Form/ChangePasswordType.php");
+        assert!(facts[0].excerpt.contains("new UserPassword()"));
+        assert!(!facts[0].excerpt.contains("newPassword"));
     }
 
     #[test]
