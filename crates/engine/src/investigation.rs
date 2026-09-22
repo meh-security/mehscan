@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::Path;
 
@@ -30,12 +30,12 @@ use mehscan_core::{
     Provenance, QueryProvenance, QueryResponse, REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
     RelationContract, RelationshipFunnel, RelationshipFunnelCapability, ReportedFinding,
     ReportedSeverity, Resolution, ResourcePolicyState, ReviewConfidence, ReviewConfidencePolicy,
-    ReviewContextTruncation, ReviewDecision, ReviewDecisionFacts, ReviewInvestigationPlan,
-    ReviewInvestigationTrace, ReviewLookupOutcome, ReviewLookupRequest, ReviewNeighborhoodFact,
-    ReviewNeighborhoodJob, ReviewPipelineCoverage, ReviewReadiness, ReviewTriageContract,
-    ReviewTriageReport, ReviewTriageResponseSet, ReviewWorkSummary, Rule, RuntimeEnvironment,
-    SCHEMA_VERSION, SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
-    StructuralMatch, TextReference,
+    ReviewContextTruncation, ReviewDecision, ReviewDecisionFacts, ReviewInvestigationBudget,
+    ReviewInvestigationPlan, ReviewInvestigationTrace, ReviewLookupOutcome, ReviewLookupRequest,
+    ReviewNeighborhoodFact, ReviewNeighborhoodJob, ReviewPipelineCoverage, ReviewReadiness,
+    ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet, ReviewWorkSummary, Rule,
+    RuntimeEnvironment, SCHEMA_VERSION, SecurityPathState, SecurityPathStepKind, Severity,
+    SeveritySource, SourceSlice, StructuralMatch, TextReference,
 };
 
 mod review_admission;
@@ -1191,16 +1191,32 @@ pub fn build_path_review_bundles_with_limits(
     max_input_bytes: Option<usize>,
     max_reviews_per_bundle: Option<usize>,
 ) -> Result<PathReviewBundleSet, EngineError> {
+    build_path_review_bundles_with_run_limit(job, max_input_bytes, max_reviews_per_bundle, None)
+}
+
+/// Builds semantic bundles after applying an optional run-level review budget.
+/// Selection reserves one position per represented capability before taking a
+/// second review from a noisy capability. Transport bundle limits remain
+/// independent from this scheduling decision.
+pub fn build_path_review_bundles_with_run_limit(
+    job: &PathReviewJob,
+    max_input_bytes: Option<usize>,
+    max_reviews_per_bundle: Option<usize>,
+    max_total_reviews: Option<usize>,
+) -> Result<PathReviewBundleSet, EngineError> {
     let max_input_bytes = bounded_review_bundle_bytes(max_input_bytes)?;
     let max_reviews_per_bundle = bounded_review_bundle_reviews(max_reviews_per_bundle)?;
+    let (selected_paths, selected_observations, deferred_review_ids) =
+        fair_run_review_selection(job, max_total_reviews)?;
+    let admitted_review_count = job.reviews.len() + job.observation_reviews.len();
     let mut bundles = Vec::new();
 
     let mut path_groups = BTreeMap::<Capability, Vec<PathReview>>::new();
-    for review in &job.reviews {
+    for review in selected_paths {
         path_groups
             .entry(review.candidate.capability)
             .or_default()
-            .push(review.clone());
+            .push(review);
     }
     for (capability, reviews) in path_groups {
         let mut cwe_candidates = reviews
@@ -1225,17 +1241,18 @@ pub fn build_path_review_bundles_with_limits(
     }
 
     let mut observation_groups = BTreeMap::<Capability, Vec<ObservationReview>>::new();
-    for review in &job.observation_reviews {
-        let anchor = observation_actionable_anchor(review).ok_or_else(|| {
+    for review in selected_observations {
+        let anchor = observation_actionable_anchor(&review).ok_or_else(|| {
             EngineError(format!(
                 "observation review {:?} has no actionable evidence to categorize",
                 review.id
             ))
         })?;
+        let capability = anchor.capability;
         observation_groups
-            .entry(anchor.capability)
+            .entry(capability)
             .or_default()
-            .push(review.clone());
+            .push(review);
     }
     for (capability, reviews) in observation_groups {
         let mut cwe_candidates = reviews
@@ -1307,11 +1324,108 @@ pub fn build_path_review_bundles_with_limits(
         job_fingerprint: job.fingerprint.clone(),
         max_input_bytes,
         max_reviews_per_bundle,
+        admitted_review_count,
+        max_total_reviews,
+        deferred_review_ids,
         review_count,
         bundle_count: bundles.len(),
         bundles: manifest_entries,
     };
     Ok(PathReviewBundleSet { manifest, bundles })
+}
+
+fn fair_run_review_selection(
+    job: &PathReviewJob,
+    max_total_reviews: Option<usize>,
+) -> Result<(Vec<PathReview>, Vec<ObservationReview>, Vec<String>), EngineError> {
+    const MAX_RUN_REVIEW_LIMIT: usize = 10_000;
+    let admitted_review_count = job.reviews.len() + job.observation_reviews.len();
+    let Some(limit) = max_total_reviews else {
+        return Ok((
+            job.reviews.clone(),
+            job.observation_reviews.clone(),
+            Vec::new(),
+        ));
+    };
+    if limit == 0 || limit > MAX_RUN_REVIEW_LIMIT {
+        return Err(EngineError(format!(
+            "review run limit must be between 1 and {MAX_RUN_REVIEW_LIMIT}"
+        )));
+    }
+    if limit >= admitted_review_count {
+        return Ok((
+            job.reviews.clone(),
+            job.observation_reviews.clone(),
+            Vec::new(),
+        ));
+    }
+
+    let mut families = BTreeMap::<Capability, VecDeque<String>>::new();
+    for review in &job.reviews {
+        families
+            .entry(review.candidate.capability)
+            .or_default()
+            .push_back(review.id.clone());
+    }
+    for review in &job.observation_reviews {
+        let anchor = observation_actionable_anchor(review).ok_or_else(|| {
+            EngineError(format!(
+                "observation review {:?} has no actionable evidence to schedule",
+                review.id
+            ))
+        })?;
+        families
+            .entry(anchor.capability)
+            .or_default()
+            .push_back(review.id.clone());
+    }
+    if limit < families.len() {
+        return Err(EngineError(format!(
+            "review run limit {limit} cannot reserve one review for each of the {} admitted capability families",
+            families.len()
+        )));
+    }
+    let mut selected = BTreeSet::new();
+    while selected.len() < limit {
+        let mut advanced = false;
+        for queue in families.values_mut() {
+            if selected.len() == limit {
+                break;
+            }
+            if let Some(review_id) = queue.pop_front() {
+                selected.insert(review_id);
+                advanced = true;
+            }
+        }
+        if !advanced {
+            break;
+        }
+    }
+    let selected_paths = job
+        .reviews
+        .iter()
+        .filter(|review| selected.contains(&review.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let selected_observations = job
+        .observation_reviews
+        .iter()
+        .filter(|review| selected.contains(&review.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut deferred_review_ids = job
+        .reviews
+        .iter()
+        .map(|review| review.id.clone())
+        .chain(
+            job.observation_reviews
+                .iter()
+                .map(|review| review.id.clone()),
+        )
+        .filter(|review_id| !selected.contains(review_id))
+        .collect::<Vec<_>>();
+    deferred_review_ids.sort();
+    Ok((selected_paths, selected_observations, deferred_review_ids))
 }
 
 pub fn validate_path_review_bundle_response(
@@ -2864,8 +2978,11 @@ fn validate_review_investigation_trace(
     supplied_artifact_ids: &BTreeSet<String>,
     trace: &ReviewInvestigationTrace,
 ) -> Result<(), EngineError> {
-    const MAX_ESCALATED_LOOKUPS: usize = 1;
-    const MAX_RETURNED_ARTIFACT_BYTES: usize = 16 * 1024;
+    if plan.lookup_requests.len() > plan.budget.max_supplied_lookups {
+        return Err(EngineError(format!(
+            "investigation plan for {review_id:?} exceeds its supplied-lookup budget"
+        )));
+    }
     let mut attempted_requests = BTreeSet::new();
     let mut escalated_lookups = 0usize;
     let mut returned_artifact_bytes = 0usize;
@@ -2898,10 +3015,16 @@ fn validate_review_investigation_trace(
                         "investigation trace for {review_id:?} must execute a supplied lookup before escalating"
                     )));
                 }
-                escalated_lookups += 1;
-                if escalated_lookups > MAX_ESCALATED_LOOKUPS {
+                if plan.budget.max_lookup_depth == 0 {
                     return Err(EngineError(format!(
-                        "investigation trace for {review_id:?} exceeds the one-lookup escalation budget"
+                        "investigation trace for {review_id:?} cannot escalate under its lookup-depth budget"
+                    )));
+                }
+                escalated_lookups += 1;
+                if escalated_lookups > plan.budget.max_escalations {
+                    return Err(EngineError(format!(
+                        "investigation trace for {review_id:?} exceeds its {}-lookup escalation budget",
+                        plan.budget.max_escalations
                     )));
                 }
                 validate_escalated_lookup(review_id, plan, request, &retrieved_locator_text)?;
@@ -2938,9 +3061,10 @@ fn validate_review_investigation_trace(
             }
             returned_artifact_bytes =
                 returned_artifact_bytes.saturating_add(artifact.excerpt.len());
-            if returned_artifact_bytes > MAX_RETURNED_ARTIFACT_BYTES {
+            if returned_artifact_bytes > plan.budget.max_returned_bytes {
                 return Err(EngineError(format!(
-                    "investigation trace for {review_id:?} exceeds the {MAX_RETURNED_ARTIFACT_BYTES}-byte returned-artifact budget"
+                    "investigation trace for {review_id:?} exceeds the {}-byte returned-artifact budget",
+                    plan.budget.max_returned_bytes
                 )));
             }
             validate_retrieved_artifact_locator(review_id, request, artifact)?;
@@ -3808,6 +3932,7 @@ fn completed_review_work(
         .count();
     ReviewWorkSummary {
         complete: true,
+        admitted_review_count: completed_review_count,
         scheduled_bundle_count: bundle_responses.len(),
         scheduled_review_count: completed_review_count,
         completed_bundle_count: bundle_responses.len(),
@@ -3834,6 +3959,7 @@ fn merge_scheduled_review_work(
         ids.dedup();
     }
     if scheduled.scheduled_bundle_count < completed.completed_bundle_count
+        || scheduled.admitted_review_count < scheduled.scheduled_review_count
         || scheduled.scheduled_review_count < completed.completed_review_count
         || (scheduled.completed_bundle_count != 0
             && scheduled.completed_bundle_count != completed.completed_bundle_count)
@@ -3841,10 +3967,6 @@ fn merge_scheduled_review_work(
             && scheduled.completed_review_count != completed.completed_review_count)
         || scheduled.scheduled_review_count
             != completed.completed_review_count + scheduled.missing_review_ids.len()
-        || !scheduled
-            .deferred_review_ids
-            .iter()
-            .all(|id| scheduled.missing_review_ids.binary_search(id).is_ok())
     {
         return Err(EngineError(
             "review work accounting does not match the validated response selection".to_string(),
@@ -4504,6 +4626,7 @@ fn path_review_investigation(
             .map(String::as_str),
     );
     review_investigation_plan(
+        candidate.capability,
         &decision_facts.unresolved,
         truncation,
         &candidate.sink.location,
@@ -4548,6 +4671,12 @@ fn observation_review_investigation(
             } else {
                 ReviewReadiness::Blocked
             },
+            budget: investigation_budget_for_capability(
+                evidence
+                    .first()
+                    .map(|item| item.capability)
+                    .unwrap_or(Capability::ExternalInput),
+            ),
             missing_facts,
             lookup_requests: Vec::new(),
             blockers,
@@ -4569,6 +4698,10 @@ fn observation_review_investigation(
         .map(|fact| &fact.location)
         .unwrap_or(anchor);
     review_investigation_plan(
+        evidence
+            .first()
+            .map(|item| item.capability)
+            .unwrap_or(Capability::ExternalInput),
         &decision_facts.unresolved,
         truncation,
         lookup_anchor,
@@ -4577,6 +4710,7 @@ fn observation_review_investigation(
 }
 
 fn review_investigation_plan(
+    capability: Capability,
     unresolved: &[String],
     truncation: &ReviewContextTruncation,
     anchor: &Location,
@@ -4593,7 +4727,10 @@ fn review_investigation_plan(
         );
     }
     if missing_facts.is_empty() {
-        return ReviewInvestigationPlan::default();
+        return ReviewInvestigationPlan {
+            budget: investigation_budget_for_capability(capability),
+            ..ReviewInvestigationPlan::default()
+        };
     }
 
     let (repository_questions, external_questions): (Vec<_>, Vec<_>) = missing_facts
@@ -4643,9 +4780,38 @@ fn review_investigation_plan(
     };
     ReviewInvestigationPlan {
         readiness,
+        budget: investigation_budget_for_capability(capability),
         missing_facts,
         lookup_requests,
         blockers,
+    }
+}
+
+fn investigation_budget_for_capability(capability: Capability) -> ReviewInvestigationBudget {
+    let max_returned_bytes = match capability {
+        Capability::Authentication
+        | Capability::Authorization
+        | Capability::ResourceAccess
+        | Capability::TokenGeneration
+        | Capability::CredentialMaterial => 24 * 1024,
+        Capability::ProcessExecution
+        | Capability::DynamicCodeExecution
+        | Capability::TemplateEvaluation
+        | Capability::DatabaseQuery
+        | Capability::FilesystemRead
+        | Capability::FilesystemWrite
+        | Capability::OutboundNetworkRequest
+        | Capability::Redirect
+        | Capability::HtmlOutput
+        | Capability::Deserialization
+        | Capability::XmlParsing => 16 * 1024,
+        _ => 12 * 1024,
+    };
+    ReviewInvestigationBudget {
+        max_supplied_lookups: 2,
+        max_escalations: 1,
+        max_returned_bytes,
+        max_lookup_depth: 1,
     }
 }
 
@@ -18811,13 +18977,14 @@ mod tests {
         let local_question =
             "Can caller input influence the command passed to this shell?".to_string();
         let local = review_investigation_plan(
+            Capability::ProcessExecution,
             std::slice::from_ref(&local_question),
             &ReviewContextTruncation::default(),
             &anchor,
             Some("command"),
         );
         assert_eq!(local.readiness, ReviewReadiness::Investigation);
-        assert_eq!(local.missing_facts, [local_question]);
+        assert_eq!(local.missing_facts, [local_question.clone()]);
         assert_eq!(
             local
                 .lookup_requests
@@ -18834,10 +19001,29 @@ mod tests {
             local.lookup_requests[1].arguments.get("symbol"),
             Some(&"command".to_string())
         );
+        assert_eq!(local.budget.max_returned_bytes, 16 * 1024);
+
+        let policy = review_investigation_plan(
+            Capability::ResourceAccess,
+            std::slice::from_ref(&local_question),
+            &ReviewContextTruncation::default(),
+            &anchor,
+            Some("authorize"),
+        );
+        let configuration = review_investigation_plan(
+            Capability::TlsConfiguration,
+            std::slice::from_ref(&local_question),
+            &ReviewContextTruncation::default(),
+            &anchor,
+            None,
+        );
+        assert_eq!(policy.budget.max_returned_bytes, 24 * 1024);
+        assert_eq!(configuration.budget.max_returned_bytes, 12 * 1024);
 
         let external_question =
             "What is the effective deployed proxy, gateway, or application control?".to_string();
         let external = review_investigation_plan(
+            Capability::OutboundNetworkRequest,
             std::slice::from_ref(&external_question),
             &ReviewContextTruncation::default(),
             &anchor,
@@ -18866,6 +19052,7 @@ mod tests {
         };
         let question = "Can caller input influence the command passed to this shell?".to_string();
         let plan = review_investigation_plan(
+            Capability::ProcessExecution,
             std::slice::from_ref(&question),
             &ReviewContextTruncation::default(),
             &anchor,
@@ -19040,11 +19227,12 @@ mod tests {
             &escalated_trace,
         )
         .expect_err("a second escalated lookup must be rejected");
-        assert!(error.to_string().contains("one-lookup escalation budget"));
+        assert!(error.to_string().contains("1-lookup escalation budget"));
 
         let external_question =
             "What is the effective deployed proxy, gateway, or application control?".to_string();
         let blocked_plan = review_investigation_plan(
+            Capability::OutboundNetworkRequest,
             std::slice::from_ref(&external_question),
             &ReviewContextTruncation::default(),
             &anchor,

@@ -409,12 +409,35 @@ pub struct ReviewLookupRequest {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ReviewInvestigationPlan {
     pub readiness: ReviewReadiness,
+    #[serde(default)]
+    pub budget: ReviewInvestigationBudget,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub missing_facts: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lookup_requests: Vec<ReviewLookupRequest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blockers: Vec<String>,
+}
+
+/// Family-calibrated limits carried with one review. These are workflow limits,
+/// not evidence and not vulnerability severity.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewInvestigationBudget {
+    pub max_supplied_lookups: usize,
+    pub max_escalations: usize,
+    pub max_returned_bytes: usize,
+    pub max_lookup_depth: usize,
+}
+
+impl Default for ReviewInvestigationBudget {
+    fn default() -> Self {
+        Self {
+            max_supplied_lookups: 2,
+            max_escalations: 1,
+            max_returned_bytes: 16 * 1024,
+            max_lookup_depth: 1,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -767,6 +790,15 @@ pub struct PathReviewBundleManifest {
     /// byte boundaries can split a bundle before this limit is reached.
     #[serde(default)]
     pub max_reviews_per_bundle: usize,
+    /// Reviews admitted before the optional run-level scheduling budget.
+    #[serde(default)]
+    pub admitted_review_count: usize,
+    /// Optional total number of reviews scheduled for this run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_total_reviews: Option<usize>,
+    /// Admitted review IDs intentionally left for a later run by the scheduler.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deferred_review_ids: Vec<String>,
     pub review_count: usize,
     pub bundle_count: usize,
     pub bundles: Vec<PathReviewBundleManifestEntry>,
@@ -806,6 +838,8 @@ pub struct PathReviewBundleTriageReport {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ReviewWorkSummary {
     pub complete: bool,
+    #[serde(default)]
+    pub admitted_review_count: usize,
     pub scheduled_bundle_count: usize,
     pub scheduled_review_count: usize,
     pub completed_bundle_count: usize,

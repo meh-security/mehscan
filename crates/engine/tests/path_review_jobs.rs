@@ -618,6 +618,74 @@ fn emits_semantic_bundles_and_retries_incomplete_bundle_responses() {
 }
 
 #[test]
+fn run_budget_reserves_every_capability_and_preserves_deferred_reviews() {
+    let job = mehscan_engine::investigation::build_all_path_review_jobs(
+        &review_admission_root(),
+        Some(2),
+        false,
+    )
+    .expect("complete review job should build");
+    let full = mehscan_engine::investigation::build_path_review_bundles(&job, None)
+        .expect("complete bundle set should build");
+    let capabilities = full
+        .manifest
+        .bundles
+        .iter()
+        .map(|entry| entry.category.capability)
+        .collect::<BTreeSet<_>>();
+    assert!(
+        full.manifest.review_count > capabilities.len(),
+        "fixture needs one noisy family to exercise fair scheduling"
+    );
+
+    let limited = mehscan_engine::investigation::build_path_review_bundles_with_run_limit(
+        &job,
+        None,
+        None,
+        Some(capabilities.len()),
+    )
+    .expect("one reserved review per capability should fit");
+    let scheduled_capabilities = limited
+        .manifest
+        .bundles
+        .iter()
+        .map(|entry| entry.category.capability)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(scheduled_capabilities, capabilities);
+    assert_eq!(limited.manifest.review_count, capabilities.len());
+    assert_eq!(
+        limited.manifest.admitted_review_count,
+        full.manifest.review_count
+    );
+    assert_eq!(
+        limited.manifest.deferred_review_ids.len(),
+        full.manifest.review_count - capabilities.len()
+    );
+    let scheduled_ids = limited
+        .manifest
+        .bundles
+        .iter()
+        .flat_map(|entry| entry.review_ids.iter())
+        .collect::<BTreeSet<_>>();
+    assert!(
+        limited
+            .manifest
+            .deferred_review_ids
+            .iter()
+            .all(|review_id| !scheduled_ids.contains(review_id))
+    );
+
+    let error = mehscan_engine::investigation::build_path_review_bundles_with_run_limit(
+        &job,
+        None,
+        None,
+        Some(capabilities.len() - 1),
+    )
+    .expect_err("a run too small to reserve every capability must fail clearly");
+    assert!(error.to_string().contains("cannot reserve one review"));
+}
+
+#[test]
 fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() {
     let scan = mehscan_engine::scan_path(review_admission_root())
         .expect("review-admission fixture should scan");

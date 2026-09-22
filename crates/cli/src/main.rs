@@ -497,6 +497,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let output = PathBuf::from(parsed.required("--output")?);
             let max_bytes = parsed.optional_usize("--max-bytes")?;
             let max_reviews = parsed.optional_usize("--max-reviews")?;
+            let max_total_reviews = parsed.optional_usize("--max-total-reviews")?;
             let context_lines = parsed.optional_usize("--context-lines")?;
             let include_review_material = parsed
                 .optional_bool("--include-review-material")?
@@ -509,10 +510,11 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 include_review_material,
             ))?;
             let mut bundle_set = engine(
-                mehscan_engine::investigation::build_path_review_bundles_with_limits(
+                mehscan_engine::investigation::build_path_review_bundles_with_run_limit(
                     &job,
                     max_bytes,
                     max_reviews,
+                    max_total_reviews,
                 ),
             )?;
             bundle_set.manifest.scope.extend(scope);
@@ -982,11 +984,34 @@ fn read_complete_bundle_responses(
                 .iter()
                 .map(|e| e.review_count)
                 .sum::<usize>()
+        || (manifest.admitted_review_count != 0
+            && manifest.admitted_review_count
+                != manifest.review_count + manifest.deferred_review_ids.len())
     {
         return Err("review manifest count does not match the run".to_string());
     }
+    let scheduled_ids = manifest
+        .bundles
+        .iter()
+        .flat_map(|entry| entry.review_ids.iter().map(String::as_str))
+        .collect::<BTreeSet<_>>();
+    let deferred_ids = manifest
+        .deferred_review_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if deferred_ids.len() != manifest.deferred_review_ids.len()
+        || !scheduled_ids.is_disjoint(&deferred_ids)
+    {
+        return Err("review manifest scheduled and deferred identities are invalid".to_string());
+    }
     let scheduled_bundle_count = manifest.bundle_count;
     let scheduled_review_count = manifest.review_count;
+    let admitted_review_count = if manifest.admitted_review_count == 0 {
+        manifest.review_count + manifest.deferred_review_ids.len()
+    } else {
+        manifest.admitted_review_count
+    };
     let mut bundle_responses = Vec::new();
     let mut selected = Vec::new();
     let mut missing_review_ids = Vec::new();
@@ -1059,16 +1084,22 @@ fn read_complete_bundle_responses(
         .sum::<usize>();
     missing_review_ids.sort();
     missing_review_ids.dedup();
+    let mut deferred_review_ids = manifest.deferred_review_ids.clone();
+    deferred_review_ids.extend(missing_review_ids.iter().cloned());
+    deferred_review_ids.sort();
+    deferred_review_ids.dedup();
     let work = mehscan_core::ReviewWorkSummary {
         complete: missing_review_ids.is_empty()
+            && deferred_review_ids.is_empty()
             && completed_bundle_count == scheduled_bundle_count
             && completed_review_count == scheduled_review_count,
+        admitted_review_count,
         scheduled_bundle_count,
         scheduled_review_count,
         completed_bundle_count,
         completed_review_count,
         accepted_investigation_count: 0,
-        deferred_review_ids: missing_review_ids.clone(),
+        deferred_review_ids,
         blocked_review_ids: Vec::new(),
         truncated_review_ids: Vec::new(),
         missing_review_ids,
@@ -1780,7 +1811,7 @@ USAGE:
   mehscan investigate funnel [ROOT]
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate review-tasks [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
-  mehscan investigate review-bundles [ROOT] --output DIR [--context-lines N] [--max-bytes N] [--max-reviews N] [--include-review-material true|false] [--scope-label TEXT] [--project NAME] [--revision REF]
+  mehscan investigate review-bundles [ROOT] --output DIR [--context-lines N] [--max-bytes N] [--max-reviews N] [--max-total-reviews N] [--include-review-material true|false] [--scope-label TEXT] [--project NAME] [--revision REF]
   mehscan investigate review-bundle-diff --before DIR --after DIR
   mehscan investigate review-response-schema --bundle PATH [--output PATH]
   mehscan investigate review-bundle-triage --bundle PATH --responses PATH
@@ -1800,7 +1831,7 @@ USAGE:
   mehscan investigate native-call-sites [ROOT] --callee NAME [--path FILE] [--limit N]
   mehscan investigate structural [ROOT] --language LANG --pattern PATTERN [--path FILE] [--limit N]
 
-Review jobs package bounded security-path candidates and non-path observation neighborhoods with source excerpts, relevant configuration facts, open questions, a stable fingerprint, and a compact cross-language response contract. Each security path includes compact rule-derived review_basis semantics. Context-only source, guard, sanitizer, validation, literal, and resource observations do not become standalone verdict jobs. review-bundles scans once, groups the complete admitted review set by review kind and capability, retains the CWE union as category metadata, and writes self-contained requests with readable semantic filenames under DIR/requests plus manifest.json; requests default to independent ceilings of 512 KiB and 20 reviews, while --max-reviews accepts 1-100 for controlled experiments or retry tuning. A bundle response is accepted or retried as a whole by review-bundle-triage. Response schema 1.2 records bounded lookup attempts, one exact follow-on source/reference lookup, retrieved artifacts, citations, reviewer inference and exact blockers; schemas 1.0 and 1.1 remain readable. Accepted results receive stable response fingerprints, and partial summaries distinguish scheduled, completed, deferred, blocked, truncated, missing, and invalid review work. review-bundle-summary validates every manifest response by default; --allow-partial true summarizes available complete responses and reports incomplete triage coverage. It deduplicates issue decisions across path and observation streams by capability, exact sink range, and rule-defined security invariant. review-tasks and review-progress remain available as low-level diagnostics. Complete paths are ordered first, followed by production observation neighborhoods. Teaching/code-fix source payloads are excluded by default and can be admitted explicitly with --include-review-material true. Review pages contain at most 100 items and expose next_offset for stable continuation with --offset. The funnel summarizes linked and unlinked compatible source/sink observations for AI routing. C# project summaries can produce security paths for unique exact-parameter controller-to-service and controller-to-service-to-repository handoffs; unresolved neighborhoods remain review facts. Triage commands must repeat the exact page offset and material policy. Query limits default to 200 and cannot exceed 1000. Investigation units default to 25 and cannot exceed 100. Source retrieval is capped at 400 lines and 64 KiB. Native call-sites is a C/C++ syntax inventory only: it does not resolve types, overloads, aliases, macros, control flow, call graphs, or value flow and never changes scan evidence or review admission. Structural queries support every scanner language as bounded ephemeral syntax lookup; repository-wide queries skip and report malformed files, while an explicitly requested malformed file fails clearly. Structural patterns are never persisted as rules or promoted to findings."#
+Review jobs package bounded security-path candidates and non-path observation neighborhoods with source excerpts, relevant configuration facts, open questions, a stable fingerprint, and a compact cross-language response contract. Each security path includes compact rule-derived review_basis semantics. Context-only source, guard, sanitizer, validation, literal, and resource observations do not become standalone verdict jobs. review-bundles scans once, groups admitted review work by review kind and capability, retains the CWE union as category metadata, and writes self-contained requests with readable semantic filenames under DIR/requests plus manifest.json. Requests default to independent ceilings of 512 KiB and 20 reviews; --max-reviews changes only that per-request transport ceiling. --max-total-reviews sets a separate run ceiling, schedules capabilities round-robin, requires room for at least one review from every admitted capability, and preserves deferred review IDs in the manifest. A bundle response is accepted or retried as a whole by review-bundle-triage. Response schema 1.2 records family-calibrated budgets, bounded lookup attempts, one exact follow-on source/reference lookup, retrieved artifacts, citations, reviewer inference and exact blockers; schemas 1.0 and 1.1 remain readable. Accepted results receive stable response fingerprints, and partial summaries distinguish admitted, scheduled, completed, deferred, blocked, truncated, missing, and invalid review work. review-bundle-summary validates every manifest response by default; --allow-partial true summarizes available complete responses and reports incomplete triage coverage. It deduplicates issue decisions across path and observation streams by capability, exact sink range, and the rule-defined security invariant. review-tasks and review-progress remain available as low-level diagnostics. Complete paths are ordered first, followed by production observation neighborhoods. Teaching/code-fix source payloads are excluded by default and can be admitted explicitly with --include-review-material true. Review pages contain at most 100 items and expose next_offset for stable continuation with --offset. The funnel summarizes linked and unlinked compatible source/sink observations for AI routing. C# project summaries can produce security paths for unique exact-parameter controller-to-service and controller-to-service-to-repository handoffs; unresolved neighborhoods remain review facts. Triage commands must repeat the exact page offset and material policy. Query limits default to 200 and cannot exceed 1000. Investigation units default to 25 and cannot exceed 100. Source retrieval is capped at 400 lines and 64 KiB. Native call-sites is a C/C++ syntax inventory only: it does not resolve types, overloads, aliases, macros, control flow, call graphs, or value flow and never changes scan evidence or review admission. Structural queries support every scanner language as bounded ephemeral syntax lookup; repository-wide queries skip and report malformed files, while an explicitly requested malformed file fails clearly. Structural patterns are never persisted as rules or promoted to findings."#
     );
 }
 
