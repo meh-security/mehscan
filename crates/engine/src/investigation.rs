@@ -5147,7 +5147,7 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Treat every remaining decision_facts.unresolved entry as decision-critical. Do not use issue or not_issue while one remains unless supplied facts or an exact retrieved artifact explicitly answer that entry; otherwise use needs_review and copy the entry into checks. Cite retrieved artifacts used to resolve it."
                 .to_string(),
-            "Use investigation.readiness as workflow metadata, not as a verdict. For investigation readiness, execute supplied bounded lookup requests in order only until the decisive fact is resolved; do not spend a secondary lookup after an earlier artifact already establishes issue or not_issue. For blocked readiness, preserve the named blockers and do not invent unavailable deployment or runtime facts."
+            "Use investigation.readiness as workflow metadata, not as a verdict. For investigation readiness, execute supplied bounded lookup requests only while they can address the missing fact; do not spend a secondary lookup after an earlier artifact already establishes issue or not_issue. If an exact source lookup exposes a decisive producer helper while the next supplied reference target is only a generic enclosing method, prefer the one permitted escalation to that producer over an irrelevant reference search. For blocked readiness, preserve the named blockers and do not invent unavailable deployment or runtime facts."
                 .to_string(),
             "A lookup request is a concrete repository query, not evidence that its expected producer or control exists. Apply only returned artifacts that match the exact operand, owner, operation, action, and resource in this review."
                 .to_string(),
@@ -5479,7 +5479,7 @@ fn review_investigation_plan(
                 .into(),
                 questions: repository_questions,
                 purpose: format!(
-                    "If the preceding source lookup does not resolve the question, find bounded repository references for the exact captured identifier `{symbol}` before inferring its origin or applicable controls."
+                    "If the preceding source lookup does not resolve the question and `{symbol}` can lead to the missing fact, find bounded references for this identifier. If source instead exposes a more exact producer or control, use the permitted follow-on lookup for that target."
                 ),
             });
         }

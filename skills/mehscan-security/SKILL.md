@@ -414,6 +414,11 @@ Within one review, execute supplied lookup requests in order and stop when the
 returned evidence resolves the decision-critical question. Do not spend a
 secondary reference lookup after an earlier exact source lookup already proves
 the issue or applicable control. Record only lookups that were actually run.
+If a source lookup exposes an exact producer helper while the next supplied
+reference target is only a generic enclosing method such as `Run` or
+`ExecuteAsync`, use the one permitted escalation for that producer instead of
+spending the lookup on unrelated method references. Preserve the producer name
+in the returned source excerpt so the response contract can validate it.
 If that review has no supplied `lookup_requests`, leave `lookup_attempts` empty;
 do not encode independent source inspection as a supplied lookup or invent an
 escalation. Keep artifact IDs and reviewer-origin leads scoped to the same
