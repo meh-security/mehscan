@@ -27,13 +27,13 @@ We recommend GitHub CLI (`gh`) for release installation: its attestation verifie
 Linux/macOS (no PowerShell):
 
 ```sh
-bash ./skills/mehscan-security/scripts/install-mehscan.sh --version 0.5.2
+bash ./skills/mehscan-security/scripts/install-mehscan.sh --version 0.6.1
 ```
 
 Windows:
 
 ```powershell
-pwsh -NoProfile -File ./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.5.2
+pwsh -NoProfile -File ./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.6.1
 ```
 
 The installer verifies release checksums and provenance, then returns the executable path. See the [platform installation instructions](skills/mehscan-security/references/installation.md) for prerequisite setup, Bash/Zsh examples, supported targets, and a source-build alternative without PowerShell. See the [security skill](skills/mehscan-security/SKILL.md) for source commit pinning. Release downloads are also available on the [releases page](https://github.com/meh-security/mehscan/releases).
@@ -89,7 +89,7 @@ A complete review requires a validated response for every request in the manifes
 - [AI triage contract](docs/ai-triage-contract.md)
 - [Extended rule gap analysis](docs/extended-rule-gap-analysis.md)
 - [Extended database coverage](docs/extended-database-coverage.md)
-- [Latest release notes](docs/release-notes-v0.5.2.md)
+- [Latest release notes](docs/release-notes-v0.6.1.md)
 
 ## License
 
