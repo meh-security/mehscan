@@ -5141,6 +5141,8 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Distinguish application-owned controls from proxy, gateway, ingress, platform, framework, and client controls."
                 .to_string(),
+            "A framework manifest identifies project build context, not necessarily the runtime of shared code. In C# Blazor reviews, verify the exact host, rendering mode, and server registration or caller before treating a WebAssembly project sink as browser-only."
+                .to_string(),
             "Use needs_review only when decision_facts.unresolved names a concrete missing artifact that can change the decision. Generic possibilities about unknown origin, runtime value, or security impact are reviewer confidence factors, not automatic escalation checks."
                 .to_string(),
             "Treat every remaining decision_facts.unresolved entry as decision-critical. Do not use issue or not_issue while one remains unless supplied facts or an exact retrieved artifact explicitly answer that entry; otherwise use needs_review and copy the entry into checks. Cite retrieved artifacts used to resolve it."
@@ -5149,9 +5151,9 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "A lookup request is a concrete repository query, not evidence that its expected producer or control exists. Apply only returned artifacts that match the exact operand, owner, operation, action, and resource in this review."
                 .to_string(),
-            "Record each executed supplied lookup by its zero-based request_index in investigation.lookup_attempts. If one attempted lookup reveals the exact next decisive file or identifier, the response permits one follow-on source or references escalation instead of request_index; retain the exact supplied missing-fact question, use the smallest locator, and do not perform generic exploration. Preserve returned source as bounded artifacts with distinct IDs and exact locations; cite those IDs for claims and keep reviewer_inferences separate from deterministic scan facts."
+            "Record each executed supplied lookup by its zero-based request_index in investigation.lookup_attempts. If a proposed follow-on lookup has the same operation and arguments as a supplied request, use that request_index rather than escalation. Otherwise, if one attempted lookup reveals the exact next decisive file or identifier, the response permits one follow-on source or references escalation instead of request_index; retain the exact supplied missing-fact question, use the smallest locator, and do not perform generic exploration. Preserve returned source as bounded artifacts with distinct IDs and exact locations; cite those IDs for claims and keep reviewer_inferences separate from deterministic scan facts."
                 .to_string(),
-            "Each lookup attempt must identify exactly one supplied request_index or one allowed escalation. An answered attempt must return at least one artifact and cite at least one artifact from that same attempt. A source artifact's path and lines must stay within the requested source window; an escalated path or symbol must come from an earlier returned artifact. Every reviewer-origin lead artifact ID must also be explicitly cited."
+            "Each lookup attempt must identify exactly one supplied request_index or one allowed escalation. An answered attempt must return at least one artifact and cite at least one artifact from that same attempt. A source artifact's path and lines must stay within the requested source window. Before escalating, verify that the exact path or identifier appears in the excerpt or path of an earlier returned artifact in this same review; an identifier inferred from a type, nearby source omitted from the excerpt, or another review is insufficient. Every reviewer-origin lead artifact ID must also be explicitly cited."
                 .to_string(),
             "If supplied or retrieved source establishes a concrete dangerous operation or security invariant that is distinct from the admitted question, retain at most three reviewer_origin_leads with a precise question, security relevance, explanation of the distinction, exact source location and explicitly cited artifact IDs. A keyword, comment, helper name or generic concern is not a lead. Leads are unvalidated follow-up work: do not use them to change this review's verdict and do not describe them as scanner findings or deterministic coverage."
                 .to_string(),
@@ -5328,6 +5330,19 @@ fn observation_review_investigation(
         .and_then(|_| evidence.first()?.enclosing_symbol.as_deref())
         .filter(|symbol| is_plain_identifier(symbol))
         .map(str::to_string)
+        .or_else(|| {
+            evidence
+                .iter()
+                .filter(|item| item.capability == Capability::DatabaseQuery)
+                .filter_map(|item| item.enclosing_symbol.as_deref())
+                .find(|symbol| {
+                    is_plain_identifier(symbol)
+                        && facts.iter().any(|fact| {
+                            fact.role == "exact_caller_context" && fact.symbol == *symbol
+                        })
+                })
+                .map(str::to_string)
+        })
         .or_else(|| {
             decision_facts
                 .unresolved
@@ -14404,6 +14419,11 @@ fn observation_review_questions(
             && item.capability == Capability::OutboundNetworkRequest
             && item.context.runtime_environment == Some(RuntimeEnvironment::Browser)
     });
+    let has_blazor_webassembly_outbound_request = evidence.iter().any(|item| {
+        item.kind == EvidenceKind::Sink && item.capability == Capability::OutboundNetworkRequest
+    }) && facts
+        .iter()
+        .any(|fact| fact.role == "framework_context" && fact.symbol == "blazor-webassembly");
     let browser_html_endpoint_question = evidence
         .iter()
         .find(|item| {
@@ -14553,7 +14573,12 @@ fn observation_review_questions(
         })
     {
         questions.push(
-            "Does request-bound model data copied into the supplied repository argument influence the interpolated command text, and is parameterization or equivalent SQL-safe construction shown?"
+            "Does request-derived data passed by the supplied caller influence SQL command text, or is the command text fixed with dynamic values passed only as bound parameters? Inspect the exact query and bindings; a repository call alone does not establish SQL interpolation."
+                .to_string(),
+        );
+    } else if !has_precise_node_boundary && has_blazor_webassembly_outbound_request {
+        questions.push(
+            "Does this Blazor WebAssembly project's exact call run only in the browser, or can shared code execute on the server (including prerendering)? If server-side, can attacker input control the destination? If browser-only, can input redirect the request or leak credentials or data?"
                 .to_string(),
         );
     } else if !has_precise_node_boundary && has_browser_outbound_request {
@@ -19303,6 +19328,11 @@ fn framework_markers(file: &SourceFile, line: &str) -> Vec<&'static str> {
 
     if manifest {
         add(
+            "blazor-webassembly",
+            lower.contains("sdk=\"microsoft.net.sdk.blazorwebassembly\"")
+                || lower.contains("sdk='microsoft.net.sdk.blazorwebassembly'"),
+        );
+        add(
             "aspnet-core",
             lower.contains("microsoft.net.sdk.web") || lower.contains("microsoft.aspnetcore"),
         );
@@ -20498,6 +20528,12 @@ impl RepositorySources {
                 | FileClass::Razor
                 | FileClass::WebForms => {
                     let Ok(source) = crate::code::read_secret_text(&file.absolute) else {
+                        continue;
+                    };
+                    (None, source)
+                }
+                FileClass::Ignored if file.relative.to_ascii_lowercase().ends_with(".csproj") => {
+                    let Ok(source) = fs::read_to_string(&file.absolute) else {
                         continue;
                     };
                     (None, source)
@@ -24102,6 +24138,38 @@ mod tests {
                         source: "from flask_cors import CORS\n".to_string(),
                     },
                 ),
+                (
+                    "apps/client/Client.csproj".to_string(),
+                    SourceFile {
+                        path: "apps/client/Client.csproj".to_string(),
+                        language: None,
+                        source: "<Project Sdk=\"Microsoft.NET.Sdk.BlazorWebAssembly\">\n".to_string(),
+                    },
+                ),
+                (
+                    "apps/client/Services/HttpService.cs".to_string(),
+                    SourceFile {
+                        path: "apps/client/Services/HttpService.cs".to_string(),
+                        language: Some(Language::Csharp),
+                        source: "using System.Net.Http;\n".to_string(),
+                    },
+                ),
+                (
+                    "apps/server/Server.csproj".to_string(),
+                    SourceFile {
+                        path: "apps/server/Server.csproj".to_string(),
+                        language: None,
+                        source: "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n".to_string(),
+                    },
+                ),
+                (
+                    "apps/server/Program.cs".to_string(),
+                    SourceFile {
+                        path: "apps/server/Program.cs".to_string(),
+                        language: Some(Language::Csharp),
+                        source: "using Microsoft.AspNetCore.Builder;\n".to_string(),
+                    },
+                ),
             ]),
         };
         let index = ReviewContextIndex::build(&sources, &BTreeSet::new()).unwrap();
@@ -24113,6 +24181,19 @@ mod tests {
                 .map(|fact| fact.symbol.as_str())
                 .collect::<Vec<_>>(),
             ["express"]
+        );
+        let client_paths = BTreeSet::from(["apps/client/Services/HttpService.cs"]);
+        let (client, truncated) = index.framework_facts(&client_paths, 8);
+        assert!(!truncated);
+        assert_eq!(client[0].symbol, "blazor-webassembly");
+        let server_paths = BTreeSet::from(["apps/server/Program.cs"]);
+        let (server, truncated) = index.framework_facts(&server_paths, 8);
+        assert!(!truncated);
+        assert!(server.iter().any(|fact| fact.symbol == "aspnet-core"));
+        assert!(
+            !server
+                .iter()
+                .any(|fact| fact.symbol == "blazor-webassembly")
         );
         let (api_authorization, truncated) = index.authorization_facts(&api_paths, &[], 8);
         assert!(!truncated);

@@ -172,6 +172,13 @@ an attacker-to-service boundary. Check for a service, scheduled job, wrapper,
 or privileged caller that passes less-trusted input before calling it an issue.
 Likewise, a fixed URL authority with a dynamic path is not a dynamic authority;
 inspect applicable redirects or URL parsing before claiming destination control.
+For .NET solutions, apply a project SDK or hosting fact only to the source in
+that project. `Microsoft.NET.Sdk.BlazorWebAssembly` identifies a browser-targeted
+client build, not a proof that shared services never execute on the server.
+Before dismissing its `HttpClient` call as browser-only, check the exact host,
+component rendering, and server registrations or callers. If those facts are
+missing, preserve the hosting uncertainty in the review; a sibling API
+project's server behavior also does not transfer automatically to the client.
 
 When the bundle cannot supply a decisive producer or control, use its bounded
 `investigation.lookup_requests` to inspect the exact source, writer, route, or
@@ -413,8 +420,22 @@ escalation. Keep artifact IDs and reviewer-origin leads scoped to the same
 review ID, and omit a lead whose exact location is not covered by its citation.
 If an attempted lookup exposes the exact next decisive file or identifier,
 the response contract permits one follow-on `source` or `references` escalation.
+If that operation and its arguments are already supplied as a lookup request,
+record its `request_index` instead of consuming the escalation allowance.
 Copy the supplied missing-fact question, use the smallest exact locator and
-record its outcome. Do not use this allowance for generic repository search.
+record its outcome. The escalated path or identifier must occur literally in
+the path or excerpt of an earlier returned artifact for that same review.
+Retain the relevant line in that artifact's bounded excerpt; a name inferred
+from a type, omitted source text, or a neighboring review does not satisfy the
+response contract. Do not use this allowance for generic repository search.
+
+For C# repository calls, inspect the actual command text and parameter
+bindings before deciding SQL injection. A request-bound repository argument
+does not imply that the SQL text interpolates it. Follow the exact repository
+method or supplied caller context when needed; controller action names and
+generic local variables can produce unrelated textual reference hits. For
+framework-invoked methods such as controller actions and health checks, an
+empty call-reference search does not establish that the method is unreachable.
 
 If a fresh complete-bundle retry still borrows facts across review IDs, regenerate
 the same authorized root with `--max-reviews 1` and the same context/material
