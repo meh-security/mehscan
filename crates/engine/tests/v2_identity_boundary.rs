@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use mehscan_core::{
-    EvidenceKind, PathReviewBundlePayload, PathReviewBundleResponseSet, PathReviewTriageResult,
-    ReviewDecision, SecurityPathState,
+    EvidenceKind, PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, PathReviewBundlePayload,
+    PathReviewBundleResponseSet, PathReviewTriageResult, ReviewDecision, SecurityPathState,
 };
 
 fn fixture_root() -> PathBuf {
@@ -109,6 +109,7 @@ fn keeps_distinct_cookie_invariants_at_one_sink_as_separate_issue_groups() {
                         summary: "The supplied evidence establishes this exact cookie weakness."
                             .to_string(),
                         checks: Vec::new(),
+                        investigation: Some(Default::default()),
                     })
                     .collect(),
                 PathReviewBundlePayload::Observation { reviews } => reviews
@@ -120,13 +121,15 @@ fn keeps_distinct_cookie_invariants_at_one_sink_as_separate_issue_groups() {
                         summary: "The supplied evidence establishes this exact observed weakness."
                             .to_string(),
                         checks: Vec::new(),
+                        investigation: Some(Default::default()),
                     })
                     .collect(),
             };
             let response = PathReviewBundleResponseSet {
-                schema_version: "1.0".to_string(),
+                schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
                 bundle_fingerprint: bundle.bundle_fingerprint.clone(),
                 results,
+                repair: None,
             };
             (bundle, response)
         })

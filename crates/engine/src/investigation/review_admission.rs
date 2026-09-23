@@ -27,10 +27,22 @@ struct ReviewAdmissionDescriptor {
     tags: Vec<String>,
 }
 
-pub(super) struct MarkerReviewContract {
+pub(super) struct OperationReviewContract {
     pub(super) relationship: &'static str,
     pub(super) security_question: &'static str,
     pub(super) title: &'static str,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OperationReviewFamily {
+    Authorization,
+    CredentialLifecycle,
+    ObjectBinding,
+    RequestIntegrity,
+    FailOpen,
+    AuthoritativeValue,
+    StateTransition,
+    SharedStateLimit,
 }
 
 /// Admit bounded review work for sensitive server mutations even when no
@@ -66,10 +78,33 @@ fn server_mutation_review_marker_groups(
             continue;
         }
         let spans = line_spans(&file.source);
+        let comment_ranges = file
+            .source
+            .contains("/*")
+            .then(|| StrDoc::try_new(&file.source, parser_language(language)).ok())
+            .flatten()
+            .map(|document| {
+                let ast = AstGrep::doc(document);
+                let root = ast.root();
+                root.dfs()
+                    .filter(|node| node.kind().as_ref().contains("comment"))
+                    .map(|node| node.range())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let mut file_count = 0;
         for line_index in 0..spans.len() {
             if file_count >= MAX_REVIEW_ADMISSION_MARKERS_PER_FILE {
                 break;
+            }
+            let (line_start, line_end) = spans[line_index];
+            let first_content = line_start + file.source[line_start..line_end].len()
+                - file.source[line_start..line_end].trim_start().len();
+            if comment_ranges
+                .iter()
+                .any(|range| range.start <= first_content && first_content < range.end)
+            {
+                continue;
             }
             let Some(marker) = server_mutation_review_marker(file, &spans, line_index) else {
                 continue;
@@ -289,24 +324,269 @@ pub(super) fn is_marker(evidence: &Evidence) -> bool {
         .any(|tag| tag == "review-admission-marker")
 }
 
-pub(super) fn review_contract(evidence: &[Evidence]) -> Option<MarkerReviewContract> {
+pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewContract> {
+    match operation_review_family(evidence)? {
+        OperationReviewFamily::Authorization => Some(OperationReviewContract {
+            relationship: "bounded_action_resource_authorization_review",
+            security_question: "Does the supplied operation, subject, selected resource, and applicable policy establish effective authorization for this exact action?",
+            title: "Review action and resource authorization",
+        }),
+        OperationReviewFamily::CredentialLifecycle => Some(OperationReviewContract {
+            relationship: "bounded_credential_lifecycle_review",
+            security_question: "Does the supplied credential or authenticator transition enforce the required subject proof, recovery authority, current credential, or step-up authentication?",
+            title: "Review credential lifecycle state transition",
+        }),
+        OperationReviewFamily::ObjectBinding => Some(OperationReviewContract {
+            relationship: "bounded_object_binding_review",
+            security_question: "Which request-controlled fields can this exact binding or copy operation persist, and do explicit allowlists, exclusions, DTO boundaries, or field-level authorization prevent security-sensitive assignment?",
+            title: "Review persisted object binding",
+        }),
+        OperationReviewFamily::RequestIntegrity => Some(OperationReviewContract {
+            relationship: "bounded_request_integrity_review",
+            security_question: "Can a cross-site request invoke this exact state-changing operation with victim authority, or does an applicable request-bound token or strict origin control reject it first?",
+            title: "Review request integrity for state change",
+        }),
+        OperationReviewFamily::FailOpen => Some(OperationReviewContract {
+            relationship: "bounded_fail_open_policy_review",
+            security_question: "Does the shown failed security or validation decision terminate the protected operation, or can execution continue to the sensitive effect?",
+            title: "Review non-enforcing security decision",
+        }),
+        OperationReviewFamily::AuthoritativeValue => Some(OperationReviewContract {
+            relationship: "bounded_authoritative_value_binding_review",
+            security_question: "Does this financial effect use the applicable server-authoritative value for the selected resource and version, rather than a caller-supplied amount?",
+            title: "Review authoritative financial value binding",
+        }),
+        OperationReviewFamily::StateTransition => Some(OperationReviewContract {
+            relationship: "bounded_state_transition_enforcement_review",
+            security_question: "Does this exact resource state change enforce an allowed transition from the persisted current state to the requested next state, with rejection before mutation?",
+            title: "Review resource state transition",
+        }),
+        OperationReviewFamily::SharedStateLimit => Some(OperationReviewContract {
+            relationship: "bounded_shared_state_limit_enforcement_review",
+            security_question: "Are the shown shared-state limit check and resulting write enforced atomically for the same persisted value, and does the check implement the applicable business limit?",
+            title: "Review shared-state limit enforcement",
+        }),
+    }
+}
+
+fn operation_review_family(evidence: &[Evidence]) -> Option<OperationReviewFamily> {
     let invariant = evidence
         .iter()
         .flat_map(|item| item.tags.iter())
-        .find_map(|tag| tag.strip_prefix("review-invariant:"))?;
-    match invariant {
-        "action-resource-authorization" => Some(MarkerReviewContract {
-            relationship: "bounded_server_mutation_review_marker",
-            security_question: "Does the supplied boundary, handler/helper, subject, selected resource, and policy context establish effective authorization for this server mutation?",
-            title: "Review authorization for bounded server mutation",
-        }),
-        "credential-lifecycle" => Some(MarkerReviewContract {
-            relationship: "bounded_credential_lifecycle_review_marker",
-            security_question: "Does the supplied boundary and transition enforce the subject proof, current credential, recovery authority, or step-up authentication required for this credential lifecycle change?",
-            title: "Review credential lifecycle state transition",
-        }),
-        _ => None,
+        .find_map(|tag| tag.strip_prefix("review-invariant:"));
+    if invariant == Some("authoritative-value-binding") {
+        return Some(OperationReviewFamily::AuthoritativeValue);
     }
+    if invariant == Some("state-transition-enforcement") {
+        return Some(OperationReviewFamily::StateTransition);
+    }
+    if invariant == Some("shared-state-limit-enforcement") {
+        return Some(OperationReviewFamily::SharedStateLimit);
+    }
+    if invariant == Some("action-resource-authorization")
+        || evidence.iter().any(|item| {
+            item.cwe_candidates.iter().any(|cwe| cwe == "CWE-862")
+                && (item.rule_id.contains("generated-crud-review")
+                    || item.tags.iter().any(|tag| {
+                        matches!(
+                            tag.as_str(),
+                            "allow-anonymous"
+                                | "needs-verification"
+                                | "verify-public-intent-and-operation-authorization"
+                                | "verify-field-authority"
+                        )
+                    }))
+        })
+    {
+        return Some(OperationReviewFamily::Authorization);
+    }
+    if invariant == Some("credential-lifecycle") {
+        return Some(OperationReviewFamily::CredentialLifecycle);
+    }
+    if evidence.iter().any(|item| {
+        matches!(
+            item.kind,
+            EvidenceKind::Sink | EvidenceKind::SensitiveOperation
+        ) && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-915")
+            && item.tags.iter().any(|tag| tag == "mass-assignment")
+    }) {
+        return Some(OperationReviewFamily::ObjectBinding);
+    }
+    if evidence.iter().any(|item| {
+        matches!(
+            item.kind,
+            EvidenceKind::Sink
+                | EvidenceKind::SensitiveOperation
+                | EvidenceKind::SecurityConfiguration
+        ) && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-352")
+            && item.tags.iter().any(|tag| tag == "csrf")
+    }) {
+        return Some(OperationReviewFamily::RequestIntegrity);
+    }
+    if evidence.iter().any(|item| {
+        item.tags.iter().any(|tag| {
+            matches!(
+                tag.as_str(),
+                "rejection-response-falls-through" | "mismatch-not-rejected"
+            )
+        })
+    }) {
+        return Some(OperationReviewFamily::FailOpen);
+    }
+    None
+}
+
+pub(super) fn decision_questions(
+    evidence: &[Evidence],
+    facts: &[ReviewNeighborhoodFact],
+) -> Vec<String> {
+    match operation_review_family(evidence) {
+        Some(OperationReviewFamily::Authorization | OperationReviewFamily::CredentialLifecycle)
+            if evidence.iter().any(is_marker) =>
+        {
+            let missing_helpers = evidence
+                .iter()
+                .flat_map(|item| item.captures.iter())
+                .filter(|(name, _)| name.starts_with("related_handler_"))
+                .map(|(_, capture)| capture.text.as_str())
+                .filter(|handler| {
+                    !facts
+                        .iter()
+                        .any(|fact| fact_supplies_mutation_helper(fact, handler))
+                })
+                .collect::<BTreeSet<_>>();
+            if missing_helpers.is_empty() {
+                Vec::new()
+            } else {
+                vec![format!(
+                    "What do the exact referenced mutation helpers {} enforce for this operation, including rejection behavior and the affected subject, action, resource, or credential transition?",
+                    missing_helpers
+                        .into_iter()
+                        .map(|handler| format!("`{handler}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )]
+            }
+        }
+        Some(OperationReviewFamily::ObjectBinding)
+            if !evidence.iter().any(|item| {
+                item.tags
+                    .iter()
+                    .any(|tag| tag.starts_with("sensitive-fields:"))
+            }) =>
+        {
+            let input_type = preferred_capture(evidence, &["input_type", "model", "entity"]);
+            vec![match input_type {
+                Some(input_type) => format!(
+                    "Which persisted fields can request-bound `{input_type}` supply through this exact binding operation, which are security-sensitive, and does an applicable executable allowlist, exclusion, DTO mapping, or field-level authorization prevent them from being written?"
+                ),
+                None => "Which persisted fields can the request-bound object supply through this exact binding operation, which are security-sensitive, and does an applicable executable allowlist, exclusion, DTO mapping, or field-level authorization prevent them from being written?".to_string(),
+            }]
+        }
+        Some(OperationReviewFamily::AuthoritativeValue) => {
+            let helper = preferred_capture(evidence, &["authority_helper"]);
+            let Some(helper) = helper else {
+                return Vec::new();
+            };
+            if facts.iter().any(|fact| {
+                matches!(
+                    fact.role.as_str(),
+                    "helper_definition_context" | "captured_definition_context"
+                ) && fact.symbol == helper
+            }) {
+                Vec::new()
+            } else {
+                vec![format!(
+                    "Does exact helper `{helper}` produce the applicable server-authoritative price, quote, order amount, or catalog value for this financial effect, and where is the caller-supplied value compared and rejected before persistence?"
+                )]
+            }
+        }
+        Some(OperationReviewFamily::StateTransition) => {
+            let helper = preferred_capture(evidence, &["transition_helper"]);
+            let Some(helper) = helper else {
+                return Vec::new();
+            };
+            vec![format!(
+                "What exact current-to-next transitions does helper `{helper}` allow for this resource, and how does it reject a disallowed edge before persistence?"
+            )]
+        }
+        Some(OperationReviewFamily::SharedStateLimit) => {
+            let helper = preferred_capture(evidence, &["persistence_helper"]);
+            let Some(helper) = helper else {
+                return Vec::new();
+            };
+            if facts.iter().any(|fact| {
+                matches!(
+                    fact.role.as_str(),
+                    "helper_definition_context" | "captured_definition_context"
+                ) && fact.symbol == helper
+            }) {
+                Vec::new()
+            } else {
+                vec![format!(
+                    "What database operation does exact helper `{helper}` execute, and does it combine the limit predicate and state change in one conditional write, locked transaction, or other adapter-established atomic operation?"
+                )]
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn fact_supplies_mutation_helper(fact: &ReviewNeighborhoodFact, handler: &str) -> bool {
+    if fact.symbol != handler {
+        return false;
+    }
+    // Both helper producers cap excerpts at this budget. Reaching the cap can
+    // mean that the rejection or affected-resource logic was omitted, so only
+    // a definition that clearly fits inside the bound satisfies the question.
+    let supplied_lines = fact
+        .location
+        .end
+        .line
+        .saturating_sub(fact.location.start.line)
+        .saturating_add(1);
+    matches!(
+        fact.role.as_str(),
+        "review_admission_helper_context" | "helper_definition_context"
+    ) && supplied_lines < MAX_REVIEW_HELPER_LINES
+}
+
+pub(super) fn preferred_lookup_symbol(evidence: &[Evidence]) -> Option<String> {
+    preferred_capture(
+        evidence,
+        &[
+            "authority_helper",
+            "transition_helper",
+            "persistence_helper",
+            "input_type",
+            "model",
+            "entity",
+            "related_handler_1",
+        ],
+    )
+    .or_else(|| {
+        evidence
+            .iter()
+            .flat_map(|item| item.tags.iter())
+            .find_map(|tag| {
+                ["model:", "entity:", "resource:"]
+                    .iter()
+                    .find_map(|prefix| tag.strip_prefix(prefix))
+            })
+            .filter(|symbol| is_helpful_reference_identifier(symbol))
+            .map(str::to_string)
+    })
+}
+
+fn preferred_capture(evidence: &[Evidence], names: &[&str]) -> Option<String> {
+    names.iter().find_map(|name| {
+        evidence
+            .iter()
+            .filter_map(|item| item.captures.get(*name))
+            .map(|capture| capture.text.trim())
+            .find(|value| is_helpful_reference_identifier(value))
+            .map(str::to_string)
+    })
 }
 
 pub(super) fn helper_facts(
@@ -504,8 +784,25 @@ fn javascript_server_mutation_marker(
         return marker_after_boundary(file, spans, line_index, 8);
     }
 
-    if javascript_http_mutation_route(line) {
-        return marker_from_inline_boundary(file, spans, line_index, "http-mutation-route");
+    let chained_mutation_route = if line.contains(".route(") {
+        let end = (line_index + 12).min(spans.len().saturating_sub(1));
+        let excerpt = &file.source[spans[line_index].0..spans[end].1];
+        let route_open = excerpt.find(".route(").map(|start| start + ".route".len());
+        route_open
+            .and_then(|open| super::balanced_javascript_call_end(excerpt, open))
+            .is_some_and(|close| {
+                let tail = excerpt[close + 1..].trim_start().to_ascii_lowercase();
+                [".post(", ".put(", ".patch(", ".delete("]
+                    .iter()
+                    .any(|verb| tail.starts_with(verb))
+            })
+    } else {
+        false
+    };
+    if javascript_http_mutation_route(line) || chained_mutation_route {
+        let symbol =
+            http_mutation_symbol(line).unwrap_or_else(|| "HTTP mutation route".to_string());
+        return marker_from_inline_boundary(file, spans, line_index, &symbol);
     }
 
     if (file.source.contains("'use server'") || file.source.contains("\"use server\""))
@@ -639,13 +936,15 @@ fn marker_from_inline_boundary(
     let end_index = textual_definition_end_with_limit(&file.source, spans, line_index, 120);
     let excerpt = &file.source[spans[line_index].0..spans[end_index].1];
     let mut handlers = terminal_call_identifiers(excerpt, "");
-    if let Some(handler) =
-        terminal_route_handler(&file.source[spans[line_index].0..spans[line_index].1])
-        && !handlers.contains(&handler)
-    {
-        handlers.insert(0, handler);
-    }
     let boundary_line = &file.source[spans[line_index].0..spans[line_index].1];
+    let route_excerpt = excerpt.lines().take(12).collect::<Vec<_>>().join("\n");
+    let route_handlers = terminal_route_handlers(&route_excerpt);
+    let route_handler = route_handlers.last().cloned();
+    for handler in route_handlers.into_iter().rev() {
+        if !handlers.contains(&handler) {
+            handlers.insert(0, handler);
+        }
+    }
     let declared = authorization_definition_identifier(boundary_line);
     let prefer_declared = boundary_line.trim_start().starts_with("export ")
         || boundary_line.contains(" = validatedAction")
@@ -654,7 +953,7 @@ fn marker_from_inline_boundary(
     let symbol = if prefer_declared {
         declared.or_else(|| handlers.first().cloned())
     } else {
-        handlers.first().cloned().or(declared)
+        route_handler
     }
     .unwrap_or_else(|| fallback_symbol.to_string());
     if is_authorization_bootstrap_operation(&symbol)
@@ -706,7 +1005,6 @@ fn mutation_effect(text: &str) -> Option<String> {
 
 fn terminal_call_identifiers(text: &str, enclosing: &str) -> Vec<String> {
     let mut called = BTreeSet::new();
-    let mut fallback = BTreeSet::new();
     for prefix in text.split('(').take(64) {
         let token = prefix
             .trim_end()
@@ -727,23 +1025,29 @@ fn terminal_call_identifiers(text: &str, enclosing: &str) -> Vec<String> {
             && !is_generic_mutation_reference(&lower)
             && is_helpful_reference_identifier(token)
             && mutation_name(&lower)
+            && is_mutation_helper_identifier(token)
         {
             called.insert(token.to_string());
         }
     }
-    for token in text.split(|character: char| {
-        !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
-    }) {
-        let lower = token.to_ascii_lowercase();
-        if token != enclosing
-            && !is_generic_mutation_reference(&lower)
-            && is_helpful_reference_identifier(token)
-            && mutation_name(&lower)
-        {
-            fallback.insert(token.to_string());
-        }
-    }
-    called.into_iter().chain(fallback).take(6).collect()
+    called.into_iter().take(6).collect()
+}
+
+fn is_mutation_helper_identifier(token: &str) -> bool {
+    let lower = token.to_ascii_lowercase();
+    token
+        .chars()
+        .next()
+        .is_some_and(|character| !character.is_ascii_uppercase())
+        && !matches!(
+            lower.as_str(),
+            "createform"
+                | "createformbuilder"
+                | "createquerybuilder"
+                | "createvalidator"
+                | "createview"
+        )
+        && !lower.contains("schema")
 }
 
 fn authorization_definition_identifier(line: &str) -> Option<String> {
@@ -790,43 +1094,135 @@ fn is_generic_mutation_reference(lower: &str) -> bool {
     )
 }
 
-fn terminal_route_handler(line: &str) -> Option<String> {
+fn terminal_route_handlers(line: &str) -> Vec<String> {
     let lower = line.to_ascii_lowercase();
-    if lower.contains(".route(") {
-        for verb in ["post(", "put(", "patch(", "delete("] {
-            let Some(start) = lower.rfind(verb).map(|start| start + verb.len()) else {
-                continue;
-            };
-            let candidate = line[start..]
-                .split(|character: char| {
-                    !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
-                })
-                .find(|token| is_helpful_reference_identifier(token));
-            if let Some(candidate) = candidate {
-                return Some(candidate.to_string());
+    let (open, chained) = [".post(", ".put(", ".patch(", ".delete("]
+        .iter()
+        .filter_map(|verb| {
+            lower
+                .find(verb)
+                .map(|start| (start + verb.len() - 1, lower[..start].contains(".route(")))
+        })
+        .min_by_key(|(start, _)| *start)
+        .unwrap_or((0, false));
+    if open == 0 || line.as_bytes().get(open) != Some(&b'(') {
+        return Vec::new();
+    }
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut argument_start = open + 1;
+    let mut arguments = Vec::new();
+    for (offset, byte) in line.as_bytes().iter().enumerate().skip(open) {
+        if let Some(delimiter) = quote {
+            if escaped {
+                escaped = false;
+            } else if *byte == b'\\' {
+                escaped = true;
+            } else if *byte == delimiter {
+                quote = None;
             }
+            continue;
+        }
+        match *byte {
+            b'\'' | b'"' | b'`' => quote = Some(*byte),
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    arguments.push(&line[argument_start..offset]);
+                    break;
+                }
+            }
+            b',' if depth == 1 => {
+                arguments.push(&line[argument_start..offset]);
+                argument_start = offset + 1;
+            }
+            _ => {}
         }
     }
-    let tail = line.rsplit_once(',')?.1;
-    let candidate = tail
-        .split(|character: char| {
-            !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
+    arguments
+        .into_iter()
+        .skip(usize::from(!chained))
+        .filter(|argument| {
+            !argument.contains("=>") && !argument.trim_start().starts_with("function")
         })
-        .find(|token| {
-            is_helpful_reference_identifier(token)
-                && !matches!(
-                    token.to_ascii_lowercase().as_str(),
-                    "post"
-                        | "put"
-                        | "patch"
-                        | "delete"
-                        | "request"
-                        | "reply"
-                        | "async"
-                        | "function"
-                )
-        })?;
-    Some(candidate.to_string())
+        .filter_map(|argument| {
+            let last_call = argument
+                .split('(')
+                .filter_map(|prefix| {
+                    prefix
+                        .trim_end()
+                        .rsplit(|character: char| {
+                            !(character.is_ascii_alphanumeric()
+                                || matches!(character, '_' | '$' | '.'))
+                        })
+                        .next()?
+                        .rsplit('.')
+                        .next()
+                })
+                .filter(|token| {
+                    is_helpful_reference_identifier(token)
+                        && !matches!(
+                            token.to_ascii_lowercase().as_str(),
+                            "async" | "function" | "asynchandler" | "request" | "reply"
+                        )
+                })
+                .last();
+            last_call.map(str::to_string)
+        })
+        .take(6)
+        .collect()
+}
+
+#[cfg(test)]
+mod route_handler_tests {
+    use super::terminal_route_handlers;
+
+    #[test]
+    fn uses_invoked_handler_instead_of_module_or_wrapper() {
+        assert_eq!(
+            terminal_route_handlers("app.delete('/api/Products/:id', security.denyAll())")
+                .last()
+                .cloned(),
+            Some("denyAll".to_string())
+        );
+        assert_eq!(
+            terminal_route_handlers(
+                "app.put('/api/BasketItems/:id', utils.asyncHandler(basketItems.quantityCheckBeforeBasketItemUpdate()))"
+            )
+            .last()
+            .cloned(),
+            Some("quantityCheckBeforeBasketItemUpdate".to_string())
+        );
+    }
+
+    #[test]
+    fn retains_ordered_route_middleware_and_chained_handlers() {
+        assert_eq!(
+            terminal_route_handlers(
+                "app.post('/benefits', isLoggedIn, isAdmin, benefitsHandler.updateBenefits)"
+            ),
+            vec!["isLoggedIn", "isAdmin", "updateBenefits"]
+        );
+        assert_eq!(
+            terminal_route_handlers("router.route('/items/:id').put(security.denyAll())"),
+            vec!["denyAll"]
+        );
+        assert_eq!(
+            terminal_route_handlers(
+                "app.put('/api/BasketItems/:id', security.appendUserId(), utils.asyncHandler(basketItems.quantityCheckBeforeBasketItemUpdate()))"
+            ),
+            vec!["appendUserId", "quantityCheckBeforeBasketItemUpdate"]
+        );
+        assert!(terminal_route_handlers("fastify.patch('/tasks/:id', async (request) => { return tasks.update(request.body) })").is_empty());
+        assert_eq!(
+            terminal_route_handlers(
+                "router.route('/items/:id')\n  .put(\n    authenticateToken,\n    handlers.updateItem\n  )"
+            ),
+            vec!["authenticateToken", "updateItem"]
+        );
+    }
 }
 
 fn javascript_http_mutation_route(line: &str) -> bool {
@@ -841,6 +1237,15 @@ fn javascript_http_mutation_route(line: &str) -> bool {
                 .iter()
                 .any(|verb| compact.contains(&format!("{receiver}.{verb}(")))
         })
+}
+
+fn http_mutation_symbol(line: &str) -> Option<String> {
+    let compact = line.split_whitespace().collect::<String>();
+    let lower = compact.to_ascii_lowercase();
+    ["post", "put", "patch", "delete"]
+        .into_iter()
+        .find(|verb| lower.contains(&format!(".{verb}(")))
+        .map(|verb| format!("{} route", verb.to_ascii_uppercase()))
 }
 
 fn is_authorization_bootstrap_operation(symbol: &str) -> bool {

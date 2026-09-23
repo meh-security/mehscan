@@ -26,6 +26,14 @@ pub struct FindingReportScan {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct FindingReportTriage {
     pub response_schema_version: String,
+    #[serde(default)]
+    pub response_fingerprint: String,
+    #[serde(default)]
+    pub work: crate::ReviewWorkSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repairs: Vec<crate::ReviewRepairTrace>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub family_measurements: Vec<crate::ReviewFamilyMeasurement>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reviewer: Option<String>,
 }
@@ -147,6 +155,8 @@ pub struct FindingReport {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dismissed: Vec<DismissedReview>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reviewer_origin_leads: Vec<crate::ReviewerOriginLeadRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub quality_warnings: Vec<String>,
 }
 
@@ -198,6 +208,48 @@ impl FindingReport {
             self.summary.needs_review_decisions,
             self.summary.not_issue_decisions
         ));
+        if !self.triage.repairs.is_empty()
+            || self.triage.work.scheduled_review_count > 0
+            || !self.triage.work.missing_review_ids.is_empty()
+            || !self.triage.work.invalid_review_ids.is_empty()
+        {
+            output.push_str(&format!(
+                "| Review work | {}/{} scheduled completed; {} admitted | {} accepted investigation traces; {} repaired, {} deferred, {} blocked, {} truncated, {} missing, {} invalid |\n",
+                self.triage.work.completed_review_count,
+                self.triage.work.scheduled_review_count,
+                self.triage.work.admitted_review_count,
+                self.triage.work.accepted_investigation_count,
+                self.triage.repairs.len(),
+                self.triage.work.deferred_review_ids.len(),
+                self.triage.work.blocked_review_ids.len(),
+                self.triage.work.truncated_review_ids.len(),
+                self.triage.work.missing_review_ids.len(),
+                self.triage.work.invalid_review_ids.len()
+            ));
+        }
+
+        if !self.triage.family_measurements.is_empty() {
+            output.push_str("\n## Investigation measurements\n\n");
+            output.push_str("| Family | Scheduled | Completed | Resolved | Issue / Not issue / Needs review | Lookups (answered / unsuccessful) | Returned bytes | Leads |\n");
+            output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+            for measurement in &self.triage.family_measurements {
+                output.push_str(&format!(
+                    "| {} | {} | {} | {} | {} / {} / {} | {} ({} / {}) | {} | {} |\n",
+                    markdown_text(&enum_label(measurement.capability)),
+                    measurement.scheduled_review_count,
+                    measurement.completed_review_count,
+                    measurement.resolved_review_count,
+                    measurement.issue_count,
+                    measurement.not_issue_count,
+                    measurement.needs_review_count,
+                    measurement.lookup_attempt_count,
+                    measurement.answered_lookup_count,
+                    measurement.unsuccessful_lookup_count,
+                    measurement.returned_artifact_bytes,
+                    measurement.reviewer_origin_lead_count,
+                ));
+            }
+        }
 
         output.push_str("\n## Scope and limitations\n\nStatic source conclusions do not establish deployed activation or external exploitation. Any isolated execution checks apply only to the controls identified in the scope label. Ignored and unsupported material is outside coverage. Severity defaults are not a validated impact ranking.\n\n");
         if let Some(coverage) = &self.scan.coverage {
@@ -266,6 +318,31 @@ impl FindingReport {
                     location,
                     enum_label(dismissed.confidence),
                     markdown_description(&dismissed.description)
+                ));
+            }
+        }
+
+        if !self.reviewer_origin_leads.is_empty() {
+            output.push_str("\n## Reviewer-origin leads\n\nThese source-supported questions were discovered during review. They are not validated findings or deterministic scanner coverage.\n\n");
+            for record in &self.reviewer_origin_leads {
+                output.push_str(&format!(
+                    "- {} at {} (from {}): {} Evidence: {}\n",
+                    markdown_description(&record.lead.question),
+                    markdown_code_span(&format!(
+                        "{}:{}:{}",
+                        record.lead.location.path,
+                        record.lead.location.start.line,
+                        record.lead.location.start.column
+                    )),
+                    markdown_code_span(&record.origin_review_id),
+                    markdown_description(&record.lead.security_relevance),
+                    record
+                        .lead
+                        .artifact_ids
+                        .iter()
+                        .map(|artifact_id| markdown_code_span(artifact_id))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
         }
@@ -712,7 +789,12 @@ mod tests {
                 scope: Vec::new(),
             },
             triage: FindingReportTriage {
-                response_schema_version: "1.0".to_string(),
+                response_schema_version: crate::PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
+                    .to_string(),
+                response_fingerprint: "review-run-response-test".to_string(),
+                work: crate::ReviewWorkSummary::default(),
+                repairs: Vec::new(),
+                family_measurements: Vec::new(),
                 reviewer: Some("reviewer-1".to_string()),
             },
             summary: FindingReportSummary {
@@ -736,6 +818,18 @@ mod tests {
                 primary_location: Some(finding(FindingStatus::Issue, Vec::new()).primary_location),
                 rule_id: Some("safe-rule".to_string()),
             }],
+            reviewer_origin_leads: vec![crate::ReviewerOriginLeadRecord {
+                origin_review_id: "review-safe".to_string(),
+                lead: crate::ReviewerOriginLead {
+                    question: "Can a separate audit write disclose the session token?".to_string(),
+                    security_relevance:
+                        "The cited audit operation writes a credential-bearing value.".to_string(),
+                    distinct_from_review:
+                        "Credential disclosure is separate from SQL query construction.".to_string(),
+                    location: location("routes/audit.ts", 31),
+                    artifact_ids: vec!["retrieved-audit-write".to_string()],
+                },
+            }],
             quality_warnings: Vec::new(),
         };
 
@@ -751,6 +845,9 @@ mod tests {
         assert!(legacy.primary_location.is_none());
         assert!(legacy.rule_id.is_none());
         assert!(markdown.contains("Confirm the effective query parameterization."));
+        assert!(markdown.contains("## Reviewer-origin leads"));
+        assert!(markdown.contains("`routes/audit.ts:31:3`"));
+        assert!(markdown.contains("not validated findings or deterministic scanner coverage"));
         assert!(markdown.contains("`review-safe` at `routes/search.ts:23:3` (high confidence)"));
         assert!(
             markdown.find("## Review next").expect("review section")
@@ -788,7 +885,12 @@ mod tests {
                 scope: Vec::new(),
             },
             triage: FindingReportTriage {
-                response_schema_version: "1.0".to_string(),
+                response_schema_version: crate::PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
+                    .to_string(),
+                response_fingerprint: "review-run-response-test".to_string(),
+                work: crate::ReviewWorkSummary::default(),
+                repairs: Vec::new(),
+                family_measurements: Vec::new(),
                 reviewer: None,
             },
             summary: FindingReportSummary {
@@ -803,6 +905,7 @@ mod tests {
             findings: vec![first, second],
             review_required: Vec::new(),
             dismissed: Vec::new(),
+            reviewer_origin_leads: Vec::new(),
             quality_warnings: Vec::new(),
         };
 

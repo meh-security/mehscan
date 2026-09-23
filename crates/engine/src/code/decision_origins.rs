@@ -14,12 +14,26 @@ pub(crate) fn annotate(
     root: &Node<'_, StrDoc<SupportLang>>,
     evidence: &mut [Evidence],
 ) {
-    for item in evidence
-        .iter_mut()
-        .filter(|item| item.kind == EvidenceKind::Sink)
-    {
+    for item in evidence.iter_mut().filter(|item| {
+        item.kind == EvidenceKind::Sink
+            || (item.kind == EvidenceKind::SensitiveOperation
+                && item.capability == Capability::DatabaseQuery
+                && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-943"))
+    }) {
         if item.capability == Capability::DatabaseQuery {
+            normalize_database_query_operand(language, source, root, item);
+            annotate_database_query_facts(source, item);
             annotate_dynamic_sql(language, source, root, item);
+            annotate_nosql_structure(root, item);
+        }
+        if item.capability == Capability::ProcessExecution {
+            annotate_process_semantics(language, source, item);
+        }
+        if item.capability == Capability::Deserialization {
+            annotate_deserialization_semantics(item);
+        }
+        if item.capability == Capability::HtmlOutput {
+            annotate_html_semantics(source, item);
         }
 
         if has_marker(item) {
@@ -39,9 +53,7 @@ pub(crate) fn annotate(
             Capability::FormatStringOutput => capture_is_dynamic(item, &["format"]),
             Capability::DynamicCodeExecution => capture_is_dynamic(item, &["code"]),
             Capability::TemplateEvaluation => capture_is_dynamic(item, &["template"]),
-            Capability::Deserialization => {
-                executable_deserializer(item) && capture_is_dynamic(item, &["payload", "stream"])
-            }
+            Capability::Deserialization => deserialization_origin_is_unresolved(item),
             Capability::DatabaseQuery => raw_nosql_boundary(item),
             Capability::LdapQuery => capture_is_dynamic(item, &["filter", "distinguished_name"]),
             Capability::XpathQuery => capture_is_dynamic(item, &["expression"]),
@@ -61,6 +73,42 @@ pub(crate) fn annotate(
     }
 }
 
+fn annotate_database_query_facts(source: &str, item: &mut Evidence) {
+    if item.tags.iter().any(|tag| tag == "sql")
+        && !item.tags.iter().any(|tag| tag.starts_with("query-role:"))
+    {
+        push_tag(&mut item.tags, "query-role:sql-text");
+    }
+    if ["parameters", "bindings", "values"]
+        .into_iter()
+        .any(|role| item.captures.contains_key(role))
+    {
+        push_tag(&mut item.tags, "query-bindings:separate");
+    }
+    let operation = source
+        .get(
+            item.location.start.byte_offset.min(source.len())
+                ..item.location.end.byte_offset.min(source.len()),
+        )
+        .unwrap_or_default();
+    let compact = operation
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let lower = compact.to_ascii_lowercase();
+    if item.captures.contains_key("query_envelope")
+        && (lower.contains("values:") || lower.contains("parameters:"))
+    {
+        push_tag(&mut item.tags, "query-bindings:separate");
+    }
+    if item.rule_id == "csharp-dapper-database-query"
+        && lower.contains("commandtype:commandtype.storedprocedure")
+    {
+        item.tags.retain(|tag| tag != "query-role:sql-text");
+        push_tag(&mut item.tags, "query-role:stored-procedure-name");
+    }
+}
+
 fn annotate_dynamic_sql(
     language: Language,
     source: &str,
@@ -68,6 +116,10 @@ fn annotate_dynamic_sql(
     item: &mut Evidence,
 ) {
     if item.tags.iter().any(|tag| tag == "nosql")
+        || item
+            .tags
+            .iter()
+            .any(|tag| tag == "query-role:structured-filter")
         || item.tags.iter().any(|tag| {
             matches!(
                 tag.as_str(),
@@ -136,6 +188,197 @@ fn annotate_dynamic_sql(
     }
 }
 
+fn normalize_database_query_operand(
+    language: Language,
+    source: &str,
+    root: &Node<'_, StrDoc<SupportLang>>,
+    item: &mut Evidence,
+) {
+    let Some(query) = item.captures.get("query").cloned() else {
+        return;
+    };
+    let Some(node) = capture_node(root, &query) else {
+        return;
+    };
+    let normalized = match language {
+        Language::Javascript | Language::Typescript | Language::Tsx
+            if matches!(node.kind().as_ref(), "object" | "object_expression") =>
+        {
+            object_property(&node, &["sql", "text"])
+                .map(|value| (value, "query-envelope:object-property"))
+        }
+        Language::Csharp
+            if node.kind().as_ref() == "object_creation_expression"
+                && node.field("type").is_some_and(|kind| {
+                    kind.text().trim().rsplit('.').next() == Some("CommandDefinition")
+                }) =>
+        {
+            csharp_command_definition_text(&node)
+                .map(|value| (value, "query-envelope:dapper-command-definition"))
+        }
+        _ => None,
+    };
+    let Some((value, tag)) = normalized else {
+        return;
+    };
+    item.captures.insert("query_envelope".to_string(), query);
+    item.captures
+        .insert("query".to_string(), capture_for_node(source, item, &value));
+    push_tag(&mut item.tags, tag);
+}
+
+fn annotate_nosql_structure(root: &Node<'_, StrDoc<SupportLang>>, item: &mut Evidence) {
+    if !is_nosql_boundary(item) {
+        return;
+    }
+    let role = if item.captures.contains_key("nosql_expression") {
+        "nosql_expression"
+    } else if item.captures.contains_key("nosql_query") {
+        "nosql_query"
+    } else if item.captures.contains_key("filter") {
+        "filter"
+    } else {
+        return;
+    };
+    let Some(operand) = item.captures.get(role).cloned() else {
+        return;
+    };
+    if !capture_is_dynamic(item, &[role]) {
+        return;
+    }
+    let fixed_keys = capture_node(root, &operand).is_some_and(|node| fixed_document_shape(&node));
+    if fixed_keys {
+        push_tag(&mut item.tags, "query-shape:fixed-document-keys");
+    }
+    let style = if item.rule_id.contains("mongodb-where") {
+        "executable-predicate"
+    } else if item.rule_id.contains("nosql-json") {
+        "raw-document-text"
+    } else if role == "nosql_expression" {
+        "expression-syntax"
+    } else if fixed_keys {
+        "fixed-keys-unknown-values"
+    } else {
+        "unknown-document-structure"
+    };
+    push_tag(&mut item.tags, "dynamic-nosql-structure");
+    push_tag(&mut item.tags, &format!("nosql-structure:{style}"));
+    item.captures.insert("dynamic_operand".to_string(), operand);
+}
+
+fn is_nosql_boundary(item: &Evidence) -> bool {
+    item.tags.iter().any(|tag| tag == "nosql")
+        || item.cwe_candidates.iter().any(|cwe| cwe == "CWE-943")
+}
+
+fn capture_node<'tree>(
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    capture: &Capture,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    root.dfs()
+        .filter(|node| {
+            node.range().start == capture.location.start.byte_offset
+                && node.range().end == capture.location.end.byte_offset
+        })
+        .last()
+}
+
+fn capture_for_node(
+    source: &str,
+    item: &Evidence,
+    node: &Node<'_, StrDoc<SupportLang>>,
+) -> Capture {
+    let prefix = source
+        .get(
+            item.location.start.byte_offset.min(source.len())..node.range().start.min(source.len()),
+        )
+        .unwrap_or_default();
+    let location_start = advance_position(&item.location.start, prefix);
+    let location_end = advance_position(&location_start, node.text().as_ref());
+    Capture {
+        text: node.text().into_owned(),
+        location: mehscan_core::Location {
+            path: item.location.path.clone(),
+            start: location_start,
+            end: location_end,
+        },
+    }
+}
+
+fn object_property<'tree>(
+    object: &Node<'tree, StrDoc<SupportLang>>,
+    names: &[&str],
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    let mut matches = object.children().filter_map(|child| {
+        if child.kind().as_ref() != "pair" {
+            return None;
+        }
+        let key = child.field("key")?;
+        names
+            .contains(&key.text().trim_matches(['\'', '"']))
+            .then(|| child.field("value"))
+            .flatten()
+    });
+    let value = matches.next()?;
+    matches.next().is_none().then_some(value)
+}
+
+fn csharp_command_definition_text<'tree>(
+    creation: &Node<'tree, StrDoc<SupportLang>>,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    let arguments = creation.field("arguments")?;
+    let mut first = None;
+    for argument in arguments.children().filter(|child| child.is_named()) {
+        let text = argument.text();
+        let compact = text
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>();
+        let value = argument
+            .field("expression")
+            .or_else(|| argument.children().filter(|child| child.is_named()).last())
+            .unwrap_or_else(|| argument.clone());
+        if compact.starts_with("commandText:") {
+            return Some(value);
+        }
+        first.get_or_insert(value);
+    }
+    first
+}
+
+fn fixed_document_shape(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    if !matches!(
+        node.kind().as_ref(),
+        "object" | "object_expression" | "dictionary"
+    ) {
+        return false;
+    }
+    node.children()
+        .filter(|child| child.is_named())
+        .all(|child| {
+            if matches!(
+                child.kind().as_ref(),
+                "shorthand_property_identifier"
+                    | "shorthand_property_identifier_pattern"
+                    | "comment"
+            ) {
+                return true;
+            }
+            if child.kind().as_ref() != "pair" {
+                return false;
+            }
+            let Some(key) = child.field("key") else {
+                return false;
+            };
+            let key = key.text();
+            let key = key.trim_matches(['\'', '"']);
+            let fixed = key.chars().enumerate().all(|(index, character)| {
+                character.is_alphanumeric() || character == '_' || (index == 0 && character == '$')
+            });
+            fixed && !matches!(key, "$where" | "$expr" | "$function" | "$accumulator")
+        })
+}
+
 fn query_is_fixed_local_alias(
     language: Language,
     source: &str,
@@ -158,7 +401,11 @@ fn query_is_fixed_local_alias(
     else {
         return false;
     };
-    for statement in bounded_statements(prefix).into_iter().rev().take(96) {
+    for statement in bounded_statements(prefix, language)
+        .into_iter()
+        .rev()
+        .take(96)
+    {
         let trimmed = statement.trim();
         if mutation_value(trimmed, name, language).is_some() {
             return false;
@@ -187,14 +434,18 @@ fn bounded_query_composition(
     }
     let scope_start = callable_start(root, query_capture).unwrap_or(0);
     let prefix = source.get(scope_start..item.location.start.byte_offset.min(source.len()))?;
-    for statement in bounded_statements(prefix).into_iter().rev().take(96) {
+    for statement in bounded_statements(prefix, language)
+        .into_iter()
+        .rev()
+        .take(96)
+    {
         let trimmed = statement.trim();
         if let Some(value) = mutation_value(trimmed, name, language) {
-            if value_is_dynamic(value) {
-                return Some((
-                    "bounded-local-builder",
-                    expression_references(language, value),
-                ));
+            if value_is_dynamic(value) || expression_is_composed(language, value) {
+                let references = expression_references(language, value);
+                if !references.is_empty() {
+                    return Some(("bounded-local-builder", references));
+                }
             }
             continue;
         }
@@ -278,7 +529,7 @@ fn split_arguments(source: &str) -> Vec<&str> {
     arguments
 }
 
-fn bounded_statements(source: &str) -> Vec<&str> {
+fn bounded_statements(source: &str, language: Language) -> Vec<&str> {
     let bytes = source.as_bytes();
     let mut statements = Vec::new();
     let mut start = 0;
@@ -297,7 +548,9 @@ fn bounded_statements(source: &str) -> Vec<&str> {
         }
         match byte {
             b'\'' | b'"' | b'`' => quote = Some(byte),
-            b';' | b'\n' => {
+            b';' | b'\n'
+                if !matches!(language, Language::Csharp | Language::Java) || byte == b';' =>
+            {
                 if let Some(statement) = source.get(start..index)
                     && !statement.trim().is_empty()
                 {
@@ -449,6 +702,7 @@ fn assignment_value(line: &str) -> Option<&str> {
 
 fn expression_references(language: Language, expression: &str) -> Vec<String> {
     let focused = match language {
+        Language::Csharp => csharp_interpolation_references(expression),
         Language::Kotlin | Language::Javascript | Language::Typescript | Language::Tsx => {
             dollar_references(expression)
         }
@@ -467,7 +721,56 @@ fn expression_references(language: Language, expression: &str) -> Vec<String> {
     if !focused.is_empty() {
         return focused;
     }
-    identifier_tokens(expression)
+    identifier_tokens(&without_quoted_literals(expression))
+}
+
+fn csharp_interpolation_references(expression: &str) -> Vec<String> {
+    if !["$\"", "$@\"", "@$\""]
+        .iter()
+        .any(|prefix| expression.contains(prefix))
+    {
+        return Vec::new();
+    }
+    let mut references = Vec::new();
+    let mut rest = expression;
+    while let Some((_, after_open)) = rest.split_once('{') {
+        let Some((inside, after_close)) = after_open.split_once('}') else {
+            break;
+        };
+        let operand = inside.split([':', ',']).next().unwrap_or_default().trim();
+        if !operand.is_empty()
+            && operand.split('.').all(plain_identifier)
+            && !references.iter().any(|existing| existing == operand)
+        {
+            references.push(operand.to_string());
+        }
+        rest = after_close;
+    }
+    references
+}
+
+fn without_quoted_literals(expression: &str) -> String {
+    let mut output = String::with_capacity(expression.len());
+    let mut quote = None;
+    let mut escaped = false;
+    for character in expression.chars() {
+        if let Some(delimiter) = quote {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == delimiter {
+                quote = None;
+            }
+            output.push(' ');
+        } else if matches!(character, '\'' | '"' | '`') {
+            quote = Some(character);
+            output.push(' ');
+        } else {
+            output.push(character);
+        }
+    }
+    output
 }
 
 fn dollar_references(expression: &str) -> Vec<String> {
@@ -562,16 +865,264 @@ fn explicit_html_trust_boundary(item: &Evidence) -> bool {
     )
 }
 
+fn annotate_html_semantics(source: &str, item: &mut Evidence) {
+    if !explicit_html_trust_boundary(item) {
+        return;
+    }
+    let operation = source
+        .get(
+            item.location.start.byte_offset.min(source.len())
+                ..item.location.end.byte_offset.min(source.len()),
+        )
+        .unwrap_or_default();
+    let interpretation = if operation.contains("bypassSecurityTrustScript")
+        || operation.contains("template.JS(")
+        || operation.contains("template.JSStr(")
+    {
+        "browser-interpretation:script"
+    } else if operation.contains("bypassSecurityTrustResourceUrl") {
+        "browser-interpretation:resource-url"
+    } else if operation.contains("bypassSecurityTrustUrl") || operation.contains("template.URL(") {
+        "browser-interpretation:url"
+    } else if operation.contains("template.CSS(") {
+        "browser-interpretation:style"
+    } else {
+        "browser-interpretation:html-markup"
+    };
+    push_tag(&mut item.tags, interpretation);
+
+    let boundary = if item.tags.iter().any(|tag| tag == "trusted-content-bypass") {
+        "html-boundary:framework-trust-bypass"
+    } else if item.rule_id.contains("browser-dom-html-output")
+        || item.rule_id.contains("jquery-html-output")
+        || item.rule_id.contains("react-dangerous-html-output")
+        || item.rule_id.contains("lit-unsafe-html-output")
+        || item.rule_id.contains("vue-inner-html-output")
+        || item.rule_id.contains("solid-inner-html-output")
+    {
+        "html-boundary:dom-insertion"
+    } else if item.tags.iter().any(|tag| tag == "trusted-markup") {
+        "html-boundary:trusted-markup"
+    } else {
+        "html-boundary:explicit-html-response"
+    };
+    push_tag(&mut item.tags, boundary);
+}
+
 fn process_operand_is_dynamic(item: &Evidence) -> bool {
-    if capture_is_dynamic(item, &["command"]) {
+    if item.tags.iter().any(|tag| tag == "shell-command-text") {
+        return capture_is_dynamic(item, &["shell_command", "arguments", "command"]);
+    }
+    // Rust builder-chain matches also contain the nested Command::new call.
+    // The constructor owns executable selection; later .arg/.args matches do
+    // not create another dynamic-executable question for the same launch.
+    if item.rule_id == "rust-process-execution" && item.captures.contains_key("arguments") {
+        return false;
+    }
+    if capture_is_dynamic(item, &["executable", "command"]) {
         return true;
     }
     fixed_literal_string(item, "command").is_some_and(is_shell_name)
         && capture_is_dynamic(item, &["arguments"])
 }
 
+/// Recovers exact local launch semantics that variadic AST captures cannot
+/// represent on their own. This stays inside the matched invocation or Rust
+/// builder chain and does not infer values across statements or call sites.
+fn annotate_process_semantics(language: Language, source: &str, item: &mut Evidence) {
+    let start = item.location.start.byte_offset.min(source.len());
+    let end = item.location.end.byte_offset.min(source.len());
+    let operation = source.get(start..end).unwrap_or_default();
+
+    if language == Language::Rust
+        && let Some((value, offset)) = rust_command_new_operand(operation)
+    {
+        insert_process_capture(item, operation, "executable", value, offset);
+    }
+
+    let shell_api = item.tags.iter().any(|tag| tag == "shell-command-text")
+        || process_is_shell_api(language, source, item);
+    let shell_executable = item
+        .captures
+        .get("executable")
+        .or_else(|| item.captures.get("command"))
+        .and_then(|capture| quoted_string(capture.text.trim()))
+        .is_some_and(is_shell_name);
+    if !shell_api && !shell_executable {
+        push_tag(&mut item.tags, "process-invocation:executable-selection");
+        return;
+    }
+    push_tag(&mut item.tags, "shell-command-text");
+    push_tag(&mut item.tags, "process-invocation:shell-command");
+
+    if let Some((payload, offset)) = exact_shell_payload(language, operation) {
+        insert_process_capture(item, operation, "shell_command", payload, offset);
+    } else if shell_api {
+        let node_shell_option = matches!(
+            language,
+            Language::Javascript | Language::Typescript | Language::Tsx
+        ) && operation
+            .replace(char::is_whitespace, "")
+            .contains("shell:true");
+        let payload = if node_shell_option {
+            item.captures
+                .get("arguments")
+                .cloned()
+                .or_else(|| item.captures.get("command").cloned())
+        } else {
+            item.captures
+                .get("command")
+                .cloned()
+                .or_else(|| item.captures.get("arguments").cloned())
+        };
+        if let Some(payload) = payload {
+            item.captures.insert("shell_command".to_string(), payload);
+        }
+    } else if let Some(arguments) = item.captures.get("arguments").cloned() {
+        item.captures.insert("shell_command".to_string(), arguments);
+    }
+}
+
+fn insert_process_capture(
+    item: &mut Evidence,
+    operation: &str,
+    role: &str,
+    value: &str,
+    relative_offset: usize,
+) {
+    let prefix = operation.get(..relative_offset).unwrap_or(operation);
+    let start = advance_position(&item.location.start, prefix);
+    let end = advance_position(&start, value);
+    item.captures.insert(
+        role.to_string(),
+        Capture {
+            text: value.trim().to_string(),
+            location: mehscan_core::Location {
+                path: item.location.path.clone(),
+                start,
+                end,
+            },
+        },
+    );
+}
+
+fn advance_position(start: &mehscan_core::Position, text: &str) -> mehscan_core::Position {
+    let mut position = start.clone();
+    position.byte_offset += text.len();
+    for character in text.chars() {
+        if character == '\n' {
+            position.line += 1;
+            position.column = 1;
+        } else {
+            position.column += 1;
+        }
+    }
+    position
+}
+
+fn rust_command_new_operand(operation: &str) -> Option<(&str, usize)> {
+    let marker = "Command::new(";
+    let start = operation.find(marker)? + marker.len();
+    let end = matching_delimiter(operation, start - 1, b'(', b')')?;
+    let value = operation.get(start..end)?.trim();
+    let offset = operation.get(start..end)?.find(value)? + start;
+    Some((value, offset))
+}
+
+fn exact_shell_payload(language: Language, operation: &str) -> Option<(&str, usize)> {
+    if language == Language::Rust {
+        let mut values = Vec::new();
+        let mut search = 0usize;
+        while let Some(found) = operation.get(search..)?.find(".arg(") {
+            let open = search + found + ".arg".len();
+            let close = matching_delimiter(operation, open, b'(', b')')?;
+            let raw = operation.get(open + 1..close)?;
+            let value = raw.trim();
+            let offset = open + 1 + raw.find(value)?;
+            values.push((value, offset));
+            search = close + 1;
+        }
+        return shell_switch_payload(&values);
+    }
+
+    let open = operation.find('(')?;
+    let close = matching_delimiter(operation, open, b'(', b')')?;
+    let inside = operation.get(open + 1..close)?;
+    let values = split_arguments(inside)
+        .into_iter()
+        .filter(|value| !value.trim_start().starts_with("shell="))
+        .map(|value| {
+            let trimmed = value.trim();
+            let offset = open + 1 + inside.find(value)? + value.find(trimmed)?;
+            Some((trimmed, offset))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    shell_switch_payload(&values)
+}
+
+fn shell_switch_payload<'a>(values: &[(&'a str, usize)]) -> Option<(&'a str, usize)> {
+    values.windows(2).find_map(|pair| {
+        let switch = quoted_string(pair[0].0)?.to_ascii_lowercase();
+        matches!(
+            switch.as_str(),
+            "/c" | "/k" | "-c" | "-command" | "-encodedcommand" | "-file"
+        )
+        .then_some(pair[1])
+    })
+}
+
+fn matching_delimiter(source: &str, open: usize, opening: u8, closing: u8) -> Option<usize> {
+    let bytes = source.as_bytes();
+    (bytes.get(open) == Some(&opening)).then_some(())?;
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, byte) in bytes.iter().copied().enumerate().skip(open) {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == active {
+                quote = None;
+            }
+            continue;
+        }
+        match byte {
+            b'\'' | b'"' | b'`' => quote = Some(byte),
+            byte if byte == opening => depth += 1,
+            byte if byte == closing => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn quoted_string(value: &str) -> Option<&str> {
+    let value = value.trim().trim_start_matches('@');
+    (value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\''))))
+    .then(|| &value[1..value.len() - 1])
+}
+
 fn process_is_shell_api(language: Language, source: &str, item: &Evidence) -> bool {
-    if item.rule_id == "php-command-execution" {
+    if matches!(
+        item.rule_id.as_str(),
+        "php-command-execution" | "php-shell-command-operator"
+    ) {
+        return true;
+    }
+    if item
+        .symbol_resolution
+        .as_ref()
+        .is_some_and(|resolution| canonical_process_api_uses_shell(&resolution.canonical))
+    {
         return true;
     }
     let operation = source
@@ -583,25 +1134,43 @@ fn process_is_shell_api(language: Language, source: &str, item: &Evidence) -> bo
         .replace(char::is_whitespace, "");
     match language {
         Language::Javascript | Language::Typescript | Language::Tsx => {
-            operation.contains(".exec(") || operation.contains(".execSync(")
+            operation.contains(".exec(")
+                || operation.contains(".execSync(")
+                || operation.contains("shell:true")
         }
         Language::Python => {
             operation.contains("os.system(")
                 || operation.contains("os.popen(")
                 || operation.contains("shell=True")
         }
-        Language::C | Language::Cpp => {
-            operation.starts_with("system(") || operation.starts_with("popen(")
-        }
+        Language::C | Language::Cpp => ["system(", "popen(", "_popen(", "_wpopen(", "_wsystem("]
+            .iter()
+            .any(|callee| operation.starts_with(callee)),
         _ => false,
     }
 }
 
-fn executable_deserializer(item: &Evidence) -> bool {
+fn canonical_process_api_uses_shell(canonical: &str) -> bool {
+    matches!(
+        canonical,
+        "child_process.exec"
+            | "child_process.execSync"
+            | "os.system"
+            | "os.popen"
+            | "subprocess.getoutput"
+            | "subprocess.getstatusoutput"
+            | "asyncio.create_subprocess_shell"
+    )
+}
+
+pub(crate) fn executable_deserializer(item: &Evidence) -> bool {
     if item.tags.iter().any(|tag| {
         matches!(
             tag.as_str(),
-            "executable-functions" | "executable-object" | "unsafe-yaml"
+            "executable-functions"
+                | "executable-object"
+                | "unsafe-yaml"
+                | "loader-policy:unspecified"
         )
     }) {
         return true;
@@ -618,35 +1187,127 @@ fn executable_deserializer(item: &Evidence) -> bool {
                 | "java-xml-decoder-deserialization"
                 | "java-snakeyaml-load"
         ),
+        rule if rule.starts_with("csharp-") => matches!(
+            rule,
+            "csharp-binaryformatter-deserialization"
+                | "csharp-soapformatter-deserialization"
+                | "csharp-netdatacontractserializer-deserialization"
+                | "csharp-losformatter-deserialization"
+                | "csharp-objectstateformatter-deserialization"
+                | "csharp-xmlserializer-dynamic-type-deserialization"
+                | "csharp-jsonnet-typename-deserialization"
+                | "csharp-jsonnet-instance-typename-deserialization"
+                | "csharp-fastjson-unrestricted-deserialization"
+                | "csharp-fspickler-deserialization"
+        ),
         _ => false,
     }
 }
 
+fn annotate_deserialization_semantics(item: &mut Evidence) {
+    if item
+        .tags
+        .iter()
+        .any(|tag| tag == "loader-policy:unspecified")
+    {
+        push_tag(&mut item.tags, "loader-capability:version-dependent-object");
+    } else if executable_deserializer(item) {
+        push_tag(&mut item.tags, "loader-capability:executable-object");
+    } else {
+        push_tag(&mut item.tags, "loader-capability:structured-data");
+    }
+    if item.captures.contains_key("stream") {
+        push_tag(&mut item.tags, "deserialization-input:stream");
+    } else if item.captures.contains_key("payload") {
+        let file_content = item.captures.get("payload").is_some_and(|capture| {
+            let compact = capture
+                .text
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect::<String>();
+            compact.contains("readFileSync(")
+                || compact.starts_with("open(")
+                || compact.contains("File.OpenRead(")
+                || compact.contains("Files.newInputStream(")
+        });
+        push_tag(
+            &mut item.tags,
+            if file_content {
+                "deserialization-input:file-content"
+            } else {
+                "deserialization-input:bytes-or-text"
+            },
+        );
+    }
+    if item.captures.contains_key("type") {
+        push_tag(&mut item.tags, "deserialization-type-policy:explicit");
+    }
+    if item.tags.iter().any(|tag| tag == "model-artifact")
+        && fixed_literal_string(item, "payload").is_some()
+    {
+        push_tag(&mut item.tags, "artifact-path:fixed");
+    }
+}
+
+fn deserialization_origin_is_unresolved(item: &Evidence) -> bool {
+    if !executable_deserializer(item) {
+        return false;
+    }
+    if item.tags.iter().any(|tag| tag == "model-artifact") && item.captures.contains_key("payload")
+    {
+        // A constant model/artifact filename fixes selection, not the trust or
+        // integrity of the bytes read from that mutable artifact.
+        return true;
+    }
+    capture_is_dynamic(item, &["payload", "stream"])
+}
+
 fn raw_nosql_boundary(item: &Evidence) -> bool {
-    if item.rule_id.contains("mongodb-where") {
-        return capture_is_dynamic(item, &["nosql_query", "code"]);
-    }
-    if item.rule_id.contains("nosql-json") {
-        return capture_is_dynamic(item, &["nosql_query"]);
-    }
-    ["nosql_query", "nosql_expression"].into_iter().any(|role| {
-        item.context
-            .literals
-            .get(role)
-            .is_some_and(|literal| literal.state == LiteralState::Partial)
-    })
+    item.tags.iter().any(|tag| tag == "dynamic-nosql-structure")
 }
 
 fn capture_is_dynamic(item: &Evidence, roles: &[&str]) -> bool {
     let Some(role) = roles.iter().find(|role| item.captures.contains_key(**role)) else {
         return false;
     };
+    if capture_is_interpolated(item, role) {
+        return true;
+    }
     if fixed_literal_string(item, role).is_some() {
         return false;
     }
     item.captures
         .get(*role)
         .is_some_and(|capture| !is_quoted_literal(capture.text.trim()))
+}
+
+fn capture_is_interpolated(item: &Evidence, role: &str) -> bool {
+    let Some(capture) = item.captures.get(role) else {
+        return false;
+    };
+    let expression = capture.text.trim();
+    let language = item.rule_id.split('-').next().unwrap_or_default();
+    match language {
+        "javascript" | "typescript" | "tsx" => {
+            expression.starts_with('`') && expression.contains("${")
+        }
+        "csharp" => {
+            (expression.starts_with("$\"")
+                || expression.starts_with("$@\"")
+                || expression.starts_with("@$\""))
+                && expression.contains('{')
+        }
+        "python" => {
+            let lower = expression.to_ascii_lowercase();
+            ["f\"", "f'", "fr\"", "fr'", "rf\"", "rf'"]
+                .iter()
+                .any(|prefix| lower.starts_with(prefix))
+                && expression.contains('{')
+        }
+        "kotlin" => expression.starts_with('"') && expression.contains('$'),
+        "php" => expression.starts_with('"') && expression.contains('$'),
+        _ => false,
+    }
 }
 
 fn fixed_literal_string<'a>(item: &'a Evidence, role: &str) -> Option<&'a str> {
@@ -709,5 +1370,33 @@ fn language_tag(language: Language) -> &'static str {
         Language::Rust => "rust",
         Language::Tsx => "tsx",
         Language::Typescript => "typescript",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sql_composition_references_exclude_literal_keywords_and_keep_members() {
+        let source = "sql += \";\\nINSERT INTO Shipments (\" +\n    \"OrderId, ShipperId, TrackingNumber\" +\n    $\"'{shipment.OrderId}','{shipment.ShipperId}','{shipment.TrackingNumber}')\";\ncommand.CommandText = sql;";
+        let builder = bounded_statements(source, Language::Csharp)
+            .into_iter()
+            .find(|statement| statement.trim_start().starts_with("sql +="))
+            .unwrap();
+        let value = mutation_value(builder.trim(), "sql", Language::Csharp).unwrap();
+        assert!(expression_is_composed(Language::Csharp, value));
+        assert_eq!(
+            expression_references(Language::Csharp, value),
+            vec![
+                "shipment.OrderId",
+                "shipment.ShipperId",
+                "shipment.TrackingNumber"
+            ]
+        );
+        assert_eq!(
+            expression_references(Language::Java, "\"INSERT INTO Shipments\" + requestValue"),
+            vec!["requestValue"]
+        );
     }
 }

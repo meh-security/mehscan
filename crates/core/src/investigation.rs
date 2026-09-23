@@ -359,6 +359,8 @@ pub struct PathReview {
     /// linked controls, and only the questions that remain unresolved.
     #[serde(default)]
     pub decision_facts: ReviewDecisionFacts,
+    #[serde(default)]
+    pub investigation: ReviewInvestigationPlan,
     /// Deterministic confidence calibration for each allowed decision. Models
     /// decide the verdict; the scanner owns confidence consistency.
     pub confidence_policy: ReviewConfidencePolicy,
@@ -382,6 +384,121 @@ pub struct ReviewDecisionFacts {
     pub effective_controls: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unresolved: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewReadiness {
+    #[default]
+    Assessment,
+    Investigation,
+    Blocked,
+}
+
+/// One concrete bounded repository query that can resolve one or more missing
+/// decision facts. `operation` names an existing `mehscan investigate`
+/// operation and `arguments` uses its long-option names without leading `--`.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewLookupArguments {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(
+        default,
+        rename = "start-line",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub start_line: Option<String>,
+    #[serde(default, rename = "end-line", skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<String>,
+}
+
+impl ReviewLookupArguments {
+    pub fn get(&self, name: &str) -> Option<&String> {
+        match name {
+            "path" => self.path.as_ref(),
+            "start-line" => self.start_line.as_ref(),
+            "end-line" => self.end_line.as_ref(),
+            "symbol" => self.symbol.as_ref(),
+            "limit" => self.limit.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        [
+            &self.path,
+            &self.start_line,
+            &self.end_line,
+            &self.symbol,
+            &self.limit,
+        ]
+        .into_iter()
+        .filter(|value| value.is_some())
+        .count()
+    }
+}
+
+impl<const N: usize> From<[(String, String); N]> for ReviewLookupArguments {
+    fn from(arguments: [(String, String); N]) -> Self {
+        let mut result = Self::default();
+        for (name, value) in arguments {
+            match name.as_str() {
+                "path" => result.path = Some(value),
+                "start-line" => result.start_line = Some(value),
+                "end-line" => result.end_line = Some(value),
+                "symbol" => result.symbol = Some(value),
+                "limit" => result.limit = Some(value),
+                _ => {}
+            }
+        }
+        result
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewLookupRequest {
+    pub operation: String,
+    pub arguments: ReviewLookupArguments,
+    pub questions: Vec<String>,
+    pub purpose: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewInvestigationPlan {
+    pub readiness: ReviewReadiness,
+    #[serde(default)]
+    pub budget: ReviewInvestigationBudget,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_facts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lookup_requests: Vec<ReviewLookupRequest>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blockers: Vec<String>,
+}
+
+/// Family-calibrated limits carried with one review. These are workflow limits,
+/// not evidence and not vulnerability severity.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewInvestigationBudget {
+    pub max_supplied_lookups: usize,
+    pub max_escalations: usize,
+    pub max_returned_bytes: usize,
+    pub max_lookup_depth: usize,
+}
+
+impl Default for ReviewInvestigationBudget {
+    fn default() -> Self {
+        Self {
+            max_supplied_lookups: 2,
+            max_escalations: 1,
+            max_returned_bytes: 16 * 1024,
+            max_lookup_depth: 1,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -452,6 +569,8 @@ pub struct ObservationReview {
     pub review_basis: Option<ObservationReviewBasis>,
     #[serde(default)]
     pub decision_facts: ReviewDecisionFacts,
+    #[serde(default)]
+    pub investigation: ReviewInvestigationPlan,
     pub confidence_policy: ReviewConfidencePolicy,
     pub facts: Vec<ReviewNeighborhoodFact>,
     pub open_questions: Vec<String>,
@@ -509,12 +628,166 @@ pub struct PathReviewJob {
     pub reviews: Vec<PathReview>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub observation_reviews: Vec<ObservationReview>,
+    #[serde(default)]
+    pub review_coverage: ReviewPipelineCoverage,
     pub coverage: Coverage,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<Diagnostic>,
 }
 
-pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.0";
+/// Accounting for deterministic recognition and AI-review admission. Readiness
+/// counts describe the returned page; admitted reviews can span later pages.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewPipelineCoverage {
+    pub recognized_boundary_count: usize,
+    pub admitted_review_count: usize,
+    pub returned_review_count: usize,
+    pub assessment_review_count: usize,
+    pub investigation_ready_review_count: usize,
+    pub blocked_review_count: usize,
+    /// Classification of existing high-risk evidence before AI-review
+    /// admission. This is diagnostic accounting only and cannot create a
+    /// finding or review.
+    #[serde(default)]
+    pub admission_audit: ReviewAdmissionAudit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewAdmissionDisposition {
+    PathOwned,
+    ObservationAdmitted,
+    SafelySuppressed,
+    DuplicateSuperseded,
+    InventoryOnly,
+    ContextOnly,
+    ExcludedReviewMaterial,
+    /// A relevant boundary missed every known admission and suppression
+    /// decision. Keeping this explicit prevents diagnostics from describing an
+    /// unexplained loss as a safe exclusion.
+    Unclassified,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewAdmissionAudit {
+    pub classified_boundary_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub counts: Vec<ReviewAdmissionAuditCount>,
+    /// Bounded deterministic examples for non-admitted dispositions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excluded_examples: Vec<ReviewAdmissionAuditExample>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewAdmissionAuditCount {
+    pub capability: Capability,
+    pub disposition: ReviewAdmissionDisposition,
+    pub count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewAdmissionAuditExample {
+    pub evidence_id: String,
+    pub rule_id: String,
+    pub capability: Capability,
+    pub disposition: ReviewAdmissionDisposition,
+    pub location: Location,
+}
+
+pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.1";
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewLookupOutcome {
+    Answered,
+    NoRelevantResult,
+    Unavailable,
+    Truncated,
+    BudgetExhausted,
+    Failed,
+}
+
+/// One source artifact returned by a requested bounded lookup. The excerpt is
+/// reviewer-supplied response evidence and remains distinct from deterministic
+/// scan evidence.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewRetrievedArtifact {
+    pub artifact_id: String,
+    pub location: Location,
+    pub excerpt: String,
+}
+
+/// Records execution of one supplied lookup or one bounded follow-on lookup.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewLookupAttempt {
+    /// Zero-based supplied request index. It may be absent only when
+    /// `escalation` records one concrete follow-on lookup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_index: Option<usize>,
+    /// One bounded follow-on lookup discovered while executing a supplied
+    /// request. It remains reviewer evidence and never becomes scan evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub escalation: Option<ReviewLookupRequest>,
+    pub outcome: ReviewLookupOutcome,
+    #[serde(default)]
+    pub artifacts: Vec<ReviewRetrievedArtifact>,
+    pub detail: String,
+}
+
+/// Connects a supplied evidence ID or retrieved artifact ID to a concrete
+/// claim used by the reviewer.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewArtifactCitation {
+    pub artifact_id: String,
+    pub claim: String,
+}
+
+/// Reviewer reasoning is retained explicitly and never promoted into scanner
+/// facts. Every inference must cite one or more supplied or retrieved artifacts.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewerInference {
+    pub claim: String,
+    pub artifact_ids: Vec<String>,
+}
+
+/// A source-supported security question discovered while reviewing a different
+/// admitted invariant. It remains an unvalidated reviewer-origin lead and must
+/// never alter the originating verdict or deterministic coverage.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewerOriginLead {
+    pub question: String,
+    pub security_relevance: String,
+    pub distinct_from_review: String,
+    pub location: Location,
+    pub artifact_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewerOriginLeadRecord {
+    pub origin_review_id: String,
+    #[serde(flatten)]
+    pub lead: ReviewerOriginLead,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewInvestigationTrace {
+    #[serde(default)]
+    pub lookup_attempts: Vec<ReviewLookupAttempt>,
+    #[serde(default)]
+    pub citations: Vec<ReviewArtifactCitation>,
+    #[serde(default)]
+    pub reviewer_inferences: Vec<ReviewerInference>,
+    #[serde(default)]
+    pub reviewer_origin_leads: Vec<ReviewerOriginLead>,
+    #[serde(default)]
+    pub blockers: Vec<String>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -524,6 +797,8 @@ pub struct PathReviewTriageResult {
     pub confidence: ReviewConfidence,
     pub summary: String,
     pub checks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub investigation: Option<ReviewInvestigationTrace>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -643,6 +918,15 @@ pub struct PathReviewBundleManifest {
     /// byte boundaries can split a bundle before this limit is reached.
     #[serde(default)]
     pub max_reviews_per_bundle: usize,
+    /// Reviews admitted before the optional run-level scheduling budget.
+    #[serde(default)]
+    pub admitted_review_count: usize,
+    /// Optional total number of reviews scheduled for this run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_total_reviews: Option<usize>,
+    /// Admitted review IDs intentionally left for a later run by the scheduler.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deferred_review_ids: Vec<String>,
     pub review_count: usize,
     pub bundle_count: usize,
     pub bundles: Vec<PathReviewBundleManifestEntry>,
@@ -660,17 +944,83 @@ pub struct PathReviewBundleResponseSet {
     pub schema_version: String,
     pub bundle_fingerprint: String,
     pub results: Vec<PathReviewTriageResult>,
+    /// Present only when the CLI replaces one invalid result and validates the
+    /// complete repaired response. A repaired response cannot be repaired again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair: Option<ReviewRepairTrace>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewRepairTrace {
+    pub review_id: String,
+    pub prior_response_fingerprint: String,
+    pub prior_result_fingerprint: String,
+    pub replacement_result_fingerprint: String,
+    pub validation_error: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PathReviewBundleTriageReport {
     pub schema_version: String,
     pub bundle_fingerprint: String,
+    #[serde(default)]
+    pub response_fingerprint: String,
     pub complete: bool,
     pub issue_count: usize,
     pub not_issue_count: usize,
     pub needs_review_count: usize,
     pub results: Vec<PathReviewTriageResult>,
+}
+
+/// Explicit review-run accounting. Missing responses are also deferred when a
+/// partial run is intentionally accepted. Blocked and truncated IDs are
+/// completed responses whose verdict remains `needs_review`, so these states
+/// do not by themselves make the response set incomplete.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewWorkSummary {
+    pub complete: bool,
+    #[serde(default)]
+    pub admitted_review_count: usize,
+    pub scheduled_bundle_count: usize,
+    pub scheduled_review_count: usize,
+    pub completed_bundle_count: usize,
+    pub completed_review_count: usize,
+    #[serde(default)]
+    pub accepted_investigation_count: usize,
+    #[serde(default)]
+    pub deferred_review_ids: Vec<String>,
+    #[serde(default)]
+    pub blocked_review_ids: Vec<String>,
+    #[serde(default)]
+    pub truncated_review_ids: Vec<String>,
+    #[serde(default)]
+    pub missing_review_ids: Vec<String>,
+    #[serde(default)]
+    pub invalid_review_ids: Vec<String>,
+}
+
+/// Low-cost review utility measurements derived from validated requests and
+/// responses. These fields do not estimate model tokens, latency, or cost.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewFamilyMeasurement {
+    pub capability: Capability,
+    pub scheduled_review_count: usize,
+    pub completed_review_count: usize,
+    pub resolved_review_count: usize,
+    pub issue_count: usize,
+    pub not_issue_count: usize,
+    pub needs_review_count: usize,
+    pub lookup_attempt_count: usize,
+    pub answered_lookup_count: usize,
+    pub no_relevant_result_lookup_count: usize,
+    pub unavailable_lookup_count: usize,
+    pub truncated_lookup_count: usize,
+    pub budget_exhausted_lookup_count: usize,
+    pub failed_lookup_count: usize,
+    pub unsuccessful_lookup_count: usize,
+    pub returned_artifact_bytes: usize,
+    pub reviewer_origin_lead_count: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -690,6 +1040,16 @@ pub struct PathReviewBundleIssueGroup {
 pub struct PathReviewBundleRunReport {
     pub schema_version: String,
     pub job_fingerprint: String,
+    #[serde(default)]
+    pub response_fingerprint: String,
+    #[serde(default)]
+    pub work: ReviewWorkSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repairs: Vec<ReviewRepairTrace>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reviewer_origin_leads: Vec<ReviewerOriginLeadRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub family_measurements: Vec<ReviewFamilyMeasurement>,
     pub bundle_count: usize,
     pub review_count: usize,
     pub issue_count: usize,
@@ -706,6 +1066,8 @@ pub struct PathReviewBundleRunReport {
 pub struct PathReviewTriageProgress {
     pub schema_version: String,
     pub job_fingerprint: String,
+    #[serde(default)]
+    pub response_fingerprint: String,
     pub submitted_count: usize,
     pub remaining_count: usize,
     pub complete: bool,
@@ -737,6 +1099,8 @@ pub struct PathReviewIssueGroup {
 pub struct PathReviewTriageReport {
     pub schema_version: String,
     pub job_fingerprint: String,
+    #[serde(default)]
+    pub response_fingerprint: String,
     pub issue_count: usize,
     pub not_issue_count: usize,
     pub needs_review_count: usize,

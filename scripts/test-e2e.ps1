@@ -55,13 +55,37 @@ foreach ($entry in $manifest.bundles) {
     $request = Get-Content -Raw -LiteralPath $requestPath | ConvertFrom-Json
     $results = foreach ($review in $request.reviews) {
         $unresolved = @($review.decision_facts.unresolved | Where-Object { $_ })
+        $trace = [ordered]@{
+            lookup_attempts = @()
+            citations = @()
+            reviewer_inferences = @()
+            reviewer_origin_leads = @()
+            blockers = @()
+        }
         if ($unresolved.Count -gt 0) {
+            $lookups = @($review.investigation.lookup_requests | Where-Object { $_ })
+            for ($index = 0; $index -lt $lookups.Count; $index++) {
+                if (@($lookups[$index].questions) -contains $unresolved[0]) {
+                    $trace.lookup_attempts = @([ordered]@{
+                        request_index = $index
+                        escalation = $null
+                        outcome = "unavailable"
+                        detail = "The synthetic end-to-end test did not execute this supplied lookup."
+                        artifacts = @()
+                    })
+                    break
+                }
+            }
+            if ($trace.lookup_attempts.Count -eq 0) {
+                $trace.blockers = @($review.investigation.blockers | Where-Object { $_ })
+            }
             [ordered]@{
                 review_id = $review.id
                 decision = "needs_review"
                 confidence = $review.confidence_policy.needs_review
                 summary = "The supplied evidence leaves one decisive runtime fact unresolved."
                 checks = @($unresolved[0])
+                investigation = $trace
             }
         } else {
             [ordered]@{
@@ -70,11 +94,12 @@ foreach ($entry in $manifest.bundles) {
                 confidence = $review.confidence_policy.issue
                 summary = "The supplied evidence establishes the reviewed weakness without an unresolved fact."
                 checks = @()
+                investigation = $trace
             }
         }
     }
     $response = [ordered]@{
-        schema_version = "1.0"
+        schema_version = "1.1"
         bundle_fingerprint = $request.bundle_fingerprint
         results = @($results)
     }

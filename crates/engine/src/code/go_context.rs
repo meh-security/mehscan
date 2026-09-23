@@ -361,8 +361,23 @@ impl GoProjectContext {
                 )
             {
                 let mut captures = capture_first(path, "query", call);
+                let structured_where = terminal_name(&call.callee) == "Where"
+                    && call
+                        .arguments
+                        .first()
+                        .is_some_and(|argument| gorm_structured_condition(root, argument));
+                if structured_where && let Some(filter) = call.arguments.first() {
+                    captures.insert("structured_filter".to_string(), capture(path, filter));
+                }
                 if call.arguments.len() > 1 {
                     captures.insert("parameters".to_string(), capture(path, &call.arguments[1]));
+                }
+                let mut tags = vec!["database", "gorm", terminal_name(&call.callee)];
+                if structured_where {
+                    tags.extend([
+                        "query-role:structured-filter",
+                        "query-structure:gorm-condition-object",
+                    ]);
                 }
                 push(
                     path,
@@ -372,7 +387,7 @@ impl GoProjectContext {
                     Capability::DatabaseQuery,
                     captures,
                     &["CWE-89"],
-                    &["database", "gorm", terminal_name(&call.callee)],
+                    &tags,
                     Confidence::Medium,
                     comments,
                     conditional,
@@ -536,6 +551,15 @@ impl GoProjectContext {
                     if !emitted_resource_filters.insert(resource_key) {
                         continue;
                     }
+                    let mut tags = vec![
+                        "database",
+                        "resource-access",
+                        "project-summary",
+                        "authorization-context-required",
+                    ];
+                    if summary.mutates_resource {
+                        tags.push("resource-mutation");
+                    }
                     push(
                         path,
                         &call.node,
@@ -553,12 +577,7 @@ impl GoProjectContext {
                             ),
                         ]),
                         &["CWE-639"],
-                        &[
-                            "database",
-                            "resource-access",
-                            "project-summary",
-                            "authorization-context-required",
-                        ],
+                        &tags,
                         Confidence::High,
                         comments,
                         conditional,
@@ -791,6 +810,85 @@ impl GoProjectContext {
         );
         relate_pair(path, node, source_rule, sink_rule, evidence);
     }
+}
+
+fn gorm_structured_condition(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    argument: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    let compact_argument = compact(argument.text().as_ref());
+    if compact_argument.contains(".Expr(")
+        || compact_argument.contains(".Expr{")
+        || compact_argument.contains(".NamedExpr{")
+    {
+        return false;
+    }
+    match argument.kind().as_ref() {
+        "composite_literal" => true,
+        "unary_expression" if argument.text().trim_start().starts_with('&') => argument
+            .children()
+            .filter(|child| child.is_named())
+            .any(|child| child.kind().as_ref() == "composite_literal"),
+        "parenthesized_expression" => argument
+            .children()
+            .filter(|child| child.is_named())
+            .next()
+            .is_some_and(|child| gorm_structured_condition(root, &child)),
+        "identifier" => gorm_structured_parameter(root, argument),
+        _ => false,
+    }
+}
+
+fn gorm_structured_parameter(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    argument: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    let name = argument.text().trim().to_string();
+    let Some(parameters) = argument
+        .ancestors()
+        .find(|ancestor| {
+            matches!(
+                ancestor.kind().as_ref(),
+                "function_declaration" | "method_declaration" | "func_literal"
+            )
+        })
+        .and_then(|function| function.field("parameters"))
+    else {
+        return false;
+    };
+    let types = parameters
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "parameter_declaration")
+        .filter_map(|parameter| {
+            let text = parameter.text();
+            let type_text = text.trim().strip_prefix(&name)?.trim_start();
+            (!type_text.is_empty() && !type_text.starts_with(',')).then_some(type_text.to_string())
+        })
+        .collect::<BTreeSet<_>>();
+    if types.len() != 1 {
+        return false;
+    }
+    let type_text = types.first().expect("one exact parameter type");
+    if type_text.starts_with("map[") {
+        return true;
+    }
+    let type_name = type_text
+        .trim_start_matches('*')
+        .rsplit('.')
+        .next()
+        .unwrap_or_default();
+    if !valid_identifier(type_name) {
+        return false;
+    }
+    root.dfs().any(|node| {
+        node.kind().as_ref() == "type_spec"
+            && node
+                .field("name")
+                .is_some_and(|declared| declared.text().trim() == type_name)
+            && node
+                .field("type")
+                .is_some_and(|declared| declared.kind().as_ref() == "struct_type")
+    })
 }
 
 fn go_function_names(source: &str) -> Vec<String> {

@@ -6,6 +6,7 @@ use ast_grep_language::SupportLang;
 use mehscan_core::{
     Capability, Capture, Confidence, Evidence, EvidenceContext, EvidenceKind, HttpRouteAccess,
     HttpRouteContext, Language, Location, Position, Provenance, Resolution, RuntimeEnvironment,
+    SymbolConfidence,
 };
 
 use super::comments::CommentRanges;
@@ -1242,69 +1243,275 @@ fn add_business_policy_reviews<'tree>(
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
     evidence: &mut Vec<Evidence>,
 ) {
-    let text = compact(&function.text());
-    if text.contains("request.json()")
-        && text.contains("amount:price")
-        && (text.contains("status:\"paid\"") || text.contains("status:'paid'"))
-        && let Some(call) = function.dfs().filter_map(call_site).find(|call| {
-            call.callee.rsplit('.').next() == Some("insertRow")
-                && compact(&call.node.text()).contains("amount:price")
-        })
-    {
-        push_fact(
-            path,
-            language,
-            "nextjs-client-controlled-financial-amount-review",
-            &call.node,
-            EvidenceKind::SensitiveOperation,
-            Capability::ResourceAccess,
-            vec!["CWE-840"],
-            vec![
+    let request_values = request_body_values(function, path);
+    let server_values = server_financial_values(function, path);
+    for call in function.dfs().filter_map(call_site) {
+        let Some(effect) = financial_effect(path, &call, evidence) else {
+            continue;
+        };
+        if let Some(origin) = request_value_origin(&effect.value, &request_values) {
+            let authority_helper = financial_authority_helper(function, path, &call);
+            let mut captures = BTreeMap::from([
+                ("financial_effect".to_string(), capture(path, &call.node)),
+                ("supplied_value".to_string(), capture(path, &effect.value)),
+                ("request_field".to_string(), origin),
+                ("effect_field".to_string(), capture(path, &effect.key)),
+            ]);
+            if let Some(resource) = effect.resource {
+                captures.insert("financial_resource".to_string(), capture(path, &resource));
+            }
+            if let Some(status) = effect.status {
+                captures.insert("financial_status".to_string(), capture(path, &status));
+            }
+            let mut tags = vec![
                 "nextjs",
                 "business-logic",
                 "financial-operation",
-                "client-controlled-amount",
-                "server-owned-price-lookup-not-observed",
+                "client-controlled-value",
+                "review-invariant:authoritative-value-binding",
                 "recommendation:fix-application",
-            ],
-            Confidence::High,
-            BTreeMap::from([("financial_write".to_string(), capture(path, &call.node))]),
-            vec![route.clone()],
-            Vec::new(),
-            comments,
-            conditional,
-            literals,
-            evidence,
-        );
+            ];
+            if let Some((_helper, helper_capture)) = authority_helper {
+                tags.push("related-authority-helper-observed");
+                captures.insert("authority_helper".to_string(), helper_capture);
+            } else {
+                tags.push("authoritative-value-binding-not-observed");
+            }
+            push_fact(
+                path,
+                language,
+                "nextjs-client-controlled-financial-amount-review",
+                &call.node,
+                EvidenceKind::SensitiveOperation,
+                Capability::ResourceAccess,
+                vec!["CWE-840"],
+                tags,
+                Confidence::High,
+                captures,
+                vec![route.clone()],
+                Vec::new(),
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+        } else if let Some((_helper, authority)) =
+            server_financial_origin(&effect.value, &server_values)
+        {
+            let mut captures = BTreeMap::from([
+                ("financial_effect".to_string(), capture(path, &call.node)),
+                (
+                    "authoritative_value".to_string(),
+                    capture(path, &effect.value),
+                ),
+                ("authority_helper".to_string(), authority),
+                ("effect_field".to_string(), capture(path, &effect.key)),
+            ]);
+            if let Some(resource) = effect.resource {
+                captures.insert("financial_resource".to_string(), capture(path, &resource));
+            }
+            push_fact(
+                path,
+                language,
+                "nextjs-authoritative-financial-value-binding-control",
+                &call.node,
+                EvidenceKind::Validation,
+                Capability::ResourceAccess,
+                vec!["CWE-840"],
+                vec![
+                    "nextjs",
+                    "business-logic",
+                    "financial-operation",
+                    "authoritative-value-binding",
+                    "server-loaded-value",
+                ],
+                Confidence::High,
+                captures,
+                vec![route.clone()],
+                Vec::new(),
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+        }
     }
-    if text.contains("currentBalance<amount")
-        && text.contains("newBalance=currentBalance-amount")
-        && text.contains("updateRow(\"credits\"")
-        && !text.to_ascii_lowercase().contains("transaction(")
-        && !text.to_ascii_lowercase().contains("forupdate")
-        && let Some(call) = function.dfs().filter_map(call_site).find(|call| {
-            call.callee.rsplit('.').next() == Some("updateRow")
-                && compact(&call.node.text()).contains("balance:newBalance")
+    add_state_transition_review(
+        path,
+        function,
+        language,
+        route,
+        &request_values,
+        comments,
+        conditional,
+        literals,
+        evidence,
+    );
+    add_shared_state_limit_review(
+        path,
+        function,
+        language,
+        route,
+        &request_values,
+        comments,
+        conditional,
+        literals,
+        evidence,
+    );
+    add_atomic_shared_state_controls(
+        path,
+        function,
+        language,
+        route,
+        &request_values,
+        comments,
+        conditional,
+        literals,
+        evidence,
+    );
+}
+
+#[derive(Clone)]
+struct RequestValueBinding {
+    field: String,
+    capture: Capture,
+}
+
+struct FinancialEffect<'tree> {
+    key: Node<'tree, StrDoc<SupportLang>>,
+    value: Node<'tree, StrDoc<SupportLang>>,
+    resource: Option<Node<'tree, StrDoc<SupportLang>>>,
+    status: Option<Node<'tree, StrDoc<SupportLang>>>,
+}
+
+struct StateTransitionEffect<'tree> {
+    key: Node<'tree, StrDoc<SupportLang>>,
+    value: Node<'tree, StrDoc<SupportLang>>,
+    resource: Node<'tree, StrDoc<SupportLang>>,
+}
+
+struct TransitionPolicy<'tree> {
+    node: Node<'tree, StrDoc<SupportLang>>,
+    current_state: Node<'tree, StrDoc<SupportLang>>,
+    helper: Option<(String, Capture)>,
+    explicit_map: bool,
+}
+
+struct SharedStateValue<'tree> {
+    value: Node<'tree, StrDoc<SupportLang>>,
+    load_helper: Option<(String, Capture)>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_atomic_shared_state_controls<'tree>(
+    path: &str,
+    function: &Node<'tree, StrDoc<SupportLang>>,
+    language: Language,
+    route: &HttpRouteContext,
+    request_values: &BTreeMap<String, RequestValueBinding>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    let Some(root) = function.ancestors().last() else {
+        return;
+    };
+    let source = root.text();
+    let Some(postgres_import) = default_import_name(&source, "postgres") else {
+        return;
+    };
+    let clients = root
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "variable_declarator")
+        .filter_map(|declaration| {
+            let name = declaration.field("name")?;
+            let value = declaration.field("value")?;
+            let call = call_site(value)?;
+            (name.kind().as_ref() == "identifier" && call.callee == postgres_import)
+                .then(|| name.text().trim().to_string())
         })
-    {
+        .collect::<Vec<_>>();
+    let candidates = function
+        .dfs()
+        .filter(|node| {
+            let text = node.text();
+            let text = text.trim_start();
+            clients
+                .iter()
+                .any(|client| text.starts_with(&format!("{client}`")))
+                && !node
+                    .children()
+                    .filter(|child| child.is_named())
+                    .any(|child| {
+                        let child = child.text();
+                        let child = child.trim_start();
+                        clients
+                            .iter()
+                            .any(|client| child.starts_with(&format!("{client}`")))
+                    })
+        })
+        .filter_map(|node| {
+            let query = compact(&node.text()).to_ascii_lowercase();
+            if !query.contains("update") || !query.contains("set") || !query.contains("where") {
+                return None;
+            }
+            request_values.iter().find_map(|(binding, origin)| {
+                let delta = binding.strip_suffix(".*").unwrap_or(binding);
+                let normalized_delta = delta.to_ascii_lowercase();
+                SHARED_STATE_FIELDS.iter().find_map(|field| {
+                    let assignment = format!("{field}={field}-${{{normalized_delta}}}");
+                    let predicate = format!("{field}>=${{{normalized_delta}}}");
+                    (query.contains(&assignment) && query.contains(&predicate)).then(|| {
+                        let mut request_field = origin.capture.clone();
+                        request_field.text = origin.field.clone();
+                        (
+                            node.clone(),
+                            field.to_string(),
+                            delta.to_string(),
+                            request_field,
+                        )
+                    })
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    for (node, field, delta, origin) in candidates {
         push_fact(
             path,
             language,
-            "nextjs-read-check-write-race-review",
-            &call.node,
-            EvidenceKind::SensitiveOperation,
+            "nextjs-atomic-shared-state-limit-control",
+            &node,
+            EvidenceKind::Validation,
             Capability::ResourceAccess,
             vec!["CWE-362"],
             vec![
                 "nextjs",
+                "postgresql",
                 "business-logic",
-                "read-check-write",
-                "transaction-or-lock-not-observed",
-                "database-atomicity-may-own-control",
-                "recommendation:review-then-fix-application",
+                "shared-state-limit",
+                "single-conditional-update",
+                "limit-predicate-same-statement",
             ],
-            Confidence::Medium,
-            BTreeMap::from([("balance_write".to_string(), capture(path, &call.node))]),
+            Confidence::High,
+            BTreeMap::from([
+                ("atomic_effect".to_string(), capture(path, &node)),
+                (
+                    "state_field".to_string(),
+                    Capture {
+                        text: field,
+                        location: location(path, &node),
+                    },
+                ),
+                (
+                    "requested_delta".to_string(),
+                    Capture {
+                        text: delta,
+                        location: origin.location.clone(),
+                    },
+                ),
+                ("request_field".to_string(), origin),
+            ]),
             vec![route.clone()],
             Vec::new(),
             comments,
@@ -1313,6 +1520,867 @@ fn add_business_policy_reviews<'tree>(
             evidence,
         );
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_shared_state_limit_review<'tree>(
+    path: &str,
+    function: &Node<'tree, StrDoc<SupportLang>>,
+    language: Language,
+    route: &HttpRouteContext,
+    request_values: &BTreeMap<String, RequestValueBinding>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    let current_values = shared_state_values(function, path);
+    for declaration in function
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "variable_declarator")
+        .filter(|node| belongs_to_function(node, function))
+    {
+        let (Some(name), Some(computation)) =
+            (declaration.field("name"), declaration.field("value"))
+        else {
+            continue;
+        };
+        if name.kind().as_ref() != "identifier"
+            || computation.kind().as_ref() != "binary_expression"
+        {
+            continue;
+        }
+        let (Some(current), Some(delta)) = (computation.field("left"), computation.field("right"))
+        else {
+            continue;
+        };
+        let derived_name = name.text().trim().to_string();
+        let current_text = current.text();
+        let current_name = current_text.trim();
+        if compact(&computation.text())
+            != format!("{}-{}", compact(&current.text()), compact(&delta.text()))
+            || !plain_identifier(current_name)
+        {
+            continue;
+        }
+        let Some(delta_origin) = request_value_origin(&delta, request_values) else {
+            continue;
+        };
+        let Some(current_value) = current_values.get(current_name) else {
+            continue;
+        };
+        let Some(limit_check) = shared_state_limit_check(
+            function,
+            declaration.range().start,
+            current_name,
+            delta.text().trim(),
+        ) else {
+            continue;
+        };
+        for call in function
+            .dfs()
+            .filter_map(call_site)
+            .filter(|call| call.node.range().start > declaration.range().end)
+        {
+            let Some((field, value, resource)) = shared_state_effect(path, &call, evidence) else {
+                continue;
+            };
+            if compact(&value.text()) != derived_name {
+                continue;
+            }
+            let persistence_name = call
+                .callee
+                .rsplit('.')
+                .next()
+                .unwrap_or(call.callee.as_str())
+                .trim()
+                .to_string();
+            let mut persistence = capture(path, &call.node);
+            persistence.text = persistence_name;
+            let mut captures = BTreeMap::from([
+                ("shared_state_effect".to_string(), capture(path, &call.node)),
+                ("state_resource".to_string(), capture(path, &resource)),
+                ("state_field".to_string(), capture(path, &field)),
+                (
+                    "current_value".to_string(),
+                    capture(path, &current_value.value),
+                ),
+                ("requested_delta".to_string(), capture(path, &delta)),
+                ("request_field".to_string(), delta_origin.clone()),
+                ("derived_value".to_string(), capture(path, &computation)),
+                ("limit_check".to_string(), capture(path, &limit_check)),
+                ("persistence_helper".to_string(), persistence),
+            ]);
+            if let Some((_name, helper)) = &current_value.load_helper {
+                captures.insert("state_load_helper".to_string(), helper.clone());
+            }
+            push_fact(
+                path,
+                language,
+                "nextjs-read-check-write-race-review",
+                &call.node,
+                EvidenceKind::SensitiveOperation,
+                Capability::ResourceAccess,
+                vec!["CWE-362"],
+                vec![
+                    "nextjs",
+                    "business-logic",
+                    "shared-state-limit",
+                    "read-check-derive-write",
+                    "review-invariant:shared-state-limit-enforcement",
+                    "database-atomicity-unresolved",
+                    "recommendation:review-then-fix-application",
+                ],
+                Confidence::High,
+                captures,
+                vec![route.clone()],
+                Vec::new(),
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+        }
+    }
+}
+
+fn shared_state_values<'tree>(
+    function: &Node<'tree, StrDoc<SupportLang>>,
+    path: &str,
+) -> BTreeMap<String, SharedStateValue<'tree>> {
+    let declarations = function
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "variable_declarator")
+        .filter(|node| belongs_to_function(node, function))
+        .collect::<Vec<_>>();
+    declarations
+        .iter()
+        .filter_map(|declaration| {
+            let name = declaration.field("name")?;
+            let value = declaration.field("value")?;
+            if name.kind().as_ref() != "identifier" || !shared_state_member(&value) {
+                return None;
+            }
+            let root = root_identifier(value.text().trim())?;
+            let load = declarations.iter().find(|candidate| {
+                candidate.range().start < declaration.range().start
+                    && candidate
+                        .field("name")
+                        .is_some_and(|candidate_name| candidate_name.text().trim() == root)
+            })?;
+            let load_value = load.field("value")?;
+            if is_request_json_call(&load_value) {
+                return None;
+            }
+            let call = load_value.dfs().find_map(call_site)?;
+            let helper_name = call.callee.rsplit('.').next()?.trim().to_string();
+            let mut helper = capture(path, &call.node);
+            helper.text = helper_name.clone();
+            let binding = name.text().trim().to_string();
+            Some((
+                binding.clone(),
+                SharedStateValue {
+                    value,
+                    load_helper: Some((helper_name, helper)),
+                },
+            ))
+        })
+        .collect()
+}
+
+fn shared_state_limit_check<'tree>(
+    function: &Node<'tree, StrDoc<SupportLang>>,
+    before: usize,
+    current: &str,
+    delta: &str,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    function
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "if_statement")
+        .filter(|node| belongs_to_function(node, function) && node.range().start < before)
+        .find(|branch| {
+            let Some(condition) = branch.field("condition") else {
+                return false;
+            };
+            let condition_text = compact(&condition.text());
+            let compares_values = expression_mentions(&condition, current)
+                && expression_mentions(&condition, delta)
+                && ['<', '>']
+                    .iter()
+                    .any(|operator| condition_text.contains(*operator));
+            let terminates = branch.field("consequence").is_some_and(|consequence| {
+                consequence.dfs().any(|node| {
+                    matches!(node.kind().as_ref(), "return_statement" | "throw_statement")
+                })
+            });
+            compares_values && terminates
+        })
+}
+
+fn expression_mentions(node: &Node<'_, StrDoc<SupportLang>>, expression: &str) -> bool {
+    let expression = compact(expression);
+    node.dfs()
+        .any(|candidate| compact(&candidate.text()) == expression)
+}
+
+fn shared_state_effect<'tree>(
+    path: &str,
+    call: &CallSite<'tree>,
+    evidence: &[Evidence],
+) -> Option<(
+    Node<'tree, StrDoc<SupportLang>>,
+    Node<'tree, StrDoc<SupportLang>>,
+    Node<'tree, StrDoc<SupportLang>>,
+)> {
+    if !owned_persistence_call(path, call, evidence) {
+        return None;
+    }
+    let object = call.arguments.iter().find(|argument| {
+        matches!(argument.kind().as_ref(), "object" | "object_expression")
+            && object_field(argument, &SHARED_STATE_FIELDS).is_some()
+    })?;
+    let (field, value) = object_field(object, &SHARED_STATE_FIELDS)?;
+    let resource = call
+        .arguments
+        .iter()
+        .find(|argument| quoted_shared_state_resource(argument.text().trim()))?
+        .clone();
+    Some((field, value, resource))
+}
+
+const SHARED_STATE_FIELDS: [&str; 7] = [
+    "balance",
+    "credits",
+    "inventory",
+    "quota",
+    "remaining",
+    "stock",
+    "usage",
+];
+
+fn shared_state_member(value: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    let value = compact(&value.text());
+    SHARED_STATE_FIELDS.iter().any(|field| {
+        value.ends_with(&format!(".{field}"))
+            || value.ends_with(&format!("['{field}']"))
+            || value.ends_with(&format!("[\"{field}\"]"))
+    })
+}
+
+fn root_identifier(value: &str) -> Option<String> {
+    let root = value
+        .split(['.', '['])
+        .next()
+        .map(str::trim)
+        .filter(|root| plain_identifier(root))?;
+    Some(root.to_string())
+}
+
+fn quoted_shared_state_resource(value: &str) -> bool {
+    let value = value.trim_matches(['\'', '"']).to_ascii_lowercase();
+    [
+        "balance",
+        "credit",
+        "inventory",
+        "quota",
+        "reservation",
+        "seat",
+        "stock",
+        "usage",
+    ]
+    .iter()
+    .any(|marker| value.contains(marker))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_state_transition_review<'tree>(
+    path: &str,
+    function: &Node<'tree, StrDoc<SupportLang>>,
+    language: Language,
+    route: &HttpRouteContext,
+    request_values: &BTreeMap<String, RequestValueBinding>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    for call in function.dfs().filter_map(call_site) {
+        let Some(effect) = state_transition_effect(path, &call, evidence) else {
+            continue;
+        };
+        let Some(origin) = request_value_origin(&effect.value, request_values) else {
+            continue;
+        };
+        let policy = transition_policy(function, path, &call, &effect.value);
+        if policy.as_ref().is_some_and(|policy| policy.explicit_map) {
+            let policy = policy.expect("checked above");
+            push_fact(
+                path,
+                language,
+                "nextjs-explicit-state-transition-control",
+                &policy.node,
+                EvidenceKind::Validation,
+                Capability::ResourceAccess,
+                vec!["CWE-841"],
+                vec![
+                    "nextjs",
+                    "business-logic",
+                    "state-transition",
+                    "explicit-transition-map",
+                    "terminating-rejection",
+                ],
+                Confidence::High,
+                BTreeMap::from([
+                    (
+                        "transition_control".to_string(),
+                        capture(path, &policy.node),
+                    ),
+                    (
+                        "current_state".to_string(),
+                        capture(path, &policy.current_state),
+                    ),
+                    ("next_state".to_string(), capture(path, &effect.value)),
+                    (
+                        "state_resource".to_string(),
+                        capture(path, &effect.resource),
+                    ),
+                ]),
+                vec![route.clone()],
+                Vec::new(),
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+            continue;
+        }
+
+        let mut captures = BTreeMap::from([
+            ("transition_effect".to_string(), capture(path, &call.node)),
+            ("next_state".to_string(), capture(path, &effect.value)),
+            ("request_field".to_string(), origin),
+            ("state_field".to_string(), capture(path, &effect.key)),
+            (
+                "state_resource".to_string(),
+                capture(path, &effect.resource),
+            ),
+        ]);
+        let mut tags = vec![
+            "nextjs",
+            "business-logic",
+            "state-transition",
+            "client-controlled-next-state",
+            "review-invariant:state-transition-enforcement",
+            "recommendation:review-then-fix-application",
+        ];
+        if let Some(policy) = policy {
+            captures.insert(
+                "current_state".to_string(),
+                capture(path, &policy.current_state),
+            );
+            if let Some((_name, helper)) = policy.helper {
+                captures.insert("transition_helper".to_string(), helper);
+                tags.push("related-transition-helper-observed");
+            }
+        } else {
+            tags.push("transition-policy-not-observed");
+        }
+        push_fact(
+            path,
+            language,
+            "nextjs-client-controlled-state-transition-review",
+            &call.node,
+            EvidenceKind::SensitiveOperation,
+            Capability::ResourceAccess,
+            vec!["CWE-841"],
+            tags,
+            Confidence::High,
+            captures,
+            vec![route.clone()],
+            Vec::new(),
+            comments,
+            conditional,
+            literals,
+            evidence,
+        );
+    }
+}
+
+fn request_body_values(
+    function: &Node<'_, StrDoc<SupportLang>>,
+    path: &str,
+) -> BTreeMap<String, RequestValueBinding> {
+    let mut bindings = BTreeMap::new();
+    let mut request_objects = BTreeMap::new();
+    for declaration in function
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "variable_declarator")
+        .filter(|node| belongs_to_function(node, function))
+    {
+        let (Some(pattern), Some(value)) = (declaration.field("name"), declaration.field("value"))
+        else {
+            continue;
+        };
+        if !is_request_json_call(&value) {
+            continue;
+        }
+        if pattern.kind().as_ref() == "identifier" {
+            request_objects.insert(pattern.text().trim().to_string(), capture(path, &pattern));
+            continue;
+        }
+        if pattern.kind().as_ref() != "object_pattern" {
+            continue;
+        }
+        for property in pattern.children().filter(|child| child.is_named()) {
+            if let Some((field, local, node)) = object_pattern_binding(&property) {
+                bindings.insert(
+                    local,
+                    RequestValueBinding {
+                        field,
+                        capture: capture(path, &node),
+                    },
+                );
+            }
+        }
+    }
+    for declaration in function
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "variable_declarator")
+        .filter(|node| belongs_to_function(node, function))
+    {
+        let (Some(name), Some(value)) = (declaration.field("name"), declaration.field("value"))
+        else {
+            continue;
+        };
+        if name.kind().as_ref() != "identifier" {
+            continue;
+        }
+        let expression = compact(&value.text());
+        if let Some((_, field)) = request_objects
+            .keys()
+            .find_map(|object| member_field(&expression, object).map(|field| (object, field)))
+        {
+            bindings.insert(
+                name.text().trim().to_string(),
+                RequestValueBinding {
+                    field,
+                    capture: capture(path, &value),
+                },
+            );
+        }
+    }
+    for (object, object_capture) in request_objects {
+        bindings.insert(
+            format!("{object}.*"),
+            RequestValueBinding {
+                field: "*".to_string(),
+                capture: object_capture,
+            },
+        );
+    }
+    bindings
+}
+
+fn server_financial_values(
+    function: &Node<'_, StrDoc<SupportLang>>,
+    path: &str,
+) -> BTreeMap<String, (String, Capture)> {
+    function
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "variable_declarator")
+        .filter(|node| belongs_to_function(node, function))
+        .filter_map(|declaration| {
+            let name = declaration.field("name")?;
+            let value = declaration.field("value")?;
+            if name.kind().as_ref() != "identifier" || is_request_json_call(&value) {
+                return None;
+            }
+            let call = value.dfs().find_map(call_site)?;
+            let helper = authority_helper_name(&call.callee)?;
+            let mut helper_capture = capture(path, &call.node);
+            helper_capture.text = helper.clone();
+            Some((name.text().trim().to_string(), (helper, helper_capture)))
+        })
+        .collect()
+}
+
+fn financial_effect<'tree>(
+    path: &str,
+    call: &CallSite<'tree>,
+    evidence: &[Evidence],
+) -> Option<FinancialEffect<'tree>> {
+    let operation = call.callee.rsplit('.').next()?.to_ascii_lowercase();
+    if !matches!(
+        operation.as_str(),
+        "create" | "insert" | "insertrow" | "save" | "update" | "upsert"
+    ) {
+        return None;
+    }
+    if !owned_persistence_call(path, call, evidence) {
+        return None;
+    }
+    let object = call.arguments.iter().find(|argument| {
+        matches!(argument.kind().as_ref(), "object" | "object_expression")
+            && object_field(argument, &FINANCIAL_VALUE_FIELDS).is_some()
+    })?;
+    let (key, value) = object_field(object, &FINANCIAL_VALUE_FIELDS)?;
+    let status = object_field(object, &["status", "paymentStatus"])
+        .and_then(|(_, status)| financial_completion_status(&status).then_some(status));
+    let resource = call
+        .arguments
+        .iter()
+        .find(|argument| quoted_financial_resource(argument.text().trim()))
+        .cloned();
+    let operation_is_financial = ["payment", "purchase", "order", "invoice", "charge"]
+        .iter()
+        .any(|marker| call.callee.to_ascii_lowercase().contains(marker));
+    (status.is_some() || resource.is_some() || operation_is_financial).then_some(FinancialEffect {
+        key,
+        value,
+        resource,
+        status,
+    })
+}
+
+fn state_transition_effect<'tree>(
+    path: &str,
+    call: &CallSite<'tree>,
+    evidence: &[Evidence],
+) -> Option<StateTransitionEffect<'tree>> {
+    let operation = call.callee.rsplit('.').next()?.to_ascii_lowercase();
+    if !matches!(
+        operation.as_str(),
+        "create" | "insert" | "insertrow" | "save" | "update" | "upsert" | "updaterow"
+    ) || !owned_persistence_call(path, call, evidence)
+    {
+        return None;
+    }
+    let object = call.arguments.iter().find(|argument| {
+        matches!(argument.kind().as_ref(), "object" | "object_expression")
+            && object_field(argument, &["state", "status"]).is_some()
+    })?;
+    let (key, value) = object_field(object, &["state", "status"])?;
+    let resource = call
+        .arguments
+        .iter()
+        .find(|argument| quoted_stateful_resource(argument.text().trim()))?
+        .clone();
+    Some(StateTransitionEffect {
+        key,
+        value,
+        resource,
+    })
+}
+
+fn owned_persistence_call(path: &str, call: &CallSite<'_>, evidence: &[Evidence]) -> bool {
+    evidence.iter().any(|item| {
+        item.location.path == path
+            && item.location.start.byte_offset == call.node.range().start
+            && item.location.end.byte_offset == call.node.range().end
+            && item.kind == EvidenceKind::Sink
+            && item.capability == Capability::DatabaseQuery
+            && item.symbol_resolution.as_ref().is_some_and(|resolution| {
+                matches!(
+                    resolution.confidence,
+                    SymbolConfidence::Exact | SymbolConfidence::High
+                )
+            })
+    })
+}
+
+fn transition_policy<'tree>(
+    function: &Node<'tree, StrDoc<SupportLang>>,
+    path: &str,
+    effect: &CallSite<'tree>,
+    next_state: &Node<'tree, StrDoc<SupportLang>>,
+) -> Option<TransitionPolicy<'tree>> {
+    let next_state = compact(&next_state.text());
+    function
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "if_statement")
+        .filter(|node| belongs_to_function(node, function))
+        .filter(|node| node.range().start < effect.node.range().start)
+        .filter_map(|branch| {
+            let condition = branch.field("condition")?;
+            let consequence = branch.field("consequence")?;
+            if !rejects_transition(&condition, &consequence, &next_state) {
+                return None;
+            }
+            let current_state = condition.dfs().find(|node| {
+                matches!(
+                    node.kind().as_ref(),
+                    "member_expression" | "subscript_expression"
+                ) && ["state", "status"]
+                    .iter()
+                    .any(|field| compact(&node.text()).ends_with(&format!(".{field}")))
+            })?;
+            let condition_text = compact(&condition.text()).to_ascii_lowercase();
+            let explicit_map = condition_text.contains(".includes(")
+                && (condition_text.contains("allowed")
+                    || condition_text.contains("transitionmap")
+                    || condition_text.contains("transitions["));
+            let helper = condition
+                .dfs()
+                .filter_map(call_site)
+                .filter_map(|call| {
+                    transition_helper_name(&call.callee).map(|name| {
+                        let mut helper = capture(path, &call.node);
+                        helper.text = name.clone();
+                        (name, helper)
+                    })
+                })
+                .next();
+            Some(TransitionPolicy {
+                node: branch,
+                current_state,
+                helper,
+                explicit_map,
+            })
+        })
+        .next()
+}
+
+fn rejects_transition(
+    condition: &Node<'_, StrDoc<SupportLang>>,
+    consequence: &Node<'_, StrDoc<SupportLang>>,
+    next_state: &str,
+) -> bool {
+    let condition_text = compact(&condition.text());
+    let next_is_checked = condition_text.contains(next_state)
+        || condition.dfs().filter_map(call_site).any(|call| {
+            call.arguments
+                .iter()
+                .any(|argument| compact(&argument.text()) == next_state)
+        });
+    let rejects = consequence
+        .dfs()
+        .any(|node| matches!(node.kind().as_ref(), "return_statement" | "throw_statement"));
+    let negative = condition_text.trim_matches(['(', ')']).starts_with('!')
+        || condition_text.contains("===false")
+        || condition_text.contains("==false");
+    next_is_checked && rejects && negative
+}
+
+fn transition_helper_name(callee: &str) -> Option<String> {
+    let name = callee.rsplit('.').next()?.trim();
+    let lower = name.to_ascii_lowercase();
+    (lower.contains("transition")
+        || lower.contains("statemove")
+        || lower.contains("workflow")
+        || lower.contains("lifecycle"))
+    .then(|| name.to_string())
+}
+
+fn quoted_stateful_resource(value: &str) -> bool {
+    let value = value.trim_matches(['\'', '"']).to_ascii_lowercase();
+    [
+        "account",
+        "application",
+        "approval",
+        "invoice",
+        "order",
+        "payment",
+        "request",
+        "subscription",
+        "ticket",
+        "workflow",
+    ]
+    .iter()
+    .any(|marker| value.contains(marker))
+}
+
+const FINANCIAL_VALUE_FIELDS: [&str; 7] = [
+    "amount",
+    "paidAmount",
+    "price",
+    "subtotal",
+    "total",
+    "totalAmount",
+    "unitAmount",
+];
+
+fn object_field<'tree>(
+    object: &Node<'tree, StrDoc<SupportLang>>,
+    names: &[&str],
+) -> Option<(
+    Node<'tree, StrDoc<SupportLang>>,
+    Node<'tree, StrDoc<SupportLang>>,
+)> {
+    object
+        .children()
+        .filter(|child| child.is_named())
+        .find_map(|property| {
+            if matches!(
+                property.kind().as_ref(),
+                "shorthand_property_identifier" | "shorthand_property_identifier_pattern"
+            ) && names.contains(&property.text().trim())
+            {
+                return Some((property.clone(), property));
+            }
+            if property.kind().as_ref() != "pair" {
+                return None;
+            }
+            let key = property.field("key")?;
+            let name = key.text();
+            names
+                .contains(&name.trim_matches(['\'', '"']))
+                .then(|| property.field("value").map(|value| (key, value)))
+                .flatten()
+        })
+}
+
+fn request_value_origin(
+    value: &Node<'_, StrDoc<SupportLang>>,
+    bindings: &BTreeMap<String, RequestValueBinding>,
+) -> Option<Capture> {
+    let expression = compact(&value.text());
+    if let Some(binding) = bindings.get(&expression) {
+        let mut origin = binding.capture.clone();
+        origin.text = binding.field.clone();
+        return Some(origin);
+    }
+    bindings.iter().find_map(|(binding, origin)| {
+        let object = binding.strip_suffix(".*")?;
+        let field = member_field(&expression, object)?;
+        let mut capture = origin.capture.clone();
+        capture.text = field;
+        Some(capture)
+    })
+}
+
+fn server_financial_origin(
+    value: &Node<'_, StrDoc<SupportLang>>,
+    bindings: &BTreeMap<String, (String, Capture)>,
+) -> Option<(String, Capture)> {
+    let expression = compact(&value.text());
+    bindings.iter().find_map(|(binding, authority)| {
+        (expression == *binding || member_field(&expression, binding).is_some())
+            .then(|| authority.clone())
+    })
+}
+
+fn financial_authority_helper(
+    function: &Node<'_, StrDoc<SupportLang>>,
+    path: &str,
+    effect: &CallSite<'_>,
+) -> Option<(String, Capture)> {
+    let mut helpers = function
+        .dfs()
+        .filter_map(call_site)
+        .filter(|call| call.node.range().start < effect.node.range().start)
+        .filter_map(|call| authority_helper_name(&call.callee).map(|name| (name, call.node)))
+        .collect::<Vec<_>>();
+    helpers.sort_by(|left, right| left.0.cmp(&right.0));
+    helpers.dedup_by(|left, right| left.0 == right.0);
+    let [(name, node)] = helpers.as_slice() else {
+        return None;
+    };
+    Some((
+        name.clone(),
+        Capture {
+            text: name.clone(),
+            location: location(path, node),
+        },
+    ))
+}
+
+fn authority_helper_name(callee: &str) -> Option<String> {
+    let name = callee.rsplit('.').next()?.trim();
+    let lower = name.to_ascii_lowercase();
+    [
+        "catalog", "order", "plan", "price", "pricing", "product", "quote",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+    .then(|| name.to_string())
+}
+
+fn object_pattern_binding<'tree>(
+    property: &Node<'tree, StrDoc<SupportLang>>,
+) -> Option<(String, String, Node<'tree, StrDoc<SupportLang>>)> {
+    if matches!(
+        property.kind().as_ref(),
+        "shorthand_property_identifier_pattern" | "shorthand_property_identifier"
+    ) {
+        let name = property.text().trim().to_string();
+        return Some((name.clone(), name, property.clone()));
+    }
+    if property.kind().as_ref() != "pair" {
+        return None;
+    }
+    let key = property.field("key")?;
+    let mut value = property.field("value")?;
+    if value.kind().as_ref() == "assignment_pattern" {
+        value = value.field("left")?;
+    }
+    (value.kind().as_ref() == "identifier").then(|| {
+        (
+            key.text().trim_matches(['\'', '"']).to_string(),
+            value.text().trim().to_string(),
+            value,
+        )
+    })
+}
+
+fn is_request_json_call(value: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    let value = compact(&value.text());
+    value.ends_with("request.json()") || value.ends_with("req.json()")
+}
+
+fn member_field(expression: &str, object: &str) -> Option<String> {
+    expression
+        .strip_prefix(&format!("{object}."))
+        .filter(|field| plain_identifier(field))
+        .map(str::to_string)
+        .or_else(|| {
+            let field = expression
+                .strip_prefix(&format!("{object}["))?
+                .strip_suffix(']')?;
+            let field = field.trim_matches(['\'', '"']);
+            plain_identifier(field).then(|| field.to_string())
+        })
+}
+
+fn quoted_financial_resource(value: &str) -> bool {
+    let value = value.trim_matches(['\'', '"']).to_ascii_lowercase();
+    [
+        "charge",
+        "invoice",
+        "order",
+        "payment",
+        "purchase",
+        "transaction",
+    ]
+    .iter()
+    .any(|marker| value.contains(marker))
+}
+
+fn financial_completion_status(value: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    matches!(
+        value
+            .text()
+            .trim_matches(['\'', '"'])
+            .to_ascii_lowercase()
+            .as_str(),
+        "charged" | "completed" | "paid" | "succeeded"
+    )
+}
+
+fn belongs_to_function(
+    node: &Node<'_, StrDoc<SupportLang>>,
+    function: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    node.ancestors()
+        .find(is_function)
+        .is_some_and(|owner| owner.range() == function.range())
+}
+
+fn plain_identifier(value: &str) -> bool {
+    let mut characters = value.chars();
+    characters
+        .next()
+        .is_some_and(|character| character == '_' || character.is_ascii_alphabetic())
+        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
 fn direct_request_body_bindings(function: &Node<'_, StrDoc<SupportLang>>) -> Vec<String> {

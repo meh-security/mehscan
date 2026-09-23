@@ -529,6 +529,23 @@ scan JSON, deterministic security paths remain admitted, and the explicit flag
 restores the omitted observation jobs. This policy deliberately does not treat
 shipped application directories or a generic `tools` tree as nonproduction.
 
+### Admission-audit diagnostics
+
+`review_coverage.admission_audit` classifies every existing CWE-bearing sink,
+sensitive operation, and security configuration before AI review. Counts are
+grouped by capability and disposition: path-owned, observation-admitted, safely
+suppressed, duplicate/superseded, inventory-only, context-only, excluded review
+material, or unclassified. Non-admitted dispositions include a bounded set of
+exact evidence examples so corpus audits can inspect why recognized evidence did
+not become review work. `unclassified` is an admission-accounting defect to
+investigate; it is never treated as a safe suppression.
+
+This diagnostic does not create findings or reviews and does not measure APIs
+the scanner failed to recognize. It measures loss between existing evidence and
+review admission only. Its evidence count is intentionally separate from
+`recognized_boundary_count`: bounded operation/invariant markers can create
+reviews without starting from one of the three audited evidence kinds.
+
 ## Validation
 
 Evaluate AI-input changes separately from deterministic scanner truth:

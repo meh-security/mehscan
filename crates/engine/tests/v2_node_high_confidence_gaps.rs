@@ -74,8 +74,9 @@ fn closes_selected_node_gaps_without_promoting_safe_siblings() {
             .any(|reason| reason == "angular_rxjs_source_summary_is_syntactic")
     }));
     assert!(html.iter().any(|path| {
-        path.steps.iter().any(|step| {
-            step.location.path == "positive/angular.ts" && step.location.start.line == 31
+        result.evidence.iter().any(|item| {
+            item.id == path.sink_evidence_id
+                && item.enclosing_symbol.as_deref() == Some("trustProductDescription")
         })
     }));
 }

@@ -2,8 +2,9 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use mehscan_core::{
-    EvidenceKind, PathReviewBundlePayload, PathReviewBundleResponseSet,
-    PathReviewTriageResponseSet, PathReviewTriageResult, ReviewConfidence, ReviewDecision,
+    EvidenceKind, PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, PathReviewBundlePayload,
+    PathReviewBundleResponseSet, PathReviewTriageResponseSet, PathReviewTriageResult,
+    ReviewAdmissionDisposition, ReviewConfidence, ReviewDecision,
 };
 
 fn process_fixture_root() -> PathBuf {
@@ -121,6 +122,23 @@ fn builds_language_neutral_self_contained_path_reviews() {
     assert!(job.fingerprint.starts_with("path-reviewpack-"));
     assert_eq!(job.context_lines, 3);
     assert_eq!(job.reviews.len(), 20);
+    assert_eq!(
+        job.review_coverage.returned_review_count,
+        job.reviews.len() + job.observation_reviews.len()
+    );
+    assert_eq!(
+        job.review_coverage.admitted_review_count,
+        job.review_coverage.returned_review_count
+    );
+    assert!(
+        job.review_coverage.recognized_boundary_count >= job.review_coverage.admitted_review_count
+    );
+    assert_eq!(
+        job.review_coverage.assessment_review_count
+            + job.review_coverage.investigation_ready_review_count
+            + job.review_coverage.blocked_review_count,
+        job.review_coverage.returned_review_count
+    );
     assert!(!job.truncated);
     assert_eq!(job.triage_contract.response_fields[0], "review_id");
     assert!(job.triage_contract.instructions.iter().any(|instruction| {
@@ -306,27 +324,25 @@ fn validates_one_compact_result_per_path_review() {
     )
     .expect("path reviews should build");
     let responses = PathReviewTriageResponseSet {
-        schema_version: "1.0".to_string(),
+        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
         job_fingerprint: job.fingerprint.clone(),
         results: job
             .reviews
             .iter()
             .map(|review| PathReviewTriageResult {
                 review_id: review.id.clone(),
-                decision: ReviewDecision::NeedsReview,
-                confidence: ReviewConfidence::Medium,
-                summary: "The bounded path is credible, but runtime behavior remains unresolved."
-                    .to_string(),
-                checks: vec![
-                    "Confirm the supplied value reaches the process at runtime.".to_string(),
-                ],
+                decision: ReviewDecision::Issue,
+                confidence: review.confidence_policy.issue,
+                summary: "The supplied bounded path supports this issue decision.".to_string(),
+                checks: Vec::new(),
+                investigation: Some(Default::default()),
             })
             .collect(),
     };
     let report = mehscan_engine::investigation::validate_path_review_triage(&job, &responses)
         .expect("responses should validate");
-    assert_eq!(report.needs_review_count, 2);
-    assert_eq!(report.issue_count, 0);
+    assert_eq!(report.needs_review_count, 0);
+    assert_eq!(report.issue_count, 2);
     assert_eq!(report.not_issue_count, 0);
 }
 
@@ -404,15 +420,16 @@ fn emits_independent_tasks_and_validates_resumable_progress() {
     }));
 
     let responses = PathReviewTriageResponseSet {
-        schema_version: "1.0".to_string(),
+        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
         job_fingerprint: job.fingerprint.clone(),
         results: vec![PathReviewTriageResult {
             review_id: tasks.tasks[0].review_id.clone(),
-            decision: ReviewDecision::NeedsReview,
-            confidence: ReviewConfidence::Medium,
-            summary: "The first independently transported task still needs one runtime check."
+            decision: ReviewDecision::Issue,
+            confidence: job.reviews[0].confidence_policy.issue,
+            summary: "The first independently transported task supports this issue decision."
                 .to_string(),
-            checks: vec!["Confirm the shown operation executes at runtime.".to_string()],
+            checks: Vec::new(),
+            investigation: Some(Default::default()),
         }],
     };
     let progress = mehscan_engine::investigation::validate_path_review_progress(&job, &responses)
@@ -504,42 +521,40 @@ fn emits_semantic_bundles_and_retries_incomplete_bundle_responses() {
         .review_ids
         .iter()
         .map(|review_id| {
-            let unresolved = match &bundle.payload {
-                PathReviewBundlePayload::SecurityPath { reviews } => reviews
-                    .iter()
-                    .find(|review| review.id == *review_id)
-                    .expect("review should exist")
-                    .decision_facts
-                    .unresolved
-                    .first()
-                    .cloned(),
-                PathReviewBundlePayload::Observation { reviews } => reviews
-                    .iter()
-                    .find(|review| review.id == *review_id)
-                    .expect("review should exist")
-                    .decision_facts
-                    .unresolved
-                    .first()
-                    .cloned(),
+            let confidence = match &bundle.payload {
+                PathReviewBundlePayload::SecurityPath { reviews } => {
+                    reviews
+                        .iter()
+                        .find(|review| review.id == *review_id)
+                        .expect("review should exist")
+                        .confidence_policy
+                        .issue
+                }
+                PathReviewBundlePayload::Observation { reviews } => {
+                    reviews
+                        .iter()
+                        .find(|review| review.id == *review_id)
+                        .expect("review should exist")
+                        .confidence_policy
+                        .issue
+                }
             };
             PathReviewTriageResult {
                 review_id: review_id.clone(),
-                decision: if unresolved.is_some() {
-                    ReviewDecision::NeedsReview
-                } else {
-                    ReviewDecision::Issue
-                },
-                confidence: ReviewConfidence::Medium,
+                decision: ReviewDecision::Issue,
+                confidence,
                 summary: "The supplied evidence supports one complete compact decision."
                     .to_string(),
-                checks: unresolved.into_iter().collect(),
+                checks: Vec::new(),
+                investigation: Some(Default::default()),
             }
         })
         .collect::<Vec<_>>();
     let response = PathReviewBundleResponseSet {
-        schema_version: "1.0".to_string(),
+        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
         bundle_fingerprint: bundle.bundle_fingerprint.clone(),
         results: results.clone(),
+        repair: None,
     };
     let report =
         mehscan_engine::investigation::validate_path_review_bundle_response(bundle, &response)
@@ -571,7 +586,7 @@ fn emits_semantic_bundles_and_retries_incomplete_bundle_responses() {
         &invented_check,
     )
     .expect_err("needs_review must use a supplied unresolved fact");
-    assert!(error.to_string().contains("decision_facts.unresolved"));
+    assert!(error.to_string().contains("needs_review"));
 
     let mut wrong_confidence = response.clone();
     wrong_confidence.results[0].confidence =
@@ -595,6 +610,74 @@ fn emits_semantic_bundles_and_retries_incomplete_bundle_responses() {
         mehscan_engine::investigation::validate_path_review_bundle_response(bundle, &incomplete)
             .expect_err("incomplete bundle response must be retried as a whole");
     assert!(error.to_string().contains("retry the whole bundle"));
+}
+
+#[test]
+fn run_budget_reserves_every_capability_and_preserves_deferred_reviews() {
+    let job = mehscan_engine::investigation::build_all_path_review_jobs(
+        &review_admission_root(),
+        Some(2),
+        false,
+    )
+    .expect("complete review job should build");
+    let full = mehscan_engine::investigation::build_path_review_bundles(&job, None)
+        .expect("complete bundle set should build");
+    let capabilities = full
+        .manifest
+        .bundles
+        .iter()
+        .map(|entry| entry.category.capability)
+        .collect::<BTreeSet<_>>();
+    assert!(
+        full.manifest.review_count > capabilities.len(),
+        "fixture needs one noisy family to exercise fair scheduling"
+    );
+
+    let limited = mehscan_engine::investigation::build_path_review_bundles_with_run_limit(
+        &job,
+        None,
+        None,
+        Some(capabilities.len()),
+    )
+    .expect("one reserved review per capability should fit");
+    let scheduled_capabilities = limited
+        .manifest
+        .bundles
+        .iter()
+        .map(|entry| entry.category.capability)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(scheduled_capabilities, capabilities);
+    assert_eq!(limited.manifest.review_count, capabilities.len());
+    assert_eq!(
+        limited.manifest.admitted_review_count,
+        full.manifest.review_count
+    );
+    assert_eq!(
+        limited.manifest.deferred_review_ids.len(),
+        full.manifest.review_count - capabilities.len()
+    );
+    let scheduled_ids = limited
+        .manifest
+        .bundles
+        .iter()
+        .flat_map(|entry| entry.review_ids.iter())
+        .collect::<BTreeSet<_>>();
+    assert!(
+        limited
+            .manifest
+            .deferred_review_ids
+            .iter()
+            .all(|review_id| !scheduled_ids.contains(review_id))
+    );
+
+    let error = mehscan_engine::investigation::build_path_review_bundles_with_run_limit(
+        &job,
+        None,
+        None,
+        Some(capabilities.len() - 1),
+    )
+    .expect_err("a run too small to reserve every capability must fail clearly");
+    assert!(error.to_string().contains("cannot reserve one review"));
 }
 
 #[test]
@@ -625,6 +708,55 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
         false,
     )
     .expect("complete review job should build");
+    let audit = &job.review_coverage.admission_audit;
+    assert_eq!(
+        audit.classified_boundary_count,
+        audit.counts.iter().map(|entry| entry.count).sum::<usize>()
+    );
+    assert!(
+        job.review_coverage.recognized_boundary_count >= job.review_coverage.admitted_review_count
+    );
+    for disposition in [
+        ReviewAdmissionDisposition::PathOwned,
+        ReviewAdmissionDisposition::ObservationAdmitted,
+        ReviewAdmissionDisposition::SafelySuppressed,
+        ReviewAdmissionDisposition::ExcludedReviewMaterial,
+    ] {
+        assert!(
+            audit
+                .counts
+                .iter()
+                .any(|entry| entry.disposition == disposition && entry.count > 0),
+            "fixture must exercise {disposition:?} admission accounting"
+        );
+    }
+    assert!(
+        audit
+            .counts
+            .iter()
+            .all(|entry| entry.disposition != ReviewAdmissionDisposition::Unclassified),
+        "known fixture boundaries must not disappear behind an unexplained exclusion"
+    );
+    assert!(audit.excluded_examples.len() <= 64);
+    assert!(audit.excluded_examples.iter().all(|example| {
+        !example.evidence_id.is_empty()
+            && !example.rule_id.is_empty()
+            && !example.location.path.is_empty()
+            && !matches!(
+                example.disposition,
+                ReviewAdmissionDisposition::PathOwned
+                    | ReviewAdmissionDisposition::ObservationAdmitted
+            )
+    }));
+    assert!(audit.excluded_examples.iter().any(|example| {
+        example.disposition == ReviewAdmissionDisposition::SafelySuppressed
+            && example.rule_id == "typescript-html-output"
+            && example.location.path == "routes/production.ts"
+    }));
+    assert!(audit.excluded_examples.iter().any(|example| {
+        example.disposition == ReviewAdmissionDisposition::ExcludedReviewMaterial
+            && example.location.path == "data/static/codefixes/teaching.ts"
+    }));
     assert!(
         job.observation_reviews
             .iter()
@@ -770,6 +902,57 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
         }),
         "a dynamic service authority must remain reviewable"
     );
+    assert!(
+        scan.evidence.iter().any(|evidence| {
+            evidence.location.path == "routes/browser-request.ts"
+                && evidence.enclosing_symbol.as_deref() == Some("fixedBrowserRequest")
+                && evidence.capability == mehscan_core::Capability::OutboundNetworkRequest
+        }),
+        "fixed same-origin browser transport must remain deterministic evidence",
+    );
+    for endpoint in ["generatorUrl", "multilineUrl", "suffixUrl"] {
+        assert!(scan.evidence.iter().any(|evidence| {
+            evidence.location.path == "routes/browser-request.ts"
+                && evidence
+                    .captures
+                    .get("endpoint")
+                    .is_some_and(|capture| capture.text == endpoint)
+        }));
+    }
+    let browser_request_anchors = anchored
+        .iter()
+        .filter(|evidence| {
+            evidence.location.path == "routes/browser-request.ts"
+                && evidence.capability == mehscan_core::Capability::OutboundNetworkRequest
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        browser_request_anchors.iter().all(|evidence| {
+            evidence.enclosing_symbol.as_deref() != Some("fixedBrowserRequest")
+                && evidence.captures.get("endpoint").is_none_or(|capture| {
+                    capture.text != "generatorUrl"
+                        && capture.text != "multilineUrl"
+                        && capture.text != "suffixUrl"
+                })
+        }),
+        "fixed imported same-origin transport must not require AI review",
+    );
+    assert!(
+        browser_request_anchors.iter().any(|evidence| {
+            evidence.enclosing_symbol.as_deref() == Some("dynamicBrowserRequest")
+        })
+    );
+    for endpoint in [
+        "externalUrl",
+        "replaceableUrl.replace('<host>', destination)",
+    ] {
+        assert!(browser_request_anchors.iter().any(|evidence| {
+            evidence
+                .captures
+                .get("endpoint")
+                .is_some_and(|capture| capture.text == endpoint)
+        }));
+    }
     let setup_evidence = scan
         .evidence
         .iter()
@@ -912,42 +1095,25 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
             let results = bundle
                 .review_ids
                 .iter()
-                .map(|review_id| {
-                    let unresolved = match &bundle.payload {
-                        PathReviewBundlePayload::SecurityPath { reviews } => reviews
-                            .iter()
-                            .find(|review| review.id == *review_id)
-                            .and_then(|review| review.decision_facts.unresolved.first()),
-                        PathReviewBundlePayload::Observation { reviews } => reviews
-                            .iter()
-                            .find(|review| review.id == *review_id)
-                            .and_then(|review| review.decision_facts.unresolved.first()),
-                    };
-                    let needs_review = !path_bundle && unresolved.is_some();
-                    PathReviewTriageResult {
-                        review_id: review_id.clone(),
-                        decision: if path_bundle {
-                            ReviewDecision::Issue
-                        } else if needs_review {
-                            ReviewDecision::NeedsReview
-                        } else {
-                            ReviewDecision::NotIssue
-                        },
-                        confidence: ReviewConfidence::Medium,
-                        summary: "The supplied bounded evidence supports this compact decision."
-                            .to_string(),
-                        checks: unresolved
-                            .filter(|_| needs_review)
-                            .cloned()
-                            .into_iter()
-                            .collect(),
-                    }
+                .map(|review_id| PathReviewTriageResult {
+                    review_id: review_id.clone(),
+                    decision: if path_bundle {
+                        ReviewDecision::Issue
+                    } else {
+                        ReviewDecision::NotIssue
+                    },
+                    confidence: ReviewConfidence::Medium,
+                    summary: "The supplied bounded evidence supports this compact decision."
+                        .to_string(),
+                    checks: Vec::new(),
+                    investigation: Some(Default::default()),
                 })
                 .collect();
             let responses = PathReviewBundleResponseSet {
-                schema_version: "1.0".to_string(),
+                schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
                 bundle_fingerprint: bundle.bundle_fingerprint.clone(),
                 results,
+                repair: None,
             };
             (bundle, responses)
         })
@@ -1219,12 +1385,16 @@ fn supplies_python_caller_loader_jwt_and_fixed_payload_origin_context() {
         fact.contains("accepted with the same source-visible literal signing key")
     }));
 
-    let yaml = review_for_rule("python-pickle-deserialization")
+    let yaml = review_for_rule("python-unspecified-yaml-loader")
         .expect("fixed-file unsafe YAML should retain provenance review");
+    assert!(yaml.facts.iter().any(|fact| {
+        fact.role == "source_context" && fact.excerpt.contains("/opt/application/trusted.yaml")
+    }));
     assert!(
-        yaml.open_questions
+        yaml.decision_facts
+            .unresolved
             .iter()
-            .any(|question| question.contains("/opt/application/trusted.yaml"))
+            .any(|question| question.contains("modify payload `stream`"))
     );
 
     let read = review_for_rule("python-filesystem-read")
@@ -1471,7 +1641,7 @@ fn keeps_distinct_sink_instances_in_one_symbol_without_hiding_results() {
     assert_eq!(job.reviews.len(), 2);
     assert!(job.observation_reviews.is_empty());
     let responses = PathReviewTriageResponseSet {
-        schema_version: "1.0".to_string(),
+        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
         job_fingerprint: job.fingerprint.clone(),
         results: job
             .reviews
@@ -1482,6 +1652,7 @@ fn keeps_distinct_sink_instances_in_one_symbol_without_hiding_results() {
                 confidence: review.confidence_policy.issue,
                 summary: "Attacker-controlled HTML reaches an unencoded response sink.".to_string(),
                 checks: Vec::new(),
+                investigation: Some(Default::default()),
             })
             .collect(),
     };
@@ -1553,12 +1724,14 @@ fn consolidates_multiple_sources_at_one_exact_sink_and_invariant() {
                         review.id
                     ),
                     checks: Vec::new(),
+                    investigation: Some(Default::default()),
                 })
                 .collect();
             let response = PathReviewBundleResponseSet {
-                schema_version: "1.0".to_string(),
+                schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
                 bundle_fingerprint: bundle.bundle_fingerprint.clone(),
                 results,
+                repair: None,
             };
             (bundle, response)
         })

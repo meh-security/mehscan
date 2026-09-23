@@ -65,15 +65,16 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let scope = parse_report_scope(&mut parsed);
     parsed.finish()?;
 
-    let (manifest, bundle_responses) =
+    let (manifest, bundle_responses, work) =
         read_complete_bundle_responses(&run, responses.as_deref(), allow_partial)?;
     let mut report = engine(
-        mehscan_engine::investigation::build_finding_report_from_manifest(
+        mehscan_engine::investigation::build_finding_report_from_manifest_with_work(
             &manifest,
             env!("CARGO_PKG_VERSION"),
             reviewer,
             &bundle_responses,
             include_dismissed,
+            work,
         ),
     )?;
     for label in scope {
@@ -496,6 +497,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let output = PathBuf::from(parsed.required("--output")?);
             let max_bytes = parsed.optional_usize("--max-bytes")?;
             let max_reviews = parsed.optional_usize("--max-reviews")?;
+            let max_total_reviews = parsed.optional_usize("--max-total-reviews")?;
             let context_lines = parsed.optional_usize("--context-lines")?;
             let include_review_material = parsed
                 .optional_bool("--include-review-material")?
@@ -508,10 +510,11 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 include_review_material,
             ))?;
             let mut bundle_set = engine(
-                mehscan_engine::investigation::build_path_review_bundles_with_limits(
+                mehscan_engine::investigation::build_path_review_bundles_with_run_limit(
                     &job,
                     max_bytes,
                     max_reviews,
+                    max_total_reviews,
                 ),
             )?;
             bundle_set.manifest.scope.extend(scope);
@@ -540,22 +543,120 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             {
                 return Err("bundle must contain a fingerprint and distinct review IDs".to_string());
             }
+            let position_schema = serde_json::json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["line", "column", "byte_offset"],
+                "properties": {
+                    "line": {"type": "integer", "minimum": 0},
+                    "column": {"type": "integer", "minimum": 0},
+                    "byte_offset": {"type": "integer", "minimum": 0}
+                }
+            });
+            let location_schema = serde_json::json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["path", "start", "end"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "start": position_schema,
+                    "end": position_schema
+                }
+            });
+            let artifact_schema = serde_json::json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["artifact_id", "location", "excerpt"],
+                "properties": {
+                    "artifact_id": {"type": "string", "minLength": 1, "maxLength": 120},
+                    "location": location_schema,
+                    "excerpt": {"type": "string", "minLength": 1, "maxLength": 4000}
+                }
+            });
+            let lookup_request_schema = serde_json::json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["operation", "arguments", "questions", "purpose"],
+                "properties": {
+                    "operation": {"type": "string", "enum": ["source", "references"]},
+                    "arguments": {
+                        "type": "object", "additionalProperties": false,
+                        "required": ["path", "start-line", "end-line", "symbol", "limit"],
+                        "properties": {
+                            "path": {"type": ["string", "null"]},
+                            "start-line": {"type": ["string", "null"]},
+                            "end-line": {"type": ["string", "null"]},
+                            "symbol": {"type": ["string", "null"]},
+                            "limit": {"type": ["string", "null"]}
+                        }
+                    },
+                    "questions": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+                    "purpose": {"type": "string", "minLength": 1, "maxLength": 500}
+                }
+            });
+            let lookup_attempt_schema = serde_json::json!({
+                "type": "object", "additionalProperties": false,
+                // Structured-output providers reject oneOf and require every
+                // declared property. Null keeps the two lookup origins explicit;
+                // triage validation still enforces that exactly one is populated.
+                "required": ["request_index", "escalation", "outcome", "artifacts", "detail"],
+                "properties": {
+                    "request_index": {"type": ["integer", "null"], "minimum": 0},
+                    "escalation": {"anyOf": [lookup_request_schema, {"type": "null"}]},
+                    "outcome": {"type": "string", "enum": ["answered", "no_relevant_result", "unavailable", "truncated", "budget_exhausted", "failed"]},
+                    "artifacts": {"type": "array", "items": artifact_schema},
+                    "detail": {"type": "string", "minLength": 1, "maxLength": 500}
+                }
+            });
+            let reviewer_origin_lead_schema = serde_json::json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["question", "security_relevance", "distinct_from_review", "location", "artifact_ids"],
+                "properties": {
+                    "question": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "security_relevance": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "distinct_from_review": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "location": location_schema,
+                    "artifact_ids": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "string"}}
+                }
+            });
+            let investigation_schema = serde_json::json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["lookup_attempts", "citations", "reviewer_inferences", "reviewer_origin_leads", "blockers"],
+                "properties": {
+                    "lookup_attempts": {"type": "array", "items": lookup_attempt_schema},
+                    "citations": {"type": "array", "items": {
+                        "type": "object", "additionalProperties": false,
+                        "required": ["artifact_id", "claim"],
+                        "properties": {
+                            "artifact_id": {"type": "string"},
+                            "claim": {"type": "string", "minLength": 1, "maxLength": 500}
+                        }
+                    }},
+                    "reviewer_inferences": {"type": "array", "items": {
+                        "type": "object", "additionalProperties": false,
+                        "required": ["claim", "artifact_ids"],
+                        "properties": {
+                            "claim": {"type": "string", "minLength": 1, "maxLength": 500},
+                            "artifact_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+                        }
+                    }},
+                    "reviewer_origin_leads": {"type": "array", "maxItems": 3, "items": reviewer_origin_lead_schema},
+                    "blockers": {"type": "array", "items": {"type": "string"}}
+                }
+            });
             let schema = serde_json::json!({
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object", "additionalProperties": false,
                 "required": ["schema_version", "bundle_fingerprint", "results"],
                 "properties": {
-                    "schema_version": {"type": "string", "const": "1.0"},
+                    "schema_version": {"type": "string", "const": mehscan_core::PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION},
                     "bundle_fingerprint": {"type": "string", "const": bundle.bundle_fingerprint},
                     "results": {"type": "array", "minItems": ids.len(), "maxItems": ids.len(), "items": {
                         "type": "object", "additionalProperties": false,
-                        "required": ["review_id", "decision", "confidence", "summary", "checks"],
+                        "required": ["review_id", "decision", "confidence", "summary", "checks", "investigation"],
                         "properties": {
                             "review_id": {"type": "string", "enum": ids},
                             "decision": {"type": "string", "enum": ["issue", "not_issue", "needs_review"]},
                             "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
                             "summary": {"type": "string", "maxLength": 450},
-                            "checks": {"type": "array", "items": {"type": "string"}}
+                            "checks": {"type": "array", "items": {"type": "string"}},
+                            "investigation": investigation_schema
                         }
                     }}
                 }
@@ -592,23 +693,80 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         responses_path.display()
                     )
                 })?;
-            print_json(&engine(
-                mehscan_engine::investigation::validate_path_review_bundle_response(
-                    &bundle, &responses,
+            let report = mehscan_engine::investigation::validate_path_review_bundle_response(
+                &bundle, &responses,
+            )
+            .map_err(|error| format!("invalid reviewer work: {error}"))?;
+            print_json(&report)
+        }
+        "review-bundle-repair" => {
+            let bundle_path = PathBuf::from(parsed.required("--bundle")?);
+            let failed_path = PathBuf::from(parsed.required("--failed-responses")?);
+            let review_id = parsed.required("--review-id")?;
+            let replacement_path = PathBuf::from(parsed.required("--replacement")?);
+            let output_path = PathBuf::from(parsed.required("--output")?);
+            parsed.finish()?;
+            let bundle: mehscan_core::PathReviewBundle =
+                serde_json::from_str(&fs::read_to_string(&bundle_path).map_err(|error| {
+                    format!(
+                        "could not read path-review bundle {}: {error}",
+                        bundle_path.display()
+                    )
+                })?)
+                .map_err(|error| {
+                    format!(
+                        "path-review bundle {} is invalid: {error}",
+                        bundle_path.display()
+                    )
+                })?;
+            let failed: mehscan_core::PathReviewBundleResponseSet =
+                serde_json::from_str(&fs::read_to_string(&failed_path).map_err(|error| {
+                    format!(
+                        "could not read failed response {}: {error}",
+                        failed_path.display()
+                    )
+                })?)
+                .map_err(|error| {
+                    format!(
+                        "failed response {} is not structurally repairable: {error}",
+                        failed_path.display()
+                    )
+                })?;
+            let replacement: mehscan_core::PathReviewTriageResult =
+                serde_json::from_str(&fs::read_to_string(&replacement_path).map_err(|error| {
+                    format!(
+                        "could not read replacement result {}: {error}",
+                        replacement_path.display()
+                    )
+                })?)
+                .map_err(|error| {
+                    format!(
+                        "replacement result {} is invalid: {error}",
+                        replacement_path.display()
+                    )
+                })?;
+            let repaired = engine(
+                mehscan_engine::investigation::repair_path_review_bundle_response(
+                    &bundle,
+                    &failed,
+                    &review_id,
+                    replacement,
                 ),
-            )?)
+            )?;
+            write_json(&repaired, Some(&output_path))
         }
         "review-bundle-summary" => {
             let run = PathBuf::from(parsed.required("--run")?);
             let responses = parsed.optional("--responses").map(PathBuf::from);
             let allow_partial = parsed.optional_bool("--allow-partial")?.unwrap_or(false);
             parsed.finish()?;
-            let (manifest, bundle_responses) =
+            let (manifest, bundle_responses, work) =
                 read_complete_bundle_responses(&run, responses.as_deref(), allow_partial)?;
             let mut summary = engine(
-                mehscan_engine::investigation::summarize_path_review_bundle_manifest_run(
+                mehscan_engine::investigation::summarize_path_review_bundle_manifest_run_with_work(
                     &manifest,
                     &bundle_responses,
+                    work,
                 ),
             )?;
             summary.quality_warnings.extend(
@@ -875,6 +1033,7 @@ fn read_complete_bundle_responses(
             mehscan_core::PathReviewBundle,
             mehscan_core::PathReviewBundleResponseSet,
         )>,
+        mehscan_core::ReviewWorkSummary,
     ),
     String,
 > {
@@ -902,11 +1061,37 @@ fn read_complete_bundle_responses(
                 .iter()
                 .map(|e| e.review_count)
                 .sum::<usize>()
+        || (manifest.admitted_review_count != 0
+            && manifest.admitted_review_count
+                != manifest.review_count + manifest.deferred_review_ids.len())
     {
         return Err("review manifest count does not match the run".to_string());
     }
+    let scheduled_ids = manifest
+        .bundles
+        .iter()
+        .flat_map(|entry| entry.review_ids.iter().map(String::as_str))
+        .collect::<BTreeSet<_>>();
+    let deferred_ids = manifest
+        .deferred_review_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if deferred_ids.len() != manifest.deferred_review_ids.len()
+        || !scheduled_ids.is_disjoint(&deferred_ids)
+    {
+        return Err("review manifest scheduled and deferred identities are invalid".to_string());
+    }
+    let scheduled_bundle_count = manifest.bundle_count;
+    let scheduled_review_count = manifest.review_count;
+    let admitted_review_count = if manifest.admitted_review_count == 0 {
+        manifest.review_count + manifest.deferred_review_ids.len()
+    } else {
+        manifest.admitted_review_count
+    };
     let mut bundle_responses = Vec::new();
     let mut selected = Vec::new();
+    let mut missing_review_ids = Vec::new();
     for entry in &manifest.bundles {
         let request_path = run.join("requests").join(&entry.filename);
         let response_path = response_directory.join(&entry.filename);
@@ -940,7 +1125,10 @@ fn read_complete_bundle_responses(
         }
         let response_source = match fs::read_to_string(&response_path) {
             Ok(source) => source,
-            Err(error) if allow_partial && error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) if allow_partial && error.kind() == std::io::ErrorKind::NotFound => {
+                missing_review_ids.extend(entry.review_ids.iter().cloned());
+                continue;
+            }
             Err(error) => {
                 return Err(format!(
                     "could not read complete path-review bundle response {}: {error}",
@@ -951,20 +1139,50 @@ fn read_complete_bundle_responses(
         let response_set: mehscan_core::PathReviewBundleResponseSet =
             serde_json::from_str(&response_source).map_err(|error| {
                 format!(
-                    "path-review bundle response {} is invalid: {error}",
+                    "path-review bundle response {} is invalid reviewer work: {error}",
                     response_path.display()
+                )
+            })?;
+        mehscan_engine::investigation::validate_path_review_bundle_response(&bundle, &response_set)
+            .map_err(|error| {
+                format!(
+                    "path-review bundle response {} is invalid reviewer work for reviews {}: {error}",
+                    response_path.display(),
+                    entry.review_ids.join(", ")
                 )
             })?;
         selected.push(entry.clone());
         bundle_responses.push((bundle, response_set));
     }
+    let completed_bundle_count = selected.len();
+    let completed_review_count = selected
+        .iter()
+        .map(|entry| entry.review_count)
+        .sum::<usize>();
+    missing_review_ids.sort();
+    missing_review_ids.dedup();
+    let deferred_review_ids = manifest.deferred_review_ids.clone();
+    let work = mehscan_core::ReviewWorkSummary {
+        complete: missing_review_ids.is_empty()
+            && deferred_review_ids.is_empty()
+            && completed_bundle_count == scheduled_bundle_count
+            && completed_review_count == scheduled_review_count,
+        admitted_review_count,
+        scheduled_bundle_count,
+        scheduled_review_count,
+        completed_bundle_count,
+        completed_review_count,
+        accepted_investigation_count: 0,
+        deferred_review_ids,
+        blocked_review_ids: Vec::new(),
+        truncated_review_ids: Vec::new(),
+        missing_review_ids,
+        invalid_review_ids: Vec::new(),
+    };
     if selected.len() != manifest.bundle_count {
         manifest.scope.push(format!("Partial triage: {}/{} bundles and {}/{} reviews completed; unreviewed bundles are excluded, not dismissed.", selected.len(), manifest.bundle_count, selected.iter().map(|e| e.review_count).sum::<usize>(), manifest.review_count));
-        manifest.bundle_count = selected.len();
-        manifest.review_count = selected.iter().map(|e| e.review_count).sum();
-        manifest.bundles = selected;
     }
-    Ok((manifest, bundle_responses))
+    Ok((manifest, bundle_responses, work))
 }
 
 fn write_json<T: serde::Serialize>(value: &T, output: Option<&Path>) -> Result<(), String> {
@@ -1664,10 +1882,11 @@ USAGE:
   mehscan investigate funnel [ROOT]
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate review-tasks [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
-  mehscan investigate review-bundles [ROOT] --output DIR [--context-lines N] [--max-bytes N] [--max-reviews N] [--include-review-material true|false] [--scope-label TEXT] [--project NAME] [--revision REF]
+  mehscan investigate review-bundles [ROOT] --output DIR [--context-lines N] [--max-bytes N] [--max-reviews N] [--max-total-reviews N] [--include-review-material true|false] [--scope-label TEXT] [--project NAME] [--revision REF]
   mehscan investigate review-bundle-diff --before DIR --after DIR
   mehscan investigate review-response-schema --bundle PATH [--output PATH]
   mehscan investigate review-bundle-triage --bundle PATH --responses PATH
+  mehscan investigate review-bundle-repair --bundle PATH --failed-responses PATH --review-id ID --replacement PATH --output PATH
   mehscan investigate review-bundle-summary --run DIR [--responses DIR] [--allow-partial true|false]
   mehscan investigate review-triage [ROOT] --responses PATH [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate review-progress [ROOT] --responses PATH [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
@@ -1684,7 +1903,7 @@ USAGE:
   mehscan investigate native-call-sites [ROOT] --callee NAME [--path FILE] [--limit N]
   mehscan investigate structural [ROOT] --language LANG --pattern PATTERN [--path FILE] [--limit N]
 
-Review jobs package bounded security-path candidates and non-path observation neighborhoods with source excerpts, relevant configuration facts, open questions, a stable fingerprint, and a compact cross-language response contract. Each security path includes compact rule-derived review_basis semantics. Context-only source, guard, sanitizer, validation, literal, and resource observations do not become standalone verdict jobs. review-bundles scans once, groups the complete admitted review set by review kind and capability, retains the CWE union as category metadata, and writes self-contained requests with readable semantic filenames under DIR/requests plus manifest.json; requests default to independent ceilings of 512 KiB and 20 reviews, while --max-reviews accepts 1-100 for controlled experiments or retry tuning. A bundle response is accepted or retried as a whole by review-bundle-triage. review-bundle-summary validates every manifest response by default; --allow-partial true summarizes available complete responses and reports incomplete triage coverage. It deduplicates issue decisions across path and observation streams by capability, exact sink range, and rule-defined security invariant. review-tasks and review-progress remain available as low-level diagnostics. Complete paths are ordered first, followed by production observation neighborhoods. Teaching/code-fix source payloads are excluded by default and can be admitted explicitly with --include-review-material true. Review pages contain at most 100 items and expose next_offset for stable continuation with --offset. The funnel summarizes linked and unlinked compatible source/sink observations for AI routing. C# project summaries can produce security paths for unique exact-parameter controller-to-service and controller-to-service-to-repository handoffs; unresolved neighborhoods remain review facts. Triage commands must repeat the exact page offset and material policy. Query limits default to 200 and cannot exceed 1000. Investigation units default to 25 and cannot exceed 100. Source retrieval is capped at 400 lines and 64 KiB. Native call-sites is a C/C++ syntax inventory only: it does not resolve types, overloads, aliases, macros, control flow, call graphs, or value flow and never changes scan evidence or review admission. Structural queries support every scanner language as bounded ephemeral syntax lookup; repository-wide queries skip and report malformed files, while an explicitly requested malformed file fails clearly. Structural patterns are never persisted as rules or promoted to findings."#
+Review jobs package bounded security-path candidates and non-path observation neighborhoods with source excerpts, relevant configuration facts, open questions, a stable fingerprint, and a compact cross-language response contract. Each security path includes compact rule-derived review_basis semantics. Context-only source, guard, sanitizer, validation, literal, and resource observations do not become standalone verdict jobs. review-bundles scans once, groups admitted review work by review kind and capability, retains the CWE union as category metadata, and writes self-contained requests with readable semantic filenames under DIR/requests plus manifest.json. Requests default to independent ceilings of 512 KiB and 20 reviews; --max-reviews changes only that per-request transport ceiling. --max-total-reviews sets a separate run ceiling, schedules capabilities round-robin, requires room for at least one review from every admitted capability, and preserves deferred review IDs in the manifest. A bundle response is accepted or retried as a whole by review-bundle-triage. Response schema 1.1 records family-calibrated budgets, bounded lookup attempts, one exact follow-on source/reference lookup, retrieved artifacts, citations, reviewer inference, distinct reviewer-origin leads, repair history and exact blockers. Reviewer-origin leads require an explicit citation and source location, remain separate from the admitted verdict, and are reported as unvalidated questions rather than deterministic coverage. review-bundle-repair can replace exactly one parseable invalid result, records the prior and replacement identities plus original validation error, revalidates the whole bundle, and rejects a second repair or any attempt to repair a valid response. Accepted results receive stable response fingerprints, and partial summaries distinguish admitted, scheduled, completed, deferred, blocked, truncated, missing, and invalid review work. Run and finding reports measure scheduled, completed and resolved reviews, lookup outcomes, returned artifact bytes and reviewer-origin leads per capability without estimating latency or model cost. review-bundle-summary validates every manifest response by default; --allow-partial true summarizes available complete responses and reports incomplete triage coverage. It deduplicates issue decisions across path and observation streams by capability, exact sink range, and the rule-defined security invariant. review-tasks and review-progress remain available as low-level diagnostics. Complete paths are ordered first, followed by production observation neighborhoods. Teaching/code-fix source payloads are excluded by default and can be admitted explicitly with --include-review-material true. Review pages contain at most 100 items and expose next_offset for stable continuation with --offset. The funnel summarizes linked and unlinked compatible source/sink observations for AI routing. C# project summaries can produce security paths for unique exact-parameter controller-to-service and controller-to-service-to-repository handoffs; unresolved neighborhoods remain review facts. Triage commands must repeat the exact page offset and material policy. Query limits default to 200 and cannot exceed 1000. Investigation units default to 25 and cannot exceed 100. Source retrieval is capped at 400 lines and 64 KiB. Native call-sites is a C/C++ syntax inventory only: it does not resolve types, overloads, aliases, macros, control flow, call graphs, or value flow and never changes scan evidence or review admission. Structural queries support every scanner language as bounded ephemeral syntax lookup; repository-wide queries skip and report malformed files, while an explicitly requested malformed file fails clearly. Structural patterns are never persisted as rules or promoted to findings."#
     );
 }
 

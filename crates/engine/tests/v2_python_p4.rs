@@ -48,6 +48,10 @@ fn distinguishes_django_object_policy_and_sensitive_writes() {
         .collect::<Vec<_>>();
     assert_eq!(mutations.len(), 1);
     assert!(mutations[0].tags.iter().any(|tag| tag == "field:balance"));
+    assert_eq!(
+        mutations[0].captures["nearby_rejecting_validation"].text,
+        "account.balance < account.unit_price"
+    );
 
     let serializer_writes = result
         .evidence
@@ -76,4 +80,27 @@ fn distinguishes_django_object_policy_and_sensitive_writes() {
         path.capability == Capability::ResourceAccess
             && path.cwe_candidates.iter().any(|cwe| cwe == "CWE-915")
     }));
+
+    let jobs =
+        mehscan_engine::investigation::build_path_review_jobs(&fixture_root(), None, Some(100))
+            .expect("Python business-invariant reviews should build");
+    let mutation_review = jobs
+        .reviews
+        .iter()
+        .find(|review| review.candidate.sink.rule_id == "python-django-sensitive-field-mutation")
+        .expect("sensitive mutation path review");
+    assert!(
+        mutation_review
+            .review_basis
+            .as_ref()
+            .expect("path review basis")
+            .security_question
+            .contains("sign, multiplicity, units and range")
+    );
+    assert!(
+        mutation_review
+            .open_questions
+            .iter()
+            .any(|question| question.contains("a check over one unit"))
+    );
 }

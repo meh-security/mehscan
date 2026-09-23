@@ -155,7 +155,10 @@ function findUser(name) { return db.query(`SELECT * FROM users WHERE name='${nam
             .iter()
             .any(|fact| fact.excerpt.contains("unrelatedController"))
     );
-    assert_eq!(review.decision_facts.unresolved.len(), 1);
+    assert!(review.decision_facts.unresolved.is_empty());
+    assert!(review.decision_facts.established.iter().any(|fact| {
+        fact.contains("bounded exact caller chain") && fact.contains("request data")
+    }));
 
     let native = reviews
         .observation_reviews
@@ -172,6 +175,7 @@ function findUser(name) { return db.query(`SELECT * FROM users WHERE name='${nam
     assert!(native.facts.iter().any(|fact| {
         fact.role == "upstream_caller_context" && fact.excerpt.contains("native_controller")
     }));
+    assert!(native.decision_facts.unresolved.is_empty());
 
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -235,11 +239,11 @@ fn retains_dynamic_interpreter_operands_but_not_fixed_or_structured_ones() {
     for (path, source) in [
         (
             "app.js",
-            "const ejs = require('ejs'); function run(code, args, template, url, res) { eval(code); eval('2 + 2'); child_process.exec(code); child_process.spawn('tool', args); document.body.innerHTML = code; ejs.render(template); fetch(url); res.redirect(url); }\n",
+            "const ejs = require('ejs'); const fs = require('fs'); const serialize = require('node-serialize'); function run(code, args, template, url, res) { eval(code); eval('2 + 2'); child_process.exec(code); child_process.spawn('tool', args); document.body.innerHTML = code; ejs.render(template); fetch(url); res.redirect(url); } function restore() { return serialize.unserialize(fs.readFileSync('./cache.json', 'utf8')); }\n",
         ),
         (
             "app.py",
-            "import os, pickle\nfrom flask import Flask\nfrom jinja2 import Template\ndef run(command, payload, template):\n    os.system(command)\n    Template(template).render()\n    return pickle.loads(payload)\n",
+            "import os, pickle, joblib, torch\nimport numpy as np\nfrom flask import Flask\nfrom jinja2 import Template\ndef run(command, payload, template):\n    os.system(command)\n    Template(template).render()\n    return pickle.loads(payload)\ndef artifacts():\n    joblib.load('./model.joblib')\n    np.load('./objects.npy', allow_pickle=True)\n    np.load('./arrays.npy', allow_pickle=False)\n    torch.load('./legacy.pt', weights_only=False)\n    torch.load('./weights.pt', weights_only=True)\n",
         ),
         (
             "app.php",
@@ -247,7 +251,7 @@ fn retains_dynamic_interpreter_operands_but_not_fixed_or_structured_ones() {
         ),
         (
             "Probe.java",
-            "import java.io.ObjectInputStream; import java.io.InputStream; class Probe { Object run(InputStream input) throws Exception { return new ObjectInputStream(input).readObject(); } Object structured(ObjectMapper mapper, String payload) { return mapper.readValue(payload, User.class); } }\n",
+            "import java.io.ObjectInputStream; import java.io.InputStream; class Probe { Object run(InputStream input) throws Exception { return new ObjectInputStream(input).readObject(); } Object unshared(ObjectInputStream input) throws Exception { return input.readUnshared(); } Object structured(ObjectMapper mapper, String payload) { return mapper.readValue(payload, User.class); } }\n",
         ),
         (
             "app.c",
@@ -277,8 +281,12 @@ fn retains_dynamic_interpreter_operands_but_not_fixed_or_structured_ones() {
         "javascript-browser-dom-html-output",
         "javascript-outbound-http",
         "javascript-http-redirect",
+        "javascript-node-serialize-deserialization",
         "python-process-execution",
         "python-pickle-deserialization",
+        "python-pickle-artifact-deserialization",
+        "python-numpy-pickle-artifact-deserialization",
+        "python-torch-pickle-artifact-deserialization",
         "python-jinja-dynamic-template-evaluation",
         "php-deserialization",
         "java-native-object-deserialization",
@@ -297,6 +305,25 @@ fn retains_dynamic_interpreter_operands_but_not_fixed_or_structured_ones() {
                 .iter()
                 .any(|tag| tag == "review-origin:decision-critical")
     }));
+    assert!(result.evidence.iter().any(|item| {
+        item.rule_id == "java-native-object-deserialization"
+            && item.enclosing_symbol.as_deref() == Some("unshared")
+            && item.captures.contains_key("stream")
+    }));
+    for safe_rule in [
+        "python-numpy-pickle-artifact-deserialization",
+        "python-torch-pickle-artifact-deserialization",
+    ] {
+        assert_eq!(
+            result
+                .evidence
+                .iter()
+                .filter(|item| item.rule_id == safe_rule)
+                .count(),
+            1,
+            "safe local mode must not create {safe_rule} evidence"
+        );
+    }
     assert!(result.evidence.iter().any(|item| {
         item.rule_id == "javascript-child-process"
             && item
@@ -317,6 +344,19 @@ fn retains_dynamic_interpreter_operands_but_not_fixed_or_structured_ones() {
         .filter_map(|review| review.review_basis.as_ref())
         .map(|basis| basis.relationship.as_str())
         .collect::<BTreeSet<_>>();
+    let reviewed_rules = reviews
+        .observation_reviews
+        .iter()
+        .flat_map(|review| review.evidence.iter().map(|item| item.rule_id.as_str()))
+        .collect::<BTreeSet<_>>();
+    for rule in [
+        "javascript-node-serialize-deserialization",
+        "python-pickle-artifact-deserialization",
+        "python-numpy-pickle-artifact-deserialization",
+        "python-torch-pickle-artifact-deserialization",
+    ] {
+        assert!(reviewed_rules.contains(rule), "missing review for {rule}");
+    }
     for relationship in [
         "bounded_shell_command_interpretation",
         "bounded_native_format_interpretation",

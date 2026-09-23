@@ -1,6 +1,8 @@
+import { DomSanitizer } from '@angular/platform-browser'
+
 export class SearchComponent {
   route: any
-  sanitizer: any
+  sanitizer: DomSanitizer
   feedbackService: any
   productService: any
   searchValue: any

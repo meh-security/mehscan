@@ -13,6 +13,8 @@
         captures: { route: ROUTE, handler: HANDLER }
       - pattern: $APP.MapPut($ROUTE, $HANDLER)
         captures: { route: ROUTE, handler: HANDLER }
+      - pattern: $APP.MapPatch($ROUTE, $HANDLER)
+        captures: { route: ROUTE, handler: HANDLER }
       - pattern: $APP.MapDelete($ROUTE, $HANDLER)
         captures: { route: ROUTE, handler: HANDLER }
   tags: [http, entrypoint, aspnet-core]

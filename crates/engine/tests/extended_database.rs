@@ -109,6 +109,13 @@ fn extended_nosql_filters_preserve_operand_for_every_supported_language() {
             hits.iter()
                 .all(|hit| !hit.cwe_candidates.iter().any(|c| c == "CWE-89"))
         );
+        assert!(
+            hits.iter().all(|hit| hit
+                .tags
+                .iter()
+                .any(|tag| tag == "review-origin:decision-critical")),
+            "dynamic NoSQL structure must remain reviewable for {path}: {hits:#?}"
+        );
     }
 }
 

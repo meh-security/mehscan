@@ -1,12 +1,47 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use mehscan_core::{Capability, SecurityPathState};
+use mehscan_core::{Capability, ReviewReadiness, SecurityPathState};
 
 fn fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("tests/fixtures/v2-java-j5")
+}
+
+#[test]
+fn packages_unresolved_persistent_object_binding_as_targeted_investigation() {
+    let job =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture_root(), Some(8), false)
+            .expect("review job should build");
+    let reviews = job
+        .observation_reviews
+        .iter()
+        .filter(|review| {
+            review
+                .evidence
+                .iter()
+                .any(|item| item.tags.iter().any(|tag| tag == "mass-assignment"))
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(reviews.len(), 3, "{reviews:#?}");
+    for review in reviews {
+        assert!(
+            review.review_basis.as_ref().is_some_and(|basis| {
+                basis.relationship == "bounded_object_binding_review"
+                    && basis.security_question.contains("persist")
+            }) && review.investigation.readiness == ReviewReadiness::Investigation
+                && review.decision_facts.unresolved.len() == 1
+                && review.investigation.lookup_requests.iter().any(|lookup| {
+                    lookup.operation == "references"
+                        && lookup.arguments.get("symbol").is_some_and(|symbol| {
+                            matches!(symbol.as_str(), "Account" | "AccountDto")
+                        })
+                }),
+            "{review:#?}"
+        );
+    }
 }
 
 #[test]

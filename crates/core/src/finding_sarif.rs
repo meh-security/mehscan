@@ -105,6 +105,12 @@ pub struct FindingSarifRunProperties {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope: Vec<String>,
     pub job_fingerprint: String,
+    #[serde(default)]
+    pub response_schema_version: String,
+    #[serde(default)]
+    pub response_fingerprint: String,
+    #[serde(default)]
+    pub review_work: crate::ReviewWorkSummary,
     pub reviewed: usize,
     pub finding_count: usize,
     pub review_required_count: usize,
@@ -163,6 +169,9 @@ impl FindingSarifLog {
                     scan_root: report.scan.root.clone(),
                     scope: report.scan.scope.clone(),
                     job_fingerprint: report.scan.job_fingerprint.clone(),
+                    response_schema_version: report.triage.response_schema_version.clone(),
+                    response_fingerprint: report.triage.response_fingerprint.clone(),
+                    review_work: report.triage.work.clone(),
                     reviewed: report.summary.reviewed,
                     finding_count: report.summary.findings,
                     review_required_count: report.summary.review_required,

@@ -347,6 +347,13 @@ fn add_mapping_observations<'tree>(
                     evidence,
                     vec![source.evidence_id.clone()],
                 );
+                attach_input_type(
+                    evidence,
+                    path,
+                    "java-spring-data-request-entity-mass-assignment",
+                    &invocation,
+                    source,
+                );
             }
 
             if operation.as_ref() == "copyProperties"
@@ -400,6 +407,15 @@ fn add_mapping_observations<'tree>(
                     evidence,
                     vec![source.evidence_id.clone()],
                 );
+                if !ignored {
+                    attach_input_type(
+                        evidence,
+                        path,
+                        "java-bean-copy-persistent-mass-assignment",
+                        &invocation,
+                        source,
+                    );
+                }
             }
 
             if operation.as_ref() == "readValue"
@@ -428,6 +444,26 @@ fn add_mapping_observations<'tree>(
                     evidence,
                     vec![source.evidence_id.clone()],
                 );
+                if let Some(target_type) = receivers.get(&target) {
+                    attach_type_capture(
+                        evidence,
+                        path,
+                        "java-jackson-persistent-update-mass-assignment",
+                        &invocation,
+                        Capture {
+                            text: target_type.clone(),
+                            location: location(path, &invocation),
+                        },
+                    );
+                } else {
+                    attach_input_type(
+                        evidence,
+                        path,
+                        "java-jackson-persistent-update-mass-assignment",
+                        &invocation,
+                        source,
+                    );
+                }
             }
 
             let Some(property) = operation.strip_prefix("set") else {
@@ -477,6 +513,7 @@ fn add_mapping_observations<'tree>(
 struct SourceParameter {
     name: String,
     evidence_id: String,
+    input_type: Option<Capture>,
 }
 
 fn source_parameters(
@@ -502,9 +539,42 @@ fn source_parameters(
             Some(SourceParameter {
                 name: name.text().into_owned(),
                 evidence_id: item.id.clone(),
+                input_type: parameter.field("type").map(|ty| Capture {
+                    text: ty.text().into_owned(),
+                    location: location(path, &ty),
+                }),
             })
         })
         .collect()
+}
+
+fn attach_input_type(
+    evidence: &mut [Evidence],
+    path: &str,
+    rule_id: &str,
+    operation: &Node<'_, StrDoc<SupportLang>>,
+    source: &SourceParameter,
+) {
+    let Some(input_type) = source.input_type.clone() else {
+        return;
+    };
+    attach_type_capture(evidence, path, rule_id, operation, input_type);
+}
+
+fn attach_type_capture(
+    evidence: &mut [Evidence],
+    path: &str,
+    rule_id: &str,
+    operation: &Node<'_, StrDoc<SupportLang>>,
+    input_type: Capture,
+) {
+    if let Some(item) = evidence.iter_mut().find(|item| {
+        item.rule_id == rule_id
+            && item.location.path == path
+            && item.location.start.byte_offset == operation.range().start
+    }) {
+        item.captures.insert("input_type".to_string(), input_type);
+    }
 }
 
 fn has_repository_save(

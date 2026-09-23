@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::Path;
 
@@ -25,13 +25,18 @@ use mehscan_core::{
     PathReviewBundleResponseSet, PathReviewBundleRunReport, PathReviewBundleSet,
     PathReviewBundleTriageReport, PathReviewEvidenceBasis, PathReviewIssueGroup, PathReviewJob,
     PathReviewTask, PathReviewTaskPage, PathReviewTaskPayload, PathReviewTriageProgress,
-    PathReviewTriageReport, PathReviewTriageResponseSet, Position, Provenance, QueryProvenance,
-    QueryResponse, REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, RelationContract, RelationshipFunnel,
-    RelationshipFunnelCapability, ReportedFinding, ReportedSeverity, Resolution,
-    ResourcePolicyState, ReviewConfidence, ReviewConfidencePolicy, ReviewContextTruncation,
-    ReviewDecision, ReviewDecisionFacts, ReviewNeighborhoodFact, ReviewNeighborhoodJob,
-    ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet, Rule, RuntimeEnvironment,
-    SCHEMA_VERSION, SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
+    PathReviewTriageReport, PathReviewTriageResponseSet, PathReviewTriageResult, Position,
+    Provenance, QueryProvenance, QueryResponse, REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+    RelationContract, RelationshipFunnel, RelationshipFunnelCapability, ReportedFinding,
+    ReportedSeverity, Resolution, ResourcePolicyState, ReviewAdmissionAudit,
+    ReviewAdmissionAuditCount, ReviewAdmissionAuditExample, ReviewAdmissionDisposition,
+    ReviewConfidence, ReviewConfidencePolicy, ReviewContextTruncation, ReviewDecision,
+    ReviewDecisionFacts, ReviewFamilyMeasurement, ReviewInvestigationBudget,
+    ReviewInvestigationPlan, ReviewInvestigationTrace, ReviewLookupOutcome, ReviewLookupRequest,
+    ReviewNeighborhoodFact, ReviewNeighborhoodJob, ReviewPipelineCoverage, ReviewReadiness,
+    ReviewRepairTrace, ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet,
+    ReviewWorkSummary, ReviewerOriginLeadRecord, Rule, RuntimeEnvironment, SCHEMA_VERSION,
+    SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
     StructuralMatch, TextReference,
 };
 
@@ -39,7 +44,7 @@ mod review_admission;
 
 use crate::repository::{FileClass, discover, is_sast_excluded_source};
 use crate::rules::parser_language;
-use crate::{EngineError, csharp_review, scan_path};
+use crate::{EngineError, code::executable_deserializer, csharp_review, scan_path};
 
 const DEFAULT_RESULT_LIMIT: usize = 200;
 const MAX_RESULT_LIMIT: usize = 1_000;
@@ -87,6 +92,7 @@ struct PendingUnit {
     selected_evidence_ids: Vec<String>,
 }
 
+#[derive(Clone)]
 struct ObservationGroup {
     path: String,
     symbol: String,
@@ -580,7 +586,7 @@ fn build_path_review_jobs_internal(
     });
     let excluded_candidates = all_candidates.len().saturating_sub(candidates.len());
     let used_ids = candidate_evidence_ids(&all_candidates, &scan.evidence, &sources);
-    let mut observation_groups =
+    let (mut observation_groups, observation_exclusions) =
         observation_groups(&scan.evidence, &used_ids, &all_candidates, &sources);
     observation_groups.extend(review_admission::marker_groups(&sources, &scan.evidence));
     observation_groups.sort_by(|left, right| {
@@ -606,6 +612,12 @@ fn build_path_review_jobs_internal(
         );
     }
     let all_observation_count = observation_groups.len();
+    let recognized_boundary_count = all_candidates.len() + all_observation_count;
+    let excluded_review_material_observation_ids = observation_groups
+        .iter()
+        .filter(|group| group.review_material)
+        .flat_map(|group| group.anchor_evidence_ids.iter().cloned())
+        .collect::<BTreeSet<_>>();
     if !include_review_material {
         observation_groups.retain(|group| !group.review_material);
     }
@@ -621,6 +633,23 @@ fn build_path_review_jobs_internal(
             &review_context,
         )
     });
+    let admitted_candidate_evidence_ids =
+        candidate_evidence_ids(&candidates, &scan.evidence, &sources)
+            .into_iter()
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+    let admitted_observation_ids = observation_groups
+        .iter()
+        .flat_map(|group| group.anchor_evidence_ids.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    let admission_audit = review_admission_audit(
+        &scan.evidence,
+        &used_ids,
+        &admitted_candidate_evidence_ids,
+        &admitted_observation_ids,
+        &excluded_review_material_observation_ids,
+        &observation_exclusions,
+    );
     let candidate_count = candidates.len();
     let observation_total = observation_groups.len();
     let total_reviews = candidate_count + observation_total;
@@ -756,6 +785,17 @@ fn build_path_review_jobs_internal(
         {
             facts.extend(python_source_file_consumer_facts(&sources, sink, 4));
         }
+        if candidate.capability == Capability::HtmlOutput
+            && candidate.source.capability == Capability::StoredUserContent
+            && evidence_by_id
+                .get(candidate.source.id.as_str())
+                .is_some_and(|source| source.tags.iter().any(|tag| tag == "local-file"))
+        {
+            let (mut writers, writers_truncated) =
+                local_asset_archive_writer_facts(&sources, &scan.evidence, &candidate, 2);
+            context_truncated |= writers_truncated;
+            facts.append(&mut writers);
+        }
         let candidate_paths = candidate
             .steps
             .iter()
@@ -845,7 +885,7 @@ fn build_path_review_jobs_internal(
             && let Some(sink) = evidence_by_id.get(candidate.sink.id.as_str())
         {
             let (mut template_facts, template_truncated) =
-                express_template_review_facts(&sources, sink, 5);
+                express_template_review_facts(&sources, sink, 6);
             context_truncated |= template_truncated;
             facts.append(&mut template_facts);
         }
@@ -977,13 +1017,22 @@ fn build_path_review_jobs_internal(
         let unresolved = path_decision_blockers(&candidate, &review_basis, &open_questions, &facts);
         let decision_facts = path_decision_facts(&candidate, &review_basis, &facts, &unresolved);
         let truncation = review_truncation(context_truncated, decision_critical_context_truncated);
+        let investigation = path_review_investigation(
+            &candidate,
+            &review_basis,
+            &decision_facts,
+            &truncation,
+            &facts,
+        );
         let confidence_policy = path_confidence_policy(&candidate, &decision_facts, &truncation);
+        assign_review_fact_artifact_ids(&mut facts);
         reviews.push(PathReview {
             id: candidate.id.replacen("path-", "review-", 1),
             language,
             candidate,
             review_basis: Some(review_basis),
             decision_facts,
+            investigation,
             confidence_policy,
             facts,
             open_questions,
@@ -1021,6 +1070,28 @@ fn build_path_review_jobs_internal(
         offset,
         include_review_material,
     );
+    let mut review_coverage = ReviewPipelineCoverage {
+        recognized_boundary_count,
+        admitted_review_count: total_reviews,
+        returned_review_count: returned_reviews,
+        admission_audit,
+        ..ReviewPipelineCoverage::default()
+    };
+    for readiness in reviews
+        .iter()
+        .map(|review| review.investigation.readiness)
+        .chain(
+            observation_reviews
+                .iter()
+                .map(|review| review.investigation.readiness),
+        )
+    {
+        match readiness {
+            ReviewReadiness::Assessment => review_coverage.assessment_review_count += 1,
+            ReviewReadiness::Investigation => review_coverage.investigation_ready_review_count += 1,
+            ReviewReadiness::Blocked => review_coverage.blocked_review_count += 1,
+        }
+    }
     Ok(PathReviewJob {
         schema_version: SCHEMA_VERSION.to_string(),
         root: scan.root,
@@ -1037,6 +1108,7 @@ fn build_path_review_jobs_internal(
         truncated,
         reviews,
         observation_reviews,
+        review_coverage,
         coverage: scan.coverage,
         diagnostics: scan.diagnostics,
     })
@@ -1070,8 +1142,14 @@ pub fn validate_path_review_triage(
     }
     let issue_groups = path_review_issue_groups(job, responses);
     Ok(PathReviewTriageReport {
-        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
+        schema_version: responses.schema_version.clone(),
         job_fingerprint: job.fingerprint.clone(),
+        response_fingerprint: review_response_fingerprint(
+            &responses.schema_version,
+            &responses.job_fingerprint,
+            &responses.results,
+            None,
+        ),
         issue_count: responses
             .results
             .iter()
@@ -1157,16 +1235,32 @@ pub fn build_path_review_bundles_with_limits(
     max_input_bytes: Option<usize>,
     max_reviews_per_bundle: Option<usize>,
 ) -> Result<PathReviewBundleSet, EngineError> {
+    build_path_review_bundles_with_run_limit(job, max_input_bytes, max_reviews_per_bundle, None)
+}
+
+/// Builds semantic bundles after applying an optional run-level review budget.
+/// Selection reserves one position per represented capability before taking a
+/// second review from a noisy capability. Transport bundle limits remain
+/// independent from this scheduling decision.
+pub fn build_path_review_bundles_with_run_limit(
+    job: &PathReviewJob,
+    max_input_bytes: Option<usize>,
+    max_reviews_per_bundle: Option<usize>,
+    max_total_reviews: Option<usize>,
+) -> Result<PathReviewBundleSet, EngineError> {
     let max_input_bytes = bounded_review_bundle_bytes(max_input_bytes)?;
     let max_reviews_per_bundle = bounded_review_bundle_reviews(max_reviews_per_bundle)?;
+    let (selected_paths, selected_observations, deferred_review_ids) =
+        fair_run_review_selection(job, max_total_reviews)?;
+    let admitted_review_count = job.reviews.len() + job.observation_reviews.len();
     let mut bundles = Vec::new();
 
     let mut path_groups = BTreeMap::<Capability, Vec<PathReview>>::new();
-    for review in &job.reviews {
+    for review in selected_paths {
         path_groups
             .entry(review.candidate.capability)
             .or_default()
-            .push(review.clone());
+            .push(review);
     }
     for (capability, reviews) in path_groups {
         let mut cwe_candidates = reviews
@@ -1191,17 +1285,18 @@ pub fn build_path_review_bundles_with_limits(
     }
 
     let mut observation_groups = BTreeMap::<Capability, Vec<ObservationReview>>::new();
-    for review in &job.observation_reviews {
-        let anchor = observation_actionable_anchor(review).ok_or_else(|| {
+    for review in selected_observations {
+        let anchor = observation_actionable_anchor(&review).ok_or_else(|| {
             EngineError(format!(
                 "observation review {:?} has no actionable evidence to categorize",
                 review.id
             ))
         })?;
+        let capability = anchor.capability;
         observation_groups
-            .entry(anchor.capability)
+            .entry(capability)
             .or_default()
-            .push(review.clone());
+            .push(review);
     }
     for (capability, reviews) in observation_groups {
         let mut cwe_candidates = reviews
@@ -1273,6 +1368,9 @@ pub fn build_path_review_bundles_with_limits(
         job_fingerprint: job.fingerprint.clone(),
         max_input_bytes,
         max_reviews_per_bundle,
+        admitted_review_count,
+        max_total_reviews,
+        deferred_review_ids,
         review_count,
         bundle_count: bundles.len(),
         bundles: manifest_entries,
@@ -1280,11 +1378,105 @@ pub fn build_path_review_bundles_with_limits(
     Ok(PathReviewBundleSet { manifest, bundles })
 }
 
+fn fair_run_review_selection(
+    job: &PathReviewJob,
+    max_total_reviews: Option<usize>,
+) -> Result<(Vec<PathReview>, Vec<ObservationReview>, Vec<String>), EngineError> {
+    const MAX_RUN_REVIEW_LIMIT: usize = 10_000;
+    let admitted_review_count = job.reviews.len() + job.observation_reviews.len();
+    let Some(limit) = max_total_reviews else {
+        return Ok((
+            job.reviews.clone(),
+            job.observation_reviews.clone(),
+            Vec::new(),
+        ));
+    };
+    if limit == 0 || limit > MAX_RUN_REVIEW_LIMIT {
+        return Err(EngineError(format!(
+            "review run limit must be between 1 and {MAX_RUN_REVIEW_LIMIT}"
+        )));
+    }
+    if limit >= admitted_review_count {
+        return Ok((
+            job.reviews.clone(),
+            job.observation_reviews.clone(),
+            Vec::new(),
+        ));
+    }
+
+    let mut families = BTreeMap::<Capability, VecDeque<String>>::new();
+    for review in &job.reviews {
+        families
+            .entry(review.candidate.capability)
+            .or_default()
+            .push_back(review.id.clone());
+    }
+    for review in &job.observation_reviews {
+        let anchor = observation_actionable_anchor(review).ok_or_else(|| {
+            EngineError(format!(
+                "observation review {:?} has no actionable evidence to schedule",
+                review.id
+            ))
+        })?;
+        families
+            .entry(anchor.capability)
+            .or_default()
+            .push_back(review.id.clone());
+    }
+    if limit < families.len() {
+        return Err(EngineError(format!(
+            "review run limit {limit} cannot reserve one review for each of the {} admitted capability families",
+            families.len()
+        )));
+    }
+    let mut selected = BTreeSet::new();
+    while selected.len() < limit {
+        let mut advanced = false;
+        for queue in families.values_mut() {
+            if selected.len() == limit {
+                break;
+            }
+            if let Some(review_id) = queue.pop_front() {
+                selected.insert(review_id);
+                advanced = true;
+            }
+        }
+        if !advanced {
+            break;
+        }
+    }
+    let selected_paths = job
+        .reviews
+        .iter()
+        .filter(|review| selected.contains(&review.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let selected_observations = job
+        .observation_reviews
+        .iter()
+        .filter(|review| selected.contains(&review.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut deferred_review_ids = job
+        .reviews
+        .iter()
+        .map(|review| review.id.clone())
+        .chain(
+            job.observation_reviews
+                .iter()
+                .map(|review| review.id.clone()),
+        )
+        .filter(|review_id| !selected.contains(review_id))
+        .collect::<Vec<_>>();
+    deferred_review_ids.sort();
+    Ok((selected_paths, selected_observations, deferred_review_ids))
+}
+
 pub fn validate_path_review_bundle_response(
     bundle: &PathReviewBundle,
     responses: &PathReviewBundleResponseSet,
 ) -> Result<PathReviewBundleTriageReport, EngineError> {
-    if responses.schema_version != PATH_REVIEW_BUNDLE_SCHEMA_VERSION {
+    if !supported_path_review_response_schema(&responses.schema_version) {
         return Err(EngineError(format!(
             "unsupported path-review bundle response schema {:?}",
             responses.schema_version
@@ -1320,6 +1512,25 @@ pub fn validate_path_review_bundle_response(
             &result.summary,
             &result.checks,
         )?;
+        if path_review_schema_has_investigation_trace(&responses.schema_version) {
+            let trace = result.investigation.as_ref().ok_or_else(|| {
+                EngineError(format!(
+                    "path-review response schema {} requires an investigation trace for {:?}",
+                    PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, result.review_id
+                ))
+            })?;
+            let (plan, supplied_artifact_ids) =
+                bundle_review_investigation_context(bundle, &result.review_id)?;
+            validate_review_investigation_trace(
+                &responses.schema_version,
+                &result.review_id,
+                result.decision,
+                &result.checks,
+                plan,
+                &supplied_artifact_ids,
+                trace,
+            )?;
+        }
         let expected_confidence = bundle_review_confidence_policy(bundle, &result.review_id)
             .map(|policy| confidence_for_decision(policy, result.decision))
             .ok_or_else(|| {
@@ -1356,9 +1567,16 @@ pub fn validate_path_review_bundle_response(
             missing.join(", ")
         )));
     }
+    validate_review_repair_trace(bundle, responses)?;
     Ok(PathReviewBundleTriageReport {
-        schema_version: PATH_REVIEW_BUNDLE_SCHEMA_VERSION.to_string(),
+        schema_version: responses.schema_version.clone(),
         bundle_fingerprint: bundle.bundle_fingerprint.clone(),
+        response_fingerprint: review_response_fingerprint(
+            &responses.schema_version,
+            &responses.bundle_fingerprint,
+            &responses.results,
+            responses.repair.as_ref(),
+        ),
         complete: true,
         issue_count: responses
             .results
@@ -1377,6 +1595,162 @@ pub fn validate_path_review_bundle_response(
             .count(),
         results: responses.results.clone(),
     })
+}
+
+fn validate_review_repair_trace(
+    bundle: &PathReviewBundle,
+    responses: &PathReviewBundleResponseSet,
+) -> Result<(), EngineError> {
+    let Some(repair) = &responses.repair else {
+        return Ok(());
+    };
+    if responses.schema_version != PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION {
+        return Err(EngineError(format!(
+            "repair history requires path-review response schema {}",
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
+        )));
+    }
+    if !bundle.review_ids.contains(&repair.review_id) {
+        return Err(EngineError(format!(
+            "repair history references unknown review {:?}",
+            repair.review_id
+        )));
+    }
+    validate_trace_line(
+        &repair.review_id,
+        "repair validation error",
+        &repair.validation_error,
+        500,
+    )?;
+    for (field, value, prefix) in [
+        (
+            "prior response fingerprint",
+            repair.prior_response_fingerprint.as_str(),
+            "review-response-",
+        ),
+        (
+            "prior result fingerprint",
+            repair.prior_result_fingerprint.as_str(),
+            "review-result-",
+        ),
+        (
+            "replacement result fingerprint",
+            repair.replacement_result_fingerprint.as_str(),
+            "review-result-",
+        ),
+    ] {
+        let suffix = value.strip_prefix(prefix).unwrap_or_default();
+        if suffix.len() != 16 || !suffix.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(EngineError(format!(
+                "{field} for {:?} is invalid",
+                repair.review_id
+            )));
+        }
+    }
+    let replacement = responses
+        .results
+        .iter()
+        .find(|result| result.review_id == repair.review_id)
+        .expect("validated complete response must contain repaired review");
+    if review_result_fingerprint(replacement) != repair.replacement_result_fingerprint {
+        return Err(EngineError(format!(
+            "replacement result fingerprint for {:?} does not match the validated result",
+            repair.review_id
+        )));
+    }
+    if repair.prior_result_fingerprint == repair.replacement_result_fingerprint {
+        return Err(EngineError(format!(
+            "repair history for {:?} does not change the targeted result",
+            repair.review_id
+        )));
+    }
+    Ok(())
+}
+
+/// Replaces exactly one result in a parseable invalid response, records the
+/// failed execution identity, and accepts the output only when the complete
+/// repaired response validates. A second repair is rejected.
+pub fn repair_path_review_bundle_response(
+    bundle: &PathReviewBundle,
+    failed: &PathReviewBundleResponseSet,
+    review_id: &str,
+    replacement: PathReviewTriageResult,
+) -> Result<PathReviewBundleResponseSet, EngineError> {
+    if failed.repair.is_some() {
+        return Err(EngineError(
+            "a path-review bundle response can be repaired only once".to_string(),
+        ));
+    }
+    if failed.bundle_fingerprint != bundle.bundle_fingerprint {
+        return Err(EngineError(
+            "failed path-review response does not match the bundle fingerprint".to_string(),
+        ));
+    }
+    if !supported_path_review_response_schema(&failed.schema_version) {
+        return Err(EngineError(format!(
+            "unsupported failed path-review response schema {:?}",
+            failed.schema_version
+        )));
+    }
+    if replacement.review_id != review_id {
+        return Err(EngineError(format!(
+            "replacement result ID {:?} does not match targeted review {review_id:?}",
+            replacement.review_id
+        )));
+    }
+    let prior_error = match validate_path_review_bundle_response(bundle, failed) {
+        Ok(_) => {
+            return Err(EngineError(
+                "a valid path-review response must not be repaired".to_string(),
+            ));
+        }
+        Err(error) => error,
+    };
+    let prior_result = failed
+        .results
+        .iter()
+        .find(|result| result.review_id == review_id)
+        .ok_or_else(|| {
+            EngineError(format!(
+                "failed response does not contain targeted review {review_id:?}"
+            ))
+        })?;
+    let prior_response_fingerprint = review_response_fingerprint(
+        &failed.schema_version,
+        &failed.bundle_fingerprint,
+        &failed.results,
+        None,
+    );
+    let prior_result_fingerprint = review_result_fingerprint(prior_result);
+    let replacement_result_fingerprint = review_result_fingerprint(&replacement);
+    let mut results = failed.results.clone();
+    let target = results
+        .iter_mut()
+        .find(|result| result.review_id == review_id)
+        .expect("targeted prior result was found above");
+    *target = replacement;
+    let validation_error = prior_error
+        .to_string()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(500)
+        .collect::<String>();
+    let repaired = PathReviewBundleResponseSet {
+        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
+        bundle_fingerprint: bundle.bundle_fingerprint.clone(),
+        results,
+        repair: Some(ReviewRepairTrace {
+            review_id: review_id.to_string(),
+            prior_response_fingerprint,
+            prior_result_fingerprint,
+            replacement_result_fingerprint,
+            validation_error,
+        }),
+    };
+    validate_path_review_bundle_response(bundle, &repaired)?;
+    Ok(repaired)
 }
 
 /// Validates a complete semantic-bundle run and deduplicates issue decisions
@@ -1415,6 +1789,38 @@ pub fn summarize_path_review_bundle_manifest_run(
             "review manifest count does not match the run".to_string(),
         ));
     }
+    Ok(report)
+}
+
+pub fn summarize_path_review_bundle_manifest_run_with_work(
+    manifest: &PathReviewBundleManifest,
+    bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
+    scheduled_work: ReviewWorkSummary,
+) -> Result<PathReviewBundleRunReport, EngineError> {
+    if manifest.bundle_count != manifest.bundles.len() {
+        return Err(EngineError(
+            "bundle manifest count does not match its entries".to_string(),
+        ));
+    }
+    let manifest_bundles = manifest
+        .bundles
+        .iter()
+        .map(|entry| entry.bundle_fingerprint.as_str())
+        .collect::<BTreeSet<_>>();
+    if bundle_responses.iter().any(|(bundle, _)| {
+        bundle.job_fingerprint != manifest.job_fingerprint
+            || !manifest_bundles.contains(bundle.bundle_fingerprint.as_str())
+    }) {
+        return Err(EngineError(
+            "completed bundle response does not belong to the manifest".to_string(),
+        ));
+    }
+    let mut report = summarize_path_review_bundle_run_with_fingerprint(
+        bundle_responses,
+        manifest.job_fingerprint.clone(),
+    )?;
+    report.work = merge_scheduled_review_work(&report.work, scheduled_work)?;
+    apply_manifest_family_schedule(manifest, &mut report.family_measurements);
     Ok(report)
 }
 
@@ -1494,9 +1900,40 @@ fn summarize_path_review_bundle_run_with_fingerprint(
         .count();
     let issue_groups = groups.into_values().collect::<Vec<_>>();
     let quality_warnings = review_run_quality_warnings(bundle_responses);
+    let response_fingerprint = review_run_response_fingerprint(&job_fingerprint, bundle_responses);
+    let work = completed_review_work(bundle_responses);
+    let mut repairs = bundle_responses
+        .iter()
+        .filter_map(|(_, response)| response.repair.clone())
+        .collect::<Vec<_>>();
+    repairs.sort_by(|left, right| left.review_id.cmp(&right.review_id));
+    let mut reviewer_origin_leads = results
+        .iter()
+        .flat_map(|result| {
+            result
+                .investigation
+                .iter()
+                .flat_map(|trace| &trace.reviewer_origin_leads)
+                .map(|lead| ReviewerOriginLeadRecord {
+                    origin_review_id: result.review_id.clone(),
+                    lead: lead.clone(),
+                })
+        })
+        .collect::<Vec<_>>();
+    reviewer_origin_leads.sort_by(|left, right| {
+        left.origin_review_id
+            .cmp(&right.origin_review_id)
+            .then_with(|| left.lead.question.cmp(&right.lead.question))
+    });
+    let family_measurements = review_family_measurements(bundle_responses);
     Ok(PathReviewBundleRunReport {
         schema_version: PATH_REVIEW_BUNDLE_SCHEMA_VERSION.to_string(),
         job_fingerprint,
+        response_fingerprint,
+        work,
+        repairs,
+        reviewer_origin_leads,
+        family_measurements,
         bundle_count: bundle_responses.len(),
         review_count: results.len(),
         issue_count,
@@ -1507,6 +1944,110 @@ fn summarize_path_review_bundle_run_with_fingerprint(
         quality_warnings,
         results,
     })
+}
+
+fn review_family_measurements(
+    bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
+) -> Vec<ReviewFamilyMeasurement> {
+    let mut measurements = BTreeMap::<Capability, ReviewFamilyMeasurement>::new();
+    for (bundle, response) in bundle_responses {
+        let measurement = measurements
+            .entry(bundle.category.capability)
+            .or_insert_with(|| empty_family_measurement(bundle.category.capability));
+        measurement.scheduled_review_count += response.results.len();
+        measurement.completed_review_count += response.results.len();
+        for result in &response.results {
+            match result.decision {
+                ReviewDecision::Issue => {
+                    measurement.issue_count += 1;
+                    measurement.resolved_review_count += 1;
+                }
+                ReviewDecision::NotIssue => {
+                    measurement.not_issue_count += 1;
+                    measurement.resolved_review_count += 1;
+                }
+                ReviewDecision::NeedsReview => measurement.needs_review_count += 1,
+            }
+            if let Some(trace) = &result.investigation {
+                measurement.lookup_attempt_count += trace.lookup_attempts.len();
+                for attempt in &trace.lookup_attempts {
+                    match attempt.outcome {
+                        ReviewLookupOutcome::Answered => measurement.answered_lookup_count += 1,
+                        ReviewLookupOutcome::NoRelevantResult => {
+                            measurement.no_relevant_result_lookup_count += 1;
+                            measurement.unsuccessful_lookup_count += 1;
+                        }
+                        ReviewLookupOutcome::Unavailable => {
+                            measurement.unavailable_lookup_count += 1;
+                            measurement.unsuccessful_lookup_count += 1;
+                        }
+                        ReviewLookupOutcome::Truncated => {
+                            measurement.truncated_lookup_count += 1;
+                            measurement.unsuccessful_lookup_count += 1;
+                        }
+                        ReviewLookupOutcome::BudgetExhausted => {
+                            measurement.budget_exhausted_lookup_count += 1;
+                            measurement.unsuccessful_lookup_count += 1;
+                        }
+                        ReviewLookupOutcome::Failed => {
+                            measurement.failed_lookup_count += 1;
+                            measurement.unsuccessful_lookup_count += 1;
+                        }
+                    }
+                }
+                measurement.returned_artifact_bytes += trace
+                    .lookup_attempts
+                    .iter()
+                    .flat_map(|attempt| &attempt.artifacts)
+                    .map(|artifact| artifact.excerpt.len())
+                    .sum::<usize>();
+                measurement.reviewer_origin_lead_count += trace.reviewer_origin_leads.len();
+            }
+        }
+    }
+    measurements.into_values().collect()
+}
+
+fn empty_family_measurement(capability: Capability) -> ReviewFamilyMeasurement {
+    ReviewFamilyMeasurement {
+        capability,
+        scheduled_review_count: 0,
+        completed_review_count: 0,
+        resolved_review_count: 0,
+        issue_count: 0,
+        not_issue_count: 0,
+        needs_review_count: 0,
+        lookup_attempt_count: 0,
+        answered_lookup_count: 0,
+        no_relevant_result_lookup_count: 0,
+        unavailable_lookup_count: 0,
+        truncated_lookup_count: 0,
+        budget_exhausted_lookup_count: 0,
+        failed_lookup_count: 0,
+        unsuccessful_lookup_count: 0,
+        returned_artifact_bytes: 0,
+        reviewer_origin_lead_count: 0,
+    }
+}
+
+fn apply_manifest_family_schedule(
+    manifest: &PathReviewBundleManifest,
+    measurements: &mut Vec<ReviewFamilyMeasurement>,
+) {
+    let mut by_capability = std::mem::take(measurements)
+        .into_iter()
+        .map(|measurement| (measurement.capability, measurement))
+        .collect::<BTreeMap<_, _>>();
+    for measurement in by_capability.values_mut() {
+        measurement.scheduled_review_count = 0;
+    }
+    for entry in &manifest.bundles {
+        let measurement = by_capability
+            .entry(entry.category.capability)
+            .or_insert_with(|| empty_family_measurement(entry.category.capability));
+        measurement.scheduled_review_count += entry.review_count;
+    }
+    *measurements = by_capability.into_values().collect();
 }
 
 /// Joins strict AI verdicts back to deterministic review evidence. The result
@@ -1550,6 +2091,31 @@ pub fn build_finding_report_from_manifest(
     Ok(report)
 }
 
+pub fn build_finding_report_from_manifest_with_work(
+    manifest: &PathReviewBundleManifest,
+    tool_version: impl Into<String>,
+    reviewer: Option<String>,
+    bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
+    include_dismissed: bool,
+    scheduled_work: ReviewWorkSummary,
+) -> Result<FindingReport, EngineError> {
+    let run = summarize_path_review_bundle_manifest_run_with_work(
+        manifest,
+        bundle_responses,
+        scheduled_work,
+    )?;
+    let mut report = finding_report_from_run(
+        tool_version,
+        reviewer,
+        bundle_responses,
+        include_dismissed,
+        run,
+    )?;
+    report.scan.coverage = manifest.coverage.clone();
+    report.scan.scope = manifest.scope.clone();
+    Ok(report)
+}
+
 fn finding_report_from_run(
     tool_version: impl Into<String>,
     reviewer: Option<String>,
@@ -1557,6 +2123,18 @@ fn finding_report_from_run(
     include_dismissed: bool,
     run: PathReviewBundleRunReport,
 ) -> Result<FindingReport, EngineError> {
+    let response_schema_versions = bundle_responses
+        .iter()
+        .map(|(_, responses)| responses.schema_version.as_str())
+        .collect::<BTreeSet<_>>();
+    let response_schema_version = if response_schema_versions.is_empty() {
+        PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string()
+    } else {
+        response_schema_versions
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join("+")
+    };
     let mut records = BTreeMap::<String, ReportAccumulator>::new();
     let mut dismissed = Vec::new();
 
@@ -1641,7 +2219,11 @@ fn finding_report_from_run(
             scope: Vec::new(),
         },
         triage: FindingReportTriage {
-            response_schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
+            response_schema_version,
+            response_fingerprint: run.response_fingerprint.clone(),
+            work: run.work.clone(),
+            repairs: run.repairs.clone(),
+            family_measurements: run.family_measurements.clone(),
             reviewer,
         },
         summary: FindingReportSummary {
@@ -1656,6 +2238,7 @@ fn finding_report_from_run(
         findings,
         review_required,
         dismissed,
+        reviewer_origin_leads: run.reviewer_origin_leads.clone(),
         quality_warnings,
     })
 }
@@ -2620,6 +3203,584 @@ fn bundle_unresolved_facts<'a>(
     .ok_or_else(|| EngineError(format!("bundle is missing review {review_id:?}")))
 }
 
+fn job_unresolved_facts<'a>(
+    job: &'a PathReviewJob,
+    review_id: &str,
+) -> Result<&'a [String], EngineError> {
+    job.reviews
+        .iter()
+        .find(|review| review.id == review_id)
+        .map(|review| review.decision_facts.unresolved.as_slice())
+        .or_else(|| {
+            job.observation_reviews
+                .iter()
+                .find(|review| review.id == review_id)
+                .map(|review| review.decision_facts.unresolved.as_slice())
+        })
+        .ok_or_else(|| EngineError(format!("job is missing review {review_id:?}")))
+}
+
+fn supported_path_review_response_schema(schema_version: &str) -> bool {
+    schema_version == PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
+}
+
+fn path_review_schema_has_investigation_trace(_schema_version: &str) -> bool {
+    true
+}
+
+fn bundle_review_investigation_context<'a>(
+    bundle: &'a PathReviewBundle,
+    review_id: &str,
+) -> Result<(&'a ReviewInvestigationPlan, BTreeMap<String, Vec<Location>>), EngineError> {
+    match &bundle.payload {
+        PathReviewBundlePayload::SecurityPath { reviews } => reviews
+            .iter()
+            .find(|review| review.id == review_id)
+            .map(|review| {
+                (
+                    &review.investigation,
+                    path_review_supplied_artifacts(review),
+                )
+            }),
+        PathReviewBundlePayload::Observation { reviews } => reviews
+            .iter()
+            .find(|review| review.id == review_id)
+            .map(|review| {
+                (
+                    &review.investigation,
+                    observation_review_supplied_artifacts(review),
+                )
+            }),
+    }
+    .ok_or_else(|| EngineError(format!("bundle is missing review {review_id:?}")))
+}
+
+fn job_review_investigation_context<'a>(
+    job: &'a PathReviewJob,
+    review_id: &str,
+) -> Result<(&'a ReviewInvestigationPlan, BTreeMap<String, Vec<Location>>), EngineError> {
+    job.reviews
+        .iter()
+        .find(|review| review.id == review_id)
+        .map(|review| {
+            (
+                &review.investigation,
+                path_review_supplied_artifacts(review),
+            )
+        })
+        .or_else(|| {
+            job.observation_reviews
+                .iter()
+                .find(|review| review.id == review_id)
+                .map(|review| {
+                    (
+                        &review.investigation,
+                        observation_review_supplied_artifacts(review),
+                    )
+                })
+        })
+        .ok_or_else(|| EngineError(format!("job is missing review {review_id:?}")))
+}
+
+fn path_review_supplied_artifacts(review: &PathReview) -> BTreeMap<String, Vec<Location>> {
+    let mut artifacts = BTreeMap::<String, Vec<Location>>::new();
+    artifacts
+        .entry(review.candidate.source.id.clone())
+        .or_default()
+        .push(review.candidate.source.location.clone());
+    artifacts
+        .entry(review.candidate.sink.id.clone())
+        .or_default()
+        .push(review.candidate.sink.location.clone());
+    for evidence in &review.candidate.protections {
+        artifacts
+            .entry(evidence.id.clone())
+            .or_default()
+            .push(evidence.location.clone());
+    }
+    for step in &review.candidate.steps {
+        if let Some(evidence_id) = &step.evidence_id {
+            artifacts
+                .entry(evidence_id.clone())
+                .or_default()
+                .push(step.location.clone());
+        }
+    }
+    for fact in &review.facts {
+        if let Some(evidence_id) = &fact.evidence_id {
+            artifacts
+                .entry(evidence_id.clone())
+                .or_default()
+                .push(fact.location.clone());
+        }
+    }
+    artifacts
+}
+
+fn observation_review_supplied_artifacts(
+    review: &ObservationReview,
+) -> BTreeMap<String, Vec<Location>> {
+    let mut artifacts = BTreeMap::<String, Vec<Location>>::new();
+    for evidence in &review.evidence {
+        artifacts
+            .entry(evidence.id.clone())
+            .or_default()
+            .push(evidence.location.clone());
+    }
+    for fact in &review.facts {
+        if let Some(evidence_id) = &fact.evidence_id {
+            artifacts
+                .entry(evidence_id.clone())
+                .or_default()
+                .push(fact.location.clone());
+        }
+    }
+    artifacts
+}
+
+fn validate_review_investigation_trace(
+    _schema_version: &str,
+    review_id: &str,
+    decision: ReviewDecision,
+    checks: &[String],
+    plan: &ReviewInvestigationPlan,
+    supplied_artifacts: &BTreeMap<String, Vec<Location>>,
+    trace: &ReviewInvestigationTrace,
+) -> Result<(), EngineError> {
+    if plan.lookup_requests.len() > plan.budget.max_supplied_lookups {
+        return Err(EngineError(format!(
+            "investigation plan for {review_id:?} exceeds its supplied-lookup budget"
+        )));
+    }
+    let mut attempted_requests = BTreeSet::new();
+    let mut escalated_lookups = 0usize;
+    let mut returned_artifact_bytes = 0usize;
+    let mut retrieved_locator_text = String::new();
+    let mut available_artifacts = supplied_artifacts.clone();
+    for attempt in &trace.lookup_attempts {
+        let request = match (attempt.request_index, attempt.escalation.as_ref()) {
+            (Some(request_index), None) => {
+                let request = plan.lookup_requests.get(request_index).ok_or_else(|| {
+                    EngineError(format!(
+                        "investigation trace for {review_id:?} references unknown lookup request {request_index}"
+                    ))
+                })?;
+                if !attempted_requests.insert(request_index) {
+                    return Err(EngineError(format!(
+                        "investigation trace for {review_id:?} repeats lookup request {request_index}"
+                    )));
+                }
+                request
+            }
+            (None, Some(request)) => {
+                if attempted_requests.is_empty() {
+                    return Err(EngineError(format!(
+                        "investigation trace for {review_id:?} must execute a supplied lookup before escalating"
+                    )));
+                }
+                if plan.budget.max_lookup_depth == 0 {
+                    return Err(EngineError(format!(
+                        "investigation trace for {review_id:?} cannot escalate under its lookup-depth budget"
+                    )));
+                }
+                escalated_lookups += 1;
+                if escalated_lookups > plan.budget.max_escalations {
+                    return Err(EngineError(format!(
+                        "investigation trace for {review_id:?} exceeds its {}-lookup escalation budget",
+                        plan.budget.max_escalations
+                    )));
+                }
+                validate_escalated_lookup(review_id, plan, request, &retrieved_locator_text)?;
+                request
+            }
+            _ => {
+                return Err(EngineError(format!(
+                    "investigation trace for {review_id:?} lookup attempt must identify exactly one supplied request_index or escalation"
+                )));
+            }
+        };
+        validate_trace_line(review_id, "lookup detail", &attempt.detail, 500)?;
+        if attempt.outcome == ReviewLookupOutcome::Answered && attempt.artifacts.is_empty() {
+            return Err(EngineError(format!(
+                "answered lookup for {review_id:?} requires a retrieved artifact"
+            )));
+        }
+        for artifact in &attempt.artifacts {
+            validate_trace_line(review_id, "artifact ID", &artifact.artifact_id, 120)?;
+            if artifact.excerpt.trim().is_empty()
+                || artifact.excerpt.chars().count() > 4_000
+                || artifact.excerpt.contains('\0')
+            {
+                return Err(EngineError(format!(
+                    "retrieved artifact {:?} for {review_id:?} requires a non-empty excerpt of at most 4000 characters",
+                    artifact.artifact_id
+                )));
+            }
+            if available_artifacts.contains_key(&artifact.artifact_id) {
+                return Err(EngineError(format!(
+                    "investigation trace for {review_id:?} contains duplicate artifact ID {:?}",
+                    artifact.artifact_id
+                )));
+            }
+            available_artifacts.insert(
+                artifact.artifact_id.clone(),
+                vec![artifact.location.clone()],
+            );
+            returned_artifact_bytes =
+                returned_artifact_bytes.saturating_add(artifact.excerpt.len());
+            if returned_artifact_bytes > plan.budget.max_returned_bytes {
+                return Err(EngineError(format!(
+                    "investigation trace for {review_id:?} exceeds the {}-byte returned-artifact budget",
+                    plan.budget.max_returned_bytes
+                )));
+            }
+            validate_retrieved_artifact_locator(review_id, request, artifact)?;
+            retrieved_locator_text.push_str(&artifact.excerpt);
+            retrieved_locator_text.push('\n');
+        }
+    }
+
+    let mut citations = BTreeSet::new();
+    let mut referenced_artifact_ids = BTreeSet::new();
+    for citation in &trace.citations {
+        validate_trace_line(review_id, "citation claim", &citation.claim, 500)?;
+        if !available_artifacts.contains_key(&citation.artifact_id) {
+            return Err(EngineError(format!(
+                "citation for {review_id:?} references unknown artifact {:?}",
+                citation.artifact_id
+            )));
+        }
+        if !citations.insert((citation.artifact_id.as_str(), citation.claim.trim())) {
+            return Err(EngineError(format!(
+                "investigation trace for {review_id:?} contains a duplicate citation"
+            )));
+        }
+        referenced_artifact_ids.insert(citation.artifact_id.as_str());
+    }
+    let explicitly_cited_artifact_ids = referenced_artifact_ids.clone();
+
+    for inference in &trace.reviewer_inferences {
+        validate_trace_line(review_id, "reviewer inference", &inference.claim, 500)?;
+        if inference.artifact_ids.is_empty() {
+            return Err(EngineError(format!(
+                "reviewer inference for {review_id:?} must cite at least one artifact"
+            )));
+        }
+        let mut cited = BTreeSet::new();
+        for artifact_id in &inference.artifact_ids {
+            if !available_artifacts.contains_key(artifact_id) {
+                return Err(EngineError(format!(
+                    "reviewer inference for {review_id:?} references unknown artifact {artifact_id:?}"
+                )));
+            }
+            if !cited.insert(artifact_id) {
+                return Err(EngineError(format!(
+                    "reviewer inference for {review_id:?} repeats artifact {artifact_id:?}"
+                )));
+            }
+            referenced_artifact_ids.insert(artifact_id.as_str());
+        }
+    }
+
+    if trace.reviewer_origin_leads.len() > 3 {
+        return Err(EngineError(format!(
+            "investigation trace for {review_id:?} exceeds the three-lead limit"
+        )));
+    }
+    let original_questions = checks
+        .iter()
+        .chain(plan.missing_facts.iter())
+        .map(|question| question.trim().to_lowercase())
+        .collect::<BTreeSet<_>>();
+    let mut lead_questions = BTreeSet::new();
+    for lead in &trace.reviewer_origin_leads {
+        validate_trace_line(review_id, "reviewer-origin question", &lead.question, 500)?;
+        validate_trace_line(
+            review_id,
+            "reviewer-origin security relevance",
+            &lead.security_relevance,
+            500,
+        )?;
+        validate_trace_line(
+            review_id,
+            "reviewer-origin distinction",
+            &lead.distinct_from_review,
+            500,
+        )?;
+        let normalized_question = lead.question.trim().to_lowercase();
+        if original_questions.contains(&normalized_question) {
+            return Err(EngineError(format!(
+                "reviewer-origin lead for {review_id:?} must ask a question distinct from the admitted review"
+            )));
+        }
+        if !lead_questions.insert(normalized_question) {
+            return Err(EngineError(format!(
+                "investigation trace for {review_id:?} contains a duplicate reviewer-origin lead"
+            )));
+        }
+        if lead.artifact_ids.is_empty() || lead.artifact_ids.len() > 4 {
+            return Err(EngineError(format!(
+                "reviewer-origin lead for {review_id:?} must cite between one and four artifacts"
+            )));
+        }
+        let mut lead_artifacts = BTreeSet::new();
+        let mut location_supported = false;
+        for artifact_id in &lead.artifact_ids {
+            if !lead_artifacts.insert(artifact_id) {
+                return Err(EngineError(format!(
+                    "reviewer-origin lead for {review_id:?} repeats artifact {artifact_id:?}"
+                )));
+            }
+            let Some(locations) = available_artifacts.get(artifact_id) else {
+                return Err(EngineError(format!(
+                    "reviewer-origin lead for {review_id:?} references unknown artifact {artifact_id:?}"
+                )));
+            };
+            if !explicitly_cited_artifact_ids.contains(artifact_id.as_str()) {
+                return Err(EngineError(format!(
+                    "reviewer-origin lead for {review_id:?} must use an explicitly cited artifact"
+                )));
+            }
+            location_supported |= locations.iter().any(|location| {
+                location.path == lead.location.path
+                    && location.start.byte_offset <= lead.location.start.byte_offset
+                    && location.end.byte_offset >= lead.location.end.byte_offset
+                    && lead.location.start.byte_offset <= lead.location.end.byte_offset
+            });
+        }
+        if !location_supported {
+            return Err(EngineError(format!(
+                "reviewer-origin lead location for {review_id:?} must be contained by one of its cited artifacts"
+            )));
+        }
+    }
+
+    for attempt in trace
+        .lookup_attempts
+        .iter()
+        .filter(|attempt| attempt.outcome == ReviewLookupOutcome::Answered)
+    {
+        if !attempt
+            .artifacts
+            .iter()
+            .any(|artifact| referenced_artifact_ids.contains(artifact.artifact_id.as_str()))
+        {
+            return Err(EngineError(format!(
+                "answered lookup for {review_id:?} must cite a retrieved artifact"
+            )));
+        }
+    }
+
+    let mut recorded_blockers = BTreeSet::new();
+    for blocker in &trace.blockers {
+        validate_trace_line(review_id, "investigation blocker", blocker, 700)?;
+        let Some(expected) = plan
+            .blockers
+            .iter()
+            .find(|expected| expected.trim() == blocker.trim())
+        else {
+            return Err(EngineError(format!(
+                "investigation trace for {review_id:?} contains a blocker not supplied by the review"
+            )));
+        };
+        if !recorded_blockers.insert(expected.as_str()) {
+            return Err(EngineError(format!(
+                "investigation trace for {review_id:?} contains a duplicate blocker"
+            )));
+        }
+    }
+
+    if decision == ReviewDecision::NeedsReview {
+        for check in checks {
+            let matching_requests = plan
+                .lookup_requests
+                .iter()
+                .enumerate()
+                .filter(|(_, request)| {
+                    request
+                        .questions
+                        .iter()
+                        .any(|question| question.trim() == check.trim())
+                })
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            if !matching_requests.is_empty() {
+                if !matching_requests
+                    .iter()
+                    .any(|index| attempted_requests.contains(index))
+                {
+                    return Err(EngineError(format!(
+                        "needs_review for {review_id:?} must attempt a supplied lookup for check {check:?}"
+                    )));
+                }
+                continue;
+            }
+            let matching_blocker = plan.blockers.iter().find(|blocker| blocker.contains(check));
+            if !matching_blocker.is_some_and(|blocker| {
+                recorded_blockers
+                    .iter()
+                    .any(|recorded| recorded.trim() == blocker.trim())
+            }) {
+                return Err(EngineError(format!(
+                    "needs_review for {review_id:?} must record the supplied blocker for check {check:?}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_escalated_lookup(
+    review_id: &str,
+    plan: &ReviewInvestigationPlan,
+    request: &ReviewLookupRequest,
+    retrieved_locator_text: &str,
+) -> Result<(), EngineError> {
+    validate_trace_line(review_id, "escalation purpose", &request.purpose, 500)?;
+    if request.questions.is_empty()
+        || request.questions.iter().any(|question| {
+            !plan
+                .missing_facts
+                .iter()
+                .any(|missing| missing.trim() == question.trim())
+        })
+    {
+        return Err(EngineError(format!(
+            "escalated lookup for {review_id:?} must retain one or more exact supplied missing facts"
+        )));
+    }
+    match request.operation.as_str() {
+        "source" => {
+            let path = request.arguments.get("path");
+            let start = request
+                .arguments
+                .get("start-line")
+                .and_then(|value| value.parse::<usize>().ok());
+            let end = request
+                .arguments
+                .get("end-line")
+                .and_then(|value| value.parse::<usize>().ok());
+            if request.arguments.len() != 3
+                || path.is_none_or(|path| path.trim().is_empty())
+                || start.is_none_or(|line| line == 0)
+                || end
+                    .is_none_or(|line| line < start.unwrap_or(1) || line - start.unwrap_or(1) > 400)
+            {
+                return Err(EngineError(format!(
+                    "escalated source lookup for {review_id:?} requires an exact path and a window of at most 400 lines"
+                )));
+            }
+            let path = path.expect("validated source path");
+            let filename = Path::new(path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(path);
+            if !retrieved_locator_text.contains(path) && !retrieved_locator_text.contains(filename)
+            {
+                return Err(EngineError(format!(
+                    "escalated source lookup for {review_id:?} must use a path exposed by an earlier retrieved artifact"
+                )));
+            }
+        }
+        "references" => {
+            let symbol = request.arguments.get("symbol");
+            let limit = request
+                .arguments
+                .get("limit")
+                .and_then(|value| value.parse::<usize>().ok());
+            if request.arguments.len() != 2
+                || symbol.is_none_or(|symbol| !is_plain_identifier(symbol))
+                || limit.is_none_or(|limit| limit == 0 || limit > DEFAULT_RESULT_LIMIT)
+            {
+                return Err(EngineError(format!(
+                    "escalated reference lookup for {review_id:?} requires an exact identifier and limit of at most {DEFAULT_RESULT_LIMIT}"
+                )));
+            }
+            if !retrieved_locator_text.contains(symbol.expect("validated reference symbol")) {
+                return Err(EngineError(format!(
+                    "escalated reference lookup for {review_id:?} must use an identifier exposed by an earlier retrieved artifact"
+                )));
+            }
+        }
+        operation => {
+            return Err(EngineError(format!(
+                "escalated lookup for {review_id:?} uses unsupported operation {operation:?}; expected source or references"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_trace_line(
+    review_id: &str,
+    field: &str,
+    value: &str,
+    max_chars: usize,
+) -> Result<(), EngineError> {
+    let value = value.trim();
+    if value.is_empty() || value.chars().count() > max_chars || value.chars().any(char::is_control)
+    {
+        return Err(EngineError(format!(
+            "{field} for {review_id:?} must be one non-empty line of at most {max_chars} characters"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_retrieved_artifact_locator(
+    review_id: &str,
+    request: &ReviewLookupRequest,
+    artifact: &mehscan_core::ReviewRetrievedArtifact,
+) -> Result<(), EngineError> {
+    if artifact.location.path.trim().is_empty()
+        || artifact.location.start.line == 0
+        || artifact.location.end.line < artifact.location.start.line
+        || artifact.location.end.byte_offset < artifact.location.start.byte_offset
+    {
+        return Err(EngineError(format!(
+            "retrieved artifact {:?} for {review_id:?} has an invalid source location",
+            artifact.artifact_id
+        )));
+    }
+    if request.operation != "source" {
+        if request.operation == "references"
+            && request
+                .arguments
+                .get("symbol")
+                .is_some_and(|symbol| !artifact.excerpt.contains(symbol))
+        {
+            return Err(EngineError(format!(
+                "retrieved artifact {:?} for {review_id:?} does not contain its requested reference symbol",
+                artifact.artifact_id
+            )));
+        }
+        return Ok(());
+    }
+    let path = request.arguments.get("path");
+    let start_line = request
+        .arguments
+        .get("start-line")
+        .and_then(|value| value.parse::<usize>().ok());
+    let end_line = request
+        .arguments
+        .get("end-line")
+        .and_then(|value| value.parse::<usize>().ok());
+    if path != Some(&artifact.location.path)
+        || start_line.is_none_or(|line| artifact.location.start.line < line)
+        || end_line.is_none_or(|line| {
+            artifact.location.end.line > line
+                && !(artifact.location.end.line == line.saturating_add(1)
+                    && artifact.location.end.column == 1)
+        })
+    {
+        return Err(EngineError(format!(
+            "retrieved artifact {:?} for {review_id:?} is outside its requested source locator",
+            artifact.artifact_id
+        )));
+    }
+    Ok(())
+}
+
 fn review_run_quality_warnings(
     bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
 ) -> Vec<String> {
@@ -2871,30 +4032,72 @@ fn split_path_bundle(
 fn split_observation_bundle(
     job: &PathReviewJob,
     category: PathReviewBundleCategory,
-    reviews: Vec<ObservationReview>,
+    mut reviews: Vec<ObservationReview>,
     max_input_bytes: usize,
     max_reviews_per_bundle: usize,
 ) -> Result<Vec<PathReviewBundle>, EngineError> {
+    reviews.sort_by(|left, right| {
+        let left_anchor = observation_actionable_anchor(left);
+        let right_anchor = observation_actionable_anchor(right);
+        left_anchor
+            .map(|item| item.location.path.as_str())
+            .cmp(&right_anchor.map(|item| item.location.path.as_str()))
+            .then_with(|| {
+                left_anchor
+                    .map(|item| item.location.start.byte_offset)
+                    .cmp(&right_anchor.map(|item| item.location.start.byte_offset))
+            })
+            .then_with(|| left.id.cmp(&right.id))
+    });
     let mut chunks = Vec::<Vec<ObservationReview>>::new();
     let mut current = Vec::new();
+    let mut file_blocks = Vec::<Vec<ObservationReview>>::new();
     for review in reviews {
-        let mut trial = current.clone();
-        trial.push(review.clone());
-        let trial_review_count = trial.len();
-        let bundle = make_observation_bundle(job, category.clone(), trial, 9_999, 9_999);
-        if (trial_review_count > max_reviews_per_bundle
-            || serialized_bundle_bytes(&bundle)? > max_input_bytes)
-            && !current.is_empty()
+        let path =
+            observation_actionable_anchor(&review).map(|anchor| anchor.location.path.as_str());
+        if let Some(block) = file_blocks.last_mut()
+            && block
+                .last()
+                .and_then(observation_actionable_anchor)
+                .map(|anchor| anchor.location.path.as_str())
+                == path
         {
-            chunks.push(std::mem::take(&mut current));
+            block.push(review);
+        } else {
+            file_blocks.push(vec![review]);
         }
-        current.push(review);
-        let single = make_observation_bundle(job, category.clone(), current.clone(), 9_999, 9_999);
-        if current.len() == 1 && serialized_bundle_bytes(&single)? > max_input_bytes {
-            return Err(EngineError(format!(
-                "review {:?} exceeds the bundle byte limit {max_input_bytes}; increase --max-bytes",
-                current[0].id
-            )));
+    }
+    for block in file_blocks {
+        if !current.is_empty() && block.len() <= max_reviews_per_bundle {
+            let mut trial = current.clone();
+            trial.extend(block.iter().cloned());
+            let bundle = make_observation_bundle(job, category.clone(), trial, 9_999, 9_999);
+            if bundle.review_ids.len() > max_reviews_per_bundle
+                || serialized_bundle_bytes(&bundle)? > max_input_bytes
+            {
+                chunks.push(std::mem::take(&mut current));
+            }
+        }
+        for review in block {
+            let mut trial = current.clone();
+            trial.push(review.clone());
+            let trial_review_count = trial.len();
+            let bundle = make_observation_bundle(job, category.clone(), trial, 9_999, 9_999);
+            if (trial_review_count > max_reviews_per_bundle
+                || serialized_bundle_bytes(&bundle)? > max_input_bytes)
+                && !current.is_empty()
+            {
+                chunks.push(std::mem::take(&mut current));
+            }
+            current.push(review);
+            let single =
+                make_observation_bundle(job, category.clone(), current.clone(), 9_999, 9_999);
+            if current.len() == 1 && serialized_bundle_bytes(&single)? > max_input_bytes {
+                return Err(EngineError(format!(
+                    "review {:?} exceeds the bundle byte limit {max_input_bytes}; increase --max-bytes",
+                    current[0].id
+                )));
+            }
         }
     }
     if !current.is_empty() {
@@ -2970,6 +4173,8 @@ fn make_bundle(
         part,
         review_ids.join("\0")
     );
+    let triage_contract =
+        path_review_triage_contract_for_bundle(&job.triage_contract, &category, &payload);
     PathReviewBundle {
         schema_version: PATH_REVIEW_BUNDLE_SCHEMA_VERSION.to_string(),
         bundle_fingerprint: stable_review_hash("review-bundle", &identity),
@@ -2978,9 +4183,136 @@ fn make_bundle(
         category,
         part,
         part_count,
-        triage_contract: job.triage_contract.clone(),
+        triage_contract,
         review_ids,
         payload,
+    }
+}
+
+/// Keep the low-level review job contract complete, but avoid repeating
+/// unrelated framework and invariant guidance in every model request. Bundle
+/// categories are homogeneous, and marker tags identify the few families that
+/// share a broad capability such as ResourceAccess.
+fn path_review_triage_contract_for_bundle(
+    contract: &ReviewTriageContract,
+    category: &PathReviewBundleCategory,
+    payload: &PathReviewBundlePayload,
+) -> ReviewTriageContract {
+    let observation_evidence = match payload {
+        PathReviewBundlePayload::Observation { reviews } => reviews
+            .iter()
+            .flat_map(|review| review.evidence.iter())
+            .collect::<Vec<_>>(),
+        PathReviewBundlePayload::SecurityPath { .. } => Vec::new(),
+    };
+    let has_tag = |tag: &str| {
+        observation_evidence
+            .iter()
+            .any(|item| item.tags.iter().any(|candidate| candidate == tag))
+    };
+    let has_tag_prefix = |prefix: &str| {
+        observation_evidence
+            .iter()
+            .any(|item| item.tags.iter().any(|tag| tag.starts_with(prefix)))
+    };
+    let has_security_configuration = observation_evidence
+        .iter()
+        .any(|item| item.kind == EvidenceKind::SecurityConfiguration);
+    let interpreted_boundary = matches!(
+        category.capability,
+        Capability::ProcessExecution
+            | Capability::LdapQuery
+            | Capability::XpathQuery
+            | Capability::DynamicCodeExecution
+            | Capability::TemplateEvaluation
+            | Capability::DatabaseQuery
+            | Capability::OutboundNetworkRequest
+            | Capability::Redirect
+            | Capability::HtmlOutput
+            | Capability::Deserialization
+    ) || has_tag("review-origin:decision-critical");
+    let authorization = matches!(
+        category.capability,
+        Capability::Authorization | Capability::ResourceAccess
+    ) || has_tag("review-invariant:action-resource-authorization");
+    let marker = has_tag("review-admission-marker") || has_tag_prefix("review-invariant:");
+    let credential = has_tag("review-invariant:credential-lifecycle");
+    let object_binding = has_tag("review-invariant:object-binding");
+    let request_integrity = has_tag("review-invariant:request-integrity");
+    let fail_open = has_tag("review-invariant:fail-open");
+    let authoritative_value = has_tag("review-invariant:authoritative-value-binding");
+    let state_transition = has_tag("review-invariant:state-transition-enforcement");
+    let shared_state = has_tag("review-invariant:shared-state-limit-enforcement");
+    let configuration = has_security_configuration
+        || matches!(
+            category.capability,
+            Capability::CookieConfiguration | Capability::CorsConfiguration
+        );
+
+    let instructions = contract
+        .instructions
+        .iter()
+        .filter(|instruction| {
+            let text = instruction.as_str();
+            if text.starts_with("Before claiming injection,")
+                || text.starts_with("Injection does not require")
+                || text.starts_with("An intervening unknown helper")
+                || text.starts_with("Server metadata, session fields")
+                || text.starts_with("For an observation whose evidence marks")
+            {
+                return interpreted_boundary;
+            }
+            if text.starts_with("For authorization,")
+                || text.starts_with("For every routed authorization review")
+                || text.starts_with("For review-invariant:action-resource-authorization")
+                || text.starts_with("In HTTP route context,")
+                || text.starts_with("Apply an authorization default")
+                || text.starts_with("For generated CRUD")
+                || text.starts_with("For resource-access review,")
+            {
+                return authorization;
+            }
+            if text.starts_with("Evidence tagged review-admission-marker") {
+                return marker;
+            }
+            if text.starts_with("For review-invariant:credential-lifecycle") {
+                return credential;
+            }
+            if text.starts_with("For bounded object-binding review") {
+                return object_binding;
+            }
+            if text.starts_with("For bounded request-integrity review") {
+                return request_integrity;
+            }
+            if text.starts_with("For bounded fail-open review") {
+                return fail_open;
+            }
+            if text.starts_with("For bounded authoritative-value review") {
+                return authoritative_value;
+            }
+            if text.starts_with("For bounded state-transition review") {
+                return state_transition;
+            }
+            if text.starts_with("For bounded shared-state limit review") {
+                return shared_state;
+            }
+            if text.starts_with("Configuration facts are")
+                || text.starts_with("Distinguish application-owned controls")
+            {
+                return configuration;
+            }
+            if text.starts_with("When the reviewed invariant requires rejection") {
+                return fail_open || marker;
+            }
+            true
+        })
+        .cloned()
+        .collect();
+    ReviewTriageContract {
+        response_fields: contract.response_fields.clone(),
+        decisions: contract.decisions.clone(),
+        confidence_levels: contract.confidence_levels.clone(),
+        instructions,
     }
 }
 
@@ -3098,14 +4430,248 @@ fn stable_review_hash(prefix: &str, input: &str) -> String {
     format!("{prefix}-{hash:016x}")
 }
 
+fn review_result_fingerprint(result: &PathReviewTriageResult) -> String {
+    let serialized =
+        serde_json::to_string(result).expect("review triage results must remain JSON serializable");
+    stable_review_hash("review-result", &serialized)
+}
+
+fn review_response_fingerprint(
+    schema_version: &str,
+    request_fingerprint: &str,
+    results: &[PathReviewTriageResult],
+    repair: Option<&ReviewRepairTrace>,
+) -> String {
+    let mut results = results.to_vec();
+    for result in &mut results {
+        result.checks.sort();
+        if let Some(trace) = &mut result.investigation {
+            for attempt in &mut trace.lookup_attempts {
+                attempt
+                    .artifacts
+                    .sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
+            }
+            trace
+                .lookup_attempts
+                .sort_by_key(|attempt| attempt.request_index);
+            trace.citations.sort_by(|left, right| {
+                left.artifact_id
+                    .cmp(&right.artifact_id)
+                    .then_with(|| left.claim.cmp(&right.claim))
+            });
+            for inference in &mut trace.reviewer_inferences {
+                inference.artifact_ids.sort();
+            }
+            trace.reviewer_inferences.sort_by(|left, right| {
+                left.claim
+                    .cmp(&right.claim)
+                    .then_with(|| left.artifact_ids.cmp(&right.artifact_ids))
+            });
+            for lead in &mut trace.reviewer_origin_leads {
+                lead.artifact_ids.sort();
+            }
+            trace.reviewer_origin_leads.sort_by(|left, right| {
+                left.question
+                    .cmp(&right.question)
+                    .then_with(|| left.location.path.cmp(&right.location.path))
+                    .then_with(|| left.location.start.line.cmp(&right.location.start.line))
+                    .then_with(|| left.location.start.column.cmp(&right.location.start.column))
+            });
+            trace.blockers.sort();
+        }
+    }
+    results.sort_by(|left, right| left.review_id.cmp(&right.review_id));
+    let serialized = serde_json::to_string(&(schema_version, request_fingerprint, results, repair))
+        .expect("validated review responses must remain JSON serializable");
+    stable_review_hash("review-response", &serialized)
+}
+
+fn review_run_response_fingerprint(
+    job_fingerprint: &str,
+    bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
+) -> String {
+    let mut responses = bundle_responses
+        .iter()
+        .map(|(bundle, response)| {
+            (
+                bundle.bundle_fingerprint.as_str(),
+                review_response_fingerprint(
+                    &response.schema_version,
+                    &response.bundle_fingerprint,
+                    &response.results,
+                    response.repair.as_ref(),
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+    responses.sort_by(|left, right| left.0.cmp(right.0));
+    let serialized = serde_json::to_string(&(job_fingerprint, responses))
+        .expect("validated review run identity must remain JSON serializable");
+    stable_review_hash("review-run-response", &serialized)
+}
+
+fn completed_review_work(
+    bundle_responses: &[(PathReviewBundle, PathReviewBundleResponseSet)],
+) -> ReviewWorkSummary {
+    let mut blocked_review_ids = Vec::new();
+    let mut truncated_review_ids = Vec::new();
+    for (bundle, responses) in bundle_responses {
+        for result in &responses.results {
+            if result.decision != ReviewDecision::NeedsReview {
+                continue;
+            }
+            let (readiness, decision_critical_truncation) =
+                bundle_review_work_metadata(bundle, &result.review_id)
+                    .expect("validated review ID must have work metadata");
+            let trace = result.investigation.as_ref();
+            let blocked = readiness == ReviewReadiness::Blocked
+                || trace.is_some_and(|trace| {
+                    !trace.blockers.is_empty()
+                        || trace.lookup_attempts.iter().any(|attempt| {
+                            matches!(
+                                attempt.outcome,
+                                ReviewLookupOutcome::Unavailable
+                                    | ReviewLookupOutcome::BudgetExhausted
+                                    | ReviewLookupOutcome::Failed
+                            )
+                        })
+                });
+            let truncated = decision_critical_truncation
+                || trace.is_some_and(|trace| {
+                    trace
+                        .lookup_attempts
+                        .iter()
+                        .any(|attempt| attempt.outcome == ReviewLookupOutcome::Truncated)
+                });
+            if blocked {
+                blocked_review_ids.push(result.review_id.clone());
+            }
+            if truncated {
+                truncated_review_ids.push(result.review_id.clone());
+            }
+        }
+    }
+    blocked_review_ids.sort();
+    blocked_review_ids.dedup();
+    truncated_review_ids.sort();
+    truncated_review_ids.dedup();
+    let completed_review_count = bundle_responses
+        .iter()
+        .map(|(_, responses)| responses.results.len())
+        .sum();
+    let accepted_investigation_count = bundle_responses
+        .iter()
+        .flat_map(|(_, responses)| &responses.results)
+        .filter(|result| result.investigation.is_some())
+        .count();
+    ReviewWorkSummary {
+        complete: true,
+        admitted_review_count: completed_review_count,
+        scheduled_bundle_count: bundle_responses.len(),
+        scheduled_review_count: completed_review_count,
+        completed_bundle_count: bundle_responses.len(),
+        completed_review_count,
+        accepted_investigation_count,
+        deferred_review_ids: Vec::new(),
+        blocked_review_ids,
+        truncated_review_ids,
+        missing_review_ids: Vec::new(),
+        invalid_review_ids: Vec::new(),
+    }
+}
+
+fn merge_scheduled_review_work(
+    completed: &ReviewWorkSummary,
+    mut scheduled: ReviewWorkSummary,
+) -> Result<ReviewWorkSummary, EngineError> {
+    for ids in [
+        &mut scheduled.deferred_review_ids,
+        &mut scheduled.missing_review_ids,
+        &mut scheduled.invalid_review_ids,
+    ] {
+        ids.sort();
+        ids.dedup();
+    }
+    let deferred = scheduled
+        .deferred_review_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let missing = scheduled
+        .missing_review_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if scheduled.scheduled_bundle_count < completed.completed_bundle_count
+        || scheduled.admitted_review_count < scheduled.scheduled_review_count
+        || scheduled.admitted_review_count
+            != scheduled.scheduled_review_count + scheduled.deferred_review_ids.len()
+        || scheduled.scheduled_review_count < completed.completed_review_count
+        || !deferred.is_disjoint(&missing)
+        || (scheduled.completed_bundle_count != 0
+            && scheduled.completed_bundle_count != completed.completed_bundle_count)
+        || (scheduled.completed_review_count != 0
+            && scheduled.completed_review_count != completed.completed_review_count)
+        || scheduled.scheduled_review_count
+            != completed.completed_review_count + scheduled.missing_review_ids.len()
+    {
+        return Err(EngineError(
+            "review work accounting does not match the validated response selection".to_string(),
+        ));
+    }
+    scheduled.completed_bundle_count = completed.completed_bundle_count;
+    scheduled.completed_review_count = completed.completed_review_count;
+    scheduled.accepted_investigation_count = completed.accepted_investigation_count;
+    scheduled.blocked_review_ids = completed.blocked_review_ids.clone();
+    scheduled.truncated_review_ids = completed.truncated_review_ids.clone();
+    scheduled.complete = scheduled.completed_bundle_count == scheduled.scheduled_bundle_count
+        && scheduled.completed_review_count == scheduled.scheduled_review_count
+        && scheduled.deferred_review_ids.is_empty()
+        && scheduled.missing_review_ids.is_empty()
+        && scheduled.invalid_review_ids.is_empty();
+    Ok(scheduled)
+}
+
+fn bundle_review_work_metadata(
+    bundle: &PathReviewBundle,
+    review_id: &str,
+) -> Option<(ReviewReadiness, bool)> {
+    match &bundle.payload {
+        PathReviewBundlePayload::SecurityPath { reviews } => reviews
+            .iter()
+            .find(|review| review.id == review_id)
+            .map(|review| {
+                (
+                    review.investigation.readiness,
+                    review.truncation.decision_critical,
+                )
+            }),
+        PathReviewBundlePayload::Observation { reviews } => reviews
+            .iter()
+            .find(|review| review.id == review_id)
+            .map(|review| {
+                (
+                    review.investigation.readiness,
+                    review.truncation.decision_critical,
+                )
+            }),
+    }
+}
+
 pub fn validate_path_review_progress(
     job: &PathReviewJob,
     responses: &PathReviewTriageResponseSet,
 ) -> Result<PathReviewTriageProgress, EngineError> {
     let missing_review_ids = validate_path_review_response_subset(job, responses)?;
     Ok(PathReviewTriageProgress {
-        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
+        schema_version: responses.schema_version.clone(),
         job_fingerprint: job.fingerprint.clone(),
+        response_fingerprint: review_response_fingerprint(
+            &responses.schema_version,
+            &responses.job_fingerprint,
+            &responses.results,
+            None,
+        ),
         submitted_count: responses.results.len(),
         remaining_count: missing_review_ids.len(),
         complete: missing_review_ids.is_empty(),
@@ -3133,7 +4699,7 @@ fn validate_path_review_response_subset(
     job: &PathReviewJob,
     responses: &PathReviewTriageResponseSet,
 ) -> Result<Vec<String>, EngineError> {
-    if responses.schema_version != PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION {
+    if !supported_path_review_response_schema(&responses.schema_version) {
         return Err(EngineError(format!(
             "unsupported path-review triage response schema {:?}",
             responses.schema_version
@@ -3174,6 +4740,25 @@ fn validate_path_review_response_subset(
             &result.summary,
             &result.checks,
         )?;
+        if path_review_schema_has_investigation_trace(&responses.schema_version) {
+            let trace = result.investigation.as_ref().ok_or_else(|| {
+                EngineError(format!(
+                    "path-review response schema {} requires an investigation trace for {:?}",
+                    PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, result.review_id
+                ))
+            })?;
+            let (plan, supplied_artifact_ids) =
+                job_review_investigation_context(job, &result.review_id)?;
+            validate_review_investigation_trace(
+                &responses.schema_version,
+                &result.review_id,
+                result.decision,
+                &result.checks,
+                plan,
+                &supplied_artifact_ids,
+                trace,
+            )?;
+        }
         let policy = job
             .reviews
             .iter()
@@ -3192,6 +4777,19 @@ fn validate_path_review_response_subset(
                 "confidence for {:?} must be {:?} for the selected {:?} decision",
                 result.review_id, expected_confidence, result.decision
             )));
+        }
+        if path_review_schema_has_investigation_trace(&responses.schema_version)
+            && result.decision == ReviewDecision::NeedsReview
+        {
+            let unresolved = job_unresolved_facts(job, &result.review_id)?;
+            for check in &result.checks {
+                if !unresolved.iter().any(|fact| fact.trim() == check.trim()) {
+                    return Err(EngineError(format!(
+                        "needs_review check for {:?} must copy an exact supplied decision_facts.unresolved entry",
+                        result.review_id
+                    )));
+                }
+            }
         }
     }
     Ok(expected_ids
@@ -3472,6 +5070,7 @@ fn path_review_triage_contract() -> ReviewTriageContract {
             "confidence".to_string(),
             "summary".to_string(),
             "checks".to_string(),
+            "investigation".to_string(),
         ],
         decisions: vec![
             "issue".to_string(),
@@ -3480,7 +5079,7 @@ fn path_review_triage_contract() -> ReviewTriageContract {
         ],
         confidence_levels: vec!["high".to_string(), "medium".to_string(), "low".to_string()],
         instructions: vec![
-            "Return one JSON object with schema_version `1.0`, bundle_fingerprint copied exactly from this request, and a results array. Each results entry must contain review_id, decision, confidence, summary, and checks; use an empty checks array for issue and not_issue."
+            "Return one JSON object with schema_version `1.1`, bundle_fingerprint copied exactly from this request, and a results array. Each results entry must contain review_id, decision, confidence, summary, checks, and investigation; use an empty checks array for issue and not_issue."
                 .to_string(),
             "Treat the candidate as a bounded review lead, not a vulnerability verdict."
                 .to_string(),
@@ -3488,9 +5087,13 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Use not_issue for affirmative disproof or a demonstrated effective protection. For a non-path observation, not_issue may also mean the supplied context establishes only an ordinary API or syntax boundary and no reportable attacker influence or concrete policy failure; use the configured medium confidence and do not claim the wider code is proven safe."
                 .to_string(),
-            "Use only supplied facts; do not invent cross-function, deployment, or runtime behavior."
+            "Use supplied facts and exact artifacts returned by the prescribed bounded lookups; do not invent cross-function, deployment, or runtime behavior."
+                .to_string(),
+            "When a decisive origin or control is missing, follow the supplied investigation lookup for that exact operand and operation. A same-file or same-language producer, route, or writer is a lead until its target, ordering, and reachability match; if bounded inspection cannot establish that link, preserve the named needs_review check rather than dismissing or asserting the issue."
                 .to_string(),
             "Before claiming injection, check that the producer's representation matches the consumer operation (for example object properties versus array indexing after JSON decoding). An incompatible access does not establish delivery to the sink."
+                .to_string(),
+            "For injection into constructed SQL, HTML, commands, or URLs, evaluate the exact interpreted operand rather than its containing object or an adjacent interpolation. Attacker selection of an integer, enum, date formatted by a fixed formatter, or fixed-format generated value does not by itself permit grammar-changing text; conversely, an unconstrained string can. Resolve each relevant operand's type or producer before treating a request-associated object as proof of injection."
                 .to_string(),
             "Injection does not require unsafe input on every execution path. For shown code equivalent to `if (enabled) value = request.field; sink(value)`, the enabled branch establishes a conditional weakness unless supplied facts disprove that branch; an uninitialized value or failure in the other branch does not protect it. The condition need not be attacker-controlled. Likewise, when a shown decoded request object supplies the selected property value, a dynamic property selector need not itself be attacker-controlled; do not confuse the selector's origin with the selected value's origin."
                 .to_string(),
@@ -3506,13 +5109,25 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "For authorization, distinguish boundary attachment, authentication, coarse role or permission checks, and authorization of the same action and resource. A custom guard, middleware, dependency, policy, or voter name is attachment inventory only until its supplied definition and rejection behavior establish what it enforces."
                 .to_string(),
-            "For every routed authorization review, align the exact server boundary, method/path or resolver action, sensitive effect, attached control scope, framework inheritance or registration order, and selected resource before deciding. Authentication proves identity only; a sibling method/path guard, coarse role, or unrelated policy does not authorize the reviewed action and object. Explicit public overrides and ignored or fail-open decisions must be applied to the exact operation they affect."
+            "For every routed authorization review, align the exact server boundary, method/path or resolver action, sensitive effect, attached control scope, framework inheritance or registration order, and selected resource before deciding. Authentication proves identity only; a sibling method/path guard, coarse role, or unrelated policy does not authorize the reviewed action and object. Explicit public overrides and ignored or fail-open decisions must be applied to the exact operation they affect. For a claimed cross-user write, distinguish shared-resource mutation from an object written only to the caller's session or response; assess any separate cross-user read or disclosure on its own evidence."
                 .to_string(),
             "Evidence tagged review-admission-marker means deterministic facts established a security-relevant boundary and effect, but the normal sink/path vocabulary could not represent the complete review invariant. Do not dismiss it merely because no conventional sink or deterministic vulnerability path fired. Judge only the named review-invariant tag from the supplied facts; the marker admits review and is not itself proof of a weakness."
                 .to_string(),
             "For review-invariant:action-resource-authorization, decide from the supplied boundary, handler/helper, subject, selected resource, and policy facts: issue requires a concrete uncovered or mismatched policy; not_issue requires an intentionally safe/public effect or an effective policy for the same action and resource."
                 .to_string(),
             "For review-invariant:credential-lifecycle, decide whether the exact credential or authenticator state transition requires and enforces appropriate proof of the subject, current credential, recovery authority, or step-up authentication. A valid session alone may be insufficient for a high-impact change; issue requires a concrete bypass or missing required proof, while not_issue requires the applicable proof and enforced transition to be shown."
+                .to_string(),
+            "For bounded object-binding review, identify the exact request-controlled object, binding or copy operation, persisted target, and writable security-sensitive fields. Apply an allowlist, exclusion, DTO boundary, serializer field list, bind-never policy, explicit mapping, or field-level authorization only when supplied executable facts cover that exact operation and field; a typed request object or validation annotation alone is not a write allowlist."
+                .to_string(),
+            "For bounded request-integrity review, require browser-managed victim authority and the exact state-changing operation. Apply a CSRF token or strict origin policy only when its attachment and rejection behavior cover that route; authentication and assumed SameSite behavior are not substitutes."
+                .to_string(),
+            "For bounded fail-open review, follow the shown decision result, branch, catch, response, or callback to the protected effect. Logging, telemetry, sending a response, setting a status, or issuing a challenge is not enforcement when supplied code continues; a return or throw protects only the branch and operation it actually terminates."
+                .to_string(),
+            "For bounded authoritative-value review, keep the caller-supplied value, selected resource, server-loaded or quoted value, units/currency, version and financial effect distinct. A variable named price, a catalog lookup, or a payment SDK call is not proof that the exact effect uses the applicable authoritative value. Direct persistence of a request field as a paid amount is decision-ready when supplied evidence establishes that relationship; do not dismiss it merely because a separate price source might exist."
+                .to_string(),
+            "For bounded state-transition review, keep the persisted current state, requested next state, affected resource, allowed-transition policy and terminating rejection separate. Status names, enums, validation calls, or a transition helper name do not prove that the exact current-to-next edge is allowed. An explicit applicable map plus rejection before mutation is a local control; direct persistence of a request-supplied state is decision-ready when no such enforcement is shown."
+                .to_string(),
+            "For bounded shared-state limit review, keep the loaded persisted value, caller-requested delta, business-limit check, derived value and persistence effect separate. A correct local comparison does not prove concurrency safety, and a transaction or atomic helper name does not prove adapter semantics. Require an exact conditional write, applicable row lock inside a transaction, compare-and-swap, or other supplied database contract before treating the read-check-write sequence as atomic."
                 .to_string(),
             "In HTTP route context, unknown means enforcement was not classified; guard names remain useful exact attachments but do not prove protection. explicitly_public and denied represent canonical local framework policy, while authenticated and role_restricted still do not by themselves prove owner, tenant, or object authorization."
                 .to_string(),
@@ -3526,7 +5141,21 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Use needs_review only when decision_facts.unresolved names a concrete missing artifact that can change the decision. Generic possibilities about unknown origin, runtime value, or security impact are reviewer confidence factors, not automatic escalation checks."
                 .to_string(),
-            "Treat every remaining decision_facts.unresolved entry as decision-critical. Do not use issue or not_issue while one remains unless a supplied established fact explicitly answers that exact entry; otherwise use needs_review and copy the entry into checks."
+            "Treat every remaining decision_facts.unresolved entry as decision-critical. Do not use issue or not_issue while one remains unless supplied facts or an exact retrieved artifact explicitly answer that entry; otherwise use needs_review and copy the entry into checks. Cite retrieved artifacts used to resolve it."
+                .to_string(),
+            "Use investigation.readiness as workflow metadata, not as a verdict. For investigation readiness, execute supplied bounded lookup requests in order only until the decisive fact is resolved; do not spend a secondary lookup after an earlier artifact already establishes issue or not_issue. For blocked readiness, preserve the named blockers and do not invent unavailable deployment or runtime facts."
+                .to_string(),
+            "A lookup request is a concrete repository query, not evidence that its expected producer or control exists. Apply only returned artifacts that match the exact operand, owner, operation, action, and resource in this review."
+                .to_string(),
+            "Record each executed supplied lookup by its zero-based request_index in investigation.lookup_attempts. If one attempted lookup reveals the exact next decisive file or identifier, the response permits one follow-on source or references escalation instead of request_index; retain the exact supplied missing-fact question, use the smallest locator, and do not perform generic exploration. Preserve returned source as bounded artifacts with distinct IDs and exact locations; cite those IDs for claims and keep reviewer_inferences separate from deterministic scan facts."
+                .to_string(),
+            "Each lookup attempt must identify exactly one supplied request_index or one allowed escalation. An answered attempt must return at least one artifact and cite at least one artifact from that same attempt. A source artifact's path and lines must stay within the requested source window; an escalated path or symbol must come from an earlier returned artifact. Every reviewer-origin lead artifact ID must also be explicitly cited."
+                .to_string(),
+            "If supplied or retrieved source establishes a concrete dangerous operation or security invariant that is distinct from the admitted question, retain at most three reviewer_origin_leads with a precise question, security relevance, explanation of the distinction, exact source location and explicitly cited artifact IDs. A keyword, comment, helper name or generic concern is not a lead. Leads are unvalidated follow-up work: do not use them to change this review's verdict and do not describe them as scanner findings or deterministic coverage."
+                .to_string(),
+            "For needs_review, every retained check with a supplied lookup must have a matching lookup attempt, including an honest no_relevant_result, unavailable, truncated, budget_exhausted, or failed outcome. A deployment-only check must copy its supplied blocker into investigation.blockers."
+                .to_string(),
+            "Do not emit repair metadata. The runner may replace one structurally parseable invalid result exactly once, records both result identities and the original validation error, and revalidates the complete bundle. Repair is for contract failure only, never for changing a valid security decision."
                 .to_string(),
             "Apply this decision procedure: issue requires established dangerous behavior plus attacker influence or a concrete policy failure and no demonstrated effective applicable control; not_issue requires affirmative safe purpose, non-attacker input, non-executable behavior, or an effective applicable control; needs_review requires a supplied unresolved fact that can change issue versus not_issue."
                 .to_string(),
@@ -3640,6 +5269,280 @@ fn review_truncation(occurred: bool, decision_critical: bool) -> ReviewContextTr
     }
 }
 
+fn path_review_investigation(
+    candidate: &mehscan_core::Candidate,
+    review_basis: &PathReviewBasis,
+    decision_facts: &ReviewDecisionFacts,
+    truncation: &ReviewContextTruncation,
+    facts: &[ReviewNeighborhoodFact],
+) -> ReviewInvestigationPlan {
+    let lookup_symbol = review_lookup_symbol(
+        review_basis
+            .source
+            .captures
+            .values()
+            .chain(review_basis.sink.captures.values())
+            .map(String::as_str),
+    );
+    let mut plan = review_investigation_plan(
+        candidate.capability,
+        &decision_facts.unresolved,
+        truncation,
+        &candidate.sink.location,
+        lookup_symbol.as_deref(),
+    );
+    if let Some(writer) = facts
+        .iter()
+        .find(|fact| fact.role == "possible_local_asset_writer_context")
+        && decision_facts
+            .unresolved
+            .iter()
+            .any(|question| is_missing_stored_producer_question(question))
+    {
+        plan.lookup_requests.insert(0, ReviewLookupRequest {
+            operation: "source".to_string(),
+            arguments: [
+                ("path".to_string(), writer.location.path.clone()),
+                ("start-line".to_string(), writer.location.start.line.saturating_sub(20).max(1).to_string()),
+                ("end-line".to_string(), writer.location.end.line.saturating_add(30).to_string()),
+            ].into(),
+            questions: decision_facts.unresolved.iter().filter(|question| is_missing_stored_producer_question(question)).cloned().collect(),
+            purpose: "Compare this exact archive write destination and entry-name constraints with the local asset read target; check whether route gates permit the write before treating it as the source's producer.".to_string(),
+        });
+        plan.lookup_requests
+            .truncate(plan.budget.max_supplied_lookups);
+    }
+    plan
+}
+
+fn observation_review_investigation(
+    evidence: &[Evidence],
+    facts: &[ReviewNeighborhoodFact],
+    decision_facts: &ReviewDecisionFacts,
+    truncation: &ReviewContextTruncation,
+) -> ReviewInvestigationPlan {
+    let anchor = evidence.first().map(|item| &item.location);
+    let lookup_symbol = decision_facts
+        .unresolved
+        .iter()
+        .find_map(|question| review_question_lookup_symbol(question))
+        .or_else(|| review_admission::preferred_lookup_symbol(evidence))
+        .or_else(|| {
+            review_lookup_symbol(
+                evidence
+                    .iter()
+                    .flat_map(|item| item.captures.values().map(|capture| capture.text.as_str())),
+            )
+        });
+    let Some(anchor) = anchor else {
+        let mut missing_facts = decision_facts.unresolved.clone();
+        if truncation.decision_critical {
+            missing_facts.push(
+                "Retrieve the decision-critical review context omitted by truncation.".to_string(),
+            );
+        }
+        let blockers = if missing_facts.is_empty() {
+            Vec::new()
+        } else {
+            vec!["No evidence anchor is available for a bounded repository lookup.".to_string()]
+        };
+        return ReviewInvestigationPlan {
+            readiness: if missing_facts.is_empty() {
+                ReviewReadiness::Assessment
+            } else {
+                ReviewReadiness::Blocked
+            },
+            budget: investigation_budget_for_capability(
+                evidence
+                    .first()
+                    .map(|item| item.capability)
+                    .unwrap_or(Capability::ExternalInput),
+            ),
+            missing_facts,
+            lookup_requests: Vec::new(),
+            blockers,
+        };
+    };
+    let lookup_anchor = lookup_symbol
+        .as_deref()
+        .and_then(|symbol| {
+            facts.iter().find(|fact| {
+                fact.symbol == symbol
+                    && matches!(
+                        fact.role.as_str(),
+                        "review_admission_helper_context"
+                            | "helper_definition_context"
+                            | "captured_definition_context"
+                    )
+            })
+        })
+        .map(|fact| &fact.location)
+        .unwrap_or(anchor);
+    review_investigation_plan(
+        evidence
+            .first()
+            .map(|item| item.capability)
+            .unwrap_or(Capability::ExternalInput),
+        &decision_facts.unresolved,
+        truncation,
+        lookup_anchor,
+        lookup_symbol.as_deref(),
+    )
+}
+
+fn review_investigation_plan(
+    capability: Capability,
+    unresolved: &[String],
+    truncation: &ReviewContextTruncation,
+    anchor: &Location,
+    lookup_symbol: Option<&str>,
+) -> ReviewInvestigationPlan {
+    let mut missing_facts = unresolved.to_vec();
+    if truncation.decision_critical
+        && !missing_facts.iter().any(|fact| {
+            fact == "Retrieve the decision-critical review context omitted by truncation."
+        })
+    {
+        missing_facts.push(
+            "Retrieve the decision-critical review context omitted by truncation.".to_string(),
+        );
+    }
+    if missing_facts.is_empty() {
+        return ReviewInvestigationPlan {
+            budget: investigation_budget_for_capability(capability),
+            ..ReviewInvestigationPlan::default()
+        };
+    }
+
+    let (repository_questions, external_questions): (Vec<_>, Vec<_>) = missing_facts
+        .iter()
+        .cloned()
+        .partition(|question| !review_question_requires_external_context(question));
+    let blockers = external_questions
+        .iter()
+        .map(|question| {
+            format!(
+                "The decisive fact requires deployment or runtime authority outside bounded repository inspection: {question}"
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut lookup_requests = Vec::new();
+    if !repository_questions.is_empty() {
+        let margin = if capability == Capability::HtmlOutput {
+            64
+        } else {
+            80
+        };
+        let start_line = anchor.start.line.saturating_sub(margin).max(1);
+        let end_line = anchor.end.line.saturating_add(margin);
+        lookup_requests.push(ReviewLookupRequest {
+            operation: "source".to_string(),
+            arguments: [
+                ("path".to_string(), anchor.path.clone()),
+                ("start-line".to_string(), start_line.to_string()),
+                ("end-line".to_string(), end_line.to_string()),
+            ]
+            .into(),
+            questions: repository_questions.clone(),
+            purpose: "Inspect expanded source around the exact located helper or review anchor for the missing producer, control, branch, or consumer fact.".to_string(),
+        });
+        if let Some(symbol) = lookup_symbol {
+            lookup_requests.push(ReviewLookupRequest {
+                operation: "references".to_string(),
+                arguments: [
+                    ("symbol".to_string(), symbol.to_string()),
+                    ("limit".to_string(), DEFAULT_RESULT_LIMIT.to_string()),
+                ]
+                .into(),
+                questions: repository_questions,
+                purpose: format!(
+                    "If the preceding source lookup does not resolve the question, find bounded repository references for the exact captured identifier `{symbol}` before inferring its origin or applicable controls."
+                ),
+            });
+        }
+    }
+    let readiness = if !lookup_requests.is_empty() {
+        ReviewReadiness::Investigation
+    } else {
+        ReviewReadiness::Blocked
+    };
+    ReviewInvestigationPlan {
+        readiness,
+        budget: investigation_budget_for_capability(capability),
+        missing_facts,
+        lookup_requests,
+        blockers,
+    }
+}
+
+fn investigation_budget_for_capability(capability: Capability) -> ReviewInvestigationBudget {
+    let max_returned_bytes = match capability {
+        Capability::Authentication
+        | Capability::Authorization
+        | Capability::ResourceAccess
+        | Capability::TokenGeneration
+        | Capability::CredentialMaterial => 24 * 1024,
+        Capability::ProcessExecution
+        | Capability::DynamicCodeExecution
+        | Capability::TemplateEvaluation
+        | Capability::DatabaseQuery
+        | Capability::FilesystemRead
+        | Capability::FilesystemWrite
+        | Capability::OutboundNetworkRequest
+        | Capability::Redirect
+        | Capability::HtmlOutput
+        | Capability::Deserialization
+        | Capability::XmlParsing => 16 * 1024,
+        _ => 12 * 1024,
+    };
+    ReviewInvestigationBudget {
+        max_supplied_lookups: 2,
+        max_escalations: 1,
+        max_returned_bytes,
+        max_lookup_depth: 1,
+    }
+}
+
+fn review_lookup_symbol<'a>(mut values: impl Iterator<Item = &'a str>) -> Option<String> {
+    values.find_map(|value| {
+        let value = value.trim();
+        let identifier = value
+            .strip_prefix('$')
+            .or_else(|| value.strip_prefix('@'))
+            .unwrap_or(value);
+        (is_plain_identifier(identifier)
+            && !matches!(
+                identifier,
+                "this" | "self" | "req" | "request" | "ctx" | "context"
+            ))
+        .then(|| identifier.to_string())
+    })
+}
+
+fn review_question_lookup_symbol(question: &str) -> Option<String> {
+    question
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .find(|candidate| is_plain_identifier(candidate))
+        .map(str::to_string)
+}
+
+fn review_question_requires_external_context(question: &str) -> bool {
+    let question = question.to_ascii_lowercase();
+    [
+        "effective deployed",
+        "deployment layer",
+        "authoritative web-server",
+        "proxy, gateway",
+        "proxy or gateway",
+        "cdn, ingress",
+        "runtime-only",
+    ]
+    .iter()
+    .any(|marker| question.contains(marker))
+}
+
 fn path_decision_facts(
     candidate: &mehscan_core::Candidate,
     review_basis: &PathReviewBasis,
@@ -3655,6 +5558,7 @@ fn path_decision_facts(
         &review_basis.source.tags,
         facts,
     );
+    let enabled_execution_configuration = path_enabled_execution_configuration(facts);
     let mut established = vec![
         format!(
             "The deterministic engine admitted a bounded relationship from source rule {} to sink rule {}.",
@@ -3696,6 +5600,12 @@ fn path_decision_facts(
                 .to_string(),
         );
     }
+    if let Some(configuration) = enabled_execution_configuration {
+        established.push(format!(
+            "The repository contains an exact checked-in configuration that enables this execution branch at {}:{}; other disabled profiles do not make the enabled profile unreachable.",
+            configuration.location.path, configuration.location.start.line
+        ));
+    }
     if let Some(control) = java_resource_control {
         established.push(format!(
             "The supplied Java path context explicitly establishes an applicable resource-access control: {control}"
@@ -3729,7 +5639,7 @@ fn path_decision_facts(
     }
     if operator_configured_local_asset {
         established.push(
-            "Exact repository facts establish that this rendered value is loaded from an operator-configured local asset path with a repository literal default; no request-origin writer for the selected asset is supplied."
+            "Exact repository facts show a literal default for the configured local asset read. This does not establish that the asset cannot be overwritten by another request-accessible file writer."
                 .to_string(),
         );
     }
@@ -3888,11 +5798,6 @@ fn path_decision_blockers(
     questions: &[String],
     facts: &[ReviewNeighborhoodFact],
 ) -> Vec<String> {
-    let operator_configured_local_asset = path_has_operator_configured_local_asset_origin(
-        candidate.source.capability,
-        &review_basis.source.tags,
-        facts,
-    );
     let has_persisted_origin = review_basis_establishes_persisted_origin(review_basis)
         || facts.iter().any(|fact| {
             matches!(
@@ -3922,21 +5827,37 @@ fn path_decision_blockers(
                     || question.contains("which application, framework, proxy")))
                 || (question.contains("Which code can write this browser-storage key")
                     && !has_browser_storage_chain)
-                || (question.contains("producer, persistence, or retrieval context")
+                || (is_missing_stored_producer_question(question)
                     && !has_persisted_origin
-                    && !has_response_origin
-                    && !operator_configured_local_asset)
-                || question.starts_with(
+                    && !has_response_origin)
+                || (question.starts_with(
                     "What exact configuration value is effective for the conditional branch",
-                )
+                ) && path_enabled_execution_configuration(facts).is_none())
                 || (candidate.sink.rule_id == "python-source-file-content-write"
                     && question.starts_with(
                         "Does an exact Python import or loader reference the request-overwritten source file",
                     )
                     && !has_python_source_consumer)
         })
-        .cloned()
+        .map(|question| {
+            if is_missing_stored_producer_question(question)
+                && review_basis.source.tags.iter().any(|tag| tag == "local-file")
+            {
+                format!(
+                    "Can a request-accessible writer produce the exact local asset read at {}:{} before it reaches this output? Compare its destination, filename constraints, configuration, route gate, and read target.",
+                    candidate.source.location.path, candidate.source.location.start.line
+                )
+            } else {
+                question.clone()
+            }
+        })
         .collect()
+}
+
+fn is_missing_stored_producer_question(question: &str) -> bool {
+    question.contains("producer, persistence, or retrieval context")
+        || question.contains("producer/write handler and persistence validator")
+        || question.starts_with("Can a request-accessible writer produce the exact local asset")
 }
 
 fn path_has_operator_configured_local_asset_origin(
@@ -3978,6 +5899,58 @@ fn path_has_operator_configured_local_asset_origin(
     });
 
     literal_configuration && fixed_local_read && operator_lifecycle
+}
+
+/// Supply a separately observed archive writer when a path renders local file
+/// bytes. It remains a review lead until the reviewer compares the exact read
+/// target, write path, gate, and route; proximity alone cannot establish origin.
+fn local_asset_archive_writer_facts(
+    sources: &RepositorySources,
+    evidence: &[Evidence],
+    candidate: &mehscan_core::Candidate,
+    limit: usize,
+) -> (Vec<ReviewNeighborhoodFact>, bool) {
+    let read_language = sources
+        .file(&candidate.source.location.path)
+        .ok()
+        .and_then(|file| file.language);
+    let mut facts = Vec::new();
+    let mut truncated = false;
+    for writer in evidence.iter().filter(|item| {
+        item.kind == EvidenceKind::Sink
+            && item.capability == Capability::FilesystemWrite
+            && item.rule_id.ends_with("archive-raw-path-write")
+    }) {
+        let Ok(file) = sources.file(&writer.location.path) else {
+            continue;
+        };
+        if file.language != read_language {
+            continue;
+        }
+        if facts.len() == limit {
+            truncated = true;
+            break;
+        }
+        let start_line = writer.location.start.line.saturating_sub(9).max(1);
+        let end_line = writer.location.end.line.saturating_add(22);
+        let Ok((slice, clipped)) =
+            review_source_slice(file, start_line, end_line, &writer.location)
+        else {
+            continue;
+        };
+        truncated |= clipped;
+        facts.push(ReviewNeighborhoodFact {
+            role: "possible_local_asset_writer_context".to_string(),
+            symbol: writer.rule_id.clone(),
+            location: slice.location,
+            excerpt: slice.text,
+            evidence_id: None,
+            provenance: textual_provenance(
+                "separate admitted archive-entry filesystem writer; target compatibility and reachability are unverified 1",
+            ),
+        });
+    }
+    (facts, truncated)
 }
 
 fn review_basis_establishes_persisted_origin(review_basis: &PathReviewBasis) -> bool {
@@ -4023,6 +5996,43 @@ fn path_execution_configuration_gate(facts: &[ReviewNeighborhoodFact]) -> bool {
         })
 }
 
+fn path_enabled_execution_configuration(
+    facts: &[ReviewNeighborhoodFact],
+) -> Option<&ReviewNeighborhoodFact> {
+    let configuration_symbols = facts
+        .iter()
+        .filter(|fact| fact.role == "configuration_context")
+        .map(|fact| fact.symbol.as_str())
+        .filter(|symbol| !symbol.is_empty() && symbol.len() <= 120)
+        .collect::<BTreeSet<_>>();
+    let gated_symbols = configuration_symbols
+        .into_iter()
+        .filter(|symbol| {
+            facts
+                .iter()
+                .filter(|fact| matches!(fact.role.as_str(), "source_context" | "sink_context"))
+                .flat_map(|fact| fact.excerpt.lines())
+                .any(|line| contains_identifier(line, symbol))
+        })
+        .collect::<BTreeSet<_>>();
+    facts.iter().find(|fact| {
+        fact.role == "configuration_context"
+            && gated_symbols.contains(fact.symbol.as_str())
+            && fact.excerpt.lines().any(|line| {
+                let Some((_, value)) = line.split_once(':').or_else(|| line.split_once('=')) else {
+                    return false;
+                };
+                value
+                    .split(['#', ';'])
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .trim_matches(['\'', '"'])
+                    .eq_ignore_ascii_case("true")
+            })
+    })
+}
+
 fn observation_decision_facts(
     evidence: &[Evidence],
     facts: &[ReviewNeighborhoodFact],
@@ -4034,6 +6044,9 @@ fn observation_decision_facts(
     let rust_policy = rust_observation_policy(evidence, facts);
     let rust_dynamic_html_parameter = rust_dynamic_html_parameter(evidence, facts);
     let javascript_policy = javascript_observation_policy(evidence, facts);
+    let python_request_credential_logging = evidence
+        .iter()
+        .find(|item| item.rule_id == "python-request-credential-logging");
     let embedded_signing_key = observation_has_source_embedded_signing_key(evidence, facts);
     let matched_python_jwt_verification = evidence
         .iter()
@@ -4064,6 +6077,8 @@ fn observation_decision_facts(
     let direct_request_resource_selector =
         observation_has_direct_request_resource_selector(evidence);
     let decision_critical_origin = decision_critical_origin(evidence);
+    let bounded_request_origin = decision_critical_origin
+        .and_then(|origin| decision_critical_request_origin_fact(origin, facts));
     let resource_policy = evidence.iter().find_map(|item| {
         item.context
             .resource_policy
@@ -4108,6 +6123,96 @@ fn observation_decision_facts(
             .unwrap_or("security");
         established.push(format!(
             "The bounded classifier established `{operation}` as a server mutation boundary with a mutation-shaped `{effect}` effect. This admits review of `{invariant}` even without an ordinary sink rule; it does not by itself prove that invariant is violated."
+        ));
+    }
+    for item in evidence.iter().filter(|item| {
+        item.tags
+            .iter()
+            .any(|tag| tag == "review-invariant:authoritative-value-binding")
+    }) {
+        let supplied = item
+            .captures
+            .get("supplied_value")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown value");
+        let request_field = item
+            .captures
+            .get("request_field")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown request field");
+        let effect_field = item
+            .captures
+            .get("effect_field")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("financial value");
+        let resource = item
+            .captures
+            .get("financial_resource")
+            .map(|capture| format!(" for resource {}", capture.text))
+            .unwrap_or_default();
+        established.push(format!(
+            "The bounded Next.js classifier established that request-body field `{request_field}` supplies expression `{supplied}` to financial effect field `{effect_field}`{resource} at {}:{}. This is an explicit value relationship, not a claim about arbitrary dataflow; a separate authoritative value protects it only if supplied facts show comparison, rejection, and use for this exact effect.",
+            item.location.path, item.location.start.line
+        ));
+    }
+    for item in evidence.iter().filter(|item| {
+        item.tags
+            .iter()
+            .any(|tag| tag == "review-invariant:shared-state-limit-enforcement")
+    }) {
+        let current = item
+            .captures
+            .get("current_value")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown current value");
+        let delta = item
+            .captures
+            .get("requested_delta")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown requested delta");
+        let derived = item
+            .captures
+            .get("derived_value")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown derived value");
+        let resource = item
+            .captures
+            .get("state_resource")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown resource");
+        established.push(format!(
+            "The bounded Next.js classifier established a read-check-derive-write sequence for resource `{resource}`: loaded value `{current}`, caller-requested delta `{delta}`, and derived value `{derived}` reach the persisted effect at {}:{}. The supplied local limit check is established separately; database atomicity remains unresolved until exact adapter semantics are supplied.",
+            item.location.path, item.location.start.line
+        ));
+    }
+    for item in evidence.iter().filter(|item| {
+        item.tags
+            .iter()
+            .any(|tag| tag == "review-invariant:state-transition-enforcement")
+    }) {
+        let next_state = item
+            .captures
+            .get("next_state")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown next state");
+        let request_field = item
+            .captures
+            .get("request_field")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown request field");
+        let resource = item
+            .captures
+            .get("state_resource")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("unknown resource");
+        let boundary = if item.rule_id.starts_with("csharp-") {
+            "ASP.NET Core"
+        } else {
+            "Next.js"
+        };
+        established.push(format!(
+            "The bounded {boundary} classifier established that request field `{request_field}` supplies next-state expression `{next_state}` to the state-changing operation for resource `{resource}` at {}:{}. This establishes the exact operation relationship; it does not prove which current-to-next transitions policy allows.",
+            item.location.path, item.location.start.line
         ));
     }
     for item in evidence
@@ -4209,11 +6314,28 @@ fn observation_decision_facts(
                 .to_string(),
         );
     }
-    if let Some(origin) = decision_critical_origin {
+    if let Some(origin_fact) = &bounded_request_origin {
+        established.push(origin_fact.clone());
+    } else if let Some(origin) = decision_critical_origin {
         established.push(origin.established_fact());
     }
     if let Some(policy) = &java_policy {
         established.push(policy.established.to_string());
+    }
+    if let Some(item) = python_request_credential_logging {
+        let origin = item
+            .captures
+            .get("credential_origin")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("request credential");
+        let message = item
+            .captures
+            .get("message")
+            .map(|capture| capture.text.as_str())
+            .unwrap_or("log arguments");
+        established.push(format!(
+            "The bounded Python classifier established that request-derived credential expression `{origin}` reaches the exact log arguments `{message}` through at most two same-function assignments."
+        ));
     }
     if let Some(policy) = &csharp_policy {
         established.push(policy.established.clone());
@@ -4297,7 +6419,11 @@ fn observation_decision_facts(
                 .control
                 .to_string(),
         ]
-    } else if java_policy.is_some() || embedded_signing_key || matched_python_jwt_verification {
+    } else if java_policy.is_some()
+        || python_request_credential_logging.is_some()
+        || embedded_signing_key
+        || matched_python_jwt_verification
+    {
         Vec::new()
     } else if resource_policy_applies
         && resource_policy.is_some_and(|policy| policy.state == ResourcePolicyState::OwnerScoped)
@@ -4315,6 +6441,54 @@ fn observation_decision_facts(
     if let Some(control) = decision_critical_origin.and_then(|origin| origin.effective_control()) {
         effective_controls.push(control);
     }
+    let dynamic_browser_output = evidence.iter().find(|item| {
+        item.kind == EvidenceKind::Sink
+            && item.capability == Capability::HtmlOutput
+            && matches!(
+                item.rule_id.as_str(),
+                "javascript-html-output" | "typescript-html-output" | "tsx-html-output"
+            )
+            && item.captures.get("content").is_some_and(|capture| {
+                let content = capture.text.trim();
+                !content.is_empty()
+                    && !((content.starts_with('"') && content.ends_with('"'))
+                        || (content.starts_with('\'') && content.ends_with('\'')))
+            })
+            && (item.captures.get("template").is_none()
+                || (item.captures.get("content").is_some_and(|capture| {
+                    capture.text.contains("...")
+                        || capture.text.contains("req.")
+                        || capture.text.contains("request.")
+                        || capture.text.lines().any(|line| {
+                            let Some((name, value)) = line.split_once(':') else {
+                                return false;
+                            };
+                            let name = name.trim().trim_start_matches('{').trim();
+                            let value = value.trim_start();
+                            !name.is_empty()
+                                && name.chars().all(|character| {
+                                    character.is_ascii_alphanumeric()
+                                        || matches!(character, '_' | '$')
+                                })
+                                && value.strip_prefix(name).is_some_and(|rest| {
+                                    rest.chars().next().is_none_or(|character| {
+                                        !character.is_ascii_alphanumeric()
+                                            && !matches!(character, '_' | '$')
+                                    })
+                                })
+                        })
+                }) && facts
+                    .iter()
+                    .any(|fact| fact.role == "server_template_binding_context")
+                    && facts.iter().any(|fact| {
+                        fact.role == "template_configuration_context"
+                            && fact
+                                .excerpt
+                                .split_whitespace()
+                                .collect::<String>()
+                                .contains("autoescape:false")
+                    })))
+    });
     let unresolved = if javascript_policy.is_some()
         || rust_policy.is_some()
         || go_policy.is_some()
@@ -4328,6 +6502,8 @@ fn observation_decision_facts(
         || server_generated_output_path
         || direct_stored_html_trust_bypass
         || java_policy.is_some()
+        || python_request_credential_logging.is_some()
+        || bounded_request_origin.is_some()
     {
         Vec::new()
     } else if let Some(sink) = evidence.iter().find(|item| {
@@ -4346,6 +6522,12 @@ fn observation_decision_facts(
     } else if let Some(parameter) = rust_dynamic_html_parameter {
         vec![format!(
             "Is runtime parameter `{parameter}` bound to attacker-controlled request data by the registered Actix route or extractor for this exact handler?"
+        )]
+    } else if let Some(sink) = dynamic_browser_output.filter(|_| decision_critical_origin.is_none())
+    {
+        vec![format!(
+            "Does the exact HTML output operand at {}:{} come from request-controlled or mutable stored content, and is that value protected for its browser output context? Inspect the producer and rendered binding or response callback before deciding.",
+            sink.location.path, sink.location.start.line
         )]
     } else if direct_request_resource_selector {
         vec![
@@ -4692,7 +6874,10 @@ impl DecisionCriticalOrigin<'_> {
 /// capability, semantic tag, and capture-role check.
 fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOrigin<'_>> {
     evidence.iter().find_map(|item| {
-        if item.kind != EvidenceKind::Sink
+        if (item.kind != EvidenceKind::Sink
+            && !(item.kind == EvidenceKind::SensitiveOperation
+                && item.capability == Capability::DatabaseQuery
+                && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-943")))
             || !item
                 .tags
                 .iter()
@@ -4779,9 +6964,9 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
                     "process launch API"
                 },
                 if shell {
-                    &["arguments", "command"]
+                    &["shell_command", "arguments", "command"]
                 } else {
-                    &["command"]
+                    &["executable", "command"]
                 },
                 false,
             )?)
@@ -4829,18 +7014,51 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
             Some(decision_origin_from_capture(
                 item,
                 DecisionCriticalBoundary::ObjectDeserialization,
-                "executable object deserializer",
+                "code-capable object deserializer",
                 &["payload", "stream"],
                 false,
             )?)
         } else if item.capability == Capability::DatabaseQuery
-            && item.rule_id == "csharp-extended-nosql-json"
+            && item.tags.iter().any(|tag| tag == "dynamic-nosql-structure")
         {
+            let style = if item
+                .tags
+                .iter()
+                .any(|tag| tag == "nosql-structure:executable-predicate")
+            {
+                "executable predicate"
+            } else if item
+                .tags
+                .iter()
+                .any(|tag| tag == "nosql-structure:raw-document-text")
+            {
+                "raw document text"
+            } else if item
+                .tags
+                .iter()
+                .any(|tag| tag == "nosql-structure:expression-syntax")
+            {
+                "expression syntax"
+            } else if item
+                .tags
+                .iter()
+                .any(|tag| tag == "nosql-structure:fixed-keys-unknown-values")
+            {
+                "fixed keys with unresolved values"
+            } else {
+                "unknown document structure"
+            };
             Some(decision_origin_from_capture(
                 item,
                 DecisionCriticalBoundary::RawNosql,
-                "raw document parser",
-                &["nosql_query"],
+                style,
+                &[
+                    "dynamic_operand",
+                    "nosql_expression",
+                    "nosql_query",
+                    "filter",
+                    "code",
+                ],
                 false,
             )?)
         } else if item.capability == Capability::LdapQuery {
@@ -5983,6 +8201,18 @@ fn path_review_basis(
     if !sink.tags.is_empty() {
         deterministic_facts.push(format!("Sink rule semantics: {}.", sink.tags.join(", ")));
     }
+    let nearby_mutation_validation = (sink.rule_id == "python-django-sensitive-field-mutation")
+        .then(|| sink.captures.get("nearby_rejecting_validation"))
+        .flatten();
+    if let (Some(validation), Some(mutation)) = (
+        nearby_mutation_validation,
+        sink.captures.get("assigned_fields"),
+    ) {
+        deterministic_facts.push(format!(
+            "The bounded Python classifier found nearby rejecting condition `{}` before sensitive mutation `{}`. This is comparison context, not proof that the condition constrains the mutation's complete value domain.",
+            validation.text, mutation.text
+        ));
+    }
     let semantic_claims = path_semantic_claims(candidate);
     if !semantic_claims.is_empty() {
         deterministic_facts.push(format!(
@@ -6035,7 +8265,15 @@ fn path_review_basis(
     }
     Ok(PathReviewBasis {
         relationship: "deterministic_bounded_path".to_string(),
-        security_question: if semantic_claims.is_empty() {
+        security_question: if let (Some(validation), Some(mutation)) = (
+            nearby_mutation_validation,
+            sink.captures.get("assigned_fields"),
+        ) {
+            format!(
+                "Does nearby rejecting condition `{}` constrain every caller-controlled operand used by sensitive mutation `{}`, including sign, multiplicity, units and range, before the persisted effect?",
+                validation.text, mutation.text
+            )
+        } else if semantic_claims.is_empty() {
             format!(
                 "Can the bounded source influence the {:?} behavior at runtime without an effective context-appropriate protection?",
                 candidate.capability
@@ -6427,6 +8665,16 @@ fn build_observation_reviews(
             .unwrap_or(first_line);
         let mut start_line = first_line.saturating_sub(context_lines).max(1);
         let mut end_line = last_line.saturating_add(context_lines);
+        if file.language == Some(Language::Java)
+            && group
+                .evidence
+                .iter()
+                .any(|item| item.capability == Capability::DatabaseQuery)
+        {
+            // A nearby route parameter or local normalization often precedes
+            // a Java SQL sink by more than the generic context margin.
+            start_line = start_line.min(first_line.saturating_sub(14).max(1));
+        }
         let anchor = group
             .anchor_evidence_ids
             .iter()
@@ -6727,7 +8975,7 @@ fn build_observation_reviews(
             item.kind == EvidenceKind::Sink && item.capability == Capability::HtmlOutput
         }) {
             let (mut template, template_truncated) =
-                express_template_review_facts(sources, sink, 5);
+                express_template_review_facts(sources, sink, 6);
             context_truncated |= template_truncated;
             facts.append(&mut template);
         }
@@ -6740,6 +8988,25 @@ fn build_observation_reviews(
                 exact_csharp_caller_facts(sources, &group.path, &group.symbol, 2);
             context_truncated |= callers_truncated;
             facts.append(&mut callers);
+            let (mut assigned_helpers, assigned_helpers_truncated) =
+                csharp_sql_assigned_helper_facts(sources, &review_context, &group, &facts, 2);
+            context_truncated |= assigned_helpers_truncated;
+            facts.append(&mut assigned_helpers);
+            let (mut operand_types, operand_types_truncated) =
+                csharp_sql_caller_type_facts(sources, &review_context, &group, &facts, 2);
+            context_truncated |= operand_types_truncated;
+            facts.append(&mut operand_types);
+        }
+        if languages.get(group.path.as_str()) == Some(&Language::Java)
+            && group
+                .evidence
+                .iter()
+                .any(|item| item.rule_id == "java-spring-data-request-entity-mass-assignment")
+        {
+            let (mut entity_facts, entity_truncated) =
+                java_request_entity_writer_facts(sources, &review_context, &group);
+            context_truncated |= entity_truncated;
+            facts.append(&mut entity_facts);
         }
         if let Some(language) = languages.get(group.path.as_str()).copied()
             && language != Language::Csharp
@@ -6858,8 +9125,15 @@ fn build_observation_reviews(
             }
         }
         let truncation = review_truncation(context_truncated, decision_critical_context_truncated);
+        let investigation = observation_review_investigation(
+            &selected_evidence,
+            &facts,
+            &decision_facts,
+            &truncation,
+        );
         let confidence_policy =
             observation_confidence_policy(&selected_evidence, &decision_facts, &truncation);
+        assign_review_fact_artifact_ids(&mut facts);
         reviews.push(ObservationReview {
             id: review_id,
             language: languages.get(group.path.as_str()).copied(),
@@ -6868,6 +9142,7 @@ fn build_observation_reviews(
             evidence: selected_evidence,
             review_basis: Some(review_basis),
             decision_facts,
+            investigation,
             confidence_policy,
             facts,
             open_questions,
@@ -7304,6 +9579,291 @@ fn exact_csharp_caller_facts(
     (facts, false)
 }
 
+/// A caller can assign a SQL-interpolated model member from a named helper.
+/// Follow only that exact assignment and an owner-resolved helper definition;
+/// this is context for the reviewer, not a cross-file flow assertion.
+fn csharp_sql_assigned_helper_facts(
+    sources: &RepositorySources,
+    context: &ReviewContextIndex,
+    group: &ObservationGroup,
+    existing: &[ReviewNeighborhoodFact],
+    limit: usize,
+) -> (Vec<ReviewNeighborhoodFact>, bool) {
+    let members = group
+        .evidence
+        .iter()
+        .filter(|item| item.capability == Capability::DatabaseQuery)
+        .filter_map(|item| item.captures.get("dynamic_operands"))
+        .flat_map(|capture| capture.text.split(','))
+        .filter_map(|operand| {
+            let (_, member) = operand.trim().rsplit_once('.')?;
+            let member = member.split(':').next()?.trim();
+            is_plain_identifier(member).then(|| member.to_string())
+        })
+        .collect::<BTreeSet<_>>();
+    if members.is_empty() {
+        return (Vec::new(), false);
+    }
+    let mut paths = BTreeSet::from([group.path.as_str()]);
+    let mut references = BTreeSet::new();
+    for caller in existing
+        .iter()
+        .filter(|fact| fact.role == "exact_caller_context")
+    {
+        paths.insert(caller.location.path.as_str());
+        let lines = caller.excerpt.lines().collect::<Vec<_>>();
+        for (index, line) in lines.iter().enumerate() {
+            let line = line.trim();
+            for member in &members {
+                let Some(rhs) = line
+                    .strip_prefix(member)
+                    .and_then(|rest| rest.trim_start().strip_prefix('='))
+                else {
+                    continue;
+                };
+                let rhs = if rhs.trim().is_empty() {
+                    lines.get(index + 1).copied().unwrap_or_default()
+                } else {
+                    rhs
+                };
+                let Some(open) = rhs.find('(') else {
+                    continue;
+                };
+                let method = rhs[..open]
+                    .trim_end()
+                    .rsplit(|character: char| {
+                        !(character.is_ascii_alphanumeric() || character == '_')
+                    })
+                    .next()
+                    .unwrap_or_default();
+                if is_helpful_reference_identifier(method) {
+                    references.insert(method.to_string());
+                }
+            }
+        }
+    }
+    if references.is_empty() {
+        return (Vec::new(), false);
+    }
+    observation_helper_definition_facts(sources, context, &paths, &references, existing, limit)
+}
+
+/// Supply a unique type instantiated by an exact caller when its name matches
+/// the owner of a SQL interpolation. The reviewer still decides whether the
+/// caller's value is the same instance used at the sink.
+fn csharp_sql_caller_type_facts(
+    sources: &RepositorySources,
+    context: &ReviewContextIndex,
+    group: &ObservationGroup,
+    existing: &[ReviewNeighborhoodFact],
+    limit: usize,
+) -> (Vec<ReviewNeighborhoodFact>, bool) {
+    let owners = group
+        .evidence
+        .iter()
+        .filter(|item| item.capability == Capability::DatabaseQuery)
+        .filter_map(|item| item.captures.get("dynamic_operands"))
+        .flat_map(|capture| capture.text.split(','))
+        .filter_map(|operand| {
+            operand
+                .trim()
+                .split_once('.')
+                .map(|(owner, _)| owner.to_ascii_lowercase())
+        })
+        .collect::<BTreeSet<_>>();
+    let mut facts = Vec::new();
+    for caller in existing
+        .iter()
+        .filter(|fact| fact.role == "exact_caller_context")
+    {
+        for tail in caller.excerpt.split("new ").skip(1) {
+            let type_name = tail
+                .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .next()
+                .unwrap_or_default();
+            if !owners.contains(&type_name.to_ascii_lowercase()) {
+                continue;
+            }
+            let Some(symbols) = context.definitions.get(type_name) else {
+                continue;
+            };
+            let definitions = symbols
+                .iter()
+                .filter(|symbol| {
+                    ["class", "record", "struct"]
+                        .iter()
+                        .any(|kind| symbol.signature.contains(&format!("{kind} {type_name}")))
+                })
+                .collect::<Vec<_>>();
+            if definitions.len() != 1 {
+                continue;
+            }
+            let symbol = definitions[0];
+            if facts_cover_location(existing, &symbol.location)
+                || facts_cover_location(&facts, &symbol.location)
+            {
+                continue;
+            }
+            if facts.len() == limit {
+                return (facts, true);
+            }
+            let Ok(file) = sources.file(&symbol.location.path) else {
+                continue;
+            };
+            let end_line = symbol
+                .location
+                .end
+                .line
+                .min(symbol.location.start.line + 39);
+            let Ok((slice, truncated)) = source_slice(file, symbol.location.start.line, end_line)
+            else {
+                continue;
+            };
+            facts.push(ReviewNeighborhoodFact {
+                role: "caller_instantiated_sql_operand_type_context".to_string(),
+                symbol: type_name.to_string(),
+                location: slice.location,
+                excerpt: slice.text,
+                evidence_id: None,
+                provenance: textual_provenance(
+                    "unique C# type instantiated in exact caller with name matching interpolated operand owner; lexical context, not flow proof 1",
+                ),
+            });
+            if truncated || end_line < symbol.location.end.line {
+                return (facts, true);
+            }
+        }
+    }
+    (facts, false)
+}
+
+/// For direct request-entity persistence, expose the exact same-package entity
+/// and the declared receiver's save method. These are bounded lexical facts;
+/// the reviewer still checks binding semantics and the sensitive write.
+fn java_request_entity_writer_facts(
+    sources: &RepositorySources,
+    context: &ReviewContextIndex,
+    group: &ObservationGroup,
+) -> (Vec<ReviewNeighborhoodFact>, bool) {
+    let Some(sink) = group
+        .evidence
+        .iter()
+        .find(|item| item.rule_id == "java-spring-data-request-entity-mass-assignment")
+    else {
+        return (Vec::new(), false);
+    };
+    let Some(type_name) = sink
+        .captures
+        .get("input_type")
+        .map(|capture| capture.text.as_str())
+    else {
+        return (Vec::new(), false);
+    };
+    if !is_plain_identifier(type_name) {
+        return (Vec::new(), false);
+    }
+    let directory = group
+        .path
+        .rsplit_once('/')
+        .map(|(dir, _)| dir)
+        .unwrap_or("");
+    let sibling = |name: &str| {
+        if directory.is_empty() {
+            format!("{name}.java")
+        } else {
+            format!("{directory}/{name}.java")
+        }
+    };
+    let mut facts = Vec::new();
+    let mut truncated = false;
+    let type_path = sibling(type_name);
+    if let Ok(file) = sources.file(&type_path) {
+        let line_count = file.source.lines().count();
+        let end = line_count.min(80);
+        if let Ok((slice, slice_truncated)) = source_slice(file, 1, end) {
+            facts.push(ReviewNeighborhoodFact {
+                role: "request_entity_type_context".into(),
+                symbol: type_name.into(),
+                location: slice.location,
+                excerpt: slice.text,
+                evidence_id: None,
+                provenance: textual_provenance(
+                    "exact same-package Java request entity type; lexical fields and annotations, not binding proof 1",
+                ),
+            });
+            truncated |= slice_truncated || end < line_count;
+        }
+    }
+    let Ok(caller) = sources.file(&group.path) else {
+        return (facts, truncated);
+    };
+    let Some(operation) = caller
+        .source
+        .get(sink.location.start.byte_offset..sink.location.end.byte_offset)
+    else {
+        return (facts, truncated);
+    };
+    let Some(receiver) = operation
+        .split_once(".save(")
+        .map(|(receiver, _)| receiver.trim())
+    else {
+        return (facts, truncated);
+    };
+    if !is_plain_identifier(receiver) {
+        return (facts, truncated);
+    }
+    let declaration_suffix = format!(" {receiver};");
+    let Some(owner) = caller.source[..sink.location.start.byte_offset]
+        .lines()
+        .rev()
+        .map(str::trim)
+        .filter(|line| !line.starts_with("//"))
+        .find_map(|line| {
+            line.strip_suffix(&declaration_suffix)?
+                .split_whitespace()
+                .last()
+                .filter(|name| is_plain_identifier(name))
+        })
+    else {
+        return (facts, truncated);
+    };
+    let owner_path = sibling(owner);
+    let Some(symbols) = context.definitions.get("save") else {
+        return (facts, truncated);
+    };
+    let matching = symbols
+        .iter()
+        .filter(|symbol| symbol.location.path == owner_path)
+        .filter(|symbol| symbol.signature.contains("save(") && symbol.signature.contains(type_name))
+        .collect::<Vec<_>>();
+    if matching.len() != 1 {
+        return (facts, truncated);
+    }
+    let symbol = matching[0];
+    let Ok(file) = sources.file(&owner_path) else {
+        return (facts, truncated);
+    };
+    let end = symbol
+        .location
+        .end
+        .line
+        .min(symbol.location.start.line + 39);
+    if let Ok((slice, slice_truncated)) = source_slice(file, symbol.location.start.line, end) {
+        facts.push(ReviewNeighborhoodFact {
+            role: "request_entity_exact_writer_context".into(),
+            symbol: format!("{owner}.save"),
+            location: slice.location,
+            excerpt: slice.text,
+            evidence_id: None,
+            provenance: textual_provenance(
+                "exact Java save receiver declared in request handler with same-package owner; lexical target, not flow proof 1",
+            ),
+        });
+        truncated |= slice_truncated || end < symbol.location.end.line;
+    }
+    (facts, truncated)
+}
+
 impl BoundedCallerIndex {
     fn build(sources: &RepositorySources) -> Self {
         #[derive(Clone)]
@@ -7566,6 +10126,102 @@ fn exact_request_source_argument(language: Language, argument: &str) -> bool {
         Language::Go => compact.contains(".URL.Query().Get(") || compact.contains(".FormValue("),
         Language::Rust | Language::Csharp => false,
     }
+}
+
+/// Reconcile a decision-critical interpreted operand with request origin only
+/// when the already-supplied bounded caller neighborhood shows the request
+/// extraction. This deliberately consumes exact caller ownership produced by
+/// the context index; it is not a new cross-file flow analysis.
+fn decision_critical_request_origin_fact(
+    origin: DecisionCriticalOrigin<'_>,
+    facts: &[ReviewNeighborhoodFact],
+) -> Option<String> {
+    if origin.affirmatively_constrained {
+        return None;
+    }
+    let fact = facts.iter().find(|fact| {
+        if !matches!(
+            fact.role.as_str(),
+            "source_context"
+                | "reference_use_context"
+                | "exact_caller_context"
+                | "upstream_caller_context"
+                | "helper_definition_context"
+        ) {
+            return false;
+        }
+        if fact
+            .provenance
+            .engine
+            .contains("bounded exact request-source argument")
+        {
+            return true;
+        }
+        let compact = fact
+            .excerpt
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        let lower = compact.to_ascii_lowercase();
+        match origin.language {
+            "C" | "C++" => {
+                compact.contains("getenv(\"QUERY_STRING\")")
+                    || compact.contains("getenv('QUERY_STRING')")
+            }
+            "C#" => {
+                lower.contains("[fromquery]")
+                    || lower.contains("[frombody]")
+                    || lower.contains("request.query[")
+                    || lower.contains("request.form[")
+            }
+            "Java" => {
+                lower.contains("@requestparam")
+                    || lower.contains("@pathvariable")
+                    || lower.contains(".getparameter(")
+                    || lower.contains(".getquerystring(")
+            }
+            "Kotlin" => {
+                lower.contains("call.parameters[")
+                    || lower.contains("call.request.queryparameters[")
+                    || lower.contains("call.receive<")
+            }
+            "JavaScript" | "TypeScript" | "TSX" => [
+                "req.query",
+                "req.body",
+                "req.params",
+                "request.query",
+                "request.body",
+                "request.params",
+            ]
+            .iter()
+            .any(|source| lower.contains(source)),
+            "Python" => {
+                lower.contains("request.args")
+                    || lower.contains("request.form")
+                    || lower.contains("request.json")
+                    || lower.contains("request.get_json(")
+            }
+            "PHP" => {
+                lower.contains("$_get[")
+                    || lower.contains("$_post[")
+                    || lower.contains("$_request[")
+                    || lower.contains("$request->input(")
+                    || lower.contains("$request->query(")
+            }
+            "Go" => lower.contains(".url.query().get(") || lower.contains(".formvalue("),
+            "Rust" => {
+                lower.contains("query<")
+                    || lower.contains("path<")
+                    || lower.contains("form<")
+                    || lower.contains("json<")
+            }
+            _ => false,
+        }
+    })?;
+    Some(format!(
+        "The supplied bounded exact caller chain establishes that request data extracted at {}:{} reaches dynamic operand `{}` at this {} boundary. This is a lexical argument handoff tied to the reviewed callable, not arbitrary repository-wide dataflow.",
+        fact.location.path, fact.location.start.line, origin.operand, origin.style
+    ))
 }
 
 fn starts_member_access(value: &str, prefix: &str) -> bool {
@@ -8855,8 +11511,12 @@ fn observation_groups(
     used_ids: &BTreeSet<&str>,
     candidates: &[mehscan_core::Candidate],
     sources: &RepositorySources,
-) -> Vec<ObservationGroup> {
+) -> (
+    Vec<ObservationGroup>,
+    BTreeMap<String, ReviewAdmissionDisposition>,
+) {
     let mut grouped: BTreeMap<(String, String), Vec<Evidence>> = BTreeMap::new();
+    let mut exclusions = BTreeMap::new();
     for item in evidence
         .iter()
         .filter(|item| item.kind != EvidenceKind::Secret)
@@ -8881,34 +11541,26 @@ fn observation_groups(
                 .cmp(&right.location.start.byte_offset)
                 .then_with(|| left.rule_id.cmp(&right.rule_id))
         });
-        let anchors = items
-            .iter()
-            .filter(|item| {
-                !used_ids.contains(item.id.as_str())
-                    && !item.cwe_candidates.is_empty()
-                    && !observation_sink_covered_by_candidate(item, candidates)
-                    && !is_non_actionable_fixed_sink_observation(item, sources)
-                    && !is_non_actionable_safe_purpose_observation(item, sources)
-                    && !is_non_actionable_java_route_control(item)
-                    && !is_non_actionable_affirmative_csharp_cookie_control(item)
-                    && !is_source_free_generic_java_log(item, &items)
-                    && !is_superseded_java_logging_observation(item, &items)
-                    && !is_superseded_csharp_cookie_observation(item, &items)
-                    && !is_context_only_uploaded_filename_check(item, &items)
-                    && !is_non_actionable_csrf_observation(item, sources)
-                    && !is_non_actionable_autoescaped_django_response(item, sources)
-                    && !is_unlinked_native_buffer_write_observation(item, sources)
-                    && !is_unlinked_native_api_inventory_observation(item, sources)
-                    && !is_duplicate_parameter_sink_summary(item, evidence)
-                    && matches!(
-                        item.kind,
-                        EvidenceKind::Sink
-                            | EvidenceKind::SensitiveOperation
-                            | EvidenceKind::SecurityConfiguration
-                    )
-            })
-            .map(|item| item.id.clone())
-            .collect::<Vec<_>>();
+        let mut anchors = Vec::new();
+        for item in &items {
+            if item.cwe_candidates.is_empty()
+                || !matches!(
+                    item.kind,
+                    EvidenceKind::Sink
+                        | EvidenceKind::SensitiveOperation
+                        | EvidenceKind::SecurityConfiguration
+                )
+            {
+                continue;
+            }
+            if let Some(disposition) = observation_exclusion_disposition(
+                item, &items, evidence, used_ids, candidates, sources,
+            ) {
+                exclusions.insert(item.id.clone(), disposition);
+            } else {
+                anchors.push(item.id.clone());
+            }
+        }
         if anchors.is_empty() {
             // Sources, entrypoints, guards, sanitizers, validations, literals,
             // and resources remain available as context, but are not standalone
@@ -8976,7 +11628,145 @@ fn observation_groups(
             .then_with(|| left.path.cmp(&right.path))
             .then_with(|| left.symbol.cmp(&right.symbol))
     });
-    groups
+    (groups, exclusions)
+}
+
+fn observation_exclusion_disposition(
+    item: &Evidence,
+    group: &[Evidence],
+    evidence: &[Evidence],
+    used_ids: &BTreeSet<&str>,
+    candidates: &[mehscan_core::Candidate],
+    sources: &RepositorySources,
+) -> Option<ReviewAdmissionDisposition> {
+    if used_ids.contains(item.id.as_str())
+        || observation_sink_covered_by_candidate(item, candidates)
+        || is_superseded_java_logging_observation(item, group)
+        || is_superseded_csharp_cookie_observation(item, group)
+        || is_duplicate_parameter_sink_summary(item, evidence)
+    {
+        return Some(ReviewAdmissionDisposition::DuplicateSuperseded);
+    }
+    if is_non_actionable_fixed_sink_observation(item, sources)
+        || is_non_actionable_safe_purpose_observation(item, sources)
+        || is_non_actionable_java_route_control(item)
+        || is_non_actionable_affirmative_csharp_cookie_control(item)
+        || is_non_actionable_csrf_observation(item, sources)
+        || is_non_actionable_autoescaped_django_response(item, sources)
+    {
+        return Some(ReviewAdmissionDisposition::SafelySuppressed);
+    }
+    if is_source_free_generic_java_log(item, group)
+        || is_unlinked_native_buffer_write_observation(item, sources)
+        || is_unlinked_native_api_inventory_observation(item, sources)
+        || is_go_resource_filter_without_observable_effect(item, sources)
+    {
+        return Some(ReviewAdmissionDisposition::InventoryOnly);
+    }
+    if is_context_only_uploaded_filename_check(item, group) {
+        return Some(ReviewAdmissionDisposition::ContextOnly);
+    }
+    None
+}
+
+const MAX_ADMISSION_AUDIT_EXAMPLES: usize = 64;
+
+fn review_admission_audit(
+    evidence: &[Evidence],
+    all_candidate_evidence_ids: &BTreeSet<&str>,
+    admitted_candidate_evidence_ids: &BTreeSet<String>,
+    admitted_observation_ids: &BTreeSet<String>,
+    excluded_review_material_observation_ids: &BTreeSet<String>,
+    observation_exclusions: &BTreeMap<String, ReviewAdmissionDisposition>,
+) -> ReviewAdmissionAudit {
+    let mut classified = evidence
+        .iter()
+        .filter(|item| {
+            !item.cwe_candidates.is_empty()
+                && matches!(
+                    item.kind,
+                    EvidenceKind::Sink
+                        | EvidenceKind::SensitiveOperation
+                        | EvidenceKind::SecurityConfiguration
+                )
+        })
+        .map(|item| {
+            let disposition = if admitted_candidate_evidence_ids.contains(&item.id) {
+                ReviewAdmissionDisposition::PathOwned
+            } else if admitted_observation_ids.contains(&item.id) {
+                ReviewAdmissionDisposition::ObservationAdmitted
+            } else if excluded_review_material_observation_ids.contains(&item.id)
+                || (all_candidate_evidence_ids.contains(item.id.as_str())
+                    && is_review_material_path(&item.location.path))
+            {
+                ReviewAdmissionDisposition::ExcludedReviewMaterial
+            } else if all_candidate_evidence_ids.contains(item.id.as_str()) {
+                // Candidate construction can establish a safe closed native
+                // ownership proof or the exact C# query-only redirect helper.
+                // Both remain deterministic evidence without AI-review work.
+                ReviewAdmissionDisposition::SafelySuppressed
+            } else {
+                observation_exclusions
+                    .get(&item.id)
+                    .copied()
+                    .unwrap_or(ReviewAdmissionDisposition::Unclassified)
+            };
+            ReviewAdmissionAuditExample {
+                evidence_id: item.id.clone(),
+                rule_id: item.rule_id.clone(),
+                capability: item.capability,
+                disposition,
+                location: item.location.clone(),
+            }
+        })
+        .collect::<Vec<_>>();
+    classified.sort_by(|left, right| {
+        left.capability
+            .cmp(&right.capability)
+            .then_with(|| left.disposition.cmp(&right.disposition))
+            .then_with(|| left.location.path.cmp(&right.location.path))
+            .then_with(|| left.location.start.line.cmp(&right.location.start.line))
+            .then_with(|| left.rule_id.cmp(&right.rule_id))
+            .then_with(|| left.evidence_id.cmp(&right.evidence_id))
+    });
+
+    let mut count_map = BTreeMap::new();
+    for item in &classified {
+        *count_map
+            .entry((item.capability, item.disposition))
+            .or_insert(0usize) += 1;
+    }
+    let counts = count_map
+        .into_iter()
+        .map(
+            |((capability, disposition), count)| ReviewAdmissionAuditCount {
+                capability,
+                disposition,
+                count,
+            },
+        )
+        .collect::<Vec<_>>();
+
+    let mut sampled_pairs = BTreeSet::new();
+    let excluded_examples = classified
+        .iter()
+        .filter(|item| {
+            !matches!(
+                item.disposition,
+                ReviewAdmissionDisposition::PathOwned
+                    | ReviewAdmissionDisposition::ObservationAdmitted
+            )
+        })
+        .filter(|item| sampled_pairs.insert((item.capability, item.disposition)))
+        .take(MAX_ADMISSION_AUDIT_EXAMPLES)
+        .cloned()
+        .collect();
+
+    ReviewAdmissionAudit {
+        classified_boundary_count: classified.len(),
+        counts,
+        excluded_examples,
+    }
 }
 
 /// A raw C/C++ memory-write API is common audit inventory, not a useful
@@ -9151,6 +11941,26 @@ fn is_standard_integer_format_macro(value: &str) -> bool {
 /// Prefer the concrete helper sink and its collected call-site context over a
 /// second file-local summary anchored at the same helper invocation.
 fn is_duplicate_parameter_sink_summary(item: &Evidence, evidence: &[Evidence]) -> bool {
+    if item.rule_id == "go-sql-parameter-query-summary" {
+        let Some(target) = item
+            .captures
+            .get("target")
+            .map(|capture| capture.text.as_str())
+        else {
+            return false;
+        };
+        return evidence.iter().any(|other| {
+            other.id != item.id
+                && other.location.path == item.location.path
+                && other.kind == EvidenceKind::Sink
+                && other.capability == Capability::DatabaseQuery
+                && other.enclosing_symbol.as_deref() == Some(target)
+                && other
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "dynamic-query-composition")
+        });
+    }
     if item.rule_id != "python-file-local-parameter-sink-summary" {
         return false;
     }
@@ -9168,6 +11978,42 @@ fn is_duplicate_parameter_sink_summary(item: &Evidence, evidence: &[Evidence]) -
             && other.enclosing_symbol.as_deref() == Some(helper)
             && other.rule_id != "python-file-local-parameter-sink-summary"
     })
+}
+
+/// A request-selected repository filter is useful context, but a bare read
+/// whose result is discarded establishes neither a sensitive read delivered to
+/// a caller nor an existence oracle. Mutations and calls whose result is
+/// returned, assigned, or consumed remain reviewable.
+fn is_go_resource_filter_without_observable_effect(
+    item: &Evidence,
+    sources: &RepositorySources,
+) -> bool {
+    if item.rule_id != "go-sql-resource-filter-summary"
+        || item.tags.iter().any(|tag| tag == "resource-mutation")
+    {
+        return false;
+    }
+    let Ok(file) = sources.file(&item.location.path) else {
+        return false;
+    };
+    let start = item.location.start.byte_offset.min(file.source.len());
+    let end = item.location.end.byte_offset.min(file.source.len());
+    if start >= end || !file.source.is_char_boundary(start) || !file.source.is_char_boundary(end) {
+        return false;
+    }
+    let line_start = file.source[..start]
+        .rfind('\n')
+        .map_or(0, |index| index + 1);
+    let line_end = file.source[end..]
+        .find('\n')
+        .map_or(file.source.len(), |index| end + index);
+    let prefix = file.source[line_start..start].trim();
+    let suffix = file.source[end..line_end].trim();
+    let statement_prefix = prefix.rsplit(['{', ';']).next().unwrap_or(prefix).trim();
+    statement_prefix.is_empty()
+        && suffix
+            .chars()
+            .all(|character| matches!(character, ';' | '}'))
 }
 
 fn is_local_observation_context(
@@ -9335,6 +12181,14 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
     {
         return has_known_string_literal(item, "nosql_query");
     }
+    if item.capability == Capability::DatabaseQuery
+        && item
+            .tags
+            .iter()
+            .any(|tag| tag == "query-role:structured-filter")
+    {
+        return true;
+    }
     if item.capability == Capability::LdapQuery {
         return has_known_string_literal(item, "filter")
             || has_known_string_literal(item, "distinguished_name");
@@ -9348,11 +12202,13 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
         .any(|tag| tag == "review-origin:decision-critical")
     {
         return match item.capability {
-            Capability::OutboundNetworkRequest => item
-                .context
-                .literals
-                .get("endpoint")
-                .is_some_and(has_fixed_http_authority),
+            Capability::OutboundNetworkRequest => {
+                item.context
+                    .literals
+                    .get("endpoint")
+                    .is_some_and(has_fixed_http_authority)
+                    || is_fixed_imported_browser_outbound_request(item, sources)
+            }
             Capability::Redirect => item
                 .context
                 .literals
@@ -9443,6 +12299,7 @@ fn is_non_actionable_safe_purpose_observation(
     }
     if item.kind == EvidenceKind::Sink
         && item.capability == Capability::Deserialization
+        && !executable_deserializer(item)
         && item
             .captures
             .get("payload")
@@ -9856,6 +12713,351 @@ fn is_fixed_imported_browser_navigation(item: &Evidence, sources: &RepositorySou
     exported_object_has_fixed_string_property(&module_file.source, exported, property)
 }
 
+/// Omits a browser transport review only when a local endpoint variable is
+/// assembled from repository-owned imported object properties that resolve to
+/// a same-origin relative path. Dynamic path and query substitutions are
+/// allowed after that fixed prefix because they cannot change the browser
+/// origin. Reassigned variables, absolute URLs and unresolved imports remain
+/// reviewable.
+fn is_fixed_imported_browser_outbound_request(
+    item: &Evidence,
+    sources: &RepositorySources,
+) -> bool {
+    if item.kind != EvidenceKind::Sink
+        || item.capability != Capability::OutboundNetworkRequest
+        || item.context.runtime_environment != Some(RuntimeEnvironment::Browser)
+    {
+        return false;
+    }
+    let Some(endpoint) = item
+        .captures
+        .get("endpoint")
+        .map(|capture| capture.text.trim())
+    else {
+        return false;
+    };
+    let Some((binding, replaced_placeholder)) = fixed_browser_endpoint_binding(endpoint) else {
+        return false;
+    };
+    let Ok(file) = sources.file(&item.location.path) else {
+        return false;
+    };
+    let Some(scope) = javascript_enclosing_prefix(file, item) else {
+        return false;
+    };
+    let Some(expression) = unique_local_javascript_assignment(scope, binding) else {
+        return false;
+    };
+    let Some(resolved) =
+        resolve_browser_string_expression(expression, file, sources, 0, String::new())
+    else {
+        return false;
+    };
+    if let Some(placeholder) = replaced_placeholder {
+        let Some(position) = resolved.find(placeholder) else {
+            return false;
+        };
+        if position == 0 || !relative_prefix_locks_browser_origin(&resolved[..position]) {
+            return false;
+        }
+    }
+    same_origin_relative_url(&resolved)
+}
+
+fn fixed_browser_endpoint_binding(endpoint: &str) -> Option<(&str, Option<&str>)> {
+    if is_plain_identifier(endpoint) {
+        return Some((endpoint, None));
+    }
+    if let Some((binding, call)) = endpoint.split_once(".replace(")
+        && is_plain_identifier(binding.trim())
+    {
+        let placeholder = call.split_once(',')?.0.trim();
+        let placeholder = first_quoted_value(placeholder)?;
+        if placeholder.starts_with('<') && placeholder.ends_with('>') {
+            return Some((binding.trim(), Some(placeholder)));
+        }
+    }
+    let template = endpoint.strip_prefix("`${")?.strip_suffix('`')?;
+    let (binding, suffix) = template.split_once('}')?;
+    if is_plain_identifier(binding)
+        && matches!(suffix.chars().next(), Some('/' | '?' | '#'))
+        && !suffix.starts_with("//")
+        && !suffix.starts_with("/\\")
+    {
+        return Some((binding, None));
+    }
+    None
+}
+
+fn unique_local_javascript_assignment<'a>(scope: &'a str, binding: &str) -> Option<&'a str> {
+    let mut assignments = Vec::new();
+    for keyword in ["const", "let", "var"] {
+        let declaration = format!("{keyword} {binding}");
+        for (start, _) in scope.match_indices(&declaration) {
+            let tail = &scope[start + declaration.len()..];
+            if !tail
+                .chars()
+                .next()
+                .is_some_and(|boundary| boundary.is_whitespace() || matches!(boundary, ':' | '='))
+            {
+                continue;
+            }
+            let (_, expression) = tail.split_once('=')?;
+            assignments.push(javascript_initializer(expression)?);
+        }
+    }
+    let [expression] = assignments.as_slice() else {
+        return None;
+    };
+    if scope.lines().any(|line| {
+        let line = line.trim();
+        line.strip_prefix(binding).is_some_and(|tail| {
+            let tail = tail.trim_start();
+            ["=", "+=", "-=", "*=", "/=", "%=", "&&=", "||=", "??="]
+                .iter()
+                .any(|operator| tail.starts_with(operator))
+                && !["const", "let", "var"]
+                    .iter()
+                    .any(|keyword| line.starts_with(&format!("{keyword} {binding}")))
+        })
+    }) {
+        return None;
+    }
+    Some(expression)
+}
+
+fn javascript_initializer(value: &str) -> Option<&str> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut nesting = 0usize;
+    for (index, character) in value.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quote.is_some() {
+            escaped = true;
+            continue;
+        }
+        if let Some(active) = quote {
+            if character == active {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '\'' | '"' | '`' => quote = Some(character),
+            '(' | '[' | '{' => nesting += 1,
+            ')' | ']' | '}' => nesting = nesting.checked_sub(1)?,
+            ';' if nesting == 0 => return Some(value[..index].trim()),
+            '\n' if nesting == 0 => {
+                let before = value[..index].trim_end();
+                let after = value[index + 1..].trim_start();
+                if before.is_empty() {
+                    continue;
+                }
+                if !before.ends_with('+') && !after.starts_with('+') {
+                    return Some(before);
+                }
+            }
+            _ => {}
+        }
+    }
+    let value = value.trim();
+    (!value.is_empty() && quote.is_none() && nesting == 0).then_some(value)
+}
+
+fn resolve_browser_string_expression(
+    expression: &str,
+    file: &SourceFile,
+    sources: &RepositorySources,
+    depth: usize,
+    mut resolved: String,
+) -> Option<String> {
+    if depth > 3 {
+        return None;
+    }
+    for term in split_top_level_plus(expression)? {
+        let term = term.trim();
+        if let Some(value) = quoted_literal_value(term) {
+            resolved.push_str(value);
+            continue;
+        }
+        if let Some(template) = term
+            .strip_prefix('`')
+            .and_then(|term| term.strip_suffix('`'))
+        {
+            let prefix = template.split("${").next().unwrap_or(template);
+            resolved.push_str(prefix);
+            if template.contains("${") {
+                if !relative_prefix_locks_browser_origin(&resolved) {
+                    return None;
+                }
+                resolved.push_str("<dynamic>");
+            }
+            continue;
+        }
+        if let Some((property_access, replacement)) = term
+            .strip_suffix(')')
+            .and_then(|term| term.split_once(".replace("))
+        {
+            let (binding, property) = property_access.split_once('.')?;
+            let (placeholder, _) = replacement.split_once(',')?;
+            let placeholder = quoted_literal_value(placeholder)?;
+            if resolved.is_empty() || placeholder.is_empty() {
+                return None;
+            }
+            let value = resolve_imported_object_string_property(
+                file,
+                binding.trim(),
+                property.trim(),
+                sources,
+                depth + 1,
+            )?;
+            if !value.contains(placeholder) || !same_origin_relative_url(&resolved) {
+                return None;
+            }
+            resolved.push_str(&value);
+            continue;
+        }
+        if is_plain_identifier(term) && relative_prefix_locks_browser_origin(&resolved) {
+            resolved.push_str("<dynamic>");
+            continue;
+        }
+        let (binding, property) = term.split_once('.')?;
+        if !is_plain_identifier(binding.trim()) || !is_plain_identifier(property.trim()) {
+            return None;
+        }
+        let value = resolve_imported_object_string_property(
+            file,
+            binding.trim(),
+            property.trim(),
+            sources,
+            depth + 1,
+        )?;
+        resolved.push_str(&value);
+    }
+    Some(resolved)
+}
+
+fn resolve_imported_object_string_property(
+    importing_file: &SourceFile,
+    binding: &str,
+    property: &str,
+    sources: &RepositorySources,
+    depth: usize,
+) -> Option<String> {
+    if depth > 3 || javascript_binding_shadowed_before_use_source(&importing_file.source, binding) {
+        return None;
+    }
+    let (exported, module) = relative_named_import(&importing_file.source, binding)?;
+    let module_path = resolve_relative_typescript_module(&importing_file.path, module, sources)?;
+    let module_file = sources.file(&module_path).ok()?;
+    let expression = exported_object_property_expression(&module_file.source, exported, property)?;
+    if sources.files.values().any(|candidate| {
+        candidate.source.lines().any(|line| {
+            compact_has_property_assignment(&line.split_whitespace().collect::<String>(), property)
+        })
+    }) {
+        return None;
+    }
+    if let Some(value) = quoted_literal_value(expression) {
+        return Some(value.to_string());
+    }
+    let (next_binding, next_property) = expression.split_once('.')?;
+    resolve_imported_object_string_property(
+        module_file,
+        next_binding.trim(),
+        next_property.trim(),
+        sources,
+        depth + 1,
+    )
+}
+
+fn javascript_binding_shadowed_before_use_source(source: &str, binding: &str) -> bool {
+    ["const", "let", "var"].iter().any(|keyword| {
+        source.lines().any(|line| {
+            let declaration = format!("{keyword} {binding}");
+            line.trim().strip_prefix(&declaration).is_some_and(|tail| {
+                tail.starts_with(char::is_whitespace)
+                    || tail.starts_with('=')
+                    || tail.starts_with(':')
+            })
+        })
+    })
+}
+
+fn split_top_level_plus(expression: &str) -> Option<Vec<&str>> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut nesting = 0usize;
+    for (index, character) in expression.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quote.is_some() {
+            escaped = true;
+            continue;
+        }
+        if let Some(active) = quote {
+            if character == active {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '\'' | '"' | '`' => quote = Some(character),
+            '(' | '[' | '{' => nesting += 1,
+            ')' | ']' | '}' => nesting = nesting.checked_sub(1)?,
+            '+' if nesting == 0 => {
+                parts.push(&expression[start..index]);
+                start = index + character.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    if quote.is_some() || nesting != 0 {
+        return None;
+    }
+    parts.push(&expression[start..]);
+    (!parts.iter().any(|part| part.trim().is_empty())).then_some(parts)
+}
+
+fn quoted_literal_value(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if value.len() < 2 {
+        return None;
+    }
+    let first = value.chars().next()?;
+    let last = value.chars().last()?;
+    (matches!(first, '\'' | '"') && first == last).then_some(&value[1..value.len() - 1])
+}
+
+fn same_origin_relative_url(value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty()
+        || value.starts_with("//")
+        || value.starts_with("/\\")
+        || value.starts_with('\\')
+    {
+        return false;
+    }
+    let authority_candidate = value
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(value)
+        .to_ascii_lowercase();
+    !authority_candidate.contains(':')
+}
+
+fn relative_prefix_locks_browser_origin(value: &str) -> bool {
+    same_origin_relative_url(value)
+        && (value.starts_with('.') || value.starts_with('/') || value.contains('/'))
+}
+
 fn fixed_service_navigation_assignment(
     item: &Evidence,
     sources: &RepositorySources,
@@ -9979,10 +13181,18 @@ fn javascript_enclosing_prefix<'a>(file: &'a SourceFile, item: &Evidence) -> Opt
         return None;
     }
     let prefix = &file.source[..end];
-    let symbol = item.enclosing_symbol.as_deref()?;
-    let start = prefix
-        .rfind(&format!("{symbol} ("))
-        .or_else(|| prefix.rfind(&format!("{symbol}(")))?;
+    let start = if let Some(symbol) = item.enclosing_symbol.as_deref() {
+        prefix
+            .rfind(&format!("{symbol} ("))
+            .or_else(|| prefix.rfind(&format!("{symbol}(")))?
+    } else {
+        // Tree-sitter does not currently name JavaScript/TypeScript generator
+        // functions. Keep the fallback limited to their explicit declaration
+        // syntax so unrelated top-level assignments cannot satisfy a review.
+        prefix
+            .rfind("function* ")
+            .or_else(|| prefix.rfind("function *"))?
+    };
     Some(&prefix[start..])
 }
 
@@ -10098,18 +13308,22 @@ fn resolve_relative_typescript_module(
 }
 
 fn exported_object_has_fixed_string_property(source: &str, object: &str, property: &str) -> bool {
+    exported_object_property_expression(source, object, property).is_some_and(is_quoted_literal)
+}
+
+fn exported_object_property_expression<'a>(
+    source: &'a str,
+    object: &str,
+    property: &str,
+) -> Option<&'a str> {
     let declaration = format!("export const {object}");
-    let Some(start) = source.find(&declaration) else {
-        return false;
-    };
+    let start = source.find(&declaration)?;
     let tail = &source[start + declaration.len()..];
-    let Some(open) = tail.find('{') else {
-        return false;
-    };
-    let Some(close) = tail[open + 1..].find('}') else {
-        return false;
-    };
-    let body = &tail[open + 1..open + 1 + close];
+    let assignment = top_level_assignment_index(tail)?;
+    let initializer = &tail[assignment + 1..];
+    let open = initializer.find('{')?;
+    let close = matching_delimiter(initializer, open, b'{', b'}')?;
+    let body = &initializer[open + 1..close];
     let values = body
         .lines()
         .filter_map(|line| {
@@ -10117,7 +13331,37 @@ fn exported_object_has_fixed_string_property(source: &str, object: &str, propert
             (name.trim() == property).then_some(value.trim())
         })
         .collect::<Vec<_>>();
-    matches!(values.as_slice(), [value] if is_quoted_literal(value))
+    matches!(values.as_slice(), [value] if !value.is_empty()).then_some(values[0])
+}
+
+fn top_level_assignment_index(value: &str) -> Option<usize> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut nesting = 0usize;
+    for (index, character) in value.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quote.is_some() {
+            escaped = true;
+            continue;
+        }
+        if let Some(active) = quote {
+            if character == active {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '\'' | '"' | '`' => quote = Some(character),
+            '(' | '[' | '{' | '<' => nesting += 1,
+            ')' | ']' | '}' | '>' => nesting = nesting.checked_sub(1)?,
+            '=' if nesting == 0 => return Some(index),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn javascript_binding_shadowed_before_use(
@@ -11028,11 +14272,15 @@ fn observation_review_questions(
     let direct_request_resource_selector =
         observation_has_direct_request_resource_selector(evidence);
     let java_decision_ready = java_observation_policy(evidence, facts).is_some();
+    let python_request_credential_logging = evidence
+        .iter()
+        .any(|item| item.rule_id == "python-request-credential-logging");
     let decision_ready_policy = evidence
         .iter()
         .any(|item| explicit_cookie_omission(&item.rule_id).is_some())
         || observation_has_source_embedded_signing_key(evidence, facts)
-        || java_decision_ready;
+        || java_decision_ready
+        || python_request_credential_logging;
     let has_source = evidence
         .iter()
         .any(|item| item.kind == EvidenceKind::Source);
@@ -11305,6 +14553,7 @@ fn observation_review_questions(
     } else if !has_precise_node_boundary
         && let Some(origin) = decision_critical_origin
         && !origin.affirmatively_constrained
+        && decision_critical_request_origin_fact(origin, facts).is_none()
     {
         questions.push(origin.unresolved_question());
     } else if !has_precise_node_boundary && direct_request_resource_selector {
@@ -11355,6 +14604,11 @@ fn observation_review_questions(
     if questions.is_empty() && !decision_ready_policy && !direct_stored_html_trust_bypass {
         questions
             .push("Does this bounded observation establish a concrete security issue?".to_string());
+    }
+    for question in review_admission::decision_questions(evidence, facts) {
+        if !questions.contains(&question) {
+            questions.push(question);
+        }
     }
     questions
 }
@@ -11533,6 +14787,12 @@ fn path_review_questions(
             "Does the application authenticate the SSO cookie with a server-held integrity key or framework data protector before reading the account identifier? Base64 decoding and JSON parsing alone do not establish authenticity."
                 .to_string(),
             "Does the verified cookie identity select the same account for which this access token is issued, with issuer, audience, purpose, and replay protections appropriate to the SSO protocol?"
+                .to_string(),
+        ];
+    }
+    if candidate.sink.rule_id == "python-django-sensitive-field-mutation" {
+        return vec![
+            "Does a rejecting condition constrain every caller-controlled operand used by this sensitive mutation, including sign, multiplicity, units and range, before the persisted effect? Compare the exact captured expressions when a nearby validation is supplied; a check over one unit does not bound a multiplied quantity."
                 .to_string(),
         ];
     }
@@ -12032,9 +15292,10 @@ fn index_review_context_names(
 /// Returns true only when a helper definition has a defensible relationship
 /// to the reviewed file. Same-file definitions are owned directly. For
 /// JavaScript and TypeScript cross-file definitions must be reached through an
-/// exact relative import. C# also permits an exact qualified static helper when
-/// its declaring type and namespace/import are owned. A repository-wide name
-/// match alone is never ownership.
+/// exact relative import. PHP permits an exact imported class whose declared
+/// namespace matches the use statement. C# also permits an exact qualified
+/// static helper when its declaring type and namespace/import are owned. A
+/// repository-wide name match alone is never ownership.
 fn review_definition_owned_by_candidate(
     sources: &RepositorySources,
     candidate_paths: &BTreeSet<&str>,
@@ -12049,7 +15310,13 @@ fn review_definition_owned_by_candidate(
             return false;
         };
         if candidate.language == Some(Language::Csharp)
-            && csharp_qualified_helper_is_owned(sources, candidate, name, symbol)
+            && (csharp_qualified_helper_is_owned(sources, candidate, name, symbol)
+                || csharp_typed_instance_helper_is_owned(sources, candidate, name, symbol))
+        {
+            return true;
+        }
+        if candidate.language == Some(Language::Php)
+            && php_imported_definition_is_owned(sources, candidate, name, symbol)
         {
             return true;
         }
@@ -12061,6 +15328,102 @@ fn review_definition_owned_by_candidate(
         }
         relative_review_import_paths(candidate, name, sources)
             .contains(symbol.location.path.as_str())
+    })
+}
+
+fn php_imported_definition_is_owned(
+    sources: &RepositorySources,
+    candidate: &SourceFile,
+    name: &str,
+    symbol: &OutlineSymbol,
+) -> bool {
+    if symbol.name != name {
+        return false;
+    }
+    let Ok(definition) = sources.file(&symbol.location.path) else {
+        return false;
+    };
+    let Some(namespace) = definition.source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("namespace ")
+            .map(|value| value.trim_end_matches(';').trim())
+            .filter(|value| !value.is_empty())
+    }) else {
+        return false;
+    };
+    let qualified = format!("{namespace}\\{name}");
+    candidate.source.lines().any(|line| {
+        line.trim()
+            .strip_prefix("use ")
+            .map(|value| value.trim_end_matches(';').trim())
+            == Some(qualified.as_str())
+    })
+}
+
+fn csharp_typed_instance_helper_is_owned(
+    sources: &RepositorySources,
+    candidate: &SourceFile,
+    name: &str,
+    symbol: &OutlineSymbol,
+) -> bool {
+    let receivers = candidate
+        .source
+        .match_indices(&format!(".{name}("))
+        .filter_map(|(at, _)| {
+            let prefix = &candidate.source[..at];
+            let start = prefix
+                .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .map_or(0, |index| index + 1);
+            let receiver = &prefix[start..];
+            is_plain_identifier(receiver).then(|| receiver.to_string())
+        })
+        .collect::<BTreeSet<_>>();
+    if receivers.len() != 1 {
+        return false;
+    }
+    let receiver = receivers.first().expect("one exact receiver");
+    let types = candidate
+        .source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .filter_map(|line| {
+            let at = line.find(receiver)?;
+            let before = line[..at].trim_end();
+            let after = line[at + receiver.len()..].trim_start();
+            if before.contains(['=', '('])
+                || !line[..at].chars().last().is_some_and(char::is_whitespace)
+                || !after.starts_with([';', '=', ',', ')'])
+            {
+                return None;
+            }
+            before.split_whitespace().last()?.rsplit('.').next()
+        })
+        .filter(|type_name| type_name.chars().next().is_some_and(char::is_uppercase))
+        .collect::<BTreeSet<_>>();
+    if types.len() != 1 {
+        return false;
+    }
+    let type_name = types.first().expect("one exact receiver type");
+    let Ok(definition) = sources.file(&symbol.location.path) else {
+        return false;
+    };
+    let declares_type = ["class", "record", "struct"]
+        .iter()
+        .any(|kind| definition.source.contains(&format!("{kind} {type_name}")));
+    if !declares_type {
+        return false;
+    }
+    let namespace = definition.source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("namespace ")
+            .map(|value| value.trim_end_matches([';', '{']).trim())
+    });
+    namespace.is_none_or(|namespace| {
+        candidate.source.contains(&format!("using {namespace};"))
+            || candidate
+                .source
+                .contains(&format!("{namespace}.{type_name}"))
+            || candidate.source.contains(&format!("namespace {namespace}"))
     })
 }
 
@@ -13306,12 +16669,14 @@ fn express_template_review_facts(
     if limit == 0 || !sink.rule_id.ends_with("html-output") {
         return (Vec::new(), false);
     }
-    let Some(template) = sink
+    let template = sink
         .captures
         .get("template")
         .map(|capture| capture.text.trim().trim_matches(['\'', '"']))
         .filter(|template| valid_template_name(template))
-    else {
+        .map(str::to_string)
+        .or_else(|| nearby_express_render_callback_template(sources, sink));
+    let Some(template) = template else {
         return (Vec::new(), false);
     };
 
@@ -13331,6 +16696,27 @@ fn express_template_review_facts(
         };
         if source.len() > MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES {
             continue;
+        }
+        let bindings = if template_path.ends_with(".hbs") {
+            simple_handlebars_bindings(&source)
+        } else {
+            BTreeSet::new()
+        };
+        if !bindings.is_empty() {
+            truncated |= bindings.len() > 64;
+            facts.push(ReviewNeighborhoodFact {
+                role: "server_template_binding_inventory".to_string(),
+                symbol: template.to_string(),
+                location: location_from_offsets(&template_path, &source, 0, source.len().min(1)),
+                excerpt: format!(
+                    "Simple Handlebars bindings in this exact template: {}. Compare these names with the supplied render locals and their overwrite order; this inventory does not prove every helper or partial safe.",
+                    bindings.into_iter().take(64).collect::<Vec<_>>().join(", ")
+                ),
+                evidence_id: None,
+                provenance: textual_provenance(
+                    "bounded exact server-template binding inventory, non-flow 1",
+                ),
+            });
         }
         let mut matching = line_spans(&source)
             .into_iter()
@@ -13355,7 +16741,7 @@ fn express_template_review_facts(
             }
         });
         for (start, end) in matching {
-            if facts.len() == limit.saturating_sub(2) {
+            if facts.len() == limit.saturating_sub(3) {
                 truncated = true;
                 break;
             }
@@ -13369,6 +16755,59 @@ fn express_template_review_facts(
                     "exact Express server-template expression, bounded non-flow 1",
                 ),
             });
+        }
+        if facts.len() < limit.saturating_sub(1) {
+            let parent_name = source
+                .lines()
+                .take(8)
+                .find(|line| line.contains("{%") && line.contains("extends"))
+                .and_then(|line| quoted_values(line).into_iter().next())
+                .filter(|name| {
+                    !name.contains("..")
+                        && !Path::new(name).is_absolute()
+                        && name.chars().all(|character| {
+                            character.is_ascii_alphanumeric()
+                                || matches!(character, '_' | '-' | '/' | '.')
+                        })
+                });
+            if let Some(parent_name) = parent_name {
+                let parent_path = Path::new(&template_path)
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""))
+                    .join(parent_name.trim_start_matches("./"));
+                if let Ok(parent_source) =
+                    fs::read_to_string(Path::new(&sources.root).join(&parent_path))
+                    && parent_source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES
+                {
+                    let parent_path = parent_path.to_string_lossy().replace('\\', "/");
+                    let parent_bindings = line_spans(&parent_source)
+                        .into_iter()
+                        .filter(|(start, end)| parent_source[*start..*end].contains("{{"))
+                        .collect::<Vec<_>>();
+                    truncated |= parent_bindings.len() > 2;
+                    for (start, end) in parent_bindings.into_iter().take(2) {
+                        if facts.len() == limit.saturating_sub(1) {
+                            truncated = true;
+                            break;
+                        }
+                        facts.push(ReviewNeighborhoodFact {
+                            role: "server_template_binding_context".to_string(),
+                            symbol: parent_name.to_string(),
+                            location: location_from_offsets(
+                                &parent_path,
+                                &parent_source,
+                                start,
+                                end,
+                            ),
+                            excerpt: bounded_line_text(&parent_source[start..end]),
+                            evidence_id: None,
+                            provenance: textual_provenance(
+                                "exact one-hop inherited server-template expression, bounded non-flow 1",
+                            ),
+                        });
+                    }
+                }
+            }
         }
         break;
     }
@@ -13391,6 +16830,109 @@ fn express_template_review_facts(
         facts.push(fact);
     }
     (facts, truncated)
+}
+
+fn nearby_express_render_callback_template(
+    sources: &RepositorySources,
+    sink: &Evidence,
+) -> Option<String> {
+    let file = sources.file(&sink.location.path).ok()?;
+    render_callback_template_at(&file.source, sink.location.start.byte_offset)
+}
+
+fn render_callback_template_at(source: &str, sink_start: usize) -> Option<String> {
+    let sink_start = sink_start.min(source.len());
+    let mut window_start = sink_start.saturating_sub(16 * 1024);
+    while !source.is_char_boundary(window_start) {
+        window_start += 1;
+    }
+    for (start, _) in source[window_start..sink_start].rmatch_indices("res.render(") {
+        let open = window_start + start + "res.render".len();
+        let Some(close) = balanced_javascript_call_end(source, open) else {
+            continue;
+        };
+        if close <= sink_start {
+            continue;
+        }
+        let call = &source[open + 1..close];
+        let tail = call.trim_start();
+        let Some(quote) = tail.chars().next() else {
+            continue;
+        };
+        if !matches!(quote, '\'' | '"') {
+            continue;
+        }
+        let Some(end) = tail[1..].find(quote).map(|index| index + 1) else {
+            continue;
+        };
+        let template = &tail[1..end];
+        let callback = &tail[end + 1..];
+        if valid_template_name(template)
+            && (callback.contains("=>") || callback.contains("function"))
+            && callback.contains("html")
+            && callback.contains("res.send(")
+        {
+            return Some(template.to_string());
+        }
+    }
+    None
+}
+
+fn balanced_javascript_call_end(source: &str, open: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if bytes.get(open) != Some(&b'(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, byte) in bytes.iter().enumerate().skip(open).take(16 * 1024) {
+        if let Some(delimiter) = quote {
+            if escaped {
+                escaped = false;
+            } else if *byte == b'\\' {
+                escaped = true;
+            } else if *byte == delimiter {
+                quote = None;
+            }
+            continue;
+        }
+        match *byte {
+            b'\'' | b'"' | b'`' => quote = Some(*byte),
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn simple_handlebars_bindings(source: &str) -> BTreeSet<String> {
+    let mut bindings = BTreeSet::new();
+    for (start, _) in source.match_indices("{{") {
+        let expression = &source[start + 2..];
+        let Some(close) = expression.find("}}") else {
+            continue;
+        };
+        let expression = expression[..close].trim_start_matches('{').trim();
+        if expression.starts_with(['#', '/', '!', '>', '^']) {
+            continue;
+        }
+        if !expression.is_empty()
+            && expression != "else"
+            && expression.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | '-')
+            })
+        {
+            bindings.insert(expression.to_string());
+        }
+    }
+    bindings
 }
 
 fn valid_template_name(template: &str) -> bool {
@@ -14725,8 +18267,7 @@ fn textual_definition_end_with_limit(
                 _ => {}
             }
         }
-        let brace_on_next_line = line_index == start_line_index
-            && depth <= 0
+        let brace_on_next_line = depth <= 0
             && spans
                 .get(line_index + 1)
                 .is_some_and(|(next_start, next_end)| {
@@ -15961,7 +19502,7 @@ fn configuration_facts(
             let lower = line.to_ascii_lowercase();
             let Some(token) = tokens
                 .iter()
-                .find(|token| contains_identifier(&lower, token))
+                .find(|token| configuration_line_matches_token(&lower, token))
             else {
                 continue;
             };
@@ -16002,6 +19543,28 @@ fn configuration_facts(
         }
     }
     (facts, truncated)
+}
+
+fn configuration_line_matches_token(line: &str, token: &str) -> bool {
+    if contains_identifier(line, token) {
+        return true;
+    }
+    let normalized_token = normalize_configuration_identifier(token);
+    normalized_token.len() >= 4
+        && line
+            .split(|character: char| {
+                !(character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+            })
+            .filter(|candidate| !candidate.is_empty())
+            .any(|candidate| normalize_configuration_identifier(candidate) == normalized_token)
+}
+
+fn normalize_configuration_identifier(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 fn looks_like_configuration_reference(line: &str) -> bool {
@@ -16052,6 +19615,20 @@ fn sort_review_facts(facts: &mut Vec<ReviewNeighborhoodFact>) {
     });
 }
 
+fn assign_review_fact_artifact_ids(facts: &mut [ReviewNeighborhoodFact]) {
+    for fact in facts.iter_mut().filter(|fact| fact.evidence_id.is_none()) {
+        let identity = serde_json::to_string(&(
+            &fact.role,
+            &fact.symbol,
+            &fact.location,
+            &fact.excerpt,
+            &fact.provenance,
+        ))
+        .expect("review facts must remain JSON serializable");
+        fact.evidence_id = Some(stable_review_hash("fact-artifact", &identity));
+    }
+}
+
 fn path_review_fingerprint(
     reviews: &[PathReview],
     observation_reviews: &[ObservationReview],
@@ -16096,6 +19673,9 @@ fn path_review_fingerprint(
         let decision_facts = serde_json::to_string(&review.decision_facts)
             .expect("path decision facts must remain JSON serializable");
         hash_review_text(&mut hash, &decision_facts);
+        let investigation = serde_json::to_string(&review.investigation)
+            .expect("path investigation plan must remain JSON serializable");
+        hash_review_text(&mut hash, &investigation);
         let truncation = serde_json::to_string(&review.truncation)
             .expect("path truncation must remain JSON serializable");
         hash_review_text(&mut hash, &truncation);
@@ -16130,6 +19710,9 @@ fn path_review_fingerprint(
         let decision_facts = serde_json::to_string(&review.decision_facts)
             .expect("observation decision facts must remain JSON serializable");
         hash_review_text(&mut hash, &decision_facts);
+        let investigation = serde_json::to_string(&review.investigation)
+            .expect("observation investigation plan must remain JSON serializable");
+        hash_review_text(&mut hash, &investigation);
         let truncation = serde_json::to_string(&review.truncation)
             .expect("observation truncation must remain JSON serializable");
         hash_review_text(&mut hash, &truncation);
@@ -17527,7 +21110,420 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use mehscan_core::{
+        ReviewArtifactCitation, ReviewLookupAttempt, ReviewRetrievedArtifact, ReviewerInference,
+        ReviewerOriginLead,
+    };
+
     use super::*;
+
+    #[test]
+    fn investigation_readiness_separates_repository_work_from_external_blockers() {
+        let anchor = Location {
+            path: "src/handler.ts".to_string(),
+            start: Position {
+                line: 120,
+                column: 5,
+                byte_offset: 400,
+            },
+            end: Position {
+                line: 120,
+                column: 25,
+                byte_offset: 420,
+            },
+        };
+        let local_question =
+            "Can caller input influence the command passed to this shell?".to_string();
+        let local = review_investigation_plan(
+            Capability::ProcessExecution,
+            std::slice::from_ref(&local_question),
+            &ReviewContextTruncation::default(),
+            &anchor,
+            Some("command"),
+        );
+        assert_eq!(local.readiness, ReviewReadiness::Investigation);
+        assert_eq!(local.missing_facts, [local_question.clone()]);
+        assert_eq!(
+            local
+                .lookup_requests
+                .iter()
+                .map(|request| request.operation.as_str())
+                .collect::<Vec<_>>(),
+            ["source", "references"]
+        );
+        assert_eq!(
+            local.lookup_requests[0].arguments.get("start-line"),
+            Some(&"40".to_string())
+        );
+        assert_eq!(
+            local.lookup_requests[1].arguments.get("symbol"),
+            Some(&"command".to_string())
+        );
+        assert_eq!(local.budget.max_returned_bytes, 16 * 1024);
+
+        let policy = review_investigation_plan(
+            Capability::ResourceAccess,
+            std::slice::from_ref(&local_question),
+            &ReviewContextTruncation::default(),
+            &anchor,
+            Some("authorize"),
+        );
+        let configuration = review_investigation_plan(
+            Capability::TlsConfiguration,
+            std::slice::from_ref(&local_question),
+            &ReviewContextTruncation::default(),
+            &anchor,
+            None,
+        );
+        assert_eq!(policy.budget.max_returned_bytes, 24 * 1024);
+        assert_eq!(configuration.budget.max_returned_bytes, 12 * 1024);
+
+        let external_question =
+            "What is the effective deployed proxy, gateway, or application control?".to_string();
+        let external = review_investigation_plan(
+            Capability::OutboundNetworkRequest,
+            std::slice::from_ref(&external_question),
+            &ReviewContextTruncation::default(),
+            &anchor,
+            None,
+        );
+        assert_eq!(external.readiness, ReviewReadiness::Blocked);
+        assert_eq!(external.missing_facts, [external_question]);
+        assert!(external.lookup_requests.is_empty());
+        assert_eq!(external.blockers.len(), 1);
+    }
+
+    #[test]
+    fn investigation_trace_requires_decisive_attempts_and_valid_artifacts() {
+        let anchor = Location {
+            path: "src/handler.ts".to_string(),
+            start: Position {
+                line: 120,
+                column: 5,
+                byte_offset: 400,
+            },
+            end: Position {
+                line: 120,
+                column: 25,
+                byte_offset: 420,
+            },
+        };
+        let question = "Can caller input influence the command passed to this shell?".to_string();
+        let plan = review_investigation_plan(
+            Capability::ProcessExecution,
+            std::slice::from_ref(&question),
+            &ReviewContextTruncation::default(),
+            &anchor,
+            Some("command"),
+        );
+        let supplied = BTreeMap::from([("evidence-sink".to_string(), vec![anchor.clone()])]);
+        let missing_attempt = validate_review_investigation_trace(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+            "review-1",
+            ReviewDecision::NeedsReview,
+            std::slice::from_ref(&question),
+            &plan,
+            &supplied,
+            &ReviewInvestigationTrace::default(),
+        )
+        .expect_err("actionable needs_review must not abandon its lookup");
+        assert!(missing_attempt.to_string().contains("must attempt"));
+
+        let trace = ReviewInvestigationTrace {
+            lookup_attempts: vec![ReviewLookupAttempt {
+                request_index: Some(0),
+                escalation: None,
+                outcome: ReviewLookupOutcome::Answered,
+                artifacts: vec![ReviewRetrievedArtifact {
+                    artifact_id: "lookup-source-1".to_string(),
+                    location: Location {
+                        path: "src/handler.ts".to_string(),
+                        start: Position {
+                            line: 90,
+                            column: 1,
+                            byte_offset: 250,
+                        },
+                        end: Position {
+                            line: 130,
+                            column: 1,
+                            byte_offset: 500,
+                        },
+                    },
+                    excerpt: "const command = request.query.command; audit.write(request.headers.authorization);"
+                        .to_string(),
+                }],
+                detail: "Expanded the exact source window around the shell call.".to_string(),
+            }],
+            citations: vec![ReviewArtifactCitation {
+                artifact_id: "lookup-source-1".to_string(),
+                claim: "The retrieved assignment is relevant to command origin.".to_string(),
+            }],
+            reviewer_inferences: vec![ReviewerInference {
+                claim: "The request field may supply the command operand.".to_string(),
+                artifact_ids: vec!["lookup-source-1".to_string()],
+            }],
+            reviewer_origin_leads: Vec::new(),
+            blockers: Vec::new(),
+        };
+        validate_review_investigation_trace(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+            "review-1",
+            ReviewDecision::NeedsReview,
+            std::slice::from_ref(&question),
+            &plan,
+            &supplied,
+            &trace,
+        )
+        .expect("a cited artifact from the requested source window should validate");
+        let mut lead_trace = trace.clone();
+        lead_trace.reviewer_origin_leads = vec![ReviewerOriginLead {
+            question: "Can the adjacent audit write expose an authorization credential?"
+                .to_string(),
+            security_relevance:
+                "The retrieved source contains a separate credential-bearing audit operation."
+                    .to_string(),
+            distinct_from_review:
+                "Credential disclosure is separate from command construction and execution."
+                    .to_string(),
+            location: Location {
+                path: "src/handler.ts".to_string(),
+                start: Position {
+                    line: 101,
+                    column: 1,
+                    byte_offset: 320,
+                },
+                end: Position {
+                    line: 101,
+                    column: 42,
+                    byte_offset: 361,
+                },
+            },
+            artifact_ids: vec!["lookup-source-1".to_string()],
+        }];
+        validate_review_investigation_trace(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+            "review-1",
+            ReviewDecision::NeedsReview,
+            std::slice::from_ref(&question),
+            &plan,
+            &supplied,
+            &lead_trace,
+        )
+        .expect("a distinct source-supported question should survive as a separate lead");
+        lead_trace.reviewer_origin_leads[0].artifact_ids = vec!["evidence-sink".to_string()];
+        let uncited = validate_review_investigation_trace(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+            "review-1",
+            ReviewDecision::NeedsReview,
+            std::slice::from_ref(&question),
+            &plan,
+            &supplied,
+            &lead_trace,
+        )
+        .expect_err("a textual lead without an explicit evidence citation must be rejected");
+        assert!(uncited.to_string().contains("explicitly cited"));
+
+        let escalation = ReviewLookupRequest {
+            operation: "source".to_string(),
+            arguments: [
+                ("path".to_string(), "src/policy.ts".to_string()),
+                ("start-line".to_string(), "1".to_string()),
+                ("end-line".to_string(), "40".to_string()),
+            ]
+            .into(),
+            questions: vec![question.clone()],
+            purpose: "Inspect the exact policy file named by the initial source lookup."
+                .to_string(),
+        };
+        let mut escalated_trace = ReviewInvestigationTrace {
+            lookup_attempts: vec![
+                ReviewLookupAttempt {
+                    request_index: Some(0),
+                    escalation: None,
+                    outcome: ReviewLookupOutcome::Answered,
+                    artifacts: vec![ReviewRetrievedArtifact {
+                        artifact_id: "initial-handler".to_string(),
+                        location: Location {
+                            path: "src/handler.ts".to_string(),
+                            start: Position {
+                                line: 120,
+                                column: 1,
+                                byte_offset: 400,
+                            },
+                            end: Position {
+                                line: 120,
+                                column: 45,
+                                byte_offset: 444,
+                            },
+                        },
+                        excerpt: "const command = loadPolicy('src/policy.ts');".to_string(),
+                    }],
+                    detail: "The handler exposed the exact policy file but not its body."
+                        .to_string(),
+                },
+                ReviewLookupAttempt {
+                    request_index: None,
+                    escalation: Some(escalation.clone()),
+                    outcome: ReviewLookupOutcome::Answered,
+                    artifacts: vec![ReviewRetrievedArtifact {
+                        artifact_id: "escalated-policy".to_string(),
+                        location: Location {
+                            path: "src/policy.ts".to_string(),
+                            start: Position {
+                                line: 1,
+                                column: 1,
+                                byte_offset: 0,
+                            },
+                            end: Position {
+                                line: 2,
+                                column: 1,
+                                byte_offset: 32,
+                            },
+                        },
+                        excerpt: "export const command = fixedValue;".to_string(),
+                    }],
+                    detail: "Retrieved the exact policy named by the handler.".to_string(),
+                },
+            ],
+            citations: vec![
+                ReviewArtifactCitation {
+                    artifact_id: "initial-handler".to_string(),
+                    claim: "The handler names the exact policy file.".to_string(),
+                },
+                ReviewArtifactCitation {
+                    artifact_id: "escalated-policy".to_string(),
+                    claim: "The policy supplies a fixed command value.".to_string(),
+                },
+            ],
+            reviewer_inferences: Vec::new(),
+            reviewer_origin_leads: Vec::new(),
+            blockers: Vec::new(),
+        };
+        validate_review_investigation_trace(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+            "review-1",
+            ReviewDecision::NotIssue,
+            &[],
+            &plan,
+            &supplied,
+            &escalated_trace,
+        )
+        .expect("one exact follow-on source lookup should validate");
+        escalated_trace.lookup_attempts.push(ReviewLookupAttempt {
+            request_index: None,
+            escalation: Some(escalation),
+            outcome: ReviewLookupOutcome::NoRelevantResult,
+            artifacts: Vec::new(),
+            detail: "A second escalation must exceed the bounded budget.".to_string(),
+        });
+        let error = validate_review_investigation_trace(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+            "review-1",
+            ReviewDecision::NotIssue,
+            &[],
+            &plan,
+            &supplied,
+            &escalated_trace,
+        )
+        .expect_err("a second escalated lookup must be rejected");
+        assert!(error.to_string().contains("1-lookup escalation budget"));
+
+        let external_question =
+            "What is the effective deployed proxy, gateway, or application control?".to_string();
+        let blocked_plan = review_investigation_plan(
+            Capability::OutboundNetworkRequest,
+            std::slice::from_ref(&external_question),
+            &ReviewContextTruncation::default(),
+            &anchor,
+            None,
+        );
+        let blocked_trace = ReviewInvestigationTrace {
+            blockers: blocked_plan.blockers.clone(),
+            ..ReviewInvestigationTrace::default()
+        };
+        validate_review_investigation_trace(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+            "review-2",
+            ReviewDecision::NeedsReview,
+            std::slice::from_ref(&external_question),
+            &blocked_plan,
+            &BTreeMap::new(),
+            &blocked_trace,
+        )
+        .expect("an exact supplied external blocker should preserve needs_review");
+    }
+
+    #[test]
+    fn response_fingerprint_is_order_stable_and_trace_sensitive() {
+        let artifact = ReviewRetrievedArtifact {
+            artifact_id: "lookup-source-1".to_string(),
+            location: Location {
+                path: "src/handler.ts".to_string(),
+                start: Position {
+                    line: 90,
+                    column: 1,
+                    byte_offset: 250,
+                },
+                end: Position {
+                    line: 90,
+                    column: 40,
+                    byte_offset: 290,
+                },
+            },
+            excerpt: "const command = request.query.command;".to_string(),
+        };
+        let result = PathReviewTriageResult {
+            review_id: "review-1".to_string(),
+            decision: ReviewDecision::NeedsReview,
+            confidence: ReviewConfidence::Medium,
+            summary: "The command origin remains unresolved after bounded lookup.".to_string(),
+            checks: vec!["check-b".to_string(), "check-a".to_string()],
+            investigation: Some(ReviewInvestigationTrace {
+                lookup_attempts: vec![ReviewLookupAttempt {
+                    request_index: Some(0),
+                    escalation: None,
+                    outcome: ReviewLookupOutcome::Answered,
+                    artifacts: vec![artifact],
+                    detail: "Retrieved the bounded source window.".to_string(),
+                }],
+                citations: vec![ReviewArtifactCitation {
+                    artifact_id: "lookup-source-1".to_string(),
+                    claim: "The assignment is relevant to command origin.".to_string(),
+                }],
+                reviewer_inferences: Vec::new(),
+                reviewer_origin_leads: Vec::new(),
+                blockers: Vec::new(),
+            }),
+        };
+        let original = review_response_fingerprint(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+            "bundle-1",
+            &[result.clone()],
+            None,
+        );
+
+        let mut reordered = result.clone();
+        reordered.checks.reverse();
+        let reordered_fingerprint = review_response_fingerprint(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+            "bundle-1",
+            &[reordered],
+            None,
+        );
+        assert_eq!(original, reordered_fingerprint);
+
+        let mut changed = result;
+        changed.investigation.as_mut().unwrap().lookup_attempts[0].artifacts[0]
+            .excerpt
+            .push_str(" // changed");
+        let changed_fingerprint = review_response_fingerprint(
+            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
+            "bundle-1",
+            &[changed],
+            None,
+        );
+        assert_ne!(original, changed_fingerprint);
+    }
 
     #[test]
     fn review_admission_markers_require_server_boundary_and_mutation_effect() {
@@ -17601,6 +21597,26 @@ mod tests {
             Capability::Authentication
         );
         assert_eq!(credential.evidence[0].cwe_candidates, ["CWE-620"]);
+        assert_eq!(
+            review_admission::review_contract(&credential.evidence)
+                .expect("credential contract")
+                .relationship,
+            "bounded_credential_lifecycle_review"
+        );
+        let authorization = groups
+            .iter()
+            .find(|group| group.path == "routes.ts")
+            .expect("authorization marker");
+        assert_eq!(
+            authorization.evidence[0].captures["operation"].text,
+            "PATCH route"
+        );
+        assert_eq!(
+            review_admission::review_contract(&authorization.evidence)
+                .expect("authorization contract")
+                .relationship,
+            "bounded_action_resource_authorization_review"
+        );
         assert!(groups.iter().all(|group| {
             group.evidence.iter().all(|evidence| {
                 evidence
@@ -18102,6 +22118,55 @@ mod tests {
     }
 
     #[test]
+    fn bundle_contract_keeps_only_relevant_security_family_guidance() {
+        let contract = path_review_triage_contract();
+        let payload = PathReviewBundlePayload::Observation {
+            reviews: Vec::new(),
+        };
+        let sql = path_review_triage_contract_for_bundle(
+            &contract,
+            &PathReviewBundleCategory {
+                scope: "test".to_string(),
+                review_kind: "observation".to_string(),
+                capability: Capability::DatabaseQuery,
+                cwe_candidates: vec!["CWE-89".to_string()],
+            },
+            &payload,
+        );
+        assert!(
+            sql.instructions
+                .iter()
+                .any(|instruction| instruction.starts_with("Before claiming injection,"))
+        );
+        assert!(
+            !sql.instructions
+                .iter()
+                .any(|instruction| instruction.starts_with("For generated CRUD"))
+        );
+
+        let authorization = path_review_triage_contract_for_bundle(
+            &contract,
+            &PathReviewBundleCategory {
+                scope: "test".to_string(),
+                review_kind: "observation".to_string(),
+                capability: Capability::Authorization,
+                cwe_candidates: vec!["CWE-862".to_string()],
+            },
+            &payload,
+        );
+        assert!(authorization
+            .instructions
+            .iter()
+            .any(|instruction| instruction.starts_with("For every routed authorization review")));
+        assert!(
+            !authorization
+                .instructions
+                .iter()
+                .any(|instruction| instruction.starts_with("Before claiming injection,"))
+        );
+    }
+
+    #[test]
     fn triage_contract_keeps_authorization_attachments_distinct_from_enforcement() {
         let contract = path_review_triage_contract();
         assert!(contract.instructions.iter().any(|instruction| {
@@ -18418,6 +22483,54 @@ mod tests {
     }
 
     #[test]
+    fn review_context_owns_exact_imported_php_security_form() {
+        let controller = "<?php\nnamespace App\\Controller;\nuse App\\Form\\ChangePasswordType;\nfinal class UserController { public function changePassword() { $this->createForm(ChangePasswordType::class); } }\n";
+        let form = "<?php\nnamespace App\\Form;\nfinal class ChangePasswordType extends AbstractType\n{\n    public function buildForm($builder): void\n    {\n        $builder->add('currentPassword', PasswordType::class, ['constraints' => [new UserPassword()]]);\n    }\n}\n";
+        let noise = "<?php\nnamespace Other\\Form;\nfinal class ChangePasswordType extends AbstractType\n{\n    public function buildForm($builder): void { $builder->add('newPassword'); }\n}\n";
+        let sources = RepositorySources {
+            root: "fixture".to_string(),
+            files: BTreeMap::from([
+                (
+                    "src/Controller/UserController.php".to_string(),
+                    SourceFile {
+                        path: "src/Controller/UserController.php".to_string(),
+                        language: Some(Language::Php),
+                        source: controller.to_string(),
+                    },
+                ),
+                (
+                    "src/Form/ChangePasswordType.php".to_string(),
+                    SourceFile {
+                        path: "src/Form/ChangePasswordType.php".to_string(),
+                        language: Some(Language::Php),
+                        source: form.to_string(),
+                    },
+                ),
+                (
+                    "vendor/Other/ChangePasswordType.php".to_string(),
+                    SourceFile {
+                        path: "vendor/Other/ChangePasswordType.php".to_string(),
+                        language: Some(Language::Php),
+                        source: noise.to_string(),
+                    },
+                ),
+            ]),
+        };
+        let references = BTreeSet::from(["ChangePasswordType".to_string()]);
+        let index = ReviewContextIndex::build(&sources, &references).expect("context index");
+        let paths = BTreeSet::from(["src/Controller/UserController.php"]);
+        let (facts, truncated) =
+            observation_helper_definition_facts(&sources, &index, &paths, &references, &[], 4);
+
+        assert!(!truncated);
+        assert_eq!(facts.len(), 1, "facts: {facts:#?}");
+        assert_eq!(facts[0].symbol, "ChangePasswordType");
+        assert_eq!(facts[0].location.path, "src/Form/ChangePasswordType.php");
+        assert!(facts[0].excerpt.contains("new UserPassword()"));
+        assert!(!facts[0].excerpt.contains("newPassword"));
+    }
+
+    #[test]
     fn review_context_owns_exact_csharp_qualified_static_helpers() {
         let controller = "using App.Models;\nnamespace App.Controllers\n{\n    class CheckoutController { object Go(string carrier) => Order.GetTrackingUrl(carrier); }\n}\n";
         let helper = "namespace App.Models\n{\n    public class Order\n    {\n        public static string GetTrackingUrl(string carrier)\n        {\n            return $\"https://{carrier}\";\n        }\n    }\n}\n";
@@ -18550,7 +22663,8 @@ mod tests {
     #[test]
     fn review_configuration_context_excludes_tests_and_teaching_material() {
         let route = "const mode = process.env.MODE\n";
-        let production = "mode: production\nmodels: generated\ndisallowed: false\n";
+        let production =
+            "mode: production\nenableShellInjection: true\nmodels: generated\ndisallowed: false\n";
         let test = "httpMock.verify()\n";
         let teaching = "explanation: verify the database lookup\n";
         let sources = RepositorySources {
@@ -18591,7 +22705,11 @@ mod tests {
             ]),
         };
         let paths = BTreeSet::from(["routes/live.ts"]);
-        let tokens = BTreeSet::from(["mode".to_string(), "verify".to_string()]);
+        let tokens = BTreeSet::from([
+            "mode".to_string(),
+            "verify".to_string(),
+            "enable_shell_injection".to_string(),
+        ]);
 
         let (facts, truncated) = configuration_facts(&sources, &paths, &tokens, 8);
         assert!(!truncated);
@@ -18605,8 +22723,12 @@ mod tests {
                 .iter()
                 .filter(|fact| fact.location.path == "config/app.yml")
                 .count(),
-            1
+            2
         );
+        assert!(facts.iter().any(|fact| {
+            fact.symbol == "enable_shell_injection"
+                && fact.excerpt.contains("enableShellInjection: true")
+        }));
         assert!(!facts.iter().any(|fact| {
             fact.location.path.ends_with(".spec.ts") || fact.location.path.contains("/codefixes/")
         }));
@@ -19177,8 +23299,41 @@ mod tests {
         };
         assert!(path_execution_configuration_gate(&[
             configuration.clone(),
-            guarded_sink,
+            guarded_sink.clone(),
         ]));
+        assert!(
+            path_enabled_execution_configuration(&[
+                ReviewNeighborhoodFact {
+                    excerpt: "enableShellInjection: true".to_string(),
+                    ..configuration.clone()
+                },
+                ReviewNeighborhoodFact {
+                    role: "configuration_context".to_string(),
+                    symbol: "unrelated_debug_mode".to_string(),
+                    location: location.clone(),
+                    excerpt: "unrelatedDebugMode: true".to_string(),
+                    evidence_id: None,
+                    provenance: textual_provenance("test"),
+                },
+                guarded_sink.clone(),
+            ])
+            .is_some_and(|fact| fact.symbol == "enable_shell_injection")
+        );
+        assert!(
+            path_enabled_execution_configuration(&[
+                configuration.clone(),
+                ReviewNeighborhoodFact {
+                    role: "configuration_context".to_string(),
+                    symbol: "unrelated_debug_mode".to_string(),
+                    location: location.clone(),
+                    excerpt: "unrelatedDebugMode: true".to_string(),
+                    evidence_id: None,
+                    provenance: textual_provenance("test"),
+                },
+                guarded_sink,
+            ])
+            .is_none()
+        );
 
         let unrelated = ReviewNeighborhoodFact {
             role: "sink_context".to_string(),
@@ -19369,6 +23524,33 @@ mod tests {
             &source.tags,
             &unsafe_facts
         ));
+    }
+
+    #[test]
+    fn handlebars_binding_inventory_uses_exact_template_names() {
+        let names = simple_handlebars_bindings(
+            "<title>{{_title_}}</title>{{#if enabled}}{{user.name}}{{/if}} {{{_logo_}}}",
+        );
+        assert_eq!(
+            names,
+            BTreeSet::from([
+                "_logo_".to_string(),
+                "_title_".to_string(),
+                "user.name".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn render_callback_template_must_enclose_the_sink() {
+        let source = "res.render('old', (err, html) => { res.send(html); });\nres.render('current', (err, html) => { res.send(html.slice(0, 5)); });\nres.send(other);";
+        let current = source.find("res.send(html.slice").unwrap();
+        let outside = source.rfind("res.send(other)").unwrap();
+        assert_eq!(
+            render_callback_template_at(source, current),
+            Some("current".to_string())
+        );
+        assert_eq!(render_callback_template_at(source, outside), None);
     }
 
     #[test]
@@ -19714,6 +23896,7 @@ mod tests {
             evidence: vec![anchor],
             review_basis: None,
             decision_facts: ReviewDecisionFacts::default(),
+            investigation: ReviewInvestigationPlan::default(),
             confidence_policy: policy,
             facts: vec![fact, policy_fact],
             open_questions: Vec::new(),
@@ -19727,6 +23910,7 @@ mod tests {
             summary: "Source-embedded signing material can be reused to forge credentials."
                 .to_string(),
             checks: Vec::new(),
+            investigation: None,
         };
         let mut bundle = bundles.bundles.into_iter().next().expect("identity bundle");
         bundle.payload = PathReviewBundlePayload::Observation {

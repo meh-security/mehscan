@@ -23,7 +23,7 @@ pub use candidate::{
 };
 pub use coverage::{
     Coverage, CoverageTotals, CweCoverage, CweSupportLevel, FileCoverage, FileStatus,
-    LanguageCoverage,
+    LanguageCoverage, ProducerCoverage,
 };
 pub use evaluation::{
     ControlLayer, EVALUATION_PACK_SCHEMA_VERSION, EVALUATION_RESPONSE_SCHEMA_VERSION,
@@ -62,11 +62,16 @@ pub use investigation::{
     PathReviewTask, PathReviewTaskPage, PathReviewTaskPayload, PathReviewTriageProgress,
     PathReviewTriageReport, PathReviewTriageResponseSet, PathReviewTriageResult, QueryProvenance,
     QueryResponse, REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, RelationshipFunnel,
-    RelationshipFunnelCapability, ReviewConfidence, ReviewConfidencePolicy,
-    ReviewContextTruncation, ReviewDecision, ReviewDecisionFacts, ReviewNeighborhood,
-    ReviewNeighborhoodFact, ReviewNeighborhoodJob, ReviewNeighborhoodVerification,
-    ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet, ReviewTriageResult,
-    SourceSlice, StructuralMatch, TextReference,
+    RelationshipFunnelCapability, ReviewAdmissionAudit, ReviewAdmissionAuditCount,
+    ReviewAdmissionAuditExample, ReviewAdmissionDisposition, ReviewArtifactCitation,
+    ReviewConfidence, ReviewConfidencePolicy, ReviewContextTruncation, ReviewDecision,
+    ReviewDecisionFacts, ReviewFamilyMeasurement, ReviewInvestigationBudget,
+    ReviewInvestigationPlan, ReviewInvestigationTrace, ReviewLookupAttempt, ReviewLookupOutcome,
+    ReviewLookupRequest, ReviewNeighborhood, ReviewNeighborhoodFact, ReviewNeighborhoodJob,
+    ReviewNeighborhoodVerification, ReviewPipelineCoverage, ReviewReadiness, ReviewRepairTrace,
+    ReviewRetrievedArtifact, ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet,
+    ReviewTriageResult, ReviewWorkSummary, ReviewerInference, ReviewerOriginLead,
+    ReviewerOriginLeadRecord, SourceSlice, StructuralMatch, TextReference,
 };
 pub use location::{Capture, Location, Position};
 pub use protocol::{

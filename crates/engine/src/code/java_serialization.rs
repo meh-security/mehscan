@@ -336,7 +336,7 @@ fn add_deserialization_observations<'tree>(
         }
 
         if native && receiver_is_at(&invocation, &object, "ObjectInputStream", receivers) {
-            if operation == "readObject" {
+            if matches!(operation.as_str(), "readObject" | "readUnshared") {
                 remove_declarative_java_deserialization(path, &invocation, evidence);
                 if let Some(payload) = receiver_constructor_argument(&object, initializers) {
                     push(

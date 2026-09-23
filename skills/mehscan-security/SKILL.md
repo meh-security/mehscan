@@ -155,6 +155,16 @@ when it protects the same value and operation. Missing application headers,
 CORS, TLS, cookies, or rate limiting may be owned by a gateway or platform and
 normally require an effective-control check.
 
+When the bundle cannot supply a decisive producer or control, use its bounded
+`investigation.lookup_requests` to inspect the exact source, writer, route, or
+configuration. Compare the same operand, target path or resource, relevant
+branch, and route reachability before promoting a nearby fact into evidence.
+For example, an archive writer elsewhere in the repository is a useful lead,
+but is not the origin of a rendered local asset until its destination and
+input constraints can reach that asset. If inspection cannot establish the
+link within the budget, retain the exact `needs_review` check and name the
+artifact that would settle it.
+
 A scanner relationship label does not override contradictory supplied facts.
 Evidence scope is per review ID. Use only that review's candidate, evidence,
 facts, review basis and decision facts. Another review in the same bundle cannot
@@ -189,6 +199,55 @@ authorization test to credential lifecycle, injection, deserialization,
 redirect, SSRF, trusted-HTML, template, or process-execution reviews; use each
 review's named operand and invariant.
 
+Operation-policy reviews also keep object binding, request integrity, and
+fail-open behavior separate. For object binding, identify the exact
+request-controlled object, binding/copy operation, persisted target and writable
+security-sensitive fields; an interface, DTO name, validation annotation, or
+unrelated explicit setter is not an allowlist. Apply exclusions, serializer
+fields, bind-never metadata, explicit mapping, or field-level authorization only
+when the supplied executable configuration covers that exact operation and
+field. Do not report automatic binding merely because a handler accepts a typed
+request object; require the supplied persistence or model-write boundary.
+
+For CSRF/request integrity, require browser-managed victim authority plus an
+applicable state-changing operation. Apply a token or strict origin check only
+when its attachment and rejection behavior cover the exact route; authentication
+and SameSite assumptions are not substitutes. For fail-open review, follow the
+shown decision result, branch, catch, response, or callback to the protected
+effect. Logging, telemetry, sending a response, setting a status, or calling a
+challenge helper is not enforcement when the supplied code continues. A local
+terminating return or throw protects only the branch and operation it actually
+stops.
+
+For authoritative-value binding, keep the caller-supplied value, selected
+resource, server-loaded or quoted value, units/currency, version and financial
+effect separate. A variable named `price`, a catalog lookup, or a payment SDK
+call does not prove that the exact write or charge uses the applicable
+authoritative value. Direct persistence of an established request field as a
+paid amount is decision-ready unless supplied facts show comparison, rejection,
+and use of the server value for that effect. A server-loaded value used directly
+at the effect is affirmative local control for amount integrity, while product
+selection, discounts, staleness and cross-service authority remain separate
+questions when the supplied code does not establish them.
+
+For resource state transitions, keep the persisted current state, requested
+next state, affected resource, transition policy and rejection path separate.
+Status names, enums and a helper named `canTransition` do not prove that the
+exact edge is permitted. An applicable explicit transition map plus a return or
+throw before mutation is affirmative local control. Direct persistence of a
+request-supplied state remains decision-ready when no such enforcement is
+shown; when a referenced policy helper is missing, retrieve its exact
+definition before deciding.
+
+For shared-state limits, keep the loaded persisted value, caller-requested
+delta, local limit check, derived value and write separate. A comparison that
+rejects insufficient balance or capacity can implement the business rule while
+still racing with another request. Treat concurrency as enforced only when the
+supplied adapter facts establish one conditional write, compare-and-swap, or an
+applicable row lock inside a transaction. Names such as `transaction`, `lock`
+or `atomic` are retrieval leads, not proof. Conversely, atomicity does not prove
+that the chosen numeric limit is the correct business policy.
+
 ### Generated and framework-registered routes
 
 For any authorization or resource-access review involving routes, handlers,
@@ -198,6 +257,10 @@ Apply its framework-neutral operation matrix first, then only the section for
 the detected framework. The same method/path/action, control scope, registration
 order, and resource must line up; authentication or a sibling-route guard is not
 object authorization for the reviewed operation.
+For a claimed cross-user mutation, verify that the selected object is written
+to shared protected state. A value stored only in the caller's session or
+returned as lesson feedback is a different effect; a separate unauthorized
+read or disclosure still needs its own source-backed decision.
 
 When a Mehscan rule or review fact explicitly labels a registration as generated
 CRUD, do not decide from the generator excerpt alone. Treat the label as proof
@@ -212,15 +275,22 @@ data flow. A confirmed issue must name a concrete uncovered operation and its
 security impact.
 
 When `decision_facts.unresolved` names an exact missing syntactic artifact that
-can change the decision, use the investigation API before leaving it unresolved.
-Prefer `source`, `enclosing`, `symbol`, `imports`, and `references` for ordinary
-navigation. For an exact AST shape, `mehscan investigate structural ROOT
+can change the decision, execute the review's supplied `source` or `references`
+lookup before leaving it unresolved. Record only those typed requests and the
+one permitted follow-on `source` or `references` lookup in the validated bundle
+response.
+
+For manual scanner-gap diagnosis outside a bundle response, `enclosing`,
+`symbol`, `imports`, and `references` remain available for navigation. For an
+exact AST shape, `mehscan investigate structural ROOT
 --language LANG --pattern PATTERN [--path FILE] [--limit N]` is available for
 every supported language. Scope it to the named file whenever possible and use
 the smallest pattern that answers the existing question. A structural match is
 ephemeral syntax inventory: it cannot create a finding, establish data flow,
 runtime binding, reachability, or make a control applicable to a different
-operation. Empty, truncated, or parse-failed results do not prove absence.
+operation. Empty, truncated, or parse-failed results do not prove absence. Do
+not attach artifacts from these untyped diagnostic operations to a bundle
+response or present them as an executed supplied lookup.
 
 Before claiming injection, match the producer's representation to the consumer
 operation. For example, PHP's default object-mode `json_decode` does not make
@@ -282,17 +352,47 @@ from the supplied unresolved set. Validate each response:
 mehscan investigate review-bundle-triage --bundle REQUEST --responses RESPONSE
 ```
 
+Do not ask the reviewer to emit repair metadata. When one parseable result
+fails contract validation, generate one replacement result for that exact ID
+and use `review-bundle-repair`; the CLI records the failed and replacement
+identities and revalidates the complete response. Never repair a valid response
+to change its security decision, and never repair an already repaired response.
+
+Retain a newly discovered security question in `reviewer_origin_leads` only
+when supplied or retrieved source shows a concrete dangerous operation or
+security invariant distinct from the admitted review. Include the exact source
+location, explicitly cited artifact IDs, the security relevance, and why it is
+separate. A keyword, comment, helper name, generic concern, or restatement of an
+existing check is not a lead. Keep leads out of the originating verdict and
+present them as unvalidated follow-up work rather than scanner findings.
+
 When the review runner supports structured output, generate a request-specific
 schema with `mehscan investigate review-response-schema --bundle REQUEST --output SCHEMA`.
 Older versions can use the packaged `scripts/new-review-response-schema.ps1` helper.
 It constrains the fingerprint, allowed IDs and exact result count; it cannot
 enforce unique IDs or semantic correctness. The CLI validator remains required.
 
-Treat each request file as one independent review invocation. Do not process a
-directory or sequence of bundles in one context: large multi-bundle tasks can
-encourage repeated verdict templates even when individual request files are
-small. The generation default remains 20 reviews per bundle; lower
-`--max-reviews` only for a measured retry or evaluation.
+Treat each request file as one independent review invocation. Separate model
+processes may review different request files concurrently; cap concurrency to
+the available budget. Do not put a directory or sequence of bundles into one
+model context. The CLI's 20-review default is a transport ceiling, not a review
+quality target. Start with a smaller measured ceiling such as five reviews and
+inspect manifest bytes and shared source context before increasing it. Keep
+reviews of the same affected file together when they fit the chosen limits;
+larger bundles need a quality and cost check on that category.
+
+Within one review, execute supplied lookup requests in order and stop when the
+returned evidence resolves the decision-critical question. Do not spend a
+secondary reference lookup after an earlier exact source lookup already proves
+the issue or applicable control. Record only lookups that were actually run.
+If that review has no supplied `lookup_requests`, leave `lookup_attempts` empty;
+do not encode independent source inspection as a supplied lookup or invent an
+escalation. Keep artifact IDs and reviewer-origin leads scoped to the same
+review ID, and omit a lead whose exact location is not covered by its citation.
+If an attempted lookup exposes the exact next decisive file or identifier,
+the response contract permits one follow-on `source` or `references` escalation.
+Copy the supplied missing-fact question, use the smallest exact locator and
+record its outcome. Do not use this allowance for generic repository search.
 
 If a fresh complete-bundle retry still borrows facts across review IDs, regenerate
 the same authorized root with `--max-reviews 1` and the same context/material
@@ -302,9 +402,9 @@ new bundle fingerprints. Never rebind singleton responses into an older bundle
 or describe this targeted audit as a complete run. Isolation reduces scope
 contamination; it does not supply missing facts or eliminate reasoning errors.
 
-Use the default capable review configuration for the first pass. Route review
-effort by payload completeness and decision quality, not by provider, model
-name, CWE, or rule:
+Use Luna 6 at medium effort as the default reviewer, with a separate process
+for each bundle. Route difficult reviews by payload completeness and decision
+quality, not by CWE or rule:
 
 - decision-critical truncation means regenerate or gather context;
 - non-empty `decision_facts.unresolved` means retain the exact `needs_review`
@@ -313,10 +413,20 @@ name, CWE, or rule:
   exact deterministic `confidence_policy`;
 - reject capability drift, operands absent from the payload, re-asking supplied
   facts, and generic repeated summaries, then retry once with fresh context;
-- use a stronger independent reviewer only when a complete payload still
-  receives a repeated, contract-valid but evidence-inconsistent decision;
-- reserve the highest-cost or deepest review configuration for a high-impact
-  disagreement that remains after those checks.
+- when a complete payload still receives a contract-valid but
+  evidence-inconsistent decision, revalidate the exact affected review with
+  Sol 6 in an independent process; do not merely increase Luna's effort;
+- if Luna and Sol disagree, inspect the cited source and fix missing or
+  misleading facts before treating either verdict as final. Reserve deeper
+  Sol review for a high-impact disagreement that remains after that check.
+
+Before handing off a final report, resolve each `needs_review` check with its
+named source or deployment fact when available. If that fact is already in the
+payload but the first reviewer still defers or contradicts it, use one
+independent Sol 6 review for that exact ID. Keep a genuinely missing fact
+under review required with its verification action; do not turn it into a
+finding by assigning an uncalibrated numeric confidence threshold. Confirmed
+findings alone enter the finding SARIF.
 
 Record the reviewer configuration and escalation history by exact review or
 payload fingerprint. Do not mark an entire CWE, capability, or rule as

@@ -257,6 +257,21 @@ pub(crate) fn presentation(rule: &str, cwes: &[String], operation: &str) -> Opti
             "Weak password acceptance at account creation",
             "Enforce an effective password-strength policy on every account-creation entry point before password storage; reject known compromised passwords.",
         )
+    } else if has("CWE-203") {
+        (
+            "Login responses reveal whether an account exists",
+            "Return the same externally visible error for unknown accounts and incorrect passwords, including status and timing where practical; retain detailed reasons only in protected server-side audit records.",
+        )
+    } else if has("CWE-384") {
+        (
+            "Login retains the pre-authentication session identifier",
+            "Regenerate the session identifier after successful authentication and before assigning authenticated identity; invalidate the previous identifier and preserve only the intended session data.",
+        )
+    } else if has("CWE-117") {
+        (
+            "Untrusted text can forge log entries",
+            "Encode or reject line breaks and control characters in untrusted log fields before writing them, and prefer structured logging that keeps each field separate from the log message format.",
+        )
     } else if has("CWE-640") {
         (
             "Password recovery relies on personal knowledge",

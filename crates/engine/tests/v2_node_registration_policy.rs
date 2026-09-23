@@ -56,3 +56,34 @@ fn admits_only_bounded_registration_and_recovery_policy_reviews() {
         .collect()
     );
 }
+
+#[test]
+fn keeps_non_enforcing_registration_checks_in_the_fail_open_contract() {
+    let job =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture_root(), Some(8), false)
+            .expect("review job should build");
+    let reviews = job
+        .observation_reviews
+        .iter()
+        .filter(|review| {
+            review.evidence.iter().any(|item| {
+                item.tags.iter().any(|tag| {
+                    matches!(
+                        tag.as_str(),
+                        "rejection-response-falls-through" | "mismatch-not-rejected"
+                    )
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(reviews.len(), 2, "{reviews:#?}");
+    assert!(reviews.iter().all(|review| {
+        review.title == "Review non-enforcing security decision"
+            && review
+                .review_basis
+                .as_ref()
+                .is_some_and(|basis| basis.relationship == "bounded_fail_open_policy_review")
+            && review.decision_facts.unresolved.is_empty()
+    }));
+}

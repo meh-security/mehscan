@@ -63,9 +63,31 @@ pub enum CweSupportLevel {
 pub struct CweCoverage {
     pub cwe: String,
     pub level: CweSupportLevel,
+    /// Languages backed by loaded declarative rules for this scan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub declarative_languages: Vec<Language>,
+    /// Languages where a procedural producer emitted matching evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observed_procedural_languages: Vec<Language>,
+    /// Union retained for clients that only need the effective claim.
     pub supported_languages: Vec<Language>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub language_independent: bool,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProducerCoverage {
+    pub loaded_declarative_rules: usize,
+    pub observed_procedural_evidence: usize,
+    /// Procedural evidence whose file could not be attributed to a scanner
+    /// language. It remains visible without widening a language/CWE claim.
+    pub unattributed_procedural_evidence: usize,
+}
+
+impl ProducerCoverage {
+    fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
 }
 
 fn is_false(value: &bool) -> bool {
@@ -78,6 +100,8 @@ pub struct Coverage {
     pub languages: BTreeMap<Language, LanguageCoverage>,
     pub security_surfaces: BTreeMap<String, usize>,
     pub cwe: Vec<CweCoverage>,
+    #[serde(default, skip_serializing_if = "ProducerCoverage::is_empty")]
+    pub producers: ProducerCoverage,
     pub files: Vec<FileCoverage>,
     /// Pruned directories are listed explicitly so ignored content is not silent.
     pub ignored_subtrees: Vec<String>,

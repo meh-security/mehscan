@@ -199,6 +199,7 @@ impl NodeProjectContext {
                 classify_runtime_environment(path, *language, source),
             );
         }
+        context.propagate_unambiguous_browser_source_roots();
         for (path, language, source) in &sources {
             context.has_graphql_http |= source.contains("express-graphql");
             context.has_mongodb_driver |= source.contains("require('mongodb')")
@@ -276,6 +277,43 @@ impl NodeProjectContext {
             routes.dedup();
         }
         context
+    }
+
+    fn propagate_unambiguous_browser_source_roots(&mut self) {
+        let mut browser_roots = BTreeSet::new();
+        let mut server_roots = BTreeSet::new();
+
+        for (path, runtime) in &self.runtime_by_path {
+            let Some(root) = node_source_root(path) else {
+                continue;
+            };
+            match runtime {
+                RuntimeEnvironment::Browser => {
+                    browser_roots.insert(root);
+                }
+                RuntimeEnvironment::Server | RuntimeEnvironment::Mixed => {
+                    server_roots.insert(root);
+                }
+                RuntimeEnvironment::Unknown => {}
+            }
+        }
+
+        let browser_only_roots = browser_roots
+            .difference(&server_roots)
+            .cloned()
+            .collect::<Vec<_>>();
+        for (path, runtime) in &mut self.runtime_by_path {
+            if *runtime != RuntimeEnvironment::Unknown {
+                continue;
+            }
+            let normalized = path.replace('\\', "/").to_ascii_lowercase();
+            if browser_only_roots
+                .iter()
+                .any(|root| normalized.starts_with(root))
+            {
+                *runtime = RuntimeEnvironment::Browser;
+            }
+        }
     }
 
     pub(crate) fn with_pug_templates<'a>(
@@ -1512,13 +1550,6 @@ pub(crate) fn classify_runtime_environment(
         &["@angular/", "react-dom/client", "@remix-run/react"],
     );
 
-    let server = server_module
-        || next_pages_api
-        || server_path
-        || contains_directive(source, "use server")
-        || source.contains("__dirname")
-        || source.contains("__filename")
-        || source.contains("process.env");
     let browser = browser_path
         || browser_module
         || contains_directive(source, "use client")
@@ -1534,6 +1565,13 @@ pub(crate) fn classify_runtime_environment(
         ]
         .iter()
         .any(|indicator| source.contains(indicator));
+    let server = server_module
+        || next_pages_api
+        || server_path
+        || contains_directive(source, "use server")
+        || source.contains("__dirname")
+        || source.contains("__filename")
+        || (source.contains("process.env") && !browser);
 
     match (server, browser) {
         (true, true) => RuntimeEnvironment::Mixed,
@@ -1541,6 +1579,15 @@ pub(crate) fn classify_runtime_environment(
         (false, true) => RuntimeEnvironment::Browser,
         (false, false) => RuntimeEnvironment::Unknown,
     }
+}
+
+fn node_source_root(path: &str) -> Option<String> {
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    let components = normalized.split('/').collect::<Vec<_>>();
+    let source_index = components
+        .iter()
+        .rposition(|component| *component == "src")?;
+    Some(format!("{}/", components[..=source_index].join("/")))
 }
 
 fn contains_directive(source: &str, directive: &str) -> bool {
@@ -4054,20 +4101,43 @@ fn resource_owner_argument_is_session_binding(
     let Some(identifier) = simple_identifier(candidate.trim()) else {
         return false;
     };
-    let source = root.text();
-    let start = scope.start.min(source.len());
-    let end = before.min(scope.end).min(source.len());
-    if start >= end || !source.is_char_boundary(start) || !source.is_char_boundary(end) {
-        return false;
-    }
-    let prior = compact(&source[start..end]).to_ascii_lowercase();
-    let identifier = identifier.to_ascii_lowercase();
-    ["req.session", "request.session"].iter().any(|session| {
-        prior.contains(&format!("{{{identifier}}}={session}"))
-            || prior.contains(&format!("{{{identifier},"))
-                && prior.contains(&format!("}}={session}"))
-            || prior.contains(&format!("{identifier}={session}.{identifier}"))
-    })
+    root.dfs()
+        .filter(|node| {
+            matches!(
+                node.kind().as_ref(),
+                "variable_declarator" | "assignment_expression"
+            ) && scope.start <= node.range().start
+                && node.range().end <= before
+                && function_scope(node, root) == *scope
+        })
+        .filter_map(|declaration| {
+            let is_assignment = declaration.kind().as_ref() == "assignment_expression";
+            let name = declaration.field(if is_assignment { "left" } else { "name" })?;
+            let is_simple = name.text().trim() == identifier;
+            let is_shorthand = matches!(name.kind().as_ref(), "object_pattern" | "object")
+                && name.dfs().any(|part| {
+                    part.kind().as_ref() == "shorthand_property_identifier_pattern"
+                        && part.text().trim() == identifier
+                });
+            (is_simple || is_shorthand).then(|| {
+                (
+                    declaration.range().start,
+                    declaration.field(if is_assignment { "right" } else { "value" }),
+                    is_shorthand,
+                )
+            })
+        })
+        .max_by_key(|(start, _, _)| *start)
+        .is_some_and(|(_, value, is_shorthand)| {
+            let Some(value) = value else { return false };
+            let source = compact(value.text().as_ref()).replace("?.", ".");
+            if is_shorthand {
+                source == "req.session" || source == "request.session"
+            } else {
+                source == format!("req.session.{identifier}")
+                    || source == format!("request.session.{identifier}")
+            }
+        })
 }
 
 fn shared_domain_resource_basis(
@@ -6078,6 +6148,59 @@ mod tests {
             ),
             RuntimeEnvironment::Server
         );
+        assert_eq!(
+            classify_runtime_environment(
+                "src/serviceWorker.js",
+                Language::Javascript,
+                "const url = `${process.env.PUBLIC_URL}/service-worker.js`; window.fetch(url);",
+            ),
+            RuntimeEnvironment::Browser,
+            "bundler-substituted process.env does not make an otherwise browser-only file mixed"
+        );
+    }
+
+    #[test]
+    fn propagates_unambiguous_browser_runtime_within_a_source_root() {
+        let browser_sources = [
+            (
+                "services/web/src/index.tsx",
+                Language::Tsx,
+                "import { createRoot } from 'react-dom/client';",
+            ),
+            (
+                "services/web/src/sagas/orders.ts",
+                Language::Typescript,
+                "export const load = (url: string) => fetch(url);",
+            ),
+        ];
+        let browser_context = NodeProjectContext::from_sources(browser_sources.into_iter());
+        assert_eq!(
+            browser_context.runtime_by_path["services/web/src/sagas/orders.ts"],
+            RuntimeEnvironment::Browser
+        );
+
+        let mixed_sources = [
+            (
+                "apps/fullstack/src/client.ts",
+                Language::Typescript,
+                "document.querySelector('#app');",
+            ),
+            (
+                "apps/fullstack/src/server.ts",
+                Language::Typescript,
+                "import express from 'express';",
+            ),
+            (
+                "apps/fullstack/src/shared.ts",
+                Language::Typescript,
+                "export const request = (url: string) => fetch(url);",
+            ),
+        ];
+        let mixed_context = NodeProjectContext::from_sources(mixed_sources.into_iter());
+        assert_eq!(
+            mixed_context.runtime_by_path["apps/fullstack/src/shared.ts"],
+            RuntimeEnvironment::Unknown
+        );
     }
 
     #[test]
@@ -6292,6 +6415,23 @@ mod tests {
             .expect("profile update call");
         let argument = &call.arguments[0];
         assert!(resource_owner_argument_is_session_binding(
+            &root,
+            argument,
+            call.node.range().start,
+            &function_scope(argument, &root),
+        ));
+
+        let source = "function update(req) { /* const { userId } = req.session; */ const { userId } = req.params; profile.updateUser(parseInt(userId)); }";
+        let document = StrDoc::try_new(source, SupportLang::TypeScript).expect("valid source");
+        let ast = AstGrep::doc(document);
+        let root = ast.root();
+        let call = root
+            .dfs()
+            .filter_map(call_site)
+            .find(|call| call.callee == "profile.updateUser")
+            .expect("profile update call");
+        let argument = &call.arguments[0];
+        assert!(!resource_owner_argument_is_session_binding(
             &root,
             argument,
             call.node.range().start,

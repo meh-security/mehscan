@@ -380,6 +380,16 @@ pub(crate) fn scan_source(
                 {
                     continue;
                 }
+                if compiled_rule.rule.id.ends_with("angular-html-trust-bypass")
+                    && matched
+                        .get_env()
+                        .get_match("SANITIZER")
+                        .is_some_and(|receiver| {
+                            !super::node_browser::accepts_angular_trust_bypass(&root, receiver)
+                        })
+                {
+                    continue;
+                }
                 if language == Language::Csharp
                     && !compiled_rule.rule.symbols.is_empty()
                     && !call_site(matched.get_node().clone()).is_some_and(|call| {
@@ -393,6 +403,23 @@ pub(crate) fn scan_source(
                                         resolution.confidence != SymbolConfidence::Ambiguous
                                     })
                             })
+                    })
+                {
+                    continue;
+                }
+                if compiled_rule
+                    .rule
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "exact-symbol-ownership")
+                    && !call_site(matched.get_node().clone()).is_some_and(|call| {
+                        compiled_rule.rule.symbols.iter().any(|symbol| {
+                            symbol_environment
+                                .resolve(&call.observed, &symbol.canonical)
+                                .is_some_and(|resolution| {
+                                    resolution.confidence != SymbolConfidence::Ambiguous
+                                })
+                        })
                     })
                 {
                     continue;
@@ -565,6 +592,9 @@ pub(crate) fn scan_source(
                 else {
                     continue;
                 };
+                if !required_local_call_mode(&compiled_rule.rule.tags, call.node.text().as_ref()) {
+                    continue;
+                }
                 if symbol_resolution.confidence == SymbolConfidence::Ambiguous {
                     continue;
                 }
@@ -1019,6 +1049,15 @@ pub(crate) fn scan_source(
         &conditional,
         &literals,
         csharp_handoff_context,
+        &mut evidence,
+    );
+    super::csharp_business::add_business_policy_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
         &mut evidence,
     );
     // Standalone source admission is intentionally last among C# semantic
@@ -1810,6 +1849,19 @@ pub(crate) fn scan_source(
             timing,
         }
     }
+}
+
+fn required_local_call_mode(tags: &[String], call: &str) -> bool {
+    let compact = call
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    tags.iter().all(|tag| match tag.as_str() {
+        "requires-python-keyword:allow_pickle=true" => compact.contains("allow_pickle=true"),
+        "requires-python-keyword:weights_only=false" => compact.contains("weights_only=false"),
+        _ => true,
+    })
 }
 
 fn location_overlaps_range(location: &Location, range: &std::ops::Range<usize>) -> bool {

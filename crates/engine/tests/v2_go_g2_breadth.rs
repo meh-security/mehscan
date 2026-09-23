@@ -131,3 +131,73 @@ func replaceProcess(executable string, arguments []string, environment []string)
     }));
     fs::remove_dir_all(&root).expect("remove Go unix.Exec fixture");
 }
+
+#[test]
+fn keeps_discarded_repository_reads_as_context_and_prefers_the_exact_sql_sink() {
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-go-discarded-repository-read-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).expect("create Go repository fixture");
+    fs::write(
+        root.join("app.go"),
+        r#"package app
+import (
+    "fmt"
+    "net/http"
+)
+func findUser(name string) { db.Query(fmt.Sprintf("SELECT * FROM users WHERE name='%s'", name)) }
+func userService(name string) { findUser(name) }
+func handler(w http.ResponseWriter, r *http.Request) { userService(r.URL.Query().Get("name")) }
+"#,
+    )
+    .expect("write Go repository fixture");
+
+    let scan = mehscan_engine::scan_path(&root).expect("scan Go repository fixture");
+    assert!(
+        scan.evidence
+            .iter()
+            .any(|item| item.rule_id == "go-sql-parameter-query-summary")
+    );
+    assert!(
+        scan.evidence
+            .iter()
+            .any(|item| item.rule_id == "go-sql-resource-filter-summary")
+    );
+
+    let jobs = mehscan_engine::investigation::build_all_path_review_jobs(&root, Some(8), false)
+        .expect("build Go reviews");
+    assert_eq!(
+        jobs.observation_reviews
+            .iter()
+            .filter(|review| review.evidence.iter().any(|item| {
+                item.capability == Capability::DatabaseQuery
+                    && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-89")
+            }))
+            .count(),
+        1
+    );
+    assert!(jobs.observation_reviews.iter().all(|review| {
+        !review
+            .evidence
+            .iter()
+            .any(|item| item.rule_id == "go-sql-resource-filter-summary")
+    }));
+    let sql = jobs
+        .observation_reviews
+        .iter()
+        .find(|review| {
+            review
+                .evidence
+                .iter()
+                .any(|item| item.rule_id == "go-database-query")
+        })
+        .expect("exact dynamic SQL review");
+    assert!(sql.decision_facts.unresolved.is_empty());
+
+    fs::remove_dir_all(&root).expect("remove Go repository fixture");
+}

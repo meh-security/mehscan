@@ -39,6 +39,10 @@
     any:
       - pattern: Runtime.getRuntime().exec($COMMAND)
         captures: { command: COMMAND }
+      - pattern: Runtime.getRuntime().exec($COMMAND, $ENVIRONMENT)
+        captures: { command: COMMAND, environment: ENVIRONMENT }
+      - pattern: Runtime.getRuntime().exec($COMMAND, $ENVIRONMENT, $DIRECTORY)
+        captures: { command: COMMAND, environment: ENVIRONMENT, directory: DIRECTORY }
       - pattern: new ProcessBuilder($COMMAND)
         captures: { command: COMMAND }
       - pattern: new ProcessBuilder($COMMAND, $$$ARGUMENTS)
