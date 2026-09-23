@@ -7,8 +7,8 @@ use std::time::Instant;
 
 use mehscan_core::{
     Capability, Coverage, CweCoverage, CweSupportLevel, Diagnostic, DiagnosticLevel, Evidence,
-    FileCoverage, FileStatus, Language, ProducerCoverage, RelationContract, Rule, SCHEMA_VERSION,
-    ScanResult,
+    FileCoverage, FileStatus, Language, OmittedExtensionCoverage, ProducerCoverage,
+    RelationContract, Rule, SCHEMA_VERSION, ScanResult,
 };
 
 use crate::code::comments::CommentRanges;
@@ -34,6 +34,15 @@ use serde::Serialize;
 
 const MAX_SECRET_TEXT_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_AUTOMATIC_WORKERS: usize = 32;
+
+fn omitted_extension(path: &str) -> String {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .filter(|extension| !extension.is_empty())
+        .map(|extension| format!(".{}", extension.to_ascii_lowercase()))
+        .unwrap_or_else(|| "(no extension)".to_string())
+}
 
 fn trace_scan_phase(name: &str, microseconds: u128) {
     if std::env::var_os("MEHSCAN_TRACE_PHASES").is_some() {
@@ -195,27 +204,61 @@ pub(crate) fn scan_profiled(
     let source_started = Instant::now();
     let mut prepared = Vec::new();
     let mut specialized_files = 0usize;
+    let single_file_scan = discovery.root.is_file();
+    let explicitly_changed = options
+        .impact_scope
+        .as_ref()
+        .map(|scope| {
+            scope
+                .changed_files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
     for file in discovery.files {
         coverage.totals.discovered += 1;
-        let analyze_file = impact_plan.includes(&file.relative);
+        let analyze_file = !matches!(
+            file.class,
+            FileClass::Ignored | FileClass::UnsupportedSource
+        ) && impact_plan.includes(&file.relative);
         match file.class {
             FileClass::Ignored => {
                 coverage.totals.ignored += 1;
-                coverage.files.push(FileCoverage {
-                    path: file.relative,
-                    language: None,
-                    status: FileStatus::Ignored,
-                    reason: file.reason,
-                });
+                if file.reason == Some("non-source file")
+                    && !single_file_scan
+                    && !explicitly_changed.contains(file.relative.as_str())
+                {
+                    coverage
+                        .omitted_files_by_extension
+                        .entry(omitted_extension(&file.relative))
+                        .or_insert_with(OmittedExtensionCoverage::default)
+                        .non_source += 1;
+                } else {
+                    coverage.files.push(FileCoverage {
+                        path: file.relative,
+                        language: None,
+                        status: FileStatus::Ignored,
+                        reason: file.reason.map(str::to_string),
+                    });
+                }
             }
             FileClass::UnsupportedSource => {
                 coverage.totals.unsupported += 1;
-                coverage.files.push(FileCoverage {
-                    path: file.relative,
-                    language: None,
-                    status: FileStatus::Unsupported,
-                    reason: file.reason,
-                });
+                if single_file_scan || explicitly_changed.contains(file.relative.as_str()) {
+                    coverage.files.push(FileCoverage {
+                        path: file.relative,
+                        language: None,
+                        status: FileStatus::Unsupported,
+                        reason: file.reason.map(str::to_string),
+                    });
+                } else {
+                    coverage
+                        .omitted_files_by_extension
+                        .entry(omitted_extension(&file.relative))
+                        .or_insert_with(OmittedExtensionCoverage::default)
+                        .unsupported_source += 1;
+                }
             }
             FileClass::SecretOnly if !analyze_file => {
                 coverage.totals.ignored += 1;
@@ -228,12 +271,23 @@ pub(crate) fn scan_profiled(
             }
             FileClass::SecretOnly if !options.scan_secrets => {
                 coverage.totals.ignored += 1;
-                coverage.files.push(FileCoverage {
-                    path: file.relative,
-                    language: None,
-                    status: FileStatus::Ignored,
-                    reason: Some("secret scanning disabled".to_string()),
-                });
+                if file.reason.is_none()
+                    && !single_file_scan
+                    && !explicitly_changed.contains(file.relative.as_str())
+                {
+                    coverage
+                        .omitted_files_by_extension
+                        .entry(omitted_extension(&file.relative))
+                        .or_insert_with(OmittedExtensionCoverage::default)
+                        .secret_scan_disabled += 1;
+                } else {
+                    coverage.files.push(FileCoverage {
+                        path: file.relative,
+                        language: None,
+                        status: FileStatus::Ignored,
+                        reason: Some("secret scanning disabled".to_string()),
+                    });
+                }
             }
             FileClass::SecretOnly => match read_secret_text(&file.absolute) {
                 Ok(source) => {
@@ -249,7 +303,7 @@ pub(crate) fn scan_profiled(
                         path: file.relative,
                         language: None,
                         status: FileStatus::SecretScanned,
-                        reason: file.reason,
+                        reason: file.reason.map(str::to_string),
                     });
                     evidence.append(&mut secret_scan.evidence);
                 }

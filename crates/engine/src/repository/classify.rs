@@ -60,7 +60,7 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
         "json" | "json5" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" | "config"
         | "properties" | "xml" | "env" | "tf" | "tfvars" | "hcl" | "md" | "markdown" | "txt"
         | "sql" | "graphql" | "sh" | "bash" | "zsh" | "ps1" => FileClass::SecretOnly,
-        "rb" | "scala" | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => {
+        "as" | "rb" | "scala" | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => {
             FileClass::UnsupportedSource
         }
         _ => FileClass::Ignored,
@@ -323,6 +323,10 @@ mod tests {
             FileClass::Supported(Language::Python)
         );
         assert_eq!(classify_path(Path::new("README.md")), FileClass::SecretOnly);
+        assert_eq!(
+            classify_path(Path::new("legacy.as")),
+            FileClass::UnsupportedSource
+        );
         assert_eq!(
             classify_path(Path::new(".env.local")),
             FileClass::SecretOnly
