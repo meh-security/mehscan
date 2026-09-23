@@ -1045,6 +1045,8 @@ fn build_path_review_jobs_internal(
     let observation_reviews = if remaining == 0 {
         Vec::new()
     } else {
+        let mut observation_framework_context = review_context.frameworks.clone();
+        observation_framework_context.extend(review_context.authorizations.iter().cloned());
         build_observation_reviews(
             observation_groups
                 .into_iter()
@@ -1055,7 +1057,7 @@ fn build_path_review_jobs_internal(
             &csharp_neighborhoods,
             context_lines,
             &rules_by_id,
-            &review_context.frameworks,
+            &observation_framework_context,
         )?
     };
     let returned_reviews = reviews.len() + observation_reviews.len();
@@ -18635,6 +18637,7 @@ fn authorization_frameworks(symbol: &str) -> &'static [&'static str] {
         | "AspNetMiddlewareOrder"
         | "AuthorizeAsync"
         | "PrincipalRoleOrClaim" => &["aspnet-core"],
+        "RazorRoute" | "BlazorRenderMode" => &["aspnet-core", "blazor-webassembly"],
         "EnableMethodSecurity"
         | "SpringRequestMatcher"
         | "SpringAnyRequest"
@@ -18745,6 +18748,30 @@ fn authorization_markers(file: &SourceFile, line: &str) -> Vec<(&'static str, &'
     };
 
     match file.language {
+        None if file.path.ends_with(".razor") || file.path.ends_with(".cshtml") => {
+            add(
+                "authorization_exception_context",
+                "AllowAnonymous",
+                trimmed.starts_with("@attribute [AllowAnonymous"),
+            );
+            add(
+                "authorization_requirement_context",
+                "Authorize",
+                trimmed.starts_with("@attribute [Authorize"),
+            );
+            add(
+                "route_context",
+                "RazorRoute",
+                trimmed == "@page" || trimmed.starts_with("@page "),
+            );
+            add(
+                "render_mode_context",
+                "BlazorRenderMode",
+                trimmed.starts_with("@rendermode ")
+                    || trimmed.contains(" @rendermode=")
+                    || (file.path.ends_with(".cshtml") && trimmed.contains(" render-mode=")),
+            );
+        }
         Some(Language::Csharp) => {
             add(
                 "authorization_exception_context",
@@ -24088,6 +24115,55 @@ mod tests {
                     .contains(required)
             );
         }
+    }
+
+    #[test]
+    fn razor_context_facts_are_attached_only_to_their_own_template() {
+        let sources = RepositorySources {
+            root: ".".to_string(),
+            files: BTreeMap::from([
+                (
+                    "app/App.csproj".to_string(),
+                    SourceFile {
+                        path: "app/App.csproj".to_string(),
+                        language: None,
+                        source: "<Project Sdk=\"Microsoft.NET.Sdk.Web\">".to_string(),
+                    },
+                ),
+                (
+                    "app/Pages/Private.razor".to_string(),
+                    SourceFile {
+                        path: "app/Pages/Private.razor".to_string(),
+                        language: None,
+                        source: "@page \"/private\"\n@attribute [Authorize]\n@rendermode InteractiveServer\n".to_string(),
+                    },
+                ),
+                (
+                    "app/Pages/Public.cshtml".to_string(),
+                    SourceFile {
+                        path: "app/Pages/Public.cshtml".to_string(),
+                        language: None,
+                        source: "@page\n<component type=\"typeof(App)\" render-mode=\"Server\" />\n".to_string(),
+                    },
+                ),
+            ]),
+        };
+        let index = ReviewContextIndex::build(&sources, &BTreeSet::new()).unwrap();
+        let private = BTreeSet::from(["app/Pages/Private.razor"]);
+        let (facts, _) = index.authorization_facts(&private, &[], 8);
+        assert!(facts.iter().any(|fact| fact.symbol == "Authorize"));
+        assert!(facts.iter().any(|fact| fact.symbol == "RazorRoute"));
+        assert!(facts.iter().any(|fact| fact.symbol == "BlazorRenderMode"));
+        assert!(
+            facts
+                .iter()
+                .all(|fact| fact.location.path == "app/Pages/Private.razor")
+        );
+
+        let public = BTreeSet::from(["app/Pages/Public.cshtml"]);
+        let (facts, _) = index.authorization_facts(&public, &[], 8);
+        assert!(facts.iter().any(|fact| fact.symbol == "BlazorRenderMode"));
+        assert!(!facts.iter().any(|fact| fact.symbol == "Authorize"));
     }
 
     #[test]

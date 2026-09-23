@@ -45,7 +45,7 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
             FileClass::Supported(Language::Cpp)
         }
         "cs" => FileClass::Supported(Language::Csharp),
-        "cshtml" => FileClass::Razor,
+        "cshtml" | "razor" => FileClass::Razor,
         "aspx" | "ascx" => FileClass::WebForms,
         "java" => FileClass::Supported(Language::Java),
         "kt" | "kts" => FileClass::Supported(Language::Kotlin),
@@ -290,6 +290,10 @@ mod tests {
         );
         assert_eq!(classify_path(Path::new("Index.cshtml")), FileClass::Razor);
         assert_eq!(
+            classify_path(Path::new("Pages/Index.razor")),
+            FileClass::Razor
+        );
+        assert_eq!(
             classify_path(Path::new("views/profile.ejs")),
             FileClass::EmbeddedJavascriptTemplate
         );
@@ -368,6 +372,7 @@ mod tests {
             "src/TestLogin.java",
             "src/LoginTests.cs",
             "tests/Views/Index.cshtml",
+            "tests/Pages/Index.razor",
             "types/index.d.ts",
             "types/index.d.mts",
             "types/index.d.cts",
