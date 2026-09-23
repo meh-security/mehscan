@@ -5846,7 +5846,8 @@ fn path_decision_blockers(
     questions
         .iter()
         .filter(|question| {
-            (explicit_cookie_omission(&candidate.sink.rule_id).is_none()
+            candidate.sink.rule_id == "cpp-drogon-route-authentication-requirement"
+                || (explicit_cookie_omission(&candidate.sink.rule_id).is_none()
                 && control_can_be_owned_outside_application(candidate.capability)
                 && (question.contains("What exact control is effective at the authoritative")
                     || question.contains("which application, framework, proxy")))
