@@ -170,8 +170,18 @@ authority the dynamic input crosses. A standalone command-line utility whose
 operator explicitly chooses its URL or executable does not by itself establish
 an attacker-to-service boundary. Check for a service, scheduled job, wrapper,
 or privileged caller that passes less-trusted input before calling it an issue.
+For every finding, identify whether the affected code runs in the shipped
+service, a browser client, an operator command, a migration, a build tool, or a
+test. Repository proximity does not make a tool's behavior a production server
+vulnerability; report its actual execution role and reachable input boundary.
 Likewise, a fixed URL authority with a dynamic path is not a dynamic authority;
 inspect applicable redirects or URL parsing before claiming destination control.
+For a fixed local redirect path resolved against the current request origin,
+verify that an attacker can control the effective response authority before
+calling it an open redirect; a request URL used as the base is not that proof.
+For browser-only network calls, assess unintended client destinations or data
+exposure under the browser's authority, not server-side SSRF. Preserve an exact
+hosting question when the same source can also run on the server.
 For .NET solutions, apply a project SDK or hosting fact only to the source in
 that project. `Microsoft.NET.Sdk.BlazorWebAssembly` identifies a browser-targeted
 client build, not a proof that shared services never execute on the server.
