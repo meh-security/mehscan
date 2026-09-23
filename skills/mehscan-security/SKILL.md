@@ -385,6 +385,10 @@ Within one review, execute supplied lookup requests in order and stop when the
 returned evidence resolves the decision-critical question. Do not spend a
 secondary reference lookup after an earlier exact source lookup already proves
 the issue or applicable control. Record only lookups that were actually run.
+If that review has no supplied `lookup_requests`, leave `lookup_attempts` empty;
+do not encode independent source inspection as a supplied lookup or invent an
+escalation. Keep artifact IDs and reviewer-origin leads scoped to the same
+review ID, and omit a lead whose exact location is not covered by its citation.
 If an attempted lookup exposes the exact next decisive file or identifier,
 the response contract permits one follow-on `source` or `references` escalation.
 Copy the supplied missing-fact question, use the smallest exact locator and
