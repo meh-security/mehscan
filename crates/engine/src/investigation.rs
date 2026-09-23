@@ -15392,7 +15392,7 @@ fn csharp_typed_instance_helper_is_owned(
             let after = line[at + receiver.len()..].trim_start();
             if before.contains(['=', '('])
                 || !line[..at].chars().last().is_some_and(char::is_whitespace)
-                || !after.starts_with([';', '=', ','])
+                || !after.starts_with([';', '=', ',', ')'])
             {
                 return None;
             }
