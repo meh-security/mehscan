@@ -16,7 +16,7 @@ pub(crate) struct DiscoveredFile {
     pub absolute: PathBuf,
     pub relative: String,
     pub class: FileClass,
-    pub reason: Option<String>,
+    pub reason: Option<&'static str>,
     pub build_symbols: BTreeMap<String, bool>,
 }
 
@@ -385,7 +385,7 @@ fn walk_directory(
                 absolute: path.to_path_buf(),
                 relative: relative_path(root, path),
                 class: FileClass::Ignored,
-                reason: Some("symbolic link is not followed".to_string()),
+                reason: Some("symbolic link is not followed"),
                 build_symbols: BTreeMap::new(),
             });
         } else if entry.file_type().is_some_and(|kind| kind.is_file()) {
@@ -428,22 +428,35 @@ fn push_file(
         | FileClass::Razor
         | FileClass::WebForms => None,
         FileClass::SecretOnly if super::classify::is_sast_excluded_source(relative_path) => {
-            Some("test or generated source excluded from SAST; secret scan retained".to_string())
+            Some("test or generated source excluded from SAST; secret scan retained")
         }
         FileClass::SecretOnly => None,
-        FileClass::UnsupportedSource => {
-            Some("source language is not enabled in this slice".to_string())
-        }
-        FileClass::Ignored => Some("non-source file".to_string()),
+        FileClass::UnsupportedSource => Some("source language is not enabled in this slice"),
+        FileClass::Ignored => match relative_path.file_name().and_then(|name| name.to_str()) {
+            Some(".gitignore" | ".ignore") => Some("repository ignore configuration"),
+            Some(".mehscan-secrets-allowlist") => Some("secret allowlist configuration"),
+            _ if relative_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("csproj")) =>
+            {
+                Some("project manifest used for context")
+            }
+            _ => Some("non-source file"),
+        },
     };
     discovery.files.push(DiscoveredFile {
         absolute: path.to_path_buf(),
         relative,
         class,
         reason,
-        build_symbols: c_family_context
-            .map(|context| context.build_symbols(path))
-            .unwrap_or_default(),
+        build_symbols: if matches!(class, FileClass::Supported(Language::C | Language::Cpp)) {
+            c_family_context
+                .map(|context| context.build_symbols(path))
+                .unwrap_or_default()
+        } else {
+            BTreeMap::new()
+        },
     });
 }
 

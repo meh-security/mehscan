@@ -16,7 +16,16 @@ fn separates_gorm_condition_objects_from_raw_query_grammar() {
         .iter()
         .filter(|item| item.rule_id == "go-gorm-query")
         .collect::<Vec<_>>();
-    assert_eq!(gorm.len(), 10, "{gorm:#?}");
+    assert_eq!(gorm.len(), 11, "{gorm:#?}");
+    assert!(
+        gorm.iter()
+            .any(|item| { item.enclosing_symbol.as_deref() == Some("sqlGroupBesideRouter") })
+    );
+    assert!(
+        !gorm
+            .iter()
+            .any(|item| { item.enclosing_symbol.as_deref() == Some("routeGroupBesideGorm") })
+    );
 
     for symbol in [
         "structuredValue",

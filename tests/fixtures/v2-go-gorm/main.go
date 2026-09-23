@@ -1,9 +1,18 @@
 package app
 
 import (
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+func routeGroupBesideGorm(router *gin.Engine) {
+	router.Group("/api")
+}
+
+func sqlGroupBesideRouter(db *gorm.DB) {
+	db.Group("team_id").Find(&User{})
+}
 
 type User struct {
 	Email string

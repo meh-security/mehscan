@@ -76,3 +76,36 @@ pub fn load_builtin_rules() -> Result<Vec<Rule>, EngineError> {
     super::validate::validate_rules(&rules)?;
     Ok(rules)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeSet, fs, path::Path};
+
+    use super::BUILTIN_RULE_CATALOGS;
+
+    #[test]
+    fn every_shipped_code_catalog_is_embedded() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../rules/code");
+        let mut pending = vec![root.clone()];
+        let mut files = BTreeSet::new();
+        while let Some(directory) = pending.pop() {
+            for entry in fs::read_dir(directory).expect("rule directory should be readable") {
+                let path = entry.expect("rule entry should be readable").path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.extension().is_some_and(|extension| extension == "yml") {
+                    let relative = path.strip_prefix(&root).expect("rule under catalog root");
+                    files.insert(format!(
+                        "rules/code/{}",
+                        relative.to_string_lossy().replace('\\', "/")
+                    ));
+                }
+            }
+        }
+        let embedded = BUILTIN_RULE_CATALOGS
+            .iter()
+            .map(|(path, _)| (*path).to_string())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(files, embedded, "every shipped YAML rule must be loaded");
+    }
+}

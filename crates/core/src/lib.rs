@@ -23,7 +23,7 @@ pub use candidate::{
 };
 pub use coverage::{
     Coverage, CoverageTotals, CweCoverage, CweSupportLevel, FileCoverage, FileStatus,
-    LanguageCoverage, ProducerCoverage,
+    LanguageCoverage, OmittedExtensionCoverage, ProducerCoverage,
 };
 pub use evaluation::{
     ControlLayer, EVALUATION_PACK_SCHEMA_VERSION, EVALUATION_RESPONSE_SCHEMA_VERSION,

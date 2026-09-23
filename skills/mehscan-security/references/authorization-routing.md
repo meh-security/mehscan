@@ -39,6 +39,19 @@ Classify controls conservatively:
 - client UI checks, commented code, challenge telemetry, logging, and rejection
   followed by continuation are not server authorization.
 
+Establish the application's access rule before calling an operation a bypass.
+Use the supplied route policy, role model, ownership model, adjacent protected
+operations, or other concrete application behavior; an absent local guard alone
+does not establish that an intentionally public operation violates policy.
+Creation of a new object has no existing owner to check. Verify who may create
+it, whether its owner or tenant comes from trusted server identity, and whether
+the caller can assign protected fields or another subject. Do not dismiss a
+creation operation merely because it creates rather than selects a resource.
+For an error-path bypass, trace both the failed authorization lookup and the
+later protected effect: a confirmed exploit needs a reachable failure in which
+the target can still be read or changed. Otherwise name that exact condition as
+the unresolved check. These distinctions apply across frameworks.
+
 Use `issue` when the supplied or boundedly retrieved code establishes a
 sensitive application operation with a concrete public, uncovered, mismatched,
 ignored, or fail-open authorization policy. Use `not_issue` for an intentionally

@@ -25,6 +25,18 @@ pub struct FileCoverage {
     pub reason: Option<String>,
 }
 
+/// Routine exclusions omitted from the per-path code-scan ledger. Counts
+/// remain in `CoverageTotals`; files may still supply project context.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct OmittedExtensionCoverage {
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub non_source: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub secret_scan_disabled: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unsupported_source: usize,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CoverageTotals {
     pub discovered: usize,
@@ -102,7 +114,11 @@ pub struct Coverage {
     pub cwe: Vec<CweCoverage>,
     #[serde(default, skip_serializing_if = "ProducerCoverage::is_empty")]
     pub producers: ProducerCoverage,
+    /// Analyzed files and exclusions that need a path-specific explanation.
     pub files: Vec<FileCoverage>,
+    /// Routine exclusions are counted by extension rather than repeated here.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub omitted_files_by_extension: BTreeMap<String, OmittedExtensionCoverage>,
     /// Pruned directories are listed explicitly so ignored content is not silent.
     pub ignored_subtrees: Vec<String>,
 }

@@ -155,6 +155,41 @@ when it protects the same value and operation. Missing application headers,
 CORS, TLS, cookies, or rate limiting may be owned by a gateway or platform and
 normally require an effective-control check.
 
+Judge a weak cryptographic algorithm against the property its actual use needs:
+collision resistance for signatures, one-wayness for hash chains, and suitable
+cost and salting for password storage are different questions. A deprecated
+algorithm name alone does not prove a bypass of a property that the operation
+does not rely on; an explicit applicable security policy may still make its use
+an issue. For a runnable entrypoint that explicitly enables a development
+debugger, distinguish the source-level debug configuration from remote exposure.
+A loopback bind limits exposure but does not disable that configuration; do not
+claim remote reachability without evidence.
+
+For injection, outbound-request, and process-launch reviews, identify whose
+authority the dynamic input crosses. A standalone command-line utility whose
+operator explicitly chooses its URL or executable does not by itself establish
+an attacker-to-service boundary. Check for a service, scheduled job, wrapper,
+or privileged caller that passes less-trusted input before calling it an issue.
+For every finding, identify whether the affected code runs in the shipped
+service, a browser client, an operator command, a migration, a build tool, or a
+test. Repository proximity does not make a tool's behavior a production server
+vulnerability; report its actual execution role and reachable input boundary.
+Likewise, a fixed URL authority with a dynamic path is not a dynamic authority;
+inspect applicable redirects or URL parsing before claiming destination control.
+For a fixed local redirect path resolved against the current request origin,
+verify that an attacker can control the effective response authority before
+calling it an open redirect; a request URL used as the base is not that proof.
+For browser-only network calls, assess unintended client destinations or data
+exposure under the browser's authority, not server-side SSRF. Preserve an exact
+hosting question when the same source can also run on the server.
+For .NET solutions, apply a project SDK or hosting fact only to the source in
+that project. `Microsoft.NET.Sdk.BlazorWebAssembly` identifies a browser-targeted
+client build, not a proof that shared services never execute on the server.
+Before dismissing its `HttpClient` call as browser-only, check the exact host,
+component rendering, and server registrations or callers. If those facts are
+missing, preserve the hosting uncertainty in the review; a sibling API
+project's server behavior also does not transfer automatically to the client.
+
 When the bundle cannot supply a decisive producer or control, use its bounded
 `investigation.lookup_requests` to inspect the exact source, writer, route, or
 configuration. Compare the same operand, target path or resource, relevant
@@ -280,6 +315,10 @@ lookup before leaving it unresolved. Record only those typed requests and the
 one permitted follow-on `source` or `references` lookup in the validated bundle
 response.
 
+For a truncated or empty lookup, record the outcome and any actual returned
+artifacts; do not invent a placeholder source location or cite a result that
+was not returned.
+
 For manual scanner-gap diagnosis outside a bundle response, `enclosing`,
 `symbol`, `imports`, and `references` remain available for navigation. For an
 exact AST shape, `mehscan investigate structural ROOT
@@ -385,14 +424,33 @@ Within one review, execute supplied lookup requests in order and stop when the
 returned evidence resolves the decision-critical question. Do not spend a
 secondary reference lookup after an earlier exact source lookup already proves
 the issue or applicable control. Record only lookups that were actually run.
+If a source lookup exposes an exact producer helper while the next supplied
+reference target is only a generic enclosing method such as `Run` or
+`ExecuteAsync`, use the one permitted escalation for that producer instead of
+spending the lookup on unrelated method references. Preserve the producer name
+in the returned source excerpt so the response contract can validate it.
 If that review has no supplied `lookup_requests`, leave `lookup_attempts` empty;
 do not encode independent source inspection as a supplied lookup or invent an
 escalation. Keep artifact IDs and reviewer-origin leads scoped to the same
 review ID, and omit a lead whose exact location is not covered by its citation.
 If an attempted lookup exposes the exact next decisive file or identifier,
 the response contract permits one follow-on `source` or `references` escalation.
+If that operation and its arguments are already supplied as a lookup request,
+record its `request_index` instead of consuming the escalation allowance.
 Copy the supplied missing-fact question, use the smallest exact locator and
-record its outcome. Do not use this allowance for generic repository search.
+record its outcome. The escalated path or identifier must occur literally in
+the path or excerpt of an earlier returned artifact for that same review.
+Retain the relevant line in that artifact's bounded excerpt; a name inferred
+from a type, omitted source text, or a neighboring review does not satisfy the
+response contract. Do not use this allowance for generic repository search.
+
+For C# repository calls, inspect the actual command text and parameter
+bindings before deciding SQL injection. A request-bound repository argument
+does not imply that the SQL text interpolates it. Follow the exact repository
+method or supplied caller context when needed; controller action names and
+generic local variables can produce unrelated textual reference hits. For
+framework-invoked methods such as controller actions and health checks, an
+empty call-reference search does not establish that the method is unreachable.
 
 If a fresh complete-bundle retry still borrows facts across review IDs, regenerate
 the same authorized root with `--max-reviews 1` and the same context/material

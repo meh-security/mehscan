@@ -1045,6 +1045,8 @@ fn build_path_review_jobs_internal(
     let observation_reviews = if remaining == 0 {
         Vec::new()
     } else {
+        let mut observation_framework_context = review_context.frameworks.clone();
+        observation_framework_context.extend(review_context.authorizations.iter().cloned());
         build_observation_reviews(
             observation_groups
                 .into_iter()
@@ -1055,7 +1057,7 @@ fn build_path_review_jobs_internal(
             &csharp_neighborhoods,
             context_lines,
             &rules_by_id,
-            &review_context.frameworks,
+            &observation_framework_context,
         )?
     };
     let returned_reviews = reviews.len() + observation_reviews.len();
@@ -3435,6 +3437,8 @@ fn validate_review_investigation_trace(
                 )));
             }
             validate_retrieved_artifact_locator(review_id, request, artifact)?;
+            retrieved_locator_text.push_str(&artifact.location.path);
+            retrieved_locator_text.push('\n');
             retrieved_locator_text.push_str(&artifact.excerpt);
             retrieved_locator_text.push('\n');
         }
@@ -5034,9 +5038,9 @@ pub(crate) fn validate_compact_triage(
     let mut checks = BTreeSet::new();
     for check in result_checks {
         let check = check.trim();
-        if check.is_empty() || check.chars().count() > 300 || check.chars().any(char::is_control) {
+        if check.is_empty() || check.chars().count() > 500 || check.chars().any(char::is_control) {
             return Err(EngineError(format!(
-                "review triage checks must be one non-empty line of at most 300 characters for {:?}",
+                "review triage checks must be one non-empty line of at most 500 characters for {:?}",
                 id
             )));
         }
@@ -5139,17 +5143,19 @@ fn path_review_triage_contract() -> ReviewTriageContract {
                 .to_string(),
             "Distinguish application-owned controls from proxy, gateway, ingress, platform, framework, and client controls."
                 .to_string(),
+            "A framework manifest identifies project build context, not necessarily the runtime of shared code. In C# Blazor reviews, verify the exact host, rendering mode, and server registration or caller before treating a WebAssembly project sink as browser-only."
+                .to_string(),
             "Use needs_review only when decision_facts.unresolved names a concrete missing artifact that can change the decision. Generic possibilities about unknown origin, runtime value, or security impact are reviewer confidence factors, not automatic escalation checks."
                 .to_string(),
             "Treat every remaining decision_facts.unresolved entry as decision-critical. Do not use issue or not_issue while one remains unless supplied facts or an exact retrieved artifact explicitly answer that entry; otherwise use needs_review and copy the entry into checks. Cite retrieved artifacts used to resolve it."
                 .to_string(),
-            "Use investigation.readiness as workflow metadata, not as a verdict. For investigation readiness, execute supplied bounded lookup requests in order only until the decisive fact is resolved; do not spend a secondary lookup after an earlier artifact already establishes issue or not_issue. For blocked readiness, preserve the named blockers and do not invent unavailable deployment or runtime facts."
+            "Use investigation.readiness as workflow metadata, not as a verdict. For investigation readiness, execute supplied bounded lookup requests only while they can address the missing fact; do not spend a secondary lookup after an earlier artifact already establishes issue or not_issue. If an exact source lookup exposes a decisive producer helper while the next supplied reference target is only a generic enclosing method, prefer the one permitted escalation to that producer over an irrelevant reference search. For blocked readiness, preserve the named blockers and do not invent unavailable deployment or runtime facts."
                 .to_string(),
             "A lookup request is a concrete repository query, not evidence that its expected producer or control exists. Apply only returned artifacts that match the exact operand, owner, operation, action, and resource in this review."
                 .to_string(),
-            "Record each executed supplied lookup by its zero-based request_index in investigation.lookup_attempts. If one attempted lookup reveals the exact next decisive file or identifier, the response permits one follow-on source or references escalation instead of request_index; retain the exact supplied missing-fact question, use the smallest locator, and do not perform generic exploration. Preserve returned source as bounded artifacts with distinct IDs and exact locations; cite those IDs for claims and keep reviewer_inferences separate from deterministic scan facts."
+            "Record each executed supplied lookup by its zero-based request_index in investigation.lookup_attempts. If a proposed follow-on lookup has the same operation and arguments as a supplied request, use that request_index rather than escalation. Otherwise, if one attempted lookup reveals the exact next decisive file or identifier, the response permits one follow-on source or references escalation instead of request_index; retain the exact supplied missing-fact question, use the smallest locator, and do not perform generic exploration. Preserve returned source as bounded artifacts with distinct IDs and exact locations; cite those IDs for claims and keep reviewer_inferences separate from deterministic scan facts."
                 .to_string(),
-            "Each lookup attempt must identify exactly one supplied request_index or one allowed escalation. An answered attempt must return at least one artifact and cite at least one artifact from that same attempt. A source artifact's path and lines must stay within the requested source window; an escalated path or symbol must come from an earlier returned artifact. Every reviewer-origin lead artifact ID must also be explicitly cited."
+            "Each lookup attempt must identify exactly one supplied request_index or one allowed escalation. An answered attempt must return at least one artifact and cite at least one artifact from that same attempt. A source artifact's path and lines must stay within the requested source window. Before escalating, verify that the exact path or identifier appears in the excerpt or path of an earlier returned artifact in this same review; an identifier inferred from a type, nearby source omitted from the excerpt, or another review is insufficient. Every reviewer-origin lead artifact ID must also be explicitly cited."
                 .to_string(),
             "If supplied or retrieved source establishes a concrete dangerous operation or security invariant that is distinct from the admitted question, retain at most three reviewer_origin_leads with a precise question, security relevance, explanation of the distinction, exact source location and explicitly cited artifact IDs. A keyword, comment, helper name or generic concern is not a lead. Leads are unvalidated follow-up work: do not use them to change this review's verdict and do not describe them as scanner findings or deterministic coverage."
                 .to_string(),
@@ -5322,10 +5328,29 @@ fn observation_review_investigation(
     truncation: &ReviewContextTruncation,
 ) -> ReviewInvestigationPlan {
     let anchor = evidence.first().map(|item| &item.location);
-    let lookup_symbol = decision_facts
-        .unresolved
-        .iter()
-        .find_map(|question| review_question_lookup_symbol(question))
+    let lookup_symbol = decision_critical_origin(evidence)
+        .and_then(|_| evidence.first()?.enclosing_symbol.as_deref())
+        .filter(|symbol| is_plain_identifier(symbol))
+        .map(str::to_string)
+        .or_else(|| {
+            evidence
+                .iter()
+                .filter(|item| item.capability == Capability::DatabaseQuery)
+                .filter_map(|item| item.enclosing_symbol.as_deref())
+                .find(|symbol| {
+                    is_plain_identifier(symbol)
+                        && facts.iter().any(|fact| {
+                            fact.role == "exact_caller_context" && fact.symbol == *symbol
+                        })
+                })
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            decision_facts
+                .unresolved
+                .iter()
+                .find_map(|question| review_question_lookup_symbol(question))
+        })
         .or_else(|| review_admission::preferred_lookup_symbol(evidence))
         .or_else(|| {
             review_lookup_symbol(
@@ -5456,7 +5481,7 @@ fn review_investigation_plan(
                 .into(),
                 questions: repository_questions,
                 purpose: format!(
-                    "If the preceding source lookup does not resolve the question, find bounded repository references for the exact captured identifier `{symbol}` before inferring its origin or applicable controls."
+                    "If the preceding source lookup does not resolve the question and `{symbol}` can lead to the missing fact, find bounded references for this identifier. If source instead exposes a more exact producer or control, use the permitted follow-on lookup for that target."
                 ),
             });
         }
@@ -5821,7 +5846,8 @@ fn path_decision_blockers(
     questions
         .iter()
         .filter(|question| {
-            (explicit_cookie_omission(&candidate.sink.rule_id).is_none()
+            candidate.sink.rule_id == "cpp-drogon-route-authentication-requirement"
+                || (explicit_cookie_omission(&candidate.sink.rule_id).is_none()
                 && control_can_be_owned_outside_application(candidate.capability)
                 && (question.contains("What exact control is effective at the authoritative")
                     || question.contains("which application, framework, proxy")))
@@ -6724,7 +6750,7 @@ impl DecisionCriticalOrigin<'_> {
     }
 
     fn unresolved_question(self) -> String {
-        match self.boundary {
+        let question = match self.boundary {
             DecisionCriticalBoundary::Sql => format!(
                 "Is dynamic SQL operand `{}` used by this {} attacker-controlled at any production call site, or is it affirmatively restricted before composition to a fixed, numeric, enum, or exact allowlisted value?",
                 self.operand, self.style
@@ -6789,6 +6815,11 @@ impl DecisionCriticalOrigin<'_> {
                 "Can attacker-controlled input influence XPath expression `{}`, or is the expression fixed with untrusted values supplied only through bound variables or an exact allowlist?",
                 self.operand
             ),
+        };
+        if question.chars().count() > 300 {
+            format!("At this sink, {}", self.security_question())
+        } else {
+            question
         }
     }
 
@@ -14391,6 +14422,11 @@ fn observation_review_questions(
             && item.capability == Capability::OutboundNetworkRequest
             && item.context.runtime_environment == Some(RuntimeEnvironment::Browser)
     });
+    let has_blazor_webassembly_outbound_request = evidence.iter().any(|item| {
+        item.kind == EvidenceKind::Sink && item.capability == Capability::OutboundNetworkRequest
+    }) && facts
+        .iter()
+        .any(|fact| fact.role == "framework_context" && fact.symbol == "blazor-webassembly");
     let browser_html_endpoint_question = evidence
         .iter()
         .find(|item| {
@@ -14540,7 +14576,12 @@ fn observation_review_questions(
         })
     {
         questions.push(
-            "Does request-bound model data copied into the supplied repository argument influence the interpolated command text, and is parameterization or equivalent SQL-safe construction shown?"
+            "Does request-derived data passed by the supplied caller influence SQL command text, or is the command text fixed with dynamic values passed only as bound parameters? Inspect the exact query and bindings; a repository call alone does not establish SQL interpolation."
+                .to_string(),
+        );
+    } else if !has_precise_node_boundary && has_blazor_webassembly_outbound_request {
+        questions.push(
+            "Does this Blazor WebAssembly project's exact call run only in the browser, or can shared code execute on the server (including prerendering)? If server-side, can attacker input control the destination? If browser-only, can input redirect the request or leak credentials or data?"
                 .to_string(),
         );
     } else if !has_precise_node_boundary && has_browser_outbound_request {
@@ -18597,6 +18638,7 @@ fn authorization_frameworks(symbol: &str) -> &'static [&'static str] {
         | "AspNetMiddlewareOrder"
         | "AuthorizeAsync"
         | "PrincipalRoleOrClaim" => &["aspnet-core"],
+        "RazorRoute" | "BlazorRenderMode" => &["aspnet-core", "blazor-webassembly"],
         "EnableMethodSecurity"
         | "SpringRequestMatcher"
         | "SpringAnyRequest"
@@ -18707,6 +18749,30 @@ fn authorization_markers(file: &SourceFile, line: &str) -> Vec<(&'static str, &'
     };
 
     match file.language {
+        None if file.path.ends_with(".razor") || file.path.ends_with(".cshtml") => {
+            add(
+                "authorization_exception_context",
+                "AllowAnonymous",
+                trimmed.starts_with("@attribute [AllowAnonymous"),
+            );
+            add(
+                "authorization_requirement_context",
+                "Authorize",
+                trimmed.starts_with("@attribute [Authorize"),
+            );
+            add(
+                "route_context",
+                "RazorRoute",
+                trimmed == "@page" || trimmed.starts_with("@page "),
+            );
+            add(
+                "render_mode_context",
+                "BlazorRenderMode",
+                trimmed.starts_with("@rendermode ")
+                    || trimmed.contains(" @rendermode=")
+                    || (file.path.ends_with(".cshtml") && trimmed.contains(" render-mode=")),
+            );
+        }
         Some(Language::Csharp) => {
             add(
                 "authorization_exception_context",
@@ -19289,6 +19355,11 @@ fn framework_markers(file: &SourceFile, line: &str) -> Vec<&'static str> {
     };
 
     if manifest {
+        add(
+            "blazor-webassembly",
+            lower.contains("sdk=\"microsoft.net.sdk.blazorwebassembly\"")
+                || lower.contains("sdk='microsoft.net.sdk.blazorwebassembly'"),
+        );
         add(
             "aspnet-core",
             lower.contains("microsoft.net.sdk.web") || lower.contains("microsoft.aspnetcore"),
@@ -20489,6 +20560,12 @@ impl RepositorySources {
                     };
                     (None, source)
                 }
+                FileClass::Ignored if file.relative.to_ascii_lowercase().ends_with(".csproj") => {
+                    let Ok(source) = fs::read_to_string(&file.absolute) else {
+                        continue;
+                    };
+                    (None, source)
+                }
                 FileClass::UnsupportedSource | FileClass::Ignored => continue,
             };
             files.insert(
@@ -21116,6 +21193,21 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn long_dynamic_operand_keeps_review_check_within_response_limit() {
+        let operand = "query_part".repeat(40);
+        let origin = DecisionCriticalOrigin {
+            boundary: DecisionCriticalBoundary::SqlOperand,
+            language: "Python",
+            style: "raw SQL query interpretation",
+            operand: &operand,
+            affirmatively_constrained: false,
+        };
+        let question = origin.unresolved_question();
+        assert!(question.len() <= 300);
+        assert!(question.contains("raw-query operand"));
+    }
 
     #[test]
     fn investigation_readiness_separates_repository_work_from_external_blockers() {
@@ -24027,6 +24119,55 @@ mod tests {
     }
 
     #[test]
+    fn razor_context_facts_are_attached_only_to_their_own_template() {
+        let sources = RepositorySources {
+            root: ".".to_string(),
+            files: BTreeMap::from([
+                (
+                    "app/App.csproj".to_string(),
+                    SourceFile {
+                        path: "app/App.csproj".to_string(),
+                        language: None,
+                        source: "<Project Sdk=\"Microsoft.NET.Sdk.Web\">".to_string(),
+                    },
+                ),
+                (
+                    "app/Pages/Private.razor".to_string(),
+                    SourceFile {
+                        path: "app/Pages/Private.razor".to_string(),
+                        language: None,
+                        source: "@page \"/private\"\n@attribute [Authorize]\n@rendermode InteractiveServer\n".to_string(),
+                    },
+                ),
+                (
+                    "app/Pages/Public.cshtml".to_string(),
+                    SourceFile {
+                        path: "app/Pages/Public.cshtml".to_string(),
+                        language: None,
+                        source: "@page\n<component type=\"typeof(App)\" render-mode=\"Server\" />\n".to_string(),
+                    },
+                ),
+            ]),
+        };
+        let index = ReviewContextIndex::build(&sources, &BTreeSet::new()).unwrap();
+        let private = BTreeSet::from(["app/Pages/Private.razor"]);
+        let (facts, _) = index.authorization_facts(&private, &[], 8);
+        assert!(facts.iter().any(|fact| fact.symbol == "Authorize"));
+        assert!(facts.iter().any(|fact| fact.symbol == "RazorRoute"));
+        assert!(facts.iter().any(|fact| fact.symbol == "BlazorRenderMode"));
+        assert!(
+            facts
+                .iter()
+                .all(|fact| fact.location.path == "app/Pages/Private.razor")
+        );
+
+        let public = BTreeSet::from(["app/Pages/Public.cshtml"]);
+        let (facts, _) = index.authorization_facts(&public, &[], 8);
+        assert!(facts.iter().any(|fact| fact.symbol == "BlazorRenderMode"));
+        assert!(!facts.iter().any(|fact| fact.symbol == "Authorize"));
+    }
+
+    #[test]
     fn framework_context_is_collected_once_and_scoped_to_the_nearest_manifest() {
         let sources = RepositorySources {
             root: ".".to_string(),
@@ -24074,6 +24215,38 @@ mod tests {
                         source: "from flask_cors import CORS\n".to_string(),
                     },
                 ),
+                (
+                    "apps/client/Client.csproj".to_string(),
+                    SourceFile {
+                        path: "apps/client/Client.csproj".to_string(),
+                        language: None,
+                        source: "<Project Sdk=\"Microsoft.NET.Sdk.BlazorWebAssembly\">\n".to_string(),
+                    },
+                ),
+                (
+                    "apps/client/Services/HttpService.cs".to_string(),
+                    SourceFile {
+                        path: "apps/client/Services/HttpService.cs".to_string(),
+                        language: Some(Language::Csharp),
+                        source: "using System.Net.Http;\n".to_string(),
+                    },
+                ),
+                (
+                    "apps/server/Server.csproj".to_string(),
+                    SourceFile {
+                        path: "apps/server/Server.csproj".to_string(),
+                        language: None,
+                        source: "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n".to_string(),
+                    },
+                ),
+                (
+                    "apps/server/Program.cs".to_string(),
+                    SourceFile {
+                        path: "apps/server/Program.cs".to_string(),
+                        language: Some(Language::Csharp),
+                        source: "using Microsoft.AspNetCore.Builder;\n".to_string(),
+                    },
+                ),
             ]),
         };
         let index = ReviewContextIndex::build(&sources, &BTreeSet::new()).unwrap();
@@ -24085,6 +24258,19 @@ mod tests {
                 .map(|fact| fact.symbol.as_str())
                 .collect::<Vec<_>>(),
             ["express"]
+        );
+        let client_paths = BTreeSet::from(["apps/client/Services/HttpService.cs"]);
+        let (client, truncated) = index.framework_facts(&client_paths, 8);
+        assert!(!truncated);
+        assert_eq!(client[0].symbol, "blazor-webassembly");
+        let server_paths = BTreeSet::from(["apps/server/Program.cs"]);
+        let (server, truncated) = index.framework_facts(&server_paths, 8);
+        assert!(!truncated);
+        assert!(server.iter().any(|fact| fact.symbol == "aspnet-core"));
+        assert!(
+            !server
+                .iter()
+                .any(|fact| fact.symbol == "blazor-webassembly")
         );
         let (api_authorization, truncated) = index.authorization_facts(&api_paths, &[], 8);
         assert!(!truncated);
