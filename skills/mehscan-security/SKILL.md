@@ -155,6 +155,24 @@ when it protects the same value and operation. Missing application headers,
 CORS, TLS, cookies, or rate limiting may be owned by a gateway or platform and
 normally require an effective-control check.
 
+Judge a weak cryptographic algorithm against the property its actual use needs:
+collision resistance for signatures, one-wayness for hash chains, and suitable
+cost and salting for password storage are different questions. A deprecated
+algorithm name alone does not prove a bypass of a property that the operation
+does not rely on; an explicit applicable security policy may still make its use
+an issue. For a runnable entrypoint that explicitly enables a development
+debugger, distinguish the source-level debug configuration from remote exposure.
+A loopback bind limits exposure but does not disable that configuration; do not
+claim remote reachability without evidence.
+
+For injection, outbound-request, and process-launch reviews, identify whose
+authority the dynamic input crosses. A standalone command-line utility whose
+operator explicitly chooses its URL or executable does not by itself establish
+an attacker-to-service boundary. Check for a service, scheduled job, wrapper,
+or privileged caller that passes less-trusted input before calling it an issue.
+Likewise, a fixed URL authority with a dynamic path is not a dynamic authority;
+inspect applicable redirects or URL parsing before claiming destination control.
+
 When the bundle cannot supply a decisive producer or control, use its bounded
 `investigation.lookup_requests` to inspect the exact source, writer, route, or
 configuration. Compare the same operand, target path or resource, relevant
@@ -279,6 +297,10 @@ can change the decision, execute the review's supplied `source` or `references`
 lookup before leaving it unresolved. Record only those typed requests and the
 one permitted follow-on `source` or `references` lookup in the validated bundle
 response.
+
+For a truncated or empty lookup, record the outcome and any actual returned
+artifacts; do not invent a placeholder source location or cite a result that
+was not returned.
 
 For manual scanner-gap diagnosis outside a bundle response, `enclosing`,
 `symbol`, `imports`, and `references` remain available for navigation. For an

@@ -3435,6 +3435,8 @@ fn validate_review_investigation_trace(
                 )));
             }
             validate_retrieved_artifact_locator(review_id, request, artifact)?;
+            retrieved_locator_text.push_str(&artifact.location.path);
+            retrieved_locator_text.push('\n');
             retrieved_locator_text.push_str(&artifact.excerpt);
             retrieved_locator_text.push('\n');
         }
@@ -5034,9 +5036,9 @@ pub(crate) fn validate_compact_triage(
     let mut checks = BTreeSet::new();
     for check in result_checks {
         let check = check.trim();
-        if check.is_empty() || check.chars().count() > 300 || check.chars().any(char::is_control) {
+        if check.is_empty() || check.chars().count() > 500 || check.chars().any(char::is_control) {
             return Err(EngineError(format!(
-                "review triage checks must be one non-empty line of at most 300 characters for {:?}",
+                "review triage checks must be one non-empty line of at most 500 characters for {:?}",
                 id
             )));
         }
@@ -5322,10 +5324,16 @@ fn observation_review_investigation(
     truncation: &ReviewContextTruncation,
 ) -> ReviewInvestigationPlan {
     let anchor = evidence.first().map(|item| &item.location);
-    let lookup_symbol = decision_facts
-        .unresolved
-        .iter()
-        .find_map(|question| review_question_lookup_symbol(question))
+    let lookup_symbol = decision_critical_origin(evidence)
+        .and_then(|_| evidence.first()?.enclosing_symbol.as_deref())
+        .filter(|symbol| is_plain_identifier(symbol))
+        .map(str::to_string)
+        .or_else(|| {
+            decision_facts
+                .unresolved
+                .iter()
+                .find_map(|question| review_question_lookup_symbol(question))
+        })
         .or_else(|| review_admission::preferred_lookup_symbol(evidence))
         .or_else(|| {
             review_lookup_symbol(
@@ -6724,7 +6732,7 @@ impl DecisionCriticalOrigin<'_> {
     }
 
     fn unresolved_question(self) -> String {
-        match self.boundary {
+        let question = match self.boundary {
             DecisionCriticalBoundary::Sql => format!(
                 "Is dynamic SQL operand `{}` used by this {} attacker-controlled at any production call site, or is it affirmatively restricted before composition to a fixed, numeric, enum, or exact allowlisted value?",
                 self.operand, self.style
@@ -6789,6 +6797,11 @@ impl DecisionCriticalOrigin<'_> {
                 "Can attacker-controlled input influence XPath expression `{}`, or is the expression fixed with untrusted values supplied only through bound variables or an exact allowlist?",
                 self.operand
             ),
+        };
+        if question.chars().count() > 300 {
+            format!("At this sink, {}", self.security_question())
+        } else {
+            question
         }
     }
 
@@ -21116,6 +21129,21 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn long_dynamic_operand_keeps_review_check_within_response_limit() {
+        let operand = "query_part".repeat(40);
+        let origin = DecisionCriticalOrigin {
+            boundary: DecisionCriticalBoundary::SqlOperand,
+            language: "Python",
+            style: "raw SQL query interpretation",
+            operand: &operand,
+            affirmatively_constrained: false,
+        };
+        let question = origin.unresolved_question();
+        assert!(question.len() <= 300);
+        assert!(question.contains("raw-query operand"));
+    }
 
     #[test]
     fn investigation_readiness_separates_repository_work_from_external_blockers() {
