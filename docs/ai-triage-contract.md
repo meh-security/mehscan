@@ -10,7 +10,7 @@ Mehscan scans source and prepares review leads. It does not assign security verd
 4. Run `mehscan investigate review-bundle-finalize --bundle REQUEST --draft DRAFT --journal-dir RUN/journals --output RESPONSE --source-root ROOT`. It attaches measured query counts and validates the response and source excerpts.
 5. Run `mehscan report --run RUN --responses RESPONSES --source-root ROOT --format json|sarif|markdown`. Only `issue` decisions become confirmed findings. `needs_review` remains an unresolved check.
 
-`issue` needs a demonstrated weakness on the selected operation. `not_issue` needs affirmative evidence that the relationship is safe or inapplicable. `needs_review` names the exact unavailable fact and how to obtain it. A scanner lead, missing file, empty query, truncated result, or nearby control does not settle that question by itself.
+`issue` needs a demonstrated weakness on the selected operation. An unparameterized SQL construction can qualify even when runtime or attacker reachability remains unresolved: use low confidence and state that exploitation is unproved. `not_issue` needs affirmative evidence that the relationship is safe or inapplicable. `needs_review` names the exact unavailable fact and how to obtain it. A scanner lead, missing file, empty query, truncated result, or nearby control does not settle that question by itself.
 
 The query journal records the complete lookup history. The response cites decisive evidence, including the selected anchor. Validation checks structure, anchors, citation links, and exact source text. The reviewer remains responsible for whether the cited facts support the verdict.
 

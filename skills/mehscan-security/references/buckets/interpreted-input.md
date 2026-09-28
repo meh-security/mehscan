@@ -10,7 +10,15 @@ scalar value.
   relevant argument. Fixed query text with bound values differs from text
   concatenation. Search the actual identifier used at call sites and treat
   text references as leads; check whether aliases, dynamic dispatch, or an
-  exposed wrapper leave a caller outside that inventory.
+  exposed wrapper leave a caller outside that inventory. When source shows a
+  variable inserted into executable SQL grammar without binding, report the
+  unsafe construction as `issue` even if runtime or attacker reachability
+  remains unproved after targeted checks. Use `low` confidence for that
+  uncertainty and say explicitly that exploitation is unproved; recommend
+  parameterization. Do not claim an exploitable SQL injection path without
+  evidence of the caller and input. A raw-query API alone, a fixed SQL template
+  with bound values, or a branch affirmatively excluded from the application
+  does not meet this rule.
 - **Command or executable:** Separate a fixed executable from its arguments.
   A command-line option proves the program accepts a value; inspect who
   controls the invocation before calling it attacker-controlled. In-repository
