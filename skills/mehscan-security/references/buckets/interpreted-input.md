@@ -27,7 +27,19 @@ scalar value.
   of a CLI entrypoint. If the executable still comes from an option and the
   invocation authority is unknown, name that missing fact in `needs_review`;
   do not close it as safe from the observed callers alone. Check shell
-  interpretation separately from direct process launch.
+  interpretation separately from direct process launch. If an unconstrained
+  variable is assembled into shell command text and a shell interprets it,
+  report that construction as `issue` with `low` confidence when CLI invocation
+  authority or runtime activation remains unknown. State that attacker control
+  and exploitation are unproved. Fixed executable plus separate arguments does
+  not meet this shell-construction rule.
+- **Code evaluation:** If an unconstrained variable becomes code passed to
+  `eval`, script compilation, or an equivalent evaluator, report the unsafe
+  construction as `issue` with `low` confidence when its caller or activation
+  is unknown. Identify the exact code operand and evaluator; do not infer
+  attacker control or claim remote code execution without its input path.
+  Fixed approved scripts and an effective same-path allowlist do not meet this
+  rule.
 - **BSON or structured query:** Determine whether request input controls
   keys/operators or only a value under a fixed key. Follow the exact decoded
   type, any preparation method, and filter passed to the database. If a
@@ -56,6 +68,7 @@ scalar value.
   before that parse.
 
 Stop when the relevant grammar/target is fixed or safely constrained, when a
-concrete lower-trust path reaches the dangerous interpretation, or when the SQL
-rule above establishes an unsafe construction despite unresolved exposure.
+concrete lower-trust path reaches the dangerous interpretation, or when one of
+the SQL, shell, or code-evaluation rules above establishes an unsafe
+construction despite unresolved exposure.
 For other unresolved wrapper callers or producers, name the exact missing edge.

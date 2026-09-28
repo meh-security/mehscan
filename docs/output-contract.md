@@ -121,9 +121,10 @@ A reported result uses one name for each concept:
 - optional decisive `checks`; and
 - compact review/evidence provenance.
 
-An `issue` can report a directly observed unsafe construction with low
-confidence when its runtime exposure remains unresolved. Its description must
-name that uncertainty; it must not claim a demonstrated exploit path.
+An `issue` can report a directly observed unsafe SQL, shell-command, or
+code-evaluation construction with low confidence when its runtime exposure
+remains unresolved. Its description must name that uncertainty; it must not
+claim a demonstrated exploit path.
 
 Severity is never derived from confidence or path state. Until a rule has an
 adjudicated severity default, JSON reports `medium` with

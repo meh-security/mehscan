@@ -44,7 +44,7 @@ if ($LASTEXITCODE -ne 0) { throw "candidate scan failed with exit code $LASTEXIT
 $scan = Get-Content -Raw -LiteralPath $scanPath | ConvertFrom-Json
 if ($scan.root -ne ".") { throw "candidate scan exposed a non-portable root: $($scan.root)" }
 
-$null = & $binary investigate review-bundles $fixturePath --output $runPath --max-reviews 20 --max-bytes 524288
+$null = & $binary investigate review-bundles $fixturePath --output $runPath --max-total-reviews 1
 if ($LASTEXITCODE -ne 0) { throw "review bundle generation failed with exit code $LASTEXITCODE" }
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $runPath "manifest.json") | ConvertFrom-Json
 if ($manifest.root -ne ".") { throw "bundle manifest exposed a non-portable root: $($manifest.root)" }
@@ -52,64 +52,49 @@ if ($manifest.root -ne ".") { throw "bundle manifest exposed a non-portable root
 foreach ($entry in $manifest.bundles) {
     $requestPath = Join-Path (Join-Path $runPath "requests") $entry.filename
     $responsePath = Join-Path (Join-Path $runPath "responses") $entry.filename
+    $draftPath = Join-Path $runPath ("draft-" + $entry.filename)
+    $journalDir = Join-Path $runPath "journals"
+    New-Item -ItemType Directory -Path $journalDir -Force | Out-Null
     $request = Get-Content -Raw -LiteralPath $requestPath | ConvertFrom-Json
     $results = foreach ($review in $request.reviews) {
-        $unresolved = @($review.decision_facts.unresolved | Where-Object { $_ })
-        $trace = [ordered]@{
-            lookup_attempts = @()
-            citations = @()
-            reviewer_inferences = @()
-            reviewer_origin_leads = @()
-            blockers = @()
-        }
-        if ($unresolved.Count -gt 0) {
-            $lookups = @($review.investigation.lookup_requests | Where-Object { $_ })
-            for ($index = 0; $index -lt $lookups.Count; $index++) {
-                if (@($lookups[$index].questions) -contains $unresolved[0]) {
-                    $trace.lookup_attempts = @([ordered]@{
-                        request_index = $index
-                        escalation = $null
-                        outcome = "unavailable"
-                        detail = "The synthetic end-to-end test did not execute this supplied lookup."
-                        artifacts = @()
-                    })
-                    break
-                }
-            }
-            if ($trace.lookup_attempts.Count -eq 0) {
-                $trace.blockers = @($review.investigation.blockers | Where-Object { $_ })
-            }
-            [ordered]@{
-                review_id = $review.id
-                decision = "needs_review"
-                confidence = $review.confidence_policy.needs_review
-                summary = "The supplied evidence leaves one decisive runtime fact unresolved."
-                checks = @($unresolved[0])
-                investigation = $trace
-            }
-        } else {
-            [ordered]@{
-                review_id = $review.id
-                decision = "issue"
-                confidence = $review.confidence_policy.issue
-                summary = "The supplied evidence establishes the reviewed weakness without an unresolved fact."
-                checks = @()
-                investigation = $trace
+        $anchor = if ($null -ne $review.candidate) { $review.candidate.sink.id } else { $review.anchor_evidence_ids[0] }
+        $location = if ($null -ne $review.candidate) { $review.candidate.sink.location } else { @($review.evidence | Where-Object { $_.id -eq $anchor })[0].location }
+        if (-not $anchor -or $null -eq $location) { throw "selected review has no source anchor: $($review.id)" }
+        $journalFile = Join-Path $journalDir "$($review.id).jsonl"
+        $null = & $binary investigate source $fixturePath --path $location.path --start-line $location.start.line --end-line $location.end.line --journal $journalFile
+        if ($LASTEXITCODE -ne 0) { throw "journaled source query failed for $($review.id)" }
+        [ordered]@{
+            review_id = $review.id
+            selected_anchor_id = $anchor
+            decision = "needs_review"
+            confidence = "low"
+            summary = "The selected operation needs a runtime check before this synthetic review can decide it."
+            checks = @("Confirm the decision-changing runtime behavior for this selected operation.")
+            investigation = [ordered]@{
+                decisive_artifacts = @()
+                journal_summary = $null
+                citations = @()
+                reviewer_inferences = @()
+                reviewer_origin_leads = @()
+                blockers = @()
             }
         }
     }
     $response = [ordered]@{
-        schema_version = "1.1"
+        schema_version = "1.3"
         bundle_fingerprint = $request.bundle_fingerprint
         results = @($results)
     }
     [IO.File]::WriteAllText(
-        $responsePath,
+        $draftPath,
         ($response | ConvertTo-Json -Depth 100),
         [Text.UTF8Encoding]::new($false)
     )
 
-    $validated = & $binary investigate review-bundle-triage --bundle $requestPath --responses $responsePath
+    $null = & $binary investigate review-bundle-finalize --bundle $requestPath --draft $draftPath --journal-dir $journalDir --output $responsePath --source-root $fixturePath
+    if ($LASTEXITCODE -ne 0) { throw "response finalization failed for $($entry.filename)" }
+
+    $validated = & $binary investigate review-bundle-triage --bundle $requestPath --responses $responsePath --source-root $fixturePath
     if ($LASTEXITCODE -ne 0) { throw "response validation failed for $($entry.filename)" }
     $triage = $validated | ConvertFrom-Json
     if (-not $triage.complete) { throw "response was incomplete for $($entry.filename)" }
