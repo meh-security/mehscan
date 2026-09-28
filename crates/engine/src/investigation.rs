@@ -4338,7 +4338,7 @@ fn path_review_triage_contract() -> ReviewTriageContract {
         instructions: vec![
             "Use schema 1.3. Resolve and cite the selected anchor for this exact operation; neighboring reviews are independent.",
             "Treat scanner facts and lookup suggestions as leads. Query the next decision-changing edge and journal each read-only Mehscan query.",
-            "Issue requires a shown weakness and no effective applicable control. A demonstrated unsafe SQL, shell-command, or code-evaluation construction may be an issue with low confidence when reachability is unresolved; state that exploitation is unproved. Not_issue requires affirmative disproof or an effective control on the same value and reachable branch.",
+            "Issue requires a shown weakness and no effective applicable control. Unsafe SQL, shell-command, or code-evaluation construction in an operation that should treat input as data may be an issue with low confidence when reachability is unresolved; exploitation is unproved. An intentional CLI command or evaluator option with unknown invocation authority remains needs_review. Not_issue requires affirmative disproof or an effective control on the same value and reachable branch.",
             "For needs_review, name the precise missing fact and the targeted check or external blocker. Do not invent runtime or deployment facts.",
             "Cite only decisive exact source in the response. Keep reviewer inference separate from scanner facts and retrieved text; follow the matching skill bucket for the specific security relationship.",
         ].into_iter().map(str::to_string).collect(),

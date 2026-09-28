@@ -122,9 +122,11 @@ A reported result uses one name for each concept:
 - compact review/evidence provenance.
 
 An `issue` can report a directly observed unsafe SQL, shell-command, or
-code-evaluation construction with low confidence when its runtime exposure
-remains unresolved. Its description must name that uncertainty; it must not
-claim a demonstrated exploit path.
+code-evaluation construction in an operation that should treat input as data,
+with low confidence when its runtime exposure remains unresolved. Its
+description must name that uncertainty; it must not claim a demonstrated
+exploit path. An intentional CLI command or evaluator option with unknown
+invocation authority remains `needs_review`.
 
 Severity is never derived from confidence or path state. Until a rule has an
 adjudicated severity default, JSON reports `medium` with
