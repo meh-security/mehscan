@@ -134,6 +134,82 @@ pub(crate) fn scan_escape_hatches(path: &str, source: &str) -> Vec<Evidence> {
         }
         cursor = close + 1;
     }
+    // Razor components render MarkupString without HTML encoding. Restrict this
+    // textual detector to expressions rendered directly in markup; constructing
+    // a value inside @code does not establish an output sink by itself.
+    let mut cursor = 0usize;
+    while let Some(relative) = source[cursor..].find("@(") {
+        let start = cursor + relative;
+        let open = start + 1;
+        cursor = open + 1;
+        if comments
+            .iter()
+            .any(|range| range.start <= start && start < range.end)
+            || start
+                .checked_sub(1)
+                .is_some_and(|offset| source.as_bytes()[offset] == b'@')
+        {
+            continue;
+        }
+        let Some(close) = matching_parenthesis(source, open) else {
+            continue;
+        };
+        let expression = trim_range(source, open + 1..close);
+        let value = if source[expression.clone()].starts_with("(MarkupString)") {
+            trim_range(
+                source,
+                expression.start + "(MarkupString)".len()..expression.end,
+            )
+        } else if let Some(prefix) = [
+            "new MarkupString(",
+            "new Microsoft.AspNetCore.Components.MarkupString(",
+        ]
+        .into_iter()
+        .find(|prefix| source[expression.clone()].starts_with(prefix))
+        {
+            let constructor_open = expression.start + prefix.len() - 1;
+            if matching_parenthesis(source, constructor_open) != Some(expression.end - 1) {
+                cursor = close + 1;
+                continue;
+            }
+            trim_range(source, constructor_open + 1..expression.end - 1)
+        } else {
+            cursor = close + 1;
+            continue;
+        };
+        if value.is_empty() {
+            cursor = close + 1;
+            continue;
+        }
+        let context = output_context(source, start);
+        let literal = is_plain_string_literal(&source[value.clone()]);
+        let mut tags = if literal {
+            literal_tags(&context)
+        } else {
+            sink_tags(&context, encoder_kind(source, &source[value.clone()]))
+        };
+        tags.push("blazor-markupstring".to_string());
+        evidence.push(make_evidence(
+            path,
+            source,
+            &(start..close + 1),
+            &value,
+            if literal {
+                "csharp-blazor-literal-markupstring-control"
+            } else {
+                "csharp-blazor-markupstring-raw-output"
+            },
+            if literal {
+                EvidenceKind::Validation
+            } else {
+                EvidenceKind::Sink
+            },
+            Capability::HtmlOutput,
+            tags,
+            Vec::new(),
+        ));
+        cursor = close + 1;
+    }
     evidence
 }
 
@@ -155,7 +231,11 @@ fn make_evidence(
         kind,
         capability,
         location: location(path, source, evidence_range.clone()),
-        enclosing_symbol: Some("Razor view".to_string()),
+        enclosing_symbol: Some(if path.ends_with(".razor") {
+            "Razor component".to_string()
+        } else {
+            "Razor view".to_string()
+        }),
         captures: BTreeMap::from([(
             if capability == Capability::HtmlOutput {
                 "html"
@@ -736,5 +816,15 @@ mod tests {
         assert_eq!(evidence.len(), 1);
         assert_eq!(evidence[0].location.start.line, 2);
         assert_eq!(evidence[0].captures["html"].text, "Model.Contents");
+    }
+
+    #[test]
+    fn finds_direct_blazor_markupstring_output() {
+        let source = "@page \"/pages\"\n@((MarkupString)Page.Contents)\n@(new MarkupString(model.Html))\n@* @((MarkupString)Hidden) *@\n@code { var value = new MarkupString(model.Other); }\n";
+        let evidence = scan_escape_hatches("Pages/Render.razor", source);
+        assert_eq!(evidence.len(), 2);
+        assert!(evidence.iter().all(|item| item.kind == EvidenceKind::Sink));
+        assert_eq!(evidence[0].captures["html"].text, "Page.Contents");
+        assert_eq!(evidence[1].captures["html"].text, "model.Html");
     }
 }

@@ -1111,7 +1111,7 @@ fn receiver_has_type(
     receiver: &str,
     predicate: fn(&str) -> bool,
 ) -> bool {
-    if root.dfs().any(|node| {
+    let field_has_type = root.dfs().any(|node| {
         node.kind().as_ref() == "field_declaration"
             && node
                 .dfs()
@@ -1124,9 +1124,7 @@ fn receiver_has_type(
                         .field("name")
                         .is_some_and(|name| name.text().trim() == receiver)
             })
-    }) {
-        return true;
-    }
+    });
     let scope = scope_range(use_site, root);
     let before = use_site.range().start;
     let mut events = root
@@ -1140,7 +1138,41 @@ fn receiver_has_type(
         .filter_map(|node| receiver_type_event(node, receiver, predicate))
         .collect::<Vec<_>>();
     events.sort_by_key(|(offset, _)| *offset);
-    events.last().is_some_and(|(_, proven)| *proven)
+    if let Some((_, proven)) = events.last() {
+        return *proven;
+    }
+    primary_constructor_parameter_has_type(use_site, receiver, predicate) || field_has_type
+}
+
+fn primary_constructor_parameter_has_type(
+    use_site: &Node<'_, StrDoc<SupportLang>>,
+    receiver: &str,
+    predicate: fn(&str) -> bool,
+) -> bool {
+    use_site
+        .ancestors()
+        .find(|node| {
+            matches!(
+                node.kind().as_ref(),
+                "class_declaration" | "struct_declaration" | "record_declaration"
+            )
+        })
+        .and_then(|declaration| {
+            declaration
+                .children()
+                .find(|child| child.kind().as_ref() == "parameter_list")
+        })
+        .is_some_and(|parameters| {
+            parameters.dfs().any(|parameter| {
+                parameter.kind().as_ref() == "parameter"
+                    && parameter
+                        .field("name")
+                        .is_some_and(|name| name.text().trim() == receiver)
+                    && parameter
+                        .field("type")
+                        .is_some_and(|kind| predicate(kind.text().as_ref()))
+            })
+        })
 }
 
 fn receiver_is_database_connection(

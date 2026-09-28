@@ -45,7 +45,7 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
             FileClass::Supported(Language::Cpp)
         }
         "cs" => FileClass::Supported(Language::Csharp),
-        "cshtml" => FileClass::Razor,
+        "cshtml" | "razor" => FileClass::Razor,
         "aspx" | "ascx" => FileClass::WebForms,
         "java" => FileClass::Supported(Language::Java),
         "kt" | "kts" => FileClass::Supported(Language::Kotlin),
@@ -62,7 +62,7 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
         | "sql" | "graphql" | "sh" | "bash" | "zsh" | "ps1" | "pug" | "hbs" => {
             FileClass::SecretOnly
         }
-        "rb" | "scala" | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => {
+        "as" | "rb" | "scala" | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => {
             FileClass::UnsupportedSource
         }
         _ => FileClass::Ignored,

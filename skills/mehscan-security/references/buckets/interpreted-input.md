@@ -54,6 +54,7 @@ scalar value.
   A sanitizer or validator matters only when it constrains that same value
   before that parse.
 
-Stop when the relevant grammar/target is fixed or safely constrained, or when
-a concrete lower-trust path reaches the dangerous interpretation. If a wrapper
-caller or producer remains unknown, name that exact edge.
+Stop when the relevant grammar/target is fixed or safely constrained, when a
+concrete lower-trust path reaches the dangerous interpretation, or when the SQL
+rule above establishes an unsafe construction despite unresolved exposure.
+For other unresolved wrapper callers or producers, name the exact missing edge.

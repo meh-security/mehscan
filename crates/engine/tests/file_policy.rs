@@ -11,6 +11,68 @@ fn fixture_root() -> PathBuf {
 }
 
 #[test]
+fn ordinary_excluded_extensions_are_counted_without_per_file_ledger_entries() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-omitted-coverage-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir(&root).expect("temporary fixture directory");
+    for index in 0..4 {
+        fs::write(root.join(format!("asset_{index}.as")), "").expect("ignored file");
+    }
+    for index in 0..2 {
+        fs::write(root.join(format!("script_{index}.rb")), "").expect("unsupported file");
+    }
+    for index in 0..3 {
+        fs::write(root.join(format!("image_{index}.png")), "").expect("non-source file");
+    }
+    fs::write(root.join("settings.json"), "{}\n").expect("secret-only text file");
+    fs::write(root.join("app.cs"), "class App { }\n").expect("supported file");
+
+    let result = mehscan_engine::scan_path(&root).expect("directory scan");
+    assert_eq!(result.coverage.totals.discovered, 11);
+    assert_eq!(result.coverage.totals.ignored, 4);
+    assert_eq!(result.coverage.totals.unsupported, 6);
+    assert_eq!(result.coverage.files.len(), 1);
+    assert_eq!(result.coverage.files[0].path, "app.cs");
+    assert_eq!(
+        result.coverage.omitted_files_by_extension[".as"].unsupported_source,
+        4
+    );
+    assert_eq!(
+        result.coverage.omitted_files_by_extension[".png"].non_source,
+        3
+    );
+    assert_eq!(
+        result.coverage.omitted_files_by_extension[".json"].secret_scan_disabled,
+        1
+    );
+    assert_eq!(
+        result.coverage.omitted_files_by_extension[".rb"].unsupported_source,
+        2
+    );
+    let omitted = result
+        .coverage
+        .omitted_files_by_extension
+        .values()
+        .map(|group| group.non_source + group.secret_scan_disabled + group.unsupported_source)
+        .sum::<usize>();
+    assert_eq!(
+        result.coverage.files.len() + omitted,
+        result.coverage.totals.discovered
+    );
+
+    let single = mehscan_engine::scan_path(root.join("asset_0.as")).expect("single-file scan");
+    assert_eq!(single.coverage.files.len(), 1);
+    assert_eq!(single.coverage.files[0].status, FileStatus::Unsupported);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn ignores_secret_only_text_when_secret_scanning_is_disabled() {
     let result = mehscan_engine::scan_path(fixture_root()).expect("fixture should scan");
 

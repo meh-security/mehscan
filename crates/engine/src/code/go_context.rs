@@ -359,6 +359,16 @@ impl GoProjectContext {
                         | "Distinct"
                         | "Table"
                 )
+                // Gin and other routers also use Group("/path"). A literal
+                // route path is not a SQL GROUP BY expression, even when the
+                // same file imports GORM for unrelated database setup.
+                && !(terminal_name(&call.callee) == "Group"
+                    && call.arguments.first().is_some_and(|argument| {
+                        let text = argument.text();
+                        let text = text.trim();
+                        (text.starts_with("\"/") && text.ends_with('"'))
+                            || (text.starts_with("`/") && text.ends_with('`'))
+                    }))
             {
                 let mut captures = capture_first(path, "query", call);
                 let structured_where = terminal_name(&call.callee) == "Where"
@@ -1205,6 +1215,11 @@ fn collect_mongo_summaries(
     source: &str,
     summaries: &mut BTreeMap<String, Vec<Vec<MongoParameterSummary>>>,
 ) {
+    // A Find/FindOne call alone does not identify a MongoDB helper. Keep
+    // project summaries within source files that actually import the driver.
+    if !source.contains("go.mongodb.org/mongo-driver/") {
+        return;
+    }
     let mut cursor = 0usize;
     while let Some(relative) = source[cursor..].find("func ") {
         let start = cursor + relative;
@@ -1647,6 +1662,7 @@ func Routes(router *mux.Router) {
     fn keeps_only_unique_mongo_function_summaries() {
         let source = r#"
 package api
+import "go.mongodb.org/mongo-driver/mongo"
 func Lookup(client *mongo.Client, filter bson.M) error {
   return client.Database("x").Collection("y").FindOne(ctx, filter).Err()
 }
@@ -1661,6 +1677,19 @@ func Lookup(client *mongo.Client, filter bson.M) error {
                 dynamic_object: true,
             }])
         );
+    }
+
+    #[test]
+    fn does_not_infer_mongo_helpers_from_unrelated_find_methods() {
+        let source = r#"
+package api
+func Lookup(db *gorm.DB, filter interface{}) error {
+  return db.Find(&filter).Error
+}
+"#;
+        let context =
+            GoProjectContext::from_sources(std::iter::once(("model.go", Language::Go, source)));
+        assert!(context.mongo_parameter_summaries.is_empty());
     }
 
     #[test]
