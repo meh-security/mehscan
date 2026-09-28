@@ -6,7 +6,6 @@ use ast_grep_language::SupportLang;
 use mehscan_core::{
     Evidence, EvidenceKind, Language, Location, Position, QueryProvenance, Resolution,
     ReviewNeighborhood, ReviewNeighborhoodFact, ReviewNeighborhoodVerification,
-    ReviewTriageContract,
 };
 
 const ENGINE: &str = "mehscan csharp-review-neighborhood 1";
@@ -250,78 +249,6 @@ pub(crate) fn build<'a>(
     let truncated = neighborhoods.len() > max_neighborhoods;
     neighborhoods.truncate(max_neighborhoods);
     (neighborhoods, truncated)
-}
-
-pub(crate) fn triage_contract() -> ReviewTriageContract {
-    ReviewTriageContract {
-        response_fields: vec![
-            "neighborhood_id".to_string(),
-            "decision".to_string(),
-            "confidence".to_string(),
-            "summary".to_string(),
-            "checks".to_string(),
-        ],
-        decisions: vec![
-            "issue".to_string(),
-            "not_issue".to_string(),
-            "needs_review".to_string(),
-        ],
-        confidence_levels: vec!["high".to_string(), "medium".to_string(), "low".to_string()],
-        instructions: vec![
-            "Make a final decision from the supplied facts; the scanner has not made one."
-                .to_string(),
-            "Use needs_review only when a named missing fact could change the decision."
-                .to_string(),
-            "Keep summary to two sentences. Use checks only for needs_review and keep them to the smallest decisive set."
-                .to_string(),
-        ],
-    }
-}
-
-pub(crate) fn fingerprint(
-    neighborhoods: &[ReviewNeighborhood],
-    contract: &ReviewTriageContract,
-) -> String {
-    let mut hash = 0xcbf29ce484222325u64;
-    for value in contract
-        .response_fields
-        .iter()
-        .chain(&contract.decisions)
-        .chain(&contract.confidence_levels)
-        .chain(&contract.instructions)
-    {
-        hash_text(&mut hash, value);
-    }
-    for neighborhood in neighborhoods {
-        hash_text(&mut hash, &neighborhood.id);
-        hash_text(&mut hash, &neighborhood.key);
-        hash_text(&mut hash, &neighborhood.candidate);
-        hash_text(&mut hash, &neighborhood.cwe);
-        for evidence_id in &neighborhood.anchor_evidence_ids {
-            hash_text(&mut hash, evidence_id);
-        }
-        for fact in &neighborhood.facts {
-            hash_text(&mut hash, &fact.role);
-            hash_text(&mut hash, &fact.symbol);
-            hash_text(&mut hash, &fact.location.path);
-            hash_text(&mut hash, &fact.location.start.byte_offset.to_string());
-            hash_text(&mut hash, &fact.location.end.byte_offset.to_string());
-            hash_text(&mut hash, &fact.excerpt);
-            hash_text(&mut hash, fact.evidence_id.as_deref().unwrap_or("<null>"));
-            hash_text(&mut hash, &format!("{:?}", fact.provenance.resolution));
-            hash_text(&mut hash, &fact.provenance.engine);
-        }
-        for question in &neighborhood.open_questions {
-            hash_text(&mut hash, question);
-        }
-    }
-    format!("csharp-reviewpack-{hash:016x}")
-}
-
-fn hash_text(hash: &mut u64, text: &str) {
-    for byte in text.bytes().chain(std::iter::once(0xff)) {
-        *hash = (*hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
-    }
 }
 
 fn catalog_file(path: &str, source: &str, catalog: &mut ProjectCatalog) {

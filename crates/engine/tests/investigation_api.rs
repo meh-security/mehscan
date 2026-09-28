@@ -43,6 +43,10 @@ fn supports_bounded_ai_investigation_workflow() {
         "def review(command):\n    sp.Popen(command)\n    launch(command)\n"
     );
 
+    let enclosing = mehscan_engine::investigation::get_enclosing_at(&root, "python/aliases.py", 6)
+        .expect("known location should have an enclosing symbol");
+    assert_eq!(enclosing.results.symbol.unwrap().name, "review");
+
     let evidence = mehscan_engine::investigation::find_evidence(
         &root,
         EvidenceFilter {
@@ -79,10 +83,36 @@ fn supports_bounded_ai_investigation_workflow() {
     assert_eq!(imports.results.len(), 2);
     assert!(imports.results.iter().all(|item| item.is_import));
 
-    let references = mehscan_engine::investigation::find_text_references(&root, "launch", None)
-        .expect("reference lookup should succeed");
+    let references =
+        mehscan_engine::investigation::find_text_references(&root, "launch", None, None)
+            .expect("reference lookup should succeed");
     assert_eq!(references.provenance.resolution, Resolution::Textual);
     assert_eq!(references.results.len(), 2);
+
+    let paths = mehscan_engine::investigation::find_source_paths(&root, "aliases.py", None)
+        .expect("path navigation should succeed");
+    assert_eq!(paths.results, vec!["python/aliases.py"]);
+    assert!(
+        mehscan_engine::investigation::find_source_paths(&root, "missing-view.pug", None)
+            .expect("missing path search should succeed")
+            .results
+            .is_empty()
+    );
+
+    let scoped = mehscan_engine::investigation::find_text_references(
+        &root,
+        "launch",
+        Some("python/aliases.py"),
+        None,
+    )
+    .expect("scoped reference search should succeed");
+    assert!(!scoped.results.is_empty());
+    assert!(
+        scoped
+            .results
+            .iter()
+            .all(|item| item.location.path == "python/aliases.py")
+    );
 
     let structural = mehscan_engine::investigation::run_structural_query(
         &root,
@@ -218,6 +248,40 @@ fn rejects_unbounded_or_out_of_root_requests() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn selected_source_reads_keep_repository_ignore_rules() {
+    let root = std::env::temp_dir().join(format!("mehscan-selected-source-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src/private")).unwrap();
+    std::fs::write(root.join(".gitignore"), "src/private/\n").unwrap();
+    std::fs::write(
+        root.join("src/public.ts"),
+        "export const publicValue = 1;\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/private/hidden.ts"),
+        "export const secret = 1;\n",
+    )
+    .unwrap();
+    let public = mehscan_engine::investigation::get_source(&root, "src/public.ts", 1, 1)
+        .expect("admitted source should be readable");
+    assert_eq!(public.results.text, "export const publicValue = 1;\n");
+    assert!(
+        mehscan_engine::investigation::get_source(&root, "src/private/hidden.ts", 1, 1).is_err()
+    );
+    assert!(
+        mehscan_engine::investigation::find_text_references(
+            &root,
+            "secret",
+            Some("src/private/hidden.ts"),
+            None,
+        )
+        .is_err()
+    );
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]

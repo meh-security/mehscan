@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::Path;
@@ -23,26 +24,24 @@ use mehscan_core::{
     PathReviewBasis, PathReviewBundle, PathReviewBundleCategory, PathReviewBundleIssueGroup,
     PathReviewBundleManifest, PathReviewBundleManifestEntry, PathReviewBundlePayload,
     PathReviewBundleResponseSet, PathReviewBundleRunReport, PathReviewBundleSet,
-    PathReviewBundleTriageReport, PathReviewEvidenceBasis, PathReviewIssueGroup, PathReviewJob,
-    PathReviewTask, PathReviewTaskPage, PathReviewTaskPayload, PathReviewTriageProgress,
-    PathReviewTriageReport, PathReviewTriageResponseSet, PathReviewTriageResult, Position,
-    Provenance, QueryProvenance, QueryResponse, REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
-    RelationContract, RelationshipFunnel, RelationshipFunnelCapability, ReportedFinding,
-    ReportedSeverity, Resolution, ResourcePolicyState, ReviewAdmissionAudit,
-    ReviewAdmissionAuditCount, ReviewAdmissionAuditExample, ReviewAdmissionDisposition,
-    ReviewConfidence, ReviewConfidencePolicy, ReviewContextTruncation, ReviewDecision,
-    ReviewDecisionFacts, ReviewFamilyMeasurement, ReviewInvestigationBudget,
-    ReviewInvestigationPlan, ReviewInvestigationTrace, ReviewLookupOutcome, ReviewLookupRequest,
-    ReviewNeighborhoodFact, ReviewNeighborhoodJob, ReviewPipelineCoverage, ReviewReadiness,
-    ReviewRepairTrace, ReviewTriageContract, ReviewTriageReport, ReviewTriageResponseSet,
-    ReviewWorkSummary, ReviewerOriginLeadRecord, Rule, RuntimeEnvironment, SCHEMA_VERSION,
-    SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
-    StructuralMatch, TextReference,
+    PathReviewBundleTriageReport, PathReviewEvidenceBasis, PathReviewJob, PathReviewTask,
+    PathReviewTaskPage, PathReviewTaskPayload, PathReviewTriageResult, Position, Provenance,
+    QueryProvenance, QueryResponse, RelationContract, RelationshipFunnel,
+    RelationshipFunnelCapability, ReportedFinding, ReportedSeverity, Resolution,
+    ResourcePolicyState, ReviewAdmissionAudit, ReviewAdmissionAuditCount,
+    ReviewAdmissionAuditExample, ReviewAdmissionDisposition, ReviewConfidence,
+    ReviewContextTruncation, ReviewDecision, ReviewDecisionFacts, ReviewFamilyMeasurement,
+    ReviewInvestigationPlan, ReviewInvestigationTrace, ReviewLookupRequest, ReviewNeighborhoodFact,
+    ReviewPipelineCoverage, ReviewReadiness, ReviewTriageContract, ReviewWorkSummary,
+    ReviewerOriginLeadRecord, Rule, RuntimeEnvironment, SCHEMA_VERSION, SecurityPathState,
+    SecurityPathStepKind, Severity, SeveritySource, SourceSlice, StructuralMatch, TextReference,
 };
 
 mod review_admission;
 
-use crate::repository::{FileClass, discover, is_sast_excluded_source};
+use crate::repository::{
+    Discovery, FileClass, discover, discover_selected, is_sast_excluded_source,
+};
 use crate::rules::parser_language;
 use crate::{EngineError, code::executable_deserializer, csharp_review, scan_path};
 
@@ -50,7 +49,7 @@ const DEFAULT_RESULT_LIMIT: usize = 200;
 const MAX_RESULT_LIMIT: usize = 1_000;
 const MAX_SOURCE_LINES: usize = 400;
 const MAX_SOURCE_BYTES: usize = 64 * 1024;
-const MAX_REVIEW_PRIMARY_CONTEXT_BYTES: usize = 16 * 1024;
+const MAX_REVIEW_PRIMARY_CONTEXT_BYTES: usize = 4 * 1024;
 const DEFAULT_UNIT_LIMIT: usize = 25;
 const MAX_UNIT_LIMIT: usize = 100;
 const DEFAULT_CONTEXT_LINES: usize = 20;
@@ -108,6 +107,9 @@ struct ReviewContextIndex {
     usages: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
     frameworks: Vec<FrameworkContextFact>,
     authorizations: Vec<FrameworkContextFact>,
+    owned_definitions: RefCell<BTreeMap<(Vec<String>, String, String, usize), bool>>,
+    csharp_receiver_types: RefCell<BTreeMap<(String, String), Option<String>>>,
+    csharp_qualified_parents: RefCell<BTreeMap<(String, String), Option<String>>>,
 }
 
 #[derive(Clone)]
@@ -204,7 +206,7 @@ pub fn get_file_outline(
     root: &Path,
     path: &str,
 ) -> Result<QueryResponse<FileOutline>, EngineError> {
-    let sources = RepositorySources::load(root)?;
+    let sources = RepositorySources::load_selected(root, path)?;
     let file = sources.file(path)?;
     let language = file.language.ok_or_else(|| {
         EngineError(format!(
@@ -237,7 +239,7 @@ pub fn get_source(
             "source range must use one-based lines with end >= start".to_string(),
         ));
     }
-    let sources = RepositorySources::load(root)?;
+    let sources = RepositorySources::load_selected(root, path)?;
     let file = sources.file(path)?;
     let (slice, truncated) = source_slice(file, start_line, end_line)?;
     Ok(response(
@@ -276,6 +278,41 @@ pub fn get_enclosing_symbol(
         false,
         EnclosingSymbolResult {
             evidence_id: evidence_id.to_string(),
+            symbol,
+        },
+    ))
+}
+
+/// Navigate to the smallest enclosing symbol when the bundle already supplies
+/// an exact file and one-based line. This avoids rescanning to resolve an ID.
+pub fn get_enclosing_at(
+    root: &Path,
+    path: &str,
+    line: usize,
+) -> Result<QueryResponse<EnclosingSymbolResult>, EngineError> {
+    if line == 0 {
+        return Err(EngineError("enclosing line must be one-based".to_string()));
+    }
+    let sources = RepositorySources::load_selected(root, path)?;
+    let file = sources.file(path)?;
+    if file.language.is_none() {
+        return Err(EngineError(format!(
+            "file {:?} is text-only and has no enclosing symbol",
+            file.path
+        )));
+    }
+    let symbol = OutlineExtractors::build()?
+        .extract(file)?
+        .into_iter()
+        .filter(|symbol| symbol.location.start.line <= line && symbol.location.end.line >= line)
+        .min_by_key(|symbol| symbol.location.end.byte_offset - symbol.location.start.byte_offset);
+    Ok(response(
+        &sources.root,
+        "get_enclosing_at",
+        ast_provenance("ast-grep-outline 0.45.1"),
+        false,
+        EnclosingSymbolResult {
+            evidence_id: format!("{}:{line}", file.path),
             symbol,
         },
     ))
@@ -462,38 +499,6 @@ fn relationship_anchor(
     ))
 }
 
-pub fn build_csharp_review_neighborhoods(
-    root: &Path,
-    limit: Option<usize>,
-) -> Result<ReviewNeighborhoodJob, EngineError> {
-    let max_neighborhoods = bounded_unit_limit(limit)?;
-    let scan = scan_path(root)?;
-    let sources = RepositorySources::load(root)?;
-    let (neighborhoods, truncated) = crate::csharp_review::build(
-        &scan.evidence,
-        sources
-            .files
-            .values()
-            .map(|file| (file.path.as_str(), file.language, file.source.as_str())),
-        max_neighborhoods,
-    );
-    let triage_contract = crate::csharp_review::triage_contract();
-    let fingerprint = crate::csharp_review::fingerprint(&neighborhoods, &triage_contract);
-    Ok(ReviewNeighborhoodJob {
-        schema_version: SCHEMA_VERSION.to_string(),
-        root: scan.root,
-        operation: "build_csharp_review_neighborhoods".to_string(),
-        language: Language::Csharp,
-        fingerprint,
-        triage_contract,
-        max_neighborhoods,
-        truncated,
-        neighborhoods,
-        coverage: scan.coverage,
-        diagnostics: scan.diagnostics,
-    })
-}
-
 pub fn build_path_review_jobs(
     root: &Path,
     context_lines: Option<usize>,
@@ -519,6 +524,7 @@ pub fn build_path_review_jobs_page(
         Some(max_reviews),
         offset,
         include_review_material,
+        None,
     )
 }
 
@@ -529,7 +535,40 @@ pub fn build_all_path_review_jobs(
     context_lines: Option<usize>,
     include_review_material: bool,
 ) -> Result<PathReviewJob, EngineError> {
-    build_path_review_jobs_internal(root, context_lines, None, 0, include_review_material)
+    build_path_review_jobs_internal(root, context_lines, None, 0, include_review_material, None)
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ReviewJobProfile {
+    pub scan_milliseconds: u128,
+    pub source_load_milliseconds: u128,
+    pub context_admission_milliseconds: u128,
+    pub path_reviews_milliseconds: u128,
+    pub observation_reviews_milliseconds: u128,
+    pub observation_index_milliseconds: u128,
+    pub observation_pre_origin_milliseconds: u128,
+    pub observation_origin_milliseconds: u128,
+    pub observation_post_origin_milliseconds: u128,
+    pub observation_review_count: usize,
+    pub finalization_milliseconds: u128,
+    pub total_milliseconds: u128,
+}
+
+pub fn build_all_path_review_jobs_profiled(
+    root: &Path,
+    context_lines: Option<usize>,
+    include_review_material: bool,
+) -> Result<(PathReviewJob, ReviewJobProfile), EngineError> {
+    let mut profile = ReviewJobProfile::default();
+    let job = build_path_review_jobs_internal(
+        root,
+        context_lines,
+        None,
+        0,
+        include_review_material,
+        Some(&mut profile),
+    )?;
+    Ok((job, profile))
 }
 
 fn build_path_review_jobs_internal(
@@ -538,10 +577,19 @@ fn build_path_review_jobs_internal(
     max_reviews: Option<usize>,
     offset: usize,
     include_review_material: bool,
+    mut profile: Option<&mut ReviewJobProfile>,
 ) -> Result<PathReviewJob, EngineError> {
+    let started = std::time::Instant::now();
     let context_lines =
         bounded_context_lines(context_lines.or(Some(DEFAULT_REVIEW_CONTEXT_LINES)))?;
     let scan = scan_path(root)?;
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.scan_milliseconds = started.elapsed().as_millis();
+        eprintln!(
+            "review-bundles phase scan: {} ms",
+            profile.scan_milliseconds
+        );
+    }
     let report = CandidateReport::from_scan(&scan)
         .map_err(|error| EngineError(format!("could not build candidate report: {error}")))?;
     let rules = crate::rules::load_builtin_rules()?;
@@ -555,6 +603,14 @@ fn build_path_review_jobs_internal(
         .map(|evidence| (evidence.id.as_str(), evidence))
         .collect::<BTreeMap<_, _>>();
     let sources = RepositorySources::load(root)?;
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.source_load_milliseconds =
+            started.elapsed().as_millis() - profile.scan_milliseconds;
+        eprintln!(
+            "review-bundles phase source load: {} ms",
+            profile.source_load_milliseconds
+        );
+    }
     let (csharp_neighborhoods, _) = csharp_review::build(
         &scan.evidence,
         sources
@@ -625,6 +681,15 @@ fn build_path_review_jobs_internal(
     let indexed_references =
         review_reference_tokens(&candidates, &sources, &evidence_by_id, context_lines);
     let review_context = ReviewContextIndex::build(&sources, &indexed_references)?;
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.context_admission_milliseconds = started.elapsed().as_millis()
+            - profile.scan_milliseconds
+            - profile.source_load_milliseconds;
+        eprintln!(
+            "review-bundles phase context index and admission: {} ms",
+            profile.context_admission_milliseconds
+        );
+    }
     candidates.retain(|candidate| {
         !csharp_redirect_helper_query_only_candidate(
             candidate,
@@ -993,6 +1058,10 @@ fn build_path_review_jobs_internal(
             review_context.authorization_facts(&candidate_paths, &authorization_anchors, 8);
         context_truncated |= authorization_truncated;
         facts.append(&mut authorization_facts);
+        let (excerpt_truncated, excerpt_critical) =
+            cap_review_fact_excerpts(&sources, &mut facts, &candidate.primary_location);
+        context_truncated |= excerpt_truncated;
+        decision_critical_context_truncated |= excerpt_critical;
         sort_review_facts(&mut facts);
         let has_configuration = facts
             .iter()
@@ -1024,7 +1093,6 @@ fn build_path_review_jobs_internal(
             &truncation,
             &facts,
         );
-        let confidence_policy = path_confidence_policy(&candidate, &decision_facts, &truncation);
         assign_review_fact_artifact_ids(&mut facts);
         reviews.push(PathReview {
             id: candidate.id.replacen("path-", "review-", 1),
@@ -1033,12 +1101,21 @@ fn build_path_review_jobs_internal(
             review_basis: Some(review_basis),
             decision_facts,
             investigation,
-            confidence_policy,
             facts,
             open_questions,
             context_truncated,
             truncation,
         });
+    }
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.path_reviews_milliseconds = started.elapsed().as_millis()
+            - profile.scan_milliseconds
+            - profile.source_load_milliseconds
+            - profile.context_admission_milliseconds;
+        eprintln!(
+            "review-bundles phase path reviews: {} ms",
+            profile.path_reviews_milliseconds
+        );
     }
     let remaining = max_reviews.saturating_sub(reviews.len());
     let observation_start = offset.saturating_sub(candidate_count);
@@ -1056,8 +1133,20 @@ fn build_path_review_jobs_internal(
             context_lines,
             &rules_by_id,
             &review_context.frameworks,
+            profile.as_deref_mut(),
         )?
     };
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.observation_reviews_milliseconds = started.elapsed().as_millis()
+            - profile.scan_milliseconds
+            - profile.source_load_milliseconds
+            - profile.context_admission_milliseconds
+            - profile.path_reviews_milliseconds;
+        eprintln!(
+            "review-bundles phase observation reviews: {} ms",
+            profile.observation_reviews_milliseconds
+        );
+    }
     let returned_reviews = reviews.len() + observation_reviews.len();
     let next_offset =
         (offset + returned_reviews < total_reviews).then_some(offset + returned_reviews);
@@ -1091,6 +1180,15 @@ fn build_path_review_jobs_internal(
             ReviewReadiness::Investigation => review_coverage.investigation_ready_review_count += 1,
             ReviewReadiness::Blocked => review_coverage.blocked_review_count += 1,
         }
+    }
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.total_milliseconds = started.elapsed().as_millis();
+        profile.finalization_milliseconds = profile.total_milliseconds
+            - profile.scan_milliseconds
+            - profile.source_load_milliseconds
+            - profile.context_admission_milliseconds
+            - profile.path_reviews_milliseconds
+            - profile.observation_reviews_milliseconds;
     }
     Ok(PathReviewJob {
         schema_version: SCHEMA_VERSION.to_string(),
@@ -1127,48 +1225,6 @@ fn is_closed_native_ownership_proof(capability: Capability, state: SecurityPathS
                 | Capability::CppHeapDeallocation
                 | Capability::CppRaiiOwner
         )
-}
-
-pub fn validate_path_review_triage(
-    job: &PathReviewJob,
-    responses: &PathReviewTriageResponseSet,
-) -> Result<PathReviewTriageReport, EngineError> {
-    let missing = validate_path_review_response_subset(job, responses)?;
-    if !missing.is_empty() {
-        return Err(EngineError(format!(
-            "path-review triage is missing reviews: {}",
-            missing.join(", ")
-        )));
-    }
-    let issue_groups = path_review_issue_groups(job, responses);
-    Ok(PathReviewTriageReport {
-        schema_version: responses.schema_version.clone(),
-        job_fingerprint: job.fingerprint.clone(),
-        response_fingerprint: review_response_fingerprint(
-            &responses.schema_version,
-            &responses.job_fingerprint,
-            &responses.results,
-            None,
-        ),
-        issue_count: responses
-            .results
-            .iter()
-            .filter(|result| result.decision == ReviewDecision::Issue)
-            .count(),
-        not_issue_count: responses
-            .results
-            .iter()
-            .filter(|result| result.decision == ReviewDecision::NotIssue)
-            .count(),
-        needs_review_count: responses
-            .results
-            .iter()
-            .filter(|result| result.decision == ReviewDecision::NeedsReview)
-            .count(),
-        issue_group_count: issue_groups.len(),
-        issue_groups,
-        results: responses.results.clone(),
-    })
 }
 
 pub fn path_review_tasks(job: &PathReviewJob) -> PathReviewTaskPage {
@@ -1362,7 +1418,7 @@ pub fn build_path_review_bundles_with_run_limit(
         // Persist a relocatable logical root; review locations are already
         // repository-relative and must not disclose the local checkout path.
         root: ".".to_string(),
-        coverage: Some(job.coverage.totals.clone()),
+        coverage: job.coverage.totals.clone(),
         scope: review_scope(job),
         operation: "build_path_review_bundles".to_string(),
         job_fingerprint: job.fingerprint.clone(),
@@ -1476,6 +1532,17 @@ pub fn validate_path_review_bundle_response(
     bundle: &PathReviewBundle,
     responses: &PathReviewBundleResponseSet,
 ) -> Result<PathReviewBundleTriageReport, EngineError> {
+    if bundle.schema_version != PATH_REVIEW_BUNDLE_SCHEMA_VERSION
+        || bundle.playbook_version != "triage-buckets-v3"
+        || bundle
+            .review_ids
+            .iter()
+            .any(|id| !bundle.review_playbooks.contains_key(id))
+    {
+        return Err(EngineError(
+            "unsupported or incomplete review bundle contract".to_string(),
+        ));
+    }
     if !supported_path_review_response_schema(&responses.schema_version) {
         return Err(EngineError(format!(
             "unsupported path-review bundle response schema {:?}",
@@ -1512,50 +1579,38 @@ pub fn validate_path_review_bundle_response(
             &result.summary,
             &result.checks,
         )?;
-        if path_review_schema_has_investigation_trace(&responses.schema_version) {
-            let trace = result.investigation.as_ref().ok_or_else(|| {
-                EngineError(format!(
-                    "path-review response schema {} requires an investigation trace for {:?}",
-                    PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, result.review_id
-                ))
-            })?;
-            let (plan, supplied_artifact_ids) =
-                bundle_review_investigation_context(bundle, &result.review_id)?;
-            validate_review_investigation_trace(
-                &responses.schema_version,
-                &result.review_id,
-                result.decision,
-                &result.checks,
-                plan,
-                &supplied_artifact_ids,
-                trace,
-            )?;
-        }
-        let expected_confidence = bundle_review_confidence_policy(bundle, &result.review_id)
-            .map(|policy| confidence_for_decision(policy, result.decision))
-            .ok_or_else(|| {
-                EngineError(format!(
-                    "path-review bundle has no confidence policy for {:?}",
-                    result.review_id
-                ))
-            })?;
-        if result.confidence != expected_confidence {
+        let expected = bundle_selected_anchor_id(bundle, &result.review_id)?;
+        if result.selected_anchor_id.as_deref() != Some(expected) {
             return Err(EngineError(format!(
-                "confidence for {:?} must be {:?} for the selected {:?} decision",
-                result.review_id, expected_confidence, result.decision
+                "review {:?} selected anchor must be {:?}; the verdict must address that sink or observation, not adjacent evidence",
+                result.review_id, expected
             )));
         }
-        if result.decision == ReviewDecision::NeedsReview {
-            let unresolved = bundle_unresolved_facts(bundle, &result.review_id)?;
-            for check in &result.checks {
-                if !unresolved.iter().any(|fact| fact.trim() == check.trim()) {
-                    return Err(EngineError(format!(
-                        "needs_review check for {:?} must copy an exact supplied decision_facts.unresolved entry",
-                        result.review_id
-                    )));
-                }
-            }
+        let trace = result.investigation.as_ref().ok_or_else(|| {
+            EngineError(format!(
+                "path-review response requires an investigation trace for {:?}",
+                result.review_id
+            ))
+        })?;
+        if result.decision != ReviewDecision::NeedsReview
+            && !trace.citations.iter().any(|citation| {
+                result.selected_anchor_id.as_deref() == Some(citation.artifact_id.as_str())
+            })
+        {
+            return Err(EngineError(format!(
+                "decisive review {:?} must cite its selected anchor",
+                result.review_id
+            )));
         }
+        let (plan, supplied_artifact_ids) =
+            bundle_review_investigation_context(bundle, &result.review_id)?;
+        validate_review_investigation_trace(
+            &result.review_id,
+            &result.checks,
+            plan,
+            &supplied_artifact_ids,
+            trace,
+        )?;
     }
     let missing = expected_ids
         .difference(&seen_ids)
@@ -1567,7 +1622,6 @@ pub fn validate_path_review_bundle_response(
             missing.join(", ")
         )));
     }
-    validate_review_repair_trace(bundle, responses)?;
     Ok(PathReviewBundleTriageReport {
         schema_version: responses.schema_version.clone(),
         bundle_fingerprint: bundle.bundle_fingerprint.clone(),
@@ -1575,7 +1629,6 @@ pub fn validate_path_review_bundle_response(
             &responses.schema_version,
             &responses.bundle_fingerprint,
             &responses.results,
-            responses.repair.as_ref(),
         ),
         complete: true,
         issue_count: responses
@@ -1595,162 +1648,6 @@ pub fn validate_path_review_bundle_response(
             .count(),
         results: responses.results.clone(),
     })
-}
-
-fn validate_review_repair_trace(
-    bundle: &PathReviewBundle,
-    responses: &PathReviewBundleResponseSet,
-) -> Result<(), EngineError> {
-    let Some(repair) = &responses.repair else {
-        return Ok(());
-    };
-    if responses.schema_version != PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION {
-        return Err(EngineError(format!(
-            "repair history requires path-review response schema {}",
-            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
-        )));
-    }
-    if !bundle.review_ids.contains(&repair.review_id) {
-        return Err(EngineError(format!(
-            "repair history references unknown review {:?}",
-            repair.review_id
-        )));
-    }
-    validate_trace_line(
-        &repair.review_id,
-        "repair validation error",
-        &repair.validation_error,
-        500,
-    )?;
-    for (field, value, prefix) in [
-        (
-            "prior response fingerprint",
-            repair.prior_response_fingerprint.as_str(),
-            "review-response-",
-        ),
-        (
-            "prior result fingerprint",
-            repair.prior_result_fingerprint.as_str(),
-            "review-result-",
-        ),
-        (
-            "replacement result fingerprint",
-            repair.replacement_result_fingerprint.as_str(),
-            "review-result-",
-        ),
-    ] {
-        let suffix = value.strip_prefix(prefix).unwrap_or_default();
-        if suffix.len() != 16 || !suffix.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(EngineError(format!(
-                "{field} for {:?} is invalid",
-                repair.review_id
-            )));
-        }
-    }
-    let replacement = responses
-        .results
-        .iter()
-        .find(|result| result.review_id == repair.review_id)
-        .expect("validated complete response must contain repaired review");
-    if review_result_fingerprint(replacement) != repair.replacement_result_fingerprint {
-        return Err(EngineError(format!(
-            "replacement result fingerprint for {:?} does not match the validated result",
-            repair.review_id
-        )));
-    }
-    if repair.prior_result_fingerprint == repair.replacement_result_fingerprint {
-        return Err(EngineError(format!(
-            "repair history for {:?} does not change the targeted result",
-            repair.review_id
-        )));
-    }
-    Ok(())
-}
-
-/// Replaces exactly one result in a parseable invalid response, records the
-/// failed execution identity, and accepts the output only when the complete
-/// repaired response validates. A second repair is rejected.
-pub fn repair_path_review_bundle_response(
-    bundle: &PathReviewBundle,
-    failed: &PathReviewBundleResponseSet,
-    review_id: &str,
-    replacement: PathReviewTriageResult,
-) -> Result<PathReviewBundleResponseSet, EngineError> {
-    if failed.repair.is_some() {
-        return Err(EngineError(
-            "a path-review bundle response can be repaired only once".to_string(),
-        ));
-    }
-    if failed.bundle_fingerprint != bundle.bundle_fingerprint {
-        return Err(EngineError(
-            "failed path-review response does not match the bundle fingerprint".to_string(),
-        ));
-    }
-    if !supported_path_review_response_schema(&failed.schema_version) {
-        return Err(EngineError(format!(
-            "unsupported failed path-review response schema {:?}",
-            failed.schema_version
-        )));
-    }
-    if replacement.review_id != review_id {
-        return Err(EngineError(format!(
-            "replacement result ID {:?} does not match targeted review {review_id:?}",
-            replacement.review_id
-        )));
-    }
-    let prior_error = match validate_path_review_bundle_response(bundle, failed) {
-        Ok(_) => {
-            return Err(EngineError(
-                "a valid path-review response must not be repaired".to_string(),
-            ));
-        }
-        Err(error) => error,
-    };
-    let prior_result = failed
-        .results
-        .iter()
-        .find(|result| result.review_id == review_id)
-        .ok_or_else(|| {
-            EngineError(format!(
-                "failed response does not contain targeted review {review_id:?}"
-            ))
-        })?;
-    let prior_response_fingerprint = review_response_fingerprint(
-        &failed.schema_version,
-        &failed.bundle_fingerprint,
-        &failed.results,
-        None,
-    );
-    let prior_result_fingerprint = review_result_fingerprint(prior_result);
-    let replacement_result_fingerprint = review_result_fingerprint(&replacement);
-    let mut results = failed.results.clone();
-    let target = results
-        .iter_mut()
-        .find(|result| result.review_id == review_id)
-        .expect("targeted prior result was found above");
-    *target = replacement;
-    let validation_error = prior_error
-        .to_string()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .take(500)
-        .collect::<String>();
-    let repaired = PathReviewBundleResponseSet {
-        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
-        bundle_fingerprint: bundle.bundle_fingerprint.clone(),
-        results,
-        repair: Some(ReviewRepairTrace {
-            review_id: review_id.to_string(),
-            prior_response_fingerprint,
-            prior_result_fingerprint,
-            replacement_result_fingerprint,
-            validation_error,
-        }),
-    };
-    validate_path_review_bundle_response(bundle, &repaired)?;
-    Ok(repaired)
 }
 
 /// Validates a complete semantic-bundle run and deduplicates issue decisions
@@ -1902,11 +1799,6 @@ fn summarize_path_review_bundle_run_with_fingerprint(
     let quality_warnings = review_run_quality_warnings(bundle_responses);
     let response_fingerprint = review_run_response_fingerprint(&job_fingerprint, bundle_responses);
     let work = completed_review_work(bundle_responses);
-    let mut repairs = bundle_responses
-        .iter()
-        .filter_map(|(_, response)| response.repair.clone())
-        .collect::<Vec<_>>();
-    repairs.sort_by(|left, right| left.review_id.cmp(&right.review_id));
     let mut reviewer_origin_leads = results
         .iter()
         .flat_map(|result| {
@@ -1931,7 +1823,6 @@ fn summarize_path_review_bundle_run_with_fingerprint(
         job_fingerprint,
         response_fingerprint,
         work,
-        repairs,
         reviewer_origin_leads,
         family_measurements,
         bundle_count: bundle_responses.len(),
@@ -1969,36 +1860,16 @@ fn review_family_measurements(
                 ReviewDecision::NeedsReview => measurement.needs_review_count += 1,
             }
             if let Some(trace) = &result.investigation {
-                measurement.lookup_attempt_count += trace.lookup_attempts.len();
-                for attempt in &trace.lookup_attempts {
-                    match attempt.outcome {
-                        ReviewLookupOutcome::Answered => measurement.answered_lookup_count += 1,
-                        ReviewLookupOutcome::NoRelevantResult => {
-                            measurement.no_relevant_result_lookup_count += 1;
-                            measurement.unsuccessful_lookup_count += 1;
-                        }
-                        ReviewLookupOutcome::Unavailable => {
-                            measurement.unavailable_lookup_count += 1;
-                            measurement.unsuccessful_lookup_count += 1;
-                        }
-                        ReviewLookupOutcome::Truncated => {
-                            measurement.truncated_lookup_count += 1;
-                            measurement.unsuccessful_lookup_count += 1;
-                        }
-                        ReviewLookupOutcome::BudgetExhausted => {
-                            measurement.budget_exhausted_lookup_count += 1;
-                            measurement.unsuccessful_lookup_count += 1;
-                        }
-                        ReviewLookupOutcome::Failed => {
-                            measurement.failed_lookup_count += 1;
-                            measurement.unsuccessful_lookup_count += 1;
-                        }
-                    }
+                if let Some(journal) = &trace.journal_summary {
+                    measurement.lookup_count += journal.query_count;
+                    measurement.failed_lookup_count += journal.failed_count;
+                    measurement.truncated_lookup_count += journal.truncated_count;
+                    measurement.empty_lookup_count += journal.empty_count;
+                    measurement.lookup_elapsed_ms += journal.elapsed_ms;
                 }
                 measurement.returned_artifact_bytes += trace
-                    .lookup_attempts
+                    .decisive_artifacts
                     .iter()
-                    .flat_map(|attempt| &attempt.artifacts)
                     .map(|artifact| artifact.excerpt.len())
                     .sum::<usize>();
                 measurement.reviewer_origin_lead_count += trace.reviewer_origin_leads.len();
@@ -2017,14 +1888,11 @@ fn empty_family_measurement(capability: Capability) -> ReviewFamilyMeasurement {
         issue_count: 0,
         not_issue_count: 0,
         needs_review_count: 0,
-        lookup_attempt_count: 0,
-        answered_lookup_count: 0,
-        no_relevant_result_lookup_count: 0,
-        unavailable_lookup_count: 0,
-        truncated_lookup_count: 0,
-        budget_exhausted_lookup_count: 0,
+        lookup_count: 0,
+        empty_lookup_count: 0,
         failed_lookup_count: 0,
-        unsuccessful_lookup_count: 0,
+        truncated_lookup_count: 0,
+        lookup_elapsed_ms: 0,
         returned_artifact_bytes: 0,
         reviewer_origin_lead_count: 0,
     }
@@ -2086,7 +1954,7 @@ pub fn build_finding_report_from_manifest(
         include_dismissed,
         run,
     )?;
-    report.scan.coverage = manifest.coverage.clone();
+    report.scan.coverage = Some(manifest.coverage.clone());
     report.scan.scope = manifest.scope.clone();
     Ok(report)
 }
@@ -2111,7 +1979,7 @@ pub fn build_finding_report_from_manifest_with_work(
         include_dismissed,
         run,
     )?;
-    report.scan.coverage = manifest.coverage.clone();
+    report.scan.coverage = Some(manifest.coverage.clone());
     report.scan.scope = manifest.scope.clone();
     Ok(report)
 }
@@ -2222,7 +2090,6 @@ fn finding_report_from_run(
             response_schema_version,
             response_fingerprint: run.response_fingerprint.clone(),
             work: run.work.clone(),
-            repairs: run.repairs.clone(),
             family_measurements: run.family_measurements.clone(),
             reviewer,
         },
@@ -3186,46 +3053,8 @@ fn reported_finding_order(left: &ReportedFinding, right: &ReportedFinding) -> st
         .then(left.rule_id.cmp(&right.rule_id))
 }
 
-fn bundle_unresolved_facts<'a>(
-    bundle: &'a PathReviewBundle,
-    review_id: &str,
-) -> Result<&'a [String], EngineError> {
-    match &bundle.payload {
-        PathReviewBundlePayload::SecurityPath { reviews } => reviews
-            .iter()
-            .find(|review| review.id == review_id)
-            .map(|review| review.decision_facts.unresolved.as_slice()),
-        PathReviewBundlePayload::Observation { reviews } => reviews
-            .iter()
-            .find(|review| review.id == review_id)
-            .map(|review| review.decision_facts.unresolved.as_slice()),
-    }
-    .ok_or_else(|| EngineError(format!("bundle is missing review {review_id:?}")))
-}
-
-fn job_unresolved_facts<'a>(
-    job: &'a PathReviewJob,
-    review_id: &str,
-) -> Result<&'a [String], EngineError> {
-    job.reviews
-        .iter()
-        .find(|review| review.id == review_id)
-        .map(|review| review.decision_facts.unresolved.as_slice())
-        .or_else(|| {
-            job.observation_reviews
-                .iter()
-                .find(|review| review.id == review_id)
-                .map(|review| review.decision_facts.unresolved.as_slice())
-        })
-        .ok_or_else(|| EngineError(format!("job is missing review {review_id:?}")))
-}
-
 fn supported_path_review_response_schema(schema_version: &str) -> bool {
     schema_version == PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION
-}
-
-fn path_review_schema_has_investigation_trace(_schema_version: &str) -> bool {
-    true
 }
 
 fn bundle_review_investigation_context<'a>(
@@ -3253,33 +3082,6 @@ fn bundle_review_investigation_context<'a>(
             }),
     }
     .ok_or_else(|| EngineError(format!("bundle is missing review {review_id:?}")))
-}
-
-fn job_review_investigation_context<'a>(
-    job: &'a PathReviewJob,
-    review_id: &str,
-) -> Result<(&'a ReviewInvestigationPlan, BTreeMap<String, Vec<Location>>), EngineError> {
-    job.reviews
-        .iter()
-        .find(|review| review.id == review_id)
-        .map(|review| {
-            (
-                &review.investigation,
-                path_review_supplied_artifacts(review),
-            )
-        })
-        .or_else(|| {
-            job.observation_reviews
-                .iter()
-                .find(|review| review.id == review_id)
-                .map(|review| {
-                    (
-                        &review.investigation,
-                        observation_review_supplied_artifacts(review),
-                    )
-                })
-        })
-        .ok_or_else(|| EngineError(format!("job is missing review {review_id:?}")))
 }
 
 fn path_review_supplied_artifacts(review: &PathReview) -> BTreeMap<String, Vec<Location>> {
@@ -3339,107 +3141,58 @@ fn observation_review_supplied_artifacts(
 }
 
 fn validate_review_investigation_trace(
-    _schema_version: &str,
     review_id: &str,
-    decision: ReviewDecision,
     checks: &[String],
     plan: &ReviewInvestigationPlan,
     supplied_artifacts: &BTreeMap<String, Vec<Location>>,
     trace: &ReviewInvestigationTrace,
 ) -> Result<(), EngineError> {
-    if plan.lookup_requests.len() > plan.budget.max_supplied_lookups {
-        return Err(EngineError(format!(
-            "investigation plan for {review_id:?} exceeds its supplied-lookup budget"
-        )));
-    }
-    let mut attempted_requests = BTreeSet::new();
-    let mut escalated_lookups = 0usize;
     let mut returned_artifact_bytes = 0usize;
-    let mut retrieved_locator_text = String::new();
     let mut available_artifacts = supplied_artifacts.clone();
-    for attempt in &trace.lookup_attempts {
-        let request = match (attempt.request_index, attempt.escalation.as_ref()) {
-            (Some(request_index), None) => {
-                let request = plan.lookup_requests.get(request_index).ok_or_else(|| {
-                    EngineError(format!(
-                        "investigation trace for {review_id:?} references unknown lookup request {request_index}"
-                    ))
-                })?;
-                if !attempted_requests.insert(request_index) {
-                    return Err(EngineError(format!(
-                        "investigation trace for {review_id:?} repeats lookup request {request_index}"
-                    )));
-                }
-                request
-            }
-            (None, Some(request)) => {
-                if attempted_requests.is_empty() {
-                    return Err(EngineError(format!(
-                        "investigation trace for {review_id:?} must execute a supplied lookup before escalating"
-                    )));
-                }
-                if plan.budget.max_lookup_depth == 0 {
-                    return Err(EngineError(format!(
-                        "investigation trace for {review_id:?} cannot escalate under its lookup-depth budget"
-                    )));
-                }
-                escalated_lookups += 1;
-                if escalated_lookups > plan.budget.max_escalations {
-                    return Err(EngineError(format!(
-                        "investigation trace for {review_id:?} exceeds its {}-lookup escalation budget",
-                        plan.budget.max_escalations
-                    )));
-                }
-                validate_escalated_lookup(review_id, plan, request, &retrieved_locator_text)?;
-                request
-            }
-            _ => {
-                return Err(EngineError(format!(
-                    "investigation trace for {review_id:?} lookup attempt must identify exactly one supplied request_index or escalation"
-                )));
-            }
-        };
-        validate_trace_line(review_id, "lookup detail", &attempt.detail, 500)?;
-        if attempt.outcome == ReviewLookupOutcome::Answered && attempt.artifacts.is_empty() {
+    if let Some(journal) = &trace.journal_summary {
+        let file = Path::new(&journal.file);
+        if journal.file.trim().is_empty()
+            || file.is_absolute()
+            || file
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+            || journal.failed_count + journal.empty_count + journal.truncated_count
+                > journal.query_count
+        {
             return Err(EngineError(format!(
-                "answered lookup for {review_id:?} requires a retrieved artifact"
+                "query journal summary for {review_id:?} is invalid"
             )));
         }
-        for artifact in &attempt.artifacts {
-            validate_trace_line(review_id, "artifact ID", &artifact.artifact_id, 120)?;
-            if artifact.excerpt.trim().is_empty()
-                || artifact.excerpt.chars().count() > 4_000
-                || artifact.excerpt.contains('\0')
-            {
-                return Err(EngineError(format!(
-                    "retrieved artifact {:?} for {review_id:?} requires a non-empty excerpt of at most 4000 characters",
-                    artifact.artifact_id
-                )));
-            }
-            if available_artifacts.contains_key(&artifact.artifact_id) {
-                return Err(EngineError(format!(
-                    "investigation trace for {review_id:?} contains duplicate artifact ID {:?}",
-                    artifact.artifact_id
-                )));
-            }
-            available_artifacts.insert(
-                artifact.artifact_id.clone(),
-                vec![artifact.location.clone()],
-            );
-            returned_artifact_bytes =
-                returned_artifact_bytes.saturating_add(artifact.excerpt.len());
-            if returned_artifact_bytes > plan.budget.max_returned_bytes {
-                return Err(EngineError(format!(
-                    "investigation trace for {review_id:?} exceeds the {}-byte returned-artifact budget",
-                    plan.budget.max_returned_bytes
-                )));
-            }
-            validate_retrieved_artifact_locator(review_id, request, artifact)?;
-            retrieved_locator_text.push_str(&artifact.excerpt);
-            retrieved_locator_text.push('\n');
-        }
     }
-
+    for artifact in &trace.decisive_artifacts {
+        validate_trace_line(review_id, "artifact ID", &artifact.artifact_id, 120)?;
+        if supplied_artifacts.contains_key(&artifact.artifact_id) {
+            return Err(EngineError(format!(
+                "decisive artifact {:?} for {review_id:?} duplicates a supplied bundle ID; cite the supplied ID directly and use a new ID for retrieved source",
+                artifact.artifact_id
+            )));
+        }
+        if artifact.excerpt.trim().is_empty()
+            || artifact.excerpt.chars().count() > 4_000
+            || artifact.excerpt.contains('\0')
+            || available_artifacts.contains_key(&artifact.artifact_id)
+        {
+            return Err(EngineError(format!(
+                "decisive artifact {:?} for {review_id:?} has invalid ID or excerpt",
+                artifact.artifact_id
+            )));
+        }
+        returned_artifact_bytes = returned_artifact_bytes.saturating_add(artifact.excerpt.len());
+        available_artifacts.insert(
+            artifact.artifact_id.clone(),
+            vec![artifact.location.clone()],
+        );
+    }
+    if returned_artifact_bytes > 256 * 1024 {
+        return Err(EngineError(format!(
+            "decisive artifacts for {review_id:?} exceed the 262144-byte limit"
+        )));
+    }
     let mut citations = BTreeSet::new();
     let mut referenced_artifact_ids = BTreeSet::new();
     for citation in &trace.citations {
@@ -3555,159 +3308,16 @@ fn validate_review_investigation_trace(
         }
     }
 
-    for attempt in trace
-        .lookup_attempts
-        .iter()
-        .filter(|attempt| attempt.outcome == ReviewLookupOutcome::Answered)
-    {
-        if !attempt
-            .artifacts
-            .iter()
-            .any(|artifact| referenced_artifact_ids.contains(artifact.artifact_id.as_str()))
-        {
-            return Err(EngineError(format!(
-                "answered lookup for {review_id:?} must cite a retrieved artifact"
-            )));
-        }
-    }
-
     let mut recorded_blockers = BTreeSet::new();
     for blocker in &trace.blockers {
         validate_trace_line(review_id, "investigation blocker", blocker, 700)?;
-        let Some(expected) = plan
-            .blockers
-            .iter()
-            .find(|expected| expected.trim() == blocker.trim())
-        else {
-            return Err(EngineError(format!(
-                "investigation trace for {review_id:?} contains a blocker not supplied by the review"
-            )));
-        };
-        if !recorded_blockers.insert(expected.as_str()) {
+        if !recorded_blockers.insert(blocker.trim()) {
             return Err(EngineError(format!(
                 "investigation trace for {review_id:?} contains a duplicate blocker"
             )));
         }
     }
 
-    if decision == ReviewDecision::NeedsReview {
-        for check in checks {
-            let matching_requests = plan
-                .lookup_requests
-                .iter()
-                .enumerate()
-                .filter(|(_, request)| {
-                    request
-                        .questions
-                        .iter()
-                        .any(|question| question.trim() == check.trim())
-                })
-                .map(|(index, _)| index)
-                .collect::<Vec<_>>();
-            if !matching_requests.is_empty() {
-                if !matching_requests
-                    .iter()
-                    .any(|index| attempted_requests.contains(index))
-                {
-                    return Err(EngineError(format!(
-                        "needs_review for {review_id:?} must attempt a supplied lookup for check {check:?}"
-                    )));
-                }
-                continue;
-            }
-            let matching_blocker = plan.blockers.iter().find(|blocker| blocker.contains(check));
-            if !matching_blocker.is_some_and(|blocker| {
-                recorded_blockers
-                    .iter()
-                    .any(|recorded| recorded.trim() == blocker.trim())
-            }) {
-                return Err(EngineError(format!(
-                    "needs_review for {review_id:?} must record the supplied blocker for check {check:?}"
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_escalated_lookup(
-    review_id: &str,
-    plan: &ReviewInvestigationPlan,
-    request: &ReviewLookupRequest,
-    retrieved_locator_text: &str,
-) -> Result<(), EngineError> {
-    validate_trace_line(review_id, "escalation purpose", &request.purpose, 500)?;
-    if request.questions.is_empty()
-        || request.questions.iter().any(|question| {
-            !plan
-                .missing_facts
-                .iter()
-                .any(|missing| missing.trim() == question.trim())
-        })
-    {
-        return Err(EngineError(format!(
-            "escalated lookup for {review_id:?} must retain one or more exact supplied missing facts"
-        )));
-    }
-    match request.operation.as_str() {
-        "source" => {
-            let path = request.arguments.get("path");
-            let start = request
-                .arguments
-                .get("start-line")
-                .and_then(|value| value.parse::<usize>().ok());
-            let end = request
-                .arguments
-                .get("end-line")
-                .and_then(|value| value.parse::<usize>().ok());
-            if request.arguments.len() != 3
-                || path.is_none_or(|path| path.trim().is_empty())
-                || start.is_none_or(|line| line == 0)
-                || end
-                    .is_none_or(|line| line < start.unwrap_or(1) || line - start.unwrap_or(1) > 400)
-            {
-                return Err(EngineError(format!(
-                    "escalated source lookup for {review_id:?} requires an exact path and a window of at most 400 lines"
-                )));
-            }
-            let path = path.expect("validated source path");
-            let filename = Path::new(path)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or(path);
-            if !retrieved_locator_text.contains(path) && !retrieved_locator_text.contains(filename)
-            {
-                return Err(EngineError(format!(
-                    "escalated source lookup for {review_id:?} must use a path exposed by an earlier retrieved artifact"
-                )));
-            }
-        }
-        "references" => {
-            let symbol = request.arguments.get("symbol");
-            let limit = request
-                .arguments
-                .get("limit")
-                .and_then(|value| value.parse::<usize>().ok());
-            if request.arguments.len() != 2
-                || symbol.is_none_or(|symbol| !is_plain_identifier(symbol))
-                || limit.is_none_or(|limit| limit == 0 || limit > DEFAULT_RESULT_LIMIT)
-            {
-                return Err(EngineError(format!(
-                    "escalated reference lookup for {review_id:?} requires an exact identifier and limit of at most {DEFAULT_RESULT_LIMIT}"
-                )));
-            }
-            if !retrieved_locator_text.contains(symbol.expect("validated reference symbol")) {
-                return Err(EngineError(format!(
-                    "escalated reference lookup for {review_id:?} must use an identifier exposed by an earlier retrieved artifact"
-                )));
-            }
-        }
-        operation => {
-            return Err(EngineError(format!(
-                "escalated lookup for {review_id:?} uses unsupported operation {operation:?}; expected source or references"
-            )));
-        }
-    }
     Ok(())
 }
 
@@ -3722,60 +3332,6 @@ fn validate_trace_line(
     {
         return Err(EngineError(format!(
             "{field} for {review_id:?} must be one non-empty line of at most {max_chars} characters"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_retrieved_artifact_locator(
-    review_id: &str,
-    request: &ReviewLookupRequest,
-    artifact: &mehscan_core::ReviewRetrievedArtifact,
-) -> Result<(), EngineError> {
-    if artifact.location.path.trim().is_empty()
-        || artifact.location.start.line == 0
-        || artifact.location.end.line < artifact.location.start.line
-        || artifact.location.end.byte_offset < artifact.location.start.byte_offset
-    {
-        return Err(EngineError(format!(
-            "retrieved artifact {:?} for {review_id:?} has an invalid source location",
-            artifact.artifact_id
-        )));
-    }
-    if request.operation != "source" {
-        if request.operation == "references"
-            && request
-                .arguments
-                .get("symbol")
-                .is_some_and(|symbol| !artifact.excerpt.contains(symbol))
-        {
-            return Err(EngineError(format!(
-                "retrieved artifact {:?} for {review_id:?} does not contain its requested reference symbol",
-                artifact.artifact_id
-            )));
-        }
-        return Ok(());
-    }
-    let path = request.arguments.get("path");
-    let start_line = request
-        .arguments
-        .get("start-line")
-        .and_then(|value| value.parse::<usize>().ok());
-    let end_line = request
-        .arguments
-        .get("end-line")
-        .and_then(|value| value.parse::<usize>().ok());
-    if path != Some(&artifact.location.path)
-        || start_line.is_none_or(|line| artifact.location.start.line < line)
-        || end_line.is_none_or(|line| {
-            artifact.location.end.line > line
-                && !(artifact.location.end.line == line.saturating_add(1)
-                    && artifact.location.end.column == 1)
-        })
-    {
-        return Err(EngineError(format!(
-            "retrieved artifact {:?} for {review_id:?} is outside its requested source locator",
-            artifact.artifact_id
         )));
     }
     Ok(())
@@ -3957,6 +3513,24 @@ fn bundle_issue_context(
             ))
         }
     }
+}
+
+pub fn bundle_selected_anchor_id<'a>(
+    bundle: &'a PathReviewBundle,
+    review_id: &str,
+) -> Result<&'a str, EngineError> {
+    match &bundle.payload {
+        PathReviewBundlePayload::SecurityPath { reviews } => reviews
+            .iter()
+            .find(|review| review.id == review_id)
+            .map(|review| review.candidate.sink.id.as_str()),
+        PathReviewBundlePayload::Observation { reviews } => reviews
+            .iter()
+            .find(|review| review.id == review_id)
+            .and_then(observation_actionable_anchor)
+            .map(|anchor| anchor.id.as_str()),
+    }
+    .ok_or_else(|| EngineError(format!("bundle has no selected anchor for {review_id:?}")))
 }
 
 fn issue_group_key(capability: Capability, location: &Location, invariant_id: &str) -> String {
@@ -4161,20 +3735,27 @@ fn make_bundle(
     part: usize,
     part_count: usize,
     review_ids: Vec<String>,
-    payload: PathReviewBundlePayload,
+    mut payload: PathReviewBundlePayload,
 ) -> PathReviewBundle {
+    let triage_contract = job.triage_contract.clone();
+    let review_playbooks = review_playbooks(&payload);
+    project_investigation_payload(&mut payload);
+    let playbook_identity = serde_json::to_string(&review_playbooks)
+        .expect("review playbook assignments must serialize");
+    let contract_identity =
+        serde_json::to_string(&triage_contract).expect("review triage contract must serialize");
     let identity = format!(
-        "{}\0{}\0{}\0{:?}\0{}\0{}\0{}",
+        "{}\0{}\0{}\0{:?}\0{}\0{}\0{}\0triage-buckets-v3\0{}\0{}",
         job.fingerprint,
         category.scope,
         category.review_kind,
         category.capability,
         category.cwe_candidates.join("+"),
         part,
-        review_ids.join("\0")
+        review_ids.join("\0"),
+        playbook_identity,
+        contract_identity,
     );
-    let triage_contract =
-        path_review_triage_contract_for_bundle(&job.triage_contract, &category, &payload);
     PathReviewBundle {
         schema_version: PATH_REVIEW_BUNDLE_SCHEMA_VERSION.to_string(),
         bundle_fingerprint: stable_review_hash("review-bundle", &identity),
@@ -4184,136 +3765,185 @@ fn make_bundle(
         part,
         part_count,
         triage_contract,
+        playbook_version: "triage-buckets-v3".to_string(),
+        review_playbooks,
         review_ids,
         payload,
     }
 }
 
-/// Keep the low-level review job contract complete, but avoid repeating
-/// unrelated framework and invariant guidance in every model request. Bundle
-/// categories are homogeneous, and marker tags identify the few families that
-/// share a broad capability such as ResourceAccess.
-fn path_review_triage_contract_for_bundle(
-    contract: &ReviewTriageContract,
-    category: &PathReviewBundleCategory,
-    payload: &PathReviewBundlePayload,
-) -> ReviewTriageContract {
-    let observation_evidence = match payload {
-        PathReviewBundlePayload::Observation { reviews } => reviews
-            .iter()
-            .flat_map(|review| review.evidence.iter())
-            .collect::<Vec<_>>(),
-        PathReviewBundlePayload::SecurityPath { .. } => Vec::new(),
-    };
-    let has_tag = |tag: &str| {
-        observation_evidence
-            .iter()
-            .any(|item| item.tags.iter().any(|candidate| candidate == tag))
-    };
-    let has_tag_prefix = |prefix: &str| {
-        observation_evidence
-            .iter()
-            .any(|item| item.tags.iter().any(|tag| tag.starts_with(prefix)))
-    };
-    let has_security_configuration = observation_evidence
-        .iter()
-        .any(|item| item.kind == EvidenceKind::SecurityConfiguration);
-    let interpreted_boundary = matches!(
-        category.capability,
-        Capability::ProcessExecution
-            | Capability::LdapQuery
-            | Capability::XpathQuery
-            | Capability::DynamicCodeExecution
-            | Capability::TemplateEvaluation
-            | Capability::DatabaseQuery
-            | Capability::OutboundNetworkRequest
-            | Capability::Redirect
-            | Capability::HtmlOutput
-            | Capability::Deserialization
-    ) || has_tag("review-origin:decision-critical");
-    let authorization = matches!(
-        category.capability,
-        Capability::Authorization | Capability::ResourceAccess
-    ) || has_tag("review-invariant:action-resource-authorization");
-    let marker = has_tag("review-admission-marker") || has_tag_prefix("review-invariant:");
-    let credential = has_tag("review-invariant:credential-lifecycle");
-    let object_binding = has_tag("review-invariant:object-binding");
-    let request_integrity = has_tag("review-invariant:request-integrity");
-    let fail_open = has_tag("review-invariant:fail-open");
-    let authoritative_value = has_tag("review-invariant:authoritative-value-binding");
-    let state_transition = has_tag("review-invariant:state-transition-enforcement");
-    let shared_state = has_tag("review-invariant:shared-state-limit-enforcement");
-    let configuration = has_security_configuration
-        || matches!(
-            category.capability,
-            Capability::CookieConfiguration | Capability::CorsConfiguration
-        );
-
-    let instructions = contract
-        .instructions
-        .iter()
-        .filter(|instruction| {
-            let text = instruction.as_str();
-            if text.starts_with("Before claiming injection,")
-                || text.starts_with("Injection does not require")
-                || text.starts_with("An intervening unknown helper")
-                || text.starts_with("Server metadata, session fields")
-                || text.starts_with("For an observation whose evidence marks")
-            {
-                return interpreted_boundary;
+/// Investigation requests are navigation cards. Retain an exact, small anchor
+/// and decision-bearing configuration or policy text; other enrichment facts
+/// remain as exact locations for the reviewer's bounded lookup.
+fn project_investigation_payload(payload: &mut PathReviewBundlePayload) {
+    match payload {
+        PathReviewBundlePayload::SecurityPath { reviews } => {
+            for review in reviews {
+                project_investigation_facts(review.investigation.readiness, &mut review.facts);
             }
-            if text.starts_with("For authorization,")
-                || text.starts_with("For every routed authorization review")
-                || text.starts_with("For review-invariant:action-resource-authorization")
-                || text.starts_with("In HTTP route context,")
-                || text.starts_with("Apply an authorization default")
-                || text.starts_with("For generated CRUD")
-                || text.starts_with("For resource-access review,")
-            {
-                return authorization;
+        }
+        PathReviewBundlePayload::Observation { reviews } => {
+            for review in reviews {
+                project_investigation_facts(review.investigation.readiness, &mut review.facts);
             }
-            if text.starts_with("Evidence tagged review-admission-marker") {
-                return marker;
-            }
-            if text.starts_with("For review-invariant:credential-lifecycle") {
-                return credential;
-            }
-            if text.starts_with("For bounded object-binding review") {
-                return object_binding;
-            }
-            if text.starts_with("For bounded request-integrity review") {
-                return request_integrity;
-            }
-            if text.starts_with("For bounded fail-open review") {
-                return fail_open;
-            }
-            if text.starts_with("For bounded authoritative-value review") {
-                return authoritative_value;
-            }
-            if text.starts_with("For bounded state-transition review") {
-                return state_transition;
-            }
-            if text.starts_with("For bounded shared-state limit review") {
-                return shared_state;
-            }
-            if text.starts_with("Configuration facts are")
-                || text.starts_with("Distinguish application-owned controls")
-            {
-                return configuration;
-            }
-            if text.starts_with("When the reviewed invariant requires rejection") {
-                return fail_open || marker;
-            }
-            true
-        })
-        .cloned()
-        .collect();
-    ReviewTriageContract {
-        response_fields: contract.response_fields.clone(),
-        decisions: contract.decisions.clone(),
-        confidence_levels: contract.confidence_levels.clone(),
-        instructions,
+        }
     }
+}
+
+fn project_investigation_facts(readiness: ReviewReadiness, facts: &mut [ReviewNeighborhoodFact]) {
+    if readiness == ReviewReadiness::Assessment {
+        return;
+    }
+    let mut retained_bytes = 0usize;
+    for fact in facts {
+        let allowed = if fact.evidence_id.is_some() {
+            1_536
+        } else {
+            match fact.role.as_str() {
+                "source_context" | "sink_context" | "anchor_context" => 1_536,
+                "configuration_context" | "feature_gate_policy_context" | "framework_context" => {
+                    768
+                }
+                _ => 0,
+            }
+        };
+        if allowed == 0
+            || fact.excerpt.len() > allowed
+            || retained_bytes + fact.excerpt.len() > 2_048
+        {
+            fact.excerpt.clear();
+            if !fact.provenance.engine.contains("location-only") {
+                fact.provenance
+                    .engine
+                    .push_str("; location-only review lead");
+            }
+        } else {
+            retained_bytes += fact.excerpt.len();
+        }
+    }
+}
+
+/// The bundle is a navigation card for the reviewer skill. Keep response syntax
+/// and evidence-scope rules here; the longer decision procedures live in the
+/// versioned skill playbooks selected per review.
+fn review_playbook_bucket(
+    capability: Capability,
+    language: Option<Language>,
+    tags: impl IntoIterator<Item = String>,
+) -> &'static str {
+    let tags = tags.into_iter().collect::<BTreeSet<_>>();
+    let has = |name: &str| tags.contains(name);
+    if has("review-invariant:credential-lifecycle") {
+        return "credential_state";
+    }
+    if has("review-invariant:action-resource-authorization")
+        || capability == Capability::Authorization
+    {
+        return "authorization";
+    }
+    if [
+        "csrf",
+        "review-invariant:object-binding",
+        "review-invariant:request-integrity",
+        "review-invariant:fail-open",
+        "review-invariant:authoritative-value-binding",
+        "review-invariant:state-transition-enforcement",
+        "review-invariant:shared-state-limit-enforcement",
+    ]
+    .iter()
+    .any(|tag| has(tag))
+    {
+        return "state_integrity";
+    }
+    if matches!(language, Some(Language::C | Language::Cpp))
+        && matches!(
+            capability,
+            Capability::BufferWrite
+                | Capability::SignedSizeMemoryOperation
+                | Capability::LocalHeapAllocation
+                | Capability::CppHeapAllocation
+                | Capability::XmlParsing
+        )
+    {
+        return "native_memory";
+    }
+    match capability {
+        Capability::ProcessExecution
+        | Capability::LdapQuery
+        | Capability::XpathQuery
+        | Capability::DynamicCodeExecution
+        | Capability::TemplateEvaluation
+        | Capability::DatabaseQuery
+        | Capability::HtmlOutput
+        | Capability::Deserialization
+        | Capability::XmlParsing => "interpreted_input",
+        Capability::FilesystemRead
+        | Capability::FilesystemWrite
+        | Capability::OutboundNetworkRequest
+        | Capability::Redirect
+        | Capability::ResourceAccess => "resource_boundary",
+        Capability::CryptographicHash
+        | Capability::CryptographicEncryption
+        | Capability::RandomGeneration
+        | Capability::TokenGeneration
+        | Capability::CookieConfiguration
+        | Capability::CorsConfiguration => "crypto_configuration",
+        _ => "operation_policy",
+    }
+}
+
+fn review_playbooks(
+    payload: &PathReviewBundlePayload,
+) -> BTreeMap<String, mehscan_core::ReviewPlaybook> {
+    let mut playbooks = BTreeMap::new();
+    let mut insert = |id: &str, capability, language, tags: Vec<String>, readiness| {
+        let mode = match readiness {
+            ReviewReadiness::Assessment => "assessment",
+            ReviewReadiness::Investigation => "investigation",
+            ReviewReadiness::Blocked => "blocked",
+        };
+        playbooks.insert(
+            id.to_string(),
+            mehscan_core::ReviewPlaybook {
+                bucket: review_playbook_bucket(capability, language, tags).to_string(),
+                mode: mode.to_string(),
+            },
+        );
+    };
+    match payload {
+        PathReviewBundlePayload::SecurityPath { reviews } => {
+            for review in reviews {
+                let tags = review
+                    .review_basis
+                    .iter()
+                    .flat_map(|basis| basis.sink.tags.iter())
+                    .cloned()
+                    .collect();
+                insert(
+                    &review.id,
+                    review.candidate.capability,
+                    review.language,
+                    tags,
+                    review.investigation.readiness,
+                );
+            }
+        }
+        PathReviewBundlePayload::Observation { reviews } => {
+            for review in reviews {
+                if let Some(anchor) = observation_actionable_anchor(review) {
+                    let tags = anchor.tags.clone();
+                    insert(
+                        &review.id,
+                        anchor.capability,
+                        review.language,
+                        tags,
+                        review.investigation.readiness,
+                    );
+                }
+            }
+        }
+    }
+    playbooks
 }
 
 fn serialized_bundle_bytes(bundle: &PathReviewBundle) -> Result<usize, EngineError> {
@@ -4430,30 +4060,18 @@ fn stable_review_hash(prefix: &str, input: &str) -> String {
     format!("{prefix}-{hash:016x}")
 }
 
-fn review_result_fingerprint(result: &PathReviewTriageResult) -> String {
-    let serialized =
-        serde_json::to_string(result).expect("review triage results must remain JSON serializable");
-    stable_review_hash("review-result", &serialized)
-}
-
 fn review_response_fingerprint(
     schema_version: &str,
     request_fingerprint: &str,
     results: &[PathReviewTriageResult],
-    repair: Option<&ReviewRepairTrace>,
 ) -> String {
     let mut results = results.to_vec();
     for result in &mut results {
         result.checks.sort();
         if let Some(trace) = &mut result.investigation {
-            for attempt in &mut trace.lookup_attempts {
-                attempt
-                    .artifacts
-                    .sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
-            }
             trace
-                .lookup_attempts
-                .sort_by_key(|attempt| attempt.request_index);
+                .decisive_artifacts
+                .sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
             trace.citations.sort_by(|left, right| {
                 left.artifact_id
                     .cmp(&right.artifact_id)
@@ -4481,7 +4099,7 @@ fn review_response_fingerprint(
         }
     }
     results.sort_by(|left, right| left.review_id.cmp(&right.review_id));
-    let serialized = serde_json::to_string(&(schema_version, request_fingerprint, results, repair))
+    let serialized = serde_json::to_string(&(schema_version, request_fingerprint, results))
         .expect("validated review responses must remain JSON serializable");
     stable_review_hash("review-response", &serialized)
 }
@@ -4499,7 +4117,6 @@ fn review_run_response_fingerprint(
                     &response.schema_version,
                     &response.bundle_fingerprint,
                     &response.results,
-                    response.repair.as_ref(),
                 ),
             )
         })
@@ -4527,21 +4144,17 @@ fn completed_review_work(
             let blocked = readiness == ReviewReadiness::Blocked
                 || trace.is_some_and(|trace| {
                     !trace.blockers.is_empty()
-                        || trace.lookup_attempts.iter().any(|attempt| {
-                            matches!(
-                                attempt.outcome,
-                                ReviewLookupOutcome::Unavailable
-                                    | ReviewLookupOutcome::BudgetExhausted
-                                    | ReviewLookupOutcome::Failed
-                            )
-                        })
+                        || trace
+                            .journal_summary
+                            .as_ref()
+                            .is_some_and(|journal| journal.failed_count > 0)
                 });
             let truncated = decision_critical_truncation
                 || trace.is_some_and(|trace| {
                     trace
-                        .lookup_attempts
-                        .iter()
-                        .any(|attempt| attempt.outcome == ReviewLookupOutcome::Truncated)
+                        .journal_summary
+                        .as_ref()
+                        .is_some_and(|journal| journal.truncated_count > 0)
                 });
             if blocked {
                 blocked_review_ids.push(result.review_id.clone());
@@ -4658,354 +4271,6 @@ fn bundle_review_work_metadata(
     }
 }
 
-pub fn validate_path_review_progress(
-    job: &PathReviewJob,
-    responses: &PathReviewTriageResponseSet,
-) -> Result<PathReviewTriageProgress, EngineError> {
-    let missing_review_ids = validate_path_review_response_subset(job, responses)?;
-    Ok(PathReviewTriageProgress {
-        schema_version: responses.schema_version.clone(),
-        job_fingerprint: job.fingerprint.clone(),
-        response_fingerprint: review_response_fingerprint(
-            &responses.schema_version,
-            &responses.job_fingerprint,
-            &responses.results,
-            None,
-        ),
-        submitted_count: responses.results.len(),
-        remaining_count: missing_review_ids.len(),
-        complete: missing_review_ids.is_empty(),
-        issue_count: responses
-            .results
-            .iter()
-            .filter(|result| result.decision == ReviewDecision::Issue)
-            .count(),
-        not_issue_count: responses
-            .results
-            .iter()
-            .filter(|result| result.decision == ReviewDecision::NotIssue)
-            .count(),
-        needs_review_count: responses
-            .results
-            .iter()
-            .filter(|result| result.decision == ReviewDecision::NeedsReview)
-            .count(),
-        missing_review_ids,
-        results: responses.results.clone(),
-    })
-}
-
-fn validate_path_review_response_subset(
-    job: &PathReviewJob,
-    responses: &PathReviewTriageResponseSet,
-) -> Result<Vec<String>, EngineError> {
-    if !supported_path_review_response_schema(&responses.schema_version) {
-        return Err(EngineError(format!(
-            "unsupported path-review triage response schema {:?}",
-            responses.schema_version
-        )));
-    }
-    if responses.job_fingerprint != job.fingerprint {
-        return Err(EngineError(
-            "path-review triage responses do not match the job fingerprint".to_string(),
-        ));
-    }
-    let expected_ids = job
-        .reviews
-        .iter()
-        .map(|review| review.id.as_str())
-        .chain(
-            job.observation_reviews
-                .iter()
-                .map(|review| review.id.as_str()),
-        )
-        .collect::<BTreeSet<_>>();
-    let mut seen_ids = BTreeSet::new();
-    for result in &responses.results {
-        if !expected_ids.contains(result.review_id.as_str()) {
-            return Err(EngineError(format!(
-                "path-review triage references unknown review {:?}",
-                result.review_id
-            )));
-        }
-        if !seen_ids.insert(result.review_id.as_str()) {
-            return Err(EngineError(format!(
-                "path-review triage contains duplicate review {:?}",
-                result.review_id
-            )));
-        }
-        validate_compact_triage(
-            &result.review_id,
-            result.decision,
-            &result.summary,
-            &result.checks,
-        )?;
-        if path_review_schema_has_investigation_trace(&responses.schema_version) {
-            let trace = result.investigation.as_ref().ok_or_else(|| {
-                EngineError(format!(
-                    "path-review response schema {} requires an investigation trace for {:?}",
-                    PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, result.review_id
-                ))
-            })?;
-            let (plan, supplied_artifact_ids) =
-                job_review_investigation_context(job, &result.review_id)?;
-            validate_review_investigation_trace(
-                &responses.schema_version,
-                &result.review_id,
-                result.decision,
-                &result.checks,
-                plan,
-                &supplied_artifact_ids,
-                trace,
-            )?;
-        }
-        let policy = job
-            .reviews
-            .iter()
-            .find(|review| review.id == result.review_id)
-            .map(|review| &review.confidence_policy)
-            .or_else(|| {
-                job.observation_reviews
-                    .iter()
-                    .find(|review| review.id == result.review_id)
-                    .map(|review| &review.confidence_policy)
-            })
-            .expect("validated review ID must have a confidence policy");
-        let expected_confidence = confidence_for_decision(policy, result.decision);
-        if result.confidence != expected_confidence {
-            return Err(EngineError(format!(
-                "confidence for {:?} must be {:?} for the selected {:?} decision",
-                result.review_id, expected_confidence, result.decision
-            )));
-        }
-        if path_review_schema_has_investigation_trace(&responses.schema_version)
-            && result.decision == ReviewDecision::NeedsReview
-        {
-            let unresolved = job_unresolved_facts(job, &result.review_id)?;
-            for check in &result.checks {
-                if !unresolved.iter().any(|fact| fact.trim() == check.trim()) {
-                    return Err(EngineError(format!(
-                        "needs_review check for {:?} must copy an exact supplied decision_facts.unresolved entry",
-                        result.review_id
-                    )));
-                }
-            }
-        }
-    }
-    Ok(expected_ids
-        .difference(&seen_ids)
-        .map(|id| (*id).to_string())
-        .collect())
-}
-
-fn bundle_review_confidence_policy<'a>(
-    bundle: &'a PathReviewBundle,
-    review_id: &str,
-) -> Option<&'a ReviewConfidencePolicy> {
-    match &bundle.payload {
-        PathReviewBundlePayload::SecurityPath { reviews } => reviews
-            .iter()
-            .find(|review| review.id == review_id)
-            .map(|review| &review.confidence_policy),
-        PathReviewBundlePayload::Observation { reviews } => reviews
-            .iter()
-            .find(|review| review.id == review_id)
-            .map(|review| &review.confidence_policy),
-    }
-}
-
-fn confidence_for_decision(
-    policy: &ReviewConfidencePolicy,
-    decision: ReviewDecision,
-) -> ReviewConfidence {
-    match decision {
-        ReviewDecision::Issue => policy.issue,
-        ReviewDecision::NotIssue => policy.not_issue,
-        ReviewDecision::NeedsReview => policy.needs_review,
-    }
-}
-
-fn path_review_issue_groups(
-    job: &PathReviewJob,
-    responses: &PathReviewTriageResponseSet,
-) -> Vec<PathReviewIssueGroup> {
-    let paths = job
-        .reviews
-        .iter()
-        .map(|review| (review.id.as_str(), review))
-        .collect::<BTreeMap<_, _>>();
-    let observations = job
-        .observation_reviews
-        .iter()
-        .map(|review| (review.id.as_str(), review))
-        .collect::<BTreeMap<_, _>>();
-    let mut groups = BTreeMap::<String, PathReviewIssueGroup>::new();
-
-    for result in responses
-        .results
-        .iter()
-        .filter(|result| result.decision == ReviewDecision::Issue)
-    {
-        let (key, language, location, capability, cwe_candidates, invariant_id) =
-            if let Some(review) = paths.get(result.review_id.as_str()) {
-                let cwes = review.candidate.cwe_candidates.clone();
-                let location = review.candidate.sink.location.clone();
-                (
-                    issue_group_key(
-                        review.candidate.capability,
-                        &location,
-                        &review.candidate.sink.rule_id,
-                    ),
-                    review.language,
-                    location,
-                    review.candidate.capability,
-                    cwes,
-                    review.candidate.sink.rule_id.clone(),
-                )
-            } else if let Some(review) = observations.get(result.review_id.as_str()) {
-                let first = review
-                    .evidence
-                    .first()
-                    .expect("observation reviews always contain evidence");
-                let mut cwes = review
-                    .evidence
-                    .iter()
-                    .flat_map(|item| item.cwe_candidates.iter().cloned())
-                    .collect::<Vec<_>>();
-                cwes.sort();
-                cwes.dedup();
-                let anchor = observation_actionable_anchor(review).unwrap_or(first);
-                (
-                    issue_group_key(anchor.capability, &anchor.location, &anchor.rule_id),
-                    review.language,
-                    anchor.location.clone(),
-                    anchor.capability,
-                    cwes,
-                    anchor.rule_id.clone(),
-                )
-            } else {
-                continue;
-            };
-
-        let group = groups.entry(key.clone()).or_insert_with(|| {
-            let mut hash = 0xcbf29ce484222325u64;
-            hash_review_text(&mut hash, &key);
-            PathReviewIssueGroup {
-                id: format!("issue-group-{hash:016x}"),
-                review_ids: Vec::new(),
-                invariant_id,
-                confidence: result.confidence,
-                language,
-                location,
-                capability,
-                cwe_candidates,
-            }
-        });
-        group.review_ids.push(result.review_id.clone());
-        group.confidence = group.confidence.max(result.confidence);
-    }
-
-    let mut groups = groups.into_values().collect::<Vec<_>>();
-    for group in &mut groups {
-        group.review_ids.sort();
-    }
-    groups.sort_by(|left, right| {
-        left.location
-            .path
-            .cmp(&right.location.path)
-            .then_with(|| {
-                left.location
-                    .start
-                    .byte_offset
-                    .cmp(&right.location.start.byte_offset)
-            })
-            .then_with(|| left.id.cmp(&right.id))
-    });
-    groups
-}
-
-pub fn validate_review_triage(
-    job: &ReviewNeighborhoodJob,
-    responses: &ReviewTriageResponseSet,
-) -> Result<ReviewTriageReport, EngineError> {
-    if responses.schema_version != REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION {
-        return Err(EngineError(format!(
-            "unsupported review triage response schema {:?}",
-            responses.schema_version
-        )));
-    }
-    if responses.job_fingerprint != job.fingerprint {
-        return Err(EngineError(
-            "review triage responses do not match the neighborhood job fingerprint".to_string(),
-        ));
-    }
-
-    let expected_ids = job
-        .neighborhoods
-        .iter()
-        .map(|neighborhood| neighborhood.id.as_str())
-        .collect::<BTreeSet<_>>();
-    let mut seen_ids = BTreeSet::new();
-    for result in &responses.results {
-        if !expected_ids.contains(result.neighborhood_id.as_str()) {
-            return Err(EngineError(format!(
-                "review triage references unknown neighborhood {:?}",
-                result.neighborhood_id
-            )));
-        }
-        if !seen_ids.insert(result.neighborhood_id.as_str()) {
-            return Err(EngineError(format!(
-                "review triage contains duplicate neighborhood {:?}",
-                result.neighborhood_id
-            )));
-        }
-        validate_triage_result(result)?;
-    }
-    if seen_ids.len() != expected_ids.len() {
-        let missing = expected_ids
-            .difference(&seen_ids)
-            .copied()
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(EngineError(format!(
-            "review triage is missing neighborhoods: {missing}"
-        )));
-    }
-
-    let issue_count = responses
-        .results
-        .iter()
-        .filter(|result| result.decision == ReviewDecision::Issue)
-        .count();
-    let not_issue_count = responses
-        .results
-        .iter()
-        .filter(|result| result.decision == ReviewDecision::NotIssue)
-        .count();
-    let needs_review_count = responses
-        .results
-        .iter()
-        .filter(|result| result.decision == ReviewDecision::NeedsReview)
-        .count();
-    Ok(ReviewTriageReport {
-        schema_version: REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
-        job_fingerprint: job.fingerprint.clone(),
-        issue_count,
-        not_issue_count,
-        needs_review_count,
-        results: responses.results.clone(),
-    })
-}
-
-fn validate_triage_result(result: &mehscan_core::ReviewTriageResult) -> Result<(), EngineError> {
-    validate_compact_triage(
-        &result.neighborhood_id,
-        result.decision,
-        &result.summary,
-        &result.checks,
-    )
-}
-
 pub(crate) fn validate_compact_triage(
     id: &str,
     decision: ReviewDecision,
@@ -5064,133 +4329,21 @@ pub(crate) fn validate_compact_triage(
 
 fn path_review_triage_contract() -> ReviewTriageContract {
     ReviewTriageContract {
-        response_fields: vec![
-            "review_id".to_string(),
-            "decision".to_string(),
-            "confidence".to_string(),
-            "summary".to_string(),
-            "checks".to_string(),
-            "investigation".to_string(),
-        ],
-        decisions: vec![
-            "issue".to_string(),
-            "not_issue".to_string(),
-            "needs_review".to_string(),
-        ],
-        confidence_levels: vec!["high".to_string(), "medium".to_string(), "low".to_string()],
+        response_fields: vec!["review_id", "selected_anchor_id", "decision", "confidence", "summary", "checks", "investigation"]
+            .into_iter().map(str::to_string).collect(),
+        decisions: vec!["issue", "not_issue", "needs_review"]
+            .into_iter().map(str::to_string).collect(),
+        confidence_levels: vec!["high", "medium", "low"]
+            .into_iter().map(str::to_string).collect(),
         instructions: vec![
-            "Return one JSON object with schema_version `1.1`, bundle_fingerprint copied exactly from this request, and a results array. Each results entry must contain review_id, decision, confidence, summary, checks, and investigation; use an empty checks array for issue and not_issue."
-                .to_string(),
-            "Treat the candidate as a bounded review lead, not a vulnerability verdict."
-                .to_string(),
-            "Use issue only when supplied evidence supports dangerous behavior, relevant attacker influence or policy failure, and no demonstrated effective protection."
-                .to_string(),
-            "Use not_issue for affirmative disproof or a demonstrated effective protection. For a non-path observation, not_issue may also mean the supplied context establishes only an ordinary API or syntax boundary and no reportable attacker influence or concrete policy failure; use the configured medium confidence and do not claim the wider code is proven safe."
-                .to_string(),
-            "Use supplied facts and exact artifacts returned by the prescribed bounded lookups; do not invent cross-function, deployment, or runtime behavior."
-                .to_string(),
-            "When a decisive origin or control is missing, follow the supplied investigation lookup for that exact operand and operation. A same-file or same-language producer, route, or writer is a lead until its target, ordering, and reachability match; if bounded inspection cannot establish that link, preserve the named needs_review check rather than dismissing or asserting the issue."
-                .to_string(),
-            "Before claiming injection, check that the producer's representation matches the consumer operation (for example object properties versus array indexing after JSON decoding). An incompatible access does not establish delivery to the sink."
-                .to_string(),
-            "For injection into constructed SQL, HTML, commands, or URLs, evaluate the exact interpreted operand rather than its containing object or an adjacent interpolation. Attacker selection of an integer, enum, date formatted by a fixed formatter, or fixed-format generated value does not by itself permit grammar-changing text; conversely, an unconstrained string can. Resolve each relevant operand's type or producer before treating a request-associated object as proof of injection."
-                .to_string(),
-            "Injection does not require unsafe input on every execution path. For shown code equivalent to `if (enabled) value = request.field; sink(value)`, the enabled branch establishes a conditional weakness unless supplied facts disprove that branch; an uninitialized value or failure in the other branch does not protect it. The condition need not be attacker-controlled. Likewise, when a shown decoded request object supplies the selected property value, a dynamic property selector need not itself be attacker-controlled; do not confuse the selector's origin with the selected value's origin."
-                .to_string(),
-            "An intervening unknown helper is neither a sanitizer nor proof that the old value survives. Check supplied argument/reference/alias and mutation semantics, including calls inside compound assignment; do not assume pass-by-value in PHP or unchanged mutable objects in other languages. A neighboring helper declaration answers this only when its exact callable and owner match. If the bounded relationship is not established and unresolved is empty, dismiss that relationship without claiming safe output."
-                .to_string(),
-            "Server metadata, session fields and framework properties are not automatically attacker-selected. Establish the producer and the relevant influence from this review's evidence; for example SCRIPT_NAME alone does not establish attacker-selected attribute-breaking content. This does not negate a separately shown request read or concrete policy failure."
-                .to_string(),
-            "Evidence scope is per review ID: use only that review's candidate, evidence, facts, review_basis, and decision_facts. Other reviews in the bundle are independent; even the same filename or variable name does not authorize borrowing their input origins, producers, controls, or branches."
-                .to_string(),
-            "A non-path observation may establish an issue through its own source excerpts: a directly shown request read, cookie loop, or request dump reaching executable HTML does not require a deterministic path. Conversely, a variable name, UI label, or unsafe-looking API alone does not establish attacker influence."
-                .to_string(),
-            "Observed guard, sanitizer, and validation syntax is possible control inventory, not demonstrated protection. Establish the same operand, owner, operation, and branch before applying it; a protected branch cannot protect a separate raw branch."
-                .to_string(),
-            "For authorization, distinguish boundary attachment, authentication, coarse role or permission checks, and authorization of the same action and resource. A custom guard, middleware, dependency, policy, or voter name is attachment inventory only until its supplied definition and rejection behavior establish what it enforces."
-                .to_string(),
-            "For every routed authorization review, align the exact server boundary, method/path or resolver action, sensitive effect, attached control scope, framework inheritance or registration order, and selected resource before deciding. Authentication proves identity only; a sibling method/path guard, coarse role, or unrelated policy does not authorize the reviewed action and object. Explicit public overrides and ignored or fail-open decisions must be applied to the exact operation they affect. For a claimed cross-user write, distinguish shared-resource mutation from an object written only to the caller's session or response; assess any separate cross-user read or disclosure on its own evidence."
-                .to_string(),
-            "Evidence tagged review-admission-marker means deterministic facts established a security-relevant boundary and effect, but the normal sink/path vocabulary could not represent the complete review invariant. Do not dismiss it merely because no conventional sink or deterministic vulnerability path fired. Judge only the named review-invariant tag from the supplied facts; the marker admits review and is not itself proof of a weakness."
-                .to_string(),
-            "For review-invariant:action-resource-authorization, decide from the supplied boundary, handler/helper, subject, selected resource, and policy facts: issue requires a concrete uncovered or mismatched policy; not_issue requires an intentionally safe/public effect or an effective policy for the same action and resource."
-                .to_string(),
-            "For review-invariant:credential-lifecycle, decide whether the exact credential or authenticator state transition requires and enforces appropriate proof of the subject, current credential, recovery authority, or step-up authentication. A valid session alone may be insufficient for a high-impact change; issue requires a concrete bypass or missing required proof, while not_issue requires the applicable proof and enforced transition to be shown."
-                .to_string(),
-            "For bounded object-binding review, identify the exact request-controlled object, binding or copy operation, persisted target, and writable security-sensitive fields. Apply an allowlist, exclusion, DTO boundary, serializer field list, bind-never policy, explicit mapping, or field-level authorization only when supplied executable facts cover that exact operation and field; a typed request object or validation annotation alone is not a write allowlist."
-                .to_string(),
-            "For bounded request-integrity review, require browser-managed victim authority and the exact state-changing operation. Apply a CSRF token or strict origin policy only when its attachment and rejection behavior cover that route; authentication and assumed SameSite behavior are not substitutes."
-                .to_string(),
-            "For bounded fail-open review, follow the shown decision result, branch, catch, response, or callback to the protected effect. Logging, telemetry, sending a response, setting a status, or issuing a challenge is not enforcement when supplied code continues; a return or throw protects only the branch and operation it actually terminates."
-                .to_string(),
-            "For bounded authoritative-value review, keep the caller-supplied value, selected resource, server-loaded or quoted value, units/currency, version and financial effect distinct. A variable named price, a catalog lookup, or a payment SDK call is not proof that the exact effect uses the applicable authoritative value. Direct persistence of a request field as a paid amount is decision-ready when supplied evidence establishes that relationship; do not dismiss it merely because a separate price source might exist."
-                .to_string(),
-            "For bounded state-transition review, keep the persisted current state, requested next state, affected resource, allowed-transition policy and terminating rejection separate. Status names, enums, validation calls, or a transition helper name do not prove that the exact current-to-next edge is allowed. An explicit applicable map plus rejection before mutation is a local control; direct persistence of a request-supplied state is decision-ready when no such enforcement is shown."
-                .to_string(),
-            "For bounded shared-state limit review, keep the loaded persisted value, caller-requested delta, business-limit check, derived value and persistence effect separate. A correct local comparison does not prove concurrency safety, and a transaction or atomic helper name does not prove adapter semantics. Require an exact conditional write, applicable row lock inside a transaction, compare-and-swap, or other supplied database contract before treating the read-check-write sequence as atomic."
-                .to_string(),
-            "In HTTP route context, unknown means enforcement was not classified; guard names remain useful exact attachments but do not prove protection. explicitly_public and denied represent canonical local framework policy, while authenticated and role_restricted still do not by themselves prove owner, tenant, or object authorization."
-                .to_string(),
-            "Apply an authorization default or activation fact only within its supplied framework scope. For a custom check to protect a dangerous operation, the supplied facts must show the trusted server-side subject, relevant action or resource, and a rejection path that stops execution; otherwise retain it as context rather than dismissing the sink."
-                .to_string(),
-            "For generated CRUD or framework-registered resources, evaluate each supplied HTTP method and path independently. A rule explicitly tagged generated-crud establishes that the matched registration generates server operations even when its excerpt contains endpoint templates rather than literal verbs; do not dismiss it on that basis. Match only middleware, route groups, policies, or allow/deny registrations that cover the exact operation and, where the framework is order-sensitive, run before the generated handler; a guard on GET, POST, DELETE, a collection path, or a sibling route does not protect an uncovered PUT/PATCH or item route. Commented-out and client-side checks are not controls. An issue summary must name at least one exact uncovered method/path and sensitive generated operation rather than broadly claiming every generated model is exposed."
-                .to_string(),
-            "Configuration facts are repository defaults or references, not proof of the effective deployed value."
-                .to_string(),
-            "Distinguish application-owned controls from proxy, gateway, ingress, platform, framework, and client controls."
-                .to_string(),
-            "Use needs_review only when decision_facts.unresolved names a concrete missing artifact that can change the decision. Generic possibilities about unknown origin, runtime value, or security impact are reviewer confidence factors, not automatic escalation checks."
-                .to_string(),
-            "Treat every remaining decision_facts.unresolved entry as decision-critical. Do not use issue or not_issue while one remains unless supplied facts or an exact retrieved artifact explicitly answer that entry; otherwise use needs_review and copy the entry into checks. Cite retrieved artifacts used to resolve it."
-                .to_string(),
-            "Use investigation.readiness as workflow metadata, not as a verdict. For investigation readiness, execute supplied bounded lookup requests in order only until the decisive fact is resolved; do not spend a secondary lookup after an earlier artifact already establishes issue or not_issue. For blocked readiness, preserve the named blockers and do not invent unavailable deployment or runtime facts."
-                .to_string(),
-            "A lookup request is a concrete repository query, not evidence that its expected producer or control exists. Apply only returned artifacts that match the exact operand, owner, operation, action, and resource in this review."
-                .to_string(),
-            "Record each executed supplied lookup by its zero-based request_index in investigation.lookup_attempts. If one attempted lookup reveals the exact next decisive file or identifier, the response permits one follow-on source or references escalation instead of request_index; retain the exact supplied missing-fact question, use the smallest locator, and do not perform generic exploration. Preserve returned source as bounded artifacts with distinct IDs and exact locations; cite those IDs for claims and keep reviewer_inferences separate from deterministic scan facts."
-                .to_string(),
-            "Each lookup attempt must identify exactly one supplied request_index or one allowed escalation. An answered attempt must return at least one artifact and cite at least one artifact from that same attempt. A source artifact's path and lines must stay within the requested source window; an escalated path or symbol must come from an earlier returned artifact. Every reviewer-origin lead artifact ID must also be explicitly cited."
-                .to_string(),
-            "If supplied or retrieved source establishes a concrete dangerous operation or security invariant that is distinct from the admitted question, retain at most three reviewer_origin_leads with a precise question, security relevance, explanation of the distinction, exact source location and explicitly cited artifact IDs. A keyword, comment, helper name or generic concern is not a lead. Leads are unvalidated follow-up work: do not use them to change this review's verdict and do not describe them as scanner findings or deterministic coverage."
-                .to_string(),
-            "For needs_review, every retained check with a supplied lookup must have a matching lookup attempt, including an honest no_relevant_result, unavailable, truncated, budget_exhausted, or failed outcome. A deployment-only check must copy its supplied blocker into investigation.blockers."
-                .to_string(),
-            "Do not emit repair metadata. The runner may replace one structurally parseable invalid result exactly once, records both result identities and the original validation error, and revalidates the complete bundle. Repair is for contract failure only, never for changing a valid security decision."
-                .to_string(),
-            "Apply this decision procedure: issue requires established dangerous behavior plus attacker influence or a concrete policy failure and no demonstrated effective applicable control; not_issue requires affirmative safe purpose, non-attacker input, non-executable behavior, or an effective applicable control; needs_review requires a supplied unresolved fact that can change issue versus not_issue."
-                .to_string(),
-            "For an observation whose evidence marks an interpreted operand's origin as decision-critical, missing production origin is not evidence of safety. Use needs_review while its supplied origin-or-constraint question remains unresolved. Use not_issue only when supplied facts affirmatively establish a safe value domain, trusted immutable producer, non-executable use, or effective construction for that exact operand. For SQL, separate parameter binding does not neutralize a value already concatenated into executable query text."
-                .to_string(),
-            "A bounded path may satisfy the issue test, but path status alone is not sufficient. Observation status alone is not a reason for needs_review."
-                .to_string(),
-            "For a deterministic bounded path whose decision_facts.unresolved and decision_facts.effective_controls are both empty, use issue when its rule-specific established behavior describes the named weakness. Use not_issue only when another supplied fact affirmatively disproves that same behavior; do not substitute a different invariant such as resource ownership for plaintext storage, CSRF, validation, or lifecycle review."
-                .to_string(),
-            "Treat an observation as decision-ready when decision_facts.unresolved is empty. Use reviewer reasoning and the exact confidence policy to distinguish a concrete weakness from an ordinary API or syntax boundary; do not turn open_questions into checks. For an application-owned authentication-cookie omission, a merely possible proxy rewrite affects deployment exposure or remediation ownership but does not erase the source defect; absent a supplied effective rewrite, use issue with medium confidence rather than needs_review."
-                .to_string(),
-            "Answer open questions from the supplied facts before requesting more evidence; do not ask to trace a flow or inspect a control that the excerpts already show, and name only the exact unresolved artifact in checks."
-                .to_string(),
-            "Before choosing needs_review, verify that the requested artifact is absent from facts. If a helper, route, producer, consumer, configuration, validation, or protection excerpt already answers the question, use that excerpt to decide issue or not_issue instead of asking to inspect it again."
-                .to_string(),
-            "For resource-access review, a sensitive read or an existence oracle can be the security impact; do not require a mutation before using issue. Conversely, treat an exact authenticated-owner, tenant, possession-secret, or server-derived selector control as affirmative disproof when it applies before the access."
-                .to_string(),
-            "Use the exact confidence_policy value for the decision you select; confidence is deterministic scanner calibration, not a model-style preference or vulnerability severity. High means the decisive behavior or affirmative disproof is directly established, medium means one bounded framework, purpose, ownership, or syntactic inference remains, and low means decision-critical evidence is truncated."
-                .to_string(),
-            "Calibration: direct request input reaching an executable injection sink with no applicable control can be issue; a weak hash used only as a non-security packaging checksum can be not_issue; a source-only observation with an unresolved sink or impact can be needs_review."
-                .to_string(),
-            "Keep summary to two sentences. Use checks only for needs_review and keep them decisive."
-                .to_string(),
-            "Evaluate each review independently. Its summary must name the concrete source, sink, or policy behavior for that review using its review_basis semantics; do not reuse category-wide boilerplate or list alternative weaknesses from other reviews."
-                .to_string(),
-            "When the reviewed invariant requires rejection, challenge solving, telemetry, logging, or auditing followed by continued execution establishes that the observed check is not an effective control. If the supplied excerpt directly shows that policy failure and no other effective control, decide issue rather than needs_review."
-                .to_string(),
-            "For needs_review, copy one or more exact entries from decision_facts.unresolved into checks. Do not create checks outside that supplied unresolved set."
-                .to_string(),
-            "Return exactly one result for every supplied review ID and do not add repository findings outside the bundle."
-                .to_string(),
-        ],
+            "Use schema 1.3. Resolve and cite the selected anchor for this exact operation; neighboring reviews are independent.",
+            "Treat scanner facts and lookup suggestions as leads. Query the next decision-changing edge and journal each read-only Mehscan query.",
+            "Issue requires a shown weakness, relevant attacker influence or policy failure, and no effective applicable control. Not_issue requires affirmative disproof or an effective control on the same value and reachable branch.",
+            "For needs_review, name the precise missing fact and the targeted check or external blocker. Do not invent runtime or deployment facts.",
+            "Cite only decisive exact source in the response. Keep reviewer inference separate from scanner facts and retrieved text; follow the matching skill bucket for the specific security relationship.",
+        ].into_iter().map(str::to_string).collect(),
     }
 }
-
 fn candidate_evidence_ids<'a>(
     candidates: &'a [mehscan_core::Candidate],
     evidence: &'a [Evidence],
@@ -5309,8 +4462,7 @@ fn path_review_investigation(
             questions: decision_facts.unresolved.iter().filter(|question| is_missing_stored_producer_question(question)).cloned().collect(),
             purpose: "Compare this exact archive write destination and entry-name constraints with the local asset read target; check whether route gates permit the write before treating it as the source's producer.".to_string(),
         });
-        plan.lookup_requests
-            .truncate(plan.budget.max_supplied_lookups);
+        plan.lookup_requests.truncate(2);
     }
     plan
 }
@@ -5322,18 +4474,30 @@ fn observation_review_investigation(
     truncation: &ReviewContextTruncation,
 ) -> ReviewInvestigationPlan {
     let anchor = evidence.first().map(|item| &item.location);
-    let lookup_symbol = decision_facts
-        .unresolved
-        .iter()
-        .find_map(|question| review_question_lookup_symbol(question))
-        .or_else(|| review_admission::preferred_lookup_symbol(evidence))
-        .or_else(|| {
-            review_lookup_symbol(
-                evidence
-                    .iter()
-                    .flat_map(|item| item.captures.values().map(|capture| capture.text.as_str())),
-            )
-        });
+    let lookup_symbol = (evidence
+        .first()
+        .is_some_and(|item| item.capability == Capability::DatabaseQuery)
+        && anchor.is_some_and(|location| {
+            location.path.ends_with(".cpp")
+                || location.path.ends_with(".cc")
+                || location.path.ends_with(".cxx")
+        }))
+    .then(|| anchor.and_then(|location| enclosing_cpp_method_lookup(facts, location)))
+    .flatten()
+    .or_else(|| {
+        decision_facts
+            .unresolved
+            .iter()
+            .find_map(|question| review_question_lookup_symbol(question))
+    })
+    .or_else(|| review_admission::preferred_lookup_symbol(evidence))
+    .or_else(|| {
+        review_lookup_symbol(
+            evidence
+                .iter()
+                .flat_map(|item| item.captures.values().map(|capture| capture.text.as_str())),
+        )
+    });
     let Some(anchor) = anchor else {
         let mut missing_facts = decision_facts.unresolved.clone();
         if truncation.decision_critical {
@@ -5352,12 +4516,6 @@ fn observation_review_investigation(
             } else {
                 ReviewReadiness::Blocked
             },
-            budget: investigation_budget_for_capability(
-                evidence
-                    .first()
-                    .map(|item| item.capability)
-                    .unwrap_or(Capability::ExternalInput),
-            ),
             missing_facts,
             lookup_requests: Vec::new(),
             blockers,
@@ -5390,6 +4548,43 @@ fn observation_review_investigation(
     )
 }
 
+/// A C++ wrapper's parameter is a poor repository-reference target. An exact
+/// qualified declaration in the anchor window gives the reviewer the callable
+/// token whose callers can be inspected instead. This is only a lookup hint.
+fn enclosing_cpp_method_lookup(
+    facts: &[ReviewNeighborhoodFact],
+    anchor: &Location,
+) -> Option<String> {
+    facts
+        .iter()
+        .filter(|fact| {
+            fact.role == "source_context"
+                && fact.location.path == anchor.path
+                && fact.location.start.line <= anchor.start.line
+                && fact.location.end.line >= anchor.start.line
+        })
+        .flat_map(|fact| {
+            fact.excerpt
+                .lines()
+                .take(anchor.start.line - fact.location.start.line + 1)
+                .filter_map(|line| {
+                    let line = line.trim();
+                    if line.contains([';', '=']) || line.starts_with("return ") {
+                        return None;
+                    }
+                    let (before_parameters, _) = line.split_once('(')?;
+                    if before_parameters.split_whitespace().count() < 2 {
+                        return None;
+                    }
+                    let (_, method) = before_parameters.rsplit_once("::")?;
+                    let method = method.trim();
+                    is_plain_identifier(method).then(|| method.to_string())
+                })
+                .collect::<Vec<_>>()
+        })
+        .last()
+}
+
 fn review_investigation_plan(
     capability: Capability,
     unresolved: &[String],
@@ -5408,10 +4603,7 @@ fn review_investigation_plan(
         );
     }
     if missing_facts.is_empty() {
-        return ReviewInvestigationPlan {
-            budget: investigation_budget_for_capability(capability),
-            ..ReviewInvestigationPlan::default()
-        };
+        return ReviewInvestigationPlan::default();
     }
 
     let (repository_questions, external_questions): (Vec<_>, Vec<_>) = missing_facts
@@ -5451,7 +4643,7 @@ fn review_investigation_plan(
                 operation: "references".to_string(),
                 arguments: [
                     ("symbol".to_string(), symbol.to_string()),
-                    ("limit".to_string(), DEFAULT_RESULT_LIMIT.to_string()),
+                    ("limit".to_string(), "20".to_string()),
                 ]
                 .into(),
                 questions: repository_questions,
@@ -5468,38 +4660,9 @@ fn review_investigation_plan(
     };
     ReviewInvestigationPlan {
         readiness,
-        budget: investigation_budget_for_capability(capability),
         missing_facts,
         lookup_requests,
         blockers,
-    }
-}
-
-fn investigation_budget_for_capability(capability: Capability) -> ReviewInvestigationBudget {
-    let max_returned_bytes = match capability {
-        Capability::Authentication
-        | Capability::Authorization
-        | Capability::ResourceAccess
-        | Capability::TokenGeneration
-        | Capability::CredentialMaterial => 24 * 1024,
-        Capability::ProcessExecution
-        | Capability::DynamicCodeExecution
-        | Capability::TemplateEvaluation
-        | Capability::DatabaseQuery
-        | Capability::FilesystemRead
-        | Capability::FilesystemWrite
-        | Capability::OutboundNetworkRequest
-        | Capability::Redirect
-        | Capability::HtmlOutput
-        | Capability::Deserialization
-        | Capability::XmlParsing => 16 * 1024,
-        _ => 12 * 1024,
-    };
-    ReviewInvestigationBudget {
-        max_supplied_lookups: 2,
-        max_escalations: 1,
-        max_returned_bytes,
-        max_lookup_depth: 1,
     }
 }
 
@@ -8071,92 +7234,6 @@ fn explicit_cookie_omission(rule_id: &str) -> Option<&'static str> {
     }
 }
 
-fn path_confidence_policy(
-    candidate: &mehscan_core::Candidate,
-    decision_facts: &ReviewDecisionFacts,
-    truncation: &ReviewContextTruncation,
-) -> ReviewConfidencePolicy {
-    if truncation.decision_critical {
-        return ReviewConfidencePolicy {
-            issue: ReviewConfidence::Low,
-            not_issue: ReviewConfidence::Low,
-            needs_review: ReviewConfidence::Low,
-            rationale: "Decision-critical evidence is truncated; every verdict is low confidence until the missing context is supplied.".to_string(),
-        };
-    }
-    let direct_complete = decision_facts.unresolved.is_empty()
-        && candidate.source.confidence == mehscan_core::Confidence::High
-        && candidate.sink.confidence == mehscan_core::Confidence::High;
-    let cookie_omission = explicit_cookie_omission(&candidate.sink.rule_id).is_some();
-    ReviewConfidencePolicy {
-        issue: if direct_complete && !cookie_omission {
-            ReviewConfidence::High
-        } else {
-            ReviewConfidence::Medium
-        },
-        not_issue: if decision_facts.unresolved.is_empty() {
-            ReviewConfidence::High
-        } else {
-            ReviewConfidence::Medium
-        },
-        needs_review: ReviewConfidence::Medium,
-        rationale: if direct_complete && !cookie_omission {
-            "The bounded path has high-confidence terminals and no unresolved decision fact; an issue or affirmative disproof may be high confidence. Needs-review remains medium because it asserts missing adjudication context."
-        } else {
-            "A bounded syntactic, framework, ownership, or unresolved inference remains; use medium confidence for the selected decision."
-        }
-        .to_string(),
-    }
-}
-
-fn observation_confidence_policy(
-    evidence: &[Evidence],
-    decision_facts: &ReviewDecisionFacts,
-    truncation: &ReviewContextTruncation,
-) -> ReviewConfidencePolicy {
-    if truncation.decision_critical {
-        return ReviewConfidencePolicy {
-            issue: ReviewConfidence::Low,
-            not_issue: ReviewConfidence::Low,
-            needs_review: ReviewConfidence::Low,
-            rationale: "Decision-critical evidence is truncated; every verdict is low confidence until the missing context is supplied.".to_string(),
-        };
-    }
-    let cookie_omission = evidence
-        .iter()
-        .any(|item| explicit_cookie_omission(&item.rule_id).is_some());
-    let direct_issue_fact = decision_facts.unresolved.is_empty()
-        && decision_facts.established.iter().any(|fact| {
-            fact.contains("source-embedded private-key")
-                || fact.contains("explicitly emits an authentication cookie")
-                || fact.contains("explicitly establishes")
-        });
-    let affirmative_safe_fact = !decision_facts.effective_controls.is_empty()
-        || decision_facts
-            .established
-            .iter()
-            .any(|fact| fact.contains("affirmatively disproving"));
-    ReviewConfidencePolicy {
-        issue: if direct_issue_fact && !cookie_omission {
-            ReviewConfidence::High
-        } else {
-            ReviewConfidence::Medium
-        },
-        not_issue: if decision_facts.unresolved.is_empty() && affirmative_safe_fact {
-            ReviewConfidence::High
-        } else {
-            ReviewConfidence::Medium
-        },
-        needs_review: ReviewConfidence::Medium,
-        rationale: if direct_issue_fact && !cookie_omission {
-            "A direct application-owned policy fact is established with no unresolved decision fact; an issue may be high confidence."
-        } else {
-            "An ordinary observation without a concrete decision blocker is adjudicated through reviewer reasoning at medium confidence; direct policy failures or affirmative controls may support high confidence."
-        }
-        .to_string(),
-    }
-}
-
 fn path_review_basis(
     candidate: &mehscan_core::Candidate,
     evidence_by_id: &BTreeMap<&str, &Evidence>,
@@ -8390,6 +7467,9 @@ fn observation_review_basis(
     if evidence
         .iter()
         .any(|item| item.kind == EvidenceKind::SecurityConfiguration)
+        && !evidence
+            .iter()
+            .any(|item| item.rule_id == "csharp-minimal-anonymous-state-change-review")
     {
         deterministic_facts.push(
             "Repository configuration evidence does not prove the effective deployed value or which application, framework, proxy, gateway, ingress, mesh, or platform layer owns it."
@@ -8635,7 +7715,9 @@ fn build_observation_reviews(
     context_lines: usize,
     rules_by_id: &BTreeMap<&str, &Rule>,
     framework_context: &[FrameworkContextFact],
+    mut profile: Option<&mut ReviewJobProfile>,
 ) -> Result<Vec<ObservationReview>, EngineError> {
+    let index_started = std::time::Instant::now();
     let groups = groups.into_iter().collect::<Vec<_>>();
     let mut indexed_references = BTreeSet::new();
     for group in &groups {
@@ -8647,9 +7729,17 @@ fn build_observation_reviews(
         .iter()
         .any(|group| decision_critical_origin(&group.evidence).is_some())
         .then(|| BoundedCallerIndex::build(sources));
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.observation_index_milliseconds = index_started.elapsed().as_millis();
+        eprintln!(
+            "review-bundles observation index: {} ms",
+            profile.observation_index_milliseconds
+        );
+    }
     let mut php_contexts = BTreeMap::new();
     let mut reviews = Vec::new();
     for group in groups {
+        let group_started = std::time::Instant::now();
         let file = sources.file(&group.path)?;
         let first_line = group
             .evidence
@@ -8755,6 +7845,7 @@ fn build_observation_reviews(
         facts.append(&mut php_origins);
         let references = observation_group_references(&group, sources, context_lines)?;
         let paths = BTreeSet::from([group.path.as_str()]);
+        let configuration_started = std::time::Instant::now();
         let (mut configuration, configuration_truncated) = configuration_facts(
             sources,
             &paths,
@@ -8763,9 +7854,11 @@ fn build_observation_reviews(
         );
         context_truncated |= configuration_truncated;
         facts.append(&mut configuration);
+        let configuration_milliseconds = configuration_started.elapsed().as_millis();
         let (mut framework_facts, framework_truncated) = review_context.framework_facts(&paths, 8);
         context_truncated |= framework_truncated;
         facts.append(&mut framework_facts);
+        let helpers_started = std::time::Instant::now();
         let (mut helpers, helpers_truncated) = observation_helper_definition_facts(
             sources,
             &review_context,
@@ -8776,10 +7869,14 @@ fn build_observation_reviews(
         );
         context_truncated |= helpers_truncated;
         facts.append(&mut helpers);
+        let helpers_milliseconds = helpers_started.elapsed().as_millis();
+        let marker_started = std::time::Instant::now();
         let (mut marker_helpers, marker_helpers_truncated) =
             review_admission::helper_facts(sources, &group, &facts, 4);
         context_truncated |= marker_helpers_truncated;
         facts.append(&mut marker_helpers);
+        let marker_milliseconds = marker_started.elapsed().as_millis();
+        let second_started = std::time::Instant::now();
         let (mut second_hop, second_hop_truncated) = second_hop_review_facts(
             sources,
             &review_context,
@@ -8791,8 +7888,30 @@ fn build_observation_reviews(
         );
         context_truncated |= second_hop_truncated;
         facts.append(&mut second_hop);
+        let second_milliseconds = second_started.elapsed().as_millis();
+        if let Some(profile) = profile.as_deref_mut() {
+            let pre_milliseconds = group_started.elapsed().as_millis();
+            profile.observation_pre_origin_milliseconds += pre_milliseconds;
+            if pre_milliseconds >= 500 {
+                eprintln!(
+                    "review-bundles slow observation {}:{}: pre={} ms config={} ms helpers={} ms marker={} ms second={} ms",
+                    group.path,
+                    group.symbol,
+                    pre_milliseconds,
+                    configuration_milliseconds,
+                    helpers_milliseconds,
+                    marker_milliseconds,
+                    second_milliseconds,
+                );
+            }
+        }
+        let origin_started = std::time::Instant::now();
         let (mut origin, origin_truncated) =
             origin_consumer_review_facts(sources, &review_context, &paths, &facts, None, 4);
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.observation_origin_milliseconds += origin_started.elapsed().as_millis();
+        }
+        let post_origin_started = std::time::Instant::now();
         context_truncated |= origin_truncated;
         facts.append(&mut origin);
         if let Some(sink) = group
@@ -9089,6 +8208,10 @@ fn build_observation_reviews(
             review_context.authorization_facts(&paths, &authorization_anchors, 8);
         context_truncated |= authorization_truncated;
         facts.append(&mut authorization_facts);
+        let (excerpt_truncated, excerpt_critical) =
+            cap_review_fact_excerpts(sources, &mut facts, anchor);
+        context_truncated |= excerpt_truncated;
+        decision_critical_context_truncated |= excerpt_critical;
         sort_review_facts(&mut facts);
         let review_id =
             observation_review_id(&group.path, &group.symbol, &group.anchor_evidence_ids);
@@ -9131,8 +8254,6 @@ fn build_observation_reviews(
             &decision_facts,
             &truncation,
         );
-        let confidence_policy =
-            observation_confidence_policy(&selected_evidence, &decision_facts, &truncation);
         assign_review_fact_artifact_ids(&mut facts);
         reviews.push(ObservationReview {
             id: review_id,
@@ -9143,12 +8264,25 @@ fn build_observation_reviews(
             review_basis: Some(review_basis),
             decision_facts,
             investigation,
-            confidence_policy,
             facts,
             open_questions,
             context_truncated,
             truncation,
         });
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.observation_post_origin_milliseconds +=
+                post_origin_started.elapsed().as_millis();
+            profile.observation_review_count += 1;
+            if profile.observation_review_count % 25 == 0 {
+                eprintln!(
+                    "review-bundles observations {}: pre={} ms origin={} ms post={} ms",
+                    profile.observation_review_count,
+                    profile.observation_pre_origin_milliseconds,
+                    profile.observation_origin_milliseconds,
+                    profile.observation_post_origin_milliseconds,
+                );
+            }
+        }
     }
     Ok(reviews)
 }
@@ -9215,18 +8349,13 @@ fn javascript_fixed_arithmetic_eval_fact(
     })
 }
 
-/// Keeps ordinary observation payloads stable, but when a very large symbol
-/// exceeds the evidence ceiling, retains actionable anchors before auxiliary
-/// context. Returned anchor IDs always name evidence present in the payload.
+/// Puts selected anchors before neighboring context, including for small
+/// observations. Returned anchor IDs always name evidence present in the payload.
 fn bounded_observation_evidence(
     evidence: Vec<Evidence>,
     anchor_evidence_ids: &[String],
     limit: usize,
 ) -> (Vec<Evidence>, Vec<String>, bool) {
-    if evidence.len() <= limit {
-        return (evidence, anchor_evidence_ids.to_vec(), false);
-    }
-
     let anchors = anchor_evidence_ids
         .iter()
         .map(String::as_str)
@@ -9441,13 +8570,13 @@ fn observation_helper_definition_facts(
         let Some(symbols) = context.definitions.get(name) else {
             continue;
         };
-        let owned_symbols = symbols
+        let selected = symbols
             .iter()
             .filter(|symbol| {
-                review_definition_owned_by_candidate(sources, candidate_paths, name, symbol)
+                context.definition_owned_by_candidate(sources, candidate_paths, name, symbol)
             })
+            .take(2)
             .collect::<Vec<_>>();
-        let selected = owned_symbols.into_iter().take(2).collect::<Vec<_>>();
         for symbol in selected {
             if !looks_like_review_helper_signature(name, &symbol.signature)
                 || facts_cover_location(existing, &symbol.location)
@@ -12956,7 +12085,11 @@ fn resolve_imported_object_string_property(
     let expression = exported_object_property_expression(&module_file.source, exported, property)?;
     if sources.files.values().any(|candidate| {
         candidate.source.lines().any(|line| {
-            compact_has_property_assignment(&line.split_whitespace().collect::<String>(), property)
+            line.contains(property)
+                && compact_has_property_assignment(
+                    &line.split_whitespace().collect::<String>(),
+                    property,
+                )
         })
     }) {
         return None;
@@ -14287,10 +13420,7 @@ fn observation_review_questions(
     let has_sink = evidence.iter().any(|item| item.kind == EvidenceKind::Sink);
     let has_configuration = evidence
         .iter()
-        .any(|item| item.kind == EvidenceKind::SecurityConfiguration)
-        || facts
-            .iter()
-            .any(|fact| fact.role == "configuration_context");
+        .any(|item| item.kind == EvidenceKind::SecurityConfiguration);
     let has_application_owned_fix = evidence.iter().any(|item| {
         item.kind == EvidenceKind::SecurityConfiguration
             && item
@@ -14420,6 +13550,9 @@ fn observation_review_questions(
         && facts
             .iter()
             .any(|fact| fact.role == "public_entrypoint_ui_context");
+    let has_minimal_anonymous_state_change = evidence
+        .iter()
+        .any(|item| item.rule_id == "csharp-minimal-anonymous-state-change-review");
     let mut questions = Vec::new();
     if has_node_session_fixation {
         questions.push(
@@ -14522,6 +13655,11 @@ fn observation_review_questions(
             "Do the supplied operation, controller policy, and matching public UI establish an intended anonymous authentication or self-registration boundary, and does the endpoint perform any privileged action beyond ordinary sign-in or account creation?"
                 .to_string(),
         );
+    } else if !has_precise_node_boundary && has_minimal_anonymous_state_change {
+        questions.push(
+            "Does this anonymously reachable operation act on a protected subject or resource beyond public authentication, self-registration, or the caller's current session? If so, what exact guard applies before that sensitive effect?"
+                .to_string(),
+        );
     } else if !has_precise_node_boundary && has_stored_raw_context {
         questions.push(
             "Do the supplied write, persistence, retrieval/view, and raw-output excerpts show a context-appropriate sanitizer or a write invariant that prevents stored attacker HTML from executing?"
@@ -14583,6 +13721,7 @@ fn observation_review_questions(
         && !has_python_csrf_exempt
         && !has_python_hardcoded_jwt
         && !has_anonymous_endpoint_policy_context
+        && !has_minimal_anonymous_state_change
         && !has_precise_node_boundary
         && !decision_ready_policy
     {
@@ -14817,7 +13956,11 @@ fn path_review_questions(
         && candidate.capability != Capability::CountControlledMemoryOperation
         && candidate.capability != Capability::ArithmeticMultiplication
     {
-        questions.push(missing_protection_question(candidate.capability).to_string());
+        questions.push(if candidate.cwe_candidates.iter().any(|cwe| cwe == "CWE-352") {
+            "Can an attacker cause a cross-site request that carries the victim's browser-managed authority to this exact state-changing route, and what request-bound control rejects it? Establish effective cookie delivery rather than inferring it from an absent SameSite attribute.".to_string()
+        } else {
+            missing_protection_question(candidate.capability).to_string()
+        });
     }
     if has_feature_gate {
         questions.push(
@@ -15301,6 +14444,8 @@ fn review_definition_owned_by_candidate(
     candidate_paths: &BTreeSet<&str>,
     name: &str,
     symbol: &OutlineSymbol,
+    csharp_receiver_types: &RefCell<BTreeMap<(String, String), Option<String>>>,
+    csharp_qualified_parents: &RefCell<BTreeMap<(String, String), Option<String>>>,
 ) -> bool {
     if candidate_paths.contains(symbol.location.path.as_str()) {
         return true;
@@ -15310,8 +14455,19 @@ fn review_definition_owned_by_candidate(
             return false;
         };
         if candidate.language == Some(Language::Csharp)
-            && (csharp_qualified_helper_is_owned(sources, candidate, name, symbol)
-                || csharp_typed_instance_helper_is_owned(sources, candidate, name, symbol))
+            && (csharp_qualified_helper_is_owned(
+                sources,
+                candidate,
+                name,
+                symbol,
+                csharp_qualified_parents,
+            ) || csharp_typed_instance_helper_is_owned(
+                sources,
+                candidate,
+                name,
+                symbol,
+                csharp_receiver_types,
+            ))
         {
             return true;
         }
@@ -15365,45 +14521,21 @@ fn csharp_typed_instance_helper_is_owned(
     candidate: &SourceFile,
     name: &str,
     symbol: &OutlineSymbol,
+    receiver_types: &RefCell<BTreeMap<(String, String), Option<String>>>,
 ) -> bool {
-    let receivers = candidate
-        .source
-        .match_indices(&format!(".{name}("))
-        .filter_map(|(at, _)| {
-            let prefix = &candidate.source[..at];
-            let start = prefix
-                .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-                .map_or(0, |index| index + 1);
-            let receiver = &prefix[start..];
-            is_plain_identifier(receiver).then(|| receiver.to_string())
-        })
-        .collect::<BTreeSet<_>>();
-    if receivers.len() != 1 {
+    let key = (candidate.path.clone(), name.to_string());
+    let cached = receiver_types.borrow().get(&key).cloned();
+    let type_name = match cached {
+        Some(value) => value,
+        None => {
+            let value = csharp_typed_instance_receiver_type(candidate, name);
+            receiver_types.borrow_mut().insert(key, value.clone());
+            value
+        }
+    };
+    let Some(type_name) = type_name else {
         return false;
-    }
-    let receiver = receivers.first().expect("one exact receiver");
-    let types = candidate
-        .source
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("//"))
-        .filter_map(|line| {
-            let at = line.find(receiver)?;
-            let before = line[..at].trim_end();
-            let after = line[at + receiver.len()..].trim_start();
-            if before.contains(['=', '('])
-                || !line[..at].chars().last().is_some_and(char::is_whitespace)
-                || !after.starts_with([';', '=', ',', ')'])
-            {
-                return None;
-            }
-            before.split_whitespace().last()?.rsplit('.').next()
-        })
-        .filter(|type_name| type_name.chars().next().is_some_and(char::is_uppercase))
-        .collect::<BTreeSet<_>>();
-    if types.len() != 1 {
-        return false;
-    }
-    let type_name = types.first().expect("one exact receiver type");
+    };
     let Ok(definition) = sources.file(&symbol.location.path) else {
         return false;
     };
@@ -15427,13 +14559,8 @@ fn csharp_typed_instance_helper_is_owned(
     })
 }
 
-fn csharp_qualified_helper_is_owned(
-    sources: &RepositorySources,
-    candidate: &SourceFile,
-    name: &str,
-    symbol: &OutlineSymbol,
-) -> bool {
-    let parents = candidate
+fn csharp_typed_instance_receiver_type(candidate: &SourceFile, name: &str) -> Option<String> {
+    let receivers = candidate
         .source
         .match_indices(&format!(".{name}("))
         .filter_map(|(at, _)| {
@@ -15441,34 +14568,58 @@ fn csharp_qualified_helper_is_owned(
             let start = prefix
                 .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
                 .map_or(0, |index| index + 1);
-            let parent = &prefix[start..];
-            is_plain_identifier(parent).then(|| parent.to_string())
+            let receiver = &prefix[start..];
+            is_plain_identifier(receiver).then(|| receiver.to_string())
         })
         .collect::<BTreeSet<_>>();
-    if parents.len() != 1 {
-        return false;
+    if receivers.len() != 1 {
+        return None;
     }
-    let parent = parents.first().expect("one qualified helper parent");
-    if !parent.chars().next().is_some_and(char::is_uppercase) {
-        return false;
-    }
-    let compact_candidate = candidate
+    let receiver = receivers.first().expect("one exact receiver");
+    let types = candidate
         .source
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>();
-    if !compact_candidate.contains(&format!("{parent}.{name}("))
-        || ["class", "struct", "record", "interface"]
-            .iter()
-            .any(|kind| {
-                candidate.source.lines().any(|line| {
-                    let normalized = line.split_whitespace().collect::<Vec<_>>().join(" ");
-                    normalized.contains(&format!("{kind} {parent}"))
-                })
-            })
-    {
-        return false;
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .filter_map(|line| {
+            let at = line.find(receiver)?;
+            let before = line[..at].trim_end();
+            let after = line[at + receiver.len()..].trim_start();
+            if before.contains(['=', '('])
+                || !line[..at].chars().last().is_some_and(char::is_whitespace)
+                || !after.starts_with([';', '=', ',', ')'])
+            {
+                return None;
+            }
+            before.split_whitespace().last()?.rsplit('.').next()
+        })
+        .filter(|type_name| type_name.chars().next().is_some_and(char::is_uppercase))
+        .collect::<BTreeSet<_>>();
+    if types.len() != 1 {
+        return None;
     }
+    Some(types.first().expect("one exact receiver type").to_string())
+}
+
+fn csharp_qualified_helper_is_owned(
+    sources: &RepositorySources,
+    candidate: &SourceFile,
+    name: &str,
+    symbol: &OutlineSymbol,
+    qualified_parents: &RefCell<BTreeMap<(String, String), Option<String>>>,
+) -> bool {
+    let key = (candidate.path.clone(), name.to_string());
+    let cached = qualified_parents.borrow().get(&key).cloned();
+    let parent = match cached {
+        Some(value) => value,
+        None => {
+            let value = csharp_qualified_helper_parent(candidate, name);
+            qualified_parents.borrow_mut().insert(key, value.clone());
+            value
+        }
+    };
+    let Some(parent) = parent else {
+        return false;
+    };
     let Ok(definition) = sources.file(&symbol.location.path) else {
         return false;
     };
@@ -15497,6 +14648,46 @@ fn csharp_qualified_helper_is_owned(
             .lines()
             .map(|line| line.trim().trim_start_matches('\u{feff}'))
             .any(|line| line == format!("using {namespace};"))
+}
+
+fn csharp_qualified_helper_parent(candidate: &SourceFile, name: &str) -> Option<String> {
+    let parents = candidate
+        .source
+        .match_indices(&format!(".{name}("))
+        .filter_map(|(at, _)| {
+            let prefix = &candidate.source[..at];
+            let start = prefix
+                .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .map_or(0, |index| index + 1);
+            let parent = &prefix[start..];
+            is_plain_identifier(parent).then(|| parent.to_string())
+        })
+        .collect::<BTreeSet<_>>();
+    if parents.len() != 1 {
+        return None;
+    }
+    let parent = parents.first().expect("one qualified helper parent");
+    if !parent.chars().next().is_some_and(char::is_uppercase) {
+        return None;
+    }
+    let compact_candidate = candidate
+        .source
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    if !compact_candidate.contains(&format!("{parent}.{name}("))
+        || ["class", "struct", "record", "interface"]
+            .iter()
+            .any(|kind| {
+                candidate.source.lines().any(|line| {
+                    let normalized = line.split_whitespace().collect::<Vec<_>>().join(" ");
+                    normalized.contains(&format!("{kind} {parent}"))
+                })
+            })
+    {
+        return None;
+    }
+    Some(parent.clone())
 }
 
 fn csharp_namespace(source: &str) -> Option<&str> {
@@ -15576,7 +14767,7 @@ fn csharp_redirect_helper_query_only_candidate(
         .into_iter()
         .flatten()
         .filter(|symbol| {
-            review_definition_owned_by_candidate(sources, &candidate_paths, method, symbol)
+            review_context.definition_owned_by_candidate(sources, &candidate_paths, method, symbol)
         })
         .collect::<Vec<_>>();
     if owned_definitions.len() != 1 {
@@ -15925,7 +15116,41 @@ impl ReviewContextIndex {
                 .filter(|item| item.fact.role != "framework_context")
                 .cloned()
                 .collect(),
+            owned_definitions: RefCell::new(BTreeMap::new()),
+            csharp_receiver_types: RefCell::new(BTreeMap::new()),
+            csharp_qualified_parents: RefCell::new(BTreeMap::new()),
         })
+    }
+
+    fn definition_owned_by_candidate(
+        &self,
+        sources: &RepositorySources,
+        candidate_paths: &BTreeSet<&str>,
+        name: &str,
+        symbol: &OutlineSymbol,
+    ) -> bool {
+        let key = (
+            candidate_paths
+                .iter()
+                .map(|path| (*path).to_string())
+                .collect(),
+            name.to_string(),
+            symbol.location.path.clone(),
+            symbol.location.start.byte_offset,
+        );
+        if let Some(owned) = self.owned_definitions.borrow().get(&key) {
+            return *owned;
+        }
+        let owned = review_definition_owned_by_candidate(
+            sources,
+            candidate_paths,
+            name,
+            symbol,
+            &self.csharp_receiver_types,
+            &self.csharp_qualified_parents,
+        );
+        self.owned_definitions.borrow_mut().insert(key, owned);
+        owned
     }
 
     fn framework_facts(
@@ -16034,7 +15259,7 @@ impl ReviewContextIndex {
                 continue;
             };
             for symbol in symbols.iter().filter(|symbol| {
-                review_definition_owned_by_candidate(sources, candidate_paths, name, symbol)
+                self.definition_owned_by_candidate(sources, candidate_paths, name, symbol)
             }) {
                 let Ok(file) = sources.file(&symbol.location.path) else {
                     continue;
@@ -16154,7 +15379,7 @@ impl ReviewContextIndex {
             for symbol in symbols
                 .iter()
                 .filter(|symbol| {
-                    review_definition_owned_by_candidate(sources, candidate_paths, name, symbol)
+                    self.definition_owned_by_candidate(sources, candidate_paths, name, symbol)
                 })
                 .take(2)
             {
@@ -17010,32 +16235,47 @@ fn origin_consumer_review_facts(
     let mut response_context = existing.to_vec();
     response_context.extend(endpoint_facts.iter().cloned());
     let mut truncated = endpoint_truncated;
-    for (mut additions, was_truncated) in [
-        ineffective_protection_review_facts(sources, existing, 2),
-        browser_storage_write_facts(sources, existing, 2),
-        token_payload_origin_facts(sources, existing, 1),
-        request_response_origin_facts(sources, &response_context, 2),
-        stored_write_origin_facts_with_fields(sources, existing, precise_stored_fields, 2),
-        configuration_lifecycle_facts(sources, existing, 2),
-        (endpoint_facts, endpoint_truncated),
-        candidate_registration_facts(sources, context, candidate_paths, existing, 1),
-    ] {
-        truncated |= was_truncated;
-        for fact in additions.drain(..) {
-            if !matches!(
-                fact.role.as_str(),
-                "ineffective_protection_context" | "request_response_origin_context"
-            ) && (facts_cover_location(existing, &fact.location)
-                || facts_cover_location(&facts, &fact.location))
-            {
-                continue;
+    // Evaluate expensive repository lookups only until the bounded fact budget
+    // is filled. An array literal evaluates every lookup before this loop.
+    macro_rules! append_origin_facts {
+        ($lookup:expr) => {{
+            let (additions, was_truncated) = $lookup;
+            truncated |= was_truncated;
+            for fact in additions {
+                if !matches!(
+                    fact.role.as_str(),
+                    "ineffective_protection_context" | "request_response_origin_context"
+                ) && (facts_cover_location(existing, &fact.location)
+                    || facts_cover_location(&facts, &fact.location))
+                {
+                    continue;
+                }
+                if facts.len() == limit {
+                    return (facts, true);
+                }
+                facts.push(fact);
             }
-            if facts.len() == limit {
-                return (facts, true);
-            }
-            facts.push(fact);
-        }
+        }};
     }
+    append_origin_facts!(ineffective_protection_review_facts(sources, existing, 2));
+    append_origin_facts!(browser_storage_write_facts(sources, existing, 2));
+    append_origin_facts!(token_payload_origin_facts(sources, existing, 1));
+    append_origin_facts!(request_response_origin_facts(sources, &response_context, 2));
+    append_origin_facts!(stored_write_origin_facts_with_fields(
+        sources,
+        existing,
+        precise_stored_fields,
+        2
+    ));
+    append_origin_facts!(configuration_lifecycle_facts(sources, existing, 2));
+    append_origin_facts!((endpoint_facts, endpoint_truncated));
+    append_origin_facts!(candidate_registration_facts(
+        sources,
+        context,
+        candidate_paths,
+        existing,
+        1
+    ));
     (facts, truncated)
 }
 
@@ -17131,17 +16371,36 @@ fn stored_write_origin_facts_with_fields(
         return (Vec::new(), false);
     }
     let mut facts = Vec::new();
+    let mut truncated = false;
     for file in sources
         .files
         .values()
         .filter(|file| file.language.is_some() && !is_nonproduction_review_context_path(&file.path))
     {
+        // This enrichment is a lexical lead, not general repository dataflow.
+        // Avoid indexing unrelated files for every admitted review.
+        if !fields.iter().any(|field| file.source.contains(field)) {
+            continue;
+        }
+        let file_lower = file.source.to_ascii_lowercase();
+        if ![".update(", ".create(", ".save(", ".set("]
+            .iter()
+            .any(|marker| file_lower.contains(marker))
+        {
+            continue;
+        }
         let spans = line_spans(&file.source);
         for (line_index, (start, end)) in spans.iter().copied().enumerate() {
             let line = &file.source[start..end];
             let Some(field) = fields.iter().find(|field| contains_identifier(line, field)) else {
                 continue;
             };
+            if line.len() > MAX_REVIEW_PRIMARY_CONTEXT_BYTES {
+                // A giant generated line can contain an unrelated request read,
+                // write method and field. It cannot establish their relationship.
+                truncated = true;
+                continue;
+            }
             let lower = line.to_ascii_lowercase();
             if ![".update(", ".create(", ".save(", ".set("]
                 .iter()
@@ -17152,19 +16411,27 @@ fn stored_write_origin_facts_with_fields(
             let definition_index = (0..=line_index).rev().take(64).find(|index| {
                 is_textual_callable_definition(&file.source[spans[*index].0..spans[*index].1])
             });
-            let (slice_start, slice_end) = if let Some(definition_index) = definition_index {
+            let (slice_start_line, slice_end_line) = if let Some(definition_index) =
+                definition_index
+            {
                 let end_index =
                     textual_definition_end_with_limit(&file.source, &spans, definition_index, 96);
-                (spans[definition_index].0, spans[end_index].1)
+                (definition_index + 1, end_index + 1)
             } else {
                 (
-                    spans[line_index.saturating_sub(8)].0,
-                    spans[(line_index + 8).min(spans.len() - 1)].1,
+                    line_index.saturating_sub(8) + 1,
+                    (line_index + 8).min(spans.len() - 1) + 1,
                 )
             };
-            let excerpt = &file.source[slice_start..slice_end];
-            let excerpt_lower = excerpt.to_ascii_lowercase();
-            if !(excerpt.contains("req.")
+            let anchor = location_from_offsets(&file.path, &file.source, start, end);
+            let Ok((slice, slice_truncated)) =
+                review_source_slice(file, slice_start_line, slice_end_line, &anchor)
+            else {
+                continue;
+            };
+            truncated |= slice_truncated;
+            let excerpt_lower = slice.text.to_ascii_lowercase();
+            if !(slice.text.contains("req.")
                 || excerpt_lower.contains("request.")
                 || excerpt_lower.contains("request["))
             {
@@ -17176,8 +16443,8 @@ fn stored_write_origin_facts_with_fields(
             facts.push(ReviewNeighborhoodFact {
                 role: "stored_write_origin_context".to_string(),
                 symbol: field.clone(),
-                location: location_from_offsets(&file.path, &file.source, slice_start, slice_end),
-                excerpt: excerpt.to_string(),
+                location: slice.location,
+                excerpt: slice.text,
                 evidence_id: None,
                 provenance: textual_provenance(
                     "exact request-backed persistence writer for rendered member field 1",
@@ -17185,7 +16452,7 @@ fn stored_write_origin_facts_with_fields(
             });
         }
     }
-    (facts, false)
+    (facts, truncated)
 }
 
 fn evidence_member_fields<'a>(evidence: impl Iterator<Item = &'a Evidence>) -> BTreeSet<String> {
@@ -19487,6 +18754,10 @@ fn configuration_facts(
     'files: for file in sources.files.values() {
         let config_file = is_configuration_file(&file.path);
         let candidate_file = candidate_paths.contains(file.path.as_str());
+        let normalized_path = file.path.replace('\\', "/").to_ascii_lowercase();
+        if !candidate_file && normalized_path.starts_with(".github/workflows/") {
+            continue;
+        }
         if !candidate_file && is_nonproduction_review_context_path(&file.path) {
             continue;
         }
@@ -19963,12 +19234,21 @@ pub fn find_symbol(
     let sources = RepositorySources::load(root)?;
     let outlines = OutlineExtractors::build()?;
     let mut matches = Vec::new();
+    let mut skipped_files = Vec::new();
     let mut truncated = false;
     for file in sources.files.values() {
         if file.language.is_none() {
             continue;
         }
-        for symbol in outlines.extract(file)? {
+        let symbols = match outlines.extract(file) {
+            Ok(symbols) => symbols,
+            Err(_) => {
+                skipped_files.push(file.path.clone());
+                truncated = true;
+                continue;
+            }
+        };
+        for symbol in symbols {
             if symbol.name == name {
                 if matches.len() == limit {
                     truncated = true;
@@ -19981,13 +19261,15 @@ pub fn find_symbol(
             break;
         }
     }
-    Ok(response(
+    let mut response = response(
         &sources.root,
         "find_symbol",
         ast_provenance("ast-grep-outline 0.45.1"),
         truncated,
         matches,
-    ))
+    );
+    response.skipped_files = skipped_files;
+    Ok(response)
 }
 
 pub fn find_imports(
@@ -20002,12 +19284,21 @@ pub fn find_imports(
     let sources = RepositorySources::load(root)?;
     let outlines = OutlineExtractors::build()?;
     let mut matches = Vec::new();
+    let mut skipped_files = Vec::new();
     let mut truncated = false;
     for file in sources.files.values() {
         if file.language.is_none() {
             continue;
         }
-        for symbol in outlines.extract(file)? {
+        let symbols = match outlines.extract(file) {
+            Ok(symbols) => symbols,
+            Err(_) => {
+                skipped_files.push(file.path.clone());
+                truncated = true;
+                continue;
+            }
+        };
+        for symbol in symbols {
             if symbol.is_import && (symbol.name.contains(name) || symbol.signature.contains(name)) {
                 if matches.len() == limit {
                     truncated = true;
@@ -20020,18 +19311,21 @@ pub fn find_imports(
             break;
         }
     }
-    Ok(response(
+    let mut response = response(
         &sources.root,
         "find_imports",
         ast_provenance("ast-grep-outline 0.45.1"),
         truncated,
         matches,
-    ))
+    );
+    response.skipped_files = skipped_files;
+    Ok(response)
 }
 
 pub fn find_text_references(
     root: &Path,
     symbol: &str,
+    path: Option<&str>,
     limit: Option<usize>,
 ) -> Result<QueryResponse<Vec<TextReference>>, EngineError> {
     if symbol.is_empty() {
@@ -20039,11 +19333,23 @@ pub fn find_text_references(
             "reference symbol must not be empty".to_string(),
         ));
     }
-    let limit = bounded_limit(limit)?;
-    let sources = RepositorySources::load(root)?;
+    let limit = bounded_limit(limit.or(Some(20)))?;
+    let sources = if let Some(path) = path {
+        RepositorySources::load_selected(root, path)?
+    } else {
+        RepositorySources::load(root)?
+    };
+    let requested_path = path.map(normalize_relative);
+    if let Some(path) = &requested_path {
+        sources.file(path)?;
+    }
     let mut matches = Vec::new();
     let mut truncated = false;
-    'files: for file in sources.files.values() {
+    'files: for file in sources.files.values().filter(|file| {
+        requested_path
+            .as_ref()
+            .is_none_or(|path| file.path == *path)
+    }) {
         for (line_start, line_end) in line_spans(&file.source) {
             let line = &file.source[line_start..line_end];
             let mut search_from = 0;
@@ -20079,6 +19385,47 @@ pub fn find_text_references(
     ))
 }
 
+/// Search the files available to read-only investigation queries. A missing
+/// result means the path is not in this source index, not that it cannot exist
+/// at runtime or in material excluded by repository discovery.
+pub fn find_source_paths(
+    root: &Path,
+    name: &str,
+    limit: Option<usize>,
+) -> Result<QueryResponse<Vec<String>>, EngineError> {
+    if name.trim().is_empty() {
+        return Err(EngineError("path name must not be empty".to_string()));
+    }
+    let limit = bounded_limit(limit)?;
+    let discovery = discover(root)?;
+    let display_root = display_path(&discovery.root);
+    let needle = name.to_lowercase();
+    let mut matches = discovery
+        .files
+        .into_iter()
+        .filter(|file| file.relative.to_lowercase().contains(&needle))
+        .filter(|file| match file.class {
+            FileClass::Supported(_) => fs::read_to_string(&file.absolute).is_ok(),
+            FileClass::SecretOnly
+            | FileClass::EmbeddedJavascriptTemplate
+            | FileClass::Razor
+            | FileClass::WebForms => crate::code::read_secret_text(&file.absolute).is_ok(),
+            FileClass::UnsupportedSource | FileClass::Ignored => false,
+        })
+        .map(|file| file.relative)
+        .collect::<Vec<_>>();
+    matches.sort();
+    let truncated = matches.len() > limit;
+    matches.truncate(limit);
+    Ok(response(
+        &display_root,
+        "find_source_paths",
+        textual_provenance("investigation-source-path-index"),
+        truncated,
+        matches,
+    ))
+}
+
 pub fn run_structural_query(
     root: &Path,
     language: Language,
@@ -20095,7 +19442,11 @@ pub fn run_structural_query(
     let parser = parser_language(language);
     let pattern = Pattern::try_new(pattern, parser)
         .map_err(|error| EngineError(format!("invalid structural query: {error}")))?;
-    let sources = RepositorySources::load(root)?;
+    let sources = if let Some(path) = path {
+        RepositorySources::load_selected(root, path)?
+    } else {
+        RepositorySources::load(root)?
+    };
     let requested_path = path.map(normalize_relative);
     if let Some(path) = &requested_path {
         sources.file(path)?;
@@ -20467,7 +19818,14 @@ fn native_expression_context(
 
 impl RepositorySources {
     fn load(root: &Path) -> Result<Self, EngineError> {
-        let discovery = discover(root)?;
+        Self::from_discovery(discover(root)?)
+    }
+
+    fn load_selected(root: &Path, path: &str) -> Result<Self, EngineError> {
+        Self::from_discovery(discover_selected(root, path)?)
+    }
+
+    fn from_discovery(discovery: Discovery) -> Result<Self, EngineError> {
         let display_root = display_path(&discovery.root);
         let mut files = BTreeMap::new();
         for file in discovery.files {
@@ -21001,6 +20359,69 @@ fn review_source_slice(
     ))
 }
 
+/// Cap every model-facing source fact before decision facts are assembled.
+/// Preserve exact byte locations for ordinary source excerpts. Transformed
+/// excerpts (for example secret-redacted text) become locators when oversized,
+/// so we never re-read and accidentally reveal the original content.
+fn cap_review_fact_excerpts(
+    sources: &RepositorySources,
+    facts: &mut [ReviewNeighborhoodFact],
+    review_anchor: &Location,
+) -> (bool, bool) {
+    let mut truncated = false;
+    let mut decision_critical = false;
+    for fact in facts {
+        if fact.excerpt.len() <= MAX_REVIEW_PRIMARY_CONTEXT_BYTES {
+            continue;
+        }
+        truncated = true;
+        decision_critical = true;
+        let Ok(file) = sources.file(&fact.location.path) else {
+            fact.excerpt.clear();
+            fact.role = "source_locator_context".to_string();
+            continue;
+        };
+        let start = fact.location.start.byte_offset;
+        let end = fact.location.end.byte_offset;
+        if file.source.get(start..end) != Some(fact.excerpt.as_str()) {
+            fact.excerpt.clear();
+            fact.role = "source_locator_context".to_string();
+            fact.provenance = textual_provenance(
+                "oversized transformed excerpt omitted; source locator retained 1",
+            );
+            continue;
+        }
+        let focus = if fact.location.path == review_anchor.path
+            && start <= review_anchor.start.byte_offset
+            && review_anchor.end.byte_offset <= end
+        {
+            review_anchor.clone()
+        } else if let Some(relative) = fact.excerpt.find(&fact.symbol) {
+            location_from_offsets(
+                &file.path,
+                &file.source,
+                start + relative,
+                start + relative + fact.symbol.len(),
+            )
+        } else {
+            location_from_offsets(&file.path, &file.source, start, (start + 1).min(end))
+        };
+        if let Ok((slice, _)) = review_source_slice(
+            file,
+            fact.location.start.line,
+            fact.location.end.line,
+            &focus,
+        ) {
+            fact.location = slice.location;
+            fact.excerpt = slice.text;
+        } else {
+            fact.excerpt.clear();
+            fact.role = "source_locator_context".to_string();
+        }
+    }
+    (truncated, decision_critical)
+}
+
 fn redact_secrets_in_slice(source: &mut SourceSlice, evidence: &[Evidence]) {
     let slice_start = source.location.start.byte_offset;
     let slice_end = source.location.end.byte_offset;
@@ -21110,11 +20531,6 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use mehscan_core::{
-        ReviewArtifactCitation, ReviewLookupAttempt, ReviewRetrievedArtifact, ReviewerInference,
-        ReviewerOriginLead,
-    };
-
     use super::*;
 
     #[test]
@@ -21159,25 +20575,6 @@ mod tests {
             local.lookup_requests[1].arguments.get("symbol"),
             Some(&"command".to_string())
         );
-        assert_eq!(local.budget.max_returned_bytes, 16 * 1024);
-
-        let policy = review_investigation_plan(
-            Capability::ResourceAccess,
-            std::slice::from_ref(&local_question),
-            &ReviewContextTruncation::default(),
-            &anchor,
-            Some("authorize"),
-        );
-        let configuration = review_investigation_plan(
-            Capability::TlsConfiguration,
-            std::slice::from_ref(&local_question),
-            &ReviewContextTruncation::default(),
-            &anchor,
-            None,
-        );
-        assert_eq!(policy.budget.max_returned_bytes, 24 * 1024);
-        assert_eq!(configuration.budget.max_returned_bytes, 12 * 1024);
-
         let external_question =
             "What is the effective deployed proxy, gateway, or application control?".to_string();
         let external = review_investigation_plan(
@@ -21191,338 +20588,6 @@ mod tests {
         assert_eq!(external.missing_facts, [external_question]);
         assert!(external.lookup_requests.is_empty());
         assert_eq!(external.blockers.len(), 1);
-    }
-
-    #[test]
-    fn investigation_trace_requires_decisive_attempts_and_valid_artifacts() {
-        let anchor = Location {
-            path: "src/handler.ts".to_string(),
-            start: Position {
-                line: 120,
-                column: 5,
-                byte_offset: 400,
-            },
-            end: Position {
-                line: 120,
-                column: 25,
-                byte_offset: 420,
-            },
-        };
-        let question = "Can caller input influence the command passed to this shell?".to_string();
-        let plan = review_investigation_plan(
-            Capability::ProcessExecution,
-            std::slice::from_ref(&question),
-            &ReviewContextTruncation::default(),
-            &anchor,
-            Some("command"),
-        );
-        let supplied = BTreeMap::from([("evidence-sink".to_string(), vec![anchor.clone()])]);
-        let missing_attempt = validate_review_investigation_trace(
-            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
-            "review-1",
-            ReviewDecision::NeedsReview,
-            std::slice::from_ref(&question),
-            &plan,
-            &supplied,
-            &ReviewInvestigationTrace::default(),
-        )
-        .expect_err("actionable needs_review must not abandon its lookup");
-        assert!(missing_attempt.to_string().contains("must attempt"));
-
-        let trace = ReviewInvestigationTrace {
-            lookup_attempts: vec![ReviewLookupAttempt {
-                request_index: Some(0),
-                escalation: None,
-                outcome: ReviewLookupOutcome::Answered,
-                artifacts: vec![ReviewRetrievedArtifact {
-                    artifact_id: "lookup-source-1".to_string(),
-                    location: Location {
-                        path: "src/handler.ts".to_string(),
-                        start: Position {
-                            line: 90,
-                            column: 1,
-                            byte_offset: 250,
-                        },
-                        end: Position {
-                            line: 130,
-                            column: 1,
-                            byte_offset: 500,
-                        },
-                    },
-                    excerpt: "const command = request.query.command; audit.write(request.headers.authorization);"
-                        .to_string(),
-                }],
-                detail: "Expanded the exact source window around the shell call.".to_string(),
-            }],
-            citations: vec![ReviewArtifactCitation {
-                artifact_id: "lookup-source-1".to_string(),
-                claim: "The retrieved assignment is relevant to command origin.".to_string(),
-            }],
-            reviewer_inferences: vec![ReviewerInference {
-                claim: "The request field may supply the command operand.".to_string(),
-                artifact_ids: vec!["lookup-source-1".to_string()],
-            }],
-            reviewer_origin_leads: Vec::new(),
-            blockers: Vec::new(),
-        };
-        validate_review_investigation_trace(
-            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
-            "review-1",
-            ReviewDecision::NeedsReview,
-            std::slice::from_ref(&question),
-            &plan,
-            &supplied,
-            &trace,
-        )
-        .expect("a cited artifact from the requested source window should validate");
-        let mut lead_trace = trace.clone();
-        lead_trace.reviewer_origin_leads = vec![ReviewerOriginLead {
-            question: "Can the adjacent audit write expose an authorization credential?"
-                .to_string(),
-            security_relevance:
-                "The retrieved source contains a separate credential-bearing audit operation."
-                    .to_string(),
-            distinct_from_review:
-                "Credential disclosure is separate from command construction and execution."
-                    .to_string(),
-            location: Location {
-                path: "src/handler.ts".to_string(),
-                start: Position {
-                    line: 101,
-                    column: 1,
-                    byte_offset: 320,
-                },
-                end: Position {
-                    line: 101,
-                    column: 42,
-                    byte_offset: 361,
-                },
-            },
-            artifact_ids: vec!["lookup-source-1".to_string()],
-        }];
-        validate_review_investigation_trace(
-            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
-            "review-1",
-            ReviewDecision::NeedsReview,
-            std::slice::from_ref(&question),
-            &plan,
-            &supplied,
-            &lead_trace,
-        )
-        .expect("a distinct source-supported question should survive as a separate lead");
-        lead_trace.reviewer_origin_leads[0].artifact_ids = vec!["evidence-sink".to_string()];
-        let uncited = validate_review_investigation_trace(
-            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
-            "review-1",
-            ReviewDecision::NeedsReview,
-            std::slice::from_ref(&question),
-            &plan,
-            &supplied,
-            &lead_trace,
-        )
-        .expect_err("a textual lead without an explicit evidence citation must be rejected");
-        assert!(uncited.to_string().contains("explicitly cited"));
-
-        let escalation = ReviewLookupRequest {
-            operation: "source".to_string(),
-            arguments: [
-                ("path".to_string(), "src/policy.ts".to_string()),
-                ("start-line".to_string(), "1".to_string()),
-                ("end-line".to_string(), "40".to_string()),
-            ]
-            .into(),
-            questions: vec![question.clone()],
-            purpose: "Inspect the exact policy file named by the initial source lookup."
-                .to_string(),
-        };
-        let mut escalated_trace = ReviewInvestigationTrace {
-            lookup_attempts: vec![
-                ReviewLookupAttempt {
-                    request_index: Some(0),
-                    escalation: None,
-                    outcome: ReviewLookupOutcome::Answered,
-                    artifacts: vec![ReviewRetrievedArtifact {
-                        artifact_id: "initial-handler".to_string(),
-                        location: Location {
-                            path: "src/handler.ts".to_string(),
-                            start: Position {
-                                line: 120,
-                                column: 1,
-                                byte_offset: 400,
-                            },
-                            end: Position {
-                                line: 120,
-                                column: 45,
-                                byte_offset: 444,
-                            },
-                        },
-                        excerpt: "const command = loadPolicy('src/policy.ts');".to_string(),
-                    }],
-                    detail: "The handler exposed the exact policy file but not its body."
-                        .to_string(),
-                },
-                ReviewLookupAttempt {
-                    request_index: None,
-                    escalation: Some(escalation.clone()),
-                    outcome: ReviewLookupOutcome::Answered,
-                    artifacts: vec![ReviewRetrievedArtifact {
-                        artifact_id: "escalated-policy".to_string(),
-                        location: Location {
-                            path: "src/policy.ts".to_string(),
-                            start: Position {
-                                line: 1,
-                                column: 1,
-                                byte_offset: 0,
-                            },
-                            end: Position {
-                                line: 2,
-                                column: 1,
-                                byte_offset: 32,
-                            },
-                        },
-                        excerpt: "export const command = fixedValue;".to_string(),
-                    }],
-                    detail: "Retrieved the exact policy named by the handler.".to_string(),
-                },
-            ],
-            citations: vec![
-                ReviewArtifactCitation {
-                    artifact_id: "initial-handler".to_string(),
-                    claim: "The handler names the exact policy file.".to_string(),
-                },
-                ReviewArtifactCitation {
-                    artifact_id: "escalated-policy".to_string(),
-                    claim: "The policy supplies a fixed command value.".to_string(),
-                },
-            ],
-            reviewer_inferences: Vec::new(),
-            reviewer_origin_leads: Vec::new(),
-            blockers: Vec::new(),
-        };
-        validate_review_investigation_trace(
-            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
-            "review-1",
-            ReviewDecision::NotIssue,
-            &[],
-            &plan,
-            &supplied,
-            &escalated_trace,
-        )
-        .expect("one exact follow-on source lookup should validate");
-        escalated_trace.lookup_attempts.push(ReviewLookupAttempt {
-            request_index: None,
-            escalation: Some(escalation),
-            outcome: ReviewLookupOutcome::NoRelevantResult,
-            artifacts: Vec::new(),
-            detail: "A second escalation must exceed the bounded budget.".to_string(),
-        });
-        let error = validate_review_investigation_trace(
-            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
-            "review-1",
-            ReviewDecision::NotIssue,
-            &[],
-            &plan,
-            &supplied,
-            &escalated_trace,
-        )
-        .expect_err("a second escalated lookup must be rejected");
-        assert!(error.to_string().contains("1-lookup escalation budget"));
-
-        let external_question =
-            "What is the effective deployed proxy, gateway, or application control?".to_string();
-        let blocked_plan = review_investigation_plan(
-            Capability::OutboundNetworkRequest,
-            std::slice::from_ref(&external_question),
-            &ReviewContextTruncation::default(),
-            &anchor,
-            None,
-        );
-        let blocked_trace = ReviewInvestigationTrace {
-            blockers: blocked_plan.blockers.clone(),
-            ..ReviewInvestigationTrace::default()
-        };
-        validate_review_investigation_trace(
-            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
-            "review-2",
-            ReviewDecision::NeedsReview,
-            std::slice::from_ref(&external_question),
-            &blocked_plan,
-            &BTreeMap::new(),
-            &blocked_trace,
-        )
-        .expect("an exact supplied external blocker should preserve needs_review");
-    }
-
-    #[test]
-    fn response_fingerprint_is_order_stable_and_trace_sensitive() {
-        let artifact = ReviewRetrievedArtifact {
-            artifact_id: "lookup-source-1".to_string(),
-            location: Location {
-                path: "src/handler.ts".to_string(),
-                start: Position {
-                    line: 90,
-                    column: 1,
-                    byte_offset: 250,
-                },
-                end: Position {
-                    line: 90,
-                    column: 40,
-                    byte_offset: 290,
-                },
-            },
-            excerpt: "const command = request.query.command;".to_string(),
-        };
-        let result = PathReviewTriageResult {
-            review_id: "review-1".to_string(),
-            decision: ReviewDecision::NeedsReview,
-            confidence: ReviewConfidence::Medium,
-            summary: "The command origin remains unresolved after bounded lookup.".to_string(),
-            checks: vec!["check-b".to_string(), "check-a".to_string()],
-            investigation: Some(ReviewInvestigationTrace {
-                lookup_attempts: vec![ReviewLookupAttempt {
-                    request_index: Some(0),
-                    escalation: None,
-                    outcome: ReviewLookupOutcome::Answered,
-                    artifacts: vec![artifact],
-                    detail: "Retrieved the bounded source window.".to_string(),
-                }],
-                citations: vec![ReviewArtifactCitation {
-                    artifact_id: "lookup-source-1".to_string(),
-                    claim: "The assignment is relevant to command origin.".to_string(),
-                }],
-                reviewer_inferences: Vec::new(),
-                reviewer_origin_leads: Vec::new(),
-                blockers: Vec::new(),
-            }),
-        };
-        let original = review_response_fingerprint(
-            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
-            "bundle-1",
-            &[result.clone()],
-            None,
-        );
-
-        let mut reordered = result.clone();
-        reordered.checks.reverse();
-        let reordered_fingerprint = review_response_fingerprint(
-            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
-            "bundle-1",
-            &[reordered],
-            None,
-        );
-        assert_eq!(original, reordered_fingerprint);
-
-        let mut changed = result;
-        changed.investigation.as_mut().unwrap().lookup_attempts[0].artifacts[0]
-            .excerpt
-            .push_str(" // changed");
-        let changed_fingerprint = review_response_fingerprint(
-            PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
-            "bundle-1",
-            &[changed],
-            None,
-        );
-        assert_ne!(original, changed_fingerprint);
     }
 
     #[test]
@@ -21996,7 +21061,159 @@ mod tests {
     }
 
     #[test]
-    fn oversized_observation_payloads_retain_actionable_anchors_first() {
+    fn stored_writer_ignores_unbounded_generated_line_and_keeps_exact_writer() {
+        let generated = format!(
+            "req.body.name;{}user.update({{name}});\n",
+            "irrelevant();".repeat(8_000)
+        );
+        let writer = "export function save(req) {\n  user.update({ name: req.body.name });\n}\n";
+        let sources = RepositorySources {
+            root: "fixture".to_string(),
+            files: [
+                ("a-generated.js", generated.as_str(), Language::Javascript),
+                ("z-handler.ts", writer, Language::Typescript),
+            ]
+            .into_iter()
+            .map(|(path, source, language)| {
+                (
+                    path.to_string(),
+                    SourceFile {
+                        path: path.to_string(),
+                        language: Some(language),
+                        source: source.to_string(),
+                    },
+                )
+            })
+            .collect(),
+        };
+        let fields = BTreeSet::from(["name".to_string()]);
+        let (facts, truncated) =
+            stored_write_origin_facts_with_fields(&sources, &[], Some(&fields), 2);
+        assert!(truncated);
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].location.path, "z-handler.ts");
+        assert!(facts[0].excerpt.len() <= MAX_REVIEW_PRIMARY_CONTEXT_BYTES);
+        assert!(facts[0].excerpt.contains("req.body.name"));
+    }
+
+    #[test]
+    fn oversized_review_facts_keep_an_exact_anchor_or_source_locator() {
+        let marker = "dangerous(input)";
+        let source = format!("{}{}{}", "x".repeat(6_000), marker, "y".repeat(6_000));
+        let file = SourceFile {
+            path: "app.js".to_string(),
+            language: Some(Language::Javascript),
+            source: source.clone(),
+        };
+        let sources = RepositorySources {
+            root: "fixture".to_string(),
+            files: BTreeMap::from([("app.js".to_string(), file)]),
+        };
+        let anchor = location_from_offsets("app.js", &source, 6_000, 6_000 + marker.len());
+        let full_location = location_from_offsets("app.js", &source, 0, source.len());
+        let mut facts = vec![
+            ReviewNeighborhoodFact {
+                role: "source_context".to_string(),
+                symbol: "dangerous".to_string(),
+                location: full_location.clone(),
+                excerpt: source,
+                evidence_id: None,
+                provenance: textual_provenance("test"),
+            },
+            ReviewNeighborhoodFact {
+                role: "helper_definition_context".to_string(),
+                symbol: "secret".to_string(),
+                location: full_location,
+                excerpt: "[redacted]".repeat(2_000),
+                evidence_id: None,
+                provenance: textual_provenance("test"),
+            },
+        ];
+        assert_eq!(
+            cap_review_fact_excerpts(&sources, &mut facts, &anchor),
+            (true, true)
+        );
+        assert!(facts[0].excerpt.len() <= MAX_REVIEW_PRIMARY_CONTEXT_BYTES);
+        assert!(facts[0].excerpt.contains(marker));
+        assert!(facts[0].location.start.byte_offset <= anchor.start.byte_offset);
+        assert!(facts[0].location.end.byte_offset >= anchor.end.byte_offset);
+        assert_eq!(facts[1].role, "source_locator_context");
+        assert!(facts[1].excerpt.is_empty());
+    }
+
+    #[test]
+    fn investigation_bundle_keeps_anchor_and_policy_but_routes_helpers_by_location() {
+        let location = location_from_offsets("src/app.ts", "const x = 1;", 0, 12);
+        let fact = |role: &str, excerpt: &str| ReviewNeighborhoodFact {
+            role: role.to_string(),
+            symbol: "x".to_string(),
+            location: location.clone(),
+            excerpt: excerpt.to_string(),
+            evidence_id: None,
+            provenance: textual_provenance("test"),
+        };
+        let mut facts = vec![
+            fact("helper_definition_context", "large helper body"),
+            fact("source_context", "const x = 1;"),
+            fact("configuration_context", "safe: false"),
+            fact("reference_use_context", "same text repeated"),
+        ];
+        let original = facts.clone();
+        project_investigation_facts(ReviewReadiness::Assessment, &mut facts);
+        assert_eq!(facts, original);
+        project_investigation_facts(ReviewReadiness::Investigation, &mut facts);
+        assert!(facts[0].excerpt.is_empty());
+        assert_eq!(facts[1].excerpt, "const x = 1;");
+        assert_eq!(facts[2].excerpt, "safe: false");
+        assert!(facts[3].excerpt.is_empty());
+        assert!(facts.iter().all(|fact| fact.location == location));
+        assert!(facts[0].provenance.engine.contains("location-only"));
+    }
+
+    #[test]
+    fn cpp_sql_wrapper_lookup_targets_callers_instead_of_its_parameter() {
+        let excerpt = "void CatalogDb::Close()\n{\n}\n\nbool CatalogDb::Exec(const char* sql, std::string* errorOut)\n{\n    int rc = sqlite3_exec((sqlite3*)m_db, sql, NULL, NULL, &err);\n}\n";
+        let fact = ReviewNeighborhoodFact {
+            role: "source_context".to_string(),
+            symbol: "sql".to_string(),
+            location: Location {
+                path: "src/catalog_db.cpp".to_string(),
+                start: Position {
+                    line: 94,
+                    column: 1,
+                    byte_offset: 0,
+                },
+                end: Position {
+                    line: 102,
+                    column: 1,
+                    byte_offset: excerpt.len(),
+                },
+            },
+            excerpt: excerpt.to_string(),
+            evidence_id: None,
+            provenance: textual_provenance("test"),
+        };
+        let anchor = Location {
+            path: "src/catalog_db.cpp".to_string(),
+            start: Position {
+                line: 100,
+                column: 15,
+                byte_offset: 100,
+            },
+            end: Position {
+                line: 100,
+                column: 25,
+                byte_offset: 110,
+            },
+        };
+        assert_eq!(
+            enclosing_cpp_method_lookup(&[fact], &anchor),
+            Some("Exec".to_string())
+        );
+    }
+
+    #[test]
+    fn observation_payloads_put_selected_anchors_first() {
         let make_evidence = |id: String, kind| Evidence {
             id,
             kind,
@@ -22028,6 +21245,17 @@ mod tests {
         assert_eq!(selected.len(), MAX_UNIT_EVIDENCE);
         assert_eq!(selected[0].id, "sink");
         assert_eq!(anchors, vec!["sink"]);
+        assert!(!anchors_truncated);
+
+        let small = vec![
+            make_evidence("neighbor".to_string(), EvidenceKind::Source),
+            make_evidence("anchor".to_string(), EvidenceKind::Sink),
+        ];
+        let (selected, anchors, anchors_truncated) =
+            bounded_observation_evidence(small, &["anchor".to_string()], MAX_UNIT_EVIDENCE);
+        assert_eq!(selected[0].id, "anchor");
+        assert_eq!(selected[1].id, "neighbor");
+        assert_eq!(anchors, vec!["anchor"]);
         assert!(!anchors_truncated);
 
         let all_anchors = (0..MAX_UNIT_EVIDENCE + 1)
@@ -22109,122 +21337,35 @@ mod tests {
     }
 
     #[test]
-    fn triage_contract_forbids_reasking_for_supplied_facts() {
+    fn bundle_contract_is_compact_and_routes_to_skill() {
         let contract = path_review_triage_contract();
-        assert!(contract.instructions.iter().any(|instruction| {
-            instruction.contains("requested artifact is absent from facts")
-                && instruction.contains("instead of asking to inspect it again")
-        }));
-    }
-
-    #[test]
-    fn bundle_contract_keeps_only_relevant_security_family_guidance() {
-        let contract = path_review_triage_contract();
-        let payload = PathReviewBundlePayload::Observation {
-            reviews: Vec::new(),
-        };
-        let sql = path_review_triage_contract_for_bundle(
-            &contract,
-            &PathReviewBundleCategory {
-                scope: "test".to_string(),
-                review_kind: "observation".to_string(),
-                capability: Capability::DatabaseQuery,
-                cwe_candidates: vec!["CWE-89".to_string()],
-            },
-            &payload,
+        assert!(contract.instructions.len() <= 6);
+        assert!(
+            contract
+                .response_fields
+                .contains(&"selected_anchor_id".to_string())
         );
         assert!(
-            sql.instructions
-                .iter()
-                .any(|instruction| instruction.starts_with("Before claiming injection,"))
-        );
-        assert!(
-            !sql.instructions
-                .iter()
-                .any(|instruction| instruction.starts_with("For generated CRUD"))
-        );
-
-        let authorization = path_review_triage_contract_for_bundle(
-            &contract,
-            &PathReviewBundleCategory {
-                scope: "test".to_string(),
-                review_kind: "observation".to_string(),
-                capability: Capability::Authorization,
-                cwe_candidates: vec!["CWE-862".to_string()],
-            },
-            &payload,
-        );
-        assert!(authorization
-            .instructions
-            .iter()
-            .any(|instruction| instruction.starts_with("For every routed authorization review")));
-        assert!(
-            !authorization
+            contract
                 .instructions
                 .iter()
-                .any(|instruction| instruction.starts_with("Before claiming injection,"))
+                .any(|instruction| instruction.contains("matching skill bucket"))
         );
-    }
-
-    #[test]
-    fn triage_contract_keeps_authorization_attachments_distinct_from_enforcement() {
-        let contract = path_review_triage_contract();
-        assert!(contract.instructions.iter().any(|instruction| {
-            instruction.contains("custom guard, middleware, dependency, policy, or voter name")
-                && instruction.contains("attachment inventory only")
-        }));
-        assert!(contract.instructions.iter().any(|instruction| {
-            instruction.contains("unknown means enforcement was not classified")
-                && instruction.contains("owner, tenant, or object authorization")
-        }));
-    }
-
-    #[test]
-    fn triage_contract_requires_review_specific_summaries() {
-        let contract = path_review_triage_contract();
-        assert!(contract.instructions.iter().any(|instruction| {
-            instruction.contains("Evaluate each review independently")
-                && instruction.contains("review_basis semantics")
-                && instruction.contains("do not reuse category-wide boilerplate")
-                && instruction.contains("alternative weaknesses from other reviews")
-        }));
-    }
-
-    #[test]
-    fn triage_contract_does_not_treat_telemetry_as_a_control() {
-        let contract = path_review_triage_contract();
-        assert!(contract.instructions.iter().any(|instruction| {
-            instruction.contains("reviewed invariant requires rejection")
-                && instruction.contains("challenge solving, telemetry, logging, or auditing")
-                && instruction.contains("decide issue rather than needs_review")
-        }));
-    }
-
-    #[test]
-    fn triage_contract_keeps_decision_ready_paths_on_the_named_invariant() {
-        let contract = path_review_triage_contract();
-        assert!(contract.instructions.iter().any(|instruction| {
-            instruction.contains("decision_facts.unresolved")
-                && instruction.contains("affirmatively disproves that same behavior")
-                && instruction.contains("do not substitute a different invariant")
-        }));
-    }
-
-    #[test]
-    fn triage_contract_calibrates_decision_ready_cookie_observations() {
-        let contract = path_review_triage_contract();
-        assert!(contract.instructions.iter().any(|instruction| {
-            instruction.contains("decision_facts.unresolved is empty")
-                && instruction.contains("authentication-cookie omission")
-                && instruction.contains("medium confidence")
-                && instruction.contains("remediation ownership")
-        }));
+        assert!(
+            contract
+                .instructions
+                .iter()
+                .any(|instruction| instruction.contains("same value and reachable branch"))
+        );
         assert_eq!(
-            explicit_cookie_omission("typescript-auth-cookie-missing-same-site"),
-            Some("SameSite")
+            review_playbook_bucket(
+                Capability::ResourceAccess,
+                Some(Language::Typescript),
+                vec!["csrf".to_string()]
+            ),
+            "state_integrity"
         );
     }
-
     #[test]
     fn generic_observation_questions_are_advisory_confidence_factors() {
         for question in [
@@ -23350,6 +22491,36 @@ mod tests {
     }
 
     #[test]
+    fn configuration_lookup_excludes_unrelated_ci_workflow() {
+        let files = [
+            (".github/workflows/build.yml", "run: powershell build.ps1\n"),
+            ("config/launcher.yml", "shell: powershell\n"),
+        ]
+        .into_iter()
+        .map(|(path, source)| {
+            (
+                path.to_string(),
+                SourceFile {
+                    path: path.to_string(),
+                    language: None,
+                    source: source.to_string(),
+                },
+            )
+        })
+        .collect();
+        let sources = RepositorySources {
+            root: "fixture".to_string(),
+            files,
+        };
+        let candidate_paths = BTreeSet::from(["src/Launcher.cs"]);
+        let tokens = BTreeSet::from(["powershell".to_string()]);
+        let (facts, truncated) = configuration_facts(&sources, &candidate_paths, &tokens, 8);
+        assert!(!truncated);
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].location.path, "config/launcher.yml");
+    }
+
+    #[test]
     fn marks_substring_redirect_allowlists_as_ineffective_context() {
         let helper = "export const isRedirectAllowed = (url: string) => {\n  for (const allowedUrl of redirectAllowlist) {\n    if (url.includes(allowedUrl)) return true\n  }\n  return false\n}\n";
         let sources = RepositorySources {
@@ -23868,12 +23039,6 @@ mod tests {
         anchor.kind = EvidenceKind::SecurityConfiguration;
         anchor.capability = Capability::TokenGeneration;
         anchor.cwe_candidates = vec!["CWE-613".into(), "CWE-347".into()];
-        let policy = job
-            .reviews
-            .first()
-            .expect("identity path")
-            .confidence_policy
-            .clone();
         let fact = ReviewNeighborhoodFact {
             role: "helper_definition_context".to_string(),
             symbol: "privateKey".to_string(),
@@ -23897,7 +23062,6 @@ mod tests {
             review_basis: None,
             decision_facts: ReviewDecisionFacts::default(),
             investigation: ReviewInvestigationPlan::default(),
-            confidence_policy: policy,
             facts: vec![fact, policy_fact],
             open_questions: Vec::new(),
             context_truncated: false,
@@ -23905,8 +23069,9 @@ mod tests {
         };
         let result = mehscan_core::PathReviewTriageResult {
             review_id: review.id.clone(),
+            selected_anchor_id: None,
             decision: ReviewDecision::Issue,
-            confidence: review.confidence_policy.issue,
+            confidence: ReviewConfidence::Medium,
             summary: "Source-embedded signing material can be reused to forge credentials."
                 .to_string(),
             checks: Vec::new(),

@@ -59,7 +59,9 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
         "php" | "phtml" | "php5" | "php7" | "php8" => FileClass::Supported(Language::Php),
         "json" | "json5" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" | "config"
         | "properties" | "xml" | "env" | "tf" | "tfvars" | "hcl" | "md" | "markdown" | "txt"
-        | "sql" | "graphql" | "sh" | "bash" | "zsh" | "ps1" => FileClass::SecretOnly,
+        | "sql" | "graphql" | "sh" | "bash" | "zsh" | "ps1" | "pug" | "hbs" => {
+            FileClass::SecretOnly
+        }
         "rb" | "scala" | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => {
             FileClass::UnsupportedSource
         }
@@ -298,6 +300,14 @@ mod tests {
             FileClass::WebForms
         );
         assert_eq!(classify_path(Path::new("Menu.ascx")), FileClass::WebForms);
+        assert_eq!(
+            classify_path(Path::new("views/profile.pug")),
+            FileClass::SecretOnly
+        );
+        assert_eq!(
+            classify_path(Path::new("views/result.hbs")),
+            FileClass::SecretOnly
+        );
         assert_eq!(
             classify_path(Path::new("a.rs")),
             FileClass::Supported(Language::Rust)

@@ -21,6 +21,8 @@ deterministic scanner and the reviewer.
 ```text
 mehscan scan PATH --format json|candidates|sarif-candidates
 mehscan investigate review-bundles PATH --output RUN_DIR
+mehscan investigate review-response-schema --bundle FILE --output SCHEMA
+mehscan investigate review-bundle-finalize --bundle FILE --draft FILE --journal-dir DIR --output FILE --source-root PATH
 mehscan investigate review-bundle-triage --bundle FILE --responses FILE
 mehscan report --run RUN_DIR [--responses DIR] --format json|sarif|markdown
 ```
@@ -35,7 +37,7 @@ not-issue decision summaries rather than only their count.
 
 ## Review request
 
-Review requests remain self-contained JSON. They carry only facts that may
+Review requests are self-contained JSON. They carry facts that may
 affect a verdict:
 
 - stable job, bundle, review, rule, and evidence identities;
@@ -45,13 +47,10 @@ affect a verdict:
 - a deterministic flow when one exists;
 - established facts, effective controls, and unresolved facts;
 - non-default reachability, availability, and truncation context; and
-- the exact response contract.
+- a playbook for the selected review question.
 
-Repeated formatting is not useful model context. Request files are serialized
-as compact JSON. The manifest remains readable and retains review membership,
-sizes, and fingerprints. Larger structural deduplication, such as shared rule
-and excerpt tables, requires a separately versioned review-request v2 and must
-be justified by bundle measurements and model-convergence tests.
+Request files are compact JSON. The manifest retains review membership,
+sizes, fingerprints, and coverage.
 
 The following concepts must remain distinct:
 
@@ -68,18 +67,32 @@ The reviewer returns one strict result per review:
 
 ```json
 {
+  "schema_version": "1.3",
+  "bundle_fingerprint": "...",
+  "results": [{
   "review_id": "...",
+  "selected_anchor_id": "...",
   "decision": "issue",
   "confidence": "high",
   "summary": "...",
-  "checks": []
+  "checks": [],
+  "investigation": {
+    "decisive_artifacts": [],
+    "journal_summary": null,
+    "citations": [{"artifact_id": "...", "claim": "..."}],
+    "reviewer_inferences": [],
+    "reviewer_origin_leads": [],
+    "blockers": []
+  }
+  }]
 }
 ```
 
 Allowed decisions are `issue`, `not_issue`, and `needs_review`. `checks` is
 empty for decided results and contains only decisive missing facts for
-`needs_review`. The response does not repeat locations, flow, CWE, severity,
-or rule metadata; the reporter joins those deterministic fields by review ID.
+`needs_review`. Finalization fills `journal_summary` from recorded queries and
+checks exact source excerpts. The response does not repeat flow, CWE, severity,
+or rule metadata; the reporter joins those fields by review ID.
 
 ## Canonical finding JSON
 
@@ -150,9 +163,8 @@ capability such as authentication or resource access. Unsupported invariants
 leave remediation unset and emit an actionable quality warning instead of an
 unrelated category fix. Known native-memory repairs remain invariant-specific.
 
-New manifests optionally record coverage totals and source-scope limitations,
-which the CLI projects into canonical scan metadata and Markdown. Older runs
-remain readable and disclose missing coverage totals. Availability from explicit
+Manifests record coverage totals and source-scope limitations,
+which the CLI projects into canonical scan metadata and Markdown. Availability from explicit
 source context is rendered without claiming deployment activation. Related
 feature-policy descriptors are labeled as associations and never promoted into
 proof that the reported operation is gated.

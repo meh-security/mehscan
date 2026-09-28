@@ -258,9 +258,38 @@ pub(crate) fn discover(requested_root: &Path) -> Result<Discovery, EngineError> 
     discover_with_options(requested_root, false)
 }
 
+/// Apply the same ignore and classification rules as a full discovery while
+/// walking only the ancestors of one requested file.
+pub(crate) fn discover_selected(
+    requested_root: &Path,
+    relative: &str,
+) -> Result<Discovery, EngineError> {
+    let normalized = relative.replace('\\', "/");
+    let path = Path::new(&normalized);
+    if path.is_absolute()
+        || normalized.contains(':')
+        || path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err(EngineError(
+            "query path must stay inside the scan root".to_string(),
+        ));
+    }
+    discover_with_selection(requested_root, false, Some(&normalized))
+}
+
 pub(crate) fn discover_with_options(
     requested_root: &Path,
     include_nonproduction: bool,
+) -> Result<Discovery, EngineError> {
+    discover_with_selection(requested_root, include_nonproduction, None)
+}
+
+fn discover_with_selection(
+    requested_root: &Path,
+    include_nonproduction: bool,
+    selected_relative: Option<&str>,
 ) -> Result<Discovery, EngineError> {
     let root = fs::canonicalize(requested_root).map_err(|error| {
         EngineError(format!(
@@ -303,19 +332,25 @@ pub(crate) fn discover_with_options(
             .collect(),
     };
     if metadata.is_file() {
-        push_file(
-            &root,
-            &root,
-            include_nonproduction,
-            c_family_context.as_ref(),
-            &mut discovery,
-        );
+        if selected_relative
+            .is_none_or(|selected| root.file_name().is_some_and(|name| name == selected))
+        {
+            push_file(
+                &root,
+                &root,
+                include_nonproduction,
+                c_family_context.as_ref(),
+                &mut discovery,
+            );
+        }
     } else {
+        let selected = selected_relative.map(|relative| root.join(relative));
         walk_directory(
             &root,
             &root,
             include_nonproduction,
             c_family_context.as_ref(),
+            selected.as_deref(),
             &mut discovery,
         );
     }
@@ -331,11 +366,13 @@ fn walk_directory(
     directory: &Path,
     include_nonproduction: bool,
     c_family_context: Option<&CFamilyCompilationContext>,
+    selected: Option<&Path>,
     discovery: &mut Discovery,
 ) {
     let ignored_subtrees = Arc::new(Mutex::new(Vec::new()));
     let filter_ignored_subtrees = Arc::clone(&ignored_subtrees);
     let filter_root = root.to_path_buf();
+    let selected = selected.map(Path::to_path_buf);
     let mut builder = WalkBuilder::new(directory);
     builder
         .hidden(false)
@@ -355,6 +392,9 @@ fn walk_directory(
                 paths.push(format!("{}/", relative_path(&filter_root, entry.path())));
             }
             !ignored
+                && selected
+                    .as_ref()
+                    .is_none_or(|target| target.starts_with(entry.path()))
         });
 
     for entry in builder.build() {

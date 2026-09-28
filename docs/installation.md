@@ -14,7 +14,7 @@ installation where possible and follow the user's host-management preferences.
 We recommend `gh` for release installation because its attestation verifier
 checks the archive's build provenance against the expected repository, signer
 workflow, source tag, and hosted-runner policy. Known releases also enforce the
-skill's source commit pin. A checksum alone cannot establish those facts: an
+installer's source commit pin. A checksum alone cannot establish those facts: an
 archive and its checksum file could both have been replaced. The installer
 uses GitHub CLI's maintained verifier and trusted Sigstore roots rather than
 implementing signature verification itself. See the
@@ -124,11 +124,11 @@ checksum-only download.
 
 ## Run the release installer
 
-Run from the skill directory, including its `scripts` and `references` folders.
+Run from the skill directory, including its `scripts` folder.
 In a repository checkout this is `skills/mehscan-security`; in an installed
 skill, use that skill's actual directory. Do not copy just the installer: it
 also needs the bundled helper (`install-mehscan.py` for Bash,
-`public-download.ps1` for PowerShell) and `references/release-pins.json`.
+`public-download.ps1` for PowerShell) and `scripts/release-pins.json`.
 
 From Bash or Zsh on Linux/macOS:
 

@@ -36,7 +36,7 @@ Windows:
 pwsh -NoProfile -File ./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.5.2
 ```
 
-The installer verifies release checksums and provenance, then returns the executable path. See the [platform installation instructions](skills/mehscan-security/references/installation.md) for prerequisite setup, Bash/Zsh examples, supported targets, and a source-build alternative without PowerShell. See the [security skill](skills/mehscan-security/SKILL.md) for source commit pinning. Release downloads are also available on the [releases page](https://github.com/meh-security/mehscan/releases).
+The installer verifies release checksums and provenance, then returns the executable path. See the [platform installation instructions](docs/installation.md) for prerequisite setup, Bash/Zsh examples, supported targets, source commit pinning, and a source-build alternative without PowerShell. Release downloads are also available on the [releases page](https://github.com/meh-security/mehscan/releases).
 
 If `gh` or your platform's installer prerequisites are unavailable or installing them is unsuitable, build from an existing trusted Mehscan source checkout with Rust 1.88 or newer and native C/C++ build tools. The installer does not automatically build or execute an unverified download:
 
