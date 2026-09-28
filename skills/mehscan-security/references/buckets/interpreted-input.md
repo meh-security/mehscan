@@ -17,8 +17,9 @@ scalar value.
   uncertainty and say explicitly that exploitation is unproved; recommend
   parameterization. Do not claim an exploitable SQL injection path without
   evidence of the caller and input. A raw-query API alone, a fixed SQL template
-  with bound values, or a branch affirmatively excluded from the application
-  does not meet this rule.
+  with bound values, or a branch proved non-executable does not meet this rule.
+  Missing HTTP route registration lowers exposure confidence; it does not make
+  variable-built SQL safe if the method itself can execute when called.
 - **Command or executable:** Separate a fixed executable from its arguments.
   A command-line option proves the program accepts a value; inspect who
   controls the invocation before calling it attacker-controlled. In-repository
