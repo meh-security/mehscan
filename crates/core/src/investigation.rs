@@ -280,8 +280,6 @@ pub struct ReviewTriageContract {
     pub instructions: Vec<String>,
 }
 
-pub const REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.0";
-
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewDecision {
@@ -296,52 +294,6 @@ pub enum ReviewConfidence {
     High,
     Medium,
     Low,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReviewTriageResult {
-    pub neighborhood_id: String,
-    pub decision: ReviewDecision,
-    pub confidence: ReviewConfidence,
-    pub summary: String,
-    pub checks: Vec<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReviewTriageResponseSet {
-    pub schema_version: String,
-    pub job_fingerprint: String,
-    pub results: Vec<ReviewTriageResult>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ReviewTriageReport {
-    pub schema_version: String,
-    pub job_fingerprint: String,
-    pub issue_count: usize,
-    pub not_issue_count: usize,
-    pub needs_review_count: usize,
-    pub results: Vec<ReviewTriageResult>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ReviewNeighborhoodJob {
-    pub schema_version: String,
-    pub root: String,
-    pub operation: String,
-    pub language: Language,
-    /// Deterministic identity of the selected review input, excluding coverage
-    /// and diagnostics.
-    pub fingerprint: String,
-    pub triage_contract: ReviewTriageContract,
-    pub max_neighborhoods: usize,
-    pub truncated: bool,
-    pub neighborhoods: Vec<ReviewNeighborhood>,
-    pub coverage: Coverage,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub diagnostics: Vec<Diagnostic>,
 }
 
 /// A self-contained, language-neutral review of one deterministic security
@@ -361,9 +313,6 @@ pub struct PathReview {
     pub decision_facts: ReviewDecisionFacts,
     #[serde(default)]
     pub investigation: ReviewInvestigationPlan,
-    /// Deterministic confidence calibration for each allowed decision. Models
-    /// decide the verdict; the scanner owns confidence consistency.
-    pub confidence_policy: ReviewConfidencePolicy,
     pub facts: Vec<ReviewNeighborhoodFact>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub open_questions: Vec<String>,
@@ -414,6 +363,20 @@ pub struct ReviewLookupArguments {
     pub symbol: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(
+        default,
+        rename = "evidence-id",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub evidence_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callee: Option<String>,
 }
 
 impl ReviewLookupArguments {
@@ -424,6 +387,11 @@ impl ReviewLookupArguments {
             "end-line" => self.end_line.as_ref(),
             "symbol" => self.symbol.as_ref(),
             "limit" => self.limit.as_ref(),
+            "name" => self.name.as_ref(),
+            "evidence-id" => self.evidence_id.as_ref(),
+            "language" => self.language.as_ref(),
+            "pattern" => self.pattern.as_ref(),
+            "callee" => self.callee.as_ref(),
             _ => None,
         }
     }
@@ -435,6 +403,11 @@ impl ReviewLookupArguments {
             &self.end_line,
             &self.symbol,
             &self.limit,
+            &self.name,
+            &self.evidence_id,
+            &self.language,
+            &self.pattern,
+            &self.callee,
         ]
         .into_iter()
         .filter(|value| value.is_some())
@@ -452,6 +425,11 @@ impl<const N: usize> From<[(String, String); N]> for ReviewLookupArguments {
                 "end-line" => result.end_line = Some(value),
                 "symbol" => result.symbol = Some(value),
                 "limit" => result.limit = Some(value),
+                "name" => result.name = Some(value),
+                "evidence-id" => result.evidence_id = Some(value),
+                "language" => result.language = Some(value),
+                "pattern" => result.pattern = Some(value),
+                "callee" => result.callee = Some(value),
                 _ => {}
             }
         }
@@ -470,43 +448,12 @@ pub struct ReviewLookupRequest {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ReviewInvestigationPlan {
     pub readiness: ReviewReadiness,
-    #[serde(default)]
-    pub budget: ReviewInvestigationBudget,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub missing_facts: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lookup_requests: Vec<ReviewLookupRequest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blockers: Vec<String>,
-}
-
-/// Family-calibrated limits carried with one review. These are workflow limits,
-/// not evidence and not vulnerability severity.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ReviewInvestigationBudget {
-    pub max_supplied_lookups: usize,
-    pub max_escalations: usize,
-    pub max_returned_bytes: usize,
-    pub max_lookup_depth: usize,
-}
-
-impl Default for ReviewInvestigationBudget {
-    fn default() -> Self {
-        Self {
-            max_supplied_lookups: 2,
-            max_escalations: 1,
-            max_returned_bytes: 16 * 1024,
-            max_lookup_depth: 1,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ReviewConfidencePolicy {
-    pub issue: ReviewConfidence,
-    pub not_issue: ReviewConfidence,
-    pub needs_review: ReviewConfidence,
-    pub rationale: String,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -571,7 +518,6 @@ pub struct ObservationReview {
     pub decision_facts: ReviewDecisionFacts,
     #[serde(default)]
     pub investigation: ReviewInvestigationPlan,
-    pub confidence_policy: ReviewConfidencePolicy,
     pub facts: Vec<ReviewNeighborhoodFact>,
     pub open_questions: Vec<String>,
     #[serde(default, skip_serializing)]
@@ -694,18 +640,7 @@ pub struct ReviewAdmissionAuditExample {
     pub location: Location,
 }
 
-pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.1";
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReviewLookupOutcome {
-    Answered,
-    NoRelevantResult,
-    Unavailable,
-    Truncated,
-    BudgetExhausted,
-    Failed,
-}
+pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.3";
 
 /// One source artifact returned by a requested bounded lookup. The excerpt is
 /// reviewer-supplied response evidence and remains distinct from deterministic
@@ -716,24 +651,6 @@ pub struct ReviewRetrievedArtifact {
     pub artifact_id: String,
     pub location: Location,
     pub excerpt: String,
-}
-
-/// Records execution of one supplied lookup or one bounded follow-on lookup.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReviewLookupAttempt {
-    /// Zero-based supplied request index. It may be absent only when
-    /// `escalation` records one concrete follow-on lookup.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request_index: Option<usize>,
-    /// One bounded follow-on lookup discovered while executing a supplied
-    /// request. It remains reviewer evidence and never becomes scan evidence.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub escalation: Option<ReviewLookupRequest>,
-    pub outcome: ReviewLookupOutcome,
-    #[serde(default)]
-    pub artifacts: Vec<ReviewRetrievedArtifact>,
-    pub detail: String,
 }
 
 /// Connects a supplied evidence ID or retrieved artifact ID to a concrete
@@ -777,8 +694,13 @@ pub struct ReviewerOriginLeadRecord {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewInvestigationTrace {
-    #[serde(default)]
-    pub lookup_attempts: Vec<ReviewLookupAttempt>,
+    /// Exact, decision-relevant source selected by the reviewer. The CLI
+    /// journal retains the complete lookup history separately.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decisive_artifacts: Vec<ReviewRetrievedArtifact>,
+    /// Filled by the CLI from a per-review query journal after model review.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub journal_summary: Option<ReviewQueryJournalSummary>,
     #[serde(default)]
     pub citations: Vec<ReviewArtifactCitation>,
     #[serde(default)]
@@ -791,22 +713,28 @@ pub struct ReviewInvestigationTrace {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ReviewQueryJournalSummary {
+    pub file: String,
+    pub query_count: usize,
+    pub failed_count: usize,
+    pub empty_count: usize,
+    pub truncated_count: usize,
+    pub elapsed_ms: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PathReviewTriageResult {
     pub review_id: String,
+    /// The exact sink or observation anchor being decided.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_anchor_id: Option<String>,
     pub decision: ReviewDecision,
     pub confidence: ReviewConfidence,
     pub summary: String,
     pub checks: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub investigation: Option<ReviewInvestigationTrace>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PathReviewTriageResponseSet {
-    pub schema_version: String,
-    pub job_fingerprint: String,
-    pub results: Vec<PathReviewTriageResult>,
 }
 
 /// One model-sized task extracted from a review page. It repeats the page
@@ -875,9 +803,23 @@ pub struct PathReviewBundle {
     pub part: usize,
     pub part_count: usize,
     pub triage_contract: ReviewTriageContract,
+    /// Version of the external reviewer playbook selected by this request.
+    pub playbook_version: String,
+    /// Skill playbook and evidence mode for each independent review.
+    pub review_playbooks: BTreeMap<String, ReviewPlaybook>,
     pub review_ids: Vec<String>,
     #[serde(flatten)]
     pub payload: PathReviewBundlePayload,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewPlaybook {
+    /// Section in skills/mehscan-security/references/triage-buckets.md.
+    pub bucket: String,
+    /// `assessment` has enough deterministic facts to decide; `investigation`
+    /// directs the reviewer to the supplied exact lookup; `blocked` names an
+    /// external or unsupported missing fact.
+    pub mode: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -906,9 +848,7 @@ pub struct PathReviewBundleManifestEntry {
 pub struct PathReviewBundleManifest {
     pub schema_version: String,
     pub root: String,
-    /// Optional for compatibility with already reviewed release bundles.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub coverage: Option<crate::CoverageTotals>,
+    pub coverage: crate::CoverageTotals,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope: Vec<String>,
     pub operation: String,
@@ -944,20 +884,6 @@ pub struct PathReviewBundleResponseSet {
     pub schema_version: String,
     pub bundle_fingerprint: String,
     pub results: Vec<PathReviewTriageResult>,
-    /// Present only when the CLI replaces one invalid result and validates the
-    /// complete repaired response. A repaired response cannot be repaired again.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repair: Option<ReviewRepairTrace>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReviewRepairTrace {
-    pub review_id: String,
-    pub prior_response_fingerprint: String,
-    pub prior_result_fingerprint: String,
-    pub replacement_result_fingerprint: String,
-    pub validation_error: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1011,14 +937,11 @@ pub struct ReviewFamilyMeasurement {
     pub issue_count: usize,
     pub not_issue_count: usize,
     pub needs_review_count: usize,
-    pub lookup_attempt_count: usize,
-    pub answered_lookup_count: usize,
-    pub no_relevant_result_lookup_count: usize,
-    pub unavailable_lookup_count: usize,
-    pub truncated_lookup_count: usize,
-    pub budget_exhausted_lookup_count: usize,
+    pub lookup_count: usize,
+    pub empty_lookup_count: usize,
     pub failed_lookup_count: usize,
-    pub unsuccessful_lookup_count: usize,
+    pub truncated_lookup_count: usize,
+    pub lookup_elapsed_ms: u64,
     pub returned_artifact_bytes: usize,
     pub reviewer_origin_lead_count: usize,
 }
@@ -1045,8 +968,6 @@ pub struct PathReviewBundleRunReport {
     #[serde(default)]
     pub work: ReviewWorkSummary,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub repairs: Vec<ReviewRepairTrace>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reviewer_origin_leads: Vec<ReviewerOriginLeadRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub family_measurements: Vec<ReviewFamilyMeasurement>,
@@ -1059,53 +980,5 @@ pub struct PathReviewBundleRunReport {
     pub issue_groups: Vec<PathReviewBundleIssueGroup>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub quality_warnings: Vec<String>,
-    pub results: Vec<PathReviewTriageResult>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct PathReviewTriageProgress {
-    pub schema_version: String,
-    pub job_fingerprint: String,
-    #[serde(default)]
-    pub response_fingerprint: String,
-    pub submitted_count: usize,
-    pub remaining_count: usize,
-    pub complete: bool,
-    pub issue_count: usize,
-    pub not_issue_count: usize,
-    pub needs_review_count: usize,
-    pub missing_review_ids: Vec<String>,
-    pub results: Vec<PathReviewTriageResult>,
-}
-
-/// Conservative consolidation: issue decisions merge only when their
-/// capability, exact sink range, and rule-defined security invariant are
-/// identical. Constituent review results remain available separately.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct PathReviewIssueGroup {
-    pub id: String,
-    pub review_ids: Vec<String>,
-    /// Rule identity defining the security behavior consolidated by this group.
-    pub invariant_id: String,
-    pub confidence: ReviewConfidence,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub language: Option<Language>,
-    pub location: Location,
-    pub capability: Capability,
-    pub cwe_candidates: Vec<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct PathReviewTriageReport {
-    pub schema_version: String,
-    pub job_fingerprint: String,
-    #[serde(default)]
-    pub response_fingerprint: String,
-    pub issue_count: usize,
-    pub not_issue_count: usize,
-    pub needs_review_count: usize,
-    pub issue_group_count: usize,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub issue_groups: Vec<PathReviewIssueGroup>,
     pub results: Vec<PathReviewTriageResult>,
 }

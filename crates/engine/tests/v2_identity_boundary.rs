@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use mehscan_core::{
     EvidenceKind, PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, PathReviewBundlePayload,
-    PathReviewBundleResponseSet, PathReviewTriageResult, ReviewDecision, SecurityPathState,
+    PathReviewBundleResponseSet, PathReviewTriageResult, ReviewArtifactCitation, ReviewConfidence,
+    ReviewDecision, ReviewInvestigationTrace, SecurityPathState,
 };
 
 fn fixture_root() -> PathBuf {
@@ -93,8 +94,28 @@ fn keeps_distinct_cookie_invariants_at_one_sink_as_separate_issue_groups() {
     let job =
         mehscan_engine::investigation::build_all_path_review_jobs(&fixture_root(), Some(4), false)
             .expect("identity-boundary review jobs should build");
+    let csrf = job
+        .reviews
+        .iter()
+        .find(|review| {
+            review
+                .candidate
+                .cwe_candidates
+                .iter()
+                .any(|cwe| cwe == "CWE-352")
+        })
+        .expect("cookie-authenticated state-change review");
+    assert!(csrf.open_questions.iter().any(|question| {
+        question.contains("cross-site request") && question.contains("cookie delivery")
+    }));
     let bundle_set = mehscan_engine::investigation::build_path_review_bundles(&job, None)
         .expect("identity-boundary review bundles should build");
+    assert!(bundle_set.bundles.iter().any(|bundle| {
+        bundle
+            .review_playbooks
+            .get(&csrf.id)
+            .is_some_and(|playbook| playbook.bucket == "state_integrity")
+    }));
     let responses = bundle_set
         .bundles
         .into_iter()
@@ -104,24 +125,38 @@ fn keeps_distinct_cookie_invariants_at_one_sink_as_separate_issue_groups() {
                     .iter()
                     .map(|review| PathReviewTriageResult {
                         review_id: review.id.clone(),
+                        selected_anchor_id: Some(review.candidate.sink.id.clone()),
                         decision: ReviewDecision::Issue,
-                        confidence: review.confidence_policy.issue,
+                        confidence: ReviewConfidence::Medium,
                         summary: "The supplied evidence establishes this exact cookie weakness."
                             .to_string(),
                         checks: Vec::new(),
-                        investigation: Some(Default::default()),
+                        investigation: Some(ReviewInvestigationTrace {
+                            citations: vec![ReviewArtifactCitation {
+                                artifact_id: review.candidate.sink.id.clone(),
+                                claim: "This is the selected cookie sink.".to_string(),
+                            }],
+                            ..Default::default()
+                        }),
                     })
                     .collect(),
                 PathReviewBundlePayload::Observation { reviews } => reviews
                     .iter()
                     .map(|review| PathReviewTriageResult {
                         review_id: review.id.clone(),
+                        selected_anchor_id: Some(review.anchor_evidence_ids[0].clone()),
                         decision: ReviewDecision::Issue,
-                        confidence: review.confidence_policy.issue,
+                        confidence: ReviewConfidence::Medium,
                         summary: "The supplied evidence establishes this exact observed weakness."
                             .to_string(),
                         checks: Vec::new(),
-                        investigation: Some(Default::default()),
+                        investigation: Some(ReviewInvestigationTrace {
+                            citations: vec![ReviewArtifactCitation {
+                                artifact_id: review.anchor_evidence_ids[0].clone(),
+                                claim: "This is the selected cookie observation.".to_string(),
+                            }],
+                            ..Default::default()
+                        }),
                     })
                     .collect(),
             };
@@ -129,7 +164,6 @@ fn keeps_distinct_cookie_invariants_at_one_sink_as_separate_issue_groups() {
                 schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
                 bundle_fingerprint: bundle.bundle_fingerprint.clone(),
                 results,
-                repair: None,
             };
             (bundle, response)
         })

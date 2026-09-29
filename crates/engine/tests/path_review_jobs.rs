@@ -3,9 +3,58 @@ use std::path::PathBuf;
 
 use mehscan_core::{
     EvidenceKind, PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, PathReviewBundlePayload,
-    PathReviewBundleResponseSet, PathReviewTriageResponseSet, PathReviewTriageResult,
-    ReviewAdmissionDisposition, ReviewConfidence, ReviewDecision,
+    PathReviewBundleResponseSet, PathReviewTriageResult, ReviewAdmissionDisposition,
+    ReviewArtifactCitation, ReviewConfidence, ReviewDecision, ReviewInvestigationTrace,
 };
+
+fn selected_anchor_id(bundle: &mehscan_core::PathReviewBundle, review_id: &str) -> String {
+    match &bundle.payload {
+        PathReviewBundlePayload::SecurityPath { reviews } => reviews
+            .iter()
+            .find(|review| review.id == review_id)
+            .unwrap()
+            .candidate
+            .sink
+            .id
+            .clone(),
+        PathReviewBundlePayload::Observation { reviews } => {
+            let review = reviews
+                .iter()
+                .find(|review| review.id == review_id)
+                .unwrap();
+            review
+                .evidence
+                .iter()
+                .find(|evidence| {
+                    review.anchor_evidence_ids.contains(&evidence.id)
+                        && evidence.kind == EvidenceKind::Sink
+                })
+                .or_else(|| {
+                    review.evidence.iter().find(|evidence| {
+                        review.anchor_evidence_ids.contains(&evidence.id)
+                            && matches!(
+                                evidence.kind,
+                                EvidenceKind::SensitiveOperation
+                                    | EvidenceKind::SecurityConfiguration
+                            )
+                    })
+                })
+                .unwrap()
+                .id
+                .clone()
+        }
+    }
+}
+
+fn cited_anchor(anchor_id: String) -> ReviewInvestigationTrace {
+    ReviewInvestigationTrace {
+        citations: vec![ReviewArtifactCitation {
+            artifact_id: anchor_id,
+            claim: "This is the selected operation or sink for this decision.".to_string(),
+        }],
+        ..Default::default()
+    }
+}
 
 fn process_fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -141,18 +190,19 @@ fn builds_language_neutral_self_contained_path_reviews() {
     );
     assert!(!job.truncated);
     assert_eq!(job.triage_contract.response_fields[0], "review_id");
+    assert!(
+        job.triage_contract
+            .response_fields
+            .contains(&"selected_anchor_id".to_string())
+    );
     assert!(job.triage_contract.instructions.iter().any(|instruction| {
-        instruction.contains("Answer open questions from the supplied facts")
-            && instruction.contains("do not ask to trace a flow")
+        instruction.contains("selected anchor") && instruction.contains("exact operation")
     }));
     assert!(job.triage_contract.instructions.iter().any(|instruction| {
-        instruction.contains("requested artifact is absent from facts")
-            && instruction.contains("instead of asking to inspect it again")
+        instruction.contains("decision-changing edge") && instruction.contains("journal")
     }));
     assert!(job.triage_contract.instructions.iter().any(|instruction| {
-        instruction.contains("Evaluate each review independently")
-            && instruction.contains("review_basis semantics")
-            && instruction.contains("do not reuse category-wide boilerplate")
+        instruction.contains("needs_review") && instruction.contains("precise missing fact")
     }));
     assert!(job.reviews.iter().all(|review| {
         review.id.starts_with("review-")
@@ -316,37 +366,6 @@ fn includes_non_secret_repository_configuration_facts() {
 }
 
 #[test]
-fn validates_one_compact_result_per_path_review() {
-    let job = mehscan_engine::investigation::build_path_review_jobs(
-        &process_fixture_root(),
-        Some(2),
-        Some(2),
-    )
-    .expect("path reviews should build");
-    let responses = PathReviewTriageResponseSet {
-        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
-        job_fingerprint: job.fingerprint.clone(),
-        results: job
-            .reviews
-            .iter()
-            .map(|review| PathReviewTriageResult {
-                review_id: review.id.clone(),
-                decision: ReviewDecision::Issue,
-                confidence: review.confidence_policy.issue,
-                summary: "The supplied bounded path supports this issue decision.".to_string(),
-                checks: Vec::new(),
-                investigation: Some(Default::default()),
-            })
-            .collect(),
-    };
-    let report = mehscan_engine::investigation::validate_path_review_triage(&job, &responses)
-        .expect("responses should validate");
-    assert_eq!(report.needs_review_count, 0);
-    assert_eq!(report.issue_count, 2);
-    assert_eq!(report.not_issue_count, 0);
-}
-
-#[test]
 fn paginates_one_stable_path_first_review_sequence() {
     let first = mehscan_engine::investigation::build_path_review_jobs_page(
         &process_fixture_root(),
@@ -399,7 +418,7 @@ fn rejects_review_pages_larger_than_one_hundred_items() {
 }
 
 #[test]
-fn emits_independent_tasks_and_validates_resumable_progress() {
+fn emits_independent_tasks() {
     let job = mehscan_engine::investigation::build_path_review_jobs_page(
         &process_fixture_root(),
         Some(2),
@@ -418,27 +437,6 @@ fn emits_independent_tasks_and_validates_resumable_progress() {
             && task.job_fingerprint == job.fingerprint
             && task.triage_contract == job.triage_contract
     }));
-
-    let responses = PathReviewTriageResponseSet {
-        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
-        job_fingerprint: job.fingerprint.clone(),
-        results: vec![PathReviewTriageResult {
-            review_id: tasks.tasks[0].review_id.clone(),
-            decision: ReviewDecision::Issue,
-            confidence: job.reviews[0].confidence_policy.issue,
-            summary: "The first independently transported task supports this issue decision."
-                .to_string(),
-            checks: Vec::new(),
-            investigation: Some(Default::default()),
-        }],
-    };
-    let progress = mehscan_engine::investigation::validate_path_review_progress(&job, &responses)
-        .expect("partial progress should validate");
-
-    assert_eq!(progress.submitted_count, 1);
-    assert_eq!(progress.remaining_count, 2);
-    assert!(!progress.complete);
-    assert_eq!(progress.missing_review_ids.len(), 2);
 }
 
 #[test]
@@ -517,49 +515,79 @@ fn emits_semantic_bundles_and_retries_incomplete_bundle_responses() {
         .iter()
         .find(|bundle| bundle.review_ids.len() > 1)
         .expect("fixture should produce a multi-review semantic bundle");
+    assert_eq!(
+        bundle.review_playbooks.keys().collect::<BTreeSet<_>>(),
+        bundle.review_ids.iter().collect::<BTreeSet<_>>()
+    );
+    assert!(bundle.review_playbooks.values().all(|playbook| {
+        !playbook.bucket.is_empty()
+            && matches!(
+                playbook.mode.as_str(),
+                "assessment" | "investigation" | "blocked"
+            )
+    }));
     let results = bundle
         .review_ids
         .iter()
-        .map(|review_id| {
-            let confidence = match &bundle.payload {
-                PathReviewBundlePayload::SecurityPath { reviews } => {
-                    reviews
-                        .iter()
-                        .find(|review| review.id == *review_id)
-                        .expect("review should exist")
-                        .confidence_policy
-                        .issue
-                }
-                PathReviewBundlePayload::Observation { reviews } => {
-                    reviews
-                        .iter()
-                        .find(|review| review.id == *review_id)
-                        .expect("review should exist")
-                        .confidence_policy
-                        .issue
-                }
-            };
-            PathReviewTriageResult {
-                review_id: review_id.clone(),
-                decision: ReviewDecision::Issue,
-                confidence,
-                summary: "The supplied evidence supports one complete compact decision."
-                    .to_string(),
-                checks: Vec::new(),
-                investigation: Some(Default::default()),
-            }
+        .map(|review_id| PathReviewTriageResult {
+            review_id: review_id.clone(),
+            selected_anchor_id: Some(selected_anchor_id(bundle, review_id)),
+            decision: ReviewDecision::Issue,
+            confidence: ReviewConfidence::Medium,
+            summary: "The supplied evidence supports one complete compact decision.".to_string(),
+            checks: Vec::new(),
+            investigation: Some(cited_anchor(selected_anchor_id(bundle, review_id))),
         })
         .collect::<Vec<_>>();
     let response = PathReviewBundleResponseSet {
         schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
         bundle_fingerprint: bundle.bundle_fingerprint.clone(),
         results: results.clone(),
-        repair: None,
     };
     let report =
         mehscan_engine::investigation::validate_path_review_bundle_response(bundle, &response)
             .expect("complete bundle response should validate");
     assert!(report.complete);
+    let mut superseded = response.clone();
+    superseded.schema_version = "1.2".to_string();
+    assert!(
+        mehscan_engine::investigation::validate_path_review_bundle_response(bundle, &superseded)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported")
+    );
+    let mut incomplete_playbook = (*bundle).clone();
+    incomplete_playbook.review_playbooks.clear();
+    assert!(
+        mehscan_engine::investigation::validate_path_review_bundle_response(
+            &incomplete_playbook,
+            &response,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("incomplete review bundle")
+    );
+    let mut wrong_subject = response.clone();
+    wrong_subject.results[0].selected_anchor_id = Some("adjacent-evidence".to_string());
+    assert!(
+        mehscan_engine::investigation::validate_path_review_bundle_response(bundle, &wrong_subject)
+            .unwrap_err()
+            .to_string()
+            .contains("selected anchor")
+    );
+    let mut uncited = response.clone();
+    uncited.results[0]
+        .investigation
+        .as_mut()
+        .unwrap()
+        .citations
+        .clear();
+    assert!(
+        mehscan_engine::investigation::validate_path_review_bundle_response(bundle, &uncited)
+            .unwrap_err()
+            .to_string()
+            .contains("must cite its selected anchor")
+    );
     assert_eq!(
         report.needs_review_count + report.issue_count,
         bundle.review_ids.len()
@@ -577,30 +605,14 @@ fn emits_semantic_bundles_and_retries_incomplete_bundle_responses() {
         })),
     }
 
-    let mut invented_check = response.clone();
-    invented_check.results[0].decision = ReviewDecision::NeedsReview;
-    invented_check.results[0].checks =
-        vec!["Inspect the whole repository for some additional security context.".to_string()];
-    let error = mehscan_engine::investigation::validate_path_review_bundle_response(
-        bundle,
-        &invented_check,
-    )
-    .expect_err("needs_review must use a supplied unresolved fact");
-    assert!(error.to_string().contains("needs_review"));
-
-    let mut wrong_confidence = response.clone();
-    wrong_confidence.results[0].confidence =
-        if wrong_confidence.results[0].confidence == ReviewConfidence::High {
-            ReviewConfidence::Medium
-        } else {
-            ReviewConfidence::High
-        };
-    let error = mehscan_engine::investigation::validate_path_review_bundle_response(
-        bundle,
-        &wrong_confidence,
-    )
-    .expect_err("confidence must match the selected decision's deterministic policy");
-    assert!(error.to_string().contains("confidence"));
+    let mut reviewer_check = response.clone();
+    reviewer_check.results[0].decision = ReviewDecision::NeedsReview;
+    reviewer_check.results[0].checks = vec![
+        "Determine whether the exact captured operand at this sink comes from an attacker-controlled caller."
+            .to_string(),
+    ];
+    mehscan_engine::investigation::validate_path_review_bundle_response(bundle, &reviewer_check)
+        .expect("schema 1.2 permits a reviewer-discovered decisive check");
 
     let incomplete = PathReviewBundleResponseSet {
         results: results.into_iter().take(1).collect(),
@@ -1097,6 +1109,7 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
                 .iter()
                 .map(|review_id| PathReviewTriageResult {
                     review_id: review_id.clone(),
+                    selected_anchor_id: Some(selected_anchor_id(&bundle, review_id)),
                     decision: if path_bundle {
                         ReviewDecision::Issue
                     } else {
@@ -1106,14 +1119,13 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
                     summary: "The supplied bounded evidence supports this compact decision."
                         .to_string(),
                     checks: Vec::new(),
-                    investigation: Some(Default::default()),
+                    investigation: Some(cited_anchor(selected_anchor_id(&bundle, review_id))),
                 })
                 .collect();
             let responses = PathReviewBundleResponseSet {
                 schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
                 bundle_fingerprint: bundle.bundle_fingerprint.clone(),
                 results,
-                repair: None,
             };
             (bundle, responses)
         })
@@ -1449,10 +1461,6 @@ fn scopes_python_owner_control_to_resource_access_in_mixed_observations() {
         })
     );
     assert!(!process.open_questions.is_empty());
-    assert_eq!(
-        process.confidence_policy.not_issue,
-        ReviewConfidence::Medium
-    );
     assert!(process.decision_facts.established.iter().all(|fact| {
         !fact.contains("owner constraint applies to this exact resource selector")
     }));
@@ -1500,11 +1508,6 @@ fn observed_conditional_encoding_and_quoting_are_not_proven_controls() {
         assert!(
             review.decision_facts.effective_controls.is_empty(),
             "conditional control syntax must not certify protection: {sink_rule}"
-        );
-        assert_eq!(
-            review.confidence_policy.not_issue,
-            ReviewConfidence::Medium,
-            "unproved protection must not raise dismissal confidence: {sink_rule}"
         );
         assert!(
             review
@@ -1629,48 +1632,6 @@ fn does_not_repeat_a_python_helper_sink_already_covered_by_a_path() {
 }
 
 #[test]
-fn keeps_distinct_sink_instances_in_one_symbol_without_hiding_results() {
-    let job = mehscan_engine::investigation::build_path_review_jobs_page(
-        &review_admission_root(),
-        Some(2),
-        Some(2),
-        0,
-        false,
-    )
-    .expect("review page should build");
-    assert_eq!(job.reviews.len(), 2);
-    assert!(job.observation_reviews.is_empty());
-    let responses = PathReviewTriageResponseSet {
-        schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
-        job_fingerprint: job.fingerprint.clone(),
-        results: job
-            .reviews
-            .iter()
-            .map(|review| PathReviewTriageResult {
-                review_id: review.id.clone(),
-                decision: ReviewDecision::Issue,
-                confidence: review.confidence_policy.issue,
-                summary: "Attacker-controlled HTML reaches an unencoded response sink.".to_string(),
-                checks: Vec::new(),
-                investigation: Some(Default::default()),
-            })
-            .collect(),
-    };
-    let report = mehscan_engine::investigation::validate_path_review_triage(&job, &responses)
-        .expect("complete triage should validate");
-
-    assert_eq!(report.issue_count, 2);
-    assert_eq!(report.results.len(), 2);
-    assert_eq!(report.issue_group_count, 2);
-    assert!(
-        report
-            .issue_groups
-            .iter()
-            .all(|group| group.review_ids.len() == 1)
-    );
-}
-
-#[test]
 fn consolidates_multiple_sources_at_one_exact_sink_and_invariant() {
     let job = mehscan_engine::investigation::build_all_path_review_jobs(
         &review_issue_grouping_root(),
@@ -1717,21 +1678,21 @@ fn consolidates_multiple_sources_at_one_exact_sink_and_invariant() {
                 .iter()
                 .map(|review| PathReviewTriageResult {
                     review_id: review.id.clone(),
+                    selected_anchor_id: Some(review.candidate.sink.id.clone()),
                     decision: ReviewDecision::Issue,
-                    confidence: review.confidence_policy.issue,
+                    confidence: ReviewConfidence::Medium,
                     summary: format!(
                         "Source {} reaches the same unencoded HTML response.",
                         review.id
                     ),
                     checks: Vec::new(),
-                    investigation: Some(Default::default()),
+                    investigation: Some(cited_anchor(review.candidate.sink.id.clone())),
                 })
                 .collect();
             let response = PathReviewBundleResponseSet {
                 schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
                 bundle_fingerprint: bundle.bundle_fingerprint.clone(),
                 results,
-                repair: None,
             };
             (bundle, response)
         })
@@ -2020,7 +1981,6 @@ fn juice_shop_first_page_keeps_all_paths_and_excludes_teaching_material() {
         assert!(review.decision_facts.established.iter().any(|fact| {
             fact.contains("affirmatively disproving an object-ownership violation")
         }));
-        assert_eq!(review.confidence_policy.not_issue, ReviewConfidence::High);
     }
 
     let chat_order = job

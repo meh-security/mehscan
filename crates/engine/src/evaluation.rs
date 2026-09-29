@@ -245,12 +245,13 @@ pub fn score_review_verdict_evaluation(
             &result.summary,
             &result.checks,
         )?;
-        let expected_confidence =
-            review_case_confidence(prepared_by_id[result.case_id.as_str()], result.decision);
-        if result.confidence != expected_confidence {
+        if !expected_by_id[result.case_id.as_str()]
+            .allowed_confidence
+            .contains(&result.confidence)
+        {
             return Err(EngineError(format!(
-                "confidence for review-verdict case {:?} must be {:?} for the selected {:?} decision",
-                result.case_id, expected_confidence, result.decision
+                "confidence for review-verdict case {:?} is outside the allowed evaluation range",
+                result.case_id
             )));
         }
         if result.decision == ReviewDecision::NeedsReview {
@@ -567,16 +568,6 @@ fn prepare_review_verdict_pack(
             review_id,
             payload,
         };
-        let expected_confidence = review_case_confidence(&case, selected.expected_decision);
-        if !selected.allowed_confidence.contains(&expected_confidence) {
-            return Err(EngineError(format!(
-                "review-verdict case {:?} allows {:?} confidence for its expected {:?} decision, but the emitted confidence policy requires {:?}",
-                selected.id,
-                selected.allowed_confidence,
-                selected.expected_decision,
-                expected_confidence
-            )));
-        }
         cases.push(case);
     }
     let mut triage_contract = triage_contract.expect("non-empty manifest has a triage contract");
@@ -605,21 +596,6 @@ fn prepare_review_verdict_pack(
         case_count: cases.len(),
         cases,
     })
-}
-
-fn review_case_confidence(
-    case: &ReviewVerdictEvaluationCase,
-    decision: ReviewDecision,
-) -> ReviewConfidence {
-    let policy = match &case.payload {
-        PathReviewTaskPayload::SecurityPath { review } => &review.confidence_policy,
-        PathReviewTaskPayload::Observation { review } => &review.confidence_policy,
-    };
-    match decision {
-        ReviewDecision::Issue => policy.issue,
-        ReviewDecision::NotIssue => policy.not_issue,
-        ReviewDecision::NeedsReview => policy.needs_review,
-    }
 }
 
 fn review_case_unresolved(case: &ReviewVerdictEvaluationCase) -> &[String] {

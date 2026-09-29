@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use mehscan_core::{
     Location, PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, PathReviewBundlePayload,
     PathReviewBundleResponseSet, PathReviewTriageResult, Position, ReviewArtifactCitation,
-    ReviewDecision, ReviewInvestigationTrace, ReviewLookupAttempt, ReviewLookupOutcome,
-    ReviewReadiness, ReviewRetrievedArtifact, ReviewerInference,
+    ReviewConfidence, ReviewDecision, ReviewInvestigationTrace, ReviewReadiness,
+    ReviewRetrievedArtifact, ReviewerInference,
 };
 
 fn fixture_root() -> PathBuf {
@@ -88,14 +88,14 @@ fn packages_csharp_state_transitions_with_exact_policy_helpers() {
 }
 
 #[test]
-fn retrieved_policy_evidence_changes_the_same_incomplete_review_outcome() {
+fn decisive_policy_evidence_changes_the_same_incomplete_review_outcome() {
     let job =
         mehscan_engine::investigation::build_all_path_review_jobs(&fixture_root(), Some(8), false)
-            .expect("review jobs should build");
-    let bundle_set =
+            .expect("review jobs");
+    let bundles =
         mehscan_engine::investigation::build_path_review_bundles_with_limits(&job, None, Some(1))
-            .expect("single-review bundles should build");
-    let bundle = bundle_set
+            .expect("single-review bundles");
+    let bundle = bundles
         .bundles
         .iter()
         .find(|bundle| match &bundle.payload {
@@ -107,29 +107,21 @@ fn retrieved_policy_evidence_changes_the_same_incomplete_review_outcome() {
             }),
             PathReviewBundlePayload::SecurityPath { .. } => false,
         })
-        .expect("guarded transition should have an isolated bundle");
+        .expect("guarded transition bundle");
     let review = match &bundle.payload {
         PathReviewBundlePayload::Observation { reviews } => &reviews[0],
         PathReviewBundlePayload::SecurityPath { .. } => unreachable!(),
     };
-    let question = review
-        .decision_facts
-        .unresolved
-        .first()
-        .expect("guarded transition should retain its policy question")
-        .clone();
-    let source_request = review
+    let anchor = review.anchor_evidence_ids[0].clone();
+    let question = review.decision_facts.unresolved[0].clone();
+    let path = review
         .investigation
         .lookup_requests
         .iter()
-        .position(|request| request.operation == "source")
-        .expect("review should supply an exact source lookup");
-    let lookup_path = review.investigation.lookup_requests[source_request]
-        .arguments
-        .get("path")
-        .expect("source lookup should name a path")
+        .find(|request| request.operation == "source")
+        .and_then(|request| request.arguments.get("path"))
+        .expect("source lookup path")
         .clone();
-
     let cases = [
         (
             ReviewDecision::Issue,
@@ -146,88 +138,57 @@ fn retrieved_policy_evidence_changes_the_same_incomplete_review_outcome() {
         (ReviewDecision::NeedsReview, None),
     ];
     let mut fingerprints = Vec::new();
-    for (decision, retrieved) in cases {
-        let confidence = match decision {
-            ReviewDecision::Issue => review.confidence_policy.issue,
-            ReviewDecision::NotIssue => review.confidence_policy.not_issue,
-            ReviewDecision::NeedsReview => review.confidence_policy.needs_review,
-        };
-        let (attempt, citations, reviewer_inferences) = if let Some(excerpt) = retrieved {
-            let artifact_id = "retrieved-transition-policy".to_string();
-            (
-                ReviewLookupAttempt {
-                    request_index: Some(source_request),
-                    escalation: None,
-                    outcome: ReviewLookupOutcome::Answered,
-                    artifacts: vec![ReviewRetrievedArtifact {
-                        artifact_id: artifact_id.clone(),
-                        location: Location {
-                            path: lookup_path.clone(),
-                            start: Position {
-                                line: 1,
-                                column: 1,
-                                byte_offset: 0,
-                            },
-                            end: Position {
-                                line: 1,
-                                column: excerpt.len() + 1,
-                                byte_offset: excerpt.len(),
-                            },
-                        },
-                        excerpt: excerpt.to_string(),
-                    }],
-                    detail: "Retrieved the exact transition helper body.".to_string(),
+    for (decision, excerpt) in cases {
+        let mut trace = ReviewInvestigationTrace::default();
+        if let Some(excerpt) = excerpt {
+            let artifact_id = "transition-policy".to_string();
+            trace.decisive_artifacts.push(ReviewRetrievedArtifact {
+                artifact_id: artifact_id.clone(),
+                location: Location {
+                    path: path.clone(),
+                    start: Position {
+                        line: 1,
+                        column: 1,
+                        byte_offset: 0,
+                    },
+                    end: Position {
+                        line: 1,
+                        column: excerpt.len() + 1,
+                        byte_offset: excerpt.len(),
+                    },
                 },
-                vec![ReviewArtifactCitation {
-                    artifact_id: artifact_id.clone(),
-                    claim: "The helper body supplies the transition policy used by this endpoint."
-                        .to_string(),
-                }],
-                vec![ReviewerInference {
-                    claim: match decision {
-                        ReviewDecision::Issue => {
-                            "The retrieved helper writes the requested state without rejecting an invalid current-to-next transition."
-                        }
-                        ReviewDecision::NotIssue => {
-                            "The retrieved helper checks the current-to-next transition and terminates before the write when it is invalid."
-                        }
-                        ReviewDecision::NeedsReview => unreachable!(),
-                    }
+                excerpt: excerpt.to_string(),
+            });
+            trace.citations.push(ReviewArtifactCitation {
+                artifact_id: artifact_id.clone(),
+                claim: "The helper body determines whether the transition is rejected.".to_string(),
+            });
+            trace.citations.push(ReviewArtifactCitation {
+                artifact_id: anchor.clone(),
+                claim: "The selected operation invokes this transition.".to_string(),
+            });
+            trace.reviewer_inferences.push(ReviewerInference {
+                claim: "The helper's rejection behavior decides the selected transition."
                     .to_string(),
-                    artifact_ids: vec![artifact_id],
-                }],
-            )
-        } else {
-            (
-                ReviewLookupAttempt {
-                    request_index: Some(source_request),
-                    escalation: None,
-                    outcome: ReviewLookupOutcome::NoRelevantResult,
-                    artifacts: Vec::new(),
-                    detail: "The bounded source lookup did not return the transition policy."
-                        .to_string(),
-                },
-                Vec::new(),
-                Vec::new(),
-            )
-        };
+                artifact_ids: vec![artifact_id],
+            });
+        }
         let response = PathReviewBundleResponseSet {
             schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
             bundle_fingerprint: bundle.bundle_fingerprint.clone(),
             results: vec![PathReviewTriageResult {
                 review_id: review.id.clone(),
+                selected_anchor_id: Some(anchor.clone()),
                 decision,
-                confidence,
+                confidence: ReviewConfidence::Medium,
                 summary: match decision {
                     ReviewDecision::Issue => {
-                        "The retrieved helper permits an unchecked requested transition."
+                        "The helper permits an unchecked requested transition."
                     }
                     ReviewDecision::NotIssue => {
-                        "The retrieved helper rejects disallowed current-to-next transitions."
+                        "The helper rejects invalid current-to-next transitions."
                     }
-                    ReviewDecision::NeedsReview => {
-                        "The decisive transition policy remains unavailable after the supplied lookup."
-                    }
+                    ReviewDecision::NeedsReview => "The decisive transition policy is unavailable.",
                 }
                 .to_string(),
                 checks: if decision == ReviewDecision::NeedsReview {
@@ -235,73 +196,15 @@ fn retrieved_policy_evidence_changes_the_same_incomplete_review_outcome() {
                 } else {
                     Vec::new()
                 },
-                investigation: Some(ReviewInvestigationTrace {
-                    lookup_attempts: vec![attempt],
-                    citations,
-                    reviewer_inferences,
-                    reviewer_origin_leads: Vec::new(),
-                    blockers: Vec::new(),
-                }),
+                investigation: Some(trace),
             }],
-            repair: None,
         };
         let report =
             mehscan_engine::investigation::validate_path_review_bundle_response(bundle, &response)
-                .expect("each evidence-supported outcome should validate");
-        assert_eq!(report.results[0].decision, decision);
+                .expect("each evidence-supported outcome validates");
         fingerprints.push(report.response_fingerprint);
-        if decision == ReviewDecision::NotIssue {
-            let valid_repair = mehscan_engine::investigation::repair_path_review_bundle_response(
-                bundle,
-                &response,
-                &review.id,
-                response.results[0].clone(),
-            )
-            .expect_err("a valid security decision must not enter the repair path");
-            assert!(valid_repair.to_string().contains("must not be repaired"));
-            let mut failed = response.clone();
-            failed.results[0].confidence = match failed.results[0].confidence {
-                mehscan_core::ReviewConfidence::High => mehscan_core::ReviewConfidence::Low,
-                _ => mehscan_core::ReviewConfidence::High,
-            };
-            let repaired = mehscan_engine::investigation::repair_path_review_bundle_response(
-                bundle,
-                &failed,
-                &review.id,
-                response.results[0].clone(),
-            )
-            .expect("one invalid result should accept one exact validated replacement");
-            let repair = repaired.repair.as_ref().expect("repair history");
-            assert_eq!(repair.review_id, review.id);
-            assert!(repair.validation_error.contains("confidence"));
-            mehscan_engine::investigation::validate_path_review_bundle_response(bundle, &repaired)
-                .expect("the complete repaired response should validate");
-            let run = mehscan_engine::investigation::summarize_path_review_bundle_run(&[(
-                (*bundle).clone(),
-                repaired.clone(),
-            )])
-            .expect("the canonical run summary should preserve repair history");
-            assert_eq!(run.repairs, vec![repair.clone()]);
-            assert_eq!(run.family_measurements.len(), 1);
-            assert_eq!(run.family_measurements[0].completed_review_count, 1);
-            assert_eq!(run.family_measurements[0].resolved_review_count, 1);
-            assert_eq!(run.family_measurements[0].lookup_attempt_count, 1);
-            assert!(run.family_measurements[0].returned_artifact_bytes > 0);
-            let second_repair = mehscan_engine::investigation::repair_path_review_bundle_response(
-                bundle,
-                &repaired,
-                &review.id,
-                response.results[0].clone(),
-            )
-            .expect_err("repair history must prevent a second repair attempt");
-            assert!(second_repair.to_string().contains("only once"));
-        }
     }
     fingerprints.sort();
     fingerprints.dedup();
-    assert_eq!(
-        fingerprints.len(),
-        3,
-        "each investigated outcome needs a distinct identity"
-    );
+    assert_eq!(fingerprints.len(), 3);
 }

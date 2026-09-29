@@ -240,7 +240,7 @@ def install(options):
     endpoint = 'tags/' + requested if requested else 'latest'
     release = json.loads(download(f'https://api.github.com/repos/{REPO}/releases/{endpoint}', 2097152))
     tag, name, assets = select_release(release, requested, host, architecture)
-    pins = json.loads((Path(__file__).parent / '../references/release-pins.json').read_text())
+    pins = json.loads((Path(__file__).parent / 'release-pins.json').read_text())
     pin = pins.get(tag)
     require(tag not in pins or (isinstance(pin, str) and re.fullmatch(r'[0-9a-f]{40}', pin)),
             'Malformed release source pin')

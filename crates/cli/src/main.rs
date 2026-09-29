@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Instant;
 
 use mehscan_core::{Capability, EvidenceFilter, EvidenceKind, Language};
 
@@ -50,6 +52,7 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     }
     let run = PathBuf::from(parsed.required("--run")?);
     let responses = parsed.optional("--responses").map(PathBuf::from);
+    let source_root = parsed.optional("--source-root").map(PathBuf::from);
     let allow_partial = parsed.optional_bool("--allow-partial")?.unwrap_or(false);
     let format = match parsed.optional("--format").as_deref().unwrap_or("json") {
         "json" => ReportOutputFormat::Json,
@@ -65,8 +68,12 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let scope = parse_report_scope(&mut parsed);
     parsed.finish()?;
 
-    let (manifest, bundle_responses, work) =
-        read_complete_bundle_responses(&run, responses.as_deref(), allow_partial)?;
+    let (manifest, bundle_responses, work) = read_complete_bundle_responses(
+        &run,
+        responses.as_deref(),
+        allow_partial,
+        source_root.as_deref(),
+    )?;
     let mut report = engine(
         mehscan_engine::investigation::build_finding_report_from_manifest_with_work(
             &manifest,
@@ -451,6 +458,28 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
         return Ok(());
     }
     let root = parsed.root.clone();
+    let journal = parsed.optional("--journal").map(PathBuf::from);
+    let query_options = parsed.options.clone();
+    let started = Instant::now();
+    if journal.is_some()
+        && !matches!(
+            operation.as_str(),
+            "outline"
+                | "source"
+                | "enclosing"
+                | "enclosing-at"
+                | "evidence"
+                | "units"
+                | "symbol"
+                | "imports"
+                | "references"
+                | "paths"
+                | "native-call-sites"
+                | "structural"
+        )
+    {
+        return Err("--journal is available only for read-only investigation queries".to_string());
+    }
     match operation.as_str() {
         "funnel" => {
             parsed.finish()?;
@@ -494,21 +523,38 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             print_json(&mehscan_engine::investigation::path_review_tasks(&job))
         }
         "review-bundles" => {
+            let started = std::time::Instant::now();
             let output = PathBuf::from(parsed.required("--output")?);
             let max_bytes = parsed.optional_usize("--max-bytes")?;
             let max_reviews = parsed.optional_usize("--max-reviews")?;
             let max_total_reviews = parsed.optional_usize("--max-total-reviews")?;
             let context_lines = parsed.optional_usize("--context-lines")?;
+            let timings = parsed.optional_bool("--timings")?.unwrap_or(false);
             let include_review_material = parsed
                 .optional_bool("--include-review-material")?
                 .unwrap_or(false);
             let scope = parse_report_scope(&mut parsed);
             parsed.finish()?;
-            let job = engine(mehscan_engine::investigation::build_all_path_review_jobs(
-                &root,
-                context_lines,
-                include_review_material,
-            ))?;
+            let (job, job_profile) = if timings {
+                let (job, profile) = engine(
+                    mehscan_engine::investigation::build_all_path_review_jobs_profiled(
+                        &root,
+                        context_lines,
+                        include_review_material,
+                    ),
+                )?;
+                (job, Some(profile))
+            } else {
+                (
+                    engine(mehscan_engine::investigation::build_all_path_review_jobs(
+                        &root,
+                        context_lines,
+                        include_review_material,
+                    ))?,
+                    None,
+                )
+            };
+            let review_jobs_milliseconds = started.elapsed().as_millis();
             let mut bundle_set = engine(
                 mehscan_engine::investigation::build_path_review_bundles_with_run_limit(
                     &job,
@@ -517,8 +563,34 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     max_total_reviews,
                 ),
             )?;
+            let bundle_build_milliseconds =
+                started.elapsed().as_millis() - review_jobs_milliseconds;
             bundle_set.manifest.scope.extend(scope);
             write_path_review_bundles(&output, &bundle_set)?;
+            if timings {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "review_jobs_milliseconds": review_jobs_milliseconds,
+                        "review_job_phases": job_profile.as_ref().map(|profile| serde_json::json!({
+                            "scan_milliseconds": profile.scan_milliseconds,
+                            "source_load_milliseconds": profile.source_load_milliseconds,
+                            "context_admission_milliseconds": profile.context_admission_milliseconds,
+                            "path_reviews_milliseconds": profile.path_reviews_milliseconds,
+                            "observation_reviews_milliseconds": profile.observation_reviews_milliseconds,
+                            "observation_index_milliseconds": profile.observation_index_milliseconds,
+                            "observation_pre_origin_milliseconds": profile.observation_pre_origin_milliseconds,
+                            "observation_origin_milliseconds": profile.observation_origin_milliseconds,
+                            "observation_post_origin_milliseconds": profile.observation_post_origin_milliseconds,
+                            "observation_review_count": profile.observation_review_count,
+                            "finalization_milliseconds": profile.finalization_milliseconds,
+                        })),
+                        "bundle_build_milliseconds": bundle_build_milliseconds,
+                        "write_milliseconds": started.elapsed().as_millis() - review_jobs_milliseconds - bundle_build_milliseconds,
+                        "total_milliseconds": started.elapsed().as_millis(),
+                    })
+                );
+            }
             print_json(&bundle_set.manifest)
         }
         "review-bundle-diff" => {
@@ -537,12 +609,38 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             )
             .map_err(|e| format!("invalid bundle: {e}"))?;
             let ids = &bundle.review_ids;
+            if bundle.schema_version != mehscan_core::PATH_REVIEW_BUNDLE_SCHEMA_VERSION
+                || bundle.playbook_version != "triage-buckets-v3"
+                || ids
+                    .iter()
+                    .any(|id| !bundle.review_playbooks.contains_key(id))
+            {
+                return Err("unsupported or incomplete review bundle contract".to_string());
+            }
             if ids.is_empty()
                 || bundle.bundle_fingerprint.is_empty()
                 || ids.iter().collect::<BTreeSet<_>>().len() != ids.len()
             {
                 return Err("bundle must contain a fingerprint and distinct review IDs".to_string());
             }
+            let selected_anchor_ids = ids
+                .iter()
+                .map(|review_id| {
+                    engine(mehscan_engine::investigation::bundle_selected_anchor_id(
+                        &bundle, review_id,
+                    ))
+                    .map(str::to_string)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let result_fields = vec![
+                "review_id",
+                "selected_anchor_id",
+                "decision",
+                "confidence",
+                "summary",
+                "checks",
+                "investigation",
+            ];
             let position_schema = serde_json::json!({
                 "type": "object", "additionalProperties": false,
                 "required": ["line", "column", "byte_offset"],
@@ -570,40 +668,6 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     "excerpt": {"type": "string", "minLength": 1, "maxLength": 4000}
                 }
             });
-            let lookup_request_schema = serde_json::json!({
-                "type": "object", "additionalProperties": false,
-                "required": ["operation", "arguments", "questions", "purpose"],
-                "properties": {
-                    "operation": {"type": "string", "enum": ["source", "references"]},
-                    "arguments": {
-                        "type": "object", "additionalProperties": false,
-                        "required": ["path", "start-line", "end-line", "symbol", "limit"],
-                        "properties": {
-                            "path": {"type": ["string", "null"]},
-                            "start-line": {"type": ["string", "null"]},
-                            "end-line": {"type": ["string", "null"]},
-                            "symbol": {"type": ["string", "null"]},
-                            "limit": {"type": ["string", "null"]}
-                        }
-                    },
-                    "questions": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-                    "purpose": {"type": "string", "minLength": 1, "maxLength": 500}
-                }
-            });
-            let lookup_attempt_schema = serde_json::json!({
-                "type": "object", "additionalProperties": false,
-                // Structured-output providers reject oneOf and require every
-                // declared property. Null keeps the two lookup origins explicit;
-                // triage validation still enforces that exactly one is populated.
-                "required": ["request_index", "escalation", "outcome", "artifacts", "detail"],
-                "properties": {
-                    "request_index": {"type": ["integer", "null"], "minimum": 0},
-                    "escalation": {"anyOf": [lookup_request_schema, {"type": "null"}]},
-                    "outcome": {"type": "string", "enum": ["answered", "no_relevant_result", "unavailable", "truncated", "budget_exhausted", "failed"]},
-                    "artifacts": {"type": "array", "items": artifact_schema},
-                    "detail": {"type": "string", "minLength": 1, "maxLength": 500}
-                }
-            });
             let reviewer_origin_lead_schema = serde_json::json!({
                 "type": "object", "additionalProperties": false,
                 "required": ["question", "security_relevance", "distinct_from_review", "location", "artifact_ids"],
@@ -617,9 +681,22 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             });
             let investigation_schema = serde_json::json!({
                 "type": "object", "additionalProperties": false,
-                "required": ["lookup_attempts", "citations", "reviewer_inferences", "reviewer_origin_leads", "blockers"],
+                "required": ["decisive_artifacts", "journal_summary", "citations", "reviewer_inferences", "reviewer_origin_leads", "blockers"],
                 "properties": {
-                    "lookup_attempts": {"type": "array", "items": lookup_attempt_schema},
+                    "decisive_artifacts": {"type": "array", "items": artifact_schema},
+                    "journal_summary": {"anyOf": [
+                        {"type": "null"},
+                        {"type": "object", "additionalProperties": false,
+                         "required": ["file", "query_count", "failed_count", "empty_count", "truncated_count", "elapsed_ms"],
+                         "properties": {
+                             "file": {"type": "string"},
+                             "query_count": {"type": "integer", "minimum": 0},
+                             "failed_count": {"type": "integer", "minimum": 0},
+                             "empty_count": {"type": "integer", "minimum": 0},
+                             "truncated_count": {"type": "integer", "minimum": 0},
+                             "elapsed_ms": {"type": "integer", "minimum": 0}
+                         }}
+                    ]},
                     "citations": {"type": "array", "items": {
                         "type": "object", "additionalProperties": false,
                         "required": ["artifact_id", "claim"],
@@ -649,9 +726,10 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     "bundle_fingerprint": {"type": "string", "const": bundle.bundle_fingerprint},
                     "results": {"type": "array", "minItems": ids.len(), "maxItems": ids.len(), "items": {
                         "type": "object", "additionalProperties": false,
-                        "required": ["review_id", "decision", "confidence", "summary", "checks", "investigation"],
+                        "required": result_fields,
                         "properties": {
                             "review_id": {"type": "string", "enum": ids},
+                            "selected_anchor_id": {"type": "string", "enum": selected_anchor_ids},
                             "decision": {"type": "string", "enum": ["issue", "not_issue", "needs_review"]},
                             "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
                             "summary": {"type": "string", "maxLength": 450},
@@ -666,6 +744,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
         "review-bundle-triage" => {
             let bundle_path = PathBuf::from(parsed.required("--bundle")?);
             let responses_path = PathBuf::from(parsed.required("--responses")?);
+            let source_root = parsed.optional("--source-root").map(PathBuf::from);
             parsed.finish()?;
             let bundle_source = fs::read_to_string(&bundle_path).map_err(|error| {
                 format!(
@@ -697,71 +776,83 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 &bundle, &responses,
             )
             .map_err(|error| format!("invalid reviewer work: {error}"))?;
+            if let Some(source_root) = source_root.as_deref() {
+                validate_review_artifact_source_text(source_root, &responses)?;
+            }
             print_json(&report)
         }
-        "review-bundle-repair" => {
+        "review-bundle-finalize" => {
             let bundle_path = PathBuf::from(parsed.required("--bundle")?);
-            let failed_path = PathBuf::from(parsed.required("--failed-responses")?);
-            let review_id = parsed.required("--review-id")?;
-            let replacement_path = PathBuf::from(parsed.required("--replacement")?);
+            let draft_path = PathBuf::from(parsed.required("--draft")?);
+            let journal_dir = PathBuf::from(parsed.required("--journal-dir")?);
             let output_path = PathBuf::from(parsed.required("--output")?);
+            let source_root = PathBuf::from(parsed.required("--source-root")?);
             parsed.finish()?;
             let bundle: mehscan_core::PathReviewBundle =
-                serde_json::from_str(&fs::read_to_string(&bundle_path).map_err(|error| {
-                    format!(
-                        "could not read path-review bundle {}: {error}",
-                        bundle_path.display()
-                    )
+                serde_json::from_slice(&fs::read(&bundle_path).map_err(|error| {
+                    format!("could not read bundle {}: {error}", bundle_path.display())
                 })?)
-                .map_err(|error| {
+                .map_err(|error| format!("invalid bundle {}: {error}", bundle_path.display()))?;
+            let mut responses: mehscan_core::PathReviewBundleResponseSet =
+                serde_json::from_slice(&fs::read(&draft_path).map_err(|error| {
+                    format!("could not read draft {}: {error}", draft_path.display())
+                })?)
+                .map_err(|error| format!("invalid draft {}: {error}", draft_path.display()))?;
+            if responses.schema_version != "1.3" {
+                return Err("review-bundle-finalize requires a schema 1.3 draft".to_string());
+            }
+            for result in &mut responses.results {
+                if result
+                    .review_id
+                    .bytes()
+                    .any(|byte| byte == b'/' || byte == 92)
+                    || result.review_id.contains("..")
+                {
+                    return Err("review ID cannot be used as a journal filename".to_string());
+                }
+                let trace = result.investigation.as_mut().ok_or_else(|| {
+                    format!("review {:?} has no investigation object", result.review_id)
+                })?;
+                if trace.journal_summary.is_some() {
+                    return Err(format!(
+                        "review {:?} draft must leave journal_summary null",
+                        result.review_id
+                    ));
+                }
+                let filename = format!("{}.jsonl", result.review_id);
+                trace.journal_summary = Some(summarize_query_journal(
+                    &journal_dir.join(&filename),
+                    &filename,
+                    &source_root,
+                )?);
+            }
+            mehscan_engine::investigation::validate_path_review_bundle_response(
+                &bundle, &responses,
+            )
+            .map_err(|error| format!("invalid reviewer work: {error}"))?;
+            validate_review_artifact_source_text(&source_root, &responses)?;
+            if let Some(parent) = output_path.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
                     format!(
-                        "path-review bundle {} is invalid: {error}",
-                        bundle_path.display()
+                        "could not create response directory {}: {error}",
+                        parent.display()
                     )
                 })?;
-            let failed: mehscan_core::PathReviewBundleResponseSet =
-                serde_json::from_str(&fs::read_to_string(&failed_path).map_err(|error| {
-                    format!(
-                        "could not read failed response {}: {error}",
-                        failed_path.display()
-                    )
-                })?)
-                .map_err(|error| {
-                    format!(
-                        "failed response {} is not structurally repairable: {error}",
-                        failed_path.display()
-                    )
-                })?;
-            let replacement: mehscan_core::PathReviewTriageResult =
-                serde_json::from_str(&fs::read_to_string(&replacement_path).map_err(|error| {
-                    format!(
-                        "could not read replacement result {}: {error}",
-                        replacement_path.display()
-                    )
-                })?)
-                .map_err(|error| {
-                    format!(
-                        "replacement result {} is invalid: {error}",
-                        replacement_path.display()
-                    )
-                })?;
-            let repaired = engine(
-                mehscan_engine::investigation::repair_path_review_bundle_response(
-                    &bundle,
-                    &failed,
-                    &review_id,
-                    replacement,
-                ),
-            )?;
-            write_json(&repaired, Some(&output_path))
+            }
+            write_json(&responses, Some(&output_path))
         }
         "review-bundle-summary" => {
             let run = PathBuf::from(parsed.required("--run")?);
             let responses = parsed.optional("--responses").map(PathBuf::from);
+            let source_root = parsed.optional("--source-root").map(PathBuf::from);
             let allow_partial = parsed.optional_bool("--allow-partial")?.unwrap_or(false);
             parsed.finish()?;
-            let (manifest, bundle_responses, work) =
-                read_complete_bundle_responses(&run, responses.as_deref(), allow_partial)?;
+            let (manifest, bundle_responses, work) = read_complete_bundle_responses(
+                &run,
+                responses.as_deref(),
+                allow_partial,
+                source_root.as_deref(),
+            )?;
             let mut summary = engine(
                 mehscan_engine::investigation::summarize_path_review_bundle_manifest_run_with_work(
                     &manifest,
@@ -778,135 +869,65 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             );
             print_json(&summary)
         }
-        "review-triage" => {
-            let responses = PathBuf::from(parsed.required("--responses")?);
-            let limit = parsed.optional_usize("--limit")?;
-            let context_lines = parsed.optional_usize("--context-lines")?;
-            let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
-            let include_review_material = parsed
-                .optional_bool("--include-review-material")?
-                .unwrap_or(false);
-            parsed.finish()?;
-            let source = fs::read_to_string(&responses).map_err(|error| {
-                format!(
-                    "could not read path-review triage responses {}: {error}",
-                    responses.display()
-                )
-            })?;
-            let response_set: mehscan_core::PathReviewTriageResponseSet =
-                serde_json::from_str(&source).map_err(|error| {
-                    format!(
-                        "path-review triage responses {} are invalid: {error}",
-                        responses.display()
-                    )
-                })?;
-            let job = engine(mehscan_engine::investigation::build_path_review_jobs_page(
-                &root,
-                context_lines,
-                limit,
-                offset,
-                include_review_material,
-            ))?;
-            print_json(&engine(
-                mehscan_engine::investigation::validate_path_review_triage(&job, &response_set),
-            )?)
-        }
-        "review-progress" => {
-            let responses = PathBuf::from(parsed.required("--responses")?);
-            let limit = parsed.optional_usize("--limit")?;
-            let context_lines = parsed.optional_usize("--context-lines")?;
-            let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
-            let include_review_material = parsed
-                .optional_bool("--include-review-material")?
-                .unwrap_or(false);
-            parsed.finish()?;
-            let source = fs::read_to_string(&responses).map_err(|error| {
-                format!(
-                    "could not read path-review progress responses {}: {error}",
-                    responses.display()
-                )
-            })?;
-            let response_set: mehscan_core::PathReviewTriageResponseSet =
-                serde_json::from_str(&source).map_err(|error| {
-                    format!(
-                        "path-review progress responses {} are invalid: {error}",
-                        responses.display()
-                    )
-                })?;
-            let job = engine(mehscan_engine::investigation::build_path_review_jobs_page(
-                &root,
-                context_lines,
-                limit,
-                offset,
-                include_review_material,
-            ))?;
-            print_json(&engine(
-                mehscan_engine::investigation::validate_path_review_progress(&job, &response_set),
-            )?)
-        }
-        "neighborhoods" => {
-            let language = parse_language(&parsed.required("--language")?)?;
-            if language != Language::Csharp {
-                return Err(
-                    "review neighborhoods currently support only --language csharp".to_string(),
-                );
-            }
-            let limit = parsed.optional_usize("--limit")?;
-            parsed.finish()?;
-            print_json(&engine(
-                mehscan_engine::investigation::build_csharp_review_neighborhoods(&root, limit),
-            )?)
-        }
-        "triage" => {
-            let language = parse_language(&parsed.required("--language")?)?;
-            if language != Language::Csharp {
-                return Err("review triage currently supports only --language csharp".to_string());
-            }
-            let responses = PathBuf::from(parsed.required("--responses")?);
-            let limit = parsed.optional_usize("--limit")?;
-            parsed.finish()?;
-            let source = fs::read_to_string(&responses).map_err(|error| {
-                format!(
-                    "could not read review triage responses {}: {error}",
-                    responses.display()
-                )
-            })?;
-            let response_set: mehscan_core::ReviewTriageResponseSet = serde_json::from_str(&source)
-                .map_err(|error| {
-                    format!(
-                        "review triage responses {} are invalid: {error}",
-                        responses.display()
-                    )
-                })?;
-            let job = engine(
-                mehscan_engine::investigation::build_csharp_review_neighborhoods(&root, limit),
-            )?;
-            print_json(&engine(
-                mehscan_engine::investigation::validate_review_triage(&job, &response_set),
-            )?)
-        }
         "outline" => {
             let path = parsed.required("--path")?;
             parsed.finish()?;
-            print_json(&engine(mehscan_engine::investigation::get_file_outline(
-                &root, &path,
-            ))?)
+            print_logged_query(
+                engine(mehscan_engine::investigation::get_file_outline(
+                    &root, &path,
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
         }
         "source" => {
             let path = parsed.required("--path")?;
             let start_line = parsed.required_usize("--start-line")?;
             let end_line = parsed.required_usize("--end-line")?;
             parsed.finish()?;
-            print_json(&engine(mehscan_engine::investigation::get_source(
-                &root, &path, start_line, end_line,
-            ))?)
+            print_logged_query(
+                engine(mehscan_engine::investigation::get_source(
+                    &root, &path, start_line, end_line,
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
         }
         "enclosing" => {
             let evidence_id = parsed.required("--evidence-id")?;
             parsed.finish()?;
-            print_json(&engine(
-                mehscan_engine::investigation::get_enclosing_symbol(&root, &evidence_id),
-            )?)
+            print_logged_query(
+                engine(mehscan_engine::investigation::get_enclosing_symbol(
+                    &root,
+                    &evidence_id,
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
+        }
+        "enclosing-at" => {
+            let path = parsed.required("--path")?;
+            let line = parsed.required_usize("--line")?;
+            parsed.finish()?;
+            print_logged_query(
+                engine(mehscan_engine::investigation::get_enclosing_at(
+                    &root, &path, line,
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
         }
         "evidence" => {
             let filter = EvidenceFilter {
@@ -926,9 +947,16 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             };
             let limit = parsed.optional_usize("--limit")?;
             parsed.finish()?;
-            print_json(&engine(mehscan_engine::investigation::find_evidence(
-                &root, filter, limit,
-            ))?)
+            print_logged_query(
+                engine(mehscan_engine::investigation::find_evidence(
+                    &root, filter, limit,
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
         }
         "units" => {
             let filter = EvidenceFilter {
@@ -949,52 +977,102 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let context_lines = parsed.optional_usize("--context-lines")?;
             let limit = parsed.optional_usize("--limit")?;
             parsed.finish()?;
-            print_json(&engine(
-                mehscan_engine::investigation::build_investigation_job(
+            print_logged_query(
+                engine(mehscan_engine::investigation::build_investigation_job(
                     &root,
                     filter,
                     context_lines,
                     limit,
-                ),
-            )?)
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
         }
         "symbol" => {
             let name = parsed.required("--name")?;
             let limit = parsed.optional_usize("--limit")?;
             parsed.finish()?;
-            print_json(&engine(mehscan_engine::investigation::find_symbol(
-                &root, &name, limit,
-            ))?)
+            print_logged_query(
+                engine(mehscan_engine::investigation::find_symbol(
+                    &root, &name, limit,
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
         }
         "imports" => {
             let name = parsed.required("--name")?;
             let limit = parsed.optional_usize("--limit")?;
             parsed.finish()?;
-            print_json(&engine(mehscan_engine::investigation::find_imports(
-                &root, &name, limit,
-            ))?)
+            print_logged_query(
+                engine(mehscan_engine::investigation::find_imports(
+                    &root, &name, limit,
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
         }
         "references" => {
             let symbol = parsed.required("--symbol")?;
+            let path = parsed.optional("--path");
             let limit = parsed.optional_usize("--limit")?;
             parsed.finish()?;
-            print_json(&engine(
-                mehscan_engine::investigation::find_text_references(&root, &symbol, limit),
-            )?)
+            print_logged_query(
+                engine(mehscan_engine::investigation::find_text_references(
+                    &root,
+                    &symbol,
+                    path.as_deref(),
+                    limit,
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
+        }
+        "paths" => {
+            let name = parsed.required("--name")?;
+            let limit = parsed.optional_usize("--limit")?;
+            parsed.finish()?;
+            print_logged_query(
+                engine(mehscan_engine::investigation::find_source_paths(
+                    &root, &name, limit,
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
         }
         "native-call-sites" => {
             let callee = parsed.required("--callee")?;
             let path = parsed.optional("--path");
             let limit = parsed.optional_usize("--limit")?;
             parsed.finish()?;
-            print_json(&engine(
-                mehscan_engine::investigation::find_native_call_sites(
+            print_logged_query(
+                engine(mehscan_engine::investigation::find_native_call_sites(
                     &root,
                     &callee,
                     path.as_deref(),
                     limit,
-                ),
-            )?)
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
         }
         "structural" => {
             let language = parse_language(&parsed.required("--language")?)?;
@@ -1002,15 +1080,20 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let path = parsed.optional("--path");
             let limit = parsed.optional_usize("--limit")?;
             parsed.finish()?;
-            print_json(&engine(
-                mehscan_engine::investigation::run_structural_query(
+            print_logged_query(
+                engine(mehscan_engine::investigation::run_structural_query(
                     &root,
                     language,
                     &pattern,
                     path.as_deref(),
                     limit,
-                ),
-            )?)
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
         }
         _ => Err(format!(
             "unknown investigation operation {operation:?}; run 'mehscan investigate --help'"
@@ -1022,10 +1105,151 @@ fn engine<T>(result: Result<T, mehscan_engine::EngineError>) -> Result<T, String
     result.map_err(|error| error.to_string())
 }
 
+fn print_logged_query<T: serde::Serialize>(
+    result: Result<T, String>,
+    journal: Option<&Path>,
+    operation: &str,
+    root: &Path,
+    arguments: &BTreeMap<String, String>,
+    started: Instant,
+) -> Result<(), String> {
+    let output = if journal.is_some() {
+        result.as_ref().ok().map(portable_json_value).transpose()?
+    } else {
+        None
+    };
+    if let Some(path) = journal {
+        let entry = serde_json::json!({
+            "operation": operation,
+            "root": root.to_string_lossy(),
+            "arguments": arguments,
+            "elapsed_ms": started.elapsed().as_millis(),
+            "status": if result.is_ok() { "ok" } else { "error" },
+            "output": &output,
+            "error": result.as_ref().err(),
+        });
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "could not create query journal directory {}: {error}",
+                    parent.display()
+                )
+            })?;
+        }
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|error| format!("could not open query journal {}: {error}", path.display()))?;
+        serde_json::to_writer(&mut file, &entry).map_err(|error| {
+            format!("could not write query journal {}: {error}", path.display())
+        })?;
+        file.write_all(b"\n").map_err(|error| {
+            format!("could not finish query journal {}: {error}", path.display())
+        })?;
+    }
+    match result {
+        Ok(value) => {
+            if let Some(output) = output {
+                let json = serde_json::to_string_pretty(&output)
+                    .map_err(|error| format!("could not serialize portable result: {error}"))?;
+                println!("{json}");
+                Ok(())
+            } else {
+                print_json(&value)
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn summarize_query_journal(
+    path: &Path,
+    filename: &str,
+    source_root: &Path,
+) -> Result<mehscan_core::ReviewQueryJournalSummary, String> {
+    let mut summary = mehscan_core::ReviewQueryJournalSummary {
+        file: filename.to_string(),
+        query_count: 0,
+        failed_count: 0,
+        empty_count: 0,
+        truncated_count: 0,
+        elapsed_ms: 0,
+    };
+    if !path.exists() {
+        return Ok(summary);
+    }
+    let expected_root = fs::canonicalize(source_root).map_err(|error| {
+        format!(
+            "could not resolve source root {}: {error}",
+            source_root.display()
+        )
+    })?;
+    let content = fs::read_to_string(path)
+        .map_err(|error| format!("could not read query journal {}: {error}", path.display()))?;
+    for (index, line) in content.lines().enumerate() {
+        let item: serde_json::Value = serde_json::from_str(line).map_err(|error| {
+            format!(
+                "query journal {} line {} is invalid: {error}",
+                path.display(),
+                index + 1
+            )
+        })?;
+        let root = item["root"].as_str().ok_or_else(|| {
+            format!(
+                "query journal {} line {} has no root",
+                path.display(),
+                index + 1
+            )
+        })?;
+        if fs::canonicalize(root).map_err(|error| {
+            format!(
+                "query journal {} line {} root cannot be resolved: {error}",
+                path.display(),
+                index + 1
+            )
+        })? != expected_root
+        {
+            return Err(format!(
+                "query journal {} line {} uses another source root",
+                path.display(),
+                index + 1
+            ));
+        }
+        let elapsed = item["elapsed_ms"].as_u64().ok_or_else(|| {
+            format!(
+                "query journal {} line {} has no elapsed_ms",
+                path.display(),
+                index + 1
+            )
+        })?;
+        summary.query_count += 1;
+        summary.elapsed_ms = summary.elapsed_ms.saturating_add(elapsed);
+        if item["status"] == "error" {
+            summary.failed_count += 1;
+        } else if item["status"] != "ok" {
+            return Err(format!(
+                "query journal {} line {} has invalid status",
+                path.display(),
+                index + 1
+            ));
+        } else if item["output"]["truncated"] == true {
+            summary.truncated_count += 1;
+        } else if item["output"]["results"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+        {
+            summary.empty_count += 1;
+        }
+    }
+    Ok(summary)
+}
+
 fn read_complete_bundle_responses(
     run: &Path,
     responses: Option<&Path>,
     allow_partial: bool,
+    source_root: Option<&Path>,
 ) -> Result<
     (
         mehscan_core::PathReviewBundleManifest,
@@ -1151,6 +1375,14 @@ fn read_complete_bundle_responses(
                     entry.review_ids.join(", ")
                 )
             })?;
+        if let Some(source_root) = source_root {
+            validate_review_artifact_source_text(source_root, &response_set).map_err(|error| {
+                format!(
+                    "path-review bundle response {} has invalid source evidence: {error}",
+                    response_path.display()
+                )
+            })?;
+        }
         selected.push(entry.clone());
         bundle_responses.push((bundle, response_set));
     }
@@ -1675,6 +1907,76 @@ fn parse_capability(value: &str) -> Result<Capability, String> {
         .map_err(|_| format!("unsupported capability {value:?}"))
 }
 
+fn validate_review_artifact_source_text(
+    source_root: &Path,
+    responses: &mehscan_core::PathReviewBundleResponseSet,
+) -> Result<(), String> {
+    let root = fs::canonicalize(source_root).map_err(|error| {
+        format!(
+            "could not resolve source root {}: {error}",
+            source_root.display()
+        )
+    })?;
+    let mut sources = BTreeMap::<PathBuf, String>::new();
+    for result in &responses.results {
+        let Some(trace) = &result.investigation else {
+            continue;
+        };
+        for artifact in &trace.decisive_artifacts {
+            let relative = Path::new(&artifact.location.path);
+            if is_absolute_artifact_path(&artifact.location.path)
+                || matches!(
+                    artifact.location.path.as_bytes(),
+                    [drive, b':', ..] if drive.is_ascii_alphabetic()
+                )
+                || relative.components().any(|part| {
+                    matches!(
+                        part,
+                        std::path::Component::ParentDir
+                            | std::path::Component::Prefix(_)
+                            | std::path::Component::RootDir
+                    )
+                })
+            {
+                return Err(format!(
+                    "retrieved artifact {:?} for {:?} has a non-relative source path",
+                    artifact.artifact_id, result.review_id
+                ));
+            }
+            let path = fs::canonicalize(root.join(relative)).map_err(|error| {
+                format!(
+                    "could not resolve retrieved artifact {:?} source {:?}: {error}",
+                    artifact.artifact_id, artifact.location.path
+                )
+            })?;
+            if !path.starts_with(&root) {
+                return Err(format!(
+                    "retrieved artifact {:?} for {:?} resolves outside the source root",
+                    artifact.artifact_id, result.review_id
+                ));
+            }
+            if !sources.contains_key(&path) {
+                let source = fs::read_to_string(&path).map_err(|error| {
+                    format!(
+                        "could not read retrieved artifact {:?} source {:?}: {error}",
+                        artifact.artifact_id, artifact.location.path
+                    )
+                })?;
+                sources.insert(path.clone(), source.replace("\r\n", "\n"));
+            }
+            let source = &sources[&path];
+            let excerpt = artifact.excerpt.replace("\r\n", "\n");
+            if !source.contains(&excerpt) {
+                return Err(format!(
+                    "retrieved artifact {:?} for {:?} is not exact source text in {:?}",
+                    artifact.artifact_id, result.review_id, artifact.location.path
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn print_json(value: &impl serde::Serialize) -> Result<(), String> {
     let portable = portable_json_value(value)?;
     let json = serde_json::to_string_pretty(&portable)
@@ -1846,13 +2148,13 @@ fn print_benchmark_summary(report: &mehscan_engine::benchmark::BenchmarkReport) 
 
 fn print_help() {
     println!(
-        "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact]\n  mehscan report --run DIR [--responses DIR] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n\nRun a command with --help for details."
+        "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact]\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n\nRun a command with --help for details."
     );
 }
 
 fn print_report_help() {
     println!(
-        "USAGE:\n  mehscan report --run DIR [--responses DIR] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH] [--reviewer NAME] [--include-dismissed true|false] [--scope-label TEXT] [--project NAME] [--revision REF]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. Markdown is the human-readable summary and prioritizes unresolved review checks before confirmed and dismissed results; use --include-dismissed true to include not-issue summaries. --responses defaults to DIR/responses. --allow-partial true skips missing response files only and labels completed versus total review coverage; present responses must still validate as complete bundles. Scope, project and revision labels are user-supplied handoff metadata, not verified security facts."
+        "USAGE:\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH] [--reviewer NAME] [--include-dismissed true|false] [--scope-label TEXT] [--project NAME] [--revision REF]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. Markdown is the human-readable summary and prioritizes unresolved review checks before confirmed and dismissed results; use --include-dismissed true to include not-issue summaries. --responses defaults to DIR/responses. --allow-partial true skips missing response files only and labels completed versus total review coverage; present responses must still validate as complete bundles. Scope, project and revision labels are user-supplied handoff metadata, not verified security facts."
     );
 }
 
@@ -1882,36 +2184,112 @@ USAGE:
   mehscan investigate funnel [ROOT]
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate review-tasks [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
-  mehscan investigate review-bundles [ROOT] --output DIR [--context-lines N] [--max-bytes N] [--max-reviews N] [--max-total-reviews N] [--include-review-material true|false] [--scope-label TEXT] [--project NAME] [--revision REF]
+  mehscan investigate review-bundles [ROOT] --output DIR [--context-lines N] [--max-bytes N] [--max-reviews N] [--max-total-reviews N] [--timings true|false] [--include-review-material true|false] [--scope-label TEXT] [--project NAME] [--revision REF]
   mehscan investigate review-bundle-diff --before DIR --after DIR
   mehscan investigate review-response-schema --bundle PATH [--output PATH]
-  mehscan investigate review-bundle-triage --bundle PATH --responses PATH
-  mehscan investigate review-bundle-repair --bundle PATH --failed-responses PATH --review-id ID --replacement PATH --output PATH
-  mehscan investigate review-bundle-summary --run DIR [--responses DIR] [--allow-partial true|false]
-  mehscan investigate review-triage [ROOT] --responses PATH [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
-  mehscan investigate review-progress [ROOT] --responses PATH [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
-  mehscan investigate neighborhoods [ROOT] --language csharp [--limit N]
-  mehscan investigate triage [ROOT] --language csharp --responses PATH [--limit N]
+  mehscan investigate review-bundle-finalize --bundle PATH --draft PATH --journal-dir DIR --output PATH --source-root ROOT
+  mehscan investigate review-bundle-triage --bundle PATH --responses PATH [--source-root ROOT]
+  mehscan investigate review-bundle-summary --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false]
   mehscan investigate outline [ROOT] --path FILE
   mehscan investigate source [ROOT] --path FILE --start-line N --end-line N
   mehscan investigate enclosing [ROOT] --evidence-id ID
+  mehscan investigate enclosing-at [ROOT] --path FILE --line N
   mehscan investigate evidence [ROOT] [--kind KIND] [--capability NAME] [--language LANG] [--path FILE] [--limit N]
   mehscan investigate units [ROOT] [--kind KIND] [--capability NAME] [--language LANG] [--path FILE] [--context-lines N] [--limit N]
   mehscan investigate symbol [ROOT] --name NAME [--limit N]
   mehscan investigate imports [ROOT] --name NAME [--limit N]
-  mehscan investigate references [ROOT] --symbol NAME [--limit N]
+  mehscan investigate references [ROOT] --symbol NAME [--path FILE] [--limit N]
+  mehscan investigate paths [ROOT] --name TEXT [--limit N]
   mehscan investigate native-call-sites [ROOT] --callee NAME [--path FILE] [--limit N]
   mehscan investigate structural [ROOT] --language LANG --pattern PATTERN [--path FILE] [--limit N]
 
-Review jobs package bounded security-path candidates and non-path observation neighborhoods with source excerpts, relevant configuration facts, open questions, a stable fingerprint, and a compact cross-language response contract. Each security path includes compact rule-derived review_basis semantics. Context-only source, guard, sanitizer, validation, literal, and resource observations do not become standalone verdict jobs. review-bundles scans once, groups admitted review work by review kind and capability, retains the CWE union as category metadata, and writes self-contained requests with readable semantic filenames under DIR/requests plus manifest.json. Requests default to independent ceilings of 512 KiB and 20 reviews; --max-reviews changes only that per-request transport ceiling. --max-total-reviews sets a separate run ceiling, schedules capabilities round-robin, requires room for at least one review from every admitted capability, and preserves deferred review IDs in the manifest. A bundle response is accepted or retried as a whole by review-bundle-triage. Response schema 1.1 records family-calibrated budgets, bounded lookup attempts, one exact follow-on source/reference lookup, retrieved artifacts, citations, reviewer inference, distinct reviewer-origin leads, repair history and exact blockers. Reviewer-origin leads require an explicit citation and source location, remain separate from the admitted verdict, and are reported as unvalidated questions rather than deterministic coverage. review-bundle-repair can replace exactly one parseable invalid result, records the prior and replacement identities plus original validation error, revalidates the whole bundle, and rejects a second repair or any attempt to repair a valid response. Accepted results receive stable response fingerprints, and partial summaries distinguish admitted, scheduled, completed, deferred, blocked, truncated, missing, and invalid review work. Run and finding reports measure scheduled, completed and resolved reviews, lookup outcomes, returned artifact bytes and reviewer-origin leads per capability without estimating latency or model cost. review-bundle-summary validates every manifest response by default; --allow-partial true summarizes available complete responses and reports incomplete triage coverage. It deduplicates issue decisions across path and observation streams by capability, exact sink range, and the rule-defined security invariant. review-tasks and review-progress remain available as low-level diagnostics. Complete paths are ordered first, followed by production observation neighborhoods. Teaching/code-fix source payloads are excluded by default and can be admitted explicitly with --include-review-material true. Review pages contain at most 100 items and expose next_offset for stable continuation with --offset. The funnel summarizes linked and unlinked compatible source/sink observations for AI routing. C# project summaries can produce security paths for unique exact-parameter controller-to-service and controller-to-service-to-repository handoffs; unresolved neighborhoods remain review facts. Triage commands must repeat the exact page offset and material policy. Query limits default to 200 and cannot exceed 1000. Investigation units default to 25 and cannot exceed 100. Source retrieval is capped at 400 lines and 64 KiB. Native call-sites is a C/C++ syntax inventory only: it does not resolve types, overloads, aliases, macros, control flow, call graphs, or value flow and never changes scan evidence or review admission. Structural queries support every scanner language as bounded ephemeral syntax lookup; repository-wide queries skip and report malformed files, while an explicitly requested malformed file fails clearly. Structural patterns are never persisted as rules or promoted to findings."#
+Add --journal FILE to a read-only query to append its exact arguments, output or error, and elapsed time as JSONL. Use one file per review. Response schema 1.3 cites only decisive source in investigation.decisive_artifacts; review-bundle-finalize attaches journal counts and checks the response. Source reads are capped at 400 lines and 64 KiB. References default to 20 results; other result limits default to 200. The maximum is 1000."#
     );
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{membership_changed_after_bundles, parse_capability, portable_json_value};
+    use super::{
+        membership_changed_after_bundles, parse_capability, portable_json_value,
+        validate_review_artifact_source_text,
+    };
     use mehscan_core::Capability;
     use std::collections::{BTreeMap, BTreeSet};
+
+    #[test]
+    fn source_audit_rejects_paraphrases_and_paths_outside_root() {
+        let directory = std::env::temp_dir().join(format!(
+            "mehscan-source-audit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).expect("create source audit root");
+        std::fs::write(directory.join("source.ts"), "const answer = 42;\r\n")
+            .expect("write source");
+        let mut responses: mehscan_core::PathReviewBundleResponseSet = serde_json::from_value(
+            serde_json::json!({
+                "schema_version": "1.3",
+                "bundle_fingerprint": "test",
+                "results": [{
+                    "review_id": "review-test",
+                    "decision": "issue",
+                    "confidence": "medium",
+                    "summary": "test",
+                    "checks": [],
+                    "investigation": {
+                        "decisive_artifacts": [{
+                                "artifact_id": "source-1",
+                                "location": {"path": "source.ts", "start": {"line": 1, "column": 1, "byte_offset": 0}, "end": {"line": 1, "column": 19, "byte_offset": 18}},
+                                "excerpt": "const answer = 42;\n"
+                        }],
+                        "citations": [], "reviewer_inferences": [], "reviewer_origin_leads": [], "blockers": []
+                    }
+                }]
+            }),
+        )
+        .expect("response fixture");
+        assert!(validate_review_artifact_source_text(&directory, &responses).is_ok());
+        responses.results[0]
+            .investigation
+            .as_mut()
+            .unwrap()
+            .decisive_artifacts[0]
+            .excerpt = "const answer = 43;".to_string();
+        assert!(
+            validate_review_artifact_source_text(&directory, &responses)
+                .unwrap_err()
+                .contains("not exact source text")
+        );
+        let artifact = &mut responses.results[0]
+            .investigation
+            .as_mut()
+            .unwrap()
+            .decisive_artifacts[0];
+        artifact.excerpt = "const answer = 42;".to_string();
+        artifact.location.path = "../outside.ts".to_string();
+        assert!(
+            validate_review_artifact_source_text(&directory, &responses)
+                .unwrap_err()
+                .contains("non-relative source path")
+        );
+        responses.results[0]
+            .investigation
+            .as_mut()
+            .unwrap()
+            .decisive_artifacts[0]
+            .location
+            .path = "C:source.ts".to_string();
+        assert!(
+            validate_review_artifact_source_text(&directory, &responses)
+                .unwrap_err()
+                .contains("non-relative source path")
+        );
+        std::fs::remove_file(directory.join("source.ts")).expect("remove test source");
+        std::fs::remove_dir(directory).expect("remove test root");
+    }
 
     #[test]
     fn detects_bundle_membership_changes_independently_of_filenames() {

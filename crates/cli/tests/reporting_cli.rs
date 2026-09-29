@@ -298,7 +298,7 @@ fn partial_triage_reports_coverage_and_rejects_invalid_present_responses() {
         String::from_utf8_lossy(&schema.stderr)
     );
     let schema: serde_json::Value = serde_json::from_slice(&schema.stdout).unwrap();
-    assert_eq!(schema["properties"]["schema_version"]["const"], "1.1");
+    assert_eq!(schema["properties"]["schema_version"]["const"], "1.3");
     assert!(schema["properties"].get("repair").is_none());
     assert!(
         schema["properties"]["results"]["items"]["properties"]["investigation"]["required"]
@@ -321,36 +321,27 @@ fn partial_triage_reports_coverage_and_rejects_invalid_present_responses() {
         schema["properties"]["results"]["items"]["properties"]["review_id"]["enum"],
         request["review_ids"]
     );
-    let lookup_attempt = &schema["properties"]["results"]["items"]["properties"]["investigation"]["properties"]
-        ["lookup_attempts"]["items"];
-    assert!(lookup_attempt.get("oneOf").is_none());
+    let investigation = &schema["properties"]["results"]["items"]["properties"]["investigation"];
+    assert!(investigation["properties"]["lookup_attempts"].is_null());
+    assert!(investigation["properties"]["decisive_artifacts"]["items"]["required"].is_array());
     assert_eq!(
-        lookup_attempt["required"],
-        serde_json::json!([
-            "request_index",
-            "escalation",
-            "outcome",
-            "artifacts",
-            "detail"
-        ])
-    );
-    assert_eq!(
-        lookup_attempt["properties"]["request_index"]["type"],
-        serde_json::json!(["integer", "null"])
-    );
-    assert_eq!(
-        lookup_attempt["properties"]["escalation"]["anyOf"]
+        investigation["properties"]["journal_summary"]["anyOf"]
             .as_array()
             .map(Vec::len),
         Some(2)
     );
     let review = &request["reviews"][0];
     let decision = "not_issue";
+    let anchor = if review["candidate"].is_object() {
+        review["candidate"]["sink"]["id"].clone()
+    } else {
+        review["anchor_evidence_ids"][0].clone()
+    };
     let response = serde_json::json!({"schema_version":mehscan_core::PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION, "bundle_fingerprint":request["bundle_fingerprint"], "results":[{
-        "review_id":request["review_ids"][0], "decision":decision, "confidence":review["confidence_policy"][decision],
+        "review_id":request["review_ids"][0], "selected_anchor_id":anchor, "decision":decision, "confidence":"medium",
         "summary":"The supplied bounded evidence was reviewed for this selected source operation.",
         "checks": [],
-        "investigation": {"lookup_attempts":[], "citations":[], "reviewer_inferences":[], "reviewer_origin_leads":[], "blockers":[]}
+        "investigation": {"decisive_artifacts":[], "journal_summary":null, "citations":[{"artifact_id":anchor,"claim":"This is the selected operation."}], "reviewer_inferences":[], "reviewer_origin_leads":[], "blockers":[]}
     }]});
     std::fs::write(&response_path, response.to_string()).unwrap();
     for operation in ["report", "summary"] {

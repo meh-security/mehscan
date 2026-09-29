@@ -76,3 +76,37 @@ fn separates_csharp_identity_reviews_from_explicit_controls() {
             && !item.tags.iter().any(|tag| tag == "needs-verification")
     }));
 }
+
+#[test]
+fn anonymous_minimal_route_asks_about_protected_effect_before_deployment() {
+    let job =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture_root(), Some(6), false)
+            .expect("identity review job");
+    let review = job
+        .observation_reviews
+        .iter()
+        .find(|review| {
+            review
+                .evidence
+                .iter()
+                .any(|item| item.rule_id == "csharp-minimal-anonymous-state-change-review")
+        })
+        .expect("anonymous minimal route review");
+    assert!(review.open_questions.iter().any(|question| {
+        question.contains("protected subject or resource")
+            && question.contains("caller's current session")
+    }));
+    assert!(
+        !review
+            .open_questions
+            .iter()
+            .any(|question| { question.contains("effective runtime or deployed control value") })
+    );
+    let basis = review.review_basis.as_ref().expect("review basis");
+    assert!(
+        !basis
+            .deterministic_facts
+            .iter()
+            .any(|fact| { fact.contains("Repository configuration evidence does not prove") })
+    );
+}

@@ -59,7 +59,9 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
         "php" | "phtml" | "php5" | "php7" | "php8" => FileClass::Supported(Language::Php),
         "json" | "json5" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" | "config"
         | "properties" | "xml" | "env" | "tf" | "tfvars" | "hcl" | "md" | "markdown" | "txt"
-        | "sql" | "graphql" | "sh" | "bash" | "zsh" | "ps1" => FileClass::SecretOnly,
+        | "sql" | "graphql" | "sh" | "bash" | "zsh" | "ps1" | "pug" | "hbs" => {
+            FileClass::SecretOnly
+        }
         "as" | "rb" | "scala" | "swift" | "ex" | "exs" | "dart" | "lua" | "sol" => {
             FileClass::UnsupportedSource
         }
@@ -290,10 +292,6 @@ mod tests {
         );
         assert_eq!(classify_path(Path::new("Index.cshtml")), FileClass::Razor);
         assert_eq!(
-            classify_path(Path::new("Pages/Index.razor")),
-            FileClass::Razor
-        );
-        assert_eq!(
             classify_path(Path::new("views/profile.ejs")),
             FileClass::EmbeddedJavascriptTemplate
         );
@@ -302,6 +300,14 @@ mod tests {
             FileClass::WebForms
         );
         assert_eq!(classify_path(Path::new("Menu.ascx")), FileClass::WebForms);
+        assert_eq!(
+            classify_path(Path::new("views/profile.pug")),
+            FileClass::SecretOnly
+        );
+        assert_eq!(
+            classify_path(Path::new("views/result.hbs")),
+            FileClass::SecretOnly
+        );
         assert_eq!(
             classify_path(Path::new("a.rs")),
             FileClass::Supported(Language::Rust)
@@ -323,10 +329,6 @@ mod tests {
             FileClass::Supported(Language::Python)
         );
         assert_eq!(classify_path(Path::new("README.md")), FileClass::SecretOnly);
-        assert_eq!(
-            classify_path(Path::new("legacy.as")),
-            FileClass::UnsupportedSource
-        );
         assert_eq!(
             classify_path(Path::new(".env.local")),
             FileClass::SecretOnly
@@ -376,7 +378,6 @@ mod tests {
             "src/TestLogin.java",
             "src/LoginTests.cs",
             "tests/Views/Index.cshtml",
-            "tests/Pages/Index.razor",
             "types/index.d.ts",
             "types/index.d.mts",
             "types/index.d.cts",

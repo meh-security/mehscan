@@ -31,8 +31,6 @@ pub struct FindingReportTriage {
     #[serde(default)]
     pub work: crate::ReviewWorkSummary,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub repairs: Vec<crate::ReviewRepairTrace>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub family_measurements: Vec<crate::ReviewFamilyMeasurement>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reviewer: Option<String>,
@@ -208,18 +206,16 @@ impl FindingReport {
             self.summary.needs_review_decisions,
             self.summary.not_issue_decisions
         ));
-        if !self.triage.repairs.is_empty()
-            || self.triage.work.scheduled_review_count > 0
+        if self.triage.work.scheduled_review_count > 0
             || !self.triage.work.missing_review_ids.is_empty()
             || !self.triage.work.invalid_review_ids.is_empty()
         {
             output.push_str(&format!(
-                "| Review work | {}/{} scheduled completed; {} admitted | {} accepted investigation traces; {} repaired, {} deferred, {} blocked, {} truncated, {} missing, {} invalid |\n",
+                "| Review work | {}/{} scheduled completed; {} admitted | {} accepted investigation traces; {} deferred, {} blocked, {} truncated, {} missing, {} invalid |\n",
                 self.triage.work.completed_review_count,
                 self.triage.work.scheduled_review_count,
                 self.triage.work.admitted_review_count,
                 self.triage.work.accepted_investigation_count,
-                self.triage.repairs.len(),
                 self.triage.work.deferred_review_ids.len(),
                 self.triage.work.blocked_review_ids.len(),
                 self.triage.work.truncated_review_ids.len(),
@@ -230,11 +226,11 @@ impl FindingReport {
 
         if !self.triage.family_measurements.is_empty() {
             output.push_str("\n## Investigation measurements\n\n");
-            output.push_str("| Family | Scheduled | Completed | Resolved | Issue / Not issue / Needs review | Lookups (answered / unsuccessful) | Returned bytes | Leads |\n");
+            output.push_str("| Family | Scheduled | Completed | Resolved | Issue / Not issue / Needs review | Queries (empty / failed / truncated) | Returned bytes | Leads |\n");
             output.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
             for measurement in &self.triage.family_measurements {
                 output.push_str(&format!(
-                    "| {} | {} | {} | {} | {} / {} / {} | {} ({} / {}) | {} | {} |\n",
+                    "| {} | {} | {} | {} | {} / {} / {} | {} ({} / {} / {}) | {} | {} |\n",
                     markdown_text(&enum_label(measurement.capability)),
                     measurement.scheduled_review_count,
                     measurement.completed_review_count,
@@ -242,9 +238,10 @@ impl FindingReport {
                     measurement.issue_count,
                     measurement.not_issue_count,
                     measurement.needs_review_count,
-                    measurement.lookup_attempt_count,
-                    measurement.answered_lookup_count,
-                    measurement.unsuccessful_lookup_count,
+                    measurement.lookup_count,
+                    measurement.empty_lookup_count,
+                    measurement.failed_lookup_count,
+                    measurement.truncated_lookup_count,
                     measurement.returned_artifact_bytes,
                     measurement.reviewer_origin_lead_count,
                 ));
@@ -793,7 +790,6 @@ mod tests {
                     .to_string(),
                 response_fingerprint: "review-run-response-test".to_string(),
                 work: crate::ReviewWorkSummary::default(),
-                repairs: Vec::new(),
                 family_measurements: Vec::new(),
                 reviewer: Some("reviewer-1".to_string()),
             },
@@ -889,7 +885,6 @@ mod tests {
                     .to_string(),
                 response_fingerprint: "review-run-response-test".to_string(),
                 work: crate::ReviewWorkSummary::default(),
-                repairs: Vec::new(),
                 family_measurements: Vec::new(),
                 reviewer: None,
             },

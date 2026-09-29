@@ -111,7 +111,7 @@ if ($null -ne $requestedTag -and $tag -cne $requestedTag) {
     throw "GitHub returned release $tag when $requestedTag was requested"
 }
 # Immutable pins distributed with the trusted skill protect known releases against tag movement.
-$releasePins = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../references/release-pins.json') -Raw | ConvertFrom-Json -AsHashtable
+$releasePins = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'release-pins.json') -Raw | ConvertFrom-Json -AsHashtable
 if (-not $SourceDigest -and $releasePins.ContainsKey($tag)) { $SourceDigest = $releasePins[$tag] }
 if ($releasePins.ContainsKey($tag) -and $releasePins[$tag] -cnotmatch '^[0-9a-f]{40}$') {
     throw "Malformed source commit pin for $tag"

@@ -719,15 +719,15 @@ fn attributed_server_mutation_marker(
                 ]
                 .iter()
                 .any(|needle| line.to_ascii_lowercase().contains(needle)))
-                || (file.source.contains("rest_framework")
-                    && [
-                        "def create(",
-                        "def update(",
-                        "def destroy(",
-                        "def partial_update(",
-                    ]
-                    .iter()
-                    .any(|prefix| line.starts_with(prefix)))
+                || ([
+                    "def create(",
+                    "def update(",
+                    "def destroy(",
+                    "def partial_update(",
+                ]
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+                    && file.source.contains("rest_framework"))
         }
         _ => false,
     };
@@ -805,10 +805,10 @@ fn javascript_server_mutation_marker(
         return marker_from_inline_boundary(file, spans, line_index, &symbol);
     }
 
-    if (file.source.contains("'use server'") || file.source.contains("\"use server\""))
-        && (line.contains("validatedActionWithUser(")
-            || line.contains("withTeam(")
-            || (line.starts_with("export async function ") && mutation_effect(line).is_some()))
+    if (line.contains("validatedActionWithUser(")
+        || line.contains("withTeam(")
+        || (line.starts_with("export async function ") && mutation_effect(line).is_some()))
+        && (file.source.contains("'use server'") || file.source.contains("\"use server\""))
     {
         return marker_from_inline_boundary(file, spans, line_index, "server-action");
     }

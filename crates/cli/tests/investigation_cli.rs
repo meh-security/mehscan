@@ -34,6 +34,298 @@ fn fixture_root() -> PathBuf {
         .join("tests/fixtures/aliases")
 }
 
+fn selected_anchor(review: &serde_json::Value) -> serde_json::Value {
+    if !review["candidate"].is_null() {
+        return review["candidate"]["sink"]["id"].clone();
+    }
+    let ids = review["anchor_evidence_ids"]
+        .as_array()
+        .expect("anchor IDs");
+    let evidence = review["evidence"].as_array().expect("review evidence");
+    evidence
+        .iter()
+        .filter(|item| ids.contains(&item["id"]))
+        .find(|item| item["kind"] == "sink")
+        .or_else(|| {
+            evidence
+                .iter()
+                .filter(|item| ids.contains(&item["id"]))
+                .find(|item| {
+                    item["kind"] == "sensitive_operation"
+                        || item["kind"] == "security_configuration"
+                })
+        })
+        .expect("selected actionable anchor")["id"]
+        .clone()
+}
+
+#[test]
+fn locates_files_before_reads_and_scopes_broad_reference_searches() {
+    let root = fixture_root();
+    let root = root.to_str().expect("fixture path should be UTF-8");
+    let paths = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args(["investigate", "paths", root, "--name", "aliases.py"])
+        .output()
+        .expect("path query should run");
+    assert!(paths.status.success(), "CLI failed: {:?}", paths.stderr);
+    let paths: serde_json::Value = serde_json::from_slice(&paths.stdout).unwrap();
+    assert_eq!(paths["results"][0], "python/aliases.py");
+
+    let references = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "references",
+            root,
+            "--symbol",
+            "launch",
+            "--path",
+            "python/aliases.py",
+        ])
+        .output()
+        .expect("scoped reference query should run");
+    assert!(
+        references.status.success(),
+        "CLI failed: {:?}",
+        references.stderr
+    );
+    let references: serde_json::Value = serde_json::from_slice(&references.stdout).unwrap();
+    assert!(
+        references["results"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+    );
+    assert!(
+        references["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| { row["location"]["path"] == "python/aliases.py" })
+    );
+}
+
+#[test]
+fn journals_exact_investigation_queries_without_changing_stdout() {
+    let root = fixture_root();
+    let journal = std::env::temp_dir().join(format!(
+        "mehscan-query-journal-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&journal);
+    let result = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "source",
+            root.to_str().unwrap(),
+            "--path",
+            "python/aliases.py",
+            "--start-line",
+            "5",
+            "--end-line",
+            "7",
+            "--journal",
+            journal.to_str().unwrap(),
+        ])
+        .output()
+        .expect("journaled source read should run");
+    assert!(result.status.success());
+    let stdout: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    let lines = fs::read_to_string(&journal).unwrap();
+    let rows = lines
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["operation"], "source");
+    assert_eq!(rows[0]["arguments"]["--path"], "python/aliases.py");
+    assert_eq!(rows[0]["output"]["results"], stdout["results"]);
+    assert!(rows[0]["elapsed_ms"].is_number());
+    let _ = fs::remove_file(&journal);
+}
+
+#[test]
+fn compact_decisive_source_is_checked_against_the_checkout() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/fixtures/v2-process-flow");
+    let run = std::env::temp_dir().join(format!("mehscan-compact-review-{}", std::process::id()));
+    let generated = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-bundles",
+            root.to_str().unwrap(),
+            "--output",
+            run.to_str().unwrap(),
+            "--max-reviews",
+            "1",
+        ])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{:?}", generated.stderr);
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(run.join("manifest.json")).unwrap()).unwrap();
+    let filename = manifest["bundles"][0]["filename"].as_str().unwrap();
+    let bundle_path = run.join("requests").join(filename);
+    let bundle: serde_json::Value =
+        serde_json::from_slice(&fs::read(&bundle_path).unwrap()).unwrap();
+    let review = &bundle["reviews"][0];
+    let anchor = selected_anchor(review);
+    let location = if review["candidate"].is_object() {
+        review["candidate"]["sink"]["location"].clone()
+    } else {
+        review["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["id"] == anchor)
+            .unwrap()["location"]
+            .clone()
+    };
+    let path = location["path"].as_str().unwrap();
+    let source = fs::read_to_string(root.join(path)).unwrap();
+    let line = location["start"]["line"].as_u64().unwrap() as usize;
+    let excerpt = source.lines().nth(line - 1).unwrap().trim();
+    assert!(!excerpt.is_empty());
+    let make_response = |excerpt: &str| {
+        serde_json::json!({
+            "schema_version": "1.3",
+            "bundle_fingerprint": bundle["bundle_fingerprint"],
+            "results": [{
+                "review_id": review["id"],
+                "selected_anchor_id": anchor,
+                "decision": "issue",
+                "confidence": "low",
+                "summary": "The selected operation is reachable in the supplied source.",
+                "checks": [],
+                "investigation": {
+                    "decisive_artifacts": [{
+                        "artifact_id": "decisive-source",
+                        "location": location,
+                        "excerpt": excerpt
+                    }],
+                    "journal_summary": null,
+                    "citations": [
+                        {"artifact_id": anchor, "claim": "This is the selected operation."},
+                        {"artifact_id": "decisive-source", "claim": "This is the exact source line."}
+                    ],
+                    "reviewer_inferences": [],
+                    "reviewer_origin_leads": [],
+                    "blockers": []
+                }
+            }]
+        })
+    };
+    let response_path = run.join("compact-response.json");
+    fs::write(
+        &response_path,
+        serde_json::to_vec(&make_response(excerpt)).unwrap(),
+    )
+    .unwrap();
+    let validate = || {
+        Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args([
+                "investigate",
+                "review-bundle-triage",
+                "--bundle",
+                bundle_path.to_str().unwrap(),
+                "--responses",
+                response_path.to_str().unwrap(),
+                "--source-root",
+                root.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap()
+    };
+    let validated = validate();
+    assert!(
+        validated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validated.stderr)
+    );
+    let journal_dir = run.join("journals");
+    fs::create_dir_all(&journal_dir).unwrap();
+    let journal = journal_dir.join(format!("{}.jsonl", review["id"].as_str().unwrap()));
+    let _ = fs::remove_file(&journal);
+    let query = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "source",
+            root.to_str().unwrap(),
+            "--path",
+            path,
+            "--start-line",
+            "1",
+            "--end-line",
+            "4",
+            "--journal",
+            journal.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(query.status.success());
+    let final_path = run.join("final-response.json");
+    let finalized = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-bundle-finalize",
+            "--bundle",
+            bundle_path.to_str().unwrap(),
+            "--draft",
+            response_path.to_str().unwrap(),
+            "--journal-dir",
+            journal_dir.to_str().unwrap(),
+            "--output",
+            final_path.to_str().unwrap(),
+            "--source-root",
+            root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(finalized.status.success(), "{:?}", finalized.stderr);
+    let final_response: serde_json::Value =
+        serde_json::from_slice(&fs::read(final_path).unwrap()).unwrap();
+    assert_eq!(
+        final_response["results"][0]["investigation"]["journal_summary"]["query_count"],
+        1
+    );
+    let responses_dir = run.join("responses");
+    fs::create_dir_all(&responses_dir).unwrap();
+    fs::copy(
+        run.join("final-response.json"),
+        responses_dir.join(filename),
+    )
+    .unwrap();
+    let summary = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-bundle-summary",
+            "--run",
+            run.to_str().unwrap(),
+            "--responses",
+            responses_dir.to_str().unwrap(),
+            "--allow-partial",
+            "true",
+            "--source-root",
+            root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(summary.status.success(), "{:?}", summary.stderr);
+    let summary: serde_json::Value = serde_json::from_slice(&summary.stdout).unwrap();
+    let queries = summary["family_measurements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|measurement| measurement["lookup_count"].as_u64().unwrap())
+        .sum::<u64>();
+    assert_eq!(queries, 1);
+    fs::write(
+        &response_path,
+        serde_json::to_vec(&make_response("source that is not present")).unwrap(),
+    )
+    .unwrap();
+    assert!(!validate().status.success());
+}
+
 fn web_fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -44,12 +336,6 @@ fn csharp_breadth_fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("tests/fixtures/v2-csharp-breadth")
-}
-
-fn csharp_c10_fixture_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("tests/fixtures/v2-csharp-c10")
 }
 
 #[test]
@@ -203,53 +489,6 @@ fn reports_the_relationship_funnel_for_ai_routing() {
 }
 
 #[test]
-fn emits_bounded_csharp_review_neighborhoods() {
-    let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
-        .args([
-            "investigate",
-            "neighborhoods",
-            csharp_c10_fixture_root()
-                .to_str()
-                .expect("fixture path should be UTF-8"),
-            "--language",
-            "csharp",
-            "--limit",
-            "10",
-        ])
-        .output()
-        .expect("CLI should run");
-    assert!(output.status.success(), "CLI failed: {:?}", output.stderr);
-    let json: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("CLI output should be JSON");
-    assert_eq!(json["operation"], "build_csharp_review_neighborhoods");
-    assert!(
-        json["fingerprint"]
-            .as_str()
-            .is_some_and(|value| value.starts_with("csharp-reviewpack-"))
-    );
-    assert_eq!(
-        json["neighborhoods"]
-            .as_array()
-            .expect("neighborhood array")
-            .len(),
-        2
-    );
-    assert_eq!(
-        json["neighborhoods"][0]["uncertainties"][0],
-        serde_json::Value::Null
-    );
-    assert_eq!(json["triage_contract"]["response_fields"][1], "decision");
-    assert_eq!(
-        json["neighborhoods"][0]["candidate"],
-        "Potential stored XSS through raw Razor output"
-    );
-    assert_eq!(
-        json["neighborhoods"][0]["verification"],
-        serde_json::Value::Null
-    );
-}
-
-#[test]
 fn emits_language_neutral_path_review_jobs() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -313,104 +552,6 @@ fn emits_language_neutral_path_review_jobs() {
             .all(|task| task["job_fingerprint"] == json["fingerprint"]
                 && task["triage_contract"]["response_fields"][0] == "review_id")
     );
-
-    let results = json["reviews"]
-        .as_array()
-        .expect("reviews")
-        .iter()
-        .map(|review| {
-            serde_json::json!({
-                "review_id": review["id"],
-                "decision": "issue",
-                "confidence": review["confidence_policy"]["issue"],
-                "summary": "The supplied bounded path supports this issue decision.",
-                "checks": [],
-                "investigation": {
-                    "lookup_attempts": [],
-                    "citations": [],
-                    "reviewer_inferences": [],
-                    "reviewer_origin_leads": [],
-                    "blockers": []
-                }
-            })
-        })
-        .collect::<Vec<_>>();
-    let response_path =
-        std::env::temp_dir().join(format!("mehscan-path-review-{}.json", std::process::id()));
-    fs::write(
-        &response_path,
-        serde_json::to_vec(&serde_json::json!({
-            "schema_version": mehscan_core::PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
-            "job_fingerprint": json["fingerprint"],
-            "results": results
-        }))
-        .expect("response should serialize"),
-    )
-    .expect("response should write");
-
-    let partial_path = std::env::temp_dir().join(format!(
-        "mehscan-path-review-partial-{}.json",
-        std::process::id()
-    ));
-    fs::write(
-        &partial_path,
-        serde_json::to_vec(&serde_json::json!({
-            "schema_version": mehscan_core::PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION,
-            "job_fingerprint": json["fingerprint"],
-            "results": [results[0].clone()]
-        }))
-        .expect("partial response should serialize"),
-    )
-    .expect("partial response should write");
-    let progress = Command::new(env!("CARGO_BIN_EXE_mehscan"))
-        .args([
-            "investigate",
-            "review-progress",
-            root.to_str().expect("fixture path should be UTF-8"),
-            "--responses",
-            partial_path
-                .to_str()
-                .expect("partial response path should be UTF-8"),
-            "--context-lines",
-            "2",
-            "--limit",
-            "3",
-        ])
-        .output()
-        .expect("progress CLI should run");
-    let _ = fs::remove_file(partial_path);
-    assert!(
-        progress.status.success(),
-        "CLI failed: {:?}",
-        progress.stderr
-    );
-    let progress_json: serde_json::Value =
-        serde_json::from_slice(&progress.stdout).expect("progress should be JSON");
-    assert_eq!(progress_json["submitted_count"], 1);
-    assert_eq!(progress_json["remaining_count"], 2);
-    assert_eq!(progress_json["complete"], false);
-    let triage = Command::new(env!("CARGO_BIN_EXE_mehscan"))
-        .args([
-            "investigate",
-            "review-triage",
-            root.to_str().expect("fixture path should be UTF-8"),
-            "--responses",
-            response_path
-                .to_str()
-                .expect("response path should be UTF-8"),
-            "--context-lines",
-            "2",
-            "--limit",
-            "3",
-        ])
-        .output()
-        .expect("triage CLI should run");
-    let _ = fs::remove_file(response_path);
-    assert!(triage.status.success(), "CLI failed: {:?}", triage.stderr);
-    let triage_json: serde_json::Value =
-        serde_json::from_slice(&triage.stdout).expect("triage should be JSON");
-    assert_eq!(triage_json["issue_count"], 3);
-    assert_eq!(triage_json["issue_group_count"], 3);
 
     let second = Command::new(env!("CARGO_BIN_EXE_mehscan"))
         .args([
@@ -519,13 +660,15 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
                 .expect("review should exist");
             serde_json::json!({
                 "review_id": review_id,
+                "selected_anchor_id": selected_anchor(review),
                 "decision": "issue",
-                "confidence": review["confidence_policy"]["issue"],
+                "confidence": "medium",
                 "summary": "The supplied bounded path supports this issue decision.",
                 "checks": [],
                 "investigation": {
-                    "lookup_attempts": [],
-                    "citations": [],
+                    "decisive_artifacts": [],
+                    "journal_summary": null,
+                    "citations": [{"artifact_id": selected_anchor(review), "claim": "This is the selected sink."}],
                     "reviewer_inferences": [],
                     "reviewer_origin_leads": [],
                     "blockers": []
@@ -592,20 +735,6 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
                     .as_array()
                     .and_then(|questions| questions.first())
                 .and_then(serde_json::Value::as_str);
-            let lookup_attempts = review["investigation"]["lookup_requests"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .enumerate()
-                .map(|(request_index, _)| {
-                    serde_json::json!({
-                        "request_index": request_index,
-                        "outcome": "no_relevant_result",
-                        "artifacts": [],
-                        "detail": "The CLI contract fixture performed the supplied lookup without a relevant result."
-                    })
-                })
-                .collect::<Vec<_>>();
             let blockers = review["investigation"]["blockers"]
                 .as_array()
                 .cloned()
@@ -613,12 +742,14 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
             if let Some(unresolved) = unresolved {
                 serde_json::json!({
                         "review_id": review_id,
+                        "selected_anchor_id": selected_anchor(review),
                         "decision": "needs_review",
-                        "confidence": review["confidence_policy"]["needs_review"],
+                        "confidence": "medium",
                         "summary": "The supplied evidence leaves one decisive runtime fact unresolved.",
                     "checks": [unresolved],
                     "investigation": {
-                        "lookup_attempts": lookup_attempts,
+                        "decisive_artifacts": [],
+                        "journal_summary": null,
                         "citations": [],
                         "reviewer_inferences": [],
                         "reviewer_origin_leads": [],
@@ -628,13 +759,15 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
             } else {
                     serde_json::json!({
                         "review_id": review_id,
+                        "selected_anchor_id": selected_anchor(review),
                         "decision": "issue",
-                        "confidence": review["confidence_policy"]["issue"],
+                        "confidence": "medium",
                         "summary": "The supplied evidence establishes the reviewed weakness without an unresolved fact.",
                     "checks": [],
                     "investigation": {
-                        "lookup_attempts": [],
-                        "citations": [],
+                        "decisive_artifacts": [],
+                        "journal_summary": null,
+                        "citations": [{"artifact_id": selected_anchor(review), "claim": "This is the selected operation."}],
                         "reviewer_inferences": [],
                         "reviewer_origin_leads": [],
                         "blockers": []
@@ -867,33 +1000,6 @@ fn diffs_reviewer_visible_bundle_content_and_scopes_model_validation() {
         );
     }
 
-    let legacy_manifest: serde_json::Value = serde_json::from_slice(
-        &fs::read(legacy.join("manifest.json")).expect("legacy manifest should read"),
-    )
-    .expect("legacy manifest should parse");
-    for entry in legacy_manifest["bundles"]
-        .as_array()
-        .expect("legacy bundle entries")
-    {
-        let request_path = legacy
-            .join("requests")
-            .join(entry["filename"].as_str().expect("legacy filename"));
-        let mut request: serde_json::Value =
-            serde_json::from_slice(&fs::read(&request_path).expect("legacy request should read"))
-                .expect("legacy request should parse");
-        for review in request["reviews"].as_array_mut().expect("legacy reviews") {
-            review
-                .as_object_mut()
-                .expect("legacy review object")
-                .remove("confidence_policy");
-        }
-        fs::write(
-            request_path,
-            serde_json::to_vec_pretty(&request).expect("legacy request should serialize"),
-        )
-        .expect("legacy request should write");
-    }
-
     let changed = Command::new(env!("CARGO_BIN_EXE_mehscan"))
         .args([
             "investigate",
@@ -955,38 +1061,6 @@ fn diffs_reviewer_visible_bundle_content_and_scopes_model_validation() {
         changed["after"]["review_count"]
     );
 
-    let legacy_diff = Command::new(env!("CARGO_BIN_EXE_mehscan"))
-        .args([
-            "investigate",
-            "review-bundle-diff",
-            "--before",
-            legacy.to_str().expect("legacy path should be UTF-8"),
-            "--after",
-            after.to_str().expect("after path should be UTF-8"),
-        ])
-        .output()
-        .expect("legacy bundle diff should run");
-    assert!(
-        legacy_diff.status.success(),
-        "legacy diff failed: {:?}",
-        legacy_diff.stderr
-    );
-    let legacy_diff: serde_json::Value =
-        serde_json::from_slice(&legacy_diff.stdout).expect("legacy diff should be JSON");
-    assert_eq!(
-        legacy_diff["recommended_model_validation"],
-        "changed_bundles"
-    );
-    assert_eq!(
-        legacy_diff["changed_review_ids"]
-            .as_array()
-            .expect("legacy changed IDs")
-            .len() as u64,
-        legacy_diff["after"]["review_count"]
-            .as_u64()
-            .expect("legacy after review count")
-    );
-
     let repacked_diff = Command::new(env!("CARGO_BIN_EXE_mehscan"))
         .args([
             "investigate",
@@ -1015,77 +1089,4 @@ fn diffs_reviewer_visible_bundle_content_and_scopes_model_validation() {
             .expect("membership-changed bundles")
             .is_empty()
     );
-}
-
-#[test]
-fn validates_and_emits_compact_csharp_triage() {
-    let root = csharp_c10_fixture_root();
-    let neighborhoods = Command::new(env!("CARGO_BIN_EXE_mehscan"))
-        .args([
-            "investigate",
-            "neighborhoods",
-            root.to_str().expect("fixture path should be UTF-8"),
-            "--language",
-            "csharp",
-            "--limit",
-            "10",
-        ])
-        .output()
-        .expect("neighborhood command should run");
-    assert!(neighborhoods.status.success());
-    let job: serde_json::Value =
-        serde_json::from_slice(&neighborhoods.stdout).expect("job should be JSON");
-    let results = job["neighborhoods"]
-        .as_array()
-        .expect("neighborhood array")
-        .iter()
-        .map(|neighborhood| {
-            serde_json::json!({
-                "neighborhood_id": neighborhood["id"],
-                "decision": "needs_review",
-                "confidence": "medium",
-                "summary": "The candidate is credible, but one runtime fact remains unresolved.",
-                "checks": ["Confirm the persisted value reaches the raw output at runtime."]
-            })
-        })
-        .collect::<Vec<_>>();
-    let response_path =
-        std::env::temp_dir().join(format!("mehscan-c10-triage-{}.json", std::process::id()));
-    fs::write(
-        &response_path,
-        serde_json::to_vec(&serde_json::json!({
-            "schema_version": "1.0",
-            "job_fingerprint": job["fingerprint"],
-            "results": results
-        }))
-        .expect("response should serialize"),
-    )
-    .expect("response fixture should write");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
-        .args([
-            "investigate",
-            "triage",
-            root.to_str().expect("fixture path should be UTF-8"),
-            "--language",
-            "csharp",
-            "--responses",
-            response_path
-                .to_str()
-                .expect("response path should be UTF-8"),
-            "--limit",
-            "10",
-        ])
-        .output()
-        .expect("triage command should run");
-    fs::remove_file(&response_path).expect("temporary response should be removable");
-
-    assert!(output.status.success(), "CLI failed: {:?}", output.stderr);
-    let report: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("report should be JSON");
-    assert_eq!(report["schema_version"], "1.0");
-    assert_eq!(report["issue_count"], 0);
-    assert_eq!(report["not_issue_count"], 0);
-    assert_eq!(report["needs_review_count"], 2);
-    assert_eq!(report["results"][0]["decision"], "needs_review");
 }
