@@ -79,6 +79,8 @@ try {
         (Join-Path $repositoryRoot 'skills/mehscan-security/SKILL.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/agents/openai.yaml'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/commands.md'),
+        (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-planning.md'),
+        (Join-Path $repositoryRoot 'skills/mehscan-security/references/pattern-sweep.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-workflow.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/triage-buckets.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets/authorization.md'),
@@ -122,6 +124,8 @@ try {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/SKILL.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/agents/openai.yaml') -Destination (Join-Path $stageRoot 'skills/mehscan-security/agents')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/commands.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-planning.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/pattern-sweep.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-workflow.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/triage-buckets.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references') -Recurse
@@ -145,6 +149,8 @@ try {
         'skills/mehscan-revalidation/SKILL.md',
         'skills/mehscan-security/agents/openai.yaml',
         'skills/mehscan-security/references/commands.md',
+        'skills/mehscan-security/references/review-planning.md',
+        'skills/mehscan-security/references/pattern-sweep.md',
         'skills/mehscan-security/references/review-workflow.md',
         'skills/mehscan-security/references/triage-buckets.md',
         'skills/mehscan-security/references/buckets/authorization.md',
