@@ -149,6 +149,8 @@ try {
         'skills/mehscan-revalidation/SKILL.md',
         'skills/mehscan-security/agents/openai.yaml',
         'skills/mehscan-security/references/commands.md',
+        'skills/mehscan-security/references/review-planning.md',
+        'skills/mehscan-security/references/pattern-sweep.md',
         'skills/mehscan-security/references/review-workflow.md',
         'skills/mehscan-security/references/triage-buckets.md',
         'skills/mehscan-security/references/buckets/authorization.md',
