@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
@@ -99,6 +100,110 @@ struct ObservationGroup {
     anchor_evidence_ids: Vec<String>,
     priority: u8,
     review_material: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReviewInventoryEntry {
+    pub review_id: String,
+    pub review_kind: String,
+    pub path: String,
+    pub line: usize,
+    pub symbol: Option<String>,
+    pub rule_id: String,
+    pub capability: Capability,
+    pub cwe_candidates: Vec<String>,
+    pub evidence_strength: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReviewInventory {
+    pub schema_version: String,
+    pub source_fingerprint: String,
+    pub include_review_material: bool,
+    pub entries: Vec<ReviewInventoryEntry>,
+    pub scan: mehscan_core::ScanResult,
+}
+
+pub fn build_review_inventory(
+    root: &Path,
+    include_review_material: bool,
+) -> Result<ReviewInventory, EngineError> {
+    let scan = scan_path(root)?;
+    let sources = RepositorySources::load(root)?;
+    let source_fingerprint = review_source_fingerprint(&sources);
+    let mut entries = Vec::new();
+    build_path_review_jobs_internal(
+        root,
+        None,
+        Some(0),
+        0,
+        include_review_material,
+        None,
+        Some(scan.clone()),
+        None,
+        Some(&mut entries),
+    )?;
+    Ok(ReviewInventory {
+        schema_version: "1".to_string(),
+        source_fingerprint,
+        include_review_material,
+        entries,
+        scan,
+    })
+}
+
+pub fn build_selected_review_jobs(
+    root: &Path,
+    inventory: &ReviewInventory,
+    review_ids: &BTreeSet<String>,
+    context_lines: Option<usize>,
+) -> Result<PathReviewJob, EngineError> {
+    if inventory.schema_version != "1" {
+        return Err(EngineError(
+            "unsupported review inventory version".to_string(),
+        ));
+    }
+    if review_ids.is_empty() {
+        return Err(EngineError("select at least one review ID".to_string()));
+    }
+    let sources = RepositorySources::load(root)?;
+    if review_source_fingerprint(&sources) != inventory.source_fingerprint {
+        return Err(EngineError(
+            "review inventory is stale: source files changed; regenerate it".to_string(),
+        ));
+    }
+    let known = inventory
+        .entries
+        .iter()
+        .map(|entry| entry.review_id.as_str())
+        .collect::<BTreeSet<_>>();
+    for id in review_ids {
+        if !known.contains(id.as_str()) {
+            return Err(EngineError(format!(
+                "unknown review ID {id:?} in inventory"
+            )));
+        }
+    }
+    build_path_review_jobs_internal(
+        root,
+        context_lines,
+        None,
+        0,
+        inventory.include_review_material,
+        None,
+        Some(inventory.scan.clone()),
+        Some(review_ids),
+        None,
+    )
+}
+
+fn review_source_fingerprint(sources: &RepositorySources) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for (path, file) in &sources.files {
+        hash_review_text(&mut hash, path);
+        hash_review_text(&mut hash, &file.source);
+    }
+    format!("{hash:016x}")
 }
 
 struct ReviewContextIndex {
@@ -239,11 +344,50 @@ pub fn get_source(
             "source range must use one-based lines with end >= start".to_string(),
         ));
     }
-    let sources = RepositorySources::load_selected(root, path)?;
-    let file = sources.file(path)?;
-    let (slice, truncated) = source_slice(file, start_line, end_line)?;
+    // An explicitly requested text file can be useful review evidence even
+    // when its suffix is not admitted to the scanner (for example, an Angular
+    // HTML template). Keep discovery's repository ignore and path rules.
+    let discovery = discover_selected(root, path)?;
+    let display_root = display_path(&discovery.root);
+    let normalized = normalize_relative(path);
+    let discovered = discovery
+        .files
+        .into_iter()
+        .find(|file| file.relative == normalized)
+        .ok_or_else(|| {
+            EngineError(format!(
+                "text file {normalized:?} was not found under the scan root"
+            ))
+        })?;
+    if fs::symlink_metadata(&discovered.absolute)?
+        .file_type()
+        .is_symlink()
+    {
+        return Err(EngineError(
+            "query path must stay inside the scan root".to_string(),
+        ));
+    }
+    if !fs::canonicalize(&discovered.absolute)?.starts_with(&discovery.root) {
+        return Err(EngineError(
+            "query path must stay inside the scan root".to_string(),
+        ));
+    }
+    let source = match discovered.class {
+        FileClass::Supported(_) => fs::read_to_string(&discovered.absolute).map_err(|error| {
+            EngineError(format!("cannot read text file {normalized:?}: {error}"))
+        })?,
+        _ => crate::code::read_secret_text(&discovered.absolute).map_err(|error| {
+            EngineError(format!("cannot read text file {normalized:?}: {error}"))
+        })?,
+    };
+    let file = SourceFile {
+        path: normalized,
+        language: None,
+        source,
+    };
+    let (slice, truncated) = source_slice(&file, start_line, end_line)?;
     Ok(response(
-        &sources.root,
+        &display_root,
         "get_source",
         textual_provenance("bounded-source-reader"),
         truncated,
@@ -525,6 +669,9 @@ pub fn build_path_review_jobs_page(
         offset,
         include_review_material,
         None,
+        None,
+        None,
+        None,
     )
 }
 
@@ -535,7 +682,17 @@ pub fn build_all_path_review_jobs(
     context_lines: Option<usize>,
     include_review_material: bool,
 ) -> Result<PathReviewJob, EngineError> {
-    build_path_review_jobs_internal(root, context_lines, None, 0, include_review_material, None)
+    build_path_review_jobs_internal(
+        root,
+        context_lines,
+        None,
+        0,
+        include_review_material,
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 #[derive(Clone, Debug, Default)]
@@ -567,6 +724,9 @@ pub fn build_all_path_review_jobs_profiled(
         0,
         include_review_material,
         Some(&mut profile),
+        None,
+        None,
+        None,
     )?;
     Ok((job, profile))
 }
@@ -578,11 +738,17 @@ fn build_path_review_jobs_internal(
     offset: usize,
     include_review_material: bool,
     mut profile: Option<&mut ReviewJobProfile>,
+    supplied_scan: Option<mehscan_core::ScanResult>,
+    selected_ids: Option<&BTreeSet<String>>,
+    mut inventory_entries: Option<&mut Vec<ReviewInventoryEntry>>,
 ) -> Result<PathReviewJob, EngineError> {
     let started = std::time::Instant::now();
     let context_lines =
         bounded_context_lines(context_lines.or(Some(DEFAULT_REVIEW_CONTEXT_LINES)))?;
-    let scan = scan_path(root)?;
+    let scan = match supplied_scan {
+        Some(scan) => scan,
+        None => scan_path(root)?,
+    };
     if let Some(profile) = profile.as_deref_mut() {
         profile.scan_milliseconds = started.elapsed().as_millis();
         eprintln!(
@@ -715,10 +881,66 @@ fn build_path_review_jobs_internal(
         &excluded_review_material_observation_ids,
         &observation_exclusions,
     );
+    if let Some(entries) = inventory_entries.as_mut() {
+        entries.extend(candidates.iter().map(|candidate| ReviewInventoryEntry {
+            review_id: candidate.id.replacen("path-", "review-", 1),
+            review_kind: "path".to_string(),
+            path: candidate.primary_location.path.clone(),
+            line: candidate.primary_location.start.line,
+            symbol: candidate.sink.enclosing_symbol.clone(),
+            rule_id: candidate.sink.rule_id.clone(),
+            capability: candidate.capability,
+            cwe_candidates: candidate.cwe_candidates.clone(),
+            evidence_strength: format!("{:?}", candidate.state).to_ascii_lowercase(),
+        }));
+        entries.extend(observation_groups.iter().filter_map(|group| {
+            let anchor = group
+                .evidence
+                .iter()
+                .find(|evidence| group.anchor_evidence_ids.contains(&evidence.id))?;
+            Some(ReviewInventoryEntry {
+                review_id: observation_review_id(
+                    &group.path,
+                    &group.symbol,
+                    &group.anchor_evidence_ids,
+                ),
+                review_kind: "observation".to_string(),
+                path: group.path.clone(),
+                line: anchor.location.start.line,
+                symbol: Some(group.symbol.clone()),
+                rule_id: anchor.rule_id.clone(),
+                capability: anchor.capability,
+                cwe_candidates: anchor.cwe_candidates.clone(),
+                evidence_strength: if group.priority == 0 {
+                    "source_and_sink"
+                } else if group.priority == 1 {
+                    "operation"
+                } else {
+                    "sink"
+                }
+                .to_string(),
+            })
+        }));
+    }
+    let total_reviews = candidates.len() + observation_groups.len();
+    if let Some(ids) = selected_ids {
+        candidates.retain(|candidate| ids.contains(&candidate.id.replacen("path-", "review-", 1)));
+        observation_groups.retain(|group| {
+            ids.contains(&observation_review_id(
+                &group.path,
+                &group.symbol,
+                &group.anchor_evidence_ids,
+            ))
+        });
+        if candidates.len() + observation_groups.len() != ids.len() {
+            return Err(EngineError(
+                "review inventory IDs no longer match current admission; regenerate it".to_string(),
+            ));
+        }
+    }
     let candidate_count = candidates.len();
     let observation_total = observation_groups.len();
-    let total_reviews = candidate_count + observation_total;
-    let max_reviews = max_reviews.unwrap_or(total_reviews.max(1));
+    let max_reviews = max_reviews.unwrap_or((candidate_count + observation_total).max(1));
     if offset > total_reviews {
         return Err(EngineError(format!(
             "review offset {offset} exceeds total review count {total_reviews}"
@@ -1148,8 +1370,11 @@ fn build_path_review_jobs_internal(
         );
     }
     let returned_reviews = reviews.len() + observation_reviews.len();
-    let next_offset =
-        (offset + returned_reviews < total_reviews).then_some(offset + returned_reviews);
+    let next_offset = if selected_ids.is_some() {
+        None
+    } else {
+        (offset + returned_reviews < total_reviews).then_some(offset + returned_reviews)
+    };
     let truncated = next_offset.is_some();
     let fingerprint = path_review_fingerprint(
         &reviews,
@@ -1193,7 +1418,12 @@ fn build_path_review_jobs_internal(
     Ok(PathReviewJob {
         schema_version: SCHEMA_VERSION.to_string(),
         root: scan.root,
-        operation: "build_path_review_jobs".to_string(),
+        operation: if selected_ids.is_some() {
+            "build_selected_review_jobs"
+        } else {
+            "build_path_review_jobs"
+        }
+        .to_string(),
         fingerprint,
         triage_contract,
         context_lines,
@@ -2726,6 +2956,10 @@ fn review_scope(job: &PathReviewJob) -> Vec<String> {
     )];
     if job.include_review_material {
         scope.push("Fixtures, tests, examples and teaching material may be included intentionally; these results do not establish deployed application vulnerabilities.".to_string());
+    }
+    if job.operation == "build_selected_review_jobs" {
+        scope.push(format!("Selected inventory chunk: {} of {} admitted reviews; remaining IDs are in the inventory.", job.reviews.len() + job.observation_reviews.len(), job.total_reviews));
+        return scope;
     }
     let paths = job
         .coverage
@@ -20532,6 +20766,78 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn inventory_selection_preserves_reviews_and_rejects_changed_source() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/php-json-body");
+        let inventory = build_review_inventory(&fixture, false).expect("inventory");
+        let path_id = inventory
+            .entries
+            .iter()
+            .find(|entry| entry.review_kind == "path")
+            .unwrap()
+            .review_id
+            .clone();
+        let observation_id = inventory
+            .entries
+            .iter()
+            .find(|entry| entry.review_kind == "observation")
+            .unwrap()
+            .review_id
+            .clone();
+        let ids = [path_id.clone(), observation_id.clone()]
+            .into_iter()
+            .collect();
+        let selected =
+            build_selected_review_jobs(&fixture, &inventory, &ids, None).expect("selected job");
+        let full = build_all_path_review_jobs(&fixture, None, false).expect("full job");
+        assert_eq!(inventory.entries.len(), full.total_reviews);
+        assert_eq!(selected.reviews.len(), 1);
+        assert_eq!(selected.observation_reviews.len(), 1);
+        assert_eq!(
+            selected.reviews[0],
+            *full
+                .reviews
+                .iter()
+                .find(|review| review.id == path_id)
+                .unwrap()
+        );
+        assert_eq!(
+            selected.observation_reviews[0],
+            *full
+                .observation_reviews
+                .iter()
+                .find(|review| review.id == observation_id)
+                .unwrap()
+        );
+        assert_eq!(selected.total_reviews, full.total_reviews);
+
+        let temp = std::env::temp_dir().join(format!(
+            "mehscan-inventory-stale-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&temp).unwrap();
+        for file in ["app.php", "lookalike.php"] {
+            fs::copy(fixture.join(file), temp.join(file)).unwrap();
+        }
+        let stale_inventory = build_review_inventory(&temp, false).expect("copy inventory");
+        let stale_id = stale_inventory.entries[0].review_id.clone();
+        fs::write(temp.join("app.php"), "<?php echo 'changed';").unwrap();
+        let error = build_selected_review_jobs(
+            &temp,
+            &stale_inventory,
+            &[stale_id].into_iter().collect(),
+            None,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("stale"));
+        fs::remove_dir_all(temp).unwrap();
+    }
 
     #[test]
     fn investigation_readiness_separates_repository_work_from_external_blockers() {

@@ -261,6 +261,7 @@ fn selected_source_reads_keep_repository_ignore_rules() {
         "export const publicValue = 1;\n",
     )
     .unwrap();
+    std::fs::write(root.join("src/template.html"), "<h1>{{ value }}</h1>\n").unwrap();
     std::fs::write(
         root.join("src/private/hidden.ts"),
         "export const secret = 1;\n",
@@ -269,6 +270,9 @@ fn selected_source_reads_keep_repository_ignore_rules() {
     let public = mehscan_engine::investigation::get_source(&root, "src/public.ts", 1, 1)
         .expect("admitted source should be readable");
     assert_eq!(public.results.text, "export const publicValue = 1;\n");
+    let template = mehscan_engine::investigation::get_source(&root, "src/template.html", 1, 1)
+        .expect("explicit template source should be readable");
+    assert_eq!(template.results.text, "<h1>{{ value }}</h1>\n");
     assert!(
         mehscan_engine::investigation::get_source(&root, "src/private/hidden.ts", 1, 1).is_err()
     );
