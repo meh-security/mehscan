@@ -50,12 +50,22 @@ scalar value.
   keys/operators or only a value under a fixed key. Follow the exact decoded
   type, any preparation method, and filter passed to the database. If a
   reference identifies their common model file, read the declaration and
-  helper together within one bounded source window.
+  helper together within one bounded source window. When a lower-trust object
+  reaches an unconstrained selector position but the dependency's operator
+  behavior is unavailable, keep the unsafe construction as a lower-confidence
+  `issue` and name the unproved interpretation. Use high confidence for an
+  operator-injection claim only when a dependency contract, implementation, or
+  behavior test establishes how that object is interpreted.
 - **Template, HTML, deserialization, loader:** Identify the consuming parser
   and the representation supplied to it. Check whether the value is template
   source, escaped data, or an engine option such as a layout path; a fixed
   view name alone does not settle what the engine reads. Use the template,
   framework contract, or repository tests when its interpretation is decisive.
+  For HTML output, identify who can write the exact rendered field. An
+  admin-only publisher of intentionally rich content does not establish XSS
+  merely because the renderer uses raw HTML. If the writer's trust or content
+  policy is unknown, name that missing boundary instead of treating a
+  privileged writer as a lower-trust attacker.
   If a behavior test can be explained by an earlier transformation (for
   example, a route's explicit `eval` before template compilation), isolate
   which operation caused the observed output before attributing it to the

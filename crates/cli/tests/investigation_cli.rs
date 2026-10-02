@@ -241,6 +241,26 @@ fn compact_decisive_source_is_checked_against_the_checkout() {
         "{}",
         String::from_utf8_lossy(&validated.stderr)
     );
+    let concise = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-bundle-triage",
+            "--bundle",
+            bundle_path.to_str().unwrap(),
+            "--responses",
+            response_path.to_str().unwrap(),
+            "--source-root",
+            root.to_str().unwrap(),
+            "--summary",
+            "true",
+        ])
+        .output()
+        .unwrap();
+    assert!(concise.status.success());
+    let concise_report: serde_json::Value = serde_json::from_slice(&concise.stdout).unwrap();
+    assert_eq!(concise_report["issue_count"], 1);
+    assert!(concise_report.get("results").is_none());
+    assert!(concise.stdout.len() < validated.stdout.len());
     let journal_dir = run.join("journals");
     fs::create_dir_all(&journal_dir).unwrap();
     let journal = journal_dir.join(format!("{}.jsonl", review["id"].as_str().unwrap()));
@@ -647,6 +667,106 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
     );
     let bundle: serde_json::Value =
         serde_json::from_slice(&bundle_bytes).expect("bundle request should be JSON");
+    let first_id = bundle["review_ids"][0].as_str().expect("review ID");
+    let list_output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-bundle-list",
+            "--bundle",
+            bundle_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("bundle list CLI should run");
+    assert!(list_output.status.success());
+    let listing: serde_json::Value = serde_json::from_slice(&list_output.stdout).unwrap();
+    assert_eq!(listing["review_ids"], bundle["review_ids"]);
+    assert!(listing.get("reviews").is_none());
+    assert!(list_output.stdout.len() < bundle_bytes.len());
+    let card_output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-card",
+            "--bundle",
+            bundle_path.to_str().expect("bundle path should be UTF-8"),
+            "--review-id",
+            first_id,
+        ])
+        .output()
+        .expect("review card CLI should run");
+    assert!(
+        card_output.status.success(),
+        "CLI failed: {:?}",
+        card_output.stderr
+    );
+    let card: serde_json::Value =
+        serde_json::from_slice(&card_output.stdout).expect("review card should be JSON");
+    assert_eq!(card["review_id"], first_id);
+    assert_eq!(
+        card["selected_anchor_id"],
+        selected_anchor(&bundle["reviews"][0])
+    );
+    assert!(card["anchor"]["location"]["path"].as_str().is_some());
+    assert!(card_output.stdout.len() < bundle_bytes.len());
+    let brief_results = bundle["reviews"]
+        .as_array()
+        .expect("bundle reviews")
+        .iter()
+        .map(|review| {
+            let location = &review["candidate"]["sink"]["location"];
+            serde_json::json!({
+                "review_id": review["id"],
+                "decision": "issue",
+                "confidence": "medium",
+                "summary": "The selected sink requires review of the source line.",
+                "reason": "The selected source line and anchor support this decision.",
+                "evidence": [{
+                    "path": location["path"],
+                    "start_line": location["start"]["line"],
+                    "end_line": location["start"]["line"]
+                }]
+            })
+        })
+        .collect::<Vec<_>>();
+    let brief_path = output_dir.join("brief.json");
+    fs::write(
+        &brief_path,
+        serde_json::to_vec(&serde_json::json!({"results": brief_results})).unwrap(),
+    )
+    .expect("brief draft should write");
+    let brief_response_path = output_dir.join("brief-response.json");
+    let brief_final = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-bundle-finalize",
+            "--bundle",
+            bundle_path.to_str().unwrap(),
+            "--draft",
+            brief_path.to_str().unwrap(),
+            "--journal-dir",
+            output_dir.join("journals").to_str().unwrap(),
+            "--output",
+            brief_response_path.to_str().unwrap(),
+            "--source-root",
+            root.to_str().unwrap(),
+        ])
+        .output()
+        .expect("brief finalization should run");
+    assert!(
+        brief_final.status.success(),
+        "brief CLI failed: {:?}",
+        brief_final.stderr
+    );
+    let brief_response: serde_json::Value =
+        serde_json::from_slice(&fs::read(&brief_response_path).unwrap()).unwrap();
+    assert_eq!(
+        brief_response["results"][0]["selected_anchor_id"],
+        selected_anchor(&bundle["reviews"][0])
+    );
+    assert!(
+        brief_response["results"][0]["investigation"]["decisive_artifacts"][0]["excerpt"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty())
+    );
     let results = bundle["review_ids"]
         .as_array()
         .expect("review IDs")

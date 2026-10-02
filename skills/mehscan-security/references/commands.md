@@ -2,15 +2,24 @@
 
 Use the executable and root supplied for the task. `ROOT` is the source
 repository, not the directory containing a saved bundle.
-Append `--journal JOURNAL.jsonl` to every read-only investigation query while
-reviewing a bundle. Use one journal per review ID; Mehscan appends the exact
-arguments, result or error, and elapsed milliseconds. The response cites only
-decisive source; the journal preserves the complete lookup history.
+Append `--journal JOURNAL.jsonl` to source, outline, references, paths, and
+other code-evidence lookups while reviewing a bundle. Bundle listing, cards,
+finalization, and validation do not accept `--journal`. Name the journal for
+the ID that prompted the query;
+Mehscan appends the exact arguments, result or error, and elapsed milliseconds.
+Read shared source once and reuse its inspected location for related IDs rather
+than issuing the same query into each journal. The response cites only decisive
+source; the journals preserve the complete lookup history.
 
 | Need | Command |
 | --- | --- |
 | Candidate scan | `mehscan scan ROOT --format candidates` |
 | Review requests | `mehscan investigate review-bundles ROOT --output DIR` |
+| Large-repo inventory | `mehscan investigate review-inventory ROOT --output RUN/inventory` |
+| Filter inventory | `mehscan investigate review-inventory-list --inventory RUN/inventory --cwe CWE --limit 50` |
+| Selected requests | `mehscan investigate review-bundles ROOT --inventory RUN/inventory --review-ids ID,ID --output RUN/chunk-N` |
+| Bundle IDs | `mehscan investigate review-bundle-list --bundle REQUEST` |
+| One review lead | `mehscan investigate review-card --bundle REQUEST --review-id ID` |
 | Exact source | `mehscan investigate source ROOT --path FILE --start-line N --end-line M` |
 | File outline | `mehscan investigate outline ROOT --path FILE` |
 | Find readable paths | `mehscan investigate paths ROOT --name TEXT` |
@@ -22,25 +31,31 @@ decisive source; the journal preserves the complete lookup history.
 | Exact syntax | `mehscan investigate structural ROOT --language LANG --pattern PATTERN --path FILE` |
 | Native call syntax | `mehscan investigate native-call-sites ROOT --callee NAME --path FILE` |
 | Response shape | `mehscan investigate review-response-schema --bundle REQUEST --output SCHEMA` |
-| Finalize draft | `mehscan investigate review-bundle-finalize --bundle REQUEST --draft DRAFT --journal-dir RUN/journals --output RESPONSE --source-root ROOT` |
-| Validate existing response | `mehscan investigate review-bundle-triage --bundle REQUEST --responses RESPONSE --source-root ROOT` |
+| Finalize brief or full draft | `mehscan investigate review-bundle-finalize --bundle REQUEST --draft DRAFT --journal-dir RUN/journals --output RESPONSE --source-root ROOT` |
+| Validate existing response | `mehscan investigate review-bundle-triage --bundle REQUEST --responses RESPONSE --source-root ROOT --summary true` |
 | Summarize run | `mehscan investigate review-bundle-summary --run DIR --responses RESPONSES_DIR --source-root ROOT` |
 | Final report | `mehscan report --run DIR --responses RESPONSES_DIR --source-root ROOT --format json --output findings.json` |
 
 Use `--format sarif` or `--format markdown` for those report projections.
+Write response drafts as files instead of embedding prose JSON in shell command
+strings. If a report needs correction, change the reviewed response and rerun
+finalization and `mehscan report`; do not edit the generated report directly.
 The response schema and CLI help are authoritative for the installed Mehscan
 version. Query results are JSON; inspect all `results`, `truncated`, and
 `skipped_files` before concluding that a lookup found nothing.
-`source` reads only files admitted to the investigation index. Check `paths`
-before requesting a guessed template path; an absent template is a coverage
-limit, not proof of safe rendering. Read the applicable engine contract or a
-repository behavior test when template interpretation determines the verdict.
+`source` reads an exact requested text file under the scan root, including
+templates omitted from scan admission; repository ignore rules still apply.
+Use a known path directly, or `paths` when the path is unknown. Read the
+applicable engine contract or a repository behavior test when template
+interpretation determines the verdict.
 `--path` always names one file, never a directory. `outline` and `enclosing-at`
 need a file with a supported parser; use `source` for tests or templates that
 Mehscan reports as text-only.
-Response schema 1.3 uses `investigation.decisive_artifacts` for exact source
-needed by the verdict. Set `journal_summary` to null in the draft; finalization
-fills it from the query journal.
+The default brief draft needs only `results` with `review_id`, `decision`,
+`confidence`, `summary`, optional `reason`, and optional `evidence` source
+ranges (`path`, `start_line`, `end_line`). Finalization reads those exact lines,
+fills the full response and journal summary, and validates it. Use
+`review-response-schema` only for exceptional full schema 1.3 drafts.
 `paths` is
 navigation, not code evidence: read a returned path before citing its contents.
 `--source-root` checks that every decisive artifact excerpt occurs in a file
