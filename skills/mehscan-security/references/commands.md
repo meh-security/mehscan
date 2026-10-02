@@ -16,8 +16,9 @@ source; the journals preserve the complete lookup history.
 | Candidate scan | `mehscan scan ROOT --format candidates` |
 | Review requests | `mehscan investigate review-bundles ROOT --output DIR` |
 | Large-repo inventory | `mehscan investigate review-inventory ROOT --output RUN/inventory` |
-| Filter inventory | `mehscan investigate review-inventory-list --inventory RUN/inventory --cwe CWE --limit 50` |
-| Selected requests | `mehscan investigate review-bundles ROOT --inventory RUN/inventory --review-ids ID,ID --output RUN/chunk-N` |
+| Reuse finalized IDs | `mehscan investigate review-ledger --inventory RUN/inventory --history OLD_RUN_ROOT,RUN --output RUN/review-ledger.json` |
+| Filter remaining inventory | `mehscan investigate review-inventory-list --inventory RUN/inventory --ledger RUN/review-ledger.json --cwe CWE --limit 50` |
+| Selected requests | `mehscan investigate review-bundles ROOT --inventory RUN/inventory --ledger RUN/review-ledger.json --review-ids ID,ID --output RUN/chunk-N` |
 | Bundle IDs | `mehscan investigate review-bundle-list --bundle REQUEST` |
 | One review lead | `mehscan investigate review-card --bundle REQUEST --review-id ID` |
 | Exact source | `mehscan investigate source ROOT --path FILE --start-line N --end-line M` |

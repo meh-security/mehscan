@@ -932,6 +932,101 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
         manifest["review_count"].as_u64().expect("review count")
     );
 
+    let inventory_dir = output_dir.join("inventory");
+    let inventory_output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-inventory",
+            root.to_str().unwrap(),
+            "--output",
+            inventory_dir.to_str().unwrap(),
+        ])
+        .output()
+        .expect("inventory CLI should run");
+    assert!(
+        inventory_output.status.success(),
+        "{:?}",
+        inventory_output.stderr
+    );
+    let ledger_path = output_dir.join("review-ledger.json");
+    let ledger_output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-ledger",
+            "--inventory",
+            inventory_dir.to_str().unwrap(),
+            "--history",
+            output_dir.to_str().unwrap(),
+            "--output",
+            ledger_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("ledger CLI should run");
+    assert!(ledger_output.status.success(), "{:?}", ledger_output.stderr);
+    let ledger: serde_json::Value =
+        serde_json::from_slice(&fs::read(&ledger_path).unwrap()).unwrap();
+    assert_eq!(
+        ledger["reviewed"].as_object().unwrap().len(),
+        manifest["review_count"].as_u64().unwrap() as usize
+    );
+    let remaining_output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-inventory-list",
+            "--inventory",
+            inventory_dir.to_str().unwrap(),
+            "--ledger",
+            ledger_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("filtered inventory CLI should run");
+    assert!(
+        remaining_output.status.success(),
+        "{:?}",
+        remaining_output.stderr
+    );
+    let remaining: serde_json::Value = serde_json::from_slice(&remaining_output.stdout).unwrap();
+    assert_eq!(remaining["matching_count"], 0);
+    let duplicate_output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-bundles",
+            root.to_str().unwrap(),
+            "--output",
+            output_dir.join("duplicate").to_str().unwrap(),
+            "--inventory",
+            inventory_dir.to_str().unwrap(),
+            "--review-ids",
+            first_id,
+            "--ledger",
+            ledger_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("duplicate selection CLI should run");
+    assert!(!duplicate_output.status.success());
+    assert!(String::from_utf8_lossy(&duplicate_output.stderr).contains("already finalized"));
+    let mut wrong_ledger = ledger.clone();
+    wrong_ledger["source_fingerprint"] = serde_json::json!("stale");
+    let wrong_ledger_path = output_dir.join("wrong-ledger.json");
+    fs::write(
+        &wrong_ledger_path,
+        serde_json::to_vec(&wrong_ledger).unwrap(),
+    )
+    .unwrap();
+    let stale_output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-inventory-list",
+            "--inventory",
+            inventory_dir.to_str().unwrap(),
+            "--ledger",
+            wrong_ledger_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("stale ledger CLI should run");
+    assert!(!stale_output.status.success());
+    assert!(String::from_utf8_lossy(&stale_output.stderr).contains("does not match"));
+
     let model_responses = output_dir.join("responses-test-model");
     fs::create_dir_all(&model_responses).expect("model response directory should be created");
     for entry in manifest["bundles"].as_array().expect("manifest bundles") {

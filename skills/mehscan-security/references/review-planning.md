@@ -1,8 +1,14 @@
 # Plan a large-repository review
 
 First inspect the requested scope, existing run artifacts, main manifests, and
-repository layout. Reuse finalized IDs only when their source fingerprint
-matches; exclude them from proposed new work. If the source and review queue are small enough to handle
+repository layout. Build a ledger with `mehscan investigate review-ledger
+--inventory RUN/inventory --history OLD_RUN_ROOT,RUN --output RUN/review-ledger.json`.
+Each history root needs a matching `inventory/overview.json`; only validated
+final responses count. Pass `--ledger RUN/review-ledger.json` to inventory
+listing and selected bundle creation. Rebuild the ledger after each chunk;
+`needs_review` remains a completed investigation with a separate follow-up.
+History without a source fingerprint needs an explicit source check before reuse.
+If the source and review queue are small enough to handle
 as a few bundles, use `review-bundles` directly. For a large or uncertain
 queue, run `mehscan investigate review-inventory ROOT --output RUN/inventory`
 once for the current source. Read `overview.json` first. Filter the queue with

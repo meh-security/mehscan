@@ -41,8 +41,9 @@ manageable queue, review nearly every ID; group only source-supported repeats
 and clearly inapplicable cases. In a large queue, keep the unselected work
 visible and call the review partial until every relevant lane is assessed.
 Comprehensive review gives every admitted ID a verdict.
-Honor a requested category. Reuse
-same-fingerprint completed reviews. For a large queue, use short source reads to rank a few inventory IDs
+Honor a requested category. Build a same-fingerprint review ledger from prior
+run roots with `review-ledger`; pass it to inventory listing and selected bundle
+creation so finalized IDs are not selected again. For a large queue, use short source reads to rank a few inventory IDs
 before materializing their requests. Materialize a selected chunk with
 `mehscan investigate review-bundles ROOT --inventory RUN/inventory --review-ids ID,ID --output RUN/chunk-1`.
 Keep `RUN/review-plan.md` current with included, conditional, and deferred

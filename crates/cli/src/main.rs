@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use mehscan_core::{Capability, EvidenceFilter, EvidenceKind, Language};
+use serde::{Deserialize, Serialize};
 
 fn main() -> ExitCode {
     match run(env::args().skip(1)) {
@@ -560,6 +561,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
         }
         "review-inventory-list" => {
             let inventory_dir = PathBuf::from(parsed.required("--inventory")?);
+            let ledger_path = parsed.optional("--ledger").map(PathBuf::from);
             let capability = parsed.optional("--capability");
             let cwe = parsed.optional("--cwe");
             let path_prefix = parsed.optional("--path-prefix");
@@ -573,11 +575,19 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let entries = inventory["entries"]
                 .as_array()
                 .ok_or("inventory entries are missing")?;
+            let ledger = ledger_path
+                .as_deref()
+                .map(|path| load_review_ledger(path, &inventory))
+                .transpose()?;
             let matching =
                 entries
                     .iter()
                     .filter(|entry| {
-                        capability.as_ref().is_none_or(|value| {
+                        ledger.as_ref().is_none_or(|ledger| {
+                            entry["review_id"]
+                                .as_str()
+                                .is_some_and(|id| !ledger.reviewed.contains_key(id))
+                        }) && capability.as_ref().is_none_or(|value| {
                             entry["capability"].as_str() == Some(value.as_str())
                         }) && cwe.as_ref().is_none_or(|value| {
                             entry["cwe_candidates"].as_array().is_some_and(|cwes| {
@@ -592,8 +602,23 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     })
                     .collect::<Vec<_>>();
             print_json(
-                &serde_json::json!({"matching_count": matching.len(), "offset": offset, "entries": matching.into_iter().skip(offset).take(limit).collect::<Vec<_>>()}),
+                &serde_json::json!({"matching_count": matching.len(), "reviewed_count": ledger.as_ref().map_or(0, |ledger| ledger.reviewed.len()), "offset": offset, "entries": matching.into_iter().skip(offset).take(limit).collect::<Vec<_>>()}),
             )
+        }
+        "review-ledger" => {
+            let inventory_dir = PathBuf::from(parsed.required("--inventory")?);
+            let history = parsed.required("--history")?;
+            let output = PathBuf::from(parsed.required("--output")?);
+            parsed.finish()?;
+            let ledger = build_review_ledger(&inventory_dir, &history)?;
+            write_json(&ledger, Some(&output))?;
+            print_json(&serde_json::json!({
+                "source_fingerprint": ledger.source_fingerprint,
+                "inventory_count": ledger.inventory_count,
+                "reviewed_count": ledger.reviewed.len(),
+                "conflicts": ledger.conflicts,
+                "output": output,
+            }))
         }
         "review-jobs" => {
             let limit = parsed.optional_usize("--limit")?;
@@ -634,6 +659,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let started = std::time::Instant::now();
             let output = PathBuf::from(parsed.required("--output")?);
             let inventory_dir = parsed.optional("--inventory").map(PathBuf::from);
+            let ledger_path = parsed.optional("--ledger").map(PathBuf::from);
             let selected_ids = parsed.optional("--review-ids");
             let max_bytes = parsed.optional_usize("--max-bytes")?;
             let max_reviews = parsed.optional_usize("--max-reviews")?;
@@ -647,6 +673,9 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             parsed.finish()?;
             if inventory_dir.is_some() != selected_ids.is_some() {
                 return Err("--inventory and --review-ids must be used together".to_string());
+            }
+            if ledger_path.is_some() && inventory_dir.is_none() {
+                return Err("--ledger requires --inventory and --review-ids".to_string());
             }
             if inventory_dir.is_some() && max_total_reviews.is_some() {
                 return Err(
@@ -667,6 +696,19 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         .filter(|id| !id.is_empty())
                         .map(str::to_string)
                         .collect::<BTreeSet<_>>();
+                    if let Some(ledger_path) = ledger_path.as_deref() {
+                        let inventory_summary: serde_json::Value = serde_json::from_slice(
+                            &fs::read(inventory_dir.join("inventory.json"))
+                                .map_err(|error| format!("could not read inventory: {error}"))?,
+                        )
+                        .map_err(|error| format!("invalid inventory: {error}"))?;
+                        let ledger = load_review_ledger(ledger_path, &inventory_summary)?;
+                        if let Some(id) = ids.iter().find(|id| ledger.reviewed.contains_key(*id)) {
+                            return Err(format!(
+                                "review ID {id:?} is already finalized in the ledger"
+                            ));
+                        }
+                    }
                     (
                         engine(mehscan_engine::investigation::build_selected_review_jobs(
                             &root,
@@ -1973,6 +2015,166 @@ fn diff_path_review_bundle_runs(
     }))
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewLedger {
+    schema_version: String,
+    source_fingerprint: String,
+    inventory_count: usize,
+    reviewed: BTreeMap<String, String>,
+    conflicts: Vec<String>,
+}
+
+fn load_review_ledger(path: &Path, inventory: &serde_json::Value) -> Result<ReviewLedger, String> {
+    let ledger: ReviewLedger = serde_json::from_slice(
+        &fs::read(path)
+            .map_err(|error| format!("could not read ledger {}: {error}", path.display()))?,
+    )
+    .map_err(|error| format!("invalid review ledger: {error}"))?;
+    let fingerprint = inventory["source_fingerprint"]
+        .as_str()
+        .ok_or("inventory source fingerprint is missing")?;
+    let count = inventory["entries"]
+        .as_array()
+        .ok_or("inventory entries are missing")?
+        .len();
+    if ledger.schema_version != "1"
+        || ledger.source_fingerprint != fingerprint
+        || ledger.inventory_count != count
+    {
+        return Err("review ledger does not match this inventory; rebuild it".to_string());
+    }
+    let known = inventory["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["review_id"].as_str())
+        .collect::<BTreeSet<_>>();
+    if ledger.reviewed.iter().any(|(id, decision)| {
+        !known.contains(id.as_str())
+            || !matches!(decision.as_str(), "issue" | "not_issue" | "needs_review")
+    }) || ledger
+        .conflicts
+        .iter()
+        .any(|id| !known.contains(id.as_str()) || ledger.reviewed.contains_key(id))
+    {
+        return Err("review ledger contains unknown IDs or invalid decisions".to_string());
+    }
+    Ok(ledger)
+}
+
+fn review_run_directories(
+    root: &Path,
+    depth: usize,
+    runs: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    if root.join("manifest.json").is_file() {
+        runs.push(root.to_path_buf());
+        return Ok(());
+    }
+    if depth == 0 {
+        return Ok(());
+    }
+    for entry in fs::read_dir(root)
+        .map_err(|error| format!("could not inspect history {}: {error}", root.display()))?
+    {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_dir()
+            && entry.file_name() != "inventory"
+        {
+            review_run_directories(&entry.path(), depth - 1, runs)?;
+        }
+    }
+    Ok(())
+}
+
+fn build_review_ledger(inventory_dir: &Path, history: &str) -> Result<ReviewLedger, String> {
+    let inventory: serde_json::Value = serde_json::from_slice(
+        &fs::read(inventory_dir.join("inventory.json"))
+            .map_err(|error| format!("could not read inventory: {error}"))?,
+    )
+    .map_err(|error| format!("invalid inventory: {error}"))?;
+    let fingerprint = inventory["source_fingerprint"]
+        .as_str()
+        .ok_or("inventory source fingerprint is missing")?;
+    let entries = inventory["entries"]
+        .as_array()
+        .ok_or("inventory entries are missing")?;
+    let known = entries
+        .iter()
+        .filter_map(|entry| entry["review_id"].as_str())
+        .collect::<BTreeSet<_>>();
+    let mut reviewed = BTreeMap::<String, String>::new();
+    let mut conflicts = BTreeSet::<String>::new();
+    let mut roots = 0;
+    for path in history
+        .split(',')
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        roots += 1;
+        let root = Path::new(path);
+        let overview: serde_json::Value = serde_json::from_slice(
+            &fs::read(root.join("inventory").join("overview.json")).map_err(|error| {
+                format!(
+                    "history {} needs an inventory overview: {error}",
+                    root.display()
+                )
+            })?,
+        )
+        .map_err(|error| format!("invalid history inventory: {error}"))?;
+        if overview["source_fingerprint"].as_str() != Some(fingerprint) {
+            return Err(format!(
+                "history {} has a different source fingerprint",
+                root.display()
+            ));
+        }
+        let mut runs = Vec::new();
+        review_run_directories(root, 3, &mut runs)?;
+        for run in runs {
+            let (_, responses, _) = read_complete_bundle_responses(&run, None, true, None)?;
+            for (_, response) in responses {
+                for result in response.results {
+                    if !known.contains(result.review_id.as_str()) {
+                        return Err(format!(
+                            "history review ID {:?} is absent from inventory",
+                            result.review_id
+                        ));
+                    }
+                    let decision = serde_json::to_value(result.decision)
+                        .map_err(|error| error.to_string())?
+                        .as_str()
+                        .ok_or("invalid review decision")?
+                        .to_string();
+                    if reviewed
+                        .get(&result.review_id)
+                        .is_some_and(|old| old != &decision)
+                    {
+                        conflicts.insert(result.review_id.clone());
+                    }
+                    reviewed.insert(result.review_id, decision);
+                }
+            }
+        }
+    }
+    if roots == 0 {
+        return Err("--history requires at least one run root".to_string());
+    }
+    for id in &conflicts {
+        reviewed.remove(id);
+    }
+    Ok(ReviewLedger {
+        schema_version: "1".to_string(),
+        source_fingerprint: fingerprint.to_string(),
+        inventory_count: entries.len(),
+        reviewed,
+        conflicts: conflicts.into_iter().collect(),
+    })
+}
+
 struct ParsedArguments {
     root: PathBuf,
     options: BTreeMap<String, String>,
@@ -2711,10 +2913,11 @@ fn print_investigation_help() {
 USAGE:
   mehscan investigate funnel [ROOT]
   mehscan investigate review-inventory [ROOT] --output DIR [--include-review-material true|false]
-  mehscan investigate review-inventory-list --inventory DIR [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--limit N] [--offset N]
+  mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--limit N] [--offset N]
+  mehscan investigate review-ledger --inventory DIR --history RUN_ROOT[,RUN_ROOT] --output FILE
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate review-tasks [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
-  mehscan investigate review-bundles [ROOT] --output DIR [--inventory DIR --review-ids ID,ID] [--context-lines N] [--max-bytes N] [--max-reviews N] [--max-total-reviews N] [--timings true|false] [--include-review-material true|false] [--scope-label TEXT] [--project NAME] [--revision REF]
+  mehscan investigate review-bundles [ROOT] --output DIR [--inventory DIR --review-ids ID,ID --ledger FILE] [--context-lines N] [--max-bytes N] [--max-reviews N] [--max-total-reviews N] [--timings true|false] [--include-review-material true|false] [--scope-label TEXT] [--project NAME] [--revision REF]
   mehscan investigate review-bundle-diff --before DIR --after DIR
   mehscan investigate review-bundle-list --bundle PATH
   mehscan investigate review-card --bundle PATH --review-id ID
