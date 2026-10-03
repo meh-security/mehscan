@@ -19,6 +19,9 @@ behavior once per shared contract. Flags passed to another unchecked helper
 do not establish what that helper returns.
 Quoted attributes can still interpret URLs, JavaScript events or CSS; verify
 that interpretation before treating HTML escaping as a complete control.
+For URL controls, check the consumer's effective scheme after whitespace,
+control-character and entity handling. A server-side parser's scheme result
+alone does not establish what a browser will execute.
 
 - **SQL:** A raw-query API or nonliteral `sql` parameter is an inventory
   point. If it is a wrapper, find the wrapper's callers and inspect every
