@@ -164,6 +164,7 @@ pub(crate) fn scan_source(
     let parse_context_microseconds = parse_started.elapsed().as_micros();
 
     let mut evidence = Vec::new();
+    let mut php_operand_nodes = BTreeMap::new();
     let php_context = (language == Language::Php)
         .then(|| super::php::PhpContext::build(&root).with_project(path, php_project_context));
     let mut seen = BTreeSet::new();
@@ -468,6 +469,15 @@ pub(crate) fn scan_source(
                                     .next()
                             });
                     if let Some(node) = captured {
+                        if php_context.is_some()
+                            && matches!(
+                                compiled_rule.rule.id.as_str(),
+                                "php-file-inclusion" | "php-html-output"
+                            )
+                        {
+                            php_operand_nodes
+                                .insert((node.range().start, node.range().end), node.clone());
+                        }
                         literal_values.insert(semantic_name.clone(), literals.evaluate(&node));
                         captures.insert(
                             semantic_name.clone(),
@@ -1661,7 +1671,7 @@ pub(crate) fn scan_source(
             .then_with(|| left.rule_id.cmp(&right.rule_id))
     });
     if let Some(context) = &php_context {
-        super::php::add_operand_facts(path, &root, context, &literals, &mut evidence);
+        super::php::add_operand_facts(path, &php_operand_nodes, context, &literals, &mut evidence);
     }
     let summaries_microseconds = summaries_started.elapsed().as_micros();
     let paths_started = Instant::now();

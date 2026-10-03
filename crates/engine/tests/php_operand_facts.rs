@@ -34,6 +34,7 @@ function parent_include() { require __DIR__ . '/../' . 'src/helper.php'; }
 function file_include() { require dirname(__FILE__) . '/helper.php'; }
 function config_include() { require APP_ROOT . '/helper.php'; }
 function underscored_config_include() { require __SITE_ROOT__ . '/helper.php'; }
+function configured_trailing_separator() { require APP_ROOT . 'helper.php'; }
 function missing_include() { require __DIR__ . '/missing.php'; }
 function writable_include() { file_put_contents(__DIR__ . '/helper.php', $_POST['code']); require __DIR__ . '/helper.php'; }
 function encoded_text($stored) { echo esc_html($stored); }
@@ -92,6 +93,13 @@ function unrelated_source($stored) { $search = $_GET['search']; echo $stored; }
             "fact must survive inventory and admission: {symbol}"
         );
     }
+    assert!(inventory.entries.iter().any(|entry| {
+        entry.symbol.as_deref() == Some("configured_trailing_separator")
+            && entry.operand_facts.iter().any(|fact| {
+                fact.kind == OperandFactKind::ConfiguredRootPath
+                    && fact.value == "APP_ROOT . \"helper.php\""
+            })
+    }));
     let config = inventory
         .entries
         .iter()

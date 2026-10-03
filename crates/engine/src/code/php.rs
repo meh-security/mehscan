@@ -12,31 +12,15 @@ use mehscan_core::{Capture, Language};
 /// Admission and protected-path construction deliberately do not consume them.
 pub(super) fn add_operand_facts<'a>(
     path: &str,
-    root: &PhpNode<'a>,
+    nodes: &BTreeMap<(usize, usize), PhpNode<'a>>,
     context: &PhpContext<'a>,
     literals: &super::literals::LiteralEnvironment<'a, StrDoc<SupportLang>>,
     evidence: &mut [mehscan_core::Evidence],
 ) {
     use mehscan_core::{OperandFact, OperandFactKind};
-    let ranges = evidence
-        .iter()
-        .filter(|e| matches!(e.rule_id.as_str(), "php-file-inclusion" | "php-html-output"))
-        .flat_map(|e| e.captures.values())
-        .map(|capture| {
-            (
-                capture.location.start.byte_offset,
-                capture.location.end.byte_offset,
-            )
-        })
-        .collect::<BTreeSet<_>>();
-    if ranges.is_empty() {
+    if nodes.is_empty() {
         return;
     }
-    let nodes = root
-        .dfs()
-        .filter(|n| n.is_named() && ranges.contains(&(n.range().start, n.range().end)))
-        .map(|n| ((n.range().start, n.range().end), n))
-        .collect::<BTreeMap<_, _>>();
     for item in evidence {
         let role = match item.rule_id.as_str() {
             "php-file-inclusion" => "path",
@@ -57,11 +41,14 @@ pub(super) fn add_operand_facts<'a>(
             let Some((root, suffix)) = compound_include_path(&node, context, literals, 0) else {
                 continue;
             };
-            if !suffix.starts_with('/') || suffix.contains(['\\', ':', '\0']) {
+            if suffix.contains(['\\', ':', '\0']) {
                 continue;
             }
             match root {
                 IncludeRoot::CodeDirectory => {
+                    if !suffix.starts_with('/') {
+                        continue;
+                    }
                     let Some(target) = code_relative_target(path, &suffix) else {
                         continue;
                     };
@@ -77,7 +64,7 @@ pub(super) fn add_operand_facts<'a>(
                     role: role.into(),
                     kind: OperandFactKind::ConfiguredRootPath,
                     location: capture.location.clone(),
-                    value: format!("{name}{suffix}"),
+                    value: format!("{name} . {suffix:?}"),
                     remaining_checks: vec![
                         "root_definition_and_overrides".into(),
                         "target_existence_and_content_trust".into(),
