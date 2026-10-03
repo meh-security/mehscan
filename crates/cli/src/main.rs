@@ -511,6 +511,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "review_count": inventory.entries.len(),
                 "coverage": inventory.scan.coverage.totals,
                 "entries": inventory.entries,
+                "admission_audit": inventory.admission_audit,
             });
             let mut by_capability = BTreeMap::<String, usize>::new();
             let mut by_cwe = BTreeMap::<String, usize>::new();
@@ -555,6 +556,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "by_capability": by_capability,
                 "by_cwe": by_cwe,
                 "by_operand_fact": by_operand_fact,
+                "deterministic_operand_closures": inventory.admission_audit.closed_operands.len(),
                 "top_areas": top_areas,
             });
             fs::write(

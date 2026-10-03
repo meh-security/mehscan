@@ -29,6 +29,17 @@ shadow evidence: they change queue navigation and cards, not review admission
 or protected-path decisions. Other languages retain their existing analysis;
 the fact contract is language-independent.
 
+Complete native integer/boolean casts and exact native `intval`, `strlen`,
+`count`, or `sizeof` output produce a `numeric_output` proof. Only the exact
+CWE-79 output review is closed; raw evidence, candidates, nested command/file
+operations, and other independent reviews remain available. Concatenation,
+multiple echo operands, conditional raw branches, string casts, unknown
+namespaces, overrides, named arguments and unpacking do not inherit this proof.
+The inventory's admission audit records every closed anchor and operand location.
+This relies on PHP's [integer conversion](https://www.php.net/manual/en/language.types.integer.php)
+and [string conversion](https://www.php.net/manual/en/language.types.string.php)
+contracts, not absence of a request source.
+
 The profile recognizes reads from `$_GET`, `$_POST`, `$_REQUEST`,
 `$_COOKIE`, and `$_FILES`, and exact native command, mysqli query, HTML output,
 filesystem, deserialization, and dynamic-code APIs. PDO methods require a

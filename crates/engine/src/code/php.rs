@@ -8,8 +8,8 @@ use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_language::SupportLang;
 use mehscan_core::{Capture, Language};
 
-/// Shadow operand facts: close only the syntactic property described here.
-/// Admission and protected-path construction deliberately do not consume them.
+/// Bounded operand facts. Only complete numeric output closes an injection
+/// question; path and encoder facts keep their explicit unresolved checks.
 pub(super) fn add_operand_facts<'a>(
     path: &str,
     nodes: &BTreeMap<(usize, usize), PhpNode<'a>>,
@@ -71,6 +71,14 @@ pub(super) fn add_operand_facts<'a>(
                     ],
                 },
             }
+        } else if let Some(value) = numeric_output(&node, context) {
+            OperandFact {
+                role: role.into(),
+                kind: OperandFactKind::NumericOutput,
+                location: capture.location.clone(),
+                value,
+                remaining_checks: Vec::new(),
+            }
         } else {
             if node.kind().as_ref() != "function_call_expression" {
                 continue;
@@ -128,6 +136,18 @@ pub(super) fn add_operand_facts<'a>(
         };
         item.context.operand_facts.push(fact);
     }
+}
+
+fn numeric_output<'a>(node: &PhpNode<'a>, context: &PhpContext<'a>) -> Option<String> {
+    if node.kind().as_ref() == "cast_expression" {
+        let cast = node.field("type")?.text().to_ascii_lowercase();
+        return matches!(cast.as_str(), "int" | "integer" | "bool" | "boolean")
+            .then(|| format!("native {cast} cast"));
+    }
+    ["intval", "strlen", "count", "sizeof"]
+        .into_iter()
+        .find(|name| context.exact_function(node, name))
+        .map(|name| format!("native {name} integer result"))
 }
 
 enum IncludeRoot {

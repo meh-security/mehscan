@@ -141,6 +141,8 @@ pub struct ReviewInventory {
     pub source_fingerprint: String,
     pub include_review_material: bool,
     pub entries: Vec<ReviewInventoryEntry>,
+    #[serde(default)]
+    pub admission_audit: ReviewAdmissionAudit,
     pub scan: mehscan_core::ScanResult,
 }
 
@@ -152,7 +154,7 @@ pub fn build_review_inventory(
     let sources = RepositorySources::load(root)?;
     let source_fingerprint = review_source_fingerprint(&sources);
     let mut entries = Vec::new();
-    build_path_review_jobs_internal(
+    let job = build_path_review_jobs_internal(
         root,
         None,
         Some(0),
@@ -168,6 +170,7 @@ pub fn build_review_inventory(
         source_fingerprint,
         include_review_material,
         entries,
+        admission_audit: job.review_coverage.admission_audit,
         scan,
     })
 }
@@ -817,6 +820,9 @@ fn build_path_review_jobs_internal(
         .iter()
         .filter(|candidate| {
             !is_closed_native_ownership_proof(candidate.capability, candidate.state)
+                && !evidence_by_id
+                    .get(candidate.sink.id.as_str())
+                    .is_some_and(|sink| closed_output_operand(sink).is_some())
                 && (include_review_material
                     || !is_review_material_path(&candidate.primary_location.path))
         })
@@ -11106,6 +11112,7 @@ fn review_admission_audit(
                 capability: item.capability,
                 disposition,
                 location: item.location.clone(),
+                operand_fact: closed_output_operand(item).cloned(),
             }
         })
         .collect::<Vec<_>>();
@@ -11155,6 +11162,13 @@ fn review_admission_audit(
         classified_boundary_count: classified.len(),
         counts,
         excluded_examples,
+        closed_operands: classified
+            .into_iter()
+            .filter(|item| {
+                item.disposition == ReviewAdmissionDisposition::SafelySuppressed
+                    && item.operand_fact.is_some()
+            })
+            .collect(),
     }
 }
 
@@ -11566,6 +11580,9 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
     if item.kind != EvidenceKind::Sink {
         return false;
     }
+    if closed_output_operand(item).is_some() {
+        return true;
+    }
     if item.capability == Capability::DatabaseQuery && item.rule_id == "csharp-extended-nosql-json"
     {
         return has_known_string_literal(item, "nosql_query");
@@ -11661,6 +11678,26 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
         || (item.capability == Capability::Redirect
             && literal.is_some_and(has_fixed_internal_redirect_prefix))
         || is_fixed_python_local_path(item, sources)
+}
+
+/// A complete numeric operand cannot introduce HTML/script delimiters. This
+/// closes only CWE-79 on this exact output; nested operations and other rules
+/// retain their own evidence and admission decisions.
+fn closed_output_operand(item: &Evidence) -> Option<&mehscan_core::OperandFact> {
+    if item.kind != EvidenceKind::Sink
+        || item.capability != Capability::HtmlOutput
+        || item.rule_id != "php-html-output"
+        || item.cwe_candidates.iter().any(|cwe| cwe != "CWE-79")
+    {
+        return None;
+    }
+    let capture = item.captures.get("content")?;
+    item.context.operand_facts.iter().find(|fact| {
+        fact.kind == mehscan_core::OperandFactKind::NumericOutput
+            && fact.role == "content"
+            && fact.location == capture.location
+            && fact.remaining_checks.is_empty()
+    })
 }
 
 fn has_known_string_literal(item: &Evidence, role: &str) -> bool {

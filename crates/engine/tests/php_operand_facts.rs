@@ -25,6 +25,111 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn closes_only_complete_numeric_output_and_accounts_for_every_closed_anchor() {
+    let fixture = Fixture::new(
+        "numeric",
+        r#"<?php
+function integer_output() { echo (int) $_GET['raw']; }
+function boolean_output($stored) { print ((boolean) $stored); }
+function native_integer() { echo intval($_GET['raw']); }
+function native_length() { echo strlen($_GET['raw']); }
+function native_count($stored) { echo count($stored); }
+function native_alias($stored) { echo sizeof($stored); }
+function qualified($stored) { echo \intval($stored); }
+function mixed($stored) { echo (int) $stored . $_GET['raw']; }
+function multiple($stored) { echo intval($stored), $_GET['raw']; }
+function branch($stored) { echo $_GET['raw'] ? intval($stored) : $stored; }
+function string_cast() { echo (string) $_GET['raw']; }
+function unknown($stored) { echo Custom\intval($stored); }
+function variable_call($fn, $stored) { echo $fn($stored); }
+function named_argument($stored) { echo intval(value: $stored); }
+function unpacked($stored) { echo intval(...$stored); }
+function retained_execution() { echo (int) shell_exec($_GET['command']); }
+"#,
+    );
+    fs::write(
+        fixture.0.join("src/shadow.php"),
+        "<?php namespace Custom; function intval($v) { return $v; } function shadowed() { echo intval($_GET['raw']); }",
+    ).unwrap();
+    fs::write(
+        fixture.0.join("src/import.php"),
+        "<?php namespace App; use function intval as number; function imported($stored) { echo number($stored); }",
+    ).unwrap();
+    let inventory =
+        mehscan_engine::investigation::build_review_inventory(&fixture.0, true).unwrap();
+    assert_eq!(inventory.scan.coverage.totals.parse_failed, 0);
+    let safe = [
+        "integer_output",
+        "boolean_output",
+        "native_integer",
+        "native_length",
+        "native_count",
+        "native_alias",
+        "qualified",
+        "retained_execution",
+        "imported",
+    ];
+    for symbol in safe {
+        let evidence = inventory
+            .scan
+            .evidence
+            .iter()
+            .find(|e| {
+                e.rule_id == "php-html-output" && e.enclosing_symbol.as_deref() == Some(symbol)
+            })
+            .unwrap();
+        let fact = &evidence.context.operand_facts[0];
+        assert_eq!(fact.kind, OperandFactKind::NumericOutput, "{symbol}");
+        assert_eq!(fact.location, evidence.captures["content"].location);
+        assert!(fact.remaining_checks.is_empty());
+        assert!(
+            !inventory
+                .entries
+                .iter()
+                .any(|e| e.rule_id == "php-html-output" && e.symbol.as_deref() == Some(symbol)),
+            "unnecessary AI job: {symbol}"
+        );
+        let closed = inventory
+            .admission_audit
+            .closed_operands
+            .iter()
+            .find(|e| e.evidence_id == evidence.id)
+            .unwrap();
+        assert_eq!(
+            closed.disposition,
+            mehscan_core::ReviewAdmissionDisposition::SafelySuppressed
+        );
+        assert_eq!(closed.operand_fact.as_ref(), Some(fact));
+    }
+    assert_eq!(inventory.admission_audit.closed_operands.len(), safe.len());
+    for symbol in [
+        "mixed",
+        "multiple",
+        "branch",
+        "string_cast",
+        "unknown",
+        "variable_call",
+        "named_argument",
+        "unpacked",
+        "shadowed",
+    ] {
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|e| e.rule_id == "php-html-output" && e.symbol.as_deref() == Some(symbol)),
+            "unsafe closure: {symbol}"
+        );
+    }
+    assert!(
+        inventory.entries.iter().any(|e| e.capability
+            == mehscan_core::Capability::ProcessExecution
+            && e.symbol.as_deref() == Some("retained_execution")),
+        "numeric output must not hide command execution"
+    );
+}
+
+#[test]
 fn records_exact_compound_operands_and_keeps_unresolved_security_questions() {
     let fixture = Fixture::new(
         "properties",

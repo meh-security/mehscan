@@ -19,6 +19,13 @@ an AI review package. The inventory lists exact IDs, operation locations,
 capabilities, CWE candidates, evidence strength, and scan coverage without
 source excerpts. A source change invalidates the cache; regenerate it then.
 
+The overview's `deterministic_operand_closures` counts exact output anchors
+already closed by the scanner. `inventory.json`'s `admission_audit.closed_operands`
+retains their locations and proofs. Currently these are complete native numeric
+PHP outputs with no unresolved CWE-79 operand check. Account for them separately
+from AI verdicts; they are not deferred work or a claim that the handler is safe.
+Independent command, file, access and disclosure questions still need review.
+
 Use `overview.json`'s `by_operand_fact` to see cheap operand properties before
 selecting a chunk. `fixed_code_relative_path` resolves a code-directory include
 target; its remaining question is target existence/content trust (writers and

@@ -4,7 +4,7 @@ use std::{fs, process::Command};
 fn filters_compact_operand_facts_and_exposes_them_on_selected_cards() {
     let root = std::env::temp_dir().join(format!("mehscan-operand-cli-{}", std::process::id()));
     fs::create_dir_all(root.join("src")).unwrap();
-    fs::write(root.join("src/review.php"), "<?php\nfunction fixed() { require __DIR__ . '/helper.php'; }\nfunction encoded($stored) { echo esc_html($stored); }\nfunction dynamic() { require $_GET['page']; }\n").unwrap();
+    fs::write(root.join("src/review.php"), "<?php\nfunction fixed() { require __DIR__ . '/helper.php'; }\nfunction encoded($stored) { echo esc_html($stored); }\nfunction dynamic() { require $_GET['page']; }\nfunction numeric() { echo (int) $_GET['raw']; }\n").unwrap();
     fs::write(root.join("src/helper.php"), "<?php return 'helper';").unwrap();
     let artifacts = root.with_file_name(format!(
         "mehscan-operand-cli-artifacts-{}",
@@ -27,6 +27,14 @@ fn filters_compact_operand_facts_and_exposes_them_on_selected_cards() {
         serde_json::from_slice(&fs::read(inventory_dir.join("overview.json")).unwrap()).unwrap();
     assert_eq!(overview["by_operand_fact"]["fixed_code_relative_path"], 1);
     assert_eq!(overview["by_operand_fact"]["encoding_call"], 1);
+    assert_eq!(overview["deterministic_operand_closures"], 1);
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(inventory_dir.join("inventory.json")).unwrap()).unwrap();
+    let closed = &saved["admission_audit"]["closed_operands"][0];
+    assert_eq!(closed["rule_id"], "php-html-output");
+    assert_eq!(closed["disposition"], "safely_suppressed");
+    assert_eq!(closed["operand_fact"]["kind"], "numeric_output");
+    assert_eq!(saved["review_count"], 3);
     let mut fixed_id = String::new();
     for kind in ["fixed_code_relative_path", "encoding_call", "unclassified"] {
         let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))

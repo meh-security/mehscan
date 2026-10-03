@@ -462,6 +462,8 @@ pub enum OperandFactKind {
     FixedCodeRelativePath,
     ConfiguredRootPath,
     EncodingCall,
+    /// The complete emitted operand has a native integer/boolean result.
+    NumericOutput,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -470,7 +472,8 @@ pub struct OperandFact {
     pub kind: OperandFactKind,
     pub location: crate::Location,
     /// A repository-relative target, unresolved root expression, or observed
-    /// encoder identity, according to kind. Never an inferred source excerpt.
+    /// encoder identity or native output type, according to kind.
+    /// Never an inferred source excerpt.
     pub value: String,
     pub remaining_checks: Vec<String>,
 }
