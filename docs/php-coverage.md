@@ -29,6 +29,15 @@ shadow evidence: they change queue navigation and cards, not review admission
 or protected-path decisions. Other languages retain their existing analysis;
 the fact contract is language-independent.
 
+Value inventory selection can defer a sink-only fixed code-relative include
+of an existing repository PHP file under a trusted-source assumption.
+Runtime/generated directories and observed writes naming the target veto this
+hint. Unknown writers and deployment changes remain possible: this is a
+`value_hint`, not a safety proof. `review-inventory-list --selection value`
+omits these IDs with visible counts; `--selection deferred` shows their reasons
+and `--selection all` retains them for Comprehensive review. The target file's
+own findings remain eligible, and encoding-call names alone never qualify.
+
 Structural follow-ups accept a single PHP code construct, with or without a
 PHP opening tag; the query adapter supplies the mixed-grammar parse context.
 Multiple statements are rejected rather than silently narrowed. C/C++, PHP

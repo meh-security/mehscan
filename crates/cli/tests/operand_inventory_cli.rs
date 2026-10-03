@@ -35,6 +35,23 @@ fn filters_compact_operand_facts_and_exposes_them_on_selected_cards() {
     assert_eq!(closed["disposition"], "safely_suppressed");
     assert_eq!(closed["operand_fact"]["kind"], "numeric_output");
     assert_eq!(saved["review_count"], 3);
+    assert_eq!(overview["value_deferred_count"], 1);
+    let value = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-inventory-list",
+            "--inventory",
+            inventory_dir.to_str().unwrap(),
+            "--selection",
+            "value",
+        ])
+        .output()
+        .unwrap();
+    assert!(value.status.success(), "{:?}", value.stderr);
+    let value: serde_json::Value = serde_json::from_slice(&value.stdout).unwrap();
+    assert_eq!(value["scope_count"], 3);
+    assert_eq!(value["matching_count"], 2);
+    assert_eq!(value["deferred_count"], 1);
     let mut fixed_id = String::new();
     for kind in ["fixed_code_relative_path", "encoding_call", "unclassified"] {
         let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
@@ -53,6 +70,10 @@ fn filters_compact_operand_facts_and_exposes_them_on_selected_cards() {
         assert_eq!(listed["matching_count"], 1, "{kind}: {listed}");
         if kind == "fixed_code_relative_path" {
             fixed_id = listed["entries"][0]["review_id"].as_str().unwrap().into();
+            assert_eq!(
+                listed["entries"][0]["value_hint"]["target"],
+                "src/helper.php"
+            );
         }
         if kind == "unclassified" {
             assert_eq!(listed["entries"][0]["symbol"], "dynamic");

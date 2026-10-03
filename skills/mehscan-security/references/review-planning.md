@@ -19,6 +19,26 @@ an AI review package. The inventory lists exact IDs, operation locations,
 capabilities, CWE candidates, evidence strength, and scan coverage without
 source excerpts. A source change invalidates the cache; regenerate it then.
 
+In Value mode, use `review-inventory-list --selection value`; Comprehensive
+uses `--selection all` (the CLI default). `--selection deferred` lists the exact
+IDs and `value_hint` reasons omitted by Value, including with component/CWE or
+contract filters. Count these as deferred, never as `not_issue` or scanner
+closures. `scope_count` is the filtered, unreviewed population before selection;
+`matching_count` is the selected population and `deferred_count` its heuristic
+deferral population. Contract queues use `matching_review_count`.
+
+The first hint, `fixed_repository_include`, covers a sink-only include whose
+whole operand resolves to an existing PHP source file in this repository.
+Runtime/upload/cache/generated directories and targets named by observed file
+writes veto it. This is a likely-false-positive effort heuristic under the
+normal trusted-repository-code assumption; it cannot rule out unknown writers
+or deployment changes. Reopen these IDs with `--selection all` when the user,
+source, or deployment indicates writable code or distrust of checked-out code.
+Do not defer the target file's own SQL, execution, output, or access findings.
+Missing targets, configured roots, dynamic includes, raw/stored output and
+encoder names alone remain eligible. Existing inventories without hints remain
+fully eligible; regenerate to obtain new scanner facts.
+
 The overview's `deterministic_operand_closures` counts exact output anchors
 already closed by the scanner. `inventory.json`'s `admission_audit.closed_operands`
 retains their locations and proofs. Currently these are complete native numeric

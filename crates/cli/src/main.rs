@@ -559,6 +559,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "by_cwe": by_cwe,
                 "by_operand_fact": by_operand_fact,
                 "deterministic_operand_closures": inventory.admission_audit.closed_operands.len(),
+                "value_deferred_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_some()).count(),
                 "top_areas": top_areas,
             });
             fs::write(
@@ -589,6 +590,12 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let operand_kind = parsed.optional("--operand-kind");
             let contract = parsed.optional("--contract");
             let group_by = parsed.optional("--group-by");
+            let selection = parsed
+                .optional("--selection")
+                .unwrap_or_else(|| "all".into());
+            if !matches!(selection.as_str(), "all" | "value" | "deferred") {
+                return Err("invalid --selection; use all, value, or deferred".into());
+            }
             if group_by.as_deref().is_some_and(|value| value != "contract") {
                 return Err("invalid --group-by; use contract".into());
             }
@@ -617,7 +624,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 .as_deref()
                 .map(|path| load_review_ledger(path, &inventory))
                 .transpose()?;
-            let matching =
+            let mut matching =
                 entries
                     .iter()
                     .filter(|entry| {
@@ -654,16 +661,30 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         })
                     })
                     .collect::<Vec<_>>();
+            let scope_count = matching.len();
+            let deferred_count = matching
+                .iter()
+                .filter(|entry| !entry["value_hint"].is_null())
+                .count();
+            matching.retain(|entry| match selection.as_str() {
+                "value" => entry["value_hint"].is_null(),
+                "deferred" => !entry["value_hint"].is_null(),
+                _ => true,
+            });
             if group_by.is_some() {
-                return print_json(&review_sweep::contract_queue(
+                let mut queue = review_sweep::contract_queue(
                     &matching,
                     &inventory["source_fingerprint"],
                     offset,
                     limit,
-                ));
+                );
+                queue["selection"] = serde_json::json!(selection);
+                queue["scope_count"] = serde_json::json!(scope_count);
+                queue["deferred_count"] = serde_json::json!(deferred_count);
+                return print_json(&queue);
             }
             print_json(
-                &serde_json::json!({"matching_count": matching.len(), "reviewed_count": ledger.as_ref().map_or(0, |ledger| ledger.reviewed.len()), "offset": offset, "entries": matching.into_iter().skip(offset).take(limit).collect::<Vec<_>>()}),
+                &serde_json::json!({"selection": selection, "scope_count": scope_count, "deferred_count": deferred_count, "matching_count": matching.len(), "reviewed_count": ledger.as_ref().map_or(0, |ledger| ledger.reviewed.len()), "offset": offset, "entries": matching.into_iter().skip(offset).take(limit).collect::<Vec<_>>()}),
             )
         }
         "review-ledger" => {
@@ -3029,7 +3050,7 @@ fn print_investigation_help() {
 USAGE:
   mehscan investigate funnel [ROOT]
   mehscan investigate review-inventory [ROOT] --output DIR [--include-review-material true|false]
-  mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--group-by contract] [--contract KEY] [--limit N] [--offset N]
+  mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--selection all|value|deferred] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--group-by contract] [--contract KEY] [--limit N] [--offset N]
   mehscan investigate review-ledger --inventory DIR --history RUN_ROOT[,RUN_ROOT] --output FILE
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate review-tasks [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]

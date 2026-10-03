@@ -18,6 +18,7 @@ source; the journals preserve the complete lookup history.
 | Large-repo inventory | `mehscan investigate review-inventory ROOT --output RUN/inventory` |
 | Reuse finalized IDs | `mehscan investigate review-ledger --inventory RUN/inventory --history OLD_RUN_ROOT,RUN --output RUN/review-ledger.json` |
 | Filter remaining inventory | `mehscan investigate review-inventory-list --inventory RUN/inventory --ledger RUN/review-ledger.json --cwe CWE --limit 50` |
+| Value selection / deferred work | Add `--selection value` / `--selection deferred`; Comprehensive uses `--selection all`. Deferrals retain exact IDs and reasons, not safe verdicts. |
 | Filter operand facts | `mehscan investigate review-inventory-list --inventory RUN/inventory --operand-kind fixed_code_relative_path --limit 50` (also `configured_root_path`, `encoding_call`, `unclassified`) |
 | Shared contract queue | `mehscan investigate review-inventory-list --inventory RUN/inventory --ledger RUN/review-ledger.json --group-by contract --limit 12` |
 | Contract members | `mehscan investigate review-inventory-list --inventory RUN/inventory --contract KEY --limit 50` (combine with ledger/component filters) |

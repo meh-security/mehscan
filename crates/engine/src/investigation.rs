@@ -121,6 +121,13 @@ fn operand_summaries(evidence: &Evidence) -> Vec<ReviewOperandSummary> {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ValueReviewHint {
+    pub reason: String,
+    pub target: String,
+    pub assumption: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReviewInventoryEntry {
     pub review_id: String,
     pub review_kind: String,
@@ -133,6 +140,57 @@ pub struct ReviewInventoryEntry {
     pub evidence_strength: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub operand_facts: Vec<ReviewOperandSummary>,
+    /// Review-effort heuristic, never a safety verdict or admission closure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_hint: Option<ValueReviewHint>,
+}
+
+fn fixed_include_value_hint(
+    anchor: &Evidence,
+    sources: &RepositorySources,
+    write_paths: &BTreeSet<String>,
+) -> Option<ValueReviewHint> {
+    if anchor.rule_id != "php-file-inclusion" {
+        return None;
+    }
+    let target = &anchor
+        .context
+        .operand_facts
+        .iter()
+        .find(|fact| fact.kind == mehscan_core::OperandFactKind::FixedCodeRelativePath)?
+        .value;
+    if sources.files.get(target)?.language != Some(Language::Php) {
+        return None;
+    }
+    // Directory roles are only conservative vetoes, never proofs of safety.
+    if target.split('/').any(|part| {
+        matches!(
+            part.to_ascii_lowercase().as_str(),
+            "upload"
+                | "uploads"
+                | "cache"
+                | "caches"
+                | "tmp"
+                | "temp"
+                | "generated"
+                | "storage"
+                | "data"
+                | "runtime"
+        )
+    }) {
+        return None;
+    }
+    let basename = target.rsplit('/').next()?.to_ascii_lowercase();
+    if write_paths.iter().any(|path| path.contains(&basename)) {
+        return None;
+    }
+    Some(ValueReviewHint {
+        reason: "fixed_repository_include".into(),
+        target: target.clone(),
+        assumption:
+            "repository_code_is_trusted; unknown writers and deployment changes are not ruled out"
+                .into(),
+    })
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -908,6 +966,13 @@ fn build_path_review_jobs_internal(
         &observation_exclusions,
     );
     if let Some(entries) = inventory_entries.as_mut() {
+        let write_paths = scan
+            .evidence
+            .iter()
+            .filter(|e| e.capability == Capability::FilesystemWrite)
+            .filter_map(|e| e.captures.get("path"))
+            .map(|capture| capture.text.to_ascii_lowercase())
+            .collect::<BTreeSet<_>>();
         entries.extend(candidates.iter().map(|candidate| {
             ReviewInventoryEntry {
                 review_id: candidate.id.replacen("path-", "review-", 1),
@@ -922,6 +987,7 @@ fn build_path_review_jobs_internal(
                 operand_facts: evidence_by_id
                     .get(candidate.sink.id.as_str())
                     .map_or_else(Vec::new, |sink| operand_summaries(sink)),
+                value_hint: None,
             }
         }));
         entries.extend(observation_groups.iter().filter_map(|group| {
@@ -951,6 +1017,9 @@ fn build_path_review_jobs_internal(
                 }
                 .to_string(),
                 operand_facts: operand_summaries(anchor),
+                value_hint: (group.priority == 2 && group.anchor_evidence_ids.len() == 1)
+                    .then(|| fixed_include_value_hint(anchor, &sources, &write_paths))
+                    .flatten(),
             })
         }));
     }
