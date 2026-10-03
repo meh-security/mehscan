@@ -35,7 +35,13 @@ fn filters_compact_operand_facts_and_exposes_them_on_selected_cards() {
     assert_eq!(closed["disposition"], "safely_suppressed");
     assert_eq!(closed["operand_fact"]["kind"], "numeric_output");
     assert_eq!(saved["review_count"], 3);
-    assert_eq!(overview["value_deferred_count"], 1);
+    assert_eq!(overview["value_deferred_count"], 2);
+    assert_eq!(overview["value_active_count"], 1);
+    assert_eq!(overview["value_conditional_count"], 1);
+    assert_eq!(
+        overview["value_deferrals_by_reason"]["ordinary_php_sink_inventory"],
+        1
+    );
     let value = Command::new(env!("CARGO_BIN_EXE_mehscan"))
         .args([
             "investigate",
@@ -50,8 +56,8 @@ fn filters_compact_operand_facts_and_exposes_them_on_selected_cards() {
     assert!(value.status.success(), "{:?}", value.stderr);
     let value: serde_json::Value = serde_json::from_slice(&value.stdout).unwrap();
     assert_eq!(value["scope_count"], 3);
-    assert_eq!(value["matching_count"], 2);
-    assert_eq!(value["deferred_count"], 1);
+    assert_eq!(value["matching_count"], 1);
+    assert_eq!(value["deferred_count"], 2);
     let mut fixed_id = String::new();
     for kind in ["fixed_code_relative_path", "encoding_call", "unclassified"] {
         let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))

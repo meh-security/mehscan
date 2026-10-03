@@ -13,7 +13,7 @@ pub(super) fn contract_keys(entry: &Value) -> Vec<(String, String, String)> {
             let value = fact["value"].as_str()?;
             let value = match kind {
                 "configured_root_path" => value.split_once(" . ")?.0,
-                "encoding_call" | "fixed_code_relative_path" => value,
+                "encoding_call" | "fixed_code_relative_path" | "repository_code_target" => value,
                 _ => return None,
             };
             Some((format!("{kind}:{value}"), kind.into(), value.into()))

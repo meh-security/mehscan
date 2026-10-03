@@ -461,7 +461,10 @@ impl EvidenceContext {
 pub enum OperandFactKind {
     FixedCodeRelativePath,
     ConfiguredRootPath,
+    RepositoryCodeTarget,
     EncodingCall,
+    /// Static template context; runtime markup and callable behavior remain open.
+    OutputContext,
     /// The complete emitted operand has a native integer/boolean result.
     NumericOutput,
 }

@@ -35,9 +35,43 @@ normal trusted-repository-code assumption; it cannot rule out unknown writers
 or deployment changes. Reopen these IDs with `--selection all` when the user,
 source, or deployment indicates writable code or distrust of checked-out code.
 Do not defer the target file's own SQL, execution, output, or access findings.
-Missing targets, configured roots, dynamic includes, raw/stored output and
-encoder names alone remain eligible. Existing inventories without hints remain
+`source_default_repository_include` additionally resolves bounded source-defined
+constants and concatenations to that target, under the explicit assumption that
+runtime constants match those defaults. Conflicting, dynamic or unresolved
+definitions stay unresolved. Missing targets, variable-selected loaders and
+observed unresolved root definitions remain eligible. Existing inventories without hints remain
 fully eligible; regenerate to obtain new scanner facts.
+
+`shared_php_encoding_question` keeps an active representative for repeated
+sink-only whole encoding calls in the same observed ordinary template context.
+The name and static context are questions, not a verified protection contract.
+Review `dependency_review_ids` even when a component filter places the
+representative elsewhere. Inspect the actual implementation through delegated
+helpers, options and visible hooks; then check applicability to the deferred
+sites. Observed script/style, unquoted/event/srcdoc attributes, URL contexts
+and source-bearing groups stay active. Unknown bindings are not shared contracts.
+Use `--selection deferred` to inspect exact dependents. Rebuild the ledger after
+the representative: `issue`, `needs_review` or conflicting decisions reopen its
+unreviewed dependents in Value (`reopened_count`). `not_issue` never generates
+their verdicts: keep them conditional only when the inspected contract and each
+site's context/options support that reason. Reopen exact exceptions with
+`--selection all`. Finish the dependency/applicability check before declaring a
+Value scope complete. Expand toward Comprehensive whenever distinct unsafe or
+unresolved relationships remain; do not force a reduction percentage.
+
+`ordinary_php_sink_inventory` moves unconnected PHP echo/print occurrences and
+constant-shaped includes into conditional surface lanes. Missing source
+provenance is not trusted input. Explicit markup construction, variable-selected
+loaders, observed unresolved definitions, connected/co-occurring input and
+dangerous interpreter operations stay active. Review these conditional lanes
+through the attack-surface map: inspect actual producers (including stored
+data), entrypoints and shared rendering/loading behavior, then select distinct
+consequential sites with `--selection all`. Do not investigate each ordinary
+occurrence merely to fill a verdict. Rebuild the ledger after chunks: an issue,
+unresolved verdict or conflict in the same file and rule reopens ordinary
+conditional sites automatically. A newly found lower-trust producer or writable
+code path also reopens relevant IDs, even without a previous verdict. If that
+evidence is widespread, use Comprehensive for the affected lane or repo.
 
 The overview's `deterministic_operand_closures` counts exact output anchors
 already closed by the scanner. `inventory.json`'s `admission_audit.closed_operands`
@@ -53,6 +87,11 @@ deployment changes), not where an HTTP path parameter originates.
 Use the checked-out application as the baseline. Follow writable/generated
 targets when source or configuration suggests that boundary; hypothetical
 filesystem tampering alone is not a reason to demand deployment research.
+`repository_code_target` resolves a source-default code target with runtime
+override and content-trust checks still open. `output_context` describes static
+template position, including embedded script/style and active attributes;
+dynamic markup can invalidate it. These contexts cover plain raw output as
+well as whole encoder calls.
 `configured_root_path` fixes only the suffix: inspect the root definition and
 overrides. `encoding_call` covers the whole captured output operand, not a
 later concatenation: inspect actual text/attribute/URL/script context, encoding

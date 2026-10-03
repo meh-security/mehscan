@@ -8,6 +8,9 @@ use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_language::SupportLang;
 use mehscan_core::{Capture, Language};
 
+#[path = "php_value.rs"]
+mod value;
+
 /// Bounded operand facts. Only complete numeric output closes an injection
 /// question; path and encoder facts keep their explicit unresolved checks.
 pub(super) fn add_operand_facts<'a>(
@@ -37,6 +40,42 @@ pub(super) fn add_operand_facts<'a>(
             continue;
         };
         let node = unwrap_operand(node.clone());
+        if role == "path" && value::unresolved_root(&node, context) {
+            item.tags.push("value-scope:unresolved-code-root".into());
+        }
+        if role == "path"
+            && let Some(target) = value::code_target(path, &node, context)
+        {
+            item.context.operand_facts.push(OperandFact {
+                role: role.into(),
+                kind: OperandFactKind::RepositoryCodeTarget,
+                location: capture.location.clone(),
+                value: target,
+                remaining_checks: vec![
+                    "source_defaults_match_runtime_constants".into(),
+                    "target_existence_and_content_trust".into(),
+                ],
+            });
+        }
+        if role == "content"
+            && numeric_output(&node, context).is_none()
+            && let Some(mut output_context) = value::output_context(context, &node)
+        {
+            if node
+                .field("function")
+                .is_some_and(|function| !function.text().starts_with('\\'))
+                && context.namespaced_scope(&namespace_scope(&node, &context.root))
+            {
+                output_context = format!("unknown_binding:{output_context}");
+            }
+            item.context.operand_facts.push(OperandFact {
+                role: role.into(),
+                kind: OperandFactKind::OutputContext,
+                location: capture.location.clone(),
+                value: output_context,
+                remaining_checks: vec!["runtime_markup_and_exact_control_compatibility".into()],
+            });
+        }
         let fact = if role == "path" {
             let Some((root, suffix)) = compound_include_path(&node, context, literals, 0) else {
                 continue;
@@ -305,6 +344,7 @@ mod tests {
 #[derive(Default)]
 pub(crate) struct PhpProjectContext {
     exports: BTreeMap<String, DatabaseExports>,
+    constants: std::sync::Arc<value::Constants>,
 }
 
 impl PhpProjectContext {
@@ -312,16 +352,23 @@ impl PhpProjectContext {
         sources: impl IntoIterator<Item = (&'s str, Language, &'s str)>,
     ) -> Self {
         let mut exports = BTreeMap::new();
+        let mut constants = value::Constants::default();
         for (path, language, source) in sources {
             if language != Language::Php || source.len() > 512 * 1024 {
                 continue;
             }
             let lower = source.to_ascii_lowercase();
-            if !lower.contains("pdo") && !lower.contains("mysqli") {
+            if !lower.contains("pdo")
+                && !lower.contains("mysqli")
+                && !lower.contains("define")
+                && !lower.contains("const")
+            {
                 continue;
             }
             let ast = AstGrep::doc(StrDoc::new(source, SupportLang::PhpMixed));
             let root = ast.root();
+            let context = PhpContext::build(&root);
+            constants.collect(path, &root, &context);
             // A config summary cannot stand in for executing arbitrary code.
             if root.dfs().any(|n| {
                 n.is_error()
@@ -340,7 +387,6 @@ impl PhpProjectContext {
             }) {
                 continue;
             }
-            let context = PhpContext::build(&root);
             if root
                 .dfs()
                 .filter(|n| n.kind().as_ref() == "object_creation_expression")
@@ -417,7 +463,10 @@ impl PhpProjectContext {
             }
             exports.insert(path.to_string(), bindings);
         }
-        Self { exports }
+        Self {
+            exports,
+            constants: std::sync::Arc::new(constants),
+        }
     }
 }
 
@@ -435,6 +484,9 @@ pub(super) struct PhpContext<'a> {
     namespaced_scopes: Vec<Range<usize>>,
     included: Vec<IncludedDatabase>,
     json_candidates: BTreeSet<(usize, usize, String)>,
+    constants: std::sync::Arc<value::Constants>,
+    template_texts: Vec<(usize, String)>,
+    markup_writes: Vec<(Range<usize>, usize)>,
 }
 
 impl<'a> PhpContext<'a> {
@@ -512,6 +564,20 @@ impl<'a> PhpContext<'a> {
             namespaced_scopes,
             included: Vec::new(),
             json_candidates: BTreeSet::new(),
+            constants: std::sync::Arc::default(),
+            template_texts: root
+                .dfs()
+                .filter(|n| n.kind().as_ref() == "text")
+                .map(|n| (n.range().end, n.text().to_string()))
+                .collect(),
+            markup_writes: root
+                .dfs()
+                .filter(|n| {
+                    matches!(n.kind().as_ref(), "echo_statement" | "print_intrinsic")
+                        && n.text().contains('<')
+                })
+                .map(|n| (function_scope(&n, root), n.range().start))
+                .collect(),
         };
         for binding in root
             .dfs()
@@ -534,6 +600,7 @@ impl<'a> PhpContext<'a> {
     }
 
     pub(super) fn with_project(mut self, path: &str, project: &PhpProjectContext) -> Self {
+        self.constants = project.constants.clone();
         for include in self.root.dfs().filter(|n| {
             matches!(
                 n.kind().as_ref(),

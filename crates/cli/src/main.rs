@@ -519,7 +519,13 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let mut by_cwe = BTreeMap::<String, usize>::new();
             let mut by_area = BTreeMap::<String, usize>::new();
             let mut by_operand_fact = BTreeMap::<String, usize>::new();
+            let mut value_deferrals_by_reason = BTreeMap::<String, usize>::new();
             for entry in &inventory.entries {
+                if let Some(hint) = &entry.value_hint {
+                    *value_deferrals_by_reason
+                        .entry(hint.reason.clone())
+                        .or_default() += 1;
+                }
                 let kinds = entry
                     .operand_facts
                     .iter()
@@ -560,6 +566,10 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "by_operand_fact": by_operand_fact,
                 "deterministic_operand_closures": inventory.admission_audit.closed_operands.len(),
                 "value_deferred_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_some()).count(),
+                "value_active_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_none()).count(),
+                "value_deferrals_by_reason": value_deferrals_by_reason,
+                "value_conditional_count": inventory.entries.iter().filter(|entry| entry.value_hint.as_ref().is_some_and(|hint| hint.depends_on.is_some() || hint.reason == "ordinary_php_sink_inventory")).count(),
+                "value_dependency_count": inventory.entries.iter().filter_map(|entry| entry.value_hint.as_ref()?.depends_on.as_deref()).collect::<BTreeSet<_>>().len(),
                 "top_areas": top_areas,
             });
             fs::write(
@@ -604,11 +614,13 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     kind,
                     "fixed_code_relative_path"
                         | "configured_root_path"
+                        | "repository_code_target"
+                        | "output_context"
                         | "encoding_call"
                         | "unclassified"
                 )
             }) {
-                return Err("invalid --operand-kind; use fixed_code_relative_path, configured_root_path, encoding_call, or unclassified".into());
+                return Err("invalid --operand-kind; use fixed_code_relative_path, configured_root_path, repository_code_target, encoding_call, output_context, or unclassified".into());
             }
             let limit = parsed.optional_usize("--limit")?.unwrap_or(50).min(200);
             let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
@@ -662,13 +674,51 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     })
                     .collect::<Vec<_>>();
             let scope_count = matching.len();
+            let reopen_surfaces = entries
+                .iter()
+                .filter(|entry| {
+                    entry["review_id"].as_str().is_some_and(|id| {
+                        ledger.as_ref().is_some_and(|ledger| {
+                            ledger.reviewed.get(id).is_some_and(|decision| {
+                                matches!(decision.as_str(), "issue" | "needs_review")
+                            }) || ledger.conflicts.iter().any(|conflict| conflict == id)
+                        })
+                    })
+                })
+                .map(|entry| (entry["path"].as_str(), entry["rule_id"].as_str()))
+                .collect::<BTreeSet<_>>();
+            let reopened = |entry: &&serde_json::Value| {
+                (entry["value_hint"]["reason"] == "ordinary_php_sink_inventory"
+                    && reopen_surfaces
+                        .contains(&(entry["path"].as_str(), entry["rule_id"].as_str())))
+                    || entry["value_hint"]["depends_on"]
+                        .as_str()
+                        .is_some_and(|id| {
+                            ledger.as_ref().is_some_and(|ledger| {
+                                ledger.reviewed.get(id).is_some_and(|decision| {
+                                    matches!(decision.as_str(), "issue" | "needs_review")
+                                }) || ledger.conflicts.iter().any(|conflict| conflict == id)
+                            })
+                        })
+            };
+            let dependency_review_ids = matching
+                .iter()
+                .filter_map(|entry| {
+                    entry["value_hint"]["depends_on"].as_str().filter(|id| {
+                        ledger
+                            .as_ref()
+                            .is_none_or(|ledger| !ledger.reviewed.contains_key(*id))
+                    })
+                })
+                .collect::<BTreeSet<_>>();
+            let reopened_count = matching.iter().filter(|entry| reopened(entry)).count();
             let deferred_count = matching
                 .iter()
-                .filter(|entry| !entry["value_hint"].is_null())
+                .filter(|entry| !entry["value_hint"].is_null() && !reopened(entry))
                 .count();
             matching.retain(|entry| match selection.as_str() {
-                "value" => entry["value_hint"].is_null(),
-                "deferred" => !entry["value_hint"].is_null(),
+                "value" => entry["value_hint"].is_null() || reopened(entry),
+                "deferred" => !entry["value_hint"].is_null() && !reopened(entry),
                 _ => true,
             });
             if group_by.is_some() {
@@ -681,10 +731,12 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 queue["selection"] = serde_json::json!(selection);
                 queue["scope_count"] = serde_json::json!(scope_count);
                 queue["deferred_count"] = serde_json::json!(deferred_count);
+                queue["reopened_count"] = serde_json::json!(reopened_count);
+                queue["dependency_review_ids"] = serde_json::json!(dependency_review_ids);
                 return print_json(&queue);
             }
             print_json(
-                &serde_json::json!({"selection": selection, "scope_count": scope_count, "deferred_count": deferred_count, "matching_count": matching.len(), "reviewed_count": ledger.as_ref().map_or(0, |ledger| ledger.reviewed.len()), "offset": offset, "entries": matching.into_iter().skip(offset).take(limit).collect::<Vec<_>>()}),
+                &serde_json::json!({"selection": selection, "scope_count": scope_count, "deferred_count": deferred_count, "reopened_count": reopened_count, "dependency_review_ids": dependency_review_ids, "matching_count": matching.len(), "reviewed_count": ledger.as_ref().map_or(0, |ledger| ledger.reviewed.len()), "offset": offset, "entries": matching.into_iter().skip(offset).take(limit).collect::<Vec<_>>()}),
             )
         }
         "review-ledger" => {
@@ -2600,14 +2652,19 @@ fn review_card_from_value(
         .and_then(|facts| {
             facts
                 .iter()
-                .find(|fact| fact["kind"] == "fixed_code_relative_path")
+                .find(|fact| {
+                    matches!(
+                        fact["kind"].as_str(),
+                        Some("fixed_code_relative_path" | "repository_code_target")
+                    )
+                })
                 .and_then(|fact| fact["value"].as_str())
         })
     {
         lookups = vec![serde_json::json!({
             "operation": "source",
             "arguments": {"path": target, "start-line": "1", "end-line": "40"},
-            "purpose": "Inspect the fixed target and any visible content-generation boundary; the path selector is resolved."
+            "purpose": "Inspect the repository target and content-generation boundary; source-defined defaults may differ at runtime."
         })];
     }
     let captures = anchor["captures"].as_object().map(|captures| {

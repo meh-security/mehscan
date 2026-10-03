@@ -125,6 +125,8 @@ pub struct ValueReviewHint {
     pub reason: String,
     pub target: String,
     pub assumption: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -157,7 +159,13 @@ fn fixed_include_value_hint(
         .context
         .operand_facts
         .iter()
-        .find(|fact| fact.kind == mehscan_core::OperandFactKind::FixedCodeRelativePath)?
+        .find(|fact| {
+            matches!(
+                fact.kind,
+                mehscan_core::OperandFactKind::FixedCodeRelativePath
+                    | mehscan_core::OperandFactKind::RepositoryCodeTarget
+            )
+        })?
         .value;
     if sources.files.get(target)?.language != Some(Language::Php) {
         return None;
@@ -185,11 +193,123 @@ fn fixed_include_value_hint(
         return None;
     }
     Some(ValueReviewHint {
-        reason: "fixed_repository_include".into(),
+        reason: if anchor.context.operand_facts.iter().any(|fact| fact.kind == mehscan_core::OperandFactKind::RepositoryCodeTarget) { "source_default_repository_include" } else { "fixed_repository_include" }.into(),
         target: target.clone(),
         assumption:
-            "repository_code_is_trusted; unknown writers and deployment changes are not ruled out"
+            "repository_code_is_trusted; source_defaults_match_runtime_constants; unknown writers and deployment changes are not ruled out"
                 .into(),
+        depends_on: None,
+    })
+}
+
+fn share_php_output_questions(entries: &mut [ReviewInventoryEntry]) {
+    use mehscan_core::OperandFactKind;
+    let mut representatives: BTreeMap<String, String> = BTreeMap::new();
+    // Source-bearing and unsupported cases remain individual work. A shared
+    // question is conditional on its representative, never transferred safety.
+    for entry in entries
+        .iter_mut()
+        .filter(|entry| entry.rule_id == "php-html-output" && entry.evidence_strength == "sink")
+    {
+        let Some(encoder) = entry
+            .operand_facts
+            .iter()
+            .find(|f| f.kind == OperandFactKind::EncodingCall)
+        else {
+            continue;
+        };
+        let Some(context) = entry
+            .operand_facts
+            .iter()
+            .find(|f| f.kind == OperandFactKind::OutputContext)
+        else {
+            continue;
+        };
+        // URL interpretation needs more than HTML encoding. Keep these sites
+        // individually selected until a URL control contract is established.
+        if context.value != "html_text" && !context.value.starts_with("html_attribute:") {
+            continue;
+        }
+        if let Some(attribute) = context.value.strip_prefix("html_attribute:") {
+            let name = attribute.split(':').next().unwrap_or_default();
+            if !matches!(
+                name,
+                "title" | "alt" | "class" | "id" | "value" | "name" | "placeholder"
+            ) && !name.starts_with("aria-")
+                && !name.starts_with("data-")
+            {
+                continue;
+            }
+        }
+        let key = format!("{}:{}", encoder.value, context.value);
+        if let Some(representative) = representatives.get(&key) {
+            entry.value_hint = Some(ValueReviewHint {
+                reason: "shared_php_encoding_question".into(),
+                target: key,
+                assumption: "conditional_on_shared_callable_review_and_per_site_applicability; escaping_and_runtime_markup_are_not_proven".into(),
+                depends_on: Some(representative.clone()),
+            });
+        } else {
+            entry.value_hint = None;
+            representatives.insert(key, entry.review_id.clone());
+        }
+    }
+}
+
+fn ordinary_php_sink_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
+    if !matches!(
+        anchor.rule_id.as_str(),
+        "php-html-output" | "php-file-inclusion"
+    ) || anchor.tags.iter().any(|tag| {
+        matches!(
+            tag.as_str(),
+            "review-origin:decision-critical" | "value-scope:unresolved-code-root"
+        )
+    }) {
+        return None;
+    }
+    let role = if anchor.rule_id == "php-file-inclusion" {
+        "path"
+    } else {
+        "content"
+    };
+    let operand = &anchor.captures.get(role)?.text;
+    if role == "path" {
+        // Variable-selected loaders remain consequential. Missing/writable
+        // resolved targets were vetoed by the stronger include check above.
+        if operand.contains('$')
+            || operand.contains("..")
+            || operand.contains(':')
+            || operand.contains('\\')
+            || anchor.context.operand_facts.iter().any(|fact| {
+                matches!(
+                    fact.kind,
+                    mehscan_core::OperandFactKind::FixedCodeRelativePath
+                        | mehscan_core::OperandFactKind::RepositoryCodeTarget
+                )
+            })
+        {
+            return None;
+        }
+    } else {
+        // Keep explicit markup construction and observed dangerous contexts.
+        // Bare echo/print occurrences with unknown producers are conditional
+        // inventory; this is a scope choice, never proof of trusted input.
+        if operand.contains('<')
+            || anchor.context.operand_facts.iter().any(|fact| {
+                fact.kind == mehscan_core::OperandFactKind::OutputContext
+                    && fact.value != "html_text"
+                    && !fact.value.starts_with("html_attribute:")
+            })
+        {
+            return None;
+        }
+    }
+    Some(ValueReviewHint {
+        reason: "ordinary_php_sink_inventory".into(),
+        target: anchor.location.path.clone(),
+        assumption: "conditional_surface_inventory; unknown_input_is_not_trusted; inspect_surface_and_producers_then_reopen_consequential_sites".into(),
+        depends_on: None,
     })
 }
 
@@ -1018,10 +1138,14 @@ fn build_path_review_jobs_internal(
                 .to_string(),
                 operand_facts: operand_summaries(anchor),
                 value_hint: (group.priority == 2 && group.anchor_evidence_ids.len() == 1)
-                    .then(|| fixed_include_value_hint(anchor, &sources, &write_paths))
+                    .then(|| {
+                        fixed_include_value_hint(anchor, &sources, &write_paths)
+                            .or_else(|| ordinary_php_sink_hint(anchor))
+                    })
                     .flatten(),
             })
         }));
+        share_php_output_questions(entries);
     }
     let total_reviews = candidates.len() + observation_groups.len();
     if let Some(ids) = selected_ids {

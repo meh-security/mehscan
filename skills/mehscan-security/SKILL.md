@@ -43,7 +43,12 @@ visible and call the review partial until every relevant lane is assessed.
 Comprehensive review gives every admitted ID a verdict.
 For inventory selection in Value mode, use `--selection value` and record
 `deferred_count`. See planning for the trusted-source assumption and overrides;
-deferred IDs are likely false positives, not reviewed safe results.
+deferred IDs have explicit effort assumptions or shared dependencies, not safe
+verdicts. Ordinary PHP output/loading occurrences are conditional surface
+inventory: inspect producers and reopen consequential sites. Review
+`dependency_review_ids` first; unsafe or unresolved shared
+behavior reopens its dependent sites with the rebuilt ledger. Value can expand
+to Comprehensive when the source warrants it.
 Honor a requested category. Build a same-fingerprint review ledger from prior
 run roots with `review-ledger`; pass it to inventory listing and selected bundle
 creation so finalized IDs are not selected again. For a large queue, use short source reads to rank a few inventory IDs

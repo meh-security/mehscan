@@ -111,3 +111,33 @@ coverage. Secret detection remains a separate opt-in stream.
 Original regression fixtures cover positive and safe calls, API identity,
 imports, receiver ownership, reassignment, branch controls, mixed capabilities,
 inert comments/strings, templates, repeated IDs, and repository policy.
+
+## Value review scope
+
+Value keeps every admitted ID in the inventory. Existing repository-code
+includes can be deferred under an explicit trusted-source assumption. Bounded
+source constants, concatenation and native `dirname` can supply a default
+target; conflicting or dynamic definitions, missing targets, observed writers
+and runtime/upload/generated paths prevent this deferral. Runtime overrides
+remain a review assumption.
+
+Static context facts also cover plain raw output, so observed script/event
+positions remain active even when no encoder is called.
+Repeated whole encoding calls in matching ordinary static template contexts
+can share an active implementation question. Their dependent IDs remain
+conditional, with no safety verdict. Reviewing the shared callable as unsafe
+or unresolved reopens its dependents through the review ledger. Unknown
+bindings, URL/script/style/event/srcdoc and unquoted contexts, raw/mixed/stored
+outputs with connected input, explicit markup construction and source-bearing
+groups remain active. Unconnected ordinary output/constant-shaped loading
+occurrences become conditional surface inventory. Inspect actual producers,
+including stored data, before selecting distinct consequential relationships;
+missing source provenance is not proof of trusted input. Unsafe or unresolved
+same-file/rule verdicts reopen these ordinary occurrences through the ledger.
+Every shared encoding site's options
+and runtime context still need an applicability check. Comprehensive selects
+all admitted IDs; Value can expand to it when evidence warrants that scope.
+
+These are generic PHP source/template facts. A helper spelling never proves
+its implementation safe. They do not add framework SQL coverage or close
+fixed-path file-disclosure questions.

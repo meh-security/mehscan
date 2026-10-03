@@ -241,12 +241,20 @@ function unrelated_source($stored) { $search = $_GET['search']; echo $stored; }
                 e.rule_id == "php-html-output" && e.enclosing_symbol.as_deref() == Some(symbol)
             })
             .unwrap();
-        assert_eq!(
-            evidence.context.operand_facts[0].kind,
-            OperandFactKind::EncodingCall
+        assert!(
+            evidence
+                .context
+                .operand_facts
+                .iter()
+                .any(|fact| fact.kind == OperandFactKind::EncodingCall)
         );
         assert!(
-            evidence.context.operand_facts[0]
+            evidence
+                .context
+                .operand_facts
+                .iter()
+                .find(|fact| fact.kind == OperandFactKind::EncodingCall)
+                .unwrap()
                 .remaining_checks
                 .iter()
                 .any(|c| c == "output_context")
@@ -309,10 +317,23 @@ function script() { ?><script>let value = "<?php echo htmlspecialchars($_GET['ra
                 e.rule_id == "php-html-output" && e.enclosing_symbol.as_deref() == Some(symbol)
             })
             .unwrap();
-        assert_eq!(
-            evidence.context.operand_facts[0].kind,
-            OperandFactKind::EncodingCall
+        assert!(
+            evidence
+                .context
+                .operand_facts
+                .iter()
+                .any(|fact| fact.kind == OperandFactKind::EncodingCall)
         );
+        if symbol == "script" {
+            assert!(
+                evidence
+                    .context
+                    .operand_facts
+                    .iter()
+                    .any(|fact| fact.kind == OperandFactKind::OutputContext
+                        && fact.value == "embedded_context:script")
+            );
+        }
         assert!(
             inventory
                 .entries
