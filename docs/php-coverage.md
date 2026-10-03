@@ -29,6 +29,11 @@ shadow evidence: they change queue navigation and cards, not review admission
 or protected-path decisions. Other languages retain their existing analysis;
 the fact contract is language-independent.
 
+Structural follow-ups accept a single PHP code construct, with or without a
+PHP opening tag; the query adapter supplies the mixed-grammar parse context.
+Multiple statements are rejected rather than silently narrowed. C/C++, PHP
+and Rust language selectors are available alongside the other scanner languages.
+
 Complete native integer/boolean casts and exact native `intval`, `strlen`,
 `count`, or `sizeof` output produce a `numeric_output` proof. Only the exact
 CWE-79 output review is closed; raw evidence, candidates, nested command/file

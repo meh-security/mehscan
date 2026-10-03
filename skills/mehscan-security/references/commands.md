@@ -19,9 +19,12 @@ source; the journals preserve the complete lookup history.
 | Reuse finalized IDs | `mehscan investigate review-ledger --inventory RUN/inventory --history OLD_RUN_ROOT,RUN --output RUN/review-ledger.json` |
 | Filter remaining inventory | `mehscan investigate review-inventory-list --inventory RUN/inventory --ledger RUN/review-ledger.json --cwe CWE --limit 50` |
 | Filter operand facts | `mehscan investigate review-inventory-list --inventory RUN/inventory --operand-kind fixed_code_relative_path --limit 50` (also `configured_root_path`, `encoding_call`, `unclassified`) |
+| Shared contract queue | `mehscan investigate review-inventory-list --inventory RUN/inventory --ledger RUN/review-ledger.json --group-by contract --limit 12` |
+| Contract members | `mehscan investigate review-inventory-list --inventory RUN/inventory --contract KEY --limit 50` (combine with ledger/component filters) |
 | Selected requests | `mehscan investigate review-bundles ROOT --inventory RUN/inventory --ledger RUN/review-ledger.json --review-ids ID,ID --output RUN/chunk-N` |
 | Bundle IDs | `mehscan investigate review-bundle-list --bundle REQUEST` |
 | One review lead | `mehscan investigate review-card --bundle REQUEST --review-id ID` |
+| Related review leads | `mehscan investigate review-sweep --bundle REQUEST` (exact cards with merged source windows) |
 | Exact source | `mehscan investigate source ROOT --path FILE --start-line N --end-line M` |
 | File outline | `mehscan investigate outline ROOT --path FILE` |
 | Find readable paths | `mehscan investigate paths ROOT --name TEXT` |
@@ -45,6 +48,9 @@ finalization and `mehscan report`; do not edit the generated report directly.
 The response schema and CLI help are authoritative for the installed Mehscan
 version. Query results are JSON; inspect all `results`, `truncated`, and
 `skipped_files` before concluding that a lookup found nothing.
+For C/C++ structural calls use a complete statement such as `memcpy($DEST,
+$SRC, $SIZE);`, or use `native-call-sites` for a callee inventory. PHP structural
+patterns are parsed as one code construct; do not combine several statements.
 `source` reads an exact requested text file under the scan root, including
 templates omitted from scan admission; repository ignore rules still apply.
 Use a known path directly, or `paths` when the path is unknown. Read the

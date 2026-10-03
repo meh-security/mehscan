@@ -44,6 +44,17 @@ from the selected evidence/card and query only facts that can change its verdict
 `source_sink_cooccurrence` means a source and sink share an enclosing group;
 it does not establish value propagation. Actual security paths remain separate.
 
+For a concentrated queue, use `review-inventory-list --inventory RUN/inventory
+--ledger RUN/review-ledger.json --group-by contract --limit 12`. It ranks repeated
+operand questions by count, not risk. `--contract KEY` returns exact members
+and combines with the usual surface filters. Verify the shared definition/root
+once, then use [pattern sweeps](pattern-sweep.md) for each member's context,
+options, target and producer exceptions. Groups are unverified lookup queues:
+one helper name does not bind every call to one implementation. Keep the
+ungrouped count visible and use ordinary review for those IDs. Record useful
+shared facts and assumptions against the queue's source fingerprint in the
+existing review plan; reopen them when the source or policy changes.
+
 ## Choose how to run the review
 
 Choose after this brief assessment; do not impose one package size or one

@@ -5,6 +5,18 @@ was built → who can supply it → same-path constraint**. Decide whether a
 lower-trust actor can change grammar or a dangerous target, not merely a
 scalar value.
 
+Check a plausible complete control before tracing every producer or caller.
+When its verified contract keeps the exact interpreter grammar safe for any
+input in this context, that settles this property. Do not keep researching
+input origins just to establish that the control is needed. For escaped HTML,
+check the entire operand, callable behavior/options/hooks, actual text or
+attribute context and any transformation after escaping. Trace producers when
+the control is absent, partial, incompatible or uncertain, or when intentional
+raw/rich content needs a trust policy. Independent disclosure or access checks
+retain their own questions.
+Quoted attributes can still interpret URLs, JavaScript events or CSS; verify
+that interpretation before treating HTML escaping as a complete control.
+
 - **SQL:** A raw-query API or nonliteral `sql` parameter is an inventory
   point. If it is a wrapper, find the wrapper's callers and inspect every
   relevant argument. Fixed query text with bound values differs from text
@@ -61,7 +73,7 @@ scalar value.
   source, escaped data, or an engine option such as a layout path; a fixed
   view name alone does not settle what the engine reads. Use the template,
   framework contract, or repository tests when its interpretation is decisive.
-  For HTML output, identify who can write the exact rendered field. An
+  For unconstrained HTML output, identify who can write the exact rendered field. An
   admin-only publisher of intentionally rich content does not establish XSS
   merely because the renderer uses raw HTML. If the writer's trust or content
   policy is unknown, name that missing boundary instead of treating a

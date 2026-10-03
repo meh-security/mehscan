@@ -5,7 +5,9 @@ not answers or a limit on research. For several IDs, first follow
 [shared-pattern review](pattern-sweep.md); reuse source facts without copying
 verdicts.
 
-1. **Select the exact subject.** Run `mehscan investigate review-card --bundle
+1. **Select the exact subject.** For several related IDs, read the exact row and
+   `question_id` and referenced source windows from `review-sweep --bundle REQUEST`; reuse them
+   instead of issuing another card query. Otherwise run `mehscan investigate review-card --bundle
    REQUEST --review-id ID` and read its security question, anchor operation and
    operand, decision facts, and playbook. The card shows only a small excerpt
    and locations; request further source when it can change the decision. Copy
@@ -26,7 +28,9 @@ verdicts.
 3. **Test one evidence chain.** State the candidate failure and the facts that
    would prove or refute it. Follow the same value, branch, actor, resource,
    control, and effect. Ask Mehscan for the next decision-changing fact. Use
-   `source` for a known path, `references` for callers or uses,
+   a complete, context-compatible control to close this property before
+   expanding caller/producer research; otherwise follow the missing input edge.
+   Use `source` for a known path, `references` for callers or uses,
    `enclosing-at` for a known file and line, `paths` only when the path is
    unknown, and other commands when their exact question fits. Scope common
    identifiers to a known file and prefer a distinctive symbol for wider

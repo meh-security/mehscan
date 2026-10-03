@@ -70,8 +70,9 @@ and cite the decisive evidence behind the verdict. Read **one** matching guide f
 security relationship to test; the review's question identifies the exact
 operation and operand.
 
-For a bundle with several IDs, first list IDs with `review-bundle-list --bundle
-REQUEST`, then follow [shared-pattern review](references/pattern-sweep.md).
+For a bundle with several IDs, read `review-sweep --bundle REQUEST` for the
+exact cards and merged source windows, then follow
+[shared-pattern review](references/pattern-sweep.md).
 Route shared dataflow contrasts to a small focused pass before a long sweep;
 review independent operations and entry-point controls in ordinary bundles.
 Group only IDs that depend on the same implementation or control. Read a shared

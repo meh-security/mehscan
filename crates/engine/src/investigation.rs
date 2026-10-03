@@ -19737,8 +19737,44 @@ pub fn run_structural_query(
     }
     let limit = bounded_limit(limit)?;
     let parser = parser_language(language);
-    let pattern = Pattern::try_new(pattern, parser)
-        .map_err(|error| EngineError(format!("invalid structural query: {error}")))?;
+    let pattern = if language == Language::Php {
+        // Mixed PHP needs a code tag for parsing. Select the one requested
+        // construct rather than accidentally querying inline HTML or a whole
+        // program containing the tag. Never silently drop a second statement.
+        let mut context = if pattern.trim_start().starts_with("<?php") {
+            pattern.to_string()
+        } else {
+            format!("<?php {pattern}")
+        };
+        if !context.trim_end().ends_with([';', '}']) {
+            context.push(';');
+        }
+        let query = AstGrep::new(&context, parser);
+        let constructs: Vec<_> = query
+            .root()
+            .children()
+            .filter(|node| {
+                node.is_named() && !matches!(node.kind().as_ref(), "php_tag" | "comment")
+            })
+            .collect();
+        let [construct] = constructs.as_slice() else {
+            return Err(EngineError(
+                "PHP structural query requires one code construct".into(),
+            ));
+        };
+        let goal = if construct.kind().as_ref() == "expression_statement" {
+            construct
+                .children()
+                .find(|node| node.is_named() && node.kind().as_ref() != "variable_name")
+                .unwrap_or_else(|| construct.clone())
+        } else {
+            construct.clone()
+        };
+        Pattern::contextual(&context, goal.kind().as_ref(), parser)
+    } else {
+        Pattern::try_new(pattern, parser)
+    }
+    .map_err(|error| EngineError(format!("invalid structural query: {error}")))?;
     let sources = if let Some(path) = path {
         RepositorySources::load_selected(root, path)?
     } else {

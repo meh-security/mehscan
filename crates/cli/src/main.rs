@@ -9,6 +9,8 @@ use std::time::Instant;
 use mehscan_core::{Capability, EvidenceFilter, EvidenceKind, Language};
 use serde::{Deserialize, Serialize};
 
+mod review_sweep;
+
 fn main() -> ExitCode {
     match run(env::args().skip(1)) {
         Ok(()) => ExitCode::SUCCESS,
@@ -585,6 +587,11 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let cwe = parsed.optional("--cwe");
             let path_prefix = parsed.optional("--path-prefix");
             let operand_kind = parsed.optional("--operand-kind");
+            let contract = parsed.optional("--contract");
+            let group_by = parsed.optional("--group-by");
+            if group_by.as_deref().is_some_and(|value| value != "contract") {
+                return Err("invalid --group-by; use contract".into());
+            }
             if operand_kind.as_deref().is_some_and(|kind| {
                 !matches!(
                     kind,
@@ -629,6 +636,10 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                             entry["path"]
                                 .as_str()
                                 .is_some_and(|path| path.starts_with(value))
+                        }) && contract.as_ref().is_none_or(|key| {
+                            review_sweep::contract_keys(entry)
+                                .iter()
+                                .any(|item| &item.0 == key)
                         }) && operand_kind.as_ref().is_none_or(|kind| {
                             let facts = entry["operand_facts"].as_array();
                             if kind == "unclassified" {
@@ -643,6 +654,14 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         })
                     })
                     .collect::<Vec<_>>();
+            if group_by.is_some() {
+                return print_json(&review_sweep::contract_queue(
+                    &matching,
+                    &inventory["source_fingerprint"],
+                    offset,
+                    limit,
+                ));
+            }
             print_json(
                 &serde_json::json!({"matching_count": matching.len(), "reviewed_count": ledger.as_ref().map_or(0, |ledger| ledger.reviewed.len()), "offset": offset, "entries": matching.into_iter().skip(offset).take(limit).collect::<Vec<_>>()}),
             )
@@ -848,6 +867,27 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 })?)
                 .map_err(|error| format!("invalid bundle: {error}"))?;
             print_json(&review_card(&bundle, &review_id)?)
+        }
+        "review-sweep" => {
+            let path = PathBuf::from(parsed.required("--bundle")?);
+            parsed.finish()?;
+            let bundle: mehscan_core::PathReviewBundle = serde_json::from_slice(
+                &fs::read(&path).map_err(|error| format!("could not read bundle: {error}"))?,
+            )
+            .map_err(|error| format!("invalid bundle: {error}"))?;
+            let value = serde_json::to_value(&bundle).map_err(|error| error.to_string())?;
+            let cards = bundle
+                .review_ids
+                .iter()
+                .map(|id| review_card_from_value(&bundle, id, &value))
+                .collect::<Result<Vec<_>, _>>()?;
+            let sweep =
+                portable_json_value(&review_sweep::sweep(&bundle.bundle_fingerprint, cards)?)?;
+            println!(
+                "{}",
+                serde_json::to_string(&sweep).map_err(|error| error.to_string())?
+            );
+            Ok(())
         }
         "review-response-schema" => {
             let path = PathBuf::from(parsed.required("--bundle")?);
@@ -2304,6 +2344,8 @@ fn parse_usize(name: &str, value: &str) -> Result<usize, String> {
 
 fn parse_language(value: &str) -> Result<Language, String> {
     match value.to_ascii_lowercase().as_str() {
+        "c" => Ok(Language::C),
+        "cpp" | "c++" => Ok(Language::Cpp),
         "csharp" | "c#" | "cs" => Ok(Language::Csharp),
         "java" => Ok(Language::Java),
         "kotlin" | "kt" | "kts" => Ok(Language::Kotlin),
@@ -2312,6 +2354,8 @@ fn parse_language(value: &str) -> Result<Language, String> {
         "tsx" => Ok(Language::Tsx),
         "python" | "py" => Ok(Language::Python),
         "go" | "golang" => Ok(Language::Go),
+        "php" => Ok(Language::Php),
+        "rust" | "rs" => Ok(Language::Rust),
         _ => Err(format!("unsupported language {value:?}")),
     }
 }
@@ -2423,11 +2467,19 @@ fn review_card(
     if !bundle.review_ids.iter().any(|id| id == review_id) {
         return Err(format!("review ID {review_id:?} is not in this bundle"));
     }
+    let value = serde_json::to_value(bundle)
+        .map_err(|error| format!("could not serialize review bundle: {error}"))?;
+    review_card_from_value(bundle, review_id, &value)
+}
+
+fn review_card_from_value(
+    bundle: &mehscan_core::PathReviewBundle,
+    review_id: &str,
+    value: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
     let selected_anchor_id = engine(mehscan_engine::investigation::bundle_selected_anchor_id(
         bundle, review_id,
     ))?;
-    let value = serde_json::to_value(bundle)
-        .map_err(|error| format!("could not serialize review bundle: {error}"))?;
     let review = value["reviews"]
         .as_array()
         .and_then(|reviews| {
@@ -2464,26 +2516,28 @@ fn review_card(
         let anchor_line = anchor["location"]["start"]["line"]
             .as_u64()
             .unwrap_or(first_line);
-        let center = anchor["captures"]
+        let center_line = anchor["captures"]
             .as_object()
             .and_then(|captures| {
                 captures.values().find_map(|capture| {
-                    let text = capture["text"].as_str()?;
-                    lines.iter().position(|line| line.contains(text))
+                    capture["location"]["start"]["line"].as_u64()
                 })
             })
-            .unwrap_or_else(|| anchor_line.saturating_sub(first_line) as usize);
+            .unwrap_or(anchor_line);
+        let center = center_line.saturating_sub(first_line) as usize;
         let start = center.saturating_sub(2).min(lines.len());
         let end = (center + 5).min(lines.len());
-        let excerpt = lines[start..end]
-            .join("\n")
+        let full_excerpt = lines[start..end].join("\n");
+        let truncated = full_excerpt.chars().count() > 700 || center >= lines.len();
+        let excerpt = full_excerpt
             .chars()
             .take(700)
             .collect::<String>();
         serde_json::json!({
             "evidence_id": fact["evidence_id"],
-            "location": brief_location(&fact["location"]),
+            "location": {"path": fact["location"]["path"], "start_line": first_line + start as u64, "end_line": first_line + start as u64 + excerpt.lines().count().saturating_sub(1) as u64},
             "excerpt": excerpt,
+            "truncated": truncated,
         })
     });
     let nearby_locations: Vec<_> = review["facts"]
@@ -2971,7 +3025,7 @@ fn print_investigation_help() {
 USAGE:
   mehscan investigate funnel [ROOT]
   mehscan investigate review-inventory [ROOT] --output DIR [--include-review-material true|false]
-  mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--limit N] [--offset N]
+  mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--group-by contract] [--contract KEY] [--limit N] [--offset N]
   mehscan investigate review-ledger --inventory DIR --history RUN_ROOT[,RUN_ROOT] --output FILE
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate review-tasks [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
@@ -2979,6 +3033,7 @@ USAGE:
   mehscan investigate review-bundle-diff --before DIR --after DIR
   mehscan investigate review-bundle-list --bundle PATH
   mehscan investigate review-card --bundle PATH --review-id ID
+  mehscan investigate review-sweep --bundle PATH
   mehscan investigate review-response-schema --bundle PATH [--output PATH]
   mehscan investigate review-bundle-finalize --bundle PATH --draft PATH --journal-dir DIR --output PATH --source-root ROOT
   mehscan investigate review-bundle-triage --bundle PATH --responses PATH [--source-root ROOT] [--summary true|false]
