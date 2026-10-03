@@ -19522,19 +19522,34 @@ pub fn build_investigation_job(
 pub fn find_symbol(
     root: &Path,
     name: &str,
+    path: Option<&str>,
     limit: Option<usize>,
 ) -> Result<QueryResponse<Vec<OutlineSymbol>>, EngineError> {
     if name.is_empty() {
         return Err(EngineError("symbol name must not be empty".to_string()));
     }
     let limit = bounded_limit(limit)?;
-    let sources = RepositorySources::load(root)?;
+    let sources = if let Some(path) = path {
+        RepositorySources::load_selected(root, path)?
+    } else {
+        RepositorySources::load(root)?
+    };
+    if let Some(path) = path {
+        sources.file(path)?;
+    }
     let outlines = OutlineExtractors::build()?;
     let mut matches = Vec::new();
     let mut skipped_files = Vec::new();
     let mut truncated = false;
-    for file in sources.files.values() {
-        if file.language.is_none() {
+    'files: for file in sources.files.values() {
+        // Built-in outline names are source captures except these synthetic
+        // labels. Text narrows parsing; only the AST establishes a definition.
+        if file.language.is_none()
+            || (!matches!(
+                name,
+                "exports" | "constructor" | "companion object" | "init"
+            ) && !file.source.contains(name))
+        {
             continue;
         }
         let symbols = match outlines.extract(file) {
@@ -19549,13 +19564,10 @@ pub fn find_symbol(
             if symbol.name == name {
                 if matches.len() == limit {
                     truncated = true;
-                    break;
+                    break 'files;
                 }
                 matches.push(symbol);
             }
-        }
-        if truncated {
-            break;
         }
     }
     let mut response = response(
@@ -19583,7 +19595,7 @@ pub fn find_imports(
     let mut matches = Vec::new();
     let mut skipped_files = Vec::new();
     let mut truncated = false;
-    for file in sources.files.values() {
+    'files: for file in sources.files.values() {
         if file.language.is_none() {
             continue;
         }
@@ -19599,13 +19611,10 @@ pub fn find_imports(
             if symbol.is_import && (symbol.name.contains(name) || symbol.signature.contains(name)) {
                 if matches.len() == limit {
                     truncated = true;
-                    break;
+                    break 'files;
                 }
                 matches.push(symbol);
             }
-        }
-        if truncated {
-            break;
         }
     }
     let mut response = response(
@@ -20278,7 +20287,7 @@ impl OutlineExtractors {
     }
 }
 
-fn all_languages() -> [Language; 11] {
+fn all_languages() -> [Language; 12] {
     [
         Language::C,
         Language::Cpp,
@@ -20291,6 +20300,7 @@ fn all_languages() -> [Language; 11] {
         Language::Python,
         Language::Php,
         Language::Go,
+        Language::Rust,
     ]
 }
 

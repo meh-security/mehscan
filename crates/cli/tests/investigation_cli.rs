@@ -63,6 +63,26 @@ fn selected_anchor(review: &serde_json::Value) -> serde_json::Value {
 fn locates_files_before_reads_and_scopes_broad_reference_searches() {
     let root = fixture_root();
     let root = root.to_str().expect("fixture path should be UTF-8");
+    let symbol = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "symbol",
+            root,
+            "--name",
+            "review",
+            "--path",
+            "python/aliases.py",
+        ])
+        .output()
+        .unwrap();
+    assert!(symbol.status.success(), "{:?}", symbol.stderr);
+    let symbol: serde_json::Value = serde_json::from_slice(&symbol.stdout).unwrap();
+    assert_eq!(symbol["results"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        symbol["results"][0]["location"]["path"],
+        "python/aliases.py"
+    );
+    assert_eq!(symbol["truncated"], false);
     let paths = Command::new(env!("CARGO_BIN_EXE_mehscan"))
         .args(["investigate", "paths", root, "--name", "aliases.py"])
         .output()

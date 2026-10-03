@@ -21,6 +21,68 @@ fn native_investigation_fixture_root() -> PathBuf {
 }
 
 #[test]
+fn symbol_queries_preserve_later_definitions_and_scope_parse_work() {
+    use mehscan_engine::investigation::{find_imports, find_symbol};
+    let root = std::env::temp_dir().join(format!("mehscan-symbols-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    for (path, source) in [
+        ("a-broken.php", "<?php function needle( {"),
+        ("b-broken.py", "import subprocess\ndef needle(\n"),
+        ("c-valid.php", "<?php function needle($v) { return $v; }"),
+        (
+            "d-valid.py",
+            "import subprocess\ndef needle(value):\n    return value\n",
+        ),
+        ("e-valid.js", "export { needle };"),
+        ("f-valid.rs", "fn needle() {}"),
+        (
+            "g-valid.kt",
+            "class Holder {\n    companion  object {\n        fun member(): Int { return 1 }\n    }\n}\n",
+        ),
+        ("h-irrelevant.php", "<?php function unrelated( {"),
+    ] {
+        std::fs::write(root.join(path), source).unwrap();
+    }
+    let broad = find_symbol(&root, "needle", None, None).unwrap();
+    assert!(broad.truncated); // Relevant parse failures remain explicit.
+    assert_eq!(broad.results.len(), 3); // Later PHP, Python and Rust definitions survive.
+    assert_eq!(broad.skipped_files, ["a-broken.php", "b-broken.py"]);
+    let scoped = find_symbol(&root, "needle", Some("c-valid.php"), None).unwrap();
+    assert_eq!(scoped.results.len(), 1);
+    assert!(!scoped.truncated);
+    assert!(scoped.skipped_files.is_empty());
+    assert!(find_symbol(&root, "needle", Some("../outside.php"), None).is_err());
+    assert!(find_symbol(&root, "needle", Some("missing.php"), None).is_err());
+    let limited = find_symbol(&root, "needle", None, Some(1)).unwrap();
+    assert!(limited.truncated);
+    assert_eq!(limited.results.len(), 1);
+    let imports = find_imports(&root, "subprocess", None).unwrap();
+    assert!(imports.truncated);
+    assert!(
+        imports
+            .results
+            .iter()
+            .any(|symbol| symbol.location.path == "d-valid.py")
+    );
+    // Synthetic labels need not occur verbatim in source; keep their AST path.
+    assert_eq!(
+        find_symbol(&root, "exports", Some("e-valid.js"), None)
+            .unwrap()
+            .results
+            .len(),
+        1
+    );
+    assert_eq!(
+        find_symbol(&root, "companion object", Some("g-valid.kt"), None)
+            .unwrap()
+            .results
+            .len(),
+        1
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn supports_bounded_ai_investigation_workflow() {
     let root = fixture_root();
 
@@ -74,7 +136,7 @@ fn supports_bounded_ai_investigation_workflow() {
         "review"
     );
 
-    let symbols = mehscan_engine::investigation::find_symbol(&root, "review", None)
+    let symbols = mehscan_engine::investigation::find_symbol(&root, "review", None, None)
         .expect("symbol lookup should succeed");
     assert!(symbols.results.len() >= 5);
 
@@ -216,7 +278,9 @@ fn native_syntax_inventory_retains_local_matches_during_parse_recovery() {
 fn rejects_unbounded_or_out_of_root_requests() {
     let root = fixture_root();
     assert!(mehscan_engine::investigation::get_source(&root, "../planv1.md", 1, 2).is_err());
-    assert!(mehscan_engine::investigation::find_symbol(&root, "review", Some(1_001)).is_err());
+    assert!(
+        mehscan_engine::investigation::find_symbol(&root, "review", None, Some(1_001)).is_err()
+    );
     assert!(mehscan_engine::investigation::get_source(&root, "python/aliases.py", 0, 1).is_err());
     assert!(
         mehscan_engine::investigation::build_investigation_job(

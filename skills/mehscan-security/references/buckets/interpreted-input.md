@@ -14,6 +14,9 @@ attribute context and any transformation after escaping. Trace producers when
 the control is absent, partial, incompatible or uncertain, or when intentional
 raw/rich content needs a trust policy. Independent disclosure or access checks
 retain their own questions.
+Follow a local control wrapper to the transformation that establishes its
+behavior once per shared contract. Flags passed to another unchecked helper
+do not establish what that helper returns.
 Quoted attributes can still interpret URLs, JavaScript events or CSS; verify
 that interpretation before treating HTML escaping as a complete control.
 

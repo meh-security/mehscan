@@ -31,10 +31,14 @@ verdicts.
    a complete, context-compatible control to close this property before
    expanding caller/producer research; otherwise follow the missing input edge.
    Use `source` for a known path, `references` for callers or uses,
-   `enclosing-at` for a known file and line, `paths` only when the path is
-   unknown, and other commands when their exact question fits. Scope common
-   identifiers to a known file and prefer a distinctive symbol for wider
-   searches; a truncated hit list is not a complete inventory. Start source
+   `enclosing-at` for a known file and line, and `symbol --path FILE` for a
+   definition in a known file. Prefer scoped reads after locating the helper.
+   Use `paths` only when the path is unknown, and other commands when their
+   exact question fits. Scope common identifiers to a known file and copy
+   paths from current evidence rather
+   than an installed framework layout remembered from elsewhere. Prefer a
+   distinctive symbol for wider searches; a truncated hit list is not a
+   complete inventory. Start source
    reads with a small window around the decisive location and expand only
    when its boundary hides a needed fact.
    For a named local template or file, request that exact path with `source`
@@ -106,8 +110,10 @@ verdicts.
    shell one-liners that construct large JSON objects. Run
    `review-bundle-finalize --bundle REQUEST --draft DRAFT --journal-dir RUN/journals
    --output RESPONSE --source-root ROOT`. It attaches query counts from the
-   journal and validates the final response. For a separate validation check,
-   use `review-bundle-triage --bundle REQUEST --responses RESPONSE --source-root
+   journal and validates the final response. Save RESPONSE as
+   `RUN/responses/REQUEST_FILENAME` so the final report can locate it directly.
+   For a separate validation check, use
+   `review-bundle-triage --bundle REQUEST --responses RESPONSE --source-root
    ROOT --summary true`; the full response is already saved on disk.
    If it rejects a source range, select a smaller range that contains the
    decision-changing operation or control.

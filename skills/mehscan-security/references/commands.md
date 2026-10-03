@@ -31,7 +31,7 @@ source; the journals preserve the complete lookup history.
 | Enclosing code at known location | `mehscan investigate enclosing-at ROOT --path FILE --line N` |
 | Enclosing code from ID only | `mehscan investigate enclosing ROOT --evidence-id ID` |
 | Identifier uses | `mehscan investigate references ROOT --symbol NAME --path FILE --limit 20` (omit `--path` for repository-wide search) |
-| Symbol definitions | `mehscan investigate symbol ROOT --name NAME --limit 200` |
+| Symbol definitions | `mehscan investigate symbol ROOT --name NAME --path FILE --limit 20` (omit `--path` only when the defining file is unknown) |
 | Import uses | `mehscan investigate imports ROOT --name NAME --limit 200` |
 | Exact syntax | `mehscan investigate structural ROOT --language LANG --pattern PATTERN --path FILE` |
 | Native call syntax | `mehscan investigate native-call-sites ROOT --callee NAME --path FILE` |
@@ -48,9 +48,13 @@ finalization and `mehscan report`; do not edit the generated report directly.
 The response schema and CLI help are authoritative for the installed Mehscan
 version. Query results are JSON; inspect all `results`, `truncated`, and
 `skipped_files` before concluding that a lookup found nothing.
+Save finalized responses as `RUN/responses/REQUEST_FILENAME`; `report` reads
+that directory and matches each response to its manifest request filename.
 For C/C++ structural calls use a complete statement such as `memcpy($DEST,
 $SRC, $SIZE);`, or use `native-call-sites` for a callee inventory. PHP structural
 patterns are parsed as one code construct; do not combine several statements.
+Pass structural patterns literally so the shell preserves `$VALUE` and
+`$$$ARGS`; in PowerShell use a literal here-string for patterns containing quotes.
 `source` reads an exact requested text file under the scan root, including
 templates omitted from scan admission; repository ignore rules still apply.
 Use a known path directly, or `paths` when the path is unknown. Read the
@@ -64,6 +68,7 @@ The default brief draft needs only `results` with `review_id`, `decision`,
 ranges (`path`, `start_line`, `end_line`). Finalization reads those exact lines,
 fills the full response and journal summary, and validates it. Use
 `review-response-schema` only for exceptional full schema 1.3 drafts.
+Keep each `summary` and `reason` on one line within 500 characters.
 `paths` is
 navigation, not code evidence: read a returned path before citing its contents.
 `--source-root` checks that every decisive artifact excerpt occurs in a file
