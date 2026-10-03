@@ -247,6 +247,14 @@ pub(super) fn code_target<'a>(
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
+pub(super) fn constant_include_expression<'a>(
+    path: &str,
+    node: &PhpNode<'a>,
+    context: &PhpContext<'a>,
+) -> bool {
+    expression(path, node, context, 0).is_some()
+}
+
 pub(super) fn output_context<'a>(context: &PhpContext<'a>, node: &PhpNode<'a>) -> Option<String> {
     let start = node.range().start;
     let owner = function_scope(node, &context.root);

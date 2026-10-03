@@ -212,6 +212,7 @@ function generated() { require __DIR__ . '/generated/item.php'; }
 function named_writer() { require __DIR__ . '/edited.php'; }
 function root_config() { require BASE_PATH . '/helper.php'; }
 function dynamic() { require $_GET['page']; }
+function helper_selected() { require choose_file(); }
 function edit($content) { file_put_contents(__DIR__ . '/EDITED.php', $content); }
 function disclosure() { readfile($_GET['file']); }
 function stored_output($stored) { echo $stored; }
@@ -282,6 +283,7 @@ function encoded_output($stored) { echo esc_html($stored); }
         "generated",
         "named_writer",
         "dynamic",
+        "helper_selected",
         "disclosure",
         "raw_sql",
         "execute",

@@ -277,7 +277,11 @@ fn ordinary_php_sink_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
     if role == "path" {
         // Variable-selected loaders remain consequential. Missing/writable
         // resolved targets were vetoed by the stronger include check above.
-        if operand.contains('$')
+        if !anchor
+            .tags
+            .iter()
+            .any(|tag| tag == "value-scope:constant-include-expression")
+            || operand.contains('$')
             || operand.contains("..")
             || operand.contains(':')
             || operand.contains('\\')

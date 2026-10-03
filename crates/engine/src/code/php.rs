@@ -40,6 +40,10 @@ pub(super) fn add_operand_facts<'a>(
             continue;
         };
         let node = unwrap_operand(node.clone());
+        if role == "path" && value::constant_include_expression(path, &node, context) {
+            item.tags
+                .push("value-scope:constant-include-expression".into());
+        }
         if role == "path" && value::unresolved_root(&node, context) {
             item.tags.push("value-scope:unresolved-code-root".into());
         }
