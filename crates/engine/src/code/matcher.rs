@@ -1660,6 +1660,9 @@ pub(crate) fn scan_source(
             .cmp(&right.location.start.byte_offset)
             .then_with(|| left.rule_id.cmp(&right.rule_id))
     });
+    if let Some(context) = &php_context {
+        super::php::add_operand_facts(path, &root, context, &literals, &mut evidence);
+    }
     let summaries_microseconds = summaries_started.elapsed().as_micros();
     let paths_started = Instant::now();
     let mut security_paths = super::security_paths::build_security_paths(
@@ -2589,6 +2592,7 @@ fn evidence_context<'tree>(
         reachability: Some(reachability::classify(node, literals)),
         availability: Some(conditional.availability_for(node.range())),
         literals: literal_values,
+        operand_facts: Vec::new(),
         secret: None,
         value_transform: None,
         http_routes: Vec::new(),

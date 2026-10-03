@@ -11,6 +11,24 @@ constructor connection properties, PostgreSQL query text, Laravel/Doctrine raw
 query entrypoints and MongoDB Driver query construction. Unknown property and
 wrapper identities remain gaps.
 
+Review inventories also expose bounded operand facts for compound includes
+and whole-operand output encoding calls. `__DIR__` and exact native
+`dirname(__FILE__)` plus literal string suffixes produce a lexically normalized
+repository-relative target. Configured constants retain an unresolved root.
+Dynamic suffixes, interpolation, stream syntax, and paths escaping the source
+root do not receive a fixed-path fact. Target existence, filesystem aliases,
+and content trust remain separate checks.
+Scalar coercion, escaped strings, and opaque suffix bindings remain unresolved
+rather than inheriting another language's literal semantics.
+
+An `encoding_call` fact identifies an exact outer output call, including
+observed WordPress helpers. It does not establish callable behavior, filter
+semantics, encoding options, or output context. Concatenation and conditional
+output do not inherit this fact from a nested call. These facts are currently
+shadow evidence: they change queue navigation and cards, not review admission
+or protected-path decisions. Other languages retain their existing analysis;
+the fact contract is language-independent.
+
 The profile recognizes reads from `$_GET`, `$_POST`, `$_REQUEST`,
 `$_COOKIE`, and `$_FILES`, and exact native command, mysqli query, HTML output,
 filesystem, deserialization, and dynamic-code APIs. PDO methods require a

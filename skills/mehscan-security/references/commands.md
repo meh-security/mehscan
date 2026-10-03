@@ -18,6 +18,7 @@ source; the journals preserve the complete lookup history.
 | Large-repo inventory | `mehscan investigate review-inventory ROOT --output RUN/inventory` |
 | Reuse finalized IDs | `mehscan investigate review-ledger --inventory RUN/inventory --history OLD_RUN_ROOT,RUN --output RUN/review-ledger.json` |
 | Filter remaining inventory | `mehscan investigate review-inventory-list --inventory RUN/inventory --ledger RUN/review-ledger.json --cwe CWE --limit 50` |
+| Filter operand facts | `mehscan investigate review-inventory-list --inventory RUN/inventory --operand-kind fixed_code_relative_path --limit 50` (also `configured_root_path`, `encoding_call`, `unclassified`) |
 | Selected requests | `mehscan investigate review-bundles ROOT --inventory RUN/inventory --ledger RUN/review-ledger.json --review-ids ID,ID --output RUN/chunk-N` |
 | Bundle IDs | `mehscan investigate review-bundle-list --bundle REQUEST` |
 | One review lead | `mehscan investigate review-card --bundle REQUEST --review-id ID` |

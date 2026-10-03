@@ -103,6 +103,24 @@ struct ObservationGroup {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReviewOperandSummary {
+    pub kind: mehscan_core::OperandFactKind,
+    pub value: String,
+}
+
+fn operand_summaries(evidence: &Evidence) -> Vec<ReviewOperandSummary> {
+    evidence
+        .context
+        .operand_facts
+        .iter()
+        .map(|fact| ReviewOperandSummary {
+            kind: fact.kind.clone(),
+            value: fact.value.clone(),
+        })
+        .collect()
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReviewInventoryEntry {
     pub review_id: String,
     pub review_kind: String,
@@ -113,6 +131,8 @@ pub struct ReviewInventoryEntry {
     pub capability: Capability,
     pub cwe_candidates: Vec<String>,
     pub evidence_strength: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operand_facts: Vec<ReviewOperandSummary>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -882,16 +902,21 @@ fn build_path_review_jobs_internal(
         &observation_exclusions,
     );
     if let Some(entries) = inventory_entries.as_mut() {
-        entries.extend(candidates.iter().map(|candidate| ReviewInventoryEntry {
-            review_id: candidate.id.replacen("path-", "review-", 1),
-            review_kind: "path".to_string(),
-            path: candidate.primary_location.path.clone(),
-            line: candidate.primary_location.start.line,
-            symbol: candidate.sink.enclosing_symbol.clone(),
-            rule_id: candidate.sink.rule_id.clone(),
-            capability: candidate.capability,
-            cwe_candidates: candidate.cwe_candidates.clone(),
-            evidence_strength: format!("{:?}", candidate.state).to_ascii_lowercase(),
+        entries.extend(candidates.iter().map(|candidate| {
+            ReviewInventoryEntry {
+                review_id: candidate.id.replacen("path-", "review-", 1),
+                review_kind: "path".to_string(),
+                path: candidate.primary_location.path.clone(),
+                line: candidate.primary_location.start.line,
+                symbol: candidate.sink.enclosing_symbol.clone(),
+                rule_id: candidate.sink.rule_id.clone(),
+                capability: candidate.capability,
+                cwe_candidates: candidate.cwe_candidates.clone(),
+                evidence_strength: format!("{:?}", candidate.state).to_ascii_lowercase(),
+                operand_facts: evidence_by_id
+                    .get(candidate.sink.id.as_str())
+                    .map_or_else(Vec::new, |sink| operand_summaries(sink)),
+            }
         }));
         entries.extend(observation_groups.iter().filter_map(|group| {
             let anchor = group
@@ -912,13 +937,14 @@ fn build_path_review_jobs_internal(
                 capability: anchor.capability,
                 cwe_candidates: anchor.cwe_candidates.clone(),
                 evidence_strength: if group.priority == 0 {
-                    "source_and_sink"
+                    "source_sink_cooccurrence"
                 } else if group.priority == 1 {
                     "operation"
                 } else {
                     "sink"
                 }
                 .to_string(),
+                operand_facts: operand_summaries(anchor),
             })
         }));
     }

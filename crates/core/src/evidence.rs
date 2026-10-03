@@ -425,6 +425,10 @@ pub struct EvidenceContext {
     pub availability: Option<Availability>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub literals: BTreeMap<String, LiteralEvaluation>,
+    /// Bounded operand properties. These are evidence and next-check hints,
+    /// never standalone safety or source-connectivity verdicts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operand_facts: Vec<OperandFact>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secret: Option<SecretMetadata>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -443,12 +447,32 @@ impl EvidenceContext {
             && self.reachability.is_none()
             && self.availability.is_none()
             && self.literals.is_empty()
+            && self.operand_facts.is_empty()
             && self.secret.is_none()
             && self.value_transform.is_none()
             && self.http_routes.is_empty()
             && self.resource_policy.is_none()
             && self.runtime_environment.is_none()
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperandFactKind {
+    FixedCodeRelativePath,
+    ConfiguredRootPath,
+    EncodingCall,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct OperandFact {
+    pub role: String,
+    pub kind: OperandFactKind,
+    pub location: crate::Location,
+    /// A repository-relative target, unresolved root expression, or observed
+    /// encoder identity, according to kind. Never an inferred source excerpt.
+    pub value: String,
+    pub remaining_checks: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

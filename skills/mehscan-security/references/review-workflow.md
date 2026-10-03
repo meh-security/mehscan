@@ -19,6 +19,10 @@ verdicts.
    locate code; they do not establish attacker control, reachability, ownership,
    or effective protection. Clipped windows and empty unresolved lists do not
    prove safety.
+   Read `operand_facts` when present. A fixed code-relative include points
+   straight to its target; check that target instead of repeating input/caller
+   research. An encoding call still needs the actual output context and its
+   callable/options contract. Facts with remaining checks are not verdicts.
 3. **Test one evidence chain.** State the candidate failure and the facts that
    would prove or refute it. Follow the same value, branch, actor, resource,
    control, and effect. Ask Mehscan for the next decision-changing fact. Use

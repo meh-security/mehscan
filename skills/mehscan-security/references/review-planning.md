@@ -13,11 +13,29 @@ as a few bundles, use `review-bundles` directly. For a large or uncertain
 queue, run `mehscan investigate review-inventory ROOT --output RUN/inventory`
 once for the current source. Read `overview.json` first. Filter the queue with
 `mehscan investigate review-inventory-list --inventory RUN/inventory --cwe CWE`
-or `--capability NAME`, `--path-prefix PATH`, and `--limit N` as needed.
+or `--capability NAME`, `--path-prefix PATH`, `--operand-kind KIND`, and `--limit N` as needed.
 `inventory.json` holds the full queue; `scan-cache.json` is for Mehscan, not
 an AI review package. The inventory lists exact IDs, operation locations,
 capabilities, CWE candidates, evidence strength, and scan coverage without
 source excerpts. A source change invalidates the cache; regenerate it then.
+
+Use `overview.json`'s `by_operand_fact` to see cheap operand properties before
+selecting a chunk. `fixed_code_relative_path` resolves a code-directory include
+target; its remaining question is target existence/content trust (writers and
+deployment changes), not where an HTTP path parameter originates.
+Use the checked-out application as the baseline. Follow writable/generated
+targets when source or configuration suggests that boundary; hypothetical
+filesystem tampering alone is not a reason to demand deployment research.
+`configured_root_path` fixes only the suffix: inspect the root definition and
+overrides. `encoding_call` covers the whole captured output operand, not a
+later concatenation: inspect actual text/attribute/URL/script context, encoding
+options, and the callable contract including filters. These shadow facts do
+not suppress IDs or prove safety. `unclassified` means no supported fact,
+not an absent input source. Combine them with the surface map and selected
+mode; comprehensive still covers every admitted ID. Read the remaining checks
+from the selected evidence/card and query only facts that can change its verdict.
+`source_sink_cooccurrence` means a source and sink share an enclosing group;
+it does not establish value propagation. Actual security paths remain separate.
 
 ## Choose how to run the review
 

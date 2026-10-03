@@ -8,6 +8,255 @@ use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_language::SupportLang;
 use mehscan_core::{Capture, Language};
 
+/// Shadow operand facts: close only the syntactic property described here.
+/// Admission and protected-path construction deliberately do not consume them.
+pub(super) fn add_operand_facts<'a>(
+    path: &str,
+    root: &PhpNode<'a>,
+    context: &PhpContext<'a>,
+    literals: &super::literals::LiteralEnvironment<'a, StrDoc<SupportLang>>,
+    evidence: &mut [mehscan_core::Evidence],
+) {
+    use mehscan_core::{OperandFact, OperandFactKind};
+    let ranges = evidence
+        .iter()
+        .filter(|e| matches!(e.rule_id.as_str(), "php-file-inclusion" | "php-html-output"))
+        .flat_map(|e| e.captures.values())
+        .map(|capture| {
+            (
+                capture.location.start.byte_offset,
+                capture.location.end.byte_offset,
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    if ranges.is_empty() {
+        return;
+    }
+    let nodes = root
+        .dfs()
+        .filter(|n| n.is_named() && ranges.contains(&(n.range().start, n.range().end)))
+        .map(|n| ((n.range().start, n.range().end), n))
+        .collect::<BTreeMap<_, _>>();
+    for item in evidence {
+        let role = match item.rule_id.as_str() {
+            "php-file-inclusion" => "path",
+            "php-html-output" => "content",
+            _ => continue,
+        };
+        let Some(capture) = item.captures.get(role) else {
+            continue;
+        };
+        let Some(node) = nodes.get(&(
+            capture.location.start.byte_offset,
+            capture.location.end.byte_offset,
+        )) else {
+            continue;
+        };
+        let node = unwrap_operand(node.clone());
+        let fact = if role == "path" {
+            let Some((root, suffix)) = compound_include_path(&node, context, literals, 0) else {
+                continue;
+            };
+            if !suffix.starts_with('/') || suffix.contains(['\\', ':', '\0']) {
+                continue;
+            }
+            match root {
+                IncludeRoot::CodeDirectory => {
+                    let Some(target) = code_relative_target(path, &suffix) else {
+                        continue;
+                    };
+                    OperandFact {
+                        role: role.into(),
+                        kind: OperandFactKind::FixedCodeRelativePath,
+                        location: capture.location.clone(),
+                        value: target,
+                        remaining_checks: vec!["target_existence_and_content_trust".into()],
+                    }
+                }
+                IncludeRoot::Configured(name) => OperandFact {
+                    role: role.into(),
+                    kind: OperandFactKind::ConfiguredRootPath,
+                    location: capture.location.clone(),
+                    value: format!("{name}{suffix}"),
+                    remaining_checks: vec![
+                        "root_definition_and_overrides".into(),
+                        "target_existence_and_content_trust".into(),
+                    ],
+                },
+            }
+        } else {
+            if node.kind().as_ref() != "function_call_expression" {
+                continue;
+            }
+            let Some(function) = node.field("function") else {
+                continue;
+            };
+            let Some(arguments) = node.field("arguments") else {
+                continue;
+            };
+            if arguments
+                .dfs()
+                .any(|n| matches!(n.kind().as_ref(), ":" | "..."))
+            {
+                continue;
+            }
+            let observed = function
+                .text()
+                .trim()
+                .trim_start_matches('\\')
+                .to_ascii_lowercase();
+            let native = ["htmlspecialchars", "htmlentities"]
+                .iter()
+                .any(|name| context.exact_function(&node, name));
+            if !native
+                && !matches!(
+                    observed.as_str(),
+                    "esc_html"
+                        | "esc_html__"
+                        | "esc_html_x"
+                        | "esc_attr"
+                        | "esc_attr__"
+                        | "esc_attr_x"
+                        | "esc_url"
+                        | "esc_textarea"
+                        | "wp_kses_post"
+                )
+            {
+                continue;
+            }
+            OperandFact {
+                role: role.into(),
+                kind: OperandFactKind::EncodingCall,
+                location: capture.location.clone(),
+                value: function.text().into_owned(),
+                remaining_checks: if native {
+                    vec!["output_context".into(), "encoding_options".into()]
+                } else {
+                    vec![
+                        "output_context".into(),
+                        "callable_contract_and_filters".into(),
+                    ]
+                },
+            }
+        };
+        item.context.operand_facts.push(fact);
+    }
+}
+
+enum IncludeRoot {
+    CodeDirectory,
+    Configured(String),
+}
+
+fn unwrap_operand(mut node: PhpNode<'_>) -> PhpNode<'_> {
+    while node.kind().as_ref() == "parenthesized_expression" {
+        let Some(child) = node.children().find(|n| n.is_named()) else {
+            break;
+        };
+        node = child;
+    }
+    node
+}
+
+fn compound_include_path<'a>(
+    node: &PhpNode<'a>,
+    context: &PhpContext<'a>,
+    literals: &super::literals::LiteralEnvironment<'a, StrDoc<SupportLang>>,
+    depth: usize,
+) -> Option<(IncludeRoot, String)> {
+    if depth >= 8 {
+        return None;
+    }
+    let node = unwrap_operand(node.clone());
+    if node.kind().as_ref() == "binary_expression"
+        && node.field("operator").is_some_and(|op| op.text() == ".")
+    {
+        let left = node.field("left")?;
+        let right = node.field("right")?;
+        let (root, mut suffix) = compound_include_path(&left, context, literals, depth + 1)?;
+        let part = include_suffix(&right, literals, depth + 1)?;
+        suffix.push_str(&part);
+        return Some((root, suffix));
+    }
+    if node.text().eq_ignore_ascii_case("__DIR__") {
+        return Some((IncludeRoot::CodeDirectory, String::new()));
+    }
+    if context.exact_function(&node, "dirname") {
+        let args = node.field("arguments")?;
+        let args = args.children().filter(|n| n.is_named()).collect::<Vec<_>>();
+        if args.len() == 1 && args[0].text().eq_ignore_ascii_case("__FILE__") {
+            return Some((IncludeRoot::CodeDirectory, String::new()));
+        }
+    }
+    let name = node.text();
+    if node.kind().as_ref() == "name"
+        && !matches!(
+            name.as_ref(),
+            "__FILE__"
+                | "__LINE__"
+                | "__CLASS__"
+                | "__TRAIT__"
+                | "__METHOD__"
+                | "__FUNCTION__"
+                | "__NAMESPACE__"
+        )
+        && name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+    {
+        return Some((IncludeRoot::Configured(name.into_owned()), String::new()));
+    }
+    None
+}
+
+// Do not inherit cross-language scalar coercion or string escape semantics.
+// PHP booleans/null/numeric literals concatenate differently, and an opaque
+// binding needs a producer trace before it can be used as a path proof.
+fn include_suffix<'a>(
+    node: &PhpNode<'a>,
+    literals: &super::literals::LiteralEnvironment<'a, StrDoc<SupportLang>>,
+    depth: usize,
+) -> Option<String> {
+    if depth >= 8 {
+        return None;
+    }
+    let node = unwrap_operand(node.clone());
+    if node.kind().as_ref() == "binary_expression"
+        && node.field("operator").is_some_and(|op| op.text() == ".")
+    {
+        let left = include_suffix(&node.field("left")?, literals, depth + 1)?;
+        let right = include_suffix(&node.field("right")?, literals, depth + 1)?;
+        return Some(format!("{left}{right}"));
+    }
+    if !matches!(node.kind().as_ref(), "string" | "encapsed_string") || node.text().contains('\\') {
+        return None;
+    }
+    match literals.evaluate(&node).value {
+        Some(mehscan_core::LiteralValue::String(value)) if !value.chars().any(char::is_control) => {
+            Some(value)
+        }
+        _ => None,
+    }
+}
+
+fn code_relative_target(path: &str, suffix: &str) -> Option<String> {
+    let parent = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+    let mut components = parent
+        .split('/')
+        .filter(|c| !c.is_empty())
+        .collect::<Vec<_>>();
+    for component in suffix.split('/') {
+        match component {
+            "" | "." => (),
+            ".." => {
+                components.pop()?;
+            }
+            value => components.push(value),
+        }
+    }
+    (!components.is_empty()).then(|| components.join("/"))
+}
+
 type PhpNode<'a> = Node<'a, StrDoc<SupportLang>>;
 type DatabaseExports = BTreeMap<String, (String, Capture)>;
 type IncludedDatabase = (Range<usize>, String, DatabaseExports);

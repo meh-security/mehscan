@@ -515,7 +515,23 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let mut by_capability = BTreeMap::<String, usize>::new();
             let mut by_cwe = BTreeMap::<String, usize>::new();
             let mut by_area = BTreeMap::<String, usize>::new();
+            let mut by_operand_fact = BTreeMap::<String, usize>::new();
             for entry in &inventory.entries {
+                let kinds = entry
+                    .operand_facts
+                    .iter()
+                    .map(|fact| {
+                        serde_json::to_value(&fact.kind)
+                            .map(|value| value.as_str().unwrap().to_string())
+                    })
+                    .collect::<Result<BTreeSet<_>, _>>()
+                    .map_err(|error| error.to_string())?;
+                for kind in kinds {
+                    *by_operand_fact.entry(kind).or_default() += 1;
+                }
+                if entry.operand_facts.is_empty() {
+                    *by_operand_fact.entry("unclassified".into()).or_default() += 1;
+                }
                 let capability =
                     serde_json::to_value(entry.capability).map_err(|error| error.to_string())?;
                 *by_capability
@@ -538,6 +554,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "coverage": inventory.scan.coverage.totals,
                 "by_capability": by_capability,
                 "by_cwe": by_cwe,
+                "by_operand_fact": by_operand_fact,
                 "top_areas": top_areas,
             });
             fs::write(
@@ -565,6 +582,18 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let capability = parsed.optional("--capability");
             let cwe = parsed.optional("--cwe");
             let path_prefix = parsed.optional("--path-prefix");
+            let operand_kind = parsed.optional("--operand-kind");
+            if operand_kind.as_deref().is_some_and(|kind| {
+                !matches!(
+                    kind,
+                    "fixed_code_relative_path"
+                        | "configured_root_path"
+                        | "encoding_call"
+                        | "unclassified"
+                )
+            }) {
+                return Err("invalid --operand-kind; use fixed_code_relative_path, configured_root_path, encoding_call, or unclassified".into());
+            }
             let limit = parsed.optional_usize("--limit")?.unwrap_or(50).min(200);
             let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
             parsed.finish()?;
@@ -598,6 +627,17 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                             entry["path"]
                                 .as_str()
                                 .is_some_and(|path| path.starts_with(value))
+                        }) && operand_kind.as_ref().is_none_or(|kind| {
+                            let facts = entry["operand_facts"].as_array();
+                            if kind == "unclassified" {
+                                facts.is_none_or(|facts| facts.is_empty())
+                            } else {
+                                facts.is_some_and(|facts| {
+                                    facts
+                                        .iter()
+                                        .any(|fact| fact["kind"].as_str() == Some(kind.as_str()))
+                                })
+                            }
                         })
                     })
                     .collect::<Vec<_>>();
@@ -2461,7 +2501,7 @@ fn review_card(
             })
         })
         .collect();
-    let lookups: Vec<_> = review["investigation"]["lookup_requests"]
+    let mut lookups: Vec<_> = review["investigation"]["lookup_requests"]
         .as_array()
         .into_iter()
         .flatten()
@@ -2474,6 +2514,21 @@ fn review_card(
             })
         })
         .collect();
+    if let Some(target) = anchor["context"]["operand_facts"]
+        .as_array()
+        .and_then(|facts| {
+            facts
+                .iter()
+                .find(|fact| fact["kind"] == "fixed_code_relative_path")
+                .and_then(|fact| fact["value"].as_str())
+        })
+    {
+        lookups = vec![serde_json::json!({
+            "operation": "source",
+            "arguments": {"path": target, "start-line": "1", "end-line": "40"},
+            "purpose": "Inspect the fixed target and any visible content-generation boundary; the path selector is resolved."
+        })];
+    }
     let captures = anchor["captures"].as_object().map(|captures| {
         captures
             .iter()
@@ -2489,6 +2544,7 @@ fn review_card(
         "bundle_fingerprint": bundle.bundle_fingerprint,
         "review_id": review_id,
         "selected_anchor_id": selected_anchor_id,
+        "operand_facts": anchor["context"]["operand_facts"].as_array().cloned().unwrap_or_default(),
         "category": bundle.category,
         "playbook": bundle.review_playbooks.get(review_id),
         "security_question": review["review_basis"]["security_question"],
@@ -2913,7 +2969,7 @@ fn print_investigation_help() {
 USAGE:
   mehscan investigate funnel [ROOT]
   mehscan investigate review-inventory [ROOT] --output DIR [--include-review-material true|false]
-  mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--limit N] [--offset N]
+  mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--limit N] [--offset N]
   mehscan investigate review-ledger --inventory DIR --history RUN_ROOT[,RUN_ROOT] --output FILE
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate review-tasks [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
