@@ -171,7 +171,8 @@ function views($a, $b, $raw) { ?>
         fs::write(
             &ledger_path,
             serde_json::to_vec(&serde_json::json!({
-                "schema_version": "1", "source_fingerprint": inventory["source_fingerprint"],
+                "schema_version": "2", "source_fingerprint": inventory["source_fingerprint"],
+                "input_fingerprint": inventory["input_fingerprint"],
                 "inventory_count": inventory["entries"].as_array().unwrap().len(),
                 "reviewed": {representative: decision}, "conflicts": []
             }))

@@ -6,6 +6,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Operations;
+using Microsoft.CodeAnalysis.FlowAnalysis;
 
 // A source/reference-only semantic helper. It never evaluates a project, restores
 // dependencies, emits binaries, or loads target analyzers/generators.
@@ -113,7 +114,7 @@ internal static class Program
                             "Roslyn could not uniquely bind the selected operation", ["missing_or_ambiguous_symbol"]));
 
                     if (action != null && symbol != null && !ErrorType(symbol))
-                        Receiver(model, action, query, project, source, facts);
+                        Receiver(model, action, query, project, source, sources, facts);
 
                     var operandSpan = Span(source, query.Operand);
                     var operand = root.FindNode(operandSpan, getInnermostNodeForTie: true);
@@ -122,6 +123,7 @@ internal static class Program
                     else
                         facts.Add(new(query.Role, "operand_boundary", query.Operand,
                             "Captured operand is not one complete C# syntax node", ["exact_operand_shape"]));
+                    ValueTypes(model, root, query, source, facts);
                     observations.Add(new(query.EvidenceId, project.Id, facts));
                 }
             }
@@ -137,6 +139,64 @@ internal static class Program
             Console.Error.WriteLine(error.Message);
             return 2;
         }
+    }
+
+    private static void ValueTypes(SemanticModel model, SyntaxNode root, Query query, Source source, List<Fact> facts)
+    {
+        if (query.Composition == null) return;
+        var span = Span(source, query.Composition);
+        var composition = root.FindNode(span, getInnermostNodeForTie: true);
+        if (composition.Span != span) return;
+        var values = new List<ExpressionSyntax>();
+        void Parts(ExpressionSyntax expression)
+        {
+            if (expression is BinaryExpressionSyntax binary && binary.IsKind(SyntaxKind.AddExpression))
+            { Parts(binary.Left); Parts(binary.Right); }
+            else if (expression is InterpolatedStringExpressionSyntax interpolation)
+                values.AddRange(interpolation.Contents.OfType<InterpolationSyntax>().Select(i => i.Expression));
+            else if (expression is not LiteralExpressionSyntax) values.Add(expression);
+        }
+        if (composition is not ExpressionSyntax expression) return;
+        if (expression is IdentifierNameSyntax && model.GetSymbolInfo(expression).Symbol is ILocalSymbol local)
+        {
+            // A fallback composition capture can point at the SQL variable rather
+            // than the inserted values. Navigate exact same-local writes from a
+            // top-level reset; do not label the query string as one inserted value.
+            var owner = expression.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault();
+            if (owner?.Body == null || owner.Span.Length > 32768
+                || owner.DescendantNodes().Any(n => n is GotoStatementSyntax or LabeledStatementSyntax)) return;
+            bool Writes(AssignmentExpressionSyntax assignment) => assignment.Left is IdentifierNameSyntax name
+                && SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(name).Symbol, local)
+                && assignment.Ancestors().FirstOrDefault(IsCallable) == owner
+                && assignment.Span.End <= expression.SpanStart;
+            var writes = owner.DescendantNodes().OfType<AssignmentExpressionSyntax>().Where(Writes).ToArray();
+            var reset = writes.LastOrDefault(a => a.IsKind(SyntaxKind.SimpleAssignmentExpression)
+                && a.Parent is ExpressionStatementSyntax { Parent: BlockSyntax block } && block == owner.Body);
+            var declaration = local.DeclaringSyntaxReferences.SingleOrDefault()?.GetSyntax() as VariableDeclaratorSyntax;
+            var initializer = declaration?.Initializer?.Value;
+            if (reset != null)
+                foreach (var write in writes.Where(a => a.SpanStart >= reset.SpanStart)) Parts(write.Right);
+            else if (initializer != null && declaration?.Parent?.Parent is LocalDeclarationStatementSyntax { Parent: BlockSyntax block }
+                && block == owner.Body && initializer.Span.End <= expression.SpanStart)
+            {
+                Parts(initializer);
+                foreach (var write in writes) Parts(write.Right);
+            }
+            else return;
+        }
+        else Parts(expression);
+        foreach (var value in values.Take(16))
+        {
+            var type = model.GetTypeInfo(value).Type;
+            if (type == null || type.TypeKind == TypeKind.Error) continue;
+            facts.Add(new("query_value", "semantic_identity", Location(source, value.Span),
+                $"Observed SQL construction value has compiler type {type.ToDisplayString()}; observed terms do not exhaust or prove the reaching query",
+                ["format_and_sql_grammar", "reaching_query_and_remaining_terms", "producer_or_caller_control"]));
+        }
+        if (values.Count > 16)
+            facts.Add(new("query_value", "operand_boundary", query.Composition,
+                "SQL construction value type window exceeded sixteen expressions; inspect the remaining terms",
+                ["remaining_value_types", "reaching_query_and_remaining_terms"]));
     }
 
     private static void Producers(SemanticModel model, SyntaxNode operand, Query query,
@@ -156,6 +216,16 @@ internal static class Program
                     "Local initializer ownership or shape is unsupported", ["local_producer_and_control_flow"]));
                 return;
             }
+            var captured = owner.DescendantNodes().OfType<IdentifierNameSyntax>().FirstOrDefault(n =>
+                n.Ancestors().FirstOrDefault(IsCallable) != owner
+                && SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(n).Symbol, local));
+            if (captured != null)
+            {
+                facts.Add(new(query.Role, "operand_boundary", Location(source, captured.Span),
+                    "Compiler-resolved local is captured by a nested callable; reaching value not inferred",
+                    ["capture_invocation_and_reaching_value", "producer_or_caller_control"]));
+                return;
+            }
             // Compiler symbol equality separates same-spelling shadowed locals.
             // Any intervening reference is a conservative stop, not a CFG proof.
             var intervening = owner.DescendantNodes().OfType<IdentifierNameSyntax>()
@@ -164,6 +234,7 @@ internal static class Program
                 .ToArray();
             if (intervening.Length != 0)
             {
+                if (LocalFlow(model, operand, local, owner, query, project, sources, facts)) return;
                 // Prefer a replacement over a later append/read so a reviewer can
                 // see resets such as sql = ... after an earlier command. Textual
                 // proximity is navigation only: a conditional write need not run,
@@ -210,8 +281,118 @@ internal static class Program
                 var name = declaration is MethodDeclarationSyntax named ? named.Identifier.Span : declaration.Span;
                 facts.Add(new(query.Role, "semantic_definition", Location(helper, name),
                     method.ToDisplayString(), ["helper_return_and_effect", "runtime_dispatch_and_replacement", "producer_or_caller_control"]));
+                // One exact source return, with call-site arguments left explicit.
+                // No substitution, recursive summary or inferred security contract.
+                if (method.IsStatic && declaration is MethodDeclarationSyntax body)
+                {
+                    var expression = body.ExpressionBody?.Expression
+                        ?? (body.Body?.Statements is { Count: 1 } statements
+                            && statements[0] is ReturnStatementSyntax returned ? returned.Expression : null);
+                    if (expression != null && expression.Span.Length <= 2048)
+                        facts.Add(new(query.Role, "local_operand_origin", Location(helper, expression.Span),
+                            expression.ToString(), ["helper_argument_mapping", "producer_or_caller_control", "exact_interpretation_and_effect"]));
+                }
             }
         }
+    }
+
+    // Possible producers of one immutable string local in the selected method.
+    // Joins union alternatives; resets kill predecessors; appends retain them.
+    // This is deliberately not path feasibility, global taint or a safe verdict.
+    private static bool LocalFlow(SemanticModel model, SyntaxNode operand, ILocalSymbol local,
+        SyntaxNode owner, Query query, Project project, SortedDictionary<string, Source> sources, List<Fact> facts)
+    {
+        if (local.Type.SpecialType != SpecialType.System_String || owner is not BaseMethodDeclarationSyntax
+            || owner.Span.Length > 32768 || owner.DescendantNodes().Any(n => n is TryStatementSyntax)) return false;
+        var references = owner.DescendantNodes().OfType<IdentifierNameSyntax>()
+            .Where(n => SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(n).Symbol, local)).ToArray();
+        if (references.Any(n => n.Ancestors().FirstOrDefault(IsCallable) != owner)) return false;
+        foreach (var reference in references.Where(n => n.SpanStart < operand.SpanStart))
+        {
+            if (reference.Parent is RefExpressionSyntax
+                || reference.Parent is ArgumentSyntax argument && !argument.RefKindKeyword.IsKind(SyntaxKind.None)) return false;
+            var write = reference.Ancestors().OfType<AssignmentExpressionSyntax>()
+                .FirstOrDefault(a => a.Left.Span.Contains(reference.Span));
+            if (write != null && (write.Left != reference
+                || !write.IsKind(SyntaxKind.SimpleAssignmentExpression) && !write.IsKind(SyntaxKind.AddAssignmentExpression))) return false;
+        }
+        ControlFlowGraph? graph;
+        try { graph = ControlFlowGraph.Create(owner, model); }
+        catch (ArgumentException) { return false; }
+        if (graph == null || graph.Blocks.Length > 64) return false;
+        var events = new List<(SyntaxNode Node, bool Keep, bool Selected)>[graph.Blocks.Length];
+        var definitions = new Dictionary<int, SyntaxNode>();
+        var selectedBlock = -1;
+        void Visit(IOperation operation, List<(SyntaxNode, bool, bool)> list, int block)
+        {
+            foreach (var child in operation.ChildOperations) Visit(child, list, block);
+            if (operation is ILocalReferenceOperation read && !read.IsDeclaration
+                && SymbolEqualityComparer.Default.Equals(read.Local, local) && read.Syntax.Span == operand.Span)
+            {
+                list.Add((read.Syntax, false, true)); selectedBlock = block;
+            }
+            IOperation? value = operation switch {
+                ISimpleAssignmentOperation { Target: ILocalReferenceOperation target } write
+                    when SymbolEqualityComparer.Default.Equals(target.Local, local) => write.Value,
+                ICompoundAssignmentOperation { Target: ILocalReferenceOperation target } write
+                    when SymbolEqualityComparer.Default.Equals(target.Local, local) => write.Value,
+                _ => null
+            };
+            if (value == null) return;
+            var node = value.Syntax;
+            bool Refers(IOperation op) => op is ILocalReferenceOperation reference
+                && SymbolEqualityComparer.Default.Equals(reference.Local, local) || op.ChildOperations.Any(Refers);
+            var keep = operation is ICompoundAssignmentOperation || Refers(value);
+            definitions[node.SpanStart] = node;
+            list.Add((node, keep, false));
+        }
+        foreach (var block in graph.Blocks)
+        {
+            var list = events[block.Ordinal] = new();
+            foreach (var operation in block.Operations) Visit(operation, list, block.Ordinal);
+            if (block.BranchValue != null) Visit(block.BranchValue, list, block.Ordinal);
+        }
+        if (selectedBlock < 0 || !graph.Blocks[selectedBlock].IsReachable) return false;
+        var outgoing = graph.Blocks.Select(_ => new HashSet<int>()).ToArray();
+        HashSet<int> Incoming(BasicBlock block) => block.Predecessors
+            .Where(p => p.Source.IsReachable).SelectMany(p => outgoing[p.Source.Ordinal]).ToHashSet();
+        bool Transfer(BasicBlock block, HashSet<int> state, bool stop)
+        {
+            foreach (var item in events[block.Ordinal])
+            {
+                if (item.Selected && stop) break;
+                if (item.Selected) continue;
+                if (!item.Keep) state.Clear();
+                state.Add(item.Node.SpanStart);
+                if (state.Count > 8 || item.Node.Span.Length > 2048) return false;
+            }
+            return true;
+        }
+        bool changed = true;
+        for (int pass = 0; changed && pass < 128; pass++)
+        {
+            changed = false;
+            foreach (var block in graph.Blocks.Where(b => b.IsReachable))
+            {
+                var state = Incoming(block);
+                if (!Transfer(block, state, false)) return false;
+                if (!state.SetEquals(outgoing[block.Ordinal])) { outgoing[block.Ordinal] = state; changed = true; }
+            }
+        }
+        if (changed) return false;
+        var possible = Incoming(graph.Blocks[selectedBlock]);
+        if (!Transfer(graph.Blocks[selectedBlock], possible, true) || possible.Count == 0 || possible.Count > 8) return false;
+        var source = sources[operand.SyntaxTree.FilePath];
+        facts.Add(new(query.Role, "operand_boundary", query.Operand,
+            $"CFG possible local producer set: {possible.Count} source expressions; alternatives and accumulation are not a safe-value proof",
+            ["branch_feasibility_and_accumulation", "producer_or_caller_control", "exact_interpretation_and_effect"]));
+        foreach (var offset in possible.Order())
+        {
+            var expression = definitions[offset];
+            facts.Add(new(query.Role, "local_operand_origin", Location(source, expression.Span),
+                expression.ToString(), ["branch_feasibility_and_accumulation", "producer_or_caller_control", "exact_interpretation_and_effect"]));
+        }
+        return true;
     }
 
     private static bool IsCallable(SyntaxNode n) => n is BaseMethodDeclarationSyntax
@@ -220,7 +401,7 @@ internal static class Program
     // Navigation around one compiler-resolved local, not a receiver-state or CFG
     // summary. In particular an absent Connection reference is not a safe verdict.
     private static void Receiver(SemanticModel model, SyntaxNode action, Query query,
-        Project project, Source source, List<Fact> facts)
+        Project project, Source source, SortedDictionary<string, Source> sources, List<Fact> facts)
     {
         var operation = model.GetOperation(action);
         IOperation? instance = operation switch {
@@ -236,12 +417,32 @@ internal static class Program
                 ? model.GetDeclaredSymbol(variable) as ILocalSymbol : null;
         var type = instance?.Type ?? model.GetTypeInfo(creation ?? action).Type;
         bool Command(ITypeSymbol? candidate) {
+            if (candidate is INamedTypeSymbol named && named.Name == "IDbCommand"
+                && named.ContainingNamespace.ToDisplayString() == "System.Data"
+                && named.DeclaringSyntaxReferences.Length == 0) return true;
             for (var current = candidate as INamedTypeSymbol; current != null; current = current.BaseType)
                 if (current.Name == "DbCommand" && current.ContainingNamespace.ToDisplayString() == "System.Data.Common"
                     && current.DeclaringSyntaxReferences.Length == 0) return true;
             return false;
         }
         if (!Command(type)) return;
+        var receiverSymbol = instance switch {
+            IFieldReferenceOperation field => (ISymbol)field.Field,
+            IParameterReferenceOperation parameter => parameter.Parameter,
+            _ => null
+        };
+        if (receiverSymbol?.DeclaringSyntaxReferences is { Length: 1 } references
+            && sources.TryGetValue(references[0].SyntaxTree.FilePath, out var declaredSource))
+        {
+            var declared = references[0].GetSyntax();
+            var name = declared switch {
+                VariableDeclaratorSyntax field => field.Identifier.Span,
+                ParameterSyntax parameter => parameter.Identifier.Span,
+                _ => declared.Span
+            };
+            facts.Add(new("receiver", "semantic_definition", Location(declaredSource, name),
+                receiverSymbol.ToDisplayString(), ["receiver_origin_and_lifecycle", "effective_execution_and_connection"]));
+        }
         var owner = action.Ancestors().FirstOrDefault(IsCallable);
         var declaration = local?.DeclaringSyntaxReferences.SingleOrDefault()?.GetSyntax() as VariableDeclaratorSyntax;
         var initializer = declaration?.Initializer?.Value;
@@ -373,7 +574,7 @@ internal static class Program
     private sealed record Project(string Id, string TargetFramework, string LanguageVersion, string[] Sources,
         string[] References, string[] ReferenceDirectories, string[] Defines, bool AllowUnsafe = false, bool Nullable = false,
         string[]? UnresolvedReferences = null, string OutputKind = "library");
-    private sealed record Query(string EvidenceId, string Role, SourceLocation Sink, SourceLocation Operand);
+    private sealed record Query(string EvidenceId, string Role, SourceLocation Sink, SourceLocation Operand, SourceLocation? Composition = null);
     private sealed record Source(string Path, string Text, string Hash);
     private sealed record Position(int Line, int Column, int ByteOffset);
     private sealed record SourceLocation(string Path, Position Start, Position End);

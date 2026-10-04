@@ -159,7 +159,7 @@ add_filter('esc_html', 'unsafe_callback');
     assert_eq!(encoded["matching_count"], 3); // Includes overridden helper and wrong script context.
     let reviewed_id = encoded["entries"][0]["review_id"].as_str().unwrap();
     let ledger = output.join("ledger.json");
-    fs::write(&ledger, serde_json::to_vec(&json!({"schema_version":"1","source_fingerprint":saved["source_fingerprint"],"inventory_count":saved["review_count"],"reviewed":{reviewed_id:"not_issue"},"conflicts":[]})).unwrap()).unwrap();
+    fs::write(&ledger, serde_json::to_vec(&json!({"schema_version":"2","source_fingerprint":saved["source_fingerprint"],"input_fingerprint":saved["input_fingerprint"],"inventory_count":saved["review_count"],"reviewed":{reviewed_id:"not_issue"},"conflicts":[]})).unwrap()).unwrap();
     let remaining = run(&[
         "investigate",
         "review-inventory-list",

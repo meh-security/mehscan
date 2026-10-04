@@ -51,6 +51,10 @@ version. Query results are JSON; inspect all `results`, `truncated`, and
 `skipped_files` before concluding that a lookup found nothing.
 Save finalized responses as `RUN/responses/REQUEST_FILENAME`; `report` reads
 that directory and matches each response to its manifest request filename.
+Keep `input-binding.json` with copied manifests and requests for historical
+verdict reuse. A stale source, native input or review-contract binding requires
+fresh review; rebuilding a root overview cannot make an old chunk current.
+Regenerate older inventories and ledgers: both now require schema 2.
 For C/C++ structural calls use a complete statement such as `memcpy($DEST,
 $SRC, $SIZE);`, or use `native-call-sites` for a callee inventory. PHP structural
 patterns are parsed as one code construct; do not combine several statements.
@@ -58,7 +62,9 @@ Pass structural patterns literally so the shell preserves `$VALUE` and
 `$$$ARGS`; in PowerShell use a literal here-string for patterns containing quotes.
 `source` reads an exact requested text file under the scan root, including
 templates omitted from scan admission; repository ignore rules still apply.
-Use a known path directly, or `paths` when the path is unknown. Read the
+Use a known path directly, or `paths` when the path is unknown. Use a
+bare identifier with `symbol --name Shipment`, not `--name "class Shipment"`;
+`paths` searches filenames, not method definitions. Read the
 applicable engine contract or a repository behavior test when template
 interpretation determines the verdict.
 `--path` always names one file, never a directory. `outline` and `enclosing-at`

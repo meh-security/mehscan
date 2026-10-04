@@ -106,20 +106,38 @@ Source files are limited to 2 MiB each; helper output to 8 MiB and execution to
 60 seconds. Snapshot import verifies SHA-256 of the context, all supplied source
 files and reference metadata. Local snapshots contain reference paths and are
 not portable between machines; final facts use repository-relative locations.
-Regenerate after a source/reference/option change. Discard old inventories after
-changing their semantic context; historical verdict reuse remains a separate gate.
+Regenerate after a source/reference/option change. Saved inventories retain the
+native input binding and revalidate it before materializing a selected chunk.
+Native chunk identities also bind these inputs. Keep `input-binding.json` with
+the manifest and requests when copying a run. Review ledgers bind the current
+inventory, every chunk's source/semantic inputs, request contents and review
+contract, and check decisive source against the checkout. Rebuild old inventories
+and ledger files. Inventory and ledger schema 2 reject previous files, including
+native inventories that did not retain reference/context bindings.
 
 Missing dependencies leave precise unresolved bindings. Unrelated compiler errors
 do not discard valid identities, but facts carry `partial_semantic_context`.
 When multiple project/target contexts cover one operation, import withholds its
 facts and emits a diagnostic. A declaration location does not establish runtime
-implementation, helper return behavior or trust. Intervening local references
-stop initializer reuse. The boundary locates the last observed replacement,
-otherwise a compound write or the first reference, for the exact compiler local.
-Conditional writes remain conditional; this is navigation, not a CFG or
-reaching-value proof. Review cards prefer the captured operand's boundary or
-initializer over receiver navigation. Inspect later appends, aliases and branches
-before drawing a conclusion.
+implementation or trust. For an immutable string local in a selected method,
+Roslyn CFG facts can locate up to eight possible source producers across resets,
+branches and appends. Joins retain alternatives; completed resets drop earlier
+parts; appends and self-dependent writes retain their inputs. These are possible
+producers, not feasible paths, concatenation order, global taint or a safe verdict.
+The bound is 64 blocks and a 32,768-character method. Captures, ref/out handoffs,
+deconstruction, unsupported writes, try/catch/finally and exceeded bounds stop
+this analysis and retain source navigation. Reads of an uncaptured immutable
+string do not imply replacement. A source-bound static helper with one return
+expression supplies that exact expression and call identity; argument mapping,
+side effects and interpretation still require review. Review cards prefer the
+captured operand over receiver navigation; captured terms need not exhaust the
+complete SQL operand.
+For SQL construction, `query_value` facts give compiler types at up to sixteen
+exact inserted-value locations. A fallback local capture navigates observed
+writes from a top-level reset. This is source navigation, not a complete reaching
+query: conditional writes, earlier execution, format/culture and all remaining
+terms still require inspection. Scalar types do not automatically establish
+safe SQL. Error types are withheld; an exceeded window stays explicit.
 Razor, generated source, implicit project imports/options and full DI/reflection
 resolution remain outside the explicit context unless already supplied as source.
 
@@ -128,20 +146,26 @@ local and its exact source uses in the same callable. `receiver_reference`
 includes member assignments and calls; an alias, replacement, capture or handoff
 ends navigation at an explicit boundary. There are at most eight reference
 windows of 256 characters, a 2,048-character initializer and a 32,768-character
-callable. Larger shapes, parameters and fields remain open questions. Constructor
+callable. Parameters and fields gain exact compiler declaration locations,
+while their runtime lifecycle remains open. `IDbCommand` is supported as an
+interface identity, without assuming its runtime implementation. Constructor
 or factory identities retain their actual metadata identity and target.
 
 These are source navigation facts: branches, API contracts, reaching state and
 effective execution still require review. Absence of a connection assignment
 is not a safety verdict. A connection passed to a constructor, a later write,
 a different local connection and a handoff must be distinguished using source
-and the applicable API contract. Admission and Value selection remain unchanged.
+and the applicable API contract. Native facts do not change admission or Value
+selection. The independent source scanner recognizes bounded direct command/
+connection aliases; inferred factories still require a later execution site.
 
 ## Native integration checks
 
 Build the helper, then set `MEHSCAN_ROSLYN_BACKEND` to its executable,
 `MEHSCAN_ROSLYN_NET8_REFS` to the .NET 8 reference directory, and
-`MEHSCAN_ROSLYN_NET48_REFS` to the Framework 4.8 reference directory. Ensure the
+`MEHSCAN_ROSLYN_NET48_REFS` to the Framework 4.8 reference directory. Also set
+`MEHSCAN_ROSLYN_NET10_REFS` and `MEHSCAN_ROSLYN_STANDARD20_REFS` to the .NET 10 and
+Standard 2.0 reference directories. Ensure the
 helper's .NET runtime is discoverable (`DOTNET_ROOT` for a private SDK).
 The receiver test additionally needs `MEHSCAN_ROSLYN_SQLCLIENT_REF` pointing to
 the real Microsoft.Data.SqlClient 5.2.1 `ref/net8.0` assembly.
@@ -152,7 +176,14 @@ cargo test -p mehscan-cli --test csharp_semantic_cli -- --ignored
 ```
 
 These opt-in checks use real metadata, including stale inputs, partial binding,
-source lookalikes, Unicode positions, conflicting contexts and saved bundles.
+source lookalikes, Unicode positions, conflicting contexts, branch/loop/reset
+contrasts, mixed operands, helper returns and saved chunk/ledger bindings.
+The validated target baselines are .NET 8/C# 12, Framework 4.8/C# 7.3,
+.NET 10/C# 14 and Standard 2.0/C# 7.3. The helper itself uses .NET 10;
+the target framework does not have to run. Other explicit versions may work
+when matching references and language options are supplied; they are not
+certified by this baseline. Existing deterministic C# rules work without .NET.
+Optional semantic queries currently enrich admitted SQL operands only.
 The asset-selection checks run without .NET:
 
 ```sh

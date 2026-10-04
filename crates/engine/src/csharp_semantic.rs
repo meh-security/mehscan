@@ -34,6 +34,8 @@ pub struct Query {
     pub role: String,
     pub sink: Location,
     pub operand: Location,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub composition: Option<Location>,
 }
 #[derive(Debug, Serialize)]
 struct Request<'a> {
@@ -42,7 +44,7 @@ struct Request<'a> {
     context_path: PathBuf,
     queries: Vec<Query>,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Snapshot {
     schema_version: String,
     pub backend: String,
@@ -53,12 +55,12 @@ pub struct Snapshot {
     pub observations: Vec<Observation>,
     pub diagnostics: Vec<serde_json::Value>,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct FileHash {
     path: String,
     sha256: String,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct ProjectRecord {
     id: String,
     target_framework: String,
@@ -69,11 +71,34 @@ struct ProjectRecord {
     #[serde(default)]
     reference_conflicts: usize,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Observation {
     pub evidence_id: String,
     project_id: String,
     pub facts: Vec<OperandFact>,
+}
+
+/// Persist only the native input binding, without duplicating imported facts.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InputBinding {
+    context_path: PathBuf,
+    snapshot: Snapshot,
+}
+
+impl InputBinding {
+    pub fn capture(context: &Path, snapshot: &Snapshot) -> Result<Self, EngineError> {
+        let mut snapshot = snapshot.clone();
+        snapshot.observations.clear();
+        snapshot.diagnostics.clear();
+        Ok(Self {
+            context_path: context.canonicalize()?,
+            snapshot,
+        })
+    }
+
+    pub fn validate(&self, root: &Path) -> Result<(), EngineError> {
+        validate(root, &self.context_path, &self.snapshot)
+    }
 }
 
 pub fn queries(scan: &ScanResult) -> Vec<Query> {
@@ -86,6 +111,10 @@ pub fn queries(scan: &ScanResult) -> Vec<Query> {
                 role: "query".into(),
                 sink: e.location.clone(),
                 operand: operand.location.clone(),
+                composition: e
+                    .captures
+                    .get("query_composition")
+                    .map(|c| c.location.clone()),
             })
         })
         .collect()

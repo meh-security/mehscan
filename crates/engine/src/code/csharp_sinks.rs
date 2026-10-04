@@ -1003,7 +1003,7 @@ fn database_command_receiver_kind(
     assignment: &Node<'_, StrDoc<SupportLang>>,
     receiver: &str,
 ) -> Option<&'static str> {
-    if receiver_has_type(root, assignment, receiver, is_database_command_type) {
+    if receiver_has_type_inner(root, assignment, receiver, is_database_command_type, 0) {
         return Some("typed-receiver");
     }
     (database_command_factory_initialized_receiver(root, assignment, receiver)
@@ -1111,6 +1111,16 @@ fn receiver_has_type(
     receiver: &str,
     predicate: fn(&str) -> bool,
 ) -> bool {
+    receiver_has_type_inner(root, use_site, receiver, predicate, 4)
+}
+
+fn receiver_has_type_inner(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    use_site: &Node<'_, StrDoc<SupportLang>>,
+    receiver: &str,
+    predicate: fn(&str) -> bool,
+    depth: usize,
+) -> bool {
     let field_has_type = root.dfs().any(|node| {
         node.kind().as_ref() == "field_declaration"
             && node
@@ -1135,7 +1145,37 @@ fn receiver_has_type(
                 && node.range().start < before
                 && scope_range(node, root) == scope
         })
-        .filter_map(|node| receiver_type_event(node, receiver, predicate))
+        .filter_map(|node| {
+            let event = receiver_type_event(node.clone(), receiver, predicate)?;
+            if event.1 || depth == 4 || node.kind().as_ref() != "variable_declarator" {
+                return Some(event);
+            }
+            // Infer only a direct local alias at its declaration. Unknown factories,
+            // field expressions and subsequent replacement retain the old boundary.
+            let Some(declared) = node.parent().and_then(|parent| parent.field("type")) else {
+                return Some(event);
+            };
+            if declared.text().trim() != "var" {
+                return Some(event);
+            }
+            let Some(value) = node
+                .field("value")
+                .or_else(|| node.children().filter(|c| c.is_named()).last())
+            else {
+                return Some(event);
+            };
+            let text = value.text();
+            let Some(alias) = simple_identifier(text.trim()) else {
+                return Some(event);
+            };
+            if alias == receiver {
+                return Some(event);
+            }
+            Some((
+                event.0,
+                receiver_has_type_inner(root, &node, alias, predicate, depth + 1),
+            ))
+        })
         .collect::<Vec<_>>();
     events.sort_by_key(|(offset, _)| *offset);
     if let Some((_, proven)) = events.last() {
@@ -1180,7 +1220,7 @@ fn receiver_is_database_connection(
     use_site: &Node<'_, StrDoc<SupportLang>>,
     receiver: &str,
 ) -> bool {
-    receiver_has_type(root, use_site, receiver, is_database_connection_type)
+    receiver_has_type_inner(root, use_site, receiver, is_database_connection_type, 0)
         || factory_initialized_receiver(
             root,
             use_site,

@@ -49,7 +49,11 @@ fn semantic_collection_import_and_saved_cards_use_real_cli() {
             "{}",
             String::from_utf8_lossy(&out.stderr)
         );
-        serde_json::from_slice(&out.stdout).unwrap()
+        if out.stdout.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&out.stdout).unwrap()
+        }
     };
     let baseline = run(&["scan", root.to_str().unwrap(), "--format", "json"]);
     let prepared = run(&[
@@ -127,8 +131,15 @@ fn semantic_collection_import_and_saved_cards_use_real_cli() {
         "--operand-kind",
         "semantic_definition",
     ]);
-    assert_eq!(listing["matching_count"], 1);
-    let id = listing["entries"][0]["review_id"].as_str().unwrap();
+    assert_eq!(listing["matching_count"], 4);
+    let id = listing["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["symbol"] == "Raw")
+        .unwrap()["review_id"]
+        .as_str()
+        .unwrap();
     let manifest = run(&[
         "investigate",
         "review-bundles",
@@ -158,7 +169,117 @@ fn semantic_collection_import_and_saved_cards_use_real_cli() {
             .iter()
             .any(|f| f["kind"] == "semantic_definition")
     );
+    let draft = artifacts.join("draft.json");
+    let journals = artifacts.join("journals");
+    fs::create_dir_all(&journals).unwrap();
+    let response = bundles
+        .join("responses")
+        .join(manifest["bundles"][0]["filename"].as_str().unwrap());
+    fs::write(
+        &draft,
+        serde_json::to_vec(&json!({"results":[{
+            "review_id": id, "decision":"needs_review", "confidence":"low",
+            "summary":"Contract test only: caller control is not established.",
+            "checks":["Establish caller authority and reachable runtime effect."],
+            "reason":"The caller authority and reachable runtime effect require review."
+        }]}))
+        .unwrap(),
+    )
+    .unwrap();
+    run(&[
+        "investigate",
+        "review-bundle-finalize",
+        "--bundle",
+        request.to_str().unwrap(),
+        "--draft",
+        draft.to_str().unwrap(),
+        "--journal-dir",
+        journals.to_str().unwrap(),
+        "--output",
+        response.to_str().unwrap(),
+        "--source-root",
+        root.to_str().unwrap(),
+    ]);
+    let ledger = artifacts.join("ledger.json");
+    run(&[
+        "investigate",
+        "review-ledger",
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--history",
+        artifacts.to_str().unwrap(),
+        "--output",
+        ledger.to_str().unwrap(),
+    ]);
+    let cache_path = inventory.join("scan-cache.json");
+    let current_cache = fs::read(&cache_path).unwrap();
+    let mut old_cache: Value = serde_json::from_slice(&current_cache).unwrap();
+    old_cache["schema_version"] = json!("1");
+    old_cache.as_object_mut().unwrap().remove("semantic_inputs");
+    fs::write(&cache_path, serde_json::to_vec(&old_cache).unwrap()).unwrap();
+    let rejected_old = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-bundles",
+            root.to_str().unwrap(),
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--review-ids",
+            id,
+            "--output",
+            artifacts.join("old-chunk").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!rejected_old.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected_old.stderr)
+            .contains("unsupported review inventory version")
+    );
+    fs::write(cache_path, current_cache).unwrap();
+    let original_request = fs::read(&request).unwrap();
+    let mut altered: Value = serde_json::from_slice(&original_request).unwrap();
+    altered["reviews"][0]["evidence"][0]["tags"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("altered-after-binding"));
+    fs::write(&request, serde_json::to_vec(&altered).unwrap()).unwrap();
+    let rejected_history = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-ledger",
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--history",
+            artifacts.to_str().unwrap(),
+            "--output",
+            ledger.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!rejected_history.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected_history.stderr)
+            .contains("request changed after input binding")
+    );
+    fs::write(&request, original_request).unwrap();
     fs::write(&assets, b"changed graph").unwrap();
+    let stale_cached = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-bundles",
+            root.to_str().unwrap(),
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--review-ids",
+            id,
+            "--output",
+            artifacts.join("stale-chunk").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!stale_cached.status.success());
+    assert!(String::from_utf8_lossy(&stale_cached.stderr).contains("input metadata is stale"));
     let stale = Command::new(env!("CARGO_BIN_EXE_mehscan"))
         .args([
             "scan",

@@ -40,7 +40,7 @@ fn env_path(name: &str) -> PathBuf {
 }
 
 #[test]
-#[ignore = "requires built Roslyn helper and real .NET 8 / Framework 4.8 reference packs"]
+#[ignore = "requires built Roslyn helper and real .NET 8 / 10, Standard 2.0 and Framework 4.8 packs"]
 fn native_frameworks_preserve_ids_and_expose_exact_symbols_and_boundaries() {
     let fixture = Fixture::new("profiles");
     let backend = env_path("MEHSCAN_ROSLYN_BACKEND");
@@ -60,6 +60,20 @@ fn native_frameworks_preserve_ids_and_expose_exact_symbols_and_boundaries() {
             "7.3",
             "MEHSCAN_ROSLYN_NET48_REFS",
             "System.Data, Version=4.0.0.0",
+        ),
+        (
+            "current",
+            "net10.0",
+            "14.0",
+            "MEHSCAN_ROSLYN_NET10_REFS",
+            "System.Data.Common, Version=10.0.0.0",
+        ),
+        (
+            "standard",
+            "netstandard2.0",
+            "7.3",
+            "MEHSCAN_ROSLYN_STANDARD20_REFS",
+            "netstandard, Version=2.0.0.0",
         ),
     ] {
         let context = fixture.context(label, target, language, &env_path(env));
@@ -127,8 +141,7 @@ fn native_frameworks_preserve_ids_and_expose_exact_symbols_and_boundaries() {
                 .operand_facts
                 .iter()
                 .any(|f| f.kind == OperandFactKind::OperandBoundary
-                    && f.value.contains("Observed local replacement")
-                    && f.location.start.line == 26)
+                    && f.value.contains("CFG possible local producer set"))
         );
         let missing = sink("Missing");
         assert!(missing.context.operand_facts.iter().any(|f| {
@@ -142,7 +155,7 @@ fn native_frameworks_preserve_ids_and_expose_exact_symbols_and_boundaries() {
                 .context
                 .operand_facts
                 .iter()
-                .any(|f| f.kind == OperandFactKind::SemanticDefinition)
+                .any(|f| f.role == "query" && f.kind == OperandFactKind::SemanticDefinition)
         );
 
         let snapshot_path = fixture.0.join(format!("{label}-snapshot.json"));
@@ -179,6 +192,17 @@ fn native_frameworks_preserve_ids_and_expose_exact_symbols_and_boundaries() {
                 .unwrap()
                 .contains("semantic_definition")
         );
+        let original = std::fs::read(&context).unwrap();
+        let mut changed: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        changed["projects"][0]["defines"] = json!(["ALTERED_AFTER_INVENTORY"]);
+        std::fs::write(&context, serde_json::to_vec(&changed).unwrap()).unwrap();
+        assert!(
+            investigation::build_selected_review_jobs(&fixture.0, &inventory, &selected, Some(4))
+                .unwrap_err()
+                .0
+                .contains("context is stale")
+        );
+        std::fs::write(&context, original).unwrap();
     }
 }
 
@@ -403,41 +427,42 @@ class Writes {
             .filter(|f| f.role == "query")
             .collect::<Vec<_>>()
     };
-    for (method, exact_write, description) in [
-        ("Reset", "query = \"SELECT 2\"", "replacement"),
-        ("Append", "query += \" final\"", "compound"),
-        ("Conditional", "query = \"SELECT 3\"", "replacement"),
+    for (method, expected) in [
+        ("Reset", vec!["\"SELECT 2\"", "\" final\""]),
+        ("Append", vec!["input", "\" first\"", "\" final\""]),
+        ("Conditional", vec!["input", "\"SELECT 3\""]),
+        ("ReadOnly", vec!["input"]),
+        ("Overlapping", vec!["input"]),
     ] {
         let facts = native_query(method);
         let boundary = facts
             .iter()
             .find(|f| f.kind == OperandFactKind::OperandBoundary)
             .unwrap();
-        assert_eq!(
-            &source[boundary.location.start.byte_offset..boundary.location.end.byte_offset],
-            exact_write
+        assert!(
+            boundary.value.contains("CFG possible local producer set"),
+            "{method}"
         );
-        assert!(boundary.value.contains(description));
-        assert!(boundary.value.contains("reaching value not inferred"));
         assert!(
             boundary
                 .remaining_checks
                 .iter()
-                .any(|c| c == "branch_and_execution_order")
+                .any(|c| c == "branch_feasibility_and_accumulation")
         );
-        assert!(
-            !facts
-                .iter()
-                .any(|f| f.kind == OperandFactKind::LocalOperandOrigin)
-        );
+        let actual: Vec<_> = facts
+            .iter()
+            .filter(|f| f.kind == OperandFactKind::LocalOperandOrigin)
+            .map(|f| f.value.as_str())
+            .collect();
+        assert_eq!(actual, expected, "{method}");
     }
-    for method in ["ReadOnly", "Handoff", "Captured", "Overlapping"] {
+    for method in ["Handoff", "Captured"] {
         let facts = native_query(method);
         assert!(
             facts
                 .iter()
                 .any(|f| f.kind == OperandFactKind::OperandBoundary
-                    && f.value.contains("Intervening reference")),
+                    && (f.value.contains("Intervening reference") || f.value.contains("captured"))),
             "{method}"
         );
         assert!(
@@ -625,4 +650,370 @@ fn receiver_navigation_tracks_exact_locals_and_stops_without_state_verdicts() {
             .contains("does not match source")
     );
     assert_eq!(unchanged, scan);
+}
+
+#[test]
+#[ignore = "requires Roslyn helper, .NET 8 and SqlClient metadata"]
+fn cfg_producers_cover_mixed_parts_joins_loops_and_unsupported_shapes() {
+    let fixture = Fixture::new("cfg-controls");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/roslyn-flow/App.cs"),
+        fixture.0.join("App.cs"),
+    )
+    .unwrap();
+    let context = fixture.context(
+        "flow",
+        "net8.0",
+        "12.0",
+        &env_path("MEHSCAN_ROSLYN_NET8_REFS"),
+    );
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&context).unwrap()).unwrap();
+    document["projects"][0]["sources"] = json!(["App.cs"]);
+    document["projects"][0]["references"] = json!([env_path("MEHSCAN_ROSLYN_SQLCLIENT_REF")]);
+    std::fs::write(&context, serde_json::to_vec(&document).unwrap()).unwrap();
+    let scan = mehscan_engine::scan_path(&fixture.0).unwrap();
+    let snapshot = csharp_semantic::collect(
+        &fixture.0,
+        &context,
+        &env_path("MEHSCAN_ROSLYN_BACKEND"),
+        &scan,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&snapshot).unwrap()["projects"][0]["compiler_errors"],
+        0
+    );
+    let facts = |method: &str| {
+        scan.evidence
+            .iter()
+            .filter(|e| e.enclosing_symbol.as_deref() == Some(method))
+            .flat_map(|e| {
+                snapshot
+                    .observations
+                    .iter()
+                    .filter(move |o| o.evidence_id == e.id)
+            })
+            .flat_map(|o| &o.facts)
+            .filter(|f| f.role == "query")
+            .collect::<Vec<_>>()
+    };
+    for (method, required, forbidden) in [
+        ("Reset", vec!["\"SELECT 1\""], Some("input")),
+        ("Conditional", vec!["\"SELECT 1\"", "input"], None),
+        ("Append", vec!["input", "\"'\""], None),
+        (
+            "BothBranches",
+            vec!["\"SELECT 1\"", "\"SELECT 2\""],
+            Some("input"),
+        ),
+        ("Loop", vec!["\"SELECT 1\"", "input"], None),
+    ] {
+        let native = facts(method);
+        assert!(
+            native
+                .iter()
+                .any(|f| f.value.contains("CFG possible local producer set")),
+            "{method}"
+        );
+        let producers: Vec<_> = native
+            .iter()
+            .filter(|f| f.kind == OperandFactKind::LocalOperandOrigin)
+            .map(|f| f.value.as_str())
+            .collect();
+        for value in required {
+            assert!(
+                producers.iter().any(|p| p.contains(value)),
+                "{method}: missing {value}: {producers:?}"
+            );
+        }
+        if let Some(value) = forbidden {
+            assert!(
+                !producers.iter().any(|p| p.contains(value)),
+                "{method}: stale {value}"
+            );
+        }
+    }
+    for method in ["Tuple", "LateCapture"] {
+        let native = facts(method);
+        assert!(
+            native
+                .iter()
+                .any(|f| f.kind == OperandFactKind::OperandBoundary),
+            "{method}"
+        );
+        assert!(
+            !native
+                .iter()
+                .any(|f| f.kind == OperandFactKind::LocalOperandOrigin),
+            "{method}"
+        );
+    }
+    assert!(
+        facts("Mixed")
+            .iter()
+            .any(|f| f.kind == OperandFactKind::LocalOperandOrigin
+                && f.value.contains("{id}")
+                && f.value.contains("{input}"))
+    );
+    assert!(facts("Helper").iter().any(|f| {
+        f.kind == OperandFactKind::LocalOperandOrigin
+            && f.value.contains("value")
+            && f.remaining_checks
+                .iter()
+                .any(|c| c == "helper_argument_mapping")
+    }));
+    let mixed = scan
+        .evidence
+        .iter()
+        .find(|e| e.enclosing_symbol.as_deref() == Some("Mixed"))
+        .unwrap();
+    let type_facts: Vec<_> = snapshot
+        .observations
+        .iter()
+        .find(|o| o.evidence_id == mixed.id)
+        .unwrap()
+        .facts
+        .iter()
+        .filter(|f| f.role == "query_value")
+        .collect();
+    assert!(
+        type_facts
+            .iter()
+            .any(|f| f.value.contains("compiler type int"))
+    );
+    assert!(
+        type_facts
+            .iter()
+            .any(|f| f.value.contains("compiler type string"))
+    );
+    assert!(type_facts.iter().all(|f| {
+        f.remaining_checks
+            .iter()
+            .any(|c| c == "reaching_query_and_remaining_terms")
+    }));
+    let mut enriched = scan.clone();
+    csharp_semantic::enrich(&fixture.0, &context, &snapshot, &mut enriched).unwrap();
+    assert_eq!(scan.security_paths, enriched.security_paths);
+    assert_eq!(
+        scan.evidence.iter().map(|e| &e.id).collect::<Vec<_>>(),
+        enriched.evidence.iter().map(|e| &e.id).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+#[ignore = "requires Roslyn helper and real .NET 8 refs"]
+fn receiver_declarations_identify_fields_and_interface_parameters_without_lifecycle_claims() {
+    let fixture = Fixture::new("receiver-declarations");
+    let source = "using System.Data; using System.Data.Common; class Fields { DbCommand stored; void Field(string input) { stored.CommandText = input; } void Parameter(IDbCommand command, string input) { command.CommandText = input; } }";
+    std::fs::write(fixture.0.join("App.cs"), source).unwrap();
+    let context = fixture.context(
+        "fields",
+        "net8.0",
+        "12.0",
+        &env_path("MEHSCAN_ROSLYN_NET8_REFS"),
+    );
+    let scan = mehscan_engine::scan_path(&fixture.0).unwrap();
+    let snapshot = csharp_semantic::collect(
+        &fixture.0,
+        &context,
+        &env_path("MEHSCAN_ROSLYN_BACKEND"),
+        &scan,
+    )
+    .unwrap();
+    assert_eq!(snapshot.observations.len(), 2);
+    for observation in &snapshot.observations {
+        let declaration = observation
+            .facts
+            .iter()
+            .find(|f| f.role == "receiver" && f.kind == OperandFactKind::SemanticDefinition)
+            .unwrap();
+        let text =
+            &source[declaration.location.start.byte_offset..declaration.location.end.byte_offset];
+        assert!(matches!(text, "stored" | "command"));
+        assert!(
+            declaration
+                .remaining_checks
+                .iter()
+                .any(|c| c == "receiver_origin_and_lifecycle")
+        );
+        assert!(
+            observation
+                .facts
+                .iter()
+                .any(|f| f.role == "receiver" && f.kind == OperandFactKind::OperandBoundary)
+        );
+        assert!(
+            !observation
+                .facts
+                .iter()
+                .any(|f| f.role == "receiver" && f.kind == OperandFactKind::LocalOperandOrigin)
+        );
+    }
+    let mut enriched = scan.clone();
+    csharp_semantic::enrich(&fixture.0, &context, &snapshot, &mut enriched).unwrap();
+    assert_eq!(scan.security_paths, enriched.security_paths);
+}
+
+#[test]
+#[ignore = "requires Roslyn helper and real .NET 8 refs"]
+fn construction_type_navigation_keeps_exact_write_values_and_an_explicit_limit() {
+    let fixture = Fixture::new("construction-types");
+    let many = (0..18)
+        .map(|i| format!("{{ids[{i}]}}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let source = format!(
+        r#"
+using System.Data.Common;
+static class TypedWrites {{
+    public static void Reset(DbCommand command, string oldInput, int id, string currentInput) {{
+        var sql = "SELECT '" + oldInput + "'";
+        command.CommandText = sql;
+        sql = "SELECT 1";
+        sql += $" WHERE Id={{id}} AND Name='{{currentInput}}'";
+        command.CommandText = sql;
+    }}
+    public static void Conditional(DbCommand command, string input, bool reset, int id) {{
+        var sql = "SELECT '" + input + "'";
+        if (reset) sql = $"SELECT {{id}}";
+        command.CommandText = sql;
+    }}
+    public static void Many(DbCommand command, int[] ids) {{
+        command.CommandText = $"SELECT {many}";
+    }}
+    public static void ManyBranches(DbCommand command, string input, int which) {{
+        var query = input;
+        switch (which) {{
+            case 0: query = "SELECT 0"; break;
+            case 1: query = "SELECT 1"; break;
+            case 2: query = "SELECT 2"; break;
+            case 3: query = "SELECT 3"; break;
+            case 4: query = "SELECT 4"; break;
+            case 5: query = "SELECT 5"; break;
+            case 6: query = "SELECT 6"; break;
+            case 7: query = "SELECT 7"; break;
+            default: query = "SELECT 8"; break;
+        }}
+        command.CommandText = query;
+    }}
+}}
+"#
+    );
+    std::fs::write(fixture.0.join("App.cs"), &source).unwrap();
+    std::fs::write(fixture.0.join("Helpers.cs"), "").unwrap();
+    let context = fixture.context(
+        "types",
+        "net8.0",
+        "12.0",
+        &env_path("MEHSCAN_ROSLYN_NET8_REFS"),
+    );
+    let mut scan = mehscan_engine::scan_path(&fixture.0).unwrap();
+    // Exercise the actual fallback capture: the query local at the sink,
+    // not a preselected interpolation. This occurs in accumulated app queries.
+    for evidence in &mut scan.evidence {
+        if matches!(
+            evidence.enclosing_symbol.as_deref(),
+            Some("Reset" | "Conditional")
+        ) {
+            let operand = evidence.captures.get("query").unwrap().clone();
+            evidence
+                .captures
+                .insert("query_composition".into(), operand);
+        }
+    }
+    let snapshot = csharp_semantic::collect(
+        &fixture.0,
+        &context,
+        &env_path("MEHSCAN_ROSLYN_BACKEND"),
+        &scan,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&snapshot).unwrap()["projects"][0]["compiler_errors"],
+        0
+    );
+    let values = |method: &str, last: bool| {
+        let matching = scan
+            .evidence
+            .iter()
+            .filter(|e| e.enclosing_symbol.as_deref() == Some(method))
+            .collect::<Vec<_>>();
+        let evidence = if last {
+            matching.last().unwrap()
+        } else {
+            matching.first().unwrap()
+        };
+        snapshot
+            .observations
+            .iter()
+            .find(|o| o.evidence_id == evidence.id)
+            .unwrap()
+            .facts
+            .iter()
+            .filter(|f| f.role == "query_value")
+            .collect::<Vec<_>>()
+    };
+    let reset = values("Reset", true);
+    let source_value = |fact: &mehscan_core::OperandFact| {
+        &source[fact.location.start.byte_offset..fact.location.end.byte_offset]
+    };
+    assert!(
+        reset
+            .iter()
+            .any(|f| source_value(f) == "id" && f.value.contains("compiler type int"))
+    );
+    assert!(
+        reset
+            .iter()
+            .any(|f| source_value(f) == "currentInput" && f.value.contains("compiler type string"))
+    );
+    assert!(
+        !reset
+            .iter()
+            .any(|f| matches!(source_value(f), "oldInput" | "sql"))
+    );
+    let conditional = values("Conditional", true);
+    assert!(conditional.iter().any(|f| source_value(f) == "input"));
+    assert!(conditional.iter().any(|f| source_value(f) == "id"));
+    assert!(conditional.iter().all(|f| {
+        f.remaining_checks
+            .iter()
+            .any(|c| c == "reaching_query_and_remaining_terms")
+    }));
+    let capped = values("Many", true);
+    assert_eq!(
+        capped
+            .iter()
+            .filter(|f| f.kind == OperandFactKind::SemanticIdentity)
+            .count(),
+        16
+    );
+    assert!(
+        capped
+            .iter()
+            .any(|f| f.kind == OperandFactKind::OperandBoundary && f.value.contains("sixteen"))
+    );
+    let joined = scan
+        .evidence
+        .iter()
+        .find(|e| e.enclosing_symbol.as_deref() == Some("ManyBranches"))
+        .unwrap();
+    let joined_facts = &snapshot
+        .observations
+        .iter()
+        .find(|o| o.evidence_id == joined.id)
+        .unwrap()
+        .facts;
+    assert!(
+        joined_facts
+            .iter()
+            .any(|f| f.role == "query" && f.kind == OperandFactKind::OperandBoundary)
+    );
+    assert!(
+        !joined_facts
+            .iter()
+            .any(|f| f.role == "query" && f.value.contains("CFG possible local producer set"))
+    );
+    csharp_semantic::enrich(&fixture.0, &context, &snapshot, &mut scan).unwrap();
 }

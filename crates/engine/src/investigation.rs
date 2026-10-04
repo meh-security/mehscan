@@ -359,6 +359,90 @@ pub struct ReviewInventory {
     #[serde(default)]
     pub admission_audit: ReviewAdmissionAudit,
     pub scan: mehscan_core::ScanResult,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_inputs: Option<crate::csharp_semantic::InputBinding>,
+}
+
+impl ReviewInventory {
+    /// Bind review reuse to facts, admission policy and native inputs, not ID count.
+    pub fn input_fingerprint(&self) -> Result<String, EngineError> {
+        let bytes = serde_json::to_vec(self).map_err(|e| EngineError(e.to_string()))?;
+        Ok(crate::csharp_semantic::digest(&bytes))
+    }
+}
+
+pub fn validate_review_inventory(
+    root: &Path,
+    inventory: &ReviewInventory,
+) -> Result<(), EngineError> {
+    if inventory.schema_version != "2" {
+        return Err(EngineError(
+            "unsupported review inventory version; regenerate it".into(),
+        ));
+    }
+    if let Some(binding) = &inventory.semantic_inputs {
+        binding.validate(root)?;
+    }
+    if review_source_fingerprint(&RepositorySources::load(root)?) != inventory.source_fingerprint {
+        return Err(EngineError(
+            "review inventory is stale: source files changed; regenerate it".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Validate each saved chunk against current source facts and the review contract.
+pub fn validate_history_bundle(
+    inventory: &ReviewInventory,
+    bundle: &PathReviewBundle,
+) -> Result<(), EngineError> {
+    if bundle.triage_contract != path_review_triage_contract()
+        || bundle.playbook_version != "triage-buckets-v3"
+    {
+        return Err(EngineError(
+            "history review contract changed; re-review the chunk".into(),
+        ));
+    }
+    let evidence: Vec<_> = match &bundle.payload {
+        PathReviewBundlePayload::SecurityPath { reviews } => {
+            let candidates = mehscan_core::CandidateReport::from_scan(&inventory.scan)
+                .map_err(|e| EngineError(e.to_string()))?;
+            if reviews
+                .iter()
+                .any(|r| !candidates.candidates.contains(&r.candidate))
+            {
+                return Err(EngineError(
+                    "history chunk has stale source/semantic candidate; re-review it".into(),
+                ));
+            }
+            Vec::new()
+        }
+        PathReviewBundlePayload::Observation { reviews } => {
+            reviews.iter().flat_map(|r| &r.evidence).collect()
+        }
+    };
+    for fact in evidence {
+        if !inventory
+            .scan
+            .evidence
+            .iter()
+            .any(|current| current == fact)
+        {
+            return Err(EngineError(format!(
+                "history chunk has stale source/semantic evidence {:?}; re-review it",
+                fact.id
+            )));
+        }
+    }
+    Ok(())
+}
+
+pub fn review_content_fingerprint(bytes: &[u8]) -> String {
+    crate::csharp_semantic::digest(bytes)
+}
+
+pub fn review_repository_fingerprint(root: &Path) -> Result<String, EngineError> {
+    Ok(review_source_fingerprint(&RepositorySources::load(root)?))
 }
 
 pub fn build_review_inventory(
@@ -374,9 +458,13 @@ pub fn build_review_inventory_with_semantics(
     semantics: Option<(&Path, &Path)>,
 ) -> Result<ReviewInventory, EngineError> {
     let mut scan = scan_path(root)?;
+    let mut semantic_inputs = None;
     if let Some((facts, context)) = semantics {
         let snapshot = crate::csharp_semantic::load(facts)?;
         crate::csharp_semantic::enrich(root, context, &snapshot, &mut scan)?;
+        semantic_inputs = Some(crate::csharp_semantic::InputBinding::capture(
+            context, &snapshot,
+        )?);
     }
     let sources = RepositorySources::load(root)?;
     let source_fingerprint = review_source_fingerprint(&sources);
@@ -393,12 +481,13 @@ pub fn build_review_inventory_with_semantics(
         Some(&mut entries),
     )?;
     Ok(ReviewInventory {
-        schema_version: "1".to_string(),
+        schema_version: "2".to_string(),
         source_fingerprint,
         include_review_material,
         entries,
         admission_audit: job.review_coverage.admission_audit,
         scan,
+        semantic_inputs,
     })
 }
 
@@ -408,20 +497,10 @@ pub fn build_selected_review_jobs(
     review_ids: &BTreeSet<String>,
     context_lines: Option<usize>,
 ) -> Result<PathReviewJob, EngineError> {
-    if inventory.schema_version != "1" {
-        return Err(EngineError(
-            "unsupported review inventory version".to_string(),
-        ));
-    }
     if review_ids.is_empty() {
         return Err(EngineError("select at least one review ID".to_string()));
     }
-    let sources = RepositorySources::load(root)?;
-    if review_source_fingerprint(&sources) != inventory.source_fingerprint {
-        return Err(EngineError(
-            "review inventory is stale: source files changed; regenerate it".to_string(),
-        ));
-    }
+    validate_review_inventory(root, inventory)?;
     let known = inventory
         .entries
         .iter()
@@ -434,7 +513,7 @@ pub fn build_selected_review_jobs(
             )));
         }
     }
-    build_path_review_jobs_internal(
+    let mut job = build_path_review_jobs_internal(
         root,
         context_lines,
         None,
@@ -444,7 +523,16 @@ pub fn build_selected_review_jobs(
         Some(inventory.scan.clone()),
         Some(review_ids),
         None,
-    )
+    )?;
+    if let Some(binding) = &inventory.semantic_inputs {
+        let identity = serde_json::to_vec(&(&job.fingerprint, binding))
+            .map_err(|e| EngineError(e.to_string()))?;
+        job.fingerprint = format!(
+            "path-reviewpack-{}",
+            crate::csharp_semantic::digest(&identity)
+        );
+    }
+    Ok(job)
 }
 
 fn review_source_fingerprint(sources: &RepositorySources) -> String {
@@ -19490,6 +19578,10 @@ fn path_review_fingerprint(
         hash_review_text(&mut hash, value);
     }
     for review in reviews {
+        hash_review_text(
+            &mut hash,
+            &serde_json::to_string(&review.candidate).expect("candidate must serialize"),
+        );
         hash_review_text(&mut hash, &review.id);
         hash_review_text(&mut hash, &review.candidate.id);
         hash_review_text(&mut hash, &review.candidate.title);
@@ -19531,6 +19623,10 @@ fn path_review_fingerprint(
             hash_review_text(&mut hash, evidence_id);
         }
         for item in &review.evidence {
+            hash_review_text(
+                &mut hash,
+                &serde_json::to_string(item).expect("evidence must serialize"),
+            );
             hash_review_text(&mut hash, &item.id);
             hash_review_text(&mut hash, &item.rule_id);
         }
@@ -23541,6 +23637,29 @@ mod tests {
             job.include_review_material,
         );
         assert_ne!(job.fingerprint, changed_fingerprint);
+        let mut changed = job.observation_reviews.clone();
+        let location = changed[0].evidence[0].location.clone();
+        changed[0].evidence[0]
+            .context
+            .operand_facts
+            .push(mehscan_core::OperandFact {
+                role: "query".into(),
+                kind: mehscan_core::OperandFactKind::OperandBoundary,
+                location,
+                value: "Changed compiler input boundary".into(),
+                remaining_checks: vec!["exact_interpretation_and_effect".into()],
+            });
+        assert_ne!(
+            job.fingerprint,
+            path_review_fingerprint(
+                &job.reviews,
+                &changed,
+                &job.triage_contract,
+                job.context_lines,
+                job.offset,
+                job.include_review_material
+            )
+        );
     }
 
     #[test]

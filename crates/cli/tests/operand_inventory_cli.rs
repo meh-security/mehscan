@@ -286,7 +286,7 @@ fn node_alias_facts_support_precise_followup_and_reopening() {
         serde_json::from_slice(&fs::read(artifacts.join("inventory.json")).unwrap()).unwrap();
     let ledger = artifacts.join("ledger.json");
     for decision in ["issue", "needs_review", "not_issue"] {
-        fs::write(&ledger, serde_json::to_vec(&serde_json::json!({"schema_version": "1", "source_fingerprint": saved["source_fingerprint"], "inventory_count": entries.len(), "reviewed": {id("composed"): decision}, "conflicts": []})).unwrap()).unwrap();
+        fs::write(&ledger, serde_json::to_vec(&serde_json::json!({"schema_version": "2", "source_fingerprint": saved["source_fingerprint"], "input_fingerprint": saved["input_fingerprint"], "inventory_count": entries.len(), "reviewed": {id("composed"): decision}, "conflicts": []})).unwrap()).unwrap();
         let queue = list(&["--selection", "value", "--ledger", ledger.to_str().unwrap()]);
         assert_eq!(
             queue["entries"]

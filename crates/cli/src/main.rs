@@ -589,6 +589,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let summary = serde_json::json!({
                 "schema_version": inventory.schema_version,
                 "source_fingerprint": inventory.source_fingerprint,
+                "input_fingerprint": engine(inventory.input_fingerprint())?,
                 "include_review_material": inventory.include_review_material,
                 "review_count": inventory.entries.len(),
                 "coverage": inventory.scan.coverage.totals,
@@ -639,6 +640,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let overview = serde_json::json!({
                 "schema_version": inventory.schema_version,
                 "source_fingerprint": inventory.source_fingerprint,
+                "input_fingerprint": engine(inventory.input_fingerprint())?,
                 "review_count": inventory.entries.len(),
                 "coverage": inventory.scan.coverage.totals,
                 "by_capability": by_capability,
@@ -908,6 +910,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     "--max-total-reviews cannot be used with selected review IDs".to_string(),
                 );
             }
+            let mut input_fingerprint = None;
+            let mut source_fingerprint = None;
             let (job, job_profile) =
                 if let (Some(inventory_dir), Some(ids)) = (inventory_dir, selected_ids) {
                     let cache_path = inventory_dir.join("scan-cache.json");
@@ -916,6 +920,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                             format!("could not read {}: {error}", cache_path.display())
                         })?)
                         .map_err(|error| format!("invalid review inventory: {error}"))?;
+                    input_fingerprint = Some(engine(inventory.input_fingerprint())?);
+                    source_fingerprint = Some(inventory.source_fingerprint.clone());
                     let ids = ids
                         .split(',')
                         .map(str::trim)
@@ -976,6 +982,33 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 started.elapsed().as_millis() - review_jobs_milliseconds;
             bundle_set.manifest.scope.extend(scope);
             write_path_review_bundles(&output, &bundle_set)?;
+            {
+                let source_fingerprint = match source_fingerprint {
+                    Some(value) => value,
+                    None => {
+                        engine(mehscan_engine::investigation::review_repository_fingerprint(&root))?
+                    }
+                };
+                let mut requests = BTreeMap::new();
+                for entry in &bundle_set.manifest.bundles {
+                    let bytes = fs::read(output.join("requests").join(&entry.filename))
+                        .map_err(|e| e.to_string())?;
+                    requests.insert(
+                        entry.filename.clone(),
+                        mehscan_engine::investigation::review_content_fingerprint(&bytes),
+                    );
+                }
+                fs::write(
+                    output.join("input-binding.json"),
+                    serde_json::to_vec_pretty(&ReviewChunkBinding {
+                        input_fingerprint,
+                        source_fingerprint,
+                        requests,
+                    })
+                    .map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+            }
             if timings {
                 eprintln!(
                     "{}",
@@ -2271,9 +2304,18 @@ fn diff_path_review_bundle_runs(
 struct ReviewLedger {
     schema_version: String,
     source_fingerprint: String,
+    input_fingerprint: String,
     inventory_count: usize,
     reviewed: BTreeMap<String, String>,
     conflicts: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewChunkBinding {
+    input_fingerprint: Option<String>,
+    source_fingerprint: String,
+    requests: BTreeMap<String, String>,
 }
 
 fn load_review_ledger(path: &Path, inventory: &serde_json::Value) -> Result<ReviewLedger, String> {
@@ -2289,8 +2331,9 @@ fn load_review_ledger(path: &Path, inventory: &serde_json::Value) -> Result<Revi
         .as_array()
         .ok_or("inventory entries are missing")?
         .len();
-    if ledger.schema_version != "1"
+    if ledger.schema_version != "2"
         || ledger.source_fingerprint != fingerprint
+        || inventory["input_fingerprint"].as_str() != Some(ledger.input_fingerprint.as_str())
         || ledger.inventory_count != count
     {
         return Err("review ledger does not match this inventory; rebuild it".to_string());
@@ -2343,11 +2386,26 @@ fn review_run_directories(
 }
 
 fn build_review_ledger(inventory_dir: &Path, history: &str) -> Result<ReviewLedger, String> {
+    let cache: mehscan_engine::investigation::ReviewInventory = serde_json::from_slice(
+        &fs::read(inventory_dir.join("scan-cache.json"))
+            .map_err(|e| format!("could not read inventory cache: {e}"))?,
+    )
+    .map_err(|e| format!("invalid inventory cache: {e}"))?;
+    engine(mehscan_engine::investigation::validate_review_inventory(
+        Path::new(&cache.scan.root),
+        &cache,
+    ))?;
+    let input_fingerprint = engine(cache.input_fingerprint())?;
     let inventory: serde_json::Value = serde_json::from_slice(
         &fs::read(inventory_dir.join("inventory.json"))
             .map_err(|error| format!("could not read inventory: {error}"))?,
     )
     .map_err(|error| format!("invalid inventory: {error}"))?;
+    if inventory["input_fingerprint"].as_str() != Some(input_fingerprint.as_str()) {
+        return Err(
+            "inventory summary does not match its source/semantic cache; regenerate it".into(),
+        );
+    }
     let fingerprint = inventory["source_fingerprint"]
         .as_str()
         .ok_or("inventory source fingerprint is missing")?;
@@ -2383,11 +2441,62 @@ fn build_review_ledger(inventory_dir: &Path, history: &str) -> Result<ReviewLedg
                 root.display()
             ));
         }
+        if overview["input_fingerprint"].as_str() != Some(input_fingerprint.as_str()) {
+            return Err(format!(
+                "history {} has different review inputs; re-review it",
+                root.display()
+            ));
+        }
         let mut runs = Vec::new();
         review_run_directories(root, 3, &mut runs)?;
         for run in runs {
-            let (_, responses, _) = read_complete_bundle_responses(&run, None, true, None)?;
-            for (_, response) in responses {
+            let binding_path = run.join("input-binding.json");
+            let binding: Option<ReviewChunkBinding> = if binding_path.exists() {
+                Some(
+                    serde_json::from_slice(&fs::read(&binding_path).map_err(|e| e.to_string())?)
+                        .map_err(|e| format!("invalid history chunk binding: {e}"))?,
+                )
+            } else {
+                None
+            };
+            if binding.as_ref().is_none_or(|b| {
+                b.source_fingerprint != fingerprint
+                    || b.input_fingerprint
+                        .as_ref()
+                        .is_some_and(|value| value != &input_fingerprint)
+                    || cache.semantic_inputs.is_some() && b.input_fingerprint.is_none()
+            }) {
+                return Err(format!(
+                    "history chunk {} has different or missing semantic input binding; re-review it",
+                    run.display()
+                ));
+            }
+            let (manifest, responses, _) = read_complete_bundle_responses(
+                &run,
+                None,
+                true,
+                Some(Path::new(&cache.scan.root)),
+            )?;
+            if let Some(binding) = &binding {
+                for entry in &manifest.bundles {
+                    let bytes = fs::read(run.join("requests").join(&entry.filename))
+                        .map_err(|e| e.to_string())?;
+                    if binding.requests.get(&entry.filename)
+                        != Some(&mehscan_engine::investigation::review_content_fingerprint(
+                            &bytes,
+                        ))
+                    {
+                        return Err(
+                            "history chunk request changed after input binding; re-review it"
+                                .into(),
+                        );
+                    }
+                }
+            }
+            for (bundle, response) in responses {
+                engine(mehscan_engine::investigation::validate_history_bundle(
+                    &cache, &bundle,
+                ))?;
                 for result in response.results {
                     if !known.contains(result.review_id.as_str()) {
                         return Err(format!(
@@ -2418,8 +2527,9 @@ fn build_review_ledger(inventory_dir: &Path, history: &str) -> Result<ReviewLedg
         reviewed.remove(id);
     }
     Ok(ReviewLedger {
-        schema_version: "1".to_string(),
+        schema_version: "2".to_string(),
         source_fingerprint: fingerprint.to_string(),
+        input_fingerprint,
         inventory_count: entries.len(),
         reviewed,
         conflicts: conflicts.into_iter().collect(),

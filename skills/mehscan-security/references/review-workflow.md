@@ -25,7 +25,12 @@ verdicts.
    straight to its target; check that target instead of repeating input/caller
    research. An encoding call still needs the actual output context and its
    callable/options contract. Facts with remaining checks are not verdicts.
-   A `local_operand_origin` locates one initializer. `operand_boundary` names
+   A `local_operand_origin` locates a source producer. A compiler CFG set may
+   include alternative writes or accumulated parts: inspect each, without treating
+   the set as a safe value. A helper return still needs its call-site arguments.
+   SQL `query_value` types locate observed construction terms; inspect formatting,
+   producers and the rest of the reaching query before deciding grammar safety.
+   `operand_boundary` names
    the use or shape where reuse stopped; inspect that location. Query text and
    values remain separate questions, and `process_shell_mode` settles only
    the observed option, not executable, argument, platform or caller policy.
