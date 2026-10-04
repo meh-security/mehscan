@@ -481,6 +481,10 @@ pub enum OperandFactKind {
     LocalCallArgument,
     /// Source-located use of one local JDBC preparation, not a binding or execution proof.
     PreparedStatementUse,
+    /// Compiler-resolved symbol metadata; runtime behavior and security contracts stay open.
+    SemanticIdentity,
+    /// Compiler-resolved source declaration location, not a return or trust summary.
+    SemanticDefinition,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -252,9 +252,25 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let mut files_from = None;
     let mut diff_mode = mehscan_engine::ImpactDiffMode::Full;
     let mut diff_mode_explicit = false;
+    let mut csharp_semantic = None;
+    let mut csharp_context = None;
     let mut arguments = arguments.peekable();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
+            "--csharp-semantic" => {
+                csharp_semantic = Some(PathBuf::from(
+                    arguments
+                        .next()
+                        .ok_or("--csharp-semantic requires a snapshot")?,
+                ))
+            }
+            "--csharp-context" => {
+                csharp_context = Some(PathBuf::from(
+                    arguments
+                        .next()
+                        .ok_or("--csharp-context requires a context file")?,
+                ))
+            }
             "--timings" => timings = true,
             "--include-tests" => include_tests = true,
             "--changed-from" => {
@@ -317,6 +333,15 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     }
 
     let root = root.unwrap_or_else(|| PathBuf::from("."));
+    if csharp_semantic.is_some() != csharp_context.is_some() {
+        return Err("--csharp-semantic and --csharp-context must be supplied together".into());
+    }
+    if csharp_semantic.is_some() && diff_mode == mehscan_engine::ImpactDiffMode::Impact {
+        return Err(
+            "Roslyn snapshot import currently requires full scan context; use --diff-mode full"
+                .into(),
+        );
+    }
     if changed_from.is_some() && files_from.is_some() {
         return Err("--changed-from and --files-from cannot be used together".to_string());
     }
@@ -361,6 +386,15 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
             None,
         )
     };
+    if let (Some(facts), Some(context)) = (csharp_semantic, csharp_context) {
+        let snapshot = engine(mehscan_engine::csharp_semantic::load(&facts))?;
+        engine(mehscan_engine::csharp_semantic::enrich(
+            &root,
+            &context,
+            &snapshot,
+            &mut result,
+        ))?;
+    }
     mehscan_engine::impact::apply_result_policy(&mut result);
     // Serialized CLI artifacts must be portable and must not disclose a
     // developer or CI runner's absolute checkout path. Evidence locations are
@@ -490,16 +524,54 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 mehscan_engine::investigation::relationship_funnel(&root),
             )?)
         }
+        "csharp-semantic" => {
+            let context = PathBuf::from(parsed.required("--context")?);
+            let backend = PathBuf::from(parsed.required("--backend")?);
+            let output = PathBuf::from(parsed.required("--output")?);
+            parsed.finish()?;
+            let scan = engine(mehscan_engine::scan_path(&root))?;
+            let snapshot = engine(mehscan_engine::csharp_semantic::collect(
+                &root, &context, &backend, &scan,
+            ))?;
+            let requested = mehscan_engine::csharp_semantic::queries(&scan).len();
+            let covered = snapshot
+                .observations
+                .iter()
+                .map(|o| &o.evidence_id)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len();
+            fs::write(
+                &output,
+                serde_json::to_vec_pretty(&snapshot).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            print_json(
+                &serde_json::json!({"snapshot": output, "backend": snapshot.backend,
+                "requested_operands": requested, "covered_operands": covered,
+                "uncovered_operands": requested.saturating_sub(covered),
+                "observations": snapshot.observations.len(), "diagnostics": snapshot.diagnostics.len()}),
+            )
+        }
         "review-inventory" => {
             let output = PathBuf::from(parsed.required("--output")?);
             let include_review_material = parsed
                 .optional_bool("--include-review-material")?
                 .unwrap_or(false);
+            let semantic = parsed.optional("--csharp-semantic").map(PathBuf::from);
+            let context = parsed.optional("--csharp-context").map(PathBuf::from);
+            if semantic.is_some() != context.is_some() {
+                return Err(
+                    "--csharp-semantic and --csharp-context must be supplied together".into(),
+                );
+            }
             parsed.finish()?;
-            let inventory = engine(mehscan_engine::investigation::build_review_inventory(
-                &root,
-                include_review_material,
-            ))?;
+            let inventory = engine(
+                mehscan_engine::investigation::build_review_inventory_with_semantics(
+                    &root,
+                    include_review_material,
+                    semantic.as_deref().zip(context.as_deref()),
+                ),
+            )?;
             fs::create_dir_all(&output).map_err(|error| {
                 format!(
                     "could not create inventory directory {}: {error}",
@@ -623,11 +695,13 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         | "process_shell_mode"
                         | "native_operand_declaration"
                         | "prepared_statement_use"
+                        | "semantic_identity"
+                        | "semantic_definition"
                         | "local_call_argument"
                         | "unclassified"
                 )
             }) {
-                return Err("invalid --operand-kind; use fixed_code_relative_path, configured_root_path, repository_code_target, encoding_call, output_context, local_operand_origin, operand_boundary, query_structure, process_shell_mode, native_operand_declaration, local_call_argument, prepared_statement_use, or unclassified".into());
+                return Err("invalid --operand-kind; use fixed_code_relative_path, configured_root_path, repository_code_target, encoding_call, output_context, local_operand_origin, operand_boundary, query_structure, process_shell_mode, native_operand_declaration, local_call_argument, prepared_statement_use, semantic_identity, semantic_definition, or unclassified".into());
             }
             let limit = parsed.optional_usize("--limit")?.unwrap_or(50).min(200);
             let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
@@ -3118,6 +3192,9 @@ fn print_report_help() {
 
 fn print_scan_help() {
     println!(
+        "Optional C# facts: --csharp-semantic SNAPSHOT --csharp-context CONTEXT (full scan context only)."
+    );
+    println!(
         "USAGE:\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--timings] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact]\n\n'json' preserves raw evidence and SecurityPath data. 'candidates' emits only reviewable bounded relationships plus coverage. 'sarif-candidates' emits one SARIF 2.1.0 review result per candidate, never one result per raw observation; legacy 'sarif' remains an alias. Use 'mehscan report --format sarif' for confirmed post-triage findings. Secret detection is currently disabled; secret-only text is reported as ignored. '--timings' emits one machine-readable phase profile to stderr without changing stdout. Directory scans honor repository-local .gitignore, nested .gitignore, .ignore, and .git/info/exclude rules, but not global user ignores. Built-in dependency and generated-tree exclusions remain mandatory. By default, test, fixture, sample, generated, and bundled sources are excluded from SAST. '--include-tests' promotes those supported source files into full SAST. '--jobs N' overrides automatic per-file worker selection. '--changed-from REF' includes tracked changes since REF and untracked files. '--files-from PATH' accepts one repository-relative path per line; a missing path is treated as a deletion. Diff mode 'full' is the default: analyze the complete repository, then return evidence and paths touching changed lines. Diff mode 'impact' analyzes changed files, small same-directory context, and direct importers. Both modes return all full-scan results when deletions, renames, project-wide configuration, or central entrypoint changes make changed-location filtering unsafe; impact mode also falls back for large or broad expansions. Scope, result policy, fallback reasons, and Git changed-line ranges are retained in JSON, candidate, and SARIF run metadata."
     );
 }
@@ -3140,7 +3217,8 @@ fn print_investigation_help() {
 
 USAGE:
   mehscan investigate funnel [ROOT]
-  mehscan investigate review-inventory [ROOT] --output DIR [--include-review-material true|false]
+  mehscan investigate csharp-semantic [ROOT] --context FILE --backend EXE --output FILE
+  mehscan investigate review-inventory [ROOT] --output DIR [--include-review-material true|false] [--csharp-semantic FILE --csharp-context FILE]
   mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--selection all|value|deferred] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--group-by contract] [--contract KEY] [--limit N] [--offset N]
   mehscan investigate review-ledger --inventory DIR --history RUN_ROOT[,RUN_ROOT] --output FILE
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]

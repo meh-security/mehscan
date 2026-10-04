@@ -6,6 +6,8 @@ Mehscan is under active development. It supports C, C++, C#, Java, JavaScript, T
 
 See [extended SQL and NoSQL coverage](docs/extended-database-coverage.md) for database query mechanics and remaining language-specific gaps.
 
+An experimental [optional Roslyn backend](backends/roslyn/README.md) adds compiler-backed C# navigation facts from explicitly supplied source and references.
+
 ## What it does
 
 - Scans source code locally without executing build tools or application code.

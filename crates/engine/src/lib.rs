@@ -3,6 +3,7 @@
 pub mod benchmark;
 pub mod code;
 mod csharp_review;
+pub mod csharp_semantic;
 pub mod evaluation;
 pub mod impact;
 pub mod investigation;

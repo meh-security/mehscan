@@ -365,7 +365,19 @@ pub fn build_review_inventory(
     root: &Path,
     include_review_material: bool,
 ) -> Result<ReviewInventory, EngineError> {
-    let scan = scan_path(root)?;
+    build_review_inventory_with_semantics(root, include_review_material, None)
+}
+
+pub fn build_review_inventory_with_semantics(
+    root: &Path,
+    include_review_material: bool,
+    semantics: Option<(&Path, &Path)>,
+) -> Result<ReviewInventory, EngineError> {
+    let mut scan = scan_path(root)?;
+    if let Some((facts, context)) = semantics {
+        let snapshot = crate::csharp_semantic::load(facts)?;
+        crate::csharp_semantic::enrich(root, context, &snapshot, &mut scan)?;
+    }
     let sources = RepositorySources::load(root)?;
     let source_fingerprint = review_source_fingerprint(&sources);
     let mut entries = Vec::new();
