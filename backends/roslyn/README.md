@@ -118,12 +118,28 @@ stop initializer reuse; this increment supplies no CFG/reaching-write proof.
 Razor, generated source, implicit project imports/options and full DI/reflection
 resolution remain outside the explicit context unless already supplied as source.
 
+For compiler-bound `DbCommand` receivers, the helper locates one initialized
+local and its exact source uses in the same callable. `receiver_reference`
+includes member assignments and calls; an alias, replacement, capture or handoff
+ends navigation at an explicit boundary. There are at most eight reference
+windows of 256 characters, a 2,048-character initializer and a 32,768-character
+callable. Larger shapes, parameters and fields remain open questions. Constructor
+or factory identities retain their actual metadata identity and target.
+
+These are source navigation facts: branches, API contracts, reaching state and
+effective execution still require review. Absence of a connection assignment
+is not a safety verdict. A connection passed to a constructor, a later write,
+a different local connection and a handoff must be distinguished using source
+and the applicable API contract. Admission and Value selection remain unchanged.
+
 ## Native integration checks
 
 Build the helper, then set `MEHSCAN_ROSLYN_BACKEND` to its executable,
 `MEHSCAN_ROSLYN_NET8_REFS` to the .NET 8 reference directory, and
 `MEHSCAN_ROSLYN_NET48_REFS` to the Framework 4.8 reference directory. Ensure the
 helper's .NET runtime is discoverable (`DOTNET_ROOT` for a private SDK).
+The receiver test additionally needs `MEHSCAN_ROSLYN_SQLCLIENT_REF` pointing to
+the real Microsoft.Data.SqlClient 5.2.1 `ref/net8.0` assembly.
 
 ```sh
 cargo test -p mehscan-engine --test csharp_semantic_backend -- --ignored

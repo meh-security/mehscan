@@ -112,6 +112,9 @@ internal static class Program
                         facts.Add(new(query.Role, "operand_boundary", query.Operand,
                             "Roslyn could not uniquely bind the selected operation", ["missing_or_ambiguous_symbol"]));
 
+                    if (action != null && symbol != null && !ErrorType(symbol))
+                        Receiver(model, action, query, project, source, facts);
+
                     var operandSpan = Span(source, query.Operand);
                     var operand = root.FindNode(operandSpan, getInnermostNodeForTie: true);
                     if (operand.Span == operandSpan)
@@ -192,6 +195,89 @@ internal static class Program
 
     private static bool IsCallable(SyntaxNode n) => n is BaseMethodDeclarationSyntax
         or LocalFunctionStatementSyntax or AnonymousFunctionExpressionSyntax;
+
+    // Navigation around one compiler-resolved local, not a receiver-state or CFG
+    // summary. In particular an absent Connection reference is not a safe verdict.
+    private static void Receiver(SemanticModel model, SyntaxNode action, Query query,
+        Project project, Source source, List<Fact> facts)
+    {
+        var operation = model.GetOperation(action);
+        IOperation? instance = operation switch {
+            ISimpleAssignmentOperation { Target: IPropertyReferenceOperation property } => property.Instance,
+            IInvocationOperation call => call.Instance,
+            _ => null
+        };
+        var creation = action as ExpressionSyntax;
+        if (instance is IInstanceReferenceOperation)
+            creation = action.Ancestors().OfType<ObjectCreationExpressionSyntax>().FirstOrDefault();
+        var local = instance is ILocalReferenceOperation reference ? reference.Local
+            : creation?.Parent is EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax variable }
+                ? model.GetDeclaredSymbol(variable) as ILocalSymbol : null;
+        var type = instance?.Type ?? model.GetTypeInfo(creation ?? action).Type;
+        bool Command(ITypeSymbol? candidate) {
+            for (var current = candidate as INamedTypeSymbol; current != null; current = current.BaseType)
+                if (current.Name == "DbCommand" && current.ContainingNamespace.ToDisplayString() == "System.Data.Common"
+                    && current.DeclaringSyntaxReferences.Length == 0) return true;
+            return false;
+        }
+        if (!Command(type)) return;
+        var owner = action.Ancestors().FirstOrDefault(IsCallable);
+        var declaration = local?.DeclaringSyntaxReferences.SingleOrDefault()?.GetSyntax() as VariableDeclaratorSyntax;
+        var initializer = declaration?.Initializer?.Value;
+        if (local == null || owner == null || owner.Span.Length > 32768 || initializer == null
+            || initializer.Ancestors().FirstOrDefault(IsCallable) != owner || initializer.Span.Length > 2048)
+        {
+            facts.Add(new("receiver", "operand_boundary", Location(source, action.Span),
+                "Command receiver is not a bounded initialized local in this callable",
+                ["receiver_origin_and_lifecycle", "effective_execution_and_connection"]));
+            return;
+        }
+        facts.Add(new("receiver", "local_operand_origin", Location(source, initializer.Span),
+            initializer.ToString(), ["control_flow_and_reaching_receiver_state", "effective_execution_and_connection"]));
+        var origin = model.GetOperation(initializer);
+        while (origin is IConversionOperation conversion) origin = conversion.Operand;
+        if (origin is ILocalReferenceOperation or IParameterReferenceOperation or IFieldReferenceOperation or IPropertyReferenceOperation)
+        {
+            facts.Add(new("receiver", "operand_boundary", Location(source, initializer.Span),
+                "Receiver initializer aliases an existing receiver; navigation stops here",
+                ["receiver_origin_alias_or_factory", "effective_execution_and_connection"]));
+            return;
+        }
+        if (Target(origin) is IMethodSymbol constructor && !ErrorType(constructor))
+            facts.Add(new("receiver", "semantic_identity", Location(source, initializer.Span),
+                Identity(constructor, project), ["constructor_or_factory_contract", "effective_execution_and_connection"]));
+        var uses = owner.DescendantNodes().OfType<IdentifierNameSyntax>()
+            .Where(n => SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(n).Symbol, local))
+            .OrderBy(n => n.SpanStart).ToArray();
+        var seen = new HashSet<Microsoft.CodeAnalysis.Text.TextSpan>();
+        foreach (var use in uses)
+        {
+            var direct = use.Parent is MemberAccessExpressionSyntax member && member.Expression == use;
+            var window = use.AncestorsAndSelf().TakeWhile(n => n != owner && n is not StatementSyntax)
+                .LastOrDefault(n => n is ExpressionSyntax or VariableDeclaratorSyntax) ?? use;
+            if (seen.Contains(window.Span)) continue;
+            if (seen.Count == 8 || window.Span.Length > 256)
+            {
+                facts.Add(new("receiver", "operand_boundary", Location(source, use.Span),
+                    "Receiver reference window exceeded eight uses or 256 characters",
+                    ["remaining_receiver_references", "effective_execution_and_connection"]));
+                return;
+            }
+            seen.Add(window.Span);
+            facts.Add(new("receiver", "receiver_reference", Location(source, window.Span),
+                window.ToString(), ["control_flow_and_reaching_receiver_state", "member_contract_and_effect"]));
+            if (!direct || use.Ancestors().FirstOrDefault(IsCallable) != owner)
+            {
+                facts.Add(new("receiver", "operand_boundary", Location(source, use.Span),
+                    "Receiver reference leaves direct local member use; navigation stops here",
+                    ["receiver_replacement_alias_capture_or_handoff", "effective_execution_and_connection"]));
+                return;
+            }
+        }
+        facts.Add(new("receiver", "operand_boundary", Location(source, declaration!.Identifier.Span),
+            $"Receiver navigation covers {seen.Count} distinct reference windows in this callable; no runtime state inferred",
+            ["control_flow_and_reaching_receiver_state", "member_contract_and_effect", "caller_or_entrypoint_reachability"]));
+    }
 
     private static ISymbol? Target(IOperation? op) => op switch
     {

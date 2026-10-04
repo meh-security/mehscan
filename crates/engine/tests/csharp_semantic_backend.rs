@@ -299,7 +299,166 @@ fn native_binding_distinguishes_source_lookalikes_and_inline_producer_from_sink(
     assert!(sink.value.contains("DbCommand.CommandText"));
     assert!(sink.value.contains("assembly=lookalike,"));
     assert!(!sink.value.contains("assembly=System.Data.Common,"));
+    assert!(!facts.iter().any(|f| f.role == "receiver"));
     assert!(facts.iter().any(|f| f.role == "query"
         && f.kind == OperandFactKind::SemanticDefinition
         && f.location.path == "nested/Helpers.cs"));
+}
+
+#[test]
+#[ignore = "requires Roslyn helper, .NET 8 refs and Microsoft.Data.SqlClient 5.2.1 ref assembly"]
+fn receiver_navigation_tracks_exact_locals_and_stops_without_state_verdicts() {
+    let fixture = Fixture::new("receivers");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/roslyn-receiver/App.cs"),
+        fixture.0.join("App.cs"),
+    )
+    .unwrap();
+    let mut source = std::fs::read_to_string(fixture.0.join("App.cs")).unwrap();
+    source.push_str("\npublic class Aliases\n{\n    public void FromOther(SqlCommand other, string input)\n    {\n        SqlCommand command = other;\n        command.CommandText = \"SELECT * FROM Items WHERE Name='\" + input + \"'\";\n        command.ExecuteReader();\n    }\n}\n");
+    std::fs::write(fixture.0.join("App.cs"), source).unwrap();
+    let context = fixture.context(
+        "receivers",
+        "net8.0",
+        "12.0",
+        &env_path("MEHSCAN_ROSLYN_NET8_REFS"),
+    );
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&context).unwrap()).unwrap();
+    document["projects"][0]["sources"] = json!(["App.cs"]);
+    document["projects"][0]["references"] = json!([env_path("MEHSCAN_ROSLYN_SQLCLIENT_REF")]);
+    std::fs::write(&context, serde_json::to_vec(&document).unwrap()).unwrap();
+    let scan = mehscan_engine::scan_path(&fixture.0).unwrap();
+    let snapshot = csharp_semantic::collect(
+        &fixture.0,
+        &context,
+        &env_path("MEHSCAN_ROSLYN_BACKEND"),
+        &scan,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&snapshot).unwrap()["projects"][0]["compiler_errors"],
+        0
+    );
+    let mut enriched = scan.clone();
+    csharp_semantic::enrich(&fixture.0, &context, &snapshot, &mut enriched).unwrap();
+    let facts = |name: &str| {
+        enriched
+            .evidence
+            .iter()
+            .filter(|e| e.enclosing_symbol.as_deref() == Some(name))
+            .flat_map(|e| e.context.operand_facts.iter())
+            .filter(|f| f.role == "receiver")
+            .collect::<Vec<_>>()
+    };
+    for method in [
+        "Constructed",
+        "Assigned",
+        "Empty",
+        "Passed",
+        "Replaced",
+        "Captured",
+        "Conditional",
+        "Many",
+        "Shadow",
+    ] {
+        assert!(
+            facts(method)
+                .iter()
+                .any(|f| f.kind == OperandFactKind::LocalOperandOrigin),
+            "{method}"
+        );
+        assert!(
+            facts(method)
+                .iter()
+                .any(|f| f.kind == OperandFactKind::SemanticIdentity
+                    && f.value
+                        .contains("Microsoft.Data.SqlClient, Version=5.0.0.0")),
+            "{method}"
+        );
+    }
+    for method in ["Constructed", "Assigned", "Empty", "Conditional", "Shadow"] {
+        assert!(
+            facts(method)
+                .iter()
+                .any(|f| f.kind == OperandFactKind::ReceiverReference
+                    && f.value == "command.ExecuteReader()"),
+            "{method}"
+        );
+        assert!(
+            facts(method)
+                .iter()
+                .any(|f| f.value.contains("no runtime state inferred")),
+            "{method}"
+        );
+    }
+    assert!(
+        facts("Assigned")
+            .iter()
+            .any(|f| f.value == "command.Connection = connection")
+    );
+    assert!(
+        facts("Conditional")
+            .iter()
+            .any(|f| f.value == "command.Connection = connection")
+    );
+    for method in ["Passed", "Replaced", "Captured"] {
+        assert!(
+            facts(method).iter().any(|f| f
+                .remaining_checks
+                .iter()
+                .any(|c| c == "receiver_replacement_alias_capture_or_handoff")),
+            "{method}"
+        );
+        assert!(
+            !facts(method)
+                .iter()
+                .any(|f| f.value.contains("no runtime state inferred")),
+            "{method}"
+        );
+    }
+    assert!(
+        !facts("Passed")
+            .iter()
+            .any(|f| f.value == "command.ExecuteReader()")
+    );
+    assert!(facts("Many").iter().any(|f| {
+        f.remaining_checks
+            .iter()
+            .any(|c| c == "remaining_receiver_references")
+    }));
+    assert!(!facts("Shadow").iter().any(|f| f.value.contains("42")));
+    assert!(
+        facts("FromOther").iter().any(|f| {
+            f.remaining_checks
+                .iter()
+                .any(|c| c == "receiver_origin_alias_or_factory")
+        }),
+        "FromOther receiver facts: {:?}",
+        facts("FromOther")
+    );
+    assert!(
+        !facts("FromOther")
+            .iter()
+            .any(|f| f.kind == OperandFactKind::ReceiverReference)
+    );
+    // Source facts are validated before any scan mutation, not trusted strings.
+    let mut forged: csharp_semantic::Snapshot =
+        serde_json::from_value(serde_json::to_value(&snapshot).unwrap()).unwrap();
+    forged
+        .observations
+        .iter_mut()
+        .flat_map(|o| &mut o.facts)
+        .find(|f| f.kind == OperandFactKind::ReceiverReference)
+        .unwrap()
+        .value
+        .push_str(" altered");
+    let mut unchanged = scan.clone();
+    assert!(
+        csharp_semantic::enrich(&fixture.0, &context, &forged, &mut unchanged)
+            .unwrap_err()
+            .0
+            .contains("does not match source")
+    );
+    assert_eq!(unchanged, scan);
 }

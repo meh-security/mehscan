@@ -485,6 +485,8 @@ pub enum OperandFactKind {
     SemanticIdentity,
     /// Compiler-resolved source declaration location, not a return or trust summary.
     SemanticDefinition,
+    /// Exact source use of a compiler-resolved receiver local; no lifecycle proof.
+    ReceiverReference,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

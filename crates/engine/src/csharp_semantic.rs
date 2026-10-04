@@ -208,18 +208,22 @@ pub fn enrich(
                     | OperandFactKind::SemanticDefinition
                     | OperandFactKind::LocalOperandOrigin
                     | OperandFactKind::OperandBoundary
+                    | OperandFactKind::ReceiverReference
             ) || fact.remaining_checks.is_empty()
             {
                 return Err(EngineError("Unsupported Roslyn navigation fact".into()));
             }
             validate_location(root, &snapshot.sources, &fact.location)?;
-            if fact.kind == OperandFactKind::LocalOperandOrigin {
+            if matches!(
+                fact.kind,
+                OperandFactKind::LocalOperandOrigin | OperandFactKind::ReceiverReference
+            ) {
                 let text = std::fs::read_to_string(source_path(root, &fact.location.path)?)?;
                 if text.get(fact.location.start.byte_offset..fact.location.end.byte_offset)
                     != Some(fact.value.as_str())
                 {
                     return Err(EngineError(
-                        "Roslyn initializer text does not match source".into(),
+                        "Roslyn source fact text does not match source".into(),
                     ));
                 }
             }
