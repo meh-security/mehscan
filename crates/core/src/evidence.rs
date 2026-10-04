@@ -475,6 +475,10 @@ pub enum OperandFactKind {
     QueryStructure,
     /// An observed process shell option; executable/argument policy stays open.
     ProcessShellMode,
+    /// An exact native scalar declaration; effective widths and conversions stay open.
+    NativeOperandDeclaration,
+    /// One observed direct call's argument for a file-local helper parameter.
+    LocalCallArgument,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

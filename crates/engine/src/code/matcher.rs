@@ -1830,6 +1830,7 @@ pub(crate) fn scan_source(
     let security_paths_microseconds = paths_started.elapsed().as_micros();
     super::decision_origins::annotate(language, source, &root, &mut evidence);
     super::csharp_operands::annotate(language, &root, &mut evidence);
+    super::native_operands::annotate(language, &root, &mut evidence);
     evidence.extend(secret_evidence);
     evidence.sort_by(|left, right| {
         left.location

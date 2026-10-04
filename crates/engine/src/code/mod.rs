@@ -82,6 +82,7 @@ mod native_libxml2;
 mod native_lifetime;
 mod native_loaded_extent;
 mod native_multiplication;
+mod native_operands;
 mod native_ownership;
 mod native_region_bounds;
 mod native_remaining_input;

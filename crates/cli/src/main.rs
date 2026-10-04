@@ -621,10 +621,12 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         | "operand_boundary"
                         | "query_structure"
                         | "process_shell_mode"
+                        | "native_operand_declaration"
+                        | "local_call_argument"
                         | "unclassified"
                 )
             }) {
-                return Err("invalid --operand-kind; use fixed_code_relative_path, configured_root_path, repository_code_target, encoding_call, output_context, local_operand_origin, operand_boundary, query_structure, process_shell_mode, or unclassified".into());
+                return Err("invalid --operand-kind; use fixed_code_relative_path, configured_root_path, repository_code_target, encoding_call, output_context, local_operand_origin, operand_boundary, query_structure, process_shell_mode, native_operand_declaration, local_call_argument, or unclassified".into());
             }
             let limit = parsed.optional_usize("--limit")?.unwrap_or(50).min(200);
             let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
