@@ -1,6 +1,104 @@
 use std::{fs, process::Command};
 
 #[test]
+fn csharp_constructor_and_reassignment_facts_survive_saved_inventory_and_cards() {
+    let root =
+        std::env::temp_dir().join(format!("mehscan-csharp-operand-cli-{}", std::process::id()));
+    let artifacts = root.with_file_name(format!(
+        "mehscan-csharp-operand-cli-run-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("Review.cs"), "using Dapper;\nusing System.Data.Common;\nclass Review {\nobject Fixed(DbConnection db, string value) {\nvar cmd = new CommandDefinition(\"SELECT @value\", new {value});\nreturn db.Query(cmd);\n}\nobject Changed(DbConnection db, string value) {\nvar cmd = new CommandDefinition(\"SELECT @value\", new {value});\ncmd = new CommandDefinition(value);\nreturn db.Query(cmd);\n}\n}\n").unwrap();
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    run(&[
+        "investigate",
+        "review-inventory",
+        root.to_str().unwrap(),
+        "--output",
+        artifacts.to_str().unwrap(),
+    ]);
+    let inventory = run(&[
+        "investigate",
+        "review-inventory-list",
+        "--inventory",
+        artifacts.to_str().unwrap(),
+        "--operand-kind",
+        "query_structure",
+    ]);
+    assert_eq!(inventory["matching_count"], 1);
+    assert_eq!(inventory["entries"][0]["symbol"], "Fixed");
+    let changed = run(&[
+        "investigate",
+        "review-inventory-list",
+        "--inventory",
+        artifacts.to_str().unwrap(),
+        "--operand-kind",
+        "operand_boundary",
+    ]);
+    assert_eq!(changed["matching_count"], 1);
+    let id = changed["entries"][0]["review_id"].as_str().unwrap();
+    let chunk = artifacts.join("chunk");
+    let manifest = run(&[
+        "investigate",
+        "review-bundles",
+        root.to_str().unwrap(),
+        "--inventory",
+        artifacts.to_str().unwrap(),
+        "--review-ids",
+        id,
+        "--output",
+        chunk.to_str().unwrap(),
+    ]);
+    let request = chunk
+        .join("requests")
+        .join(manifest["bundles"][0]["filename"].as_str().unwrap());
+    let card = run(&[
+        "investigate",
+        "review-card",
+        "--bundle",
+        request.to_str().unwrap(),
+        "--review-id",
+        id,
+    ]);
+    assert_eq!(card["anchor"]["captures"]["query"], "cmd");
+    assert!(
+        card["operand_facts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["kind"] == "operand_boundary" && f["location"]["start"]["line"] == 10)
+    );
+    assert_eq!(
+        card["suggested_lookups"][0]["arguments"]["path"],
+        "Review.cs"
+    );
+    let value = run(&[
+        "investigate",
+        "review-inventory-list",
+        "--inventory",
+        artifacts.to_str().unwrap(),
+        "--selection",
+        "value",
+    ]);
+    assert_eq!(value["matching_count"], 2);
+    assert_eq!(value["deferred_count"], 0);
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(artifacts).unwrap();
+}
+
+#[test]
 fn node_alias_facts_support_precise_followup_and_reopening() {
     let root =
         std::env::temp_dir().join(format!("mehscan-node-operand-cli-{}", std::process::id()));

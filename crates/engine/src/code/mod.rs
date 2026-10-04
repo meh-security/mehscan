@@ -12,6 +12,7 @@ mod csharp_injection;
 mod csharp_legacy_web;
 mod csharp_mainstream;
 mod csharp_model;
+mod csharp_operands;
 mod csharp_output;
 mod csharp_privilege;
 mod csharp_rpc;
