@@ -14,18 +14,28 @@ fn semantic_collection_import_and_saved_cards_use_real_cli() {
         fs::copy(fixtures.join(file), root.join(file)).unwrap();
     }
     let context = artifacts.join("context.json");
+    let seed = artifacts.join("seed.json");
+    let assets = artifacts.join("project.assets.json");
     let snapshot = artifacts.join("semantic.json");
     let inventory = artifacts.join("inventory");
     let bundles = artifacts.join("bundles");
     let backend = std::env::var("MEHSCAN_ROSLYN_BACKEND").unwrap();
     fs::write(
-        &context,
+        &seed,
         serde_json::to_vec(
             &json!({"projects": [{"id": "app", "target_framework": "net8.0",
         "language_version": "12.0", "sources": ["App.cs", "Helpers.cs"], "references": [],
         "reference_directories": [std::env::var("MEHSCAN_ROSLYN_NET8_REFS").unwrap()],
-        "defines": [], "nullable": false, "allow_unsafe": false}]}),
+        "defines": [], "nullable": false, "allow_unsafe": false,
+        "assets_file": assets, "assets_target": "net8.0"}]}),
         )
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        &assets,
+        serde_json::to_vec(&json!({"targets": {"net8.0": {}},
+        "libraries": {}, "packageFolders": {}, "project": {"frameworks": {"net8.0": {}}}}))
         .unwrap(),
     )
     .unwrap();
@@ -42,6 +52,16 @@ fn semantic_collection_import_and_saved_cards_use_real_cli() {
         serde_json::from_slice(&out.stdout).unwrap()
     };
     let baseline = run(&["scan", root.to_str().unwrap(), "--format", "json"]);
+    let prepared = run(&[
+        "investigate",
+        "csharp-context",
+        root.to_str().unwrap(),
+        "--context",
+        seed.to_str().unwrap(),
+        "--output",
+        context.to_str().unwrap(),
+    ]);
+    assert_eq!(prepared["projects"][0]["resolved_compile_assets"], 0);
     let collection = run(&[
         "investigate",
         "csharp-semantic",
@@ -138,6 +158,20 @@ fn semantic_collection_import_and_saved_cards_use_real_cli() {
             .iter()
             .any(|f| f["kind"] == "semantic_definition")
     );
+    fs::write(&assets, b"changed graph").unwrap();
+    let stale = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "scan",
+            root.to_str().unwrap(),
+            "--csharp-semantic",
+            snapshot.to_str().unwrap(),
+            "--csharp-context",
+            context.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!stale.status.success());
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("input metadata is stale"));
     fs::remove_dir_all(root).unwrap();
     fs::remove_dir_all(artifacts).unwrap();
 }

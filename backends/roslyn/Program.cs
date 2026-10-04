@@ -63,11 +63,29 @@ internal static class Program
                     return MetadataReference.CreateFromFile(path);
                 }).ToArray();
                 var compilation = CSharpCompilation.Create(project.Id, trees, references,
-                    new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
+                    new CSharpCompilationOptions(project.OutputKind switch {
+                        "library" => OutputKind.DynamicallyLinkedLibrary,
+                        "console" => OutputKind.ConsoleApplication,
+                        "windows" => OutputKind.WindowsApplication,
+                        _ => throw new InvalidDataException("output_kind must be library, console or windows") },
                         allowUnsafe: project.AllowUnsafe,
                         nullableContextOptions: project.Nullable ? NullableContextOptions.Enable : NullableContextOptions.Disable));
+                // A restore graph is not the final compiler ReferencePath. Do not
+                // guess SDK conflict resolution or let old facades shadow target refs.
+                var conflicts = references.Select(r => ReferenceName(r.FilePath!)).Where(n => n != null)
+                    .GroupBy(n => n, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).ToArray();
+                if (conflicts.Length > 0)
+                {
+                    projects.Add(new(project.Id, project.TargetFramework, project.LanguageVersion, 0,
+                        project.UnresolvedReferences?.Length ?? 0, conflicts.Length));
+                    foreach (var conflict in conflicts.Take(12))
+                        diagnostics.Add(new(project.Id, "MEHSCAN_REFERENCE_CONFLICT",
+                            $"Multiple metadata files define {conflict.Key}; provide an explicit resolved reference set. Project facts withheld.", null));
+                    continue;
+                }
                 var errors = compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
-                projects.Add(new(project.Id, project.TargetFramework, project.LanguageVersion, errors.Length));
+                projects.Add(new(project.Id, project.TargetFramework, project.LanguageVersion, errors.Length,
+                    project.UnresolvedReferences?.Length ?? 0, 0));
                 foreach (var error in errors.Take(12))
                     diagnostics.Add(new(project.Id, error.Id, error.GetMessage(),
                         error.Location.IsInSource ? Location(sources[error.Location.SourceTree!.FilePath], error.Location.SourceSpan) : null));
@@ -89,7 +107,7 @@ internal static class Program
                     var symbol = action == null ? null : Target(model.GetOperation(action));
                     if (symbol != null && !ErrorType(symbol))
                         facts.Add(new("sink", "semantic_identity", Location(source, action!.Span),
-                            Identity(symbol, project), ["api_security_contract", "runtime_dispatch_and_replacement"]));
+                            Identity(symbol, project), ["api_security_contract", "runtime_dispatch_and_replacement", "caller_or_entrypoint_reachability"]));
                     else
                         facts.Add(new(query.Role, "operand_boundary", query.Operand,
                             "Roslyn could not uniquely bind the selected operation", ["missing_or_ambiguous_symbol"]));
@@ -210,6 +228,14 @@ internal static class Program
         .Concat(project.ReferenceDirectories.SelectMany(d => Directory.GetFiles(d, "*.dll")))
         .Select(Path.GetFullPath).Distinct().Order(StringComparer.Ordinal);
 
+    private static string? ReferenceName(string path)
+    {
+        try { return System.Reflection.AssemblyName.GetAssemblyName(path).Name; }
+        // Some Framework reference directories also contain native PE files.
+        // Roslyn reports their metadata errors; keep valid sibling bindings.
+        catch (BadImageFormatException) { return null; }
+    }
+
     private static string Hash(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
 
     private static Microsoft.CodeAnalysis.Text.TextSpan Span(Source source, SourceLocation location)
@@ -238,14 +264,15 @@ internal static class Program
     private sealed record Request(string SchemaVersion, string Root, string ContextPath, Query[] Queries);
     private sealed record Context(Project[] Projects);
     private sealed record Project(string Id, string TargetFramework, string LanguageVersion, string[] Sources,
-        string[] References, string[] ReferenceDirectories, string[] Defines, bool AllowUnsafe = false, bool Nullable = false);
+        string[] References, string[] ReferenceDirectories, string[] Defines, bool AllowUnsafe = false, bool Nullable = false,
+        string[]? UnresolvedReferences = null, string OutputKind = "library");
     private sealed record Query(string EvidenceId, string Role, SourceLocation Sink, SourceLocation Operand);
     private sealed record Source(string Path, string Text, string Hash);
     private sealed record Position(int Line, int Column, int ByteOffset);
     private sealed record SourceLocation(string Path, Position Start, Position End);
     private sealed record Fact(string Role, string Kind, SourceLocation Location, string Value, string[] RemainingChecks);
     private sealed record FileHash(string Path, string Sha256);
-    private sealed record ProjectRecord(string Id, string TargetFramework, string LanguageVersion, int CompilerErrors);
+    private sealed record ProjectRecord(string Id, string TargetFramework, string LanguageVersion, int CompilerErrors, int UnresolvedReferences, int ReferenceConflicts);
     private sealed record Observation(string EvidenceId, string ProjectId, List<Fact> Facts);
     private sealed record DiagnosticRecord(string ProjectId, string Code, string Message, SourceLocation? Location);
     private sealed record Snapshot(string SchemaVersion, string Backend, string ContextSha256,

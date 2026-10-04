@@ -18,6 +18,8 @@ const MAX_SNAPSHOT: u64 = 8 * 1024 * 1024;
 #[derive(Debug, Deserialize)]
 struct Context {
     projects: Vec<Project>,
+    #[serde(default)]
+    input_files: Vec<FileHash>,
 }
 #[derive(Debug, Deserialize)]
 struct Project {
@@ -62,6 +64,10 @@ struct ProjectRecord {
     target_framework: String,
     language_version: String,
     compiler_errors: usize,
+    #[serde(default)]
+    unresolved_references: usize,
+    #[serde(default)]
+    reference_conflicts: usize,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Observation {
@@ -93,6 +99,7 @@ pub fn collect(
     scan: &ScanResult,
 ) -> Result<Snapshot, EngineError> {
     let declared: Context = serde_json::from_slice(&std::fs::read(context)?).map_err(err)?;
+    validate_inputs(&declared)?;
     for path in declared.projects.iter().flat_map(|p| &p.sources) {
         source_path(root, path)?;
     }
@@ -233,7 +240,11 @@ pub fn enrich(
             continue;
         }
         let record = records[0];
-        let partial = projects[record.project_id.as_str()].compiler_errors > 0;
+        let project = projects[record.project_id.as_str()];
+        if project.reference_conflicts > 0 {
+            continue;
+        }
+        let partial = project.compiler_errors > 0 || project.unresolved_references > 0;
         for fact in &record.facts {
             let mut fact = fact.clone();
             if partial {
@@ -251,6 +262,14 @@ pub fn enrich(
         }
     }
     for project in &snapshot.projects {
+        if project.reference_conflicts > 0 {
+            scan.diagnostics.push(Diagnostic { level: DiagnosticLevel::Warning, path: None,
+                message: format!("Roslyn project {} has {} metadata reference conflicts; project facts withheld. Supply an explicit resolved reference set", project.id, project.reference_conflicts) });
+        }
+        if project.unresolved_references > 0 {
+            scan.diagnostics.push(Diagnostic { level: DiagnosticLevel::Warning, path: None,
+                message: format!("Roslyn project {} has {} unresolved compile references; semantic context is partial", project.id, project.unresolved_references) });
+        }
         if project.compiler_errors > 0 {
             scan.diagnostics.push(Diagnostic { level: DiagnosticLevel::Warning, path: None,
                 message: format!("Roslyn project {} ({}, C# {}) has {} compiler errors; affected bindings remain unresolved",
@@ -268,6 +287,7 @@ fn validate(root: &Path, context_path: &Path, snapshot: &Snapshot) -> Result<(),
         ));
     }
     let context: Context = serde_json::from_slice(&context_bytes).map_err(err)?;
+    validate_inputs(&context)?;
     let expected_sources: BTreeSet<_> = context
         .projects
         .iter()
@@ -332,7 +352,7 @@ fn validate(root: &Path, context_path: &Path, snapshot: &Snapshot) -> Result<(),
     Ok(())
 }
 
-fn source_path(root: &Path, path: &str) -> Result<PathBuf, EngineError> {
+pub(crate) fn source_path(root: &Path, path: &str) -> Result<PathBuf, EngineError> {
     if Path::new(path).is_absolute() || path.split(['/', '\\']).any(|c| c == "..") {
         return Err(EngineError(
             "Roslyn source must be repository-relative".into(),
@@ -372,8 +392,22 @@ fn validate_location(
     Ok(())
 }
 
-fn digest(bytes: &[u8]) -> String {
+pub(crate) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+fn validate_inputs(context: &Context) -> Result<(), EngineError> {
+    for input in &context.input_files {
+        if !Path::new(&input.path).is_absolute()
+            || std::fs::metadata(&input.path)?.len() > 32 * 1024 * 1024
+            || digest(&std::fs::read(&input.path)?) != input.sha256
+        {
+            return Err(EngineError(format!(
+                "Roslyn input metadata is stale: {}; prepare the context again",
+                input.path
+            )));
+        }
+    }
+    Ok(())
 }
 fn err(error: impl std::fmt::Display) -> EngineError {
     EngineError(error.to_string())

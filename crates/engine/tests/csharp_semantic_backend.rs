@@ -87,6 +87,13 @@ fn native_frameworks_preserve_ids_and_expose_exact_symbols_and_boundaries() {
                 .unwrap()
         };
         let raw = sink("Raw");
+        assert!(raw.context.operand_facts.iter().any(|f| {
+            f.role == "sink"
+                && f.kind == OperandFactKind::SemanticIdentity
+                && f.remaining_checks
+                    .iter()
+                    .any(|c| c == "caller_or_entrypoint_reachability")
+        }));
         assert!(
             raw.context
                 .operand_facts
@@ -233,6 +240,13 @@ fn native_snapshot_rejects_staleness_and_withholds_conflicting_contexts() {
     document["projects"][0]["references"] = json!([reference]);
     std::fs::write(&context, serde_json::to_vec(&document).unwrap()).unwrap();
     let with_reference = csharp_semantic::collect(&fixture.0, &context, &backend, &scan).unwrap();
+    assert!(with_reference.observations.is_empty());
+    assert!(
+        with_reference
+            .diagnostics
+            .iter()
+            .any(|d| d["code"] == "MEHSCAN_REFERENCE_CONFLICT")
+    );
     std::fs::write(&reference, b"changed metadata").unwrap();
     let mut unchanged = scan.clone();
     assert!(

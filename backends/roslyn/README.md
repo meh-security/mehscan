@@ -38,6 +38,9 @@ Create a JSON file outside the scanned source tree, for example:
 }
 ```
 
+`output_kind` can be `library` (default), `console` or `windows`. Choose the
+application's actual output kind; top-level programs need `console` or `windows`.
+
 Use actual target reference assemblies and dependency metadata; host runtime
 assemblies are not a substitute. Supply absolute reference paths/directories,
 and root-relative UTF-8 C# source paths. All listed array fields are required.
@@ -45,6 +48,43 @@ Reference directories contribute their immediate `.dll` files. ASP.NET Core,
 System.Web, Dapper/EF and proprietary APIs need their corresponding references.
 The target label describes the supplied context; the backend does not discover
 or certify its references from the label. Keep multi-target contexts separate.
+
+## Use existing package metadata
+
+When a project already has `obj/project.assets.json`, add these fields to each
+project in a context seed:
+
+```json
+"assets_file": "/absolute/path/to/obj/project.assets.json",
+"assets_target": "net8.0",
+"package_roots": ["/absolute/path/to/local/nuget/packages"]
+```
+
+Run `mehscan investigate csharp-context ROOT --context SEED --output CONTEXT`.
+It resolves only the selected target's exact `compile` DLL paths. Package roots
+are optional and default to the assets file's cache locations; explicit roots
+allow a relocated cache with the same package/version/asset paths. It never
+substitutes runtime assets, newer packages, project output placeholders or
+executes package build/analyzer/generator assets. Missing entries are recorded
+in the prepared context and summary; they do not stop unrelated valid bindings.
+
+Target keys must use modern short names matching `target_framework` (`net8.0`,
+`net10.0`, optionally with an explicit RID). Older long NuGet target keys and
+`packages.config` remain explicit-reference workflows. Framework reference
+directories, sources and compiler options remain supplied by the caller. Include
+existing generated global-using files in `sources` when needed; no files are
+generated automatically. Project references need explicit source or metadata.
+
+Optional top-level `context_files` lists absolute project/props/lock filenames
+whose changes should invalidate this context. The prepared context binds their
+hashes, the original seed and assets file; imports reject subsequent changes.
+This does not certify that an old assets file matches today's project options.
+Use a known applicable restore graph and prepare again after changing inputs.
+Use the original seed for regeneration and a separate output path.
+
+A restore graph can contain duplicate framework/package assembly names. The
+backend withholds that project's facts and reports the conflicting names; supply
+an explicit resolved reference set. It does not guess SDK conflict resolution.
 
 ## Collect and reuse
 
@@ -92,3 +132,11 @@ cargo test -p mehscan-cli --test csharp_semantic_cli -- --ignored
 
 These opt-in checks use real metadata, including stale inputs, partial binding,
 source lookalikes, Unicode positions, conflicting contexts and saved bundles.
+The asset-selection checks run without .NET:
+
+```sh
+cargo test -p mehscan-engine --test csharp_context
+```
+
+NuGet background: [dependency graphs](https://learn.microsoft.com/en-us/nuget/concepts/dependency-resolution)
+and [compile/runtime asset selection](https://learn.microsoft.com/en-us/nuget/consume-packages/package-references-in-project-files).

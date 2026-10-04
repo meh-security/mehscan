@@ -2,6 +2,7 @@
 
 pub mod benchmark;
 pub mod code;
+pub mod csharp_context;
 mod csharp_review;
 pub mod csharp_semantic;
 pub mod evaluation;

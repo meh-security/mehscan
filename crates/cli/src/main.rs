@@ -524,6 +524,14 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 mehscan_engine::investigation::relationship_funnel(&root),
             )?)
         }
+        "csharp-context" => {
+            let seed = PathBuf::from(parsed.required("--context")?);
+            let output = PathBuf::from(parsed.required("--output")?);
+            parsed.finish()?;
+            print_json(&engine(mehscan_engine::csharp_context::prepare(
+                &root, &seed, &output,
+            ))?)
+        }
         "csharp-semantic" => {
             let context = PathBuf::from(parsed.required("--context")?);
             let backend = PathBuf::from(parsed.required("--backend")?);
@@ -3217,6 +3225,7 @@ fn print_investigation_help() {
 
 USAGE:
   mehscan investigate funnel [ROOT]
+  mehscan investigate csharp-context [ROOT] --context SEED --output FILE
   mehscan investigate csharp-semantic [ROOT] --context FILE --backend EXE --output FILE
   mehscan investigate review-inventory [ROOT] --output DIR [--include-review-material true|false] [--csharp-semantic FILE --csharp-context FILE]
   mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--selection all|value|deferred] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--group-by contract] [--contract KEY] [--limit N] [--offset N]
