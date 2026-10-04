@@ -171,6 +171,7 @@ pub(crate) fn scan_source(
     let declarative_started = Instant::now();
     let mut declarative_patterns_considered = 0;
     let mut declarative_patterns_skipped = 0;
+    let mut extended_symbols = None;
     for compiled_rule in rules {
         for compiled_pattern in &compiled_rule.patterns {
             declarative_patterns_considered += 1;
@@ -201,6 +202,11 @@ pub(crate) fn scan_source(
                         language,
                         matched.get_env().get_match("DATABASE"),
                         matched.get_env().get_match("TYPE"),
+                        matched.get_env().get_match("TYPE").map(|_| {
+                            extended_symbols.get_or_insert_with(|| {
+                                super::extended_database::ExactSymbolIndex::new(&root)
+                            }) as &_
+                        }),
                     )
                 {
                     continue;

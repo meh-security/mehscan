@@ -3,8 +3,76 @@
 use ast_grep_core::{Node, tree_sitter::StrDoc};
 use ast_grep_language::SupportLang;
 use mehscan_core::Language;
+use std::collections::BTreeMap;
 
 type DbNode<'a> = Node<'a, StrDoc<SupportLang>>;
+
+/// File-local AST references only; visibility is still checked at each use.
+pub(super) struct ExactSymbolIndex<'a> {
+    declarations: BTreeMap<String, Vec<DbNode<'a>>>,
+    imports: Vec<DbNode<'a>>,
+}
+
+impl<'a> ExactSymbolIndex<'a> {
+    pub(super) fn new(root: &DbNode<'a>) -> Self {
+        let mut index = Self {
+            declarations: BTreeMap::new(),
+            imports: Vec::new(),
+        };
+        for node in root.dfs() {
+            if let Some(name) = declaration_name(&node) {
+                index
+                    .declarations
+                    .entry(name)
+                    .or_default()
+                    .push(node.clone());
+            }
+            if matches!(
+                node.kind().as_ref(),
+                "import_statement"
+                    | "import_from_statement"
+                    | "import_declaration"
+                    | "using_directive"
+                    | "import_spec"
+            ) {
+                index.imports.push(node);
+            }
+        }
+        index
+    }
+}
+
+fn declaration_name(node: &DbNode<'_>) -> Option<String> {
+    let bare_parameter = node.kind().as_ref() == "identifier"
+        && node
+            .parent()
+            .is_some_and(|p| matches!(p.kind().as_ref(), "parameters" | "formal_parameters"));
+    if bare_parameter {
+        return Some(compact(node.text().as_ref()));
+    }
+    if !matches!(
+        node.kind().as_ref(),
+        "class_declaration"
+            | "class_definition"
+            | "struct_item"
+            | "function_definition"
+            | "function_declaration"
+            | "variable_declarator"
+            | "assignment"
+            | "parameter"
+            | "formal_parameter"
+            | "typed_parameter"
+            | "default_parameter"
+            | "required_parameter"
+            | "optional_parameter"
+    ) {
+        return None;
+    }
+    node.field("name")
+        .or_else(|| node.field("left"))
+        .or_else(|| node.field("pattern"))
+        .map(|name| compact(name.text().as_ref()))
+}
 
 pub(super) fn is_rule(rule: &str) -> bool {
     let Some((language, boundary)) = rule.split_once("-extended-") else {
@@ -40,6 +108,7 @@ pub(super) fn accepts(
     language: Language,
     receiver: Option<&DbNode<'_>>,
     symbol: Option<&DbNode<'_>>,
+    symbols: Option<&ExactSymbolIndex<'_>>,
 ) -> bool {
     if rule == "python-extended-django-query" {
         let Some(receiver) = receiver else {
@@ -111,7 +180,14 @@ pub(super) fn accepts(
             _ => &[],
         };
         return canonical.iter().any(|canonical| {
-            exact_symbol(root, node, symbol.text().as_ref(), canonical, language)
+            exact_symbol_with_index(
+                root,
+                node,
+                symbol.text().as_ref(),
+                canonical,
+                language,
+                symbols,
+            )
         });
     }
     let Some(receiver) = receiver else {
@@ -167,6 +243,17 @@ pub(super) fn exact_symbol(
     canonical: &str,
     language: Language,
 ) -> bool {
+    exact_symbol_with_index(root, use_site, observed, canonical, language, None)
+}
+
+fn exact_symbol_with_index(
+    root: &DbNode<'_>,
+    use_site: &DbNode<'_>,
+    observed: &str,
+    canonical: &str,
+    language: Language,
+    symbols: Option<&ExactSymbolIndex<'_>>,
+) -> bool {
     let observed = compact(observed)
         .split('<')
         .next()
@@ -174,40 +261,18 @@ pub(super) fn exact_symbol(
         .to_string();
     let head = observed.split('.').next().unwrap_or(&observed);
     // A local name or declared lookalike must not inherit an imported SDK identity.
-    if root.dfs().any(|n| {
-        let declaration = matches!(
-            n.kind().as_ref(),
-            "class_declaration"
-                | "class_definition"
-                | "struct_item"
-                | "function_definition"
-                | "function_declaration"
-                | "variable_declarator"
-                | "assignment"
-                | "parameter"
-                | "formal_parameter"
-                | "typed_parameter"
-                | "default_parameter"
-                | "required_parameter"
-                | "optional_parameter"
-        );
-        let bare_parameter = n.kind().as_ref() == "identifier"
-            && n.parent()
-                .is_some_and(|p| matches!(p.kind().as_ref(), "parameters" | "formal_parameters"));
-        if !declaration && !bare_parameter {
-            return false;
-        }
-        let name = n
-            .field("name")
-            .or_else(|| n.field("left"))
-            .or_else(|| n.field("pattern"));
-        let name = if bare_parameter {
-            Some(n.clone())
-        } else {
-            name
-        };
-        name.is_some_and(|name| compact(name.text().as_ref()) == head) && visible(&n, use_site)
-    }) {
+    let shadowed = if let Some(symbols) = symbols {
+        symbols
+            .declarations
+            .get(head)
+            .into_iter()
+            .flatten()
+            .any(|n| visible(n, use_site))
+    } else {
+        root.dfs()
+            .any(|n| declaration_name(&n).is_some_and(|name| name == head) && visible(&n, use_site))
+    };
+    if shadowed {
         return false;
     }
     if observed == canonical {
@@ -219,8 +284,20 @@ pub(super) fn exact_symbol(
             .next()
             == Some(canonical);
     }
-    root.dfs().any(|import| {
-        if !visible(&import, use_site) {
+    let is_import = |node: &DbNode<'_>| match language {
+        Language::Javascript | Language::Typescript | Language::Tsx | Language::Python => {
+            matches!(
+                node.kind().as_ref(),
+                "import_statement" | "import_from_statement"
+            )
+        }
+        Language::Java => node.kind().as_ref() == "import_declaration",
+        Language::Csharp => node.kind().as_ref() == "using_directive",
+        Language::Go => node.kind().as_ref() == "import_spec",
+        _ => false,
+    };
+    let matches_import = |import: &DbNode<'_>| {
+        if !visible(import, use_site) {
             return false;
         }
         let text = import.text();
@@ -325,7 +402,16 @@ pub(super) fn exact_symbol(
             }
             _ => false,
         }
-    })
+    };
+    if let Some(symbols) = symbols {
+        symbols
+            .imports
+            .iter()
+            .filter(|n| is_import(n))
+            .any(matches_import)
+    } else {
+        root.dfs().filter(is_import).any(|n| matches_import(&n))
+    }
 }
 
 pub(super) fn typed_receiver(
@@ -516,6 +602,7 @@ pub(super) fn pgx_receiver(root: &DbNode<'_>, node: &DbNode<'_>, receiver: &DbNo
         "go-extended-pgx-query",
         Language::Go,
         Some(receiver),
+        None,
         None,
     )
 }
