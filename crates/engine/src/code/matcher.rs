@@ -1831,6 +1831,10 @@ pub(crate) fn scan_source(
     super::decision_origins::annotate(language, source, &root, &mut evidence);
     super::csharp_operands::annotate(language, &root, &mut evidence);
     super::native_operands::annotate(language, &root, &mut evidence);
+    super::java_prepared::annotate(language, &root, &mut evidence);
+    if let Some(imports) = kotlin_imports.as_ref() {
+        super::kotlin::annotate_prepared(&root, imports, &mut evidence);
+    }
     evidence.extend(secret_evidence);
     evidence.sort_by(|left, right| {
         left.location

@@ -479,6 +479,8 @@ pub enum OperandFactKind {
     NativeOperandDeclaration,
     /// One observed direct call's argument for a file-local helper parameter.
     LocalCallArgument,
+    /// Source-located use of one local JDBC preparation, not a binding or execution proof.
+    PreparedStatementUse,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

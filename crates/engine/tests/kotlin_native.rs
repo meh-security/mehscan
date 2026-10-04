@@ -996,7 +996,7 @@ fn prepared_ownership_excludes_unrelated_bindings_and_preserves_resets() {
             .facts
             .iter()
             .any(|f| f.role == "prepared_statement_execution_context"
-                && f.excerpt.contains("enclosing conditions"))
+                && f.provenance.engine.contains("conditions"))
     );
 }
 

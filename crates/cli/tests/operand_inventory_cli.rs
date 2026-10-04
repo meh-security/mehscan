@@ -1,6 +1,78 @@
 use std::{fs, process::Command};
 
 #[test]
+fn prepared_use_filter_survives_saved_inventory_and_selected_packaging() {
+    let root = std::env::temp_dir().join(format!("mehscan-jvm-use-cli-{}", std::process::id()));
+    let artifacts = root.with_file_name(format!("mehscan-jvm-use-cli-run-{}", std::process::id()));
+    let inventory = artifacts.join("inventory");
+    let bundles = artifacts.join("bundles");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("Review.java"), "import java.sql.Connection;\nclass Review {\nvoid query(Connection c, String q) throws Exception {\nvar st = c.prepareStatement(q);\nst.executeQuery();\n}\n}\n").unwrap();
+    let run = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()
+    };
+    run(&[
+        "investigate",
+        "review-inventory",
+        root.to_str().unwrap(),
+        "--output",
+        inventory.to_str().unwrap(),
+    ]);
+    let listing = run(&[
+        "investigate",
+        "review-inventory-list",
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--operand-kind",
+        "prepared_statement_use",
+    ]);
+    assert_eq!(listing["matching_count"], 1);
+    let id = listing["entries"][0]["review_id"].as_str().unwrap();
+    let manifest = run(&[
+        "investigate",
+        "review-bundles",
+        root.to_str().unwrap(),
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--review-ids",
+        id,
+        "--output",
+        bundles.to_str().unwrap(),
+    ]);
+    let request = bundles
+        .join("requests")
+        .join(manifest["bundles"][0]["filename"].as_str().unwrap());
+    let card = run(&[
+        "investigate",
+        "review-card",
+        "--bundle",
+        request.to_str().unwrap(),
+        "--review-id",
+        id,
+    ]);
+    let fact = card["operand_facts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["kind"] == "prepared_statement_use")
+        .unwrap();
+    assert_eq!(fact["location"]["start"]["line"], 5);
+    assert_eq!(fact["value"], "st");
+    assert_eq!(fact["role"], "prepared_statement_execution_context");
+    fs::remove_dir_all(&root).unwrap();
+    fs::remove_dir_all(&artifacts).unwrap();
+}
+
+#[test]
 fn csharp_constructor_and_reassignment_facts_survive_saved_inventory_and_cards() {
     let root =
         std::env::temp_dir().join(format!("mehscan-csharp-operand-cli-{}", std::process::id()));

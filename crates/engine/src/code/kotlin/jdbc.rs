@@ -1,7 +1,5 @@
 use super::identity::{self, Imports, KNode};
-use ast_grep_core::tree_sitter::LanguageExt;
-use ast_grep_language::SupportLang;
-use mehscan_core::{Evidence, QueryProvenance, Resolution, ReviewNeighborhoodFact};
+use mehscan_core::{Evidence, OperandFact, OperandFactKind};
 
 fn prepared_origin<'a>(
     root: &KNode<'a>,
@@ -34,6 +32,19 @@ fn prepared_origin<'a>(
     let property = binding
         .parent()
         .filter(|n| n.kind().as_ref() == "property_declaration")?;
+    if root.dfs().any(|n| {
+        n.kind().as_ref() == "simple_identifier"
+            && n.text() == symbol
+            && n.range().start >= property.range().end
+            && n.range().start < expression.range().start
+            && (identity::callable(&n).map(|n| n.range())
+                != identity::callable(expression).map(|n| n.range())
+                || n.parent().is_some_and(|n| {
+                    matches!(n.kind().as_ref(), "value_argument" | "property_declaration")
+                }))
+    }) {
+        return None;
+    }
     if !property
         .children()
         .any(|n| n.kind().as_ref() == "binding_pattern_kind" && n.text().as_ref() == "val")
@@ -47,17 +58,8 @@ fn prepared_origin<'a>(
 }
 
 /// Exact same-callable use context, never an execution or protection summary.
-pub(crate) fn prepared_facts(
-    path: &str,
-    source: &str,
-    sink: &Evidence,
-) -> Vec<ReviewNeighborhoodFact> {
+fn prepared_uses(root: &KNode<'_>, imports: &Imports, sink: &Evidence) -> Vec<OperandFact> {
     if sink.rule_id != "kotlin-jdbc-prepare-query" {
-        return vec![];
-    }
-    let ast = SupportLang::Kotlin.ast_grep(source);
-    let root = ast.root();
-    if root.dfs().any(|n| n.is_error() || n.is_missing()) {
         return vec![];
     }
     let Some(preparation) = root.dfs().find(|n| {
@@ -70,7 +72,9 @@ pub(crate) fn prepared_facts(
     let Some(scope) = identity::callable(&preparation) else {
         return vec![];
     };
-    let imports = Imports::build(&root);
+    if scope.range().len() > 32 * 1024 {
+        return vec![];
+    }
     let rule = "kotlin-jdbc-prepare-query";
     if !super::accept(&root, &imports, rule, &preparation) {
         return vec![];
@@ -123,13 +127,37 @@ pub(crate) fn prepared_facts(
         if node.range().len() > 4096 || facts.len() >= 12 {
             return vec![];
         }
-        facts.push(ReviewNeighborhoodFact {
-            role: role.into(), symbol: receiver.text().into_owned(),
-            location: crate::code::matcher::location(path, &node), excerpt: format!("Exact use of this preparation's immutable local receiver in the same callable. This is source context; enclosing conditions, binding resets and runtime execution still require review.\n{}", node.text()),
-            evidence_id: Some(sink.id.clone()), provenance: QueryProvenance { resolution: Resolution::Ast, engine: "Kotlin bounded prepared receiver origin and same-callable use 1".into() },
+        facts.push(OperandFact {
+            role: role.into(),
+            value: receiver.text().into_owned(),
+            kind: OperandFactKind::PreparedStatementUse,
+            location: crate::code::matcher::location(&sink.location.path, &node),
+            remaining_checks: vec!["conditions_order_resets_and_execution".into()],
         });
     }
     facts
+}
+
+pub(in crate::code) fn annotate_prepared(
+    root: &KNode<'_>,
+    imports: &Imports,
+    evidence: &mut [Evidence],
+) {
+    if !evidence
+        .iter()
+        .any(|e| e.rule_id == "kotlin-jdbc-prepare-query")
+        || root.dfs().any(|n| n.is_error() || n.is_missing())
+    {
+        return;
+    }
+    for sink in evidence
+        .iter_mut()
+        .filter(|e| e.rule_id == "kotlin-jdbc-prepare-query")
+    {
+        sink.context
+            .operand_facts
+            .extend(prepared_uses(root, imports, sink));
+    }
 }
 
 /// Bounded JVM factory identity, independent of whether SQL is safe or executed.
@@ -268,6 +296,8 @@ pub(super) fn receiver<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ast_grep_core::tree_sitter::LanguageExt;
+    use ast_grep_language::SupportLang;
 
     #[test]
     fn origins_distinguish_real_statements_aliases_and_callable_handoffs() {

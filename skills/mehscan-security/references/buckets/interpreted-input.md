@@ -39,6 +39,10 @@ alone does not establish what a browser will execute.
   with bound values, or a branch proved non-executable does not meet this rule.
   Missing HTTP route registration lowers exposure confidence; it does not make
   variable-built SQL safe if the method itself can execute when called.
+  JVM `prepared_statement_use` facts locate uses of that exact local
+  preparation. Check query construction separately from its bindings; another
+  statement's bindings do not apply. Read source for conditions, resets and
+  execution order. Missing use facts do not prove the statement is unused.
 - **Command or executable:** Separate a fixed executable from its arguments.
   A command-line option proves the program accepts a value; inspect who
   controls the invocation before calling it attacker-controlled. In-repository

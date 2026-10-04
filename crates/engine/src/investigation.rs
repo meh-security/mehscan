@@ -120,6 +120,22 @@ fn operand_summaries(evidence: &Evidence) -> Vec<ReviewOperandSummary> {
         .collect()
 }
 
+/// Materialize already located uses without reparsing each preparation's file.
+fn prepared_statement_facts(
+    path: &str,
+    source: &str,
+    sink: &Evidence,
+) -> Vec<ReviewNeighborhoodFact> {
+    sink.context.operand_facts.iter()
+        .filter(|f| f.kind == mehscan_core::OperandFactKind::PreparedStatementUse && f.location.path == path)
+        .filter_map(|f| source.get(f.location.start.byte_offset..f.location.end.byte_offset).map(|text| ReviewNeighborhoodFact {
+            role: f.role.clone(), symbol: f.value.clone(), location: f.location.clone(),
+            excerpt: text.into(), evidence_id: Some(sink.id.clone()),
+            provenance: QueryProvenance { resolution: Resolution::Ast, engine: "JVM local prepared receiver use; conditions, order, resets and execution require review 1".into() },
+        }))
+        .collect()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ValueReviewHint {
     pub reason: String,
@@ -1294,11 +1310,13 @@ fn build_path_review_jobs_internal(
                 provenance: textual_provenance("mehscan bounded path-review source 1"),
             });
         }
-        if candidate.sink.rule_id == "kotlin-jdbc-prepare-query"
-            && let Some(sink) = evidence_by_id.get(candidate.sink.id.as_str())
+        if matches!(
+            candidate.sink.rule_id.as_str(),
+            "kotlin-jdbc-prepare-query" | "java-database-query"
+        ) && let Some(sink) = evidence_by_id.get(candidate.sink.id.as_str())
         {
             let file = sources.file(&candidate.sink.location.path)?;
-            facts.extend(crate::code::kotlin_prepared_facts(
+            facts.extend(prepared_statement_facts(
                 &candidate.sink.location.path,
                 &file.source,
                 sink,
@@ -8322,6 +8340,9 @@ fn build_observation_reviews(
         }];
         let (mut captured_definitions, captured_definitions_truncated) =
             captured_definition_facts(sources, group.evidence.iter(), &facts, 3);
+        for item in &group.evidence {
+            facts.extend(prepared_statement_facts(&group.path, &file.source, item));
+        }
         context_truncated |= captured_definitions_truncated;
         facts.append(&mut captured_definitions);
         let php_context = php_contexts.entry(group.path.clone()).or_insert_with(|| {
@@ -8552,11 +8573,6 @@ fn build_observation_reviews(
                             provenance: QueryProvenance { resolution: Resolution::Ast, engine: "Kotlin exact response content literal node 1".into() },
                         });
                 }
-                facts.extend(crate::code::kotlin_prepared_facts(
-                    &group.path,
-                    &file.source,
-                    item,
-                ));
                 facts.extend(crate::code::kotlin_member_receiver_facts(
                     &group.path,
                     &file.source,
