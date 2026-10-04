@@ -1828,6 +1828,7 @@ pub(crate) fn scan_source(
     security_paths.append(&mut native_remaining_input_paths);
     security_paths.sort_by(|left, right| left.id.cmp(&right.id));
     let security_paths_microseconds = paths_started.elapsed().as_micros();
+    super::python_operands::annotate(language, &root, &mut evidence);
     super::decision_origins::annotate(language, source, &root, &mut evidence);
     super::csharp_operands::annotate(language, &root, &mut evidence);
     super::native_operands::annotate(language, &root, &mut evidence);

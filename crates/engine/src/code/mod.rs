@@ -106,6 +106,7 @@ mod php;
 mod python_context;
 mod python_flask;
 mod python_identity;
+mod python_operands;
 mod razor;
 mod reachability;
 mod rust_context;

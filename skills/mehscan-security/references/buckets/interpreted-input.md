@@ -58,6 +58,13 @@ alone does not establish what a browser will execute.
   for an intentional CLI command runner and invocation authority is unknown,
   use `needs_review` instead. Fixed executable plus separate arguments does
   not meet this shell-construction rule.
+  Python shell-option facts describe a keyword or bounded local dictionary;
+  inspect an `operand_boundary` when reuse stops. `shell=False` does not rule
+  out an explicit interpreter such as `sh -c`. With `shell=True`, argument
+  sequences differ by platform: on POSIX, the first item is script text and
+  later items are shell positional arguments. Use `posix_shell_command` only
+  after verifying that runtime; check quoting inside the script and any
+  replacement executable. [Python subprocess contract](https://docs.python.org/3/library/subprocess.html#subprocess.Popen).
 - **Code evaluation:** If an unconstrained variable becomes code passed to
   `eval`, script compilation, or an equivalent evaluator in an application
   operation that should treat input as data, report the unsafe construction as

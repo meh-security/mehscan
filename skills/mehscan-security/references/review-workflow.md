@@ -93,6 +93,10 @@ verdicts.
      names a repository caller, template, writer, configuration, or behavior
      test, query that local evidence before stopping. An unindexed file or a
      narrow search is not itself a blocker.
+     For a missing runtime/configuration fact, inspect the relevant deployment
+     manifest or root README before stopping. `paths` searches indexed source;
+     use `source` for a known conventional filename even when scan admission
+     or an empty path search omitted it.
 5. **Stop and answer briefly.** Stop when the chain is established,
    contradicted, or blocked by a specific unavailable fact. The query journal
    is the audit trail. Write a brief JSON draft with one result per bundle ID:

@@ -951,6 +951,23 @@ fn annotate_process_semantics(language: Language, source: &str, item: &mut Evide
     let start = item.location.start.byte_offset.min(source.len());
     let end = item.location.end.byte_offset.min(source.len());
     let operation = source.get(start..end).unwrap_or_default();
+    if language == Language::Python
+        && item.context.operand_facts.iter().any(|f| {
+            f.role == "process_options" && f.kind == mehscan_core::OperandFactKind::OperandBoundary
+        })
+        && !item.captures.contains_key("shell_mode")
+    {
+        push_tag(&mut item.tags, "process-invocation:unresolved-shell");
+        return;
+    }
+    if language == Language::Python
+        && item.context.operand_facts.iter().any(|f| {
+            f.kind == mehscan_core::OperandFactKind::ProcessShellMode && f.value == "unresolved"
+        })
+    {
+        push_tag(&mut item.tags, "process-invocation:unresolved-shell");
+        return;
+    }
 
     if language == Language::Rust
         && let Some((value, offset)) = rust_command_new_operand(operation)
@@ -974,7 +991,10 @@ fn annotate_process_semantics(language: Language, source: &str, item: &mut Evide
     push_tag(&mut item.tags, "process-invocation:shell-command");
 
     // The parsed options adapter already selected the actual argv operand.
-    if item.captures.contains_key("shell_mode") && item.captures.contains_key("shell_command") {
+    if (item.captures.contains_key("shell_command")
+        && (item.captures.contains_key("shell_mode") || language == Language::Python))
+        || (language == Language::Python && item.captures.contains_key("posix_shell_command"))
+    {
         return;
     }
 
@@ -1135,6 +1155,15 @@ fn quoted_string(value: &str) -> Option<&str> {
 }
 
 fn process_is_shell_api(language: Language, source: &str, item: &Evidence) -> bool {
+    if language == Language::Python
+        && let Some(mode) = item
+            .context
+            .operand_facts
+            .iter()
+            .find(|f| f.kind == mehscan_core::OperandFactKind::ProcessShellMode)
+    {
+        return mode.value == "true";
+    }
     if matches!(
         item.rule_id.as_str(),
         "php-command-execution" | "php-shell-command-operator"
