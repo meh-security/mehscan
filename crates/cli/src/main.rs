@@ -617,10 +617,14 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         | "repository_code_target"
                         | "output_context"
                         | "encoding_call"
+                        | "local_operand_origin"
+                        | "operand_boundary"
+                        | "query_structure"
+                        | "process_shell_mode"
                         | "unclassified"
                 )
             }) {
-                return Err("invalid --operand-kind; use fixed_code_relative_path, configured_root_path, repository_code_target, encoding_call, output_context, or unclassified".into());
+                return Err("invalid --operand-kind; use fixed_code_relative_path, configured_root_path, repository_code_target, encoding_call, output_context, local_operand_origin, operand_boundary, query_structure, process_shell_mode, or unclassified".into());
             }
             let limit = parsed.optional_usize("--limit")?.unwrap_or(50).min(200);
             let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
@@ -688,9 +692,11 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 .map(|entry| (entry["path"].as_str(), entry["rule_id"].as_str()))
                 .collect::<BTreeSet<_>>();
             let reopened = |entry: &&serde_json::Value| {
-                (entry["value_hint"]["reason"] == "ordinary_php_sink_inventory"
-                    && reopen_surfaces
-                        .contains(&(entry["path"].as_str(), entry["rule_id"].as_str())))
+                (matches!(
+                    entry["value_hint"]["reason"].as_str(),
+                    Some("ordinary_php_sink_inventory" | "local_bound_query_inventory")
+                ) && reopen_surfaces
+                    .contains(&(entry["path"].as_str(), entry["rule_id"].as_str())))
                     || entry["value_hint"]["depends_on"]
                         .as_str()
                         .is_some_and(|id| {
@@ -2666,6 +2672,31 @@ fn review_card_from_value(
             "arguments": {"path": target, "start-line": "1", "end-line": "40"},
             "purpose": "Inspect the repository target and content-generation boundary; source-defined defaults may differ at runtime."
         })];
+    }
+    if let Some(fact) = anchor["context"]["operand_facts"]
+        .as_array()
+        .and_then(|facts| {
+            facts
+                .iter()
+                .find(|fact| fact["kind"] == "operand_boundary")
+                .or_else(|| {
+                    facts
+                        .iter()
+                        .find(|fact| fact["kind"] == "local_operand_origin")
+                })
+        })
+    {
+        if let (Some(path), Some(line), Some(end)) = (
+            fact["location"]["path"].as_str(),
+            fact["location"]["start"]["line"].as_u64(),
+            fact["location"]["end"]["line"].as_u64(),
+        ) {
+            lookups.insert(0, serde_json::json!({
+                "operation": "source", "arguments": {"path": path, "start-line": line.saturating_sub(3).max(1).to_string(), "end-line": end.saturating_add(5).min(line.saturating_add(40)).to_string()},
+                "purpose": "Inspect the exact operand initializer or intervening use where local reuse stops."
+            }));
+            lookups.truncate(2);
+        }
     }
     let captures = anchor["captures"].as_object().map(|captures| {
         captures

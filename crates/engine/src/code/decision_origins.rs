@@ -309,6 +309,24 @@ fn object_property<'tree>(
     object: &Node<'tree, StrDoc<SupportLang>>,
     names: &[&str],
 ) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    // Spreads, computed keys and getters can replace the apparent query text.
+    // Do not normalize a partial object into a fixed SQL operand.
+    let mut keys = std::collections::BTreeSet::new();
+    for child in object
+        .children()
+        .filter(|child| child.is_named() && child.kind().as_ref() != "comment")
+    {
+        if child.kind().as_ref() != "pair" {
+            return None;
+        }
+        let key = child.field("key")?;
+        if !matches!(key.kind().as_ref(), "property_identifier" | "string")
+            || key.text().contains('\\')
+            || !keys.insert(key.text().trim_matches(['\'', '"']).to_string())
+        {
+            return None;
+        }
+    }
     let mut matches = object.children().filter_map(|child| {
         if child.kind().as_ref() != "pair" {
             return None;
@@ -954,6 +972,11 @@ fn annotate_process_semantics(language: Language, source: &str, item: &mut Evide
     }
     push_tag(&mut item.tags, "shell-command-text");
     push_tag(&mut item.tags, "process-invocation:shell-command");
+
+    // The parsed options adapter already selected the actual argv operand.
+    if item.captures.contains_key("shell_mode") && item.captures.contains_key("shell_command") {
+        return;
+    }
 
     if let Some((payload, offset)) = exact_shell_payload(language, operation) {
         insert_process_capture(item, operation, "shell_command", payload, offset);

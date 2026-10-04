@@ -25,6 +25,10 @@ verdicts.
    straight to its target; check that target instead of repeating input/caller
    research. An encoding call still needs the actual output context and its
    callable/options contract. Facts with remaining checks are not verdicts.
+   A `local_operand_origin` locates one initializer. `operand_boundary` names
+   the use or shape where reuse stopped; inspect that location. Query text and
+   values remain separate questions, and `process_shell_mode` settles only
+   the observed option, not executable, argument, platform or caller policy.
 3. **Test one evidence chain.** State the candidate failure and the facts that
    would prove or refute it. Follow the same value, branch, actor, resource,
    control, and effect. Ask Mehscan for the next decision-changing fact. Use

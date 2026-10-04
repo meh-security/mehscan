@@ -27,6 +27,13 @@ closures. `scope_count` is the filtered, unreviewed population before selection;
 `matching_count` is the selected population and `deferred_count` its heuristic
 deferral population. Contract queues use `matching_review_count`.
 
+`local_bound_query_inventory` conditionally defers a sink-only, fixed-text
+node-postgres query passed as a private local const object with separate values.
+It settles no access policy or runtime method replacement; observed inputs,
+mutations, escapes and uncertain object slots remain active. Comprehensive
+retains the exact ID. Reopen if the driver is replaced or this operation has
+another consequential relationship.
+
 The first hint, `fixed_repository_include`, covers a sink-only include whose
 whole operand resolves to an existing PHP source file in this repository.
 Runtime/upload/cache/generated directories and targets named by observed file

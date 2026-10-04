@@ -467,6 +467,14 @@ pub enum OperandFactKind {
     OutputContext,
     /// The complete emitted operand has a native integer/boolean result.
     NumericOutput,
+    /// A source-located initializer for a single local operand alias.
+    LocalOperandOrigin,
+    /// The precise unsupported use/shape where local operand reuse stops.
+    OperandBoundary,
+    /// Observed query text and separate value slots; not an API safety verdict.
+    QueryStructure,
+    /// An observed process shell option; executable/argument policy stays open.
+    ProcessShellMode,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

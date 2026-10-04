@@ -16,7 +16,8 @@ the IDs use the same behavior.
    name/root can have overrides, contexts or targets that differ. Prefer repeated
    questions whose identity can actually be checked. Review
    the other cards when their bundles are actually triaged. For the IDs being
-   reviewed, make a short table: exact operation, actor and value producer,
+   reviewed, make a short table keyed by `review_id` and anchor `path:line`:
+   exact operation, actor and value producer,
    interpreter options or selected files, control, effect, suspected shared
    implementation, and missing fact. Do not load the full bundle JSON into
    context.
@@ -58,7 +59,9 @@ the IDs use the same behavior.
    supports each result; add the operation-specific range as needed. Empty or
    short per-ID journals are valid when earlier queries already supplied the
    evidence. The finalizer counts actual queries, not source ranges cited.
-5. Stop a group when each ID has a supported verdict or a precise unavailable
+5. Join draft decisions to that ID/anchor table, never to row or source-window
+   order. Check each summary against its own cited operation before finalizing.
+   Stop a group when each ID has a supported verdict or a precise unavailable
    fact. Write one brief draft for the bundle and finalize it. Keep a one-line
    pattern note only if it helps a later chunk avoid rediscovering the same
    control; tie it to the current source revision and recheck after changes.

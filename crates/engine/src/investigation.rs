@@ -317,6 +317,23 @@ fn ordinary_php_sink_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
     })
 }
 
+fn local_bound_query_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
+    if !anchor
+        .tags
+        .iter()
+        .any(|tag| tag == "value-scope:local-pg-bound-query")
+        || anchor.cwe_candidates.iter().any(|cwe| cwe != "CWE-89")
+    {
+        return None;
+    }
+    Some(ValueReviewHint {
+        reason: "local_bound_query_inventory".into(),
+        target: format!("{}:{}", anchor.location.path, anchor.location.start.line),
+        assumption: "exact_local_const_object_and_pg_identity; values_are_separate_data; matched_driver_method_is_not_replaced; data_access_policy_is_not_proven".into(),
+        depends_on: None,
+    })
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReviewInventory {
     pub schema_version: String,
@@ -1145,6 +1162,7 @@ fn build_path_review_jobs_internal(
                     .then(|| {
                         fixed_include_value_hint(anchor, &sources, &write_paths)
                             .or_else(|| ordinary_php_sink_hint(anchor))
+                            .or_else(|| local_bound_query_hint(anchor))
                     })
                     .flatten(),
             })
@@ -6192,6 +6210,7 @@ enum DecisionCriticalBoundary {
     SqlIdentifier,
     TrustedHtml,
     ProcessExecutable,
+    ProcessOptions,
     ShellCommand,
     NativeFormat,
     DynamicCode,
@@ -6222,6 +6241,7 @@ impl DecisionCriticalOrigin<'_> {
             DecisionCriticalBoundary::SqlIdentifier => "bounded_dynamic_sql_identifier",
             DecisionCriticalBoundary::TrustedHtml => "bounded_trusted_html_interpretation",
             DecisionCriticalBoundary::ProcessExecutable => "bounded_dynamic_executable_selection",
+            DecisionCriticalBoundary::ProcessOptions => "bounded_unresolved_process_options",
             DecisionCriticalBoundary::ShellCommand => "bounded_shell_command_interpretation",
             DecisionCriticalBoundary::NativeFormat => "bounded_native_format_interpretation",
             DecisionCriticalBoundary::DynamicCode => "bounded_dynamic_code_interpretation",
@@ -6299,6 +6319,9 @@ impl DecisionCriticalOrigin<'_> {
             (DecisionCriticalBoundary::ProcessExecutable, _) => {
                 "Review dynamic executable selection for CWE-78"
             }
+            (DecisionCriticalBoundary::ProcessOptions, _) => {
+                "Review unresolved process shell options for CWE-78"
+            }
             (DecisionCriticalBoundary::ShellCommand, _) => {
                 "Review dynamic shell command text for CWE-78"
             }
@@ -6335,6 +6358,7 @@ impl DecisionCriticalOrigin<'_> {
             DecisionCriticalBoundary::SqlIdentifier => "Can an attacker select the stored procedure or SQL identifier used by this database operation, or is the identifier fixed or restricted to an exact server-owned allowlist?".to_string(),
             DecisionCriticalBoundary::TrustedHtml => "Can the runtime value passed across this explicit HTML trust boundary be influenced by an attacker, or is it sanitized for the exact browser context before escaping is bypassed?".to_string(),
             DecisionCriticalBoundary::ProcessExecutable => "Can an attacker influence the executable selected by this process launch, or is it chosen from an exact server-owned allowlist?".to_string(),
+            DecisionCriticalBoundary::ProcessOptions => "Do the effective process options enable shell interpretation of dynamic arguments? Resolve the observed options boundary before treating a fixed executable as protection.".to_string(),
             DecisionCriticalBoundary::ShellCommand => "Can an attacker influence text interpreted by this command shell, or is every dynamic value kept outside shell grammar under an exact allowlist?".to_string(),
             DecisionCriticalBoundary::NativeFormat => "Can an attacker influence the printf-family format operand, or is the exact format string fixed by trusted code?".to_string(),
             DecisionCriticalBoundary::DynamicCode => "Can an attacker influence the program or expression interpreted by this runtime evaluator, or is the exact grammar fixed and trusted?".to_string(),
@@ -6369,6 +6393,10 @@ impl DecisionCriticalOrigin<'_> {
             ),
             DecisionCriticalBoundary::ProcessExecutable => format!(
                 "Can attacker-controlled input select executable `{}` at this process launch, or is the executable restricted to an exact server-owned allowlist?",
+                self.operand
+            ),
+            DecisionCriticalBoundary::ProcessOptions => format!(
+                "What effective shell option reaches this process launch through `{}`, after the observed mutation, escape or unresolved producer?",
                 self.operand
             ),
             DecisionCriticalBoundary::ShellCommand => format!(
@@ -6451,6 +6479,7 @@ impl DecisionCriticalOrigin<'_> {
                 match self.boundary {
                     DecisionCriticalBoundary::TrustedHtml => "trusted HTML interpretation",
                     DecisionCriticalBoundary::ProcessExecutable => "process executable selection",
+                    DecisionCriticalBoundary::ProcessOptions => "unresolved process options",
                     DecisionCriticalBoundary::ShellCommand => "shell command interpretation",
                     DecisionCriticalBoundary::NativeFormat => "native format-string interpretation",
                     DecisionCriticalBoundary::DynamicCode => "dynamic code interpretation",
@@ -6569,6 +6598,12 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
                 false,
             )?)
         } else if item.capability == Capability::ProcessExecution {
+            let options_unresolved = item.context.operand_facts.iter().any(|fact| {
+                fact.role == "process_options"
+                    && (fact.kind == mehscan_core::OperandFactKind::OperandBoundary
+                        || (fact.kind == mehscan_core::OperandFactKind::ProcessShellMode
+                            && fact.value == "unresolved"))
+            });
             let shell = item.tags.iter().any(|tag| tag == "shell-command-text")
                 || (item.captures.contains_key("arguments")
                     && item.context.literals.get("command").is_some_and(|literal| {
@@ -6581,6 +6616,8 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
                 item,
                 if shell {
                     DecisionCriticalBoundary::ShellCommand
+                } else if options_unresolved {
+                    DecisionCriticalBoundary::ProcessOptions
                 } else {
                     DecisionCriticalBoundary::ProcessExecutable
                 },
@@ -6591,6 +6628,8 @@ fn decision_critical_origin(evidence: &[Evidence]) -> Option<DecisionCriticalOri
                 },
                 if shell {
                     &["shell_command", "arguments", "command"]
+                } else if options_unresolved {
+                    &["process_options_operand", "arguments", "command"]
                 } else {
                     &["executable", "command"]
                 },

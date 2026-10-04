@@ -85,6 +85,19 @@ pub(super) fn contract_queue(
 }
 
 pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, String> {
+    // Read adjacent operations in source order. Identity still comes from the
+    // exact ID/anchor, never the position of a row in this list.
+    cards.sort_by(|a, b| {
+        a["anchor"]["location"]["path"]
+            .as_str()
+            .cmp(&b["anchor"]["location"]["path"].as_str())
+            .then_with(|| {
+                a["anchor"]["location"]["start_line"]
+                    .as_u64()
+                    .cmp(&b["anchor"]["location"]["start_line"].as_u64())
+            })
+            .then_with(|| a["review_id"].as_str().cmp(&b["review_id"].as_str()))
+    });
     let mut lines = BTreeMap::<String, BTreeMap<u64, String>>::new();
     let mut contexts = Vec::<Value>::new();
     for card in &cards {
@@ -205,6 +218,22 @@ mod tests {
 
     fn card(text: &str, truncated: bool) -> Value {
         json!({"review_id":text,"source_context":{"location":{"path":"view.php","start_line":10,"end_line":10},"excerpt":text,"truncated":truncated}})
+    }
+
+    #[test]
+    fn source_order_preserves_each_exact_identity_and_operand() {
+        let cards = [("a", 17, "changed"), ("b", 21, "spread"), ("c", 12, "bound")].map(|(id, line, operand)| {
+            json!({"review_id":id, "selected_anchor_id":operand, "anchor":{"location":{"path":"app.js", "start_line":line}, "captures":{"query":operand}}})
+        });
+        let result = sweep("bundle", cards.into()).unwrap();
+        for (index, id, operand) in [(0, "c", "bound"), (1, "a", "changed"), (2, "b", "spread")] {
+            assert_eq!(result["reviews"][index]["review_id"], id);
+            assert_eq!(result["reviews"][index]["selected_anchor_id"], operand);
+            assert_eq!(
+                result["reviews"][index]["anchor"]["captures"]["query"],
+                operand
+            );
+        }
     }
 
     #[test]

@@ -1,6 +1,141 @@
 use std::{fs, process::Command};
 
 #[test]
+fn node_alias_facts_support_precise_followup_and_reopening() {
+    let root =
+        std::env::temp_dir().join(format!("mehscan-node-operand-cli-{}", std::process::id()));
+    let artifacts = root.with_file_name(format!(
+        "mehscan-node-operand-cli-run-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("app.js"), "const {Client} = require('pg');\nconst cp = require('node:child_process');\nconst client = new Client();\nfunction fixed(value) { const config = {text: 'SELECT $1', values: [value]}; return client.query(config); }\nfunction composed(value) { const config = {text: 'SELECT ' + value}; return client.query(config); }\nfunction launch(value) {\nconst opts = {shell: false};\nopts.shell = true;\nreturn cp.execFile('tool', [value], opts);\n}\n").unwrap();
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    run(&[
+        "investigate",
+        "review-inventory",
+        root.to_str().unwrap(),
+        "--output",
+        artifacts.to_str().unwrap(),
+    ]);
+    let list = |extra: &[&str]| {
+        let mut args = vec![
+            "investigate",
+            "review-inventory-list",
+            "--inventory",
+            artifacts.to_str().unwrap(),
+        ];
+        args.extend_from_slice(extra);
+        run(&args)
+    };
+    let all = list(&[]);
+    let entries = all["entries"].as_array().unwrap();
+    let id = |name: &str| {
+        entries.iter().find(|e| e["symbol"] == name).unwrap()["review_id"]
+            .as_str()
+            .unwrap()
+    };
+    let fixed = id("fixed");
+    assert_eq!(
+        list(&["--selection", "deferred"])["entries"][0]["review_id"],
+        fixed
+    );
+    for kind in [
+        "local_operand_origin",
+        "operand_boundary",
+        "query_structure",
+    ] {
+        assert!(
+            list(&["--operand-kind", kind])["matching_count"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
+    }
+    let chunk = artifacts.join("chunk");
+    let manifest = run(&[
+        "investigate",
+        "review-bundles",
+        root.to_str().unwrap(),
+        "--inventory",
+        artifacts.to_str().unwrap(),
+        "--review-ids",
+        id("launch"),
+        "--output",
+        chunk.to_str().unwrap(),
+    ]);
+    let request = chunk
+        .join("requests")
+        .join(manifest["bundles"][0]["filename"].as_str().unwrap());
+    let card = run(&[
+        "investigate",
+        "review-card",
+        "--bundle",
+        request.to_str().unwrap(),
+        "--review-id",
+        id("launch"),
+    ]);
+    assert!(
+        card["operand_facts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["kind"] == "operand_boundary" && f["location"]["start"]["line"] == 8)
+    );
+    assert_eq!(card["suggested_lookups"][0]["arguments"]["path"], "app.js");
+    let start = card["suggested_lookups"][0]["arguments"]["start-line"]
+        .as_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    let end = card["suggested_lookups"][0]["arguments"]["end-line"]
+        .as_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    assert!(start <= 8 && end >= 8);
+    assert!(
+        card["security_question"]
+            .as_str()
+            .unwrap()
+            .contains("effective process options"),
+        "{card}"
+    );
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(artifacts.join("inventory.json")).unwrap()).unwrap();
+    let ledger = artifacts.join("ledger.json");
+    for decision in ["issue", "needs_review", "not_issue"] {
+        fs::write(&ledger, serde_json::to_vec(&serde_json::json!({"schema_version": "1", "source_fingerprint": saved["source_fingerprint"], "inventory_count": entries.len(), "reviewed": {id("composed"): decision}, "conflicts": []})).unwrap()).unwrap();
+        let queue = list(&["--selection", "value", "--ledger", ledger.to_str().unwrap()]);
+        assert_eq!(
+            queue["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["review_id"] == fixed),
+            decision != "not_issue"
+        );
+        assert_eq!(
+            queue["reopened_count"],
+            if decision == "not_issue" { 0 } else { 1 }
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(artifacts).unwrap();
+}
+
+#[test]
 fn filters_compact_operand_facts_and_exposes_them_on_selected_cards() {
     let root = std::env::temp_dir().join(format!("mehscan-operand-cli-{}", std::process::id()));
     fs::create_dir_all(root.join("src")).unwrap();
