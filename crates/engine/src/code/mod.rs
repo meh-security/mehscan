@@ -31,6 +31,7 @@ mod go_context;
 mod go_filesystem;
 mod go_grpc;
 mod go_ldap;
+mod go_operands;
 mod go_policy;
 mod go_vulnerability;
 mod go_web;
