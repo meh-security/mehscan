@@ -159,12 +159,33 @@ internal static class Program
             // Compiler symbol equality separates same-spelling shadowed locals.
             // Any intervening reference is a conservative stop, not a CFG proof.
             var intervening = owner.DescendantNodes().OfType<IdentifierNameSyntax>()
-                .FirstOrDefault(n => n.SpanStart >= initializer.Span.End && n.Span.End <= operand.SpanStart
-                    && SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(n).Symbol, local));
-            if (intervening != null)
+                .Where(n => n.SpanStart >= initializer.Span.End && n.Span.End <= operand.SpanStart
+                    && SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(n).Symbol, local))
+                .ToArray();
+            if (intervening.Length != 0)
             {
-                facts.Add(new(query.Role, "operand_boundary", Location(source, intervening.Span),
-                    "Intervening reference to the compiler-resolved local", ["reaching_write_alias_or_handoff"]));
+                // Prefer a replacement over a later append/read so a reviewer can
+                // see resets such as sql = ... after an earlier command. Textual
+                // proximity is navigation only: a conditional write need not run,
+                // and other references may alias, capture or mutate the value.
+                var writes = intervening
+                    .Where(n => n.Ancestors().FirstOrDefault(IsCallable) == owner)
+                    .Select(n => n.Parent is AssignmentExpressionSyntax assignment && assignment.Left == n
+                        ? assignment : null)
+                    .OfType<AssignmentExpressionSyntax>()
+                    // A write whose RHS contains this operand has not completed.
+                    .Where(n => n.Span.End <= operand.SpanStart)
+                    .OrderBy(n => n.SpanStart).ToArray();
+                var write = writes.LastOrDefault(n => n.IsKind(SyntaxKind.SimpleAssignmentExpression))
+                    ?? writes.LastOrDefault();
+                var span = write == null ? intervening[0].Span
+                    : write.Span.Length <= 2048 ? write.Span : write.Left.Span;
+                var detail = write == null ? "Intervening reference to the compiler-resolved local"
+                    : write.IsKind(SyntaxKind.SimpleAssignmentExpression)
+                        ? "Observed local replacement before this operand; reaching value not inferred"
+                        : "Observed compound local write before this operand; reaching value not inferred";
+                facts.Add(new(query.Role, "operand_boundary", Location(source, span), detail,
+                    ["reaching_write_alias_or_handoff", "branch_and_execution_order"]));
                 return;
             }
             facts.Add(new(query.Role, "local_operand_origin", Location(source, initializer.Span),

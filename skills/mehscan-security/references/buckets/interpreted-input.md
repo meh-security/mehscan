@@ -28,8 +28,11 @@ alone does not establish what a browser will execute.
   relevant argument. Fixed query text with bound values differs from text
   concatenation. Search the actual identifier used at call sites and treat
   text references as leads; check whether aliases, dynamic dispatch, or an
-  exposed wrapper leave a caller outside that inventory. When an application
-  operation that should treat input as a value shows a variable inserted into
+  exposed wrapper leave a caller outside that inventory. Check the inserted
+  values' declared types, conversions and formatting. Source-proven restrictions
+  that prevent SQL grammar changes can settle this property without binding;
+  parameterization can remain a hardening recommendation. When an application
+  operation that should treat input as a value shows an unconstrained value inserted into
   executable SQL grammar without binding, report the
   unsafe construction as `issue` even if runtime or attacker reachability
   remains unproved after targeted checks. Use `low` confidence for that

@@ -127,7 +127,7 @@ fn native_frameworks_preserve_ids_and_expose_exact_symbols_and_boundaries() {
                 .operand_facts
                 .iter()
                 .any(|f| f.kind == OperandFactKind::OperandBoundary
-                    && f.value.contains("Intervening reference")
+                    && f.value.contains("Observed local replacement")
                     && f.location.start.line == 26)
         );
         let missing = sink("Missing");
@@ -303,6 +303,170 @@ fn native_binding_distinguishes_source_lookalikes_and_inline_producer_from_sink(
     assert!(facts.iter().any(|f| f.role == "query"
         && f.kind == OperandFactKind::SemanticDefinition
         && f.location.path == "nested/Helpers.cs"));
+}
+
+#[test]
+#[ignore = "requires built Roslyn helper and real .NET 8 reference pack"]
+fn local_write_navigation_distinguishes_resets_branches_and_same_spelling_locals() {
+    let fixture = Fixture::new("local-writes");
+    // The source-defined Query supplies a compiler-bound call shape only;
+    // this control makes no claim about Dapper behavior or SQL safety.
+    let source = r#"using System.Data.Common;
+using Dapper;
+namespace Dapper {
+    static class QueryApi { public static string Query(this DbConnection db, string sql) => sql; }
+}
+class Writes {
+    static void Read(string value) { }
+    static void Mutate(ref string value) { }
+    void Reset(DbConnection db, string input) {
+        var query = input;
+        query += " first";
+        Read(query);
+        query = "SELECT 1";
+        query += " old";
+        query = "SELECT 2";
+        query += " final";
+        using DbCommand command = db.CreateCommand();
+        command.CommandText = query;
+    }
+    void Append(DbCommand command, string input) {
+        var query = input;
+        query += " first";
+        query += " final";
+        command.CommandText = query;
+    }
+    void Conditional(DbCommand command, string input, bool flag) {
+        var query = input;
+        if (flag) query = "SELECT 3";
+        command.CommandText = query;
+    }
+    void Shadow(DbCommand command, string input) {
+        { var query = "SELECT 4";
+          query = input;
+          command.CommandText = query; }
+        { var query = "SELECT 5";
+          command.CommandText = query; }
+    }
+    void ReadOnly(DbCommand command, string input) {
+        var query = input;
+        Read(query);
+        command.CommandText = query;
+    }
+    void Handoff(DbCommand command, string input) {
+        var query = input;
+        Mutate(ref query);
+        command.CommandText = query;
+    }
+    void Captured(DbCommand command, string input) {
+        var query = input;
+        System.Action change = () => { query = "SELECT 6"; };
+        command.CommandText = query;
+    }
+    void Overlapping(DbConnection db, string input) {
+        var query = input;
+        query = db.Query(query);
+    }
+}
+"#;
+    std::fs::write(fixture.0.join("App.cs"), source).unwrap();
+    let context = fixture.context(
+        "writes",
+        "net8.0",
+        "12.0",
+        &env_path("MEHSCAN_ROSLYN_NET8_REFS"),
+    );
+    let scan = mehscan_engine::scan_path(&fixture.0).unwrap();
+    let snapshot = csharp_semantic::collect(
+        &fixture.0,
+        &context,
+        &env_path("MEHSCAN_ROSLYN_BACKEND"),
+        &scan,
+    )
+    .unwrap();
+    assert_eq!(snapshot.observations.len(), 9);
+    assert_eq!(
+        serde_json::to_value(&snapshot).unwrap()["projects"][0]["compiler_errors"],
+        0
+    );
+    let native_query = |method: &str| {
+        scan.evidence
+            .iter()
+            .filter(|e| e.enclosing_symbol.as_deref() == Some(method))
+            .flat_map(|e| {
+                snapshot
+                    .observations
+                    .iter()
+                    .filter(move |o| o.evidence_id == e.id)
+            })
+            .flat_map(|o| &o.facts)
+            .filter(|f| f.role == "query")
+            .collect::<Vec<_>>()
+    };
+    for (method, exact_write, description) in [
+        ("Reset", "query = \"SELECT 2\"", "replacement"),
+        ("Append", "query += \" final\"", "compound"),
+        ("Conditional", "query = \"SELECT 3\"", "replacement"),
+    ] {
+        let facts = native_query(method);
+        let boundary = facts
+            .iter()
+            .find(|f| f.kind == OperandFactKind::OperandBoundary)
+            .unwrap();
+        assert_eq!(
+            &source[boundary.location.start.byte_offset..boundary.location.end.byte_offset],
+            exact_write
+        );
+        assert!(boundary.value.contains(description));
+        assert!(boundary.value.contains("reaching value not inferred"));
+        assert!(
+            boundary
+                .remaining_checks
+                .iter()
+                .any(|c| c == "branch_and_execution_order")
+        );
+        assert!(
+            !facts
+                .iter()
+                .any(|f| f.kind == OperandFactKind::LocalOperandOrigin)
+        );
+    }
+    for method in ["ReadOnly", "Handoff", "Captured", "Overlapping"] {
+        let facts = native_query(method);
+        assert!(
+            facts
+                .iter()
+                .any(|f| f.kind == OperandFactKind::OperandBoundary
+                    && f.value.contains("Intervening reference")),
+            "{method}"
+        );
+        assert!(
+            !facts
+                .iter()
+                .any(|f| f.kind == OperandFactKind::LocalOperandOrigin),
+            "{method}"
+        );
+    }
+    let shadow = native_query("Shadow");
+    assert_eq!(
+        shadow
+            .iter()
+            .filter(|f| f.kind == OperandFactKind::OperandBoundary)
+            .count(),
+        1
+    );
+    assert!(
+        shadow
+            .iter()
+            .any(|f| f.kind == OperandFactKind::LocalOperandOrigin && f.value == "\"SELECT 5\"")
+    );
+    let mut enriched = scan.clone();
+    csharp_semantic::enrich(&fixture.0, &context, &snapshot, &mut enriched).unwrap();
+    assert_eq!(
+        scan.evidence.iter().map(|e| &e.id).collect::<Vec<_>>(),
+        enriched.evidence.iter().map(|e| &e.id).collect::<Vec<_>>()
+    );
+    assert_eq!(scan.security_paths, enriched.security_paths);
 }
 
 #[test]

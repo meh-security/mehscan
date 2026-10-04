@@ -114,7 +114,12 @@ do not discard valid identities, but facts carry `partial_semantic_context`.
 When multiple project/target contexts cover one operation, import withholds its
 facts and emits a diagnostic. A declaration location does not establish runtime
 implementation, helper return behavior or trust. Intervening local references
-stop initializer reuse; this increment supplies no CFG/reaching-write proof.
+stop initializer reuse. The boundary locates the last observed replacement,
+otherwise a compound write or the first reference, for the exact compiler local.
+Conditional writes remain conditional; this is navigation, not a CFG or
+reaching-value proof. Review cards prefer the captured operand's boundary or
+initializer over receiver navigation. Inspect later appends, aliases and branches
+before drawing a conclusion.
 Razor, generated source, implicit project imports/options and full DI/reflection
 resolution remain outside the explicit context unless already supplied as source.
 

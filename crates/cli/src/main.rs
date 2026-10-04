@@ -2641,6 +2641,34 @@ fn review_card(
     review_card_from_value(bundle, review_id, &value)
 }
 
+// Receiver navigation can precede producer facts in a native snapshot. Prefer
+// the selected operand's question; array order must not redirect it to the
+// command receiver when the unresolved value is the query/path/etc.
+fn operand_lookup_fact<'a>(
+    facts: &'a [serde_json::Value],
+    captures: &serde_json::Value,
+) -> Option<&'a serde_json::Value> {
+    facts
+        .iter()
+        .filter(|fact| {
+            matches!(
+                fact["kind"].as_str(),
+                Some("operand_boundary" | "local_operand_origin")
+            )
+        })
+        .min_by_key(|fact| {
+            let role = fact["role"].as_str().unwrap_or_default();
+            let role_rank = if captures.get(role).is_some() {
+                0
+            } else if matches!(role, "receiver" | "sink") {
+                2
+            } else {
+                1
+            };
+            (role_rank, u8::from(fact["kind"] != "operand_boundary"))
+        })
+}
+
 fn review_card_from_value(
     bundle: &mehscan_core::PathReviewBundle,
     review_id: &str,
@@ -2761,16 +2789,7 @@ fn review_card_from_value(
     }
     if let Some(fact) = anchor["context"]["operand_facts"]
         .as_array()
-        .and_then(|facts| {
-            facts
-                .iter()
-                .find(|fact| fact["kind"] == "operand_boundary")
-                .or_else(|| {
-                    facts
-                        .iter()
-                        .find(|fact| fact["kind"] == "local_operand_origin")
-                })
-        })
+        .and_then(|facts| operand_lookup_fact(facts, &anchor["captures"]))
     {
         if let (Some(path), Some(line), Some(end)) = (
             fact["location"]["path"].as_str(),
@@ -2779,7 +2798,7 @@ fn review_card_from_value(
         ) {
             lookups.insert(0, serde_json::json!({
                 "operation": "source", "arguments": {"path": path, "start-line": line.saturating_sub(3).max(1).to_string(), "end-line": end.saturating_add(5).min(line.saturating_add(40)).to_string()},
-                "purpose": "Inspect the exact operand initializer or intervening use where local reuse stops."
+                "purpose": format!("Inspect the {} initializer or intervening write/reference; reaching value and control flow remain unproved.", fact["role"].as_str().unwrap_or("operand"))
             }));
             lookups.truncate(2);
         }
@@ -3262,11 +3281,38 @@ Add --journal FILE to a read-only query to append its exact arguments, output or
 #[cfg(test)]
 mod tests {
     use super::{
-        BriefSourceRef, membership_changed_after_bundles, parse_capability, portable_json_value,
-        read_brief_source, validate_review_artifact_source_text,
+        BriefSourceRef, membership_changed_after_bundles, operand_lookup_fact, parse_capability,
+        portable_json_value, read_brief_source, validate_review_artifact_source_text,
     };
     use mehscan_core::Capability;
     use std::collections::{BTreeMap, BTreeSet};
+
+    #[test]
+    fn operand_navigation_prefers_captured_value_over_receiver_regardless_of_fact_order() {
+        let receiver = serde_json::json!({"role": "receiver", "kind": "operand_boundary"});
+        let query = serde_json::json!({"role": "query", "kind": "operand_boundary"});
+        let origin = serde_json::json!({"role": "query", "kind": "local_operand_origin"});
+        let captures = serde_json::json!({"query": {"text": "sql"}});
+        for facts in [
+            vec![receiver.clone(), query.clone()],
+            vec![query.clone(), receiver.clone()],
+        ] {
+            assert_eq!(operand_lookup_fact(&facts, &captures), Some(&query));
+        }
+        assert_eq!(
+            operand_lookup_fact(&[receiver.clone(), origin.clone()], &captures),
+            Some(&origin)
+        );
+        assert_eq!(
+            operand_lookup_fact(&[origin, query.clone()], &captures),
+            Some(&query)
+        );
+        assert_eq!(
+            operand_lookup_fact(&[receiver.clone()], &captures),
+            Some(&receiver)
+        );
+        assert!(operand_lookup_fact(&[], &captures).is_none());
+    }
 
     #[test]
     fn brief_source_accepts_context_over_twenty_lines_but_remains_bounded() {
