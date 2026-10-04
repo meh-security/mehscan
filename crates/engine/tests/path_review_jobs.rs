@@ -693,6 +693,77 @@ fn run_budget_reserves_every_capability_and_preserves_deferred_reviews() {
 }
 
 #[test]
+fn deduplicates_exact_csharp_operations_without_merging_roles_or_calls() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/fixtures/review-csharp-operation-duplicates");
+    let scan = mehscan_engine::scan_path(&root).expect("C# operation fixture should scan");
+    let raw_count = |rule: &str| {
+        scan.evidence
+            .iter()
+            .filter(|item| item.rule_id == rule)
+            .count()
+    };
+    assert_eq!(raw_count("csharp-file-copy-source"), 3);
+    assert_eq!(raw_count("csharp-file-copy-destination"), 3);
+    assert_eq!(raw_count("csharp-process-start-info"), 4);
+    assert_eq!(raw_count("csharp-process-start"), 6);
+
+    let jobs = mehscan_engine::investigation::build_all_path_review_jobs(&root, Some(8), false)
+        .expect("C# operation review jobs should build");
+    let anchors = jobs
+        .observation_reviews
+        .iter()
+        .flat_map(|review| {
+            review
+                .evidence
+                .iter()
+                .filter(|item| review.anchor_evidence_ids.contains(&item.id))
+        })
+        .collect::<Vec<_>>();
+    let count = |rule: &str| anchors.iter().filter(|item| item.rule_id == rule).count();
+    assert_eq!(count("csharp-file-copy-source"), 3);
+    assert_eq!(count("csharp-file-copy-destination"), 3);
+    assert_eq!(count("csharp-file-move-source"), 1);
+    assert_eq!(count("csharp-file-move-destination"), 1);
+    assert_eq!(
+        count("csharp-filesystem-read"),
+        1,
+        "only ReadAllText needs the generic anchor"
+    );
+    assert_eq!(
+        count("csharp-process-start-info"),
+        3,
+        "separate starts remain separate jobs"
+    );
+    assert_eq!(
+        count("csharp-process-start"),
+        3,
+        "unresolved descriptor, direct overload and non-admitted companion remain"
+    );
+    for item in anchors
+        .iter()
+        .filter(|item| item.rule_id == "csharp-process-start-info")
+    {
+        assert!(item.captures.contains_key("command"));
+        assert!(item.captures.contains_key("arguments"));
+        assert!(item.captures.contains_key("shell_policy"));
+    }
+    let superseded = jobs
+        .review_coverage
+        .admission_audit
+        .counts
+        .iter()
+        .filter(|entry| entry.disposition == ReviewAdmissionDisposition::DuplicateSuperseded)
+        .map(|entry| entry.count)
+        .sum::<usize>();
+    assert_eq!(
+        superseded, 6,
+        "three copy-source and three descriptor duplicates"
+    );
+}
+
+#[test]
 fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() {
     let scan = mehscan_engine::scan_path(review_admission_root())
         .expect("review-admission fixture should scan");

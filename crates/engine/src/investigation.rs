@@ -11390,6 +11390,7 @@ fn observation_exclusion_disposition(
         || observation_sink_covered_by_candidate(item, candidates)
         || is_superseded_java_logging_observation(item, group)
         || is_superseded_csharp_cookie_observation(item, group)
+        || is_superseded_csharp_operation_observation(item, group, sources)
         || is_duplicate_parameter_sink_summary(item, evidence)
     {
         return Some(ReviewAdmissionDisposition::DuplicateSuperseded);
@@ -11881,6 +11882,37 @@ fn is_superseded_csharp_cookie_observation(item: &Evidence, group: &[Evidence]) 
             other.rule_id == "csharp-session-cookie-policy-risk"
                 && other.location.start.line <= item.location.start.line
                 && item.location.end.line <= other.location.end.line
+        })
+}
+
+/// Prefer the existing operand-specific observation for the same operation and
+/// property. This removes redundant verdict jobs, not raw evidence or independent
+/// copy destinations, process calls, or unresolved descriptor operations.
+fn is_superseded_csharp_operation_observation(
+    item: &Evidence,
+    group: &[Evidence],
+    sources: &RepositorySources,
+) -> bool {
+    let (replacement_rule, operand, replacement_operand) = match item.rule_id.as_str() {
+        "csharp-filesystem-read" => ("csharp-file-copy-source", "path", "path"),
+        "csharp-process-start" => ("csharp-process-start-info", "command", "start_info"),
+        _ => return false,
+    };
+    let Some(operand) = item.captures.get(operand) else {
+        return false;
+    };
+    item.kind == EvidenceKind::Sink
+        && group.iter().any(|other| {
+            other.rule_id == replacement_rule
+                && other.kind == item.kind
+                && other.capability == item.capability
+                && other.cwe_candidates == item.cwe_candidates
+                && other.location == item.location
+                && other.captures.get(replacement_operand) == Some(operand)
+                // Do not strand an operation behind a replacement that will not
+                // itself be reviewed (unless another admission rule owns it).
+                && !is_non_actionable_fixed_sink_observation(other, sources)
+                && !is_non_actionable_safe_purpose_observation(other, sources)
         })
 }
 
