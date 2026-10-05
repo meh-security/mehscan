@@ -82,8 +82,9 @@ evidence is widespread, use Comprehensive for the affected lane or repo.
 
 The overview's `deterministic_operand_closures` counts exact output anchors
 already closed by the scanner. `inventory.json`'s `admission_audit.closed_operands`
-retains their locations and proofs. Currently these are complete native numeric
-PHP outputs with no unresolved CWE-79 operand check. Account for them separately
+retains their locations and proofs. These include complete native numeric PHP
+outputs with no unresolved CWE-79 operand check and complete Roslyn fixed
+filesystem selectors closing only CWE-22. Account for them separately
 from AI verdicts; they are not deferred work or a claim that the handler is safe.
 Independent command, file, access and disclosure questions still need review.
 

@@ -69,7 +69,7 @@ fn covers_mainstream_csharp_sinks_and_keeps_safe_siblings_out_of_paths() {
                 .is_some_and(|step| step.location.path == "positive/Mainstream.cs")
         })
         .collect::<Vec<_>>();
-    assert_eq!(paths.len(), 12);
+    assert_eq!(paths.len(), 11);
     assert!(paths.iter().all(|path| {
         path.state == SecurityPathState::Propagated
             && path
@@ -102,6 +102,76 @@ fn covers_mainstream_csharp_sinks_and_keeps_safe_siblings_out_of_paths() {
     assert_eq!(capabilities[&Capability::XmlParsing], 1);
     assert_eq!(capabilities[&Capability::DynamicCodeExecution], 1);
     assert_eq!(capabilities[&Capability::ProcessExecution], 1);
-    assert_eq!(capabilities[&Capability::FilesystemRead], 4);
+    assert_eq!(capabilities[&Capability::FilesystemRead], 3);
     assert_eq!(capabilities[&Capability::FilesystemWrite], 4);
+}
+
+#[test]
+fn binds_named_filesystem_arguments_and_deduplicates_copy_paths() {
+    let root =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/roslyn-filesystem");
+    let scan = mehscan_engine::scan_path(root).unwrap();
+    let capture = |method: &str, rule: &str, role: &str| {
+        scan.evidence
+            .iter()
+            .find(|e| e.enclosing_symbol.as_deref() == Some(method) && e.rule_id == rule)
+            .unwrap()
+            .captures[role]
+            .text
+            .as_str()
+    };
+    assert_eq!(
+        capture("NamedCopy", "csharp-filesystem-read", "path"),
+        "Console.ReadLine()"
+    );
+    assert_eq!(
+        capture("NamedCopy", "csharp-file-copy-source", "path"),
+        "Console.ReadLine()"
+    );
+    assert_eq!(
+        capture("NamedCopy", "csharp-file-copy-destination", "path"),
+        "\"known.txt\""
+    );
+    assert_eq!(
+        capture("NamedMove", "csharp-file-move-source", "path"),
+        "\"known.txt\""
+    );
+    assert_eq!(
+        capture("NamedMove", "csharp-file-move-destination", "path"),
+        "Console.ReadLine()"
+    );
+    assert_eq!(
+        capture("NamedDirectoryMove", "csharp-filesystem-write", "path"),
+        "Console.ReadLine()"
+    );
+    assert_eq!(
+        capture("NamedDirectoryMove", "csharp-filesystem-write", "source"),
+        "\"known\""
+    );
+    assert_eq!(
+        capture("NamedStream", "csharp-filestream-write", "path"),
+        "Console.ReadLine()"
+    );
+    let source = scan
+        .evidence
+        .iter()
+        .find(|e| {
+            e.enclosing_symbol.as_deref() == Some("NamedCopy")
+                && e.rule_id == "csharp-file-copy-source"
+        })
+        .unwrap();
+    assert_eq!(
+        scan.security_paths
+            .iter()
+            .filter(|p| p.sink_evidence_id == source.id)
+            .count(),
+        1
+    );
+    assert!(!scan.security_paths.iter().any(|p| {
+        scan.evidence.iter().any(|e| {
+            e.id == p.sink_evidence_id
+                && e.enclosing_symbol.as_deref() == Some("NamedCopy")
+                && e.rule_id == "csharp-filesystem-read"
+        })
+    }));
 }

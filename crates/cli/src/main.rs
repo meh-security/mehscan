@@ -695,6 +695,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 !matches!(
                     kind,
                     "fixed_code_relative_path"
+                        | "fixed_filesystem_path"
+                        | "temporary_filesystem_path"
                         | "configured_root_path"
                         | "repository_code_target"
                         | "output_context"
@@ -712,7 +714,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         | "unclassified"
                 )
             }) {
-                return Err("invalid --operand-kind; use fixed_code_relative_path, configured_root_path, repository_code_target, encoding_call, output_context, local_operand_origin, operand_boundary, query_structure, process_shell_mode, native_operand_declaration, local_call_argument, prepared_statement_use, semantic_identity, semantic_definition, receiver_reference, or unclassified".into());
+                return Err("invalid --operand-kind; use fixed_code_relative_path, fixed_filesystem_path, temporary_filesystem_path, configured_root_path, repository_code_target, encoding_call, output_context, local_operand_origin, operand_boundary, query_structure, process_shell_mode, native_operand_declaration, local_call_argument, prepared_statement_use, semantic_identity, semantic_definition, receiver_reference, or unclassified".into());
             }
             let limit = parsed.optional_usize("--limit")?.unwrap_or(50).min(200);
             let offset = parsed.optional_usize("--offset")?.unwrap_or(0);

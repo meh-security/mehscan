@@ -16,6 +16,14 @@ boundary before applying CWE-918.
   engine or closing that path. A writer
   elsewhere in the repository is a lead until its destination can reach the
   read target.
+- C# native `fixed_filesystem_path` establishes fixed selection for that exact
+  operand, not authorization or safe contents/effects. `temporary_filesystem_path`
+  is conditional on temporary-root authority and symlinks; reopen deferred Value
+  IDs when those assumptions fail or the operation participates in a sensitive
+  effect. Use `local_operand_origin` for exact producers and `operand_boundary`
+  to locate the missing edge. Path.Combine and a primitive ToString call alone
+  establish neither containment nor trusted input. Partial compiler facts remain
+  research evidence and do not justify closing the question.
 - For outbound requests and redirects, identify the final scheme, authority
   and destination after any parsing or rewrite. Fixed release URLs selected
   by OS or architecture do not become attacker-selected merely because a

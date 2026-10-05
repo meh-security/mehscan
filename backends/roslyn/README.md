@@ -1,9 +1,11 @@
 # Optional Roslyn evidence
 
 Experimental source/reference-only C# backend. It adds compact compiler symbol,
-local producer/stop and source helper declaration facts to selected SQL operands.
-It preserves review IDs, admission and Value selection. Facts guide research;
-they do not prove input control, safe binding, escaping or runtime dispatch.
+local producer/stop and source helper declaration facts to selected SQL and
+filesystem operands. Most facts guide research without changing admission.
+Complete fixed filesystem selectors can close the exact CWE-22 question;
+generated temporary selectors receive conditional Value deferral. Neither
+establishes resource authorization, filesystem policy or safe runtime effects.
 
 ## Build
 
@@ -138,6 +140,31 @@ writes from a top-level reset. This is source navigation, not a complete reachin
 query: conditional writes, earlier execution, format/culture and all remaining
 terms still require inspection. Scalar types do not automatically establish
 safe SQL. Error types are withheld; an exceeded window stays explicit.
+
+## Filesystem selection facts
+
+Filesystem requests use the complete `path` capture. Compiler-bound File,
+Directory and FileStream operations can expose `fixed_filesystem_path` for
+constant selectors, immutable local aliases, supported completed resets and
+fixed Path.Combine parts. A fixed selector closes only the CWE-22 path-selection
+review; other capabilities and security questions remain independent.
+Default ToString on a constant nonnegative built-in integer or constant boolean
+also resolves a fixed selector. This does not apply to arbitrary numeric values,
+caller-selected formats/providers, character conversions or custom implicit
+conversions. These are path-selection facts, not cross-context sanitizers.
+
+`temporary_filesystem_path` recognizes the framework temporary root combined
+with Guid.NewGuid().ToString() (default, N or D), GetRandomFileName, or a framework
+GetTempFileName result. Constant child segments are limited to simple basenames.
+Comprehensive keeps these IDs; Value defers them under an explicit trusted-root
+and symlink assumption. Unknown roots/manifest properties, arbitrary ToString,
+numeric formats, captured/ref/out locals, accumulation and unsupported flow
+receive no exclusion. Executable suffix constructions remain active.
+
+Path facts must match the exact selected source span and text. Partial compiler
+contexts and overlapping project contexts cannot change admission or Value
+selection through these facts. The backend does not resolve filesystem links,
+build caller trust models or import a primitive sanitizer catalog.
 Razor, generated source, implicit project imports/options and full DI/reflection
 resolution remain outside the explicit context unless already supplied as source.
 

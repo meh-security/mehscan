@@ -1,4 +1,4 @@
-//! Optional, source-bound Roslyn navigation facts. No admission or safety changes.
+//! Optional, source-bound Roslyn facts with narrow complete-path selection facts.
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -104,11 +104,16 @@ impl InputBinding {
 pub fn queries(scan: &ScanResult) -> Vec<Query> {
     scan.evidence
         .iter()
-        .filter(|e| e.location.path.ends_with(".cs") && e.capability == Capability::DatabaseQuery)
+        .filter(|e| e.location.path.ends_with(".cs"))
         .filter_map(|e| {
-            e.captures.get("query").map(|operand| Query {
+            let role = match e.capability {
+                Capability::DatabaseQuery => "query",
+                Capability::FilesystemRead | Capability::FilesystemWrite => "path",
+                _ => return None,
+            };
+            e.captures.get(role).map(|operand| Query {
                 evidence_id: e.id.clone(),
-                role: "query".into(),
+                role: role.into(),
                 sink: e.location.clone(),
                 operand: operand.location.clone(),
                 composition: e
@@ -120,7 +125,7 @@ pub fn queries(scan: &ScanResult) -> Vec<Query> {
         .collect()
 }
 
-/// Launch an explicitly supplied helper once for the selected SQL operands.
+/// Launch an explicitly supplied helper once for selected SQL/filesystem operands.
 pub fn collect(
     root: &Path,
     context: &Path,
@@ -199,8 +204,8 @@ pub fn load(path: &Path) -> Result<Snapshot, EngineError> {
     serde_json::from_slice(&read_bounded(std::fs::File::open(path)?, MAX_SNAPSHOT)?).map_err(err)
 }
 
-/// Validate all source/reference inputs before attaching anything. This is shadow
-/// metadata: existing identities, captures, paths, IDs and selection stay intact.
+/// Validate all source/reference inputs before attaching anything. Scan identities,
+/// captures and paths stay intact; supported complete path facts inform admission.
 pub fn enrich(
     root: &Path,
     context: &Path,
@@ -238,6 +243,8 @@ pub fn enrich(
                     | OperandFactKind::LocalOperandOrigin
                     | OperandFactKind::OperandBoundary
                     | OperandFactKind::ReceiverReference
+                    | OperandFactKind::FixedFilesystemPath
+                    | OperandFactKind::TemporaryFilesystemPath
             ) || fact.remaining_checks.is_empty()
             {
                 return Err(EngineError("Unsupported Roslyn navigation fact".into()));
@@ -245,7 +252,22 @@ pub fn enrich(
             validate_location(root, &snapshot.sources, &fact.location)?;
             if matches!(
                 fact.kind,
-                OperandFactKind::LocalOperandOrigin | OperandFactKind::ReceiverReference
+                OperandFactKind::FixedFilesystemPath | OperandFactKind::TemporaryFilesystemPath
+            ) {
+                let query = &expected[&observation.evidence_id];
+                if query.role != "path" || fact.role != query.role || fact.location != query.operand
+                {
+                    return Err(EngineError(
+                        "Roslyn path fact is not bound to the complete selected path".into(),
+                    ));
+                }
+            }
+            if matches!(
+                fact.kind,
+                OperandFactKind::LocalOperandOrigin
+                    | OperandFactKind::ReceiverReference
+                    | OperandFactKind::FixedFilesystemPath
+                    | OperandFactKind::TemporaryFilesystemPath
             ) {
                 let text = std::fs::read_to_string(source_path(root, &fact.location.path)?)?;
                 if text.get(fact.location.start.byte_offset..fact.location.end.byte_offset)

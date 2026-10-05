@@ -163,6 +163,38 @@ pub struct ReviewInventoryEntry {
     pub value_hint: Option<ValueReviewHint>,
 }
 
+fn complete_csharp_path_fact(anchor: &Evidence, kind: mehscan_core::OperandFactKind) -> bool {
+    let Some(path) = anchor.captures.get("path") else {
+        return false;
+    };
+    anchor.location.path.ends_with(".cs")
+        && matches!(
+            anchor.capability,
+            Capability::FilesystemRead | Capability::FilesystemWrite
+        )
+        && anchor.cwe_candidates == ["CWE-22"]
+        && anchor.context.operand_facts.iter().any(|fact| {
+            fact.kind == kind
+                && fact.role == "path"
+                && fact.location == path.location
+                && fact.value == path.text
+                && !fact
+                    .remaining_checks
+                    .iter()
+                    .any(|check| check == "partial_semantic_context")
+        })
+}
+
+fn temporary_csharp_path_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
+    complete_csharp_path_fact(anchor, mehscan_core::OperandFactKind::TemporaryFilesystemPath)
+        .then(|| ValueReviewHint {
+            reason: "generated_temporary_path".into(),
+            target: anchor.captures["path"].text.clone(),
+            assumption: "Framework temporary root is trusted and not attacker-replaced; generated basename limits path selection. Reopen for root/symlink policy or sensitive filesystem effects; this is not a safe verdict.".into(),
+            depends_on: None,
+        })
+}
+
 fn fixed_include_value_hint(
     anchor: &Evidence,
     sources: &RepositorySources,
@@ -1138,6 +1170,14 @@ fn build_path_review_jobs_internal(
                 && !evidence_by_id
                     .get(candidate.sink.id.as_str())
                     .is_some_and(|sink| closed_output_operand(sink).is_some())
+                && !evidence_by_id
+                    .get(candidate.sink.id.as_str())
+                    .is_some_and(|sink| {
+                        complete_csharp_path_fact(
+                            sink,
+                            mehscan_core::OperandFactKind::FixedFilesystemPath,
+                        )
+                    })
                 && (include_review_material
                     || !is_review_material_path(&candidate.primary_location.path))
         })
@@ -1274,13 +1314,18 @@ fn build_path_review_jobs_internal(
                 }
                 .to_string(),
                 operand_facts: operand_summaries(anchor),
-                value_hint: (group.priority == 2 && group.anchor_evidence_ids.len() == 1)
-                    .then(|| {
-                        fixed_include_value_hint(anchor, &sources, &write_paths)
-                            .or_else(|| ordinary_php_sink_hint(anchor))
-                            .or_else(|| local_bound_query_hint(anchor))
-                    })
-                    .flatten(),
+                value_hint: (group.anchor_evidence_ids.len() == 1)
+                    .then(|| temporary_csharp_path_hint(anchor))
+                    .flatten()
+                    .or_else(|| {
+                        (group.priority == 2 && group.anchor_evidence_ids.len() == 1)
+                            .then(|| {
+                                fixed_include_value_hint(anchor, &sources, &write_paths)
+                                    .or_else(|| ordinary_php_sink_hint(anchor))
+                                    .or_else(|| local_bound_query_hint(anchor))
+                            })
+                            .flatten()
+                    }),
             })
         }));
         share_php_output_questions(entries);
@@ -11465,7 +11510,20 @@ fn review_admission_audit(
                 capability: item.capability,
                 disposition,
                 location: item.location.clone(),
-                operand_fact: closed_output_operand(item).cloned(),
+                operand_fact: closed_output_operand(item)
+                    .or_else(|| {
+                        complete_csharp_path_fact(
+                            item,
+                            mehscan_core::OperandFactKind::FixedFilesystemPath,
+                        )
+                        .then(|| {
+                            item.context.operand_facts.iter().find(|fact| {
+                                fact.kind == mehscan_core::OperandFactKind::FixedFilesystemPath
+                            })
+                        })
+                        .flatten()
+                    })
+                    .cloned(),
             }
         })
         .collect::<Vec<_>>();
@@ -11965,6 +12023,9 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
         return false;
     }
     if closed_output_operand(item).is_some() {
+        return true;
+    }
+    if complete_csharp_path_fact(item, mehscan_core::OperandFactKind::FixedFilesystemPath) {
         return true;
     }
     if item.capability == Capability::DatabaseQuery && item.rule_id == "csharp-extended-nosql-json"

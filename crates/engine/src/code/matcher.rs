@@ -948,6 +948,13 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    super::csharp_mainstream::normalize_filesystem_arguments(
+        path,
+        &root,
+        language,
+        &literals,
+        &mut evidence,
+    );
     super::csharp_archive::add_archive_observations(
         path,
         &root,

@@ -40,6 +40,250 @@ fn env_path(name: &str) -> PathBuf {
 }
 
 #[test]
+#[ignore = "requires built Roslyn helper and real four-framework reference packs"]
+fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
+    let fixture = Fixture::new("filesystem");
+    for file in ["App.cs", "Helpers.cs"] {
+        std::fs::write(fixture.0.join(file), "").unwrap();
+    }
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/roslyn-filesystem/Paths.cs"),
+        fixture.0.join("App.cs"),
+    )
+    .unwrap();
+    let scan = mehscan_engine::scan_path(&fixture.0).unwrap();
+    let plain = investigation::build_review_inventory(&fixture.0, false).unwrap();
+    for (label, target, language, refs) in [
+        ("net8", "net8.0", "12.0", "MEHSCAN_ROSLYN_NET8_REFS"),
+        ("net10", "net10.0", "14.0", "MEHSCAN_ROSLYN_NET10_REFS"),
+        ("net48", "net48", "7.3", "MEHSCAN_ROSLYN_NET48_REFS"),
+        (
+            "standard",
+            "netstandard2.0",
+            "7.3",
+            "MEHSCAN_ROSLYN_STANDARD20_REFS",
+        ),
+    ] {
+        let context = fixture.context(label, target, language, &env_path(refs));
+        if target == "net48" {
+            // The reference pack also contains two native COM helper DLLs.
+            // Supply managed references explicitly rather than declaring them as assemblies.
+            let references = std::fs::read_dir(env_path(refs))
+                .unwrap()
+                .filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.extension().is_some_and(|e| e == "dll")
+                        && !p
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with("System.EnterpriseServices.")
+                })
+                .collect::<Vec<_>>();
+            let mut declared: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&context).unwrap()).unwrap();
+            declared["projects"][0]["reference_directories"] = json!([]);
+            declared["projects"][0]["references"] = json!(references);
+            std::fs::write(&context, serde_json::to_vec(&declared).unwrap()).unwrap();
+        }
+        let snapshot = csharp_semantic::collect(
+            &fixture.0,
+            &context,
+            &env_path("MEHSCAN_ROSLYN_BACKEND"),
+            &scan,
+        )
+        .unwrap();
+        assert!(
+            snapshot.diagnostics.is_empty(),
+            "{label}: {:?}",
+            snapshot.diagnostics
+        );
+        let mut enriched = scan.clone();
+        csharp_semantic::enrich(&fixture.0, &context, &snapshot, &mut enriched).unwrap();
+        assert_eq!(scan.security_paths, enriched.security_paths);
+        for (old, new) in scan.evidence.iter().zip(&enriched.evidence) {
+            assert_eq!(old.id, new.id);
+            assert_eq!(old.captures, new.captures);
+        }
+        let fact = |method: &str, kind: OperandFactKind| {
+            enriched
+                .evidence
+                .iter()
+                .filter(|e| e.enclosing_symbol.as_deref() == Some(method))
+                .any(|e| e.context.operand_facts.iter().any(|f| f.kind == kind))
+        };
+        for method in [
+            "FixedReset",
+            "FixedAlias",
+            "FixedCombine",
+            "FixedNumber",
+            "FixedBoolean",
+        ] {
+            assert!(
+                fact(method, OperandFactKind::FixedFilesystemPath),
+                "{label}: {method}"
+            );
+        }
+        for method in [
+            "TempGuid",
+            "TempRandom",
+            "TempAlias",
+            "TempFile",
+            "TempReads",
+        ] {
+            assert!(
+                fact(method, OperandFactKind::TemporaryFilesystemPath),
+                "{label}: {method}"
+            );
+        }
+        for method in [
+            "ConditionalReset",
+            "Accumulation",
+            "UnknownRoot",
+            "UnknownManifest",
+            "TempExecutable",
+            "FormatInput",
+            "Character",
+            "RefReplacement",
+            "Capture",
+            "TryReplacement",
+            "UnknownNumber",
+            "Conversion",
+        ] {
+            assert!(
+                !fact(method, OperandFactKind::FixedFilesystemPath),
+                "{label}: {method}"
+            );
+            assert!(
+                !fact(method, OperandFactKind::TemporaryFilesystemPath),
+                "{label}: {method}"
+            );
+        }
+        let path = fixture.0.join(format!("{label}-snapshot.json"));
+        std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+        let inventory = investigation::build_review_inventory_with_semantics(
+            &fixture.0,
+            false,
+            Some((&path, &context)),
+        )
+        .unwrap();
+        assert!(inventory.entries.len() < plain.entries.len());
+        assert!(
+            inventory
+                .admission_audit
+                .closed_operands
+                .iter()
+                .any(|closed| closed
+                    .operand_fact
+                    .as_ref()
+                    .is_some_and(|fact| fact.kind == OperandFactKind::FixedFilesystemPath))
+        );
+        assert!(
+            !inventory
+                .entries
+                .iter()
+                .any(|e| e.symbol.as_deref() == Some("FixedReset"))
+        );
+        for method in [
+            "TempGuid",
+            "TempRandom",
+            "TempAlias",
+            "TempFile",
+            "TempReads",
+        ] {
+            let entry = inventory
+                .entries
+                .iter()
+                .find(|e| e.symbol.as_deref() == Some(method))
+                .unwrap();
+            assert_eq!(
+                entry.value_hint.as_ref().unwrap().reason,
+                "generated_temporary_path"
+            );
+        }
+        for method in [
+            "ConditionalReset",
+            "Accumulation",
+            "UnknownRoot",
+            "UnknownManifest",
+            "TempExecutable",
+            "FormatInput",
+            "Character",
+            "RefReplacement",
+            "Capture",
+            "TryReplacement",
+            "UnknownNumber",
+            "Conversion",
+        ] {
+            assert!(
+                inventory
+                    .entries
+                    .iter()
+                    .any(|e| e.symbol.as_deref() == Some(method) && e.value_hint.is_none()),
+                "{label}: {method}"
+            );
+        }
+        if label == "net10" {
+            let mut malformed = serde_json::to_value(&snapshot).unwrap();
+            let fact = malformed["observations"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .flat_map(|o| o["facts"].as_array_mut().unwrap())
+                .find(|f| f["kind"] == "temporary_filesystem_path")
+                .unwrap();
+            fact["value"] = json!("invented safe path");
+            let malformed = serde_json::from_value(malformed).unwrap();
+            assert!(
+                csharp_semantic::enrich(&fixture.0, &context, &malformed, &mut scan.clone())
+                    .is_err()
+            );
+            std::fs::write(
+                fixture.0.join("Helpers.cs"),
+                "class Broken { MissingType field; }",
+            )
+            .unwrap();
+            let partial_scan = mehscan_engine::scan_path(&fixture.0).unwrap();
+            let partial = csharp_semantic::collect(
+                &fixture.0,
+                &context,
+                &env_path("MEHSCAN_ROSLYN_BACKEND"),
+                &partial_scan,
+            )
+            .unwrap();
+            std::fs::write(&path, serde_json::to_vec(&partial).unwrap()).unwrap();
+            let partial_inventory = investigation::build_review_inventory_with_semantics(
+                &fixture.0,
+                false,
+                Some((&path, &context)),
+            )
+            .unwrap();
+            assert_eq!(
+                plain
+                    .entries
+                    .iter()
+                    .map(|e| &e.review_id)
+                    .collect::<Vec<_>>(),
+                partial_inventory
+                    .entries
+                    .iter()
+                    .map(|e| &e.review_id)
+                    .collect::<Vec<_>>()
+            );
+            assert!(
+                partial_inventory
+                    .entries
+                    .iter()
+                    .all(|e| e.value_hint.is_none())
+            );
+            std::fs::write(fixture.0.join("Helpers.cs"), "").unwrap();
+        }
+    }
+}
+
+#[test]
 #[ignore = "requires built Roslyn helper and real .NET 8 / 10, Standard 2.0 and Framework 4.8 packs"]
 fn native_frameworks_preserve_ids_and_expose_exact_symbols_and_boundaries() {
     let fixture = Fixture::new("profiles");
