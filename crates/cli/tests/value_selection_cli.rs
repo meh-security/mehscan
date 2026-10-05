@@ -1,6 +1,157 @@
 use std::{fs, process::Command};
 
 #[test]
+#[ignore = "requires Roslyn helper and real .NET 10 refs"]
+fn compiler_bound_shared_filesystem_slots_keep_exact_ids_and_reopen() {
+    let root = std::env::temp_dir().join(format!("mehscan-csharp-value-{}", std::process::id()));
+    let artifacts =
+        std::env::temp_dir().join(format!("mehscan-csharp-value-run-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&artifacts).unwrap();
+    fs::write(
+        root.join("App.cs"),
+        r#"using System.IO;
+class App {
+ void Shared(string path) { File.Delete(path); File.Delete(path); File.ReadAllText(path); }
+ void Mutable(string path, string other) { File.Delete(path); path = other; File.Delete(path); }
+ void Ref(string path) { File.Delete(path); Change(ref path); File.Delete(path); }
+ void Change(ref string path) { path = "changed"; }
+ void Other(string path) { File.Delete(path); }
+}"#,
+    )
+    .unwrap();
+    let context = artifacts.join("context.json");
+    fs::write(&context, serde_json::to_vec(&serde_json::json!({"projects": [{
+        "id": "app", "target_framework": "net10.0", "language_version": "14.0", "sources": ["App.cs"],
+        "references": [], "reference_directories": [std::env::var("MEHSCAN_ROSLYN_NET10_REFS").unwrap()], "defines": []
+    }]})).unwrap()).unwrap();
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let semantic = artifacts.join("semantic.json");
+    run(&[
+        "investigate",
+        "csharp-semantic",
+        root.to_str().unwrap(),
+        "--context",
+        context.to_str().unwrap(),
+        "--backend",
+        &std::env::var("MEHSCAN_ROSLYN_BACKEND").unwrap(),
+        "--output",
+        semantic.to_str().unwrap(),
+    ]);
+    let inventory = artifacts.join("inventory");
+    run(&[
+        "investigate",
+        "review-inventory",
+        root.to_str().unwrap(),
+        "--output",
+        inventory.to_str().unwrap(),
+        "--csharp-semantic",
+        semantic.to_str().unwrap(),
+        "--csharp-context",
+        context.to_str().unwrap(),
+    ]);
+    let list = |selection: &str, extra: &[&str]| {
+        let mut args = vec![
+            "investigate",
+            "review-inventory-list",
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--selection",
+            selection,
+        ];
+        args.extend_from_slice(extra);
+        run(&args)
+    };
+    let all = list("all", &[]);
+    let deferred = list("deferred", &[]);
+    assert_eq!(deferred["matching_count"], 1, "{deferred}");
+    let child = &deferred["entries"][0];
+    assert_eq!(child["symbol"], "Shared");
+    assert_eq!(
+        child["value_hint"]["reason"],
+        "shared_csharp_filesystem_selection"
+    );
+    let representative = child["value_hint"]["depends_on"].as_str().unwrap();
+    let value = list("value", &[]);
+    assert_eq!(
+        all["matching_count"].as_u64().unwrap(),
+        value["matching_count"].as_u64().unwrap() + 1
+    );
+    for symbol in ["Mutable", "Ref", "Other"] {
+        assert!(
+            value["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["symbol"] == symbol)
+        );
+    }
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(inventory.join("inventory.json")).unwrap()).unwrap();
+    let ledger = artifacts.join("ledger.json");
+    for verdict in ["issue", "needs_review", "not_issue"] {
+        fs::write(&ledger, serde_json::to_vec(&serde_json::json!({
+            "schema_version": "2", "source_fingerprint": saved["source_fingerprint"], "input_fingerprint": saved["input_fingerprint"],
+            "inventory_count": saved["entries"].as_array().unwrap().len(), "reviewed": {representative: verdict}, "conflicts": []
+        })).unwrap()).unwrap();
+        let queue = list("value", &["--ledger", ledger.to_str().unwrap()]);
+        assert_eq!(
+            queue["reopened_count"],
+            if verdict == "not_issue" { 0 } else { 1 }
+        );
+        assert_eq!(queue["reviewed_count"], 1);
+        assert_eq!(
+            queue["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["review_id"] == child["review_id"]),
+            verdict != "not_issue"
+        );
+    }
+    // Reject malformed declaration identity rather than grouping arbitrary slots.
+    let mut snapshot: serde_json::Value =
+        serde_json::from_slice(&fs::read(&semantic).unwrap()).unwrap();
+    let fact = snapshot["observations"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .flat_map(|o| o["facts"].as_array_mut().unwrap())
+        .find(|f| f["kind"] == "immutable_filesystem_operand")
+        .unwrap();
+    fact["value"] = serde_json::json!("unbound-slot");
+    fs::write(&semantic, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-inventory",
+            root.to_str().unwrap(),
+            "--output",
+            artifacts.join("rejected").to_str().unwrap(),
+            "--csharp-semantic",
+            semantic.to_str().unwrap(),
+            "--csharp-context",
+            context.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(artifacts).unwrap();
+}
+
+#[test]
 fn source_defaults_and_shared_questions_preserve_gaps_and_reopen_dependents() {
     let root = std::env::temp_dir().join(format!("mehscan-value-questions-{}", std::process::id()));
     let artifacts = std::env::temp_dir().join(format!(

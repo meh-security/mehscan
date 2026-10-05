@@ -113,6 +113,13 @@ fn operand_summaries(evidence: &Evidence) -> Vec<ReviewOperandSummary> {
         .context
         .operand_facts
         .iter()
+        .filter(|fact| {
+            fact.kind != mehscan_core::OperandFactKind::ImmutableFilesystemOperand
+                || !fact
+                    .remaining_checks
+                    .iter()
+                    .any(|c| c == "partial_semantic_context")
+        })
         .map(|fact| ReviewOperandSummary {
             kind: fact.kind.clone(),
             value: fact.value.clone(),
@@ -311,6 +318,40 @@ fn share_php_output_questions(entries: &mut [ReviewInventoryEntry]) {
             });
         } else {
             entry.value_hint = None;
+            representatives.insert(key, entry.review_id.clone());
+        }
+    }
+}
+
+fn share_csharp_filesystem_questions(entries: &mut [ReviewInventoryEntry]) {
+    let mut representatives = BTreeMap::<String, String>::new();
+    for entry in entries.iter_mut().filter(|entry| {
+        entry.path.ends_with(".cs")
+            && entry.evidence_strength == "sink"
+            && entry.cwe_candidates == ["CWE-22"]
+            && matches!(
+                entry.capability,
+                Capability::FilesystemRead | Capability::FilesystemWrite
+            )
+    }) {
+        let Some(identity) = entry
+            .operand_facts
+            .iter()
+            .find(|fact| fact.kind == mehscan_core::OperandFactKind::ImmutableFilesystemOperand)
+        else {
+            continue;
+        };
+        // Never share different capabilities or callables. A dependency saves repeated
+        // root research; it cannot transfer the representative's safety verdict.
+        let key = format!("{}:{:?}:{}", entry.path, entry.capability, identity.value);
+        if let Some(representative) = representatives.get(&key) {
+            entry.value_hint = Some(ValueReviewHint {
+                reason: "shared_csharp_filesystem_selection".into(),
+                target: key,
+                assumption: "Same compiler-bound immutable string slot and filesystem capability in one callable. Review shared root authority once; check each operation's guards and effects separately. This is not a safe verdict.".into(),
+                depends_on: Some(representative.clone()),
+            });
+        } else {
             representatives.insert(key, entry.review_id.clone());
         }
     }
@@ -1331,6 +1372,7 @@ fn build_path_review_jobs_internal(
             })
         }));
         share_php_output_questions(entries);
+        share_csharp_filesystem_questions(entries);
     }
     let total_reviews = candidates.len() + observation_groups.len();
     if let Some(ids) = selected_ids {

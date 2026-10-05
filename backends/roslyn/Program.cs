@@ -35,6 +35,7 @@ internal static class Program
                 ?? throw new InvalidDataException("Empty semantic context");
             var sources = new SortedDictionary<string, Source>();
             var referenceHashes = new SortedDictionary<string, string>();
+            var metadata = new Dictionary<string, PortableExecutableReference>(StringComparer.OrdinalIgnoreCase);
             var observations = new List<Observation>();
             var diagnostics = new List<DiagnosticRecord>();
             var projects = new List<ProjectRecord>();
@@ -65,10 +66,24 @@ internal static class Program
                 }).ToArray();
                 var references = References(project).Select(path =>
                 {
-                    referenceHashes[path] = Hash(File.ReadAllBytes(path));
-                    return MetadataReference.CreateFromFile(path);
+                    if (!metadata.TryGetValue(path, out var reference))
+                    {
+                        referenceHashes[path] = Hash(File.ReadAllBytes(path));
+                        metadata[path] = reference = MetadataReference.CreateFromFile(path);
+                    }
+                    return reference;
                 }).ToArray();
-                var compilation = CSharpCompilation.Create(project.Id, trees, references,
+                var compilationTrees = trees.AsEnumerable();
+                if (project.GlobalUsings is { Length: > 0 } imports)
+                {
+                    if (imports.Length > 64 || imports.Any(n => string.IsNullOrWhiteSpace(n)
+                        || n.Any(c => !(char.IsLetterOrDigit(c) || c is '.' or '_'))
+                        || SyntaxFactory.ParseName(n).ContainsDiagnostics))
+                        throw new InvalidDataException("global_usings must contain namespace names");
+                    compilationTrees = compilationTrees.Append(CSharpSyntaxTree.ParseText(
+                        string.Join("\n", imports.Distinct().Select(n => $"global using {n};")), parseOptions));
+                }
+                var compilation = CSharpCompilation.Create(project.Id, compilationTrees, references,
                     new CSharpCompilationOptions(project.OutputKind switch {
                         "library" => OutputKind.DynamicallyLinkedLibrary,
                         "console" => OutputKind.ConsoleApplication,
@@ -94,7 +109,8 @@ internal static class Program
                     project.UnresolvedReferences?.Length ?? 0, 0));
                 foreach (var error in errors.Take(12))
                     diagnostics.Add(new(project.Id, error.Id, error.GetMessage(),
-                        error.Location.IsInSource ? Location(sources[error.Location.SourceTree!.FilePath], error.Location.SourceSpan) : null));
+                        error.Location.IsInSource && sources.TryGetValue(error.Location.SourceTree!.FilePath, out var errorSource)
+                            ? Location(errorSource, error.Location.SourceSpan) : null));
                 var models = trees.ToDictionary(t => t.FilePath, t => compilation.GetSemanticModel(t));
                 foreach (var query in request.Queries.Where(q => trees.Any(t => t.FilePath == q.Operand.Path)))
                 {
@@ -103,6 +119,7 @@ internal static class Program
                     var model = models[tree.FilePath];
                     var facts = new List<Fact>();
                     var locallyCompletePathSelection = false;
+                    var locallyCompleteSelectionIdentity = false;
                     var root = tree.GetRoot();
                     var sinkSpan = Span(source, query.Sink);
                     var sinkNode = root.FindNode(sinkSpan, getInnermostNodeForTie: true);
@@ -132,6 +149,7 @@ internal static class Program
                         {
                             var started = timed ? Stopwatch.GetTimestamp() : 0;
                             locallyCompletePathSelection = FilesystemShape(model, operand, action, query, sources, facts, errors);
+                            locallyCompleteSelectionIdentity = FilesystemIdentity(model, operand, action, query, sources, facts, errors);
                             if (timed) { filesystemMilliseconds += Stopwatch.GetElapsedTime(started).TotalMilliseconds; filesystemQueries++; }
                         }
                     }
@@ -139,7 +157,7 @@ internal static class Program
                         facts.Add(new(query.Role, "operand_boundary", query.Operand,
                             "Captured operand is not one complete C# syntax node", ["exact_operand_shape"]));
                     ValueTypes(model, root, query, source, facts);
-                    observations.Add(new(query.EvidenceId, project.Id, facts, locallyCompletePathSelection));
+                    observations.Add(new(query.EvidenceId, project.Id, facts, locallyCompletePathSelection, locallyCompleteSelectionIdentity));
                 }
             }
             var result = new Snapshot("1", "Roslyn " + typeof(CSharpCompilation).Assembly.GetName().Version,
@@ -421,6 +439,47 @@ internal static class Program
 
     private enum PathShape { Unknown, Fixed, TemporaryRoot, GeneratedName, TemporaryPath }
 
+    private static bool FilesystemIdentity(SemanticModel model, SyntaxNode operand, SyntaxNode? action,
+        Query query, SortedDictionary<string, Source> sources, List<Fact> facts, Diagnostic[] errors)
+    {
+        if (action == null || Target(model.GetOperation(action)) is not IMethodSymbol sink || !FrameworkMethod(sink)
+            || sink.ContainingNamespace.ToDisplayString() != "System.IO"
+            || sink.ContainingType.Name is not ("File" or "Directory" or "FileStream")
+            || errors.Any(d => d.Location.IsInSource && d.Location.SourceTree == action.SyntaxTree
+                && d.Location.SourceSpan.IntersectsWith(action.Span))) return false;
+        var node = operand is PostfixUnaryExpressionSyntax postfix && postfix.IsKind(SyntaxKind.SuppressNullableWarningExpression)
+            ? postfix.Operand : operand;
+        if (node is not IdentifierNameSyntax name || model.GetTypeInfo(node).Type?.SpecialType != SpecialType.System_String) return false;
+        var symbol = model.GetSymbolInfo(node).Symbol;
+        if (symbol is not (ILocalSymbol or IParameterSymbol or IFieldSymbol { IsReadOnly: true })
+            || symbol is IParameterSymbol { RefKind: not RefKind.None }) return false;
+        var owner = node.Ancestors().FirstOrDefault(IsCallable);
+        var declaration = symbol.DeclaringSyntaxReferences.SingleOrDefault()?.GetSyntax();
+        if (owner == null || owner.Span.Length > 32768 || declaration == null || declaration.SyntaxTree != node.SyntaxTree
+            || !sources.TryGetValue(declaration.SyntaxTree.FilePath, out var source)) return false;
+        var references = owner.DescendantNodes().OfType<IdentifierNameSyntax>()
+            .Where(n => n.Identifier.ValueText == name.Identifier.ValueText).ToArray();
+        foreach (var reference in references)
+        {
+            var bound = model.GetSymbolInfo(reference).Symbol;
+            if (bound == null) return false;
+            if (!SymbolEqualityComparer.Default.Equals(bound, symbol)) continue;
+            if (reference.Ancestors().OfType<AssignmentExpressionSyntax>().Any(a => a.Left.Span.Contains(reference.Span))
+                || reference.Parent is PrefixUnaryExpressionSyntax prefix && prefix.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression
+                || reference.Parent is PostfixUnaryExpressionSyntax postfixUse && postfixUse.Kind() is SyntaxKind.PostIncrementExpression or SyntaxKind.PostDecrementExpression
+                || reference.Parent is RefExpressionSyntax
+                || reference.Parent is ArgumentSyntax argument && !argument.RefKindKeyword.IsKind(SyntaxKind.None)) return false;
+        }
+        // Same whole string value within this exact callable. Root authority,
+        // guards and effects remain open; this enables conditional context reuse.
+        var location = Location(source, declaration.Span);
+        var ownerLocation = Location(sources[node.SyntaxTree.FilePath], owner.Span);
+        facts.Add(new("path", "immutable_filesystem_operand", location,
+            $"{location.Path}:{location.Start.ByteOffset}:{location.End.ByteOffset}:{ownerLocation.Start.ByteOffset}",
+            ["root_origin_and_authority", "per_operation_guards_and_effects"]));
+        return true;
+    }
+
     private static bool FilesystemShape(SemanticModel model, SyntaxNode operand, SyntaxNode? action,
         Query query, SortedDictionary<string, Source> sources, List<Fact> facts, Diagnostic[] errors)
     {
@@ -432,22 +491,192 @@ internal static class Program
             || sink.ContainingType.Name is not ("File" or "Directory" or "FileStream")
             || HasError(action)) return false;
         var visited = new HashSet<ILocalSymbol>(SymbolEqualityComparer.Default);
+        bool Closed(PathShape s) => s != PathShape.Unknown;
+        PathShape Merge(IEnumerable<PathShape> values)
+        {
+            var shapes = values.ToArray();
+            if (shapes.Length == 0 || shapes.Any(s => !Closed(s))) return PathShape.Unknown;
+            return shapes.All(s => s == shapes[0]) ? shapes[0] : PathShape.Fixed;
+        }
+        bool Integral(ITypeSymbol? t) => t?.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64
+            or SpecialType.System_UInt32 or SpecialType.System_UInt64 or SpecialType.System_Int16
+            or SpecialType.System_UInt16 or SpecialType.System_Byte or SpecialType.System_SByte
+            or SpecialType.System_IntPtr or SpecialType.System_UIntPtr;
+        PathShape Scalar(ITypeSymbol? type, string? format)
+        {
+            if (type?.ToDisplayString() == "System.Guid" && type.DeclaringSyntaxReferences.Length == 0
+                    && type.ContainingAssembly.Identity.PublicKeyToken.Length > 0
+                || type?.SpecialType == SpecialType.System_Boolean
+                || type?.TypeKind == TypeKind.Enum) return PathShape.GeneratedName;
+            if (Integral(type) && (string.IsNullOrEmpty(format)
+                || "dDgGxX".Contains(format[0]) && format.Skip(1).All(char.IsAsciiDigit))) return PathShape.GeneratedName;
+            if (type?.ToDisplayString() is "System.DateTime" or "System.DateTimeOffset"
+                && format is { Length: > 1 } && !format.Contains("MMM") && !format.Contains("ddd")
+                && format.All(c => "yMdHhmsfF-._0123456789".Contains(c)))
+                return PathShape.GeneratedName;
+            return PathShape.Unknown;
+        }
+        PathShape Collection(ExpressionSyntax expression, int depth)
+        {
+            if (depth > 6 || HasError(expression)) return PathShape.Unknown;
+            if (expression is IdentifierNameSyntax && model.GetSymbolInfo(expression).Symbol is ILocalSymbol list)
+            {
+                if (!visited.Add(list)) return PathShape.Unknown;
+                try
+                {
+                    var declaration = list.DeclaringSyntaxReferences.SingleOrDefault()?.GetSyntax() as VariableDeclaratorSyntax;
+                    var owner = expression.Ancestors().FirstOrDefault(IsCallable);
+                    if (declaration?.Initializer?.Value is not ExpressionSyntax initial || owner == null
+                        || initial.Span.End > expression.SpanStart) return PathShape.Unknown;
+                    // Arrays/lists are mutable: only direct enumeration and reads
+                    // through known LINQ operators may reuse this producer.
+                    var references = owner.DescendantNodes().OfType<IdentifierNameSyntax>()
+                        .Where(n => SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(n).Symbol, list));
+                    foreach (var reference in references)
+                    {
+                        if (reference.Parent is ForEachStatementSyntax loop && loop.Expression == reference) continue;
+                        var invoke = reference.Ancestors().OfType<InvocationExpressionSyntax>().FirstOrDefault();
+                        if (invoke == null || model.GetOperation(invoke) is not IInvocationOperation use
+                            || !FrameworkMethod(use.TargetMethod)
+                            || use.TargetMethod.ContainingType.ToDisplayString() != "System.Linq.Enumerable"
+                            || use.TargetMethod.Name is not ("Where" or "OrderBy" or "OrderByDescending" or "ToArray" or "ToList"
+                                or "First" or "FirstOrDefault" or "Single" or "SingleOrDefault")
+                            || use.Arguments.FirstOrDefault()?.Value.Syntax != reference) return PathShape.Unknown;
+                    }
+                    return Collection(initial, depth + 1);
+                }
+                finally { visited.Remove(list); }
+            }
+            if (model.GetOperation(expression) is not IInvocationOperation call || !FrameworkMethod(call.TargetMethod)) return PathShape.Unknown;
+            var type = call.TargetMethod.ContainingType.ToDisplayString();
+            if (type == "System.Linq.Enumerable" && call.TargetMethod.Name is "Where" or "OrderBy" or "OrderByDescending" or "ToArray" or "ToList")
+                return call.Arguments.FirstOrDefault()?.Value.Syntax is ExpressionSyntax inputList ? Collection(inputList, depth + 1) : PathShape.Unknown;
+            if (type != "System.IO.Directory" || call.TargetMethod.Name is not ("GetFiles" or "EnumerateFiles" or "GetDirectories"
+                or "EnumerateDirectories" or "GetFileSystemEntries" or "EnumerateFileSystemEntries")) return PathShape.Unknown;
+            var root = call.Arguments.FirstOrDefault(a => a.Parameter?.Name == "path");
+            if (root?.Value.Syntax is not ExpressionSyntax path) return PathShape.Unknown;
+            if (call.Arguments.Any(a => a.Parameter?.Name == "searchPattern" && !a.Value.ConstantValue.HasValue)) return PathShape.Unknown;
+            return Shape(path, depth + 1);
+        }
         PathShape Shape(ExpressionSyntax expression, int depth)
         {
             if (depth > 6 || expression.Span.Length > 2048) return PathShape.Unknown;
             if (HasError(expression)) return PathShape.Unknown;
+            if (expression.IsKind(SyntaxKind.NullLiteralExpression)) return PathShape.Fixed;
             // Never substitute a string initializer through a user-defined conversion.
             if (model.GetTypeInfo(expression).Type?.SpecialType != SpecialType.System_String) return PathShape.Unknown;
             if (model.GetConstantValue(expression) is { HasValue: true, Value: string }) return PathShape.Fixed;
             if (expression is ParenthesizedExpressionSyntax parenthesized) return Shape(parenthesized.Expression, depth + 1);
             if (expression is PostfixUnaryExpressionSyntax postfix && postfix.IsKind(SyntaxKind.SuppressNullableWarningExpression))
                 return Shape(postfix.Operand, depth + 1);
+            if (expression is ConditionalExpressionSyntax conditional)
+                return Merge([Shape(conditional.WhenTrue, depth + 1), Shape(conditional.WhenFalse, depth + 1)]);
+            if (expression is SwitchExpressionSyntax choose)
+                return Merge(choose.Arms.Select(a => Shape(a.Expression, depth + 1)));
+            if (expression is BinaryExpressionSyntax coalesce && coalesce.IsKind(SyntaxKind.CoalesceExpression))
+                return Merge([Shape(coalesce.Left, depth + 1), Shape(coalesce.Right, depth + 1)]);
+            if (expression is InterpolatedStringExpressionSyntax interpolation)
+            {
+                foreach (var value in interpolation.Contents.OfType<InterpolationSyntax>())
+                {
+                    var valueType = model.GetTypeInfo(value.Expression).Type;
+                    var shape = valueType?.SpecialType == SpecialType.System_String ? Shape(value.Expression, depth + 1)
+                        : Scalar(valueType, value.FormatClause?.FormatStringToken.ValueText);
+                    if (!Closed(shape)) return PathShape.Unknown;
+                }
+                // No arbitrary formatter participates in an ordinary string interpolation.
+                return PathShape.Fixed;
+            }
+            if (model.GetOperation(expression) is IPropertyReferenceOperation property
+                && property.Property.DeclaringSyntaxReferences.Length == 0
+                && property.Property.ContainingAssembly.Identity.PublicKeyToken.Length > 0)
+            {
+                var propertyType = property.Property.ContainingType.ToDisplayString();
+                if (propertyType == "System.AppContext" && property.Property.Name == "BaseDirectory"
+                    || propertyType == "System.Environment" && property.Property.Name == "CurrentDirectory") return PathShape.Fixed;
+                if (propertyType == "System.AppDomain" && property.Property.Name == "BaseDirectory"
+                    && property.Instance is IPropertyReferenceOperation domain && domain.Property.Name == "CurrentDomain"
+                    && domain.Property.ContainingType.ToDisplayString() == "System.AppDomain") return PathShape.Fixed;
+                if (propertyType == "System.Diagnostics.ProcessModule" && property.Property.Name == "FileName"
+                    && property.Instance is IPropertyReferenceOperation module && module.Property.Name == "MainModule"
+                    && module.Instance is IInvocationOperation process && FrameworkMethod(process.TargetMethod)
+                    && process.TargetMethod.ContainingType.ToDisplayString() == "System.Diagnostics.Process"
+                    && process.TargetMethod.Name == "GetCurrentProcess") return PathShape.Fixed;
+                if (propertyType is "System.IO.FileInfo" or "System.IO.DirectoryInfo" or "System.IO.FileSystemInfo" && property.Property.Name == "FullName"
+                    && property.Instance is IObjectCreationOperation file && FrameworkMethod(file.Constructor!)
+                    && file.Type?.ToDisplayString() is "System.IO.FileInfo" or "System.IO.DirectoryInfo"
+                    && file.Arguments.FirstOrDefault()?.Value.Syntax is ExpressionSyntax source)
+                    return Shape(source, depth + 1);
+            }
+            if (model.GetOperation(expression) is IFieldReferenceOperation field && field.Field.IsReadOnly
+                && field.Field.ContainingType.DeclaringSyntaxReferences.Length == 1
+                && field.Field.DeclaringSyntaxReferences.SingleOrDefault()?.GetSyntax() is VariableDeclaratorSyntax fieldDeclaration
+                && fieldDeclaration.SyntaxTree == model.SyntaxTree)
+            {
+                var declaringType = field.Field.ContainingType.DeclaringSyntaxReferences[0].GetSyntax();
+                if (declaringType is TypeDeclarationSyntax fieldType && fieldType.Modifiers.Any(SyntaxKind.PartialKeyword))
+                    return PathShape.Unknown;
+                var assignments = declaringType.DescendantNodes().OfType<AssignmentExpressionSyntax>().Where(a =>
+                    SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(a.Left).Symbol, field.Field)).ToArray();
+                if (declaringType.DescendantNodes().OfType<ArgumentSyntax>().Any(a =>
+                        !a.RefKindKeyword.IsKind(SyntaxKind.None)
+                        && SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(a.Expression).Symbol, field.Field))) return PathShape.Unknown;
+                if (assignments.Length == 0 && fieldDeclaration.Initializer?.Value is ExpressionSyntax initial)
+                    return Shape(initial, depth + 1);
+                // Private immutable wrappers often own a generated temporary path.
+                // Bind the single constructor assignment and every accessible
+                // construction in this complete source type, not caller spelling.
+                if (!field.Field.ContainingType.IsSealed || assignments.Length != 1
+                    || assignments[0] is not { RawKind: (int)SyntaxKind.SimpleAssignmentExpression,
+                        Parent: ExpressionStatementSyntax { Parent: BlockSyntax constructorBody } } assignment
+                    || constructorBody.Parent is not ConstructorDeclarationSyntax constructor
+                    || model.GetDeclaredSymbol(constructor) is not IMethodSymbol ctor
+                    || model.GetSymbolInfo(assignment.Right).Symbol is not IParameterSymbol parameter
+                    || !SymbolEqualityComparer.Default.Equals(parameter.ContainingSymbol, ctor)
+                    || parameter.RefKind != RefKind.None
+                    || parameter.Type.SpecialType != SpecialType.System_String
+                    || declaringType.DescendantNodes().OfType<ConstructorDeclarationSyntax>()
+                        .Count(c => c.Parent == declaringType && !c.Modifiers.Any(SyntaxKind.StaticKeyword)) != 1)
+                    return PathShape.Unknown;
+                if (ctor.DeclaredAccessibility != Accessibility.Private
+                    && field.Field.ContainingType.DeclaredAccessibility != Accessibility.Private) return PathShape.Unknown;
+                var accessibleType = field.Field.ContainingType;
+                while (accessibleType.ContainingType != null)
+                {
+                    if (accessibleType.DeclaringSyntaxReferences.Length != 1
+                        || accessibleType.DeclaringSyntaxReferences[0].GetSyntax() is TypeDeclarationSyntax nestedType
+                            && nestedType.Modifiers.Any(SyntaxKind.PartialKeyword)) return PathShape.Unknown;
+                    accessibleType = accessibleType.ContainingType;
+                }
+                if (accessibleType.DeclaringSyntaxReferences.Length != 1) return PathShape.Unknown;
+                var scope = accessibleType.DeclaringSyntaxReferences[0].GetSyntax();
+                if (scope.SyntaxTree != model.SyntaxTree || scope.Span.Length > 32768
+                    || scope is TypeDeclarationSyntax outerType && outerType.Modifiers.Any(SyntaxKind.PartialKeyword)) return PathShape.Unknown;
+                if (constructor.DescendantNodes().OfType<IdentifierNameSyntax>().Any(n =>
+                    SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(n).Symbol, parameter)
+                    && (n.Ancestors().OfType<AssignmentExpressionSyntax>().Any(a => a.Left.Span.Contains(n.Span))
+                        || n.Parent is RefExpressionSyntax
+                        || n.Parent is ArgumentSyntax a && !a.RefKindKeyword.IsKind(SyntaxKind.None)))) return PathShape.Unknown;
+                var origins = new List<PathShape>();
+                foreach (var creation in scope.DescendantNodes().Where(n => n is ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax))
+                {
+                    if (!SymbolEqualityComparer.Default.Equals(model.GetTypeInfo(creation).Type, field.Field.ContainingType)) continue;
+                    if (HasError(creation) || model.GetOperation(creation) is not IObjectCreationOperation callSite
+                        || !SymbolEqualityComparer.Default.Equals(callSite.Constructor, ctor)
+                        || callSite.Arguments.FirstOrDefault(a => a.Parameter?.Ordinal == parameter.Ordinal)?.Value.Syntax is not ExpressionSyntax input)
+                        return PathShape.Unknown;
+                    origins.Add(Shape(input, depth + 1));
+                }
+                return Merge(origins);
+            }
             if (expression is IdentifierNameSyntax && model.GetSymbolInfo(expression).Symbol is ILocalSymbol local)
             {
                 if (!visited.Add(local)) return PathShape.Unknown;
                 try
                 {
-                    var declaration = local.DeclaringSyntaxReferences.SingleOrDefault()?.GetSyntax() as VariableDeclaratorSyntax;
+                    var declared = local.DeclaringSyntaxReferences.SingleOrDefault()?.GetSyntax();
+                    if (declared is ForEachStatementSyntax loop) return Collection(loop.Expression, depth + 1);
+                    var declaration = declared as VariableDeclaratorSyntax;
                     var initializer = declaration?.Initializer?.Value;
                     var owner = expression.Ancestors().FirstOrDefault(IsCallable);
                     if (initializer == null || owner == null || initializer.Span.End > expression.SpanStart
@@ -463,6 +692,10 @@ internal static class Program
                     bool Writes(IdentifierNameSyntax n) => n.Ancestors().OfType<AssignmentExpressionSyntax>().Any(a => a.Left.Span.Contains(n.Span))
                         || n.Parent is PrefixUnaryExpressionSyntax prefix && prefix.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression
                         || n.Parent is PostfixUnaryExpressionSyntax postfix && postfix.Kind() is SyntaxKind.PostIncrementExpression or SyntaxKind.PostDecrementExpression;
+                    var loops = expression.Ancestors().Where(n => n is WhileStatementSyntax or DoStatementSyntax
+                        or ForStatementSyntax or ForEachStatementSyntax).ToArray();
+                    if (references.Any(n => n.SpanStart > expression.SpanStart && Writes(n)
+                        && loops.Any(loop => loop.Span.Contains(n.Span)))) return PathShape.Unknown;
                     if (references.Any(n => n.Ancestors().FirstOrDefault(IsCallable) != owner && Writes(n)
                         || n.Parent is RefExpressionSyntax
                         || n.Parent is ArgumentSyntax argument && !argument.RefKindKeyword.IsKind(SyntaxKind.None))) return PathShape.Unknown;
@@ -479,12 +712,33 @@ internal static class Program
                     if (reset is { RawKind: (int)SyntaxKind.SimpleAssignmentExpression,
                             Parent: ExpressionStatementSyntax { Parent: BlockSyntax resetBlock } }
                         && reset.Left == lastWrite && resetBlock == expression.Ancestors().OfType<BlockSyntax>().FirstOrDefault())
-                        return Shape(reset.Right, depth + 1);
+                    {
+                        var value = Shape(reset.Right, depth + 1);
+                        if (Closed(value)) return value;
+                    }
+                    // If every initializer/possible write is independently closed,
+                    // exceptional/branch order cannot introduce an unknown string.
+                    // This deliberately proves less than a full reaching-value CFG.
+                    var all = new List<PathShape> { Shape(initializer, depth + 1) };
+                    foreach (var write in writes)
+                    {
+                        if (write.Parent is not AssignmentExpressionSyntax assignment
+                            || !assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) || assignment.Left != write)
+                        { all.Add(PathShape.Unknown); break; }
+                        if (assignment.Right is BinaryExpressionSyntax append && append.IsKind(SyntaxKind.AddExpression)
+                            && append.Left is IdentifierNameSyntax name
+                            && SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(name).Symbol, local)
+                            && model.GetConstantValue(append.Right) is { HasValue: true, Value: string suffix }
+                            && suffix.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-')) continue;
+                        all.Add(Shape(assignment.Right, depth + 1));
+                    }
+                    var closed = Merge(all);
+                    if (Closed(closed)) return closed;
                     var reaching = new List<ExpressionSyntax>();
                     if (!LocalFlow(model, expression, local, owner, query, sources, new(), reaching)
                         || reaching.Count == 0) return PathShape.Unknown;
                     var shapes = reaching.Select(e => Shape(e, depth + 1)).Distinct().ToArray();
-                    return shapes.Length == 1 ? shapes[0] : PathShape.Unknown;
+                    return Merge(shapes);
                 }
                 finally { visited.Remove(local); }
             }
@@ -505,15 +759,23 @@ internal static class Program
                 return PathShape.Unknown;
             var type = call.TargetMethod.ContainingType.ToDisplayString();
             var method = call.TargetMethod.Name;
-            if (method == "ToString" && call.Arguments.Length == 0
-                && call.TargetMethod.ContainingType.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64
-                    or SpecialType.System_UInt32 or SpecialType.System_UInt64 or SpecialType.System_Int16
-                    or SpecialType.System_UInt16 or SpecialType.System_Byte or SpecialType.System_SByte or SpecialType.System_Boolean
-                && call.Instance?.ConstantValue is { HasValue: true, Value: var constant }
-                && constant switch { bool or byte or ushort or uint or ulong => true,
-                    sbyte value => value >= 0, short value => value >= 0,
-                    int value => value >= 0, long value => value >= 0, _ => false })
+            if (method == "ToString" && call.Instance != null)
+            {
+                var format = call.Arguments.FirstOrDefault(a => a.Parameter?.Name == "format");
+                if (call.Arguments.All(a => a == format) && (format == null || format.Value.ConstantValue is { HasValue: true }))
+                {
+                    var shape = Scalar(call.Instance.Type, format?.Value.ConstantValue.Value as string);
+                    if (Closed(shape)) return shape;
+                }
+            }
+            if (type == "System.Convert" && method == "ToString" && call.Arguments.Length == 1)
+                return Scalar(call.Arguments[0].Value.Type, null);
+            if (type == "System.Convert" && method == "ToHexString") return PathShape.GeneratedName;
+            if (type == "System.Environment" && method == "GetFolderPath" && call.Arguments.FirstOrDefault()?.Value.Type?.TypeKind == TypeKind.Enum)
                 return PathShape.Fixed;
+            if (type == "System.IO.Directory" && method == "GetCurrentDirectory" && call.Arguments.Length == 0) return PathShape.Fixed;
+            if (type == "System.Linq.Enumerable" && method is "First" or "FirstOrDefault" or "Single" or "SingleOrDefault"
+                && call.Arguments.FirstOrDefault()?.Value.Syntax is ExpressionSyntax list) return Collection(list, depth + 1);
             if (type == "System.IO.Path" && method == "GetTempPath" && call.Arguments.Length == 0)
                 return PathShape.TemporaryRoot;
             if (type == "System.IO.Path" && method == "GetRandomFileName" && call.Arguments.Length == 0)
@@ -526,25 +788,22 @@ internal static class Program
             // path segment, not an authorization proof for the selected object.
             if (type == "System.Guid" && method == "ToString" && call.Instance?.Type?.ToDisplayString() == "System.Guid")
                 return PathShape.GeneratedName;
-            if (type != "System.IO.Path" || method != "Combine" || call.Arguments.Length is < 2 or > 4
-                || call.Arguments.Any(a => a.ArgumentKind == ArgumentKind.ParamArray)) return PathShape.Unknown;
-            var parts = call.Arguments.OrderBy(a => a.Parameter!.Ordinal).Select(a => a.Value.Syntax as ExpressionSyntax).ToArray();
+            if (type == "System.IO.Path" && method is "GetDirectoryName" or "GetFullPath"
+                && call.Arguments.Length == 1 && call.Arguments[0].Value.Syntax is ExpressionSyntax original)
+                return Shape(original, depth + 1);
+            if (type != "System.IO.Path" || method is not ("Combine" or "Join")) return PathShape.Unknown;
+            var values = call.Arguments.OrderBy(a => a.Parameter!.Ordinal).SelectMany<IArgumentOperation, IOperation>(a =>
+                a.Value is IArrayCreationOperation { Initializer: { } array } ? array.ElementValues : new[] { a.Value }).ToArray();
+            var parts = values.Select(v => v.Syntax as ExpressionSyntax).ToArray();
             if (parts.Any(p => p == null)) return PathShape.Unknown;
             var shapesOfParts = parts.Select(p => Shape(p!, depth + 1)).ToArray();
-            if (shapesOfParts.All(s => s is PathShape.Fixed or PathShape.GeneratedName)) return PathShape.Fixed;
-            if (shapesOfParts[0] != PathShape.TemporaryRoot || !shapesOfParts.Skip(1).Any(s => s == PathShape.GeneratedName))
-                return PathShape.Unknown;
-            for (var i = 1; i < parts.Length; i++)
-                if (shapesOfParts[i] != PathShape.GeneratedName
-                    && !(model.GetConstantValue(parts[i]!) is { HasValue: true, Value: string name }
-                        && name.Length > 0 && name is not ("." or "..")
-                        && name.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-')))
-                    return PathShape.Unknown;
-            return PathShape.TemporaryPath;
+            return !shapesOfParts.All(Closed) ? PathShape.Unknown
+                : shapesOfParts.Any(s => s is PathShape.TemporaryPath or PathShape.TemporaryRoot)
+                    ? PathShape.TemporaryPath : PathShape.Fixed;
         }
         if (operand is not ExpressionSyntax path) return false;
         var shape = Shape(path, 0);
-        if (shape == PathShape.GeneratedName) shape = PathShape.Fixed;
+        if (shape is PathShape.GeneratedName or PathShape.TemporaryRoot) shape = PathShape.Fixed;
         if (shape is PathShape.Fixed or PathShape.TemporaryPath)
             facts.Add(new(query.Role, shape == PathShape.Fixed ? "fixed_filesystem_path" : "temporary_filesystem_path",
                 query.Operand, path.ToString(), shape == PathShape.Fixed
@@ -737,7 +996,7 @@ internal static class Program
     private sealed record Context(Project[] Projects);
     private sealed record Project(string Id, string TargetFramework, string LanguageVersion, string[] Sources,
         string[] References, string[] ReferenceDirectories, string[] Defines, bool AllowUnsafe = false, bool Nullable = false,
-        string[]? UnresolvedReferences = null, string OutputKind = "library");
+        string[]? UnresolvedReferences = null, string OutputKind = "library", string[]? GlobalUsings = null);
     private sealed record Query(string EvidenceId, string Role, SourceLocation Sink, SourceLocation Operand, SourceLocation? Composition = null);
     private sealed record Source(string Path, string Text, string Hash);
     private sealed record Position(int Line, int Column, int ByteOffset);
@@ -745,7 +1004,7 @@ internal static class Program
     private sealed record Fact(string Role, string Kind, SourceLocation Location, string Value, string[] RemainingChecks);
     private sealed record FileHash(string Path, string Sha256);
     private sealed record ProjectRecord(string Id, string TargetFramework, string LanguageVersion, int CompilerErrors, int UnresolvedReferences, int ReferenceConflicts);
-    private sealed record Observation(string EvidenceId, string ProjectId, List<Fact> Facts, bool LocallyCompletePathSelection);
+    private sealed record Observation(string EvidenceId, string ProjectId, List<Fact> Facts, bool LocallyCompletePathSelection, bool LocallyCompleteSelectionIdentity);
     private sealed record DiagnosticRecord(string ProjectId, string Code, string Message, SourceLocation? Location);
     private sealed record Snapshot(string SchemaVersion, string Backend, string ContextSha256,
         FileHash[] Sources, FileHash[] References, List<ProjectRecord> Projects,

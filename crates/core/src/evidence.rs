@@ -491,6 +491,9 @@ pub enum OperandFactKind {
     FixedFilesystemPath,
     /// Framework temporary root with bounded safe basename; closes traversal selection, not root policy or other effects.
     TemporaryFilesystemPath,
+    /// Compiler-bound unchanged string slot shared by filesystem operations.
+    /// This identifies repeated selection work, not a safe resource or caller.
+    ImmutableFilesystemOperand,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

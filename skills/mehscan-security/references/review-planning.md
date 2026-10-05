@@ -27,6 +27,13 @@ closures. `scope_count` is the filtered, unreviewed population before selection;
 `matching_count` is the selected population and `deferred_count` its heuristic
 deferral population. Contract queues use `matching_review_count`.
 
+`shared_csharp_filesystem_selection` defers repeated sink-only CWE-22 operations
+using the same compiler-bound unchanged string slot and capability in one
+callable. Review its dependency first; unsafe or unresolved root authority
+reopens dependents. Different effects still need their own guard checks. No
+dependent gets a safe verdict; Comprehensive retains all exact IDs. Native
+closed-selector exclusions are separate and already removed from admission.
+
 `local_bound_query_inventory` conditionally defers a sink-only, fixed-text
 node-postgres query passed as a private local const object with separate values.
 It settles no access policy or runtime method replacement; observed inputs,

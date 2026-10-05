@@ -80,6 +80,8 @@ pub struct Observation {
     /// diagnostic-free, even when unrelated application code cannot compile.
     #[serde(default)]
     locally_complete_path_selection: bool,
+    #[serde(default)]
+    locally_complete_selection_identity: bool,
 }
 
 /// Persist only the native input binding, without duplicating imported facts.
@@ -249,11 +251,35 @@ pub fn enrich(
                     | OperandFactKind::ReceiverReference
                     | OperandFactKind::FixedFilesystemPath
                     | OperandFactKind::TemporaryFilesystemPath
+                    | OperandFactKind::ImmutableFilesystemOperand
             ) || fact.remaining_checks.is_empty()
             {
                 return Err(EngineError("Unsupported Roslyn navigation fact".into()));
             }
             validate_location(root, &snapshot.sources, &fact.location)?;
+            if fact.kind == OperandFactKind::ImmutableFilesystemOperand {
+                let query = &expected[&observation.evidence_id];
+                let prefix = format!(
+                    "{}:{}:{}:",
+                    fact.location.path,
+                    fact.location.start.byte_offset,
+                    fact.location.end.byte_offset
+                );
+                let owner = fact
+                    .value
+                    .strip_prefix(&prefix)
+                    .and_then(|v| v.parse::<usize>().ok());
+                if query.role != "path"
+                    || fact.role != query.role
+                    || fact.location.path != query.operand.path
+                    || !owner.is_some_and(|offset| offset <= query.operand.start.byte_offset)
+                {
+                    return Err(EngineError(
+                        "Roslyn filesystem identity is not bound to its declaration and callable"
+                            .into(),
+                    ));
+                }
+            }
             if matches!(
                 fact.kind,
                 OperandFactKind::FixedFilesystemPath | OperandFactKind::TemporaryFilesystemPath
@@ -311,7 +337,9 @@ pub fn enrich(
                     fact.kind,
                     OperandFactKind::FixedFilesystemPath | OperandFactKind::TemporaryFilesystemPath
                 );
-            if partial && !locally_complete_path {
+            let locally_complete_identity = record.locally_complete_selection_identity
+                && fact.kind == OperandFactKind::ImmutableFilesystemOperand;
+            if partial && !locally_complete_path && !locally_complete_identity {
                 fact.remaining_checks
                     .push("partial_semantic_context".into());
             }

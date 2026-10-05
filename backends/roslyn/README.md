@@ -3,8 +3,8 @@
 Experimental source/reference-only C# backend. It adds compact compiler symbol,
 local producer/stop and source helper declaration facts to selected SQL and
 filesystem operands. Most facts guide research without changing admission.
-Complete fixed filesystem selectors can close the exact CWE-22 question;
-generated temporary selectors receive conditional Value deferral. Neither
+Complete fixed and generated temporary selectors can close the exact CWE-22 question.
+Repeated immutable selectors can share conditional Value research. Neither
 establishes resource authorization, filesystem policy or safe runtime effects.
 
 ## Build
@@ -43,6 +43,10 @@ Create a JSON file outside the scanned source tree, for example:
 `output_kind` can be `library` (default), `console` or `windows`. Choose the
 application's actual output kind; top-level programs need `console` or `windows`.
 
+Optional `global_usings` lists namespaces from the project's actual compiler
+imports (for example `["System", "System.IO"]`). It supplies imports in memory,
+without generating or changing application files; do not guess missing imports.
+
 Use actual target reference assemblies and dependency metadata; host runtime
 assemblies are not a substitute. Supply absolute reference paths/directories,
 and root-relative UTF-8 C# source paths. All listed array fields are required.
@@ -74,8 +78,9 @@ Target keys must use modern short names matching `target_framework` (`net8.0`,
 `net10.0`, optionally with an explicit RID). Older long NuGet target keys and
 `packages.config` remain explicit-reference workflows. Framework reference
 directories, sources and compiler options remain supplied by the caller. Include
-existing generated global-using files in `sources` when needed; no files are
-generated automatically. Project references need explicit source or metadata.
+existing generated global-using files in `sources`, or declare their namespaces
+in `global_usings`; no application files are generated. Project references need
+explicit source or metadata.
 
 Optional top-level `context_files` lists absolute project/props/lock filenames
 whose changes should invalidate this context. The prepared context binds their
@@ -155,18 +160,33 @@ Compiler-bound Guid.ToString output is a safe path segment regardless of where
 the GUID originated. Standard formats have a closed alphabet; invalid formats
 throw and this API ignores the provider. Known-root GUID paths and fixed suffixes
 close traversal selection; unknown roots or additional filenames stay active.
-Default ToString on a constant nonnegative built-in integer or constant boolean
-also resolves a fixed selector. This does not apply to arbitrary numeric values,
-caller-selected formats/providers, character conversions or custom implicit
-conversions. These are path-selection facts, not cross-context sanitizers.
+Built-in integer default/D/G/X formatting, booleans, enum formatting and
+Convert.ToString of these types constrain filename syntax. Numeric-only fixed
+date formats and ordinary string interpolation of supported values also qualify.
+Integer formatting assumes ordinary framework culture conventions; explicit
+arbitrary formats/providers, chars, floats and custom conversions stay open.
+These facts concern traversal syntax, not object ownership or other sink contexts.
+
+Known runtime roots (application base, current directory, special folders and
+the current executable), parent/full paths of already closed selectors, and
+framework enumeration under a closed root are supported. GetFullPath never
+sanitizes an unknown input. Mutable or escaped enumeration collections stay
+open. A readonly same-file field can use its closed initializer only when the
+declaring type has no replacement. Local alternatives must all be closed;
+ref/out, captured writes and loop-carried replacements block exclusion.
+For a sealed private wrapper/private constructor, a readonly string assigned
+from one unchanged constructor parameter can inherit the shapes of all bound
+source constructions in one complete outer type. Unknown arguments, public
+construction, partial types, parameter replacement and ref/out block this proof.
+This does not model reflection or arbitrary factories across files.
 
 `temporary_filesystem_path` recognizes the framework temporary root combined
 with Guid.ToString(), GetRandomFileName, or a framework GetTempFileName result.
 Constant child segments are limited to simple basenames. These complete operands
 close standalone CWE-22 selection reviews, including routine setup and cleanup.
 This does not establish safe archive contents, authorization, symlink policy or
-execution. Unknown roots/manifest properties, arbitrary ToString,
-numeric formats, captured/ref/out locals, accumulation and unsupported flow
+execution. Unknown roots/manifest properties, arbitrary ToString or formats,
+captured writes/ref/out locals and unsupported flow
 receive no exclusion. A constant basename suffix, including .exe or .ps1,
 does not reopen traversal selection; contents/execution remain separate.
 
@@ -174,13 +194,23 @@ Path facts must match the exact selected source span and text. Only locally
 complete path proofs may change admission amid unrelated compiler errors;
 overlapping project contexts still withhold facts. A same-block unconditional
 reset is supported inside try/catch; captured reads do not imply replacement.
-Conditional and escaping writes stay open.
+Conditional writes with any unknown alternative and escaping writes stay open.
+
+`immutable_filesystem_operand` identifies the exact unchanged string declaration
+within one callable. It does not establish safety. Value keeps one sink-only
+CWE-22 representative per slot/capability and conditionally defers repeated
+operations as `shared_csharp_filesystem_selection`; Comprehensive keeps every ID.
+An unsafe or unresolved representative reopens its dependents through the ledger.
+Review shared root authority once; per-operation guards and effects remain
+separate. Mutated/ref/out slots, different callables/capabilities, connected
+input flows and ambiguous bindings are not grouped.
 Set `MEHSCAN_ROSLYN_TIMING=1` for total backend and filesystem-check timings on
-stderr. Semantic models are reused per file; collected errors are reused for
+stderr. Metadata references are loaded once across project contexts. Semantic
+models are reused per file; collected errors are reused for
 local completeness checks. The backend does not resolve filesystem links,
 build caller trust models or import a primitive sanitizer catalog.
-Razor, generated source, implicit project imports/options and full DI/reflection
-resolution remain outside the explicit context unless already supplied as source.
+Razor, missing generated source/options and full DI/reflection resolution remain
+outside the explicit context unless already supplied.
 
 For compiler-bound `DbCommand` receivers, the helper locates one initialized
 local and its exact source uses in the same callable. `receiver_reference`

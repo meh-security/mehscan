@@ -21,6 +21,9 @@ boundary before applying CWE-918.
   `temporary_filesystem_path` closes routine generated-path traversal selection.
   A compiler-bound Guid.ToString segment cannot introduce traversal, even if the
   GUID came from a request. Do not research its caller to establish that property.
+  Supported scalar formatting, known runtime roots and closed-root enumeration
+  can also settle traversal syntax; they do not settle object ownership. Do not
+  reopen these proven selectors merely because a variable reaches a file API.
   Check any unknown root or additional filename separately. Archive contents,
   unauthorized object selection and executable writes are distinct relationships;
   retain them when supported by source, rather than reopening mundane setup.
@@ -28,6 +31,9 @@ boundary before applying CWE-918.
   the missing edge. Path.Combine and arbitrary ToString calls alone do not prove
   safe selection. A fact carrying `partial_semantic_context` remains navigation
   evidence; a locally complete path fact can survive unrelated compiler errors.
+  `immutable_filesystem_operand` only identifies an unchanged string slot. For
+  `shared_csharp_filesystem_selection`, inspect shared root authority once and
+  check the selected operation's guards/effect; do not transfer a safe verdict.
 - For outbound requests and redirects, identify the final scheme, authority
   and destination after any parsing or rewrite. Fixed release URLs selected
   by OS or architecture do not become attacker-selected merely because a

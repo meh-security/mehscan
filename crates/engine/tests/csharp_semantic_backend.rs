@@ -40,6 +40,58 @@ fn env_path(name: &str) -> PathBuf {
 }
 
 #[test]
+#[ignore = "requires Roslyn helper and real .NET 10 refs"]
+fn declared_global_imports_bind_framework_calls_and_invalidate_snapshots() {
+    let fixture = Fixture::new("global-imports");
+    std::fs::write(fixture.0.join("App.cs"), "class App { void Delete() { File.Delete(Path.Combine(AppContext.BaseDirectory, Guid.NewGuid().ToString())); } }").unwrap();
+    std::fs::write(fixture.0.join("Helpers.cs"), "").unwrap();
+    let context = fixture.context(
+        "imports",
+        "net10.0",
+        "14.0",
+        &env_path("MEHSCAN_ROSLYN_NET10_REFS"),
+    );
+    let scan = mehscan_engine::scan_path(&fixture.0).unwrap();
+    let missing = csharp_semantic::collect(
+        &fixture.0,
+        &context,
+        &env_path("MEHSCAN_ROSLYN_BACKEND"),
+        &scan,
+    )
+    .unwrap();
+    assert!(
+        !missing
+            .observations
+            .iter()
+            .flat_map(|o| &o.facts)
+            .any(|f| f.kind == OperandFactKind::FixedFilesystemPath)
+    );
+    let mut declared: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&context).unwrap()).unwrap();
+    declared["projects"][0]["global_usings"] = json!(["System", "System.IO"]);
+    std::fs::write(&context, serde_json::to_vec(&declared).unwrap()).unwrap();
+    let bound = csharp_semantic::collect(
+        &fixture.0,
+        &context,
+        &env_path("MEHSCAN_ROSLYN_BACKEND"),
+        &scan,
+    )
+    .unwrap();
+    assert!(
+        bound
+            .observations
+            .iter()
+            .flat_map(|o| &o.facts)
+            .any(|f| f.kind == OperandFactKind::FixedFilesystemPath)
+    );
+    let mut enriched = scan.clone();
+    csharp_semantic::enrich(&fixture.0, &context, &bound, &mut enriched).unwrap();
+    declared["projects"][0]["global_usings"] = json!(["System"]);
+    std::fs::write(&context, serde_json::to_vec(&declared).unwrap()).unwrap();
+    assert!(csharp_semantic::enrich(&fixture.0, &context, &bound, &mut enriched).is_err());
+}
+
+#[test]
 #[ignore = "requires built Roslyn helper and real four-framework reference packs"]
 fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
     let fixture = Fixture::new("filesystem");
@@ -111,7 +163,10 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             enriched
                 .evidence
                 .iter()
-                .filter(|e| e.enclosing_symbol.as_deref() == Some(method))
+                .filter(|e| {
+                    e.enclosing_symbol.as_deref() == Some(method)
+                        && e.capability == Capability::FilesystemWrite
+                })
                 .any(|e| e.context.operand_facts.iter().any(|f| f.kind == kind))
         };
         for method in [
@@ -124,6 +179,27 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "GuidFormat",
             "GuidProvider",
             "GuidSuffix",
+            "UnknownNumber",
+            "ParsedNumber",
+            "IntegralFormat",
+            "BooleanValue",
+            "ConvertedNumber",
+            "EnumValue",
+            "DateFilename",
+            "InterpolatedId",
+            "InterpolatedNumber",
+            "RuntimeRoot",
+            "DomainRoot",
+            "WorkingRoot",
+            "FolderRoot",
+            "ParentOfKnownPath",
+            "FixedArrayCombine",
+            "EnumeratedFiles",
+            "FirstFile",
+            "KnownFileInfo",
+            "ReadonlyPath",
+            "ClosedBranches",
+            "TempFinally",
         ] {
             assert!(
                 fact(method, OperandFactKind::FixedFilesystemPath),
@@ -139,6 +215,8 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "TempResetInTry",
             "TempCapturedRead",
             "TempExecutable",
+            "TempSuffixReset",
+            "PrivateTempDelete",
         ] {
             assert!(
                 fact(method, OperandFactKind::TemporaryFilesystemPath),
@@ -155,12 +233,26 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "RefReplacement",
             "Capture",
             "TryReplacement",
-            "UnknownNumber",
             "Conversion",
+            "PrivateUnknownDelete",
+            "MutatingConstructorDelete",
+            "PublicOwnerDelete",
+            "PartialReadonlyDelete",
             "GuidUnknownRoot",
             "GuidUnknownFilename",
             "GuidLookalike",
             "TempConditionalInTry",
+            "UnknownInterpolation",
+            "UnknownNumericFormat",
+            "UnknownNumericProvider",
+            "ParentOfUnknownPath",
+            "EnumeratedUnknownRoot",
+            "MutatedFiles",
+            "EscapedFiles",
+            "OverwrittenReadonly",
+            "ReplacedReadonly",
+            "MixedBranches",
+            "LoopReplacement",
         ] {
             assert!(
                 !fact(method, OperandFactKind::FixedFilesystemPath),
@@ -197,6 +289,40 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
                 .any(|e| e.symbol.as_deref() == Some("FixedReset"))
         );
         for method in [
+            "GuidParameter",
+            "GuidFormat",
+            "GuidProvider",
+            "GuidSuffix",
+            "UnknownNumber",
+            "ParsedNumber",
+            "IntegralFormat",
+            "BooleanValue",
+            "ConvertedNumber",
+            "EnumValue",
+            "DateFilename",
+            "InterpolatedId",
+            "InterpolatedNumber",
+            "RuntimeRoot",
+            "DomainRoot",
+            "WorkingRoot",
+            "FolderRoot",
+            "ParentOfKnownPath",
+            "FixedArrayCombine",
+            "EnumeratedFiles",
+            "FirstFile",
+            "KnownFileInfo",
+            "ReadonlyPath",
+            "ClosedBranches",
+        ] {
+            assert!(
+                !inventory
+                    .entries
+                    .iter()
+                    .any(|e| e.symbol.as_deref() == Some(method)),
+                "{label}: leftover {method}"
+            );
+        }
+        for method in [
             "TempGuid",
             "TempRandom",
             "TempAlias",
@@ -205,6 +331,8 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "TempResetInTry",
             "TempCapturedRead",
             "TempExecutable",
+            "TempFinally",
+            "TempSuffixReset",
         ] {
             assert!(
                 !inventory
@@ -234,12 +362,22 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "RefReplacement",
             "Capture",
             "TryReplacement",
-            "UnknownNumber",
             "Conversion",
             "GuidUnknownRoot",
             "GuidUnknownFilename",
             "GuidLookalike",
             "TempConditionalInTry",
+            "UnknownInterpolation",
+            "UnknownNumericFormat",
+            "UnknownNumericProvider",
+            "ParentOfUnknownPath",
+            "EnumeratedUnknownRoot",
+            "MutatedFiles",
+            "EscapedFiles",
+            "OverwrittenReadonly",
+            "ReplacedReadonly",
+            "MixedBranches",
+            "LoopReplacement",
         ] {
             assert!(
                 inventory
