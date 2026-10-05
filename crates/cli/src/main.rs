@@ -2411,7 +2411,7 @@ fn build_review_ledger(inventory_dir: &Path, history: &str) -> Result<ReviewLedg
             .map_err(|e| format!("could not read inventory cache: {e}"))?,
     )
     .map_err(|e| format!("invalid inventory cache: {e}"))?;
-    engine(mehscan_engine::investigation::validate_review_inventory(
+    let history_validator = engine(mehscan_engine::investigation::ReviewHistoryValidator::new(
         Path::new(&cache.scan.root),
         &cache,
     ))?;
@@ -2514,9 +2514,7 @@ fn build_review_ledger(inventory_dir: &Path, history: &str) -> Result<ReviewLedg
                 }
             }
             for (bundle, response) in responses {
-                engine(mehscan_engine::investigation::validate_history_bundle(
-                    &cache, &bundle,
-                ))?;
+                engine(history_validator.validate_bundle(&bundle))?;
                 for result in response.results {
                     if !known.contains(result.review_id.as_str()) {
                         return Err(format!(

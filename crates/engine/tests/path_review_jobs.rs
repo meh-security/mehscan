@@ -62,6 +62,66 @@ fn process_fixture_root() -> PathBuf {
         .join("tests/fixtures/v2-process-flow")
 }
 
+#[test]
+fn history_validates_source_derived_markers_and_rejects_modified_facts() {
+    use mehscan_engine::investigation::{
+        ReviewHistoryValidator, build_path_review_bundles, build_review_inventory,
+        build_selected_review_jobs,
+    };
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/review-history-markers");
+    let inventory = build_review_inventory(&root, false).unwrap();
+    let ids = inventory
+        .entries
+        .iter()
+        .map(|entry| entry.review_id.clone())
+        .collect();
+    let job = build_selected_review_jobs(&root, &inventory, &ids, None).unwrap();
+    let bundles = build_path_review_bundles(&job, None).unwrap();
+    let validator = ReviewHistoryValidator::new(&root, &inventory).unwrap();
+    let mut checked_marker = false;
+    for bundle in bundles.bundles {
+        validator.validate_bundle(&bundle).unwrap();
+        if let PathReviewBundlePayload::Observation { reviews } = &bundle.payload {
+            for (review_index, review) in reviews.iter().enumerate() {
+                for (fact_index, fact) in review.evidence.iter().enumerate() {
+                    if !fact.tags.iter().any(|tag| tag == "review-admission-marker") {
+                        continue;
+                    }
+                    checked_marker = true;
+                    assert!(!inventory.scan.evidence.contains(fact));
+                    let mut changed = bundle.clone();
+                    let PathReviewBundlePayload::Observation { reviews } = &mut changed.payload
+                    else {
+                        unreachable!()
+                    };
+                    reviews[review_index].evidence[fact_index]
+                        .captures
+                        .get_mut("operation")
+                        .unwrap()
+                        .text
+                        .push_str(" forged");
+                    assert!(validator.validate_bundle(&changed).is_err());
+                    let mut changed = bundle.clone();
+                    let PathReviewBundlePayload::Observation { reviews } = &mut changed.payload
+                    else {
+                        unreachable!()
+                    };
+                    reviews[review_index].evidence[fact_index]
+                        .location
+                        .start
+                        .line += 1;
+                    assert!(validator.validate_bundle(&changed).is_err());
+                }
+            }
+        }
+    }
+    assert!(
+        checked_marker,
+        "exercise an admission marker absent from raw scan facts"
+    );
+}
+
 fn crapi_root() -> PathBuf {
     std::env::var_os("MEHSCAN_CRAPI_ROOT")
         .map(PathBuf::from)

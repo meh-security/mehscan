@@ -500,6 +500,14 @@ pub fn validate_review_inventory(
     root: &Path,
     inventory: &ReviewInventory,
 ) -> Result<(), EngineError> {
+    validate_review_inventory_sources(root, inventory, &RepositorySources::load(root)?)
+}
+
+fn validate_review_inventory_sources(
+    root: &Path,
+    inventory: &ReviewInventory,
+    sources: &RepositorySources,
+) -> Result<(), EngineError> {
     if inventory.schema_version != "2" {
         return Err(EngineError(
             "unsupported review inventory version; regenerate it".into(),
@@ -508,7 +516,7 @@ pub fn validate_review_inventory(
     if let Some(binding) = &inventory.semantic_inputs {
         binding.validate(root)?;
     }
-    if review_source_fingerprint(&RepositorySources::load(root)?) != inventory.source_fingerprint {
+    if review_source_fingerprint(sources) != inventory.source_fingerprint {
         return Err(EngineError(
             "review inventory is stale: source files changed; regenerate it".into(),
         ));
@@ -516,9 +524,39 @@ pub fn validate_review_inventory(
     Ok(())
 }
 
+/// Reconstruct admission evidence once for an entire history, using the same
+/// source and semantic binding as the inventory. Admission markers are derived
+/// facts and are intentionally absent from the raw scan evidence.
+pub struct ReviewHistoryValidator<'a> {
+    inventory: &'a ReviewInventory,
+    admission_evidence: BTreeMap<String, Evidence>,
+}
+
+impl<'a> ReviewHistoryValidator<'a> {
+    pub fn new(root: &Path, inventory: &'a ReviewInventory) -> Result<Self, EngineError> {
+        let sources = RepositorySources::load(root)?;
+        validate_review_inventory_sources(root, inventory, &sources)?;
+        let admission_evidence =
+            review_admission::marker_groups(&sources, &inventory.scan.evidence)
+                .into_iter()
+                .flat_map(|group| group.evidence)
+                .map(|fact| (fact.id.clone(), fact))
+                .collect();
+        Ok(Self {
+            inventory,
+            admission_evidence,
+        })
+    }
+
+    pub fn validate_bundle(&self, bundle: &PathReviewBundle) -> Result<(), EngineError> {
+        validate_history_bundle(self.inventory, &self.admission_evidence, bundle)
+    }
+}
+
 /// Validate each saved chunk against current source facts and the review contract.
-pub fn validate_history_bundle(
+fn validate_history_bundle(
     inventory: &ReviewInventory,
+    admission_evidence: &BTreeMap<String, Evidence>,
     bundle: &PathReviewBundle,
 ) -> Result<(), EngineError> {
     if bundle.triage_contract != path_review_triage_contract()
@@ -552,6 +590,7 @@ pub fn validate_history_bundle(
             .evidence
             .iter()
             .any(|current| current == fact)
+            && admission_evidence.get(&fact.id) != Some(fact)
         {
             return Err(EngineError(format!(
                 "history chunk has stale source/semantic evidence {:?}; re-review it",
