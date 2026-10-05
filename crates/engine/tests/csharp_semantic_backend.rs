@@ -40,6 +40,217 @@ fn env_path(name: &str) -> PathBuf {
 }
 
 #[test]
+#[ignore = "requires real .NET and ASP.NET 8/10 refs plus Roslyn backend"]
+fn html_proofs_and_shared_destinations_preserve_unsafe_and_distinct_cases() {
+    let fixture = Fixture::new("output-destination");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/roslyn-output/App.cs"),
+        fixture.0.join("App.cs"),
+    )
+    .unwrap();
+    // An unrelated compiler gap must not veto a locally complete framework proof.
+    std::fs::write(
+        fixture.0.join("Helpers.cs"),
+        "class Gap { UnknownType Missing; }",
+    )
+    .unwrap();
+    let baseline = mehscan_engine::scan_path(&fixture.0).unwrap();
+    let plain = investigation::build_review_inventory(&fixture.0, false).unwrap();
+    for (target, language, refs, aspnet) in [
+        (
+            "net8.0",
+            "12.0",
+            "MEHSCAN_ROSLYN_NET8_REFS",
+            "MEHSCAN_ROSLYN_ASPNET8_REFS",
+        ),
+        (
+            "net10.0",
+            "14.0",
+            "MEHSCAN_ROSLYN_NET10_REFS",
+            "MEHSCAN_ROSLYN_ASPNET10_REFS",
+        ),
+    ] {
+        let context = fixture.context(target, target, language, &env_path(refs));
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&context).unwrap()).unwrap();
+        json["projects"][0]["reference_directories"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(env_path(aspnet)));
+        std::fs::write(&context, serde_json::to_vec(&json).unwrap()).unwrap();
+        let snapshot = csharp_semantic::collect(
+            &fixture.0,
+            &context,
+            &env_path("MEHSCAN_ROSLYN_BACKEND"),
+            &baseline,
+        )
+        .unwrap();
+        let facts = |name: &str| {
+            baseline
+                .evidence
+                .iter()
+                .filter(|e| e.enclosing_symbol.as_deref() == Some(name))
+                .flat_map(|e| {
+                    snapshot
+                        .observations
+                        .iter()
+                        .filter(move |o| o.evidence_id == e.id)
+                        .flat_map(|o| &o.facts)
+                })
+                .collect::<Vec<_>>()
+        };
+        for name in ["Encoded", "Child", "Fragment"] {
+            assert!(
+                facts(name)
+                    .iter()
+                    .any(|f| f.kind == OperandFactKind::EncodedHtmlOperand),
+                "missing HTML proof: {target}/{name}: {:?}",
+                facts(name)
+            );
+        }
+        for name in [
+            "Raw",
+            "SuppliedEncoder",
+            "Replaced",
+            "RawChild",
+            "LaterRawChild",
+            "AliasedChild",
+            "Link",
+            "Script",
+        ] {
+            assert!(
+                !facts(name)
+                    .iter()
+                    .any(|f| f.kind == OperandFactKind::EncodedHtmlOperand),
+                "unsafe HTML closure: {target}/{name}"
+            );
+        }
+        let identity = |name: &str| {
+            facts(name)
+                .iter()
+                .find(|f| f.kind == OperandFactKind::SharedOutboundDestination)
+                .map(|f| f.value.clone())
+        };
+        assert!(
+            identity("First").is_some(),
+            "missing destination identity: {target}"
+        );
+        assert_eq!(identity("First"), identity("Second"));
+        assert_ne!(identity("First"), identity("DifferentHook"));
+        assert_ne!(identity("First"), identity("DifferentRoot"));
+        for name in ["RawSuffix", "ReplacedUrl"] {
+            assert!(
+                identity(name).is_none(),
+                "unsafe destination grouping: {target}/{name}"
+            );
+        }
+        let producer = |name: &str| {
+            facts(name)
+                .iter()
+                .find(|f| f.kind == OperandFactKind::SharedFilesystemProducer)
+                .map(|f| f.value.clone())
+        };
+        assert!(producer("DeleteOne").is_some());
+        assert_eq!(producer("DeleteOne"), producer("DeleteTwo"));
+        assert_eq!(producer("DeleteOne"), producer("DeleteNamed"));
+        assert_eq!(producer("DeleteBypass"), producer("DeleteNamedBypass"));
+        assert_ne!(producer("DeleteOne"), producer("DeleteBypass"));
+        assert_ne!(producer("DeleteOne"), producer("DeleteOther"));
+        assert!(producer("DeleteReplaced").is_none());
+        let native = investigation::build_review_inventory_with_semantics(
+            &fixture.0,
+            false,
+            Some((
+                &{
+                    let path = fixture.0.join(format!("{target}-snapshot.json"));
+                    std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+                    path
+                },
+                &context,
+            )),
+        )
+        .unwrap();
+        for name in ["Encoded", "Child", "Fragment"] {
+            assert!(
+                !native
+                    .entries
+                    .iter()
+                    .any(|e| e.symbol.as_deref() == Some(name)),
+                "HTML proof not used in admission: {name}"
+            );
+        }
+        for name in [
+            "Raw",
+            "SuppliedEncoder",
+            "Replaced",
+            "RawChild",
+            "LaterRawChild",
+            "AliasedChild",
+            "Link",
+            "Script",
+            "RawSuffix",
+            "ReplacedUrl",
+        ] {
+            assert!(
+                native
+                    .entries
+                    .iter()
+                    .any(|e| e.symbol.as_deref() == Some(name)),
+                "lost unsafe case: {name}"
+            );
+        }
+        let shared = native
+            .entries
+            .iter()
+            .filter(|e| {
+                e.value_hint
+                    .as_ref()
+                    .is_some_and(|h| h.reason == "shared_csharp_outbound_destination")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(shared.len(), 1);
+        let path_shared = native
+            .entries
+            .iter()
+            .filter(|e| {
+                e.value_hint
+                    .as_ref()
+                    .is_some_and(|h| h.reason == "shared_csharp_filesystem_producer")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(path_shared.len(), 3);
+        assert!(
+            native
+                .entries
+                .iter()
+                .find(|e| e.symbol.as_deref() == Some("Read"))
+                .unwrap()
+                .value_hint
+                .is_none()
+        );
+        assert!(shared[0].value_hint.as_ref().unwrap().depends_on.is_some());
+        assert_eq!(
+            plain
+                .scan
+                .evidence
+                .iter()
+                .map(|e| &e.id)
+                .collect::<Vec<_>>(),
+            native
+                .scan
+                .evidence
+                .iter()
+                .map(|e| &e.id)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(baseline.security_paths, native.scan.security_paths);
+        let mut enriched = baseline.clone();
+        csharp_semantic::enrich(&fixture.0, &context, &snapshot, &mut enriched).unwrap();
+        assert_eq!(baseline.coverage, enriched.coverage);
+    }
+}
+
+#[test]
 #[ignore = "requires Roslyn helper and real .NET 10 refs"]
 fn declared_global_imports_bind_framework_calls_and_invalidate_snapshots() {
     let fixture = Fixture::new("global-imports");

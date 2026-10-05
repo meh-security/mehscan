@@ -114,11 +114,15 @@ fn operand_summaries(evidence: &Evidence) -> Vec<ReviewOperandSummary> {
         .operand_facts
         .iter()
         .filter(|fact| {
-            fact.kind != mehscan_core::OperandFactKind::ImmutableFilesystemOperand
-                || !fact
-                    .remaining_checks
-                    .iter()
-                    .any(|c| c == "partial_semantic_context")
+            !matches!(
+                fact.kind,
+                mehscan_core::OperandFactKind::ImmutableFilesystemOperand
+                    | mehscan_core::OperandFactKind::SharedOutboundDestination
+                    | mehscan_core::OperandFactKind::SharedFilesystemProducer
+            ) || !fact
+                .remaining_checks
+                .iter()
+                .any(|c| c == "partial_semantic_context")
         })
         .map(|fact| ReviewOperandSummary {
             kind: fact.kind.clone(),
@@ -337,7 +341,12 @@ fn share_csharp_filesystem_questions(entries: &mut [ReviewInventoryEntry]) {
         let Some(identity) = entry
             .operand_facts
             .iter()
-            .find(|fact| fact.kind == mehscan_core::OperandFactKind::ImmutableFilesystemOperand)
+            .find(|fact| fact.kind == mehscan_core::OperandFactKind::SharedFilesystemProducer)
+            .or_else(|| {
+                entry.operand_facts.iter().find(|fact| {
+                    fact.kind == mehscan_core::OperandFactKind::ImmutableFilesystemOperand
+                })
+            })
         else {
             continue;
         };
@@ -346,9 +355,40 @@ fn share_csharp_filesystem_questions(entries: &mut [ReviewInventoryEntry]) {
         let key = format!("{}:{:?}:{}", entry.path, entry.capability, identity.value);
         if let Some(representative) = representatives.get(&key) {
             entry.value_hint = Some(ValueReviewHint {
-                reason: "shared_csharp_filesystem_selection".into(),
+                reason: if identity.kind == mehscan_core::OperandFactKind::SharedFilesystemProducer { "shared_csharp_filesystem_producer" } else { "shared_csharp_filesystem_selection" }.into(),
                 target: key,
-                assumption: "Same compiler-bound immutable string slot and filesystem capability in one callable. Review shared root authority once; check each operation's guards and effects separately. This is not a safe verdict.".into(),
+                assumption: if identity.kind == mehscan_core::OperandFactKind::SharedFilesystemProducer {
+                    "Same compiler-bound private path producer and fixed options, unchanged selectors, and filesystem capability. Review helper containment once; check each caller input, guards and effects. No safe verdict is transferred."
+                } else { "Same compiler-bound immutable string slot and filesystem capability in one callable. Review shared root authority once; check each operation's guards and effects separately. This is not a safe verdict." }.into(),
+                depends_on: Some(representative.clone()),
+            });
+        } else {
+            representatives.insert(key, entry.review_id.clone());
+        }
+    }
+}
+
+fn share_csharp_destination_questions(entries: &mut [ReviewInventoryEntry]) {
+    let mut representatives = BTreeMap::<String, String>::new();
+    for entry in entries.iter_mut().filter(|entry| {
+        entry.path.ends_with(".cs")
+            && entry.evidence_strength == "sink"
+            && entry.rule_id == "csharp-http-request-uri"
+            && entry.cwe_candidates == ["CWE-918"]
+            && entry.capability == Capability::OutboundNetworkRequest
+    }) {
+        let Some(identity) = entry
+            .operand_facts
+            .iter()
+            .find(|f| f.kind == mehscan_core::OperandFactKind::SharedOutboundDestination)
+        else {
+            continue;
+        };
+        let key = format!("{}:{}", entry.path, identity.value);
+        if let Some(representative) = representatives.get(&key) {
+            entry.value_hint = Some(ValueReviewHint {
+                reason: "shared_csharp_outbound_destination".into(), target: key,
+                assumption: "Same compiler-bound destination field, URI construction shape and private hook set. Review caller authority and hooks once; check endpoint-specific exceptions and request effects. No safe verdict is transferred.".into(),
                 depends_on: Some(representative.clone()),
             });
         } else {
@@ -542,7 +582,35 @@ pub fn build_review_inventory_with_semantics(
     include_review_material: bool,
     semantics: Option<(&Path, &Path)>,
 ) -> Result<ReviewInventory, EngineError> {
-    let mut scan = scan_path(root)?;
+    build_review_inventory_with_backend(root, include_review_material, semantics, None, None)
+}
+
+#[derive(Default, Serialize)]
+pub struct ReviewInventoryProfile {
+    pub scan: crate::ScanProfile,
+    pub native_milliseconds: u128,
+    pub inventory_milliseconds: u128,
+}
+
+/// Scan once, optionally collect native facts for that exact scan, then admit IDs.
+pub fn build_review_inventory_with_backend(
+    root: &Path,
+    include_review_material: bool,
+    semantics: Option<(&Path, &Path)>,
+    native_backend: Option<(&Path, &Path)>,
+    mut profile: Option<&mut ReviewInventoryProfile>,
+) -> Result<ReviewInventory, EngineError> {
+    if semantics.is_some() && native_backend.is_some() {
+        return Err(EngineError(
+            "supply a Roslyn snapshot or backend, not both".into(),
+        ));
+    }
+    let (mut scan, scan_profile) =
+        crate::scan_path_profiled_with_options(root, Default::default())?;
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.scan = scan_profile;
+    }
+    let native_started = std::time::Instant::now();
     let mut semantic_inputs = None;
     if let Some((facts, context)) = semantics {
         let snapshot = crate::csharp_semantic::load(facts)?;
@@ -551,6 +619,17 @@ pub fn build_review_inventory_with_semantics(
             context, &snapshot,
         )?);
     }
+    if let Some((context, backend)) = native_backend {
+        let snapshot = crate::csharp_semantic::collect(root, context, backend, &scan)?;
+        crate::csharp_semantic::enrich(root, context, &snapshot, &mut scan)?;
+        semantic_inputs = Some(crate::csharp_semantic::InputBinding::capture(
+            context, &snapshot,
+        )?);
+    }
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.native_milliseconds = native_started.elapsed().as_millis();
+    }
+    let inventory_started = std::time::Instant::now();
     let sources = RepositorySources::load(root)?;
     let source_fingerprint = review_source_fingerprint(&sources);
     let mut entries = Vec::new();
@@ -565,6 +644,9 @@ pub fn build_review_inventory_with_semantics(
         None,
         Some(&mut entries),
     )?;
+    if let Some(profile) = profile {
+        profile.inventory_milliseconds = inventory_started.elapsed().as_millis();
+    }
     Ok(ReviewInventory {
         schema_version: "2".to_string(),
         source_fingerprint,
@@ -1200,14 +1282,6 @@ fn build_path_review_jobs_internal(
             profile.source_load_milliseconds
         );
     }
-    let (csharp_neighborhoods, _) = csharp_review::build(
-        &scan.evidence,
-        sources
-            .files
-            .values()
-            .map(|file| (file.path.as_str(), file.language, file.source.as_str())),
-        usize::MAX,
-    );
     let languages = scan
         .coverage
         .files
@@ -1373,6 +1447,7 @@ fn build_path_review_jobs_internal(
         }));
         share_php_output_questions(entries);
         share_csharp_filesystem_questions(entries);
+        share_csharp_destination_questions(entries);
     }
     let total_reviews = candidates.len() + observation_groups.len();
     if let Some(ids) = selected_ids {
@@ -1798,11 +1873,32 @@ fn build_path_review_jobs_internal(
     let observation_reviews = if remaining == 0 {
         Vec::new()
     } else {
+        let selected_groups = observation_groups
+            .into_iter()
+            .skip(observation_start)
+            .take(remaining)
+            .collect::<Vec<_>>();
+        // Inventory and path-only selections do not consume rendering neighborhoods.
+        // Build them only when selected observation bundles need them.
+        let csharp_neighborhoods = if selected_groups.iter().any(|g| {
+            g.evidence
+                .iter()
+                .any(|e| e.rule_id == "csharp-razor-html-raw-output")
+        }) {
+            csharp_review::build(
+                &scan.evidence,
+                sources
+                    .files
+                    .values()
+                    .map(|file| (file.path.as_str(), file.language, file.source.as_str())),
+                usize::MAX,
+            )
+            .0
+        } else {
+            Vec::new()
+        };
         build_observation_reviews(
-            observation_groups
-                .into_iter()
-                .skip(observation_start)
-                .take(remaining),
+            selected_groups.into_iter(),
             &sources,
             &languages,
             &csharp_neighborhoods,
@@ -4467,33 +4563,94 @@ fn project_investigation_payload(payload: &mut PathReviewBundlePayload) {
     match payload {
         PathReviewBundlePayload::SecurityPath { reviews } => {
             for review in reviews {
-                project_investigation_facts(review.investigation.readiness, &mut review.facts);
+                project_investigation_facts(
+                    review.investigation.readiness,
+                    &mut review.facts,
+                    &review.candidate.sink.location,
+                );
             }
         }
         PathReviewBundlePayload::Observation { reviews } => {
             for review in reviews {
-                project_investigation_facts(review.investigation.readiness, &mut review.facts);
+                let anchor = review
+                    .evidence
+                    .iter()
+                    .find(|e| review.anchor_evidence_ids.contains(&e.id));
+                if let Some(anchor) = anchor {
+                    project_investigation_facts(
+                        review.investigation.readiness,
+                        &mut review.facts,
+                        &anchor.location,
+                    );
+                }
             }
         }
     }
 }
 
-fn project_investigation_facts(readiness: ReviewReadiness, facts: &mut [ReviewNeighborhoodFact]) {
+fn project_investigation_facts(
+    readiness: ReviewReadiness,
+    facts: &mut [ReviewNeighborhoodFact],
+    anchor: &Location,
+) {
     if readiness == ReviewReadiness::Assessment {
         return;
     }
+    let primary = |fact: &ReviewNeighborhoodFact| {
+        matches!(
+            fact.role.as_str(),
+            "source_context" | "sink_context" | "anchor_context"
+        ) && fact.location.path == anchor.path
+            && fact.location.start.byte_offset <= anchor.start.byte_offset
+            && fact.location.end.byte_offset >= anchor.end.byte_offset
+    };
+    let mut order = (0..facts.len()).collect::<Vec<_>>();
+    order.sort_by_key(|&index| !primary(&facts[index]));
     let mut retained_bytes = 0usize;
-    for fact in facts {
-        let allowed = if fact.evidence_id.is_some() {
-            1_536
-        } else {
-            match fact.role.as_str() {
-                "source_context" | "sink_context" | "anchor_context" => 1_536,
-                "configuration_context" | "feature_gate_policy_context" | "framework_context" => {
-                    768
+    for index in order {
+        let fact = &mut facts[index];
+        if primary(fact)
+            && fact.excerpt.len() > 1_536
+            && fact.excerpt.len() == fact.location.end.byte_offset - fact.location.start.byte_offset
+        {
+            let origin = fact.location.start.clone();
+            let focus = anchor.start.byte_offset - origin.byte_offset;
+            let focus_end = anchor.end.byte_offset - origin.byte_offset;
+            if focus_end - focus <= 1_536 {
+                let mut start = focus.saturating_sub((1_536 - (focus_end - focus)) / 2);
+                let end =
+                    floor_char_boundary(&fact.excerpt, (start + 1_536).min(fact.excerpt.len()));
+                while start < end && !fact.excerpt.is_char_boundary(start) {
+                    start += 1;
                 }
-                _ => 0,
+                if start <= focus && end >= focus_end {
+                    let mut location =
+                        location_from_offsets(&fact.location.path, &fact.excerpt, start, end);
+                    for position in [&mut location.start, &mut location.end] {
+                        if position.line == 1 {
+                            position.column += origin.column - 1;
+                        }
+                        position.line += origin.line - 1;
+                        position.byte_offset += origin.byte_offset;
+                    }
+                    fact.excerpt = fact.excerpt[start..end].to_string();
+                    fact.location = location;
+                }
             }
+        }
+        // Every fact receives an artifact ID. That must not turn helper bodies
+        // into anchor evidence or let them consume the small card's source budget.
+        let allowed = match fact.role.as_str() {
+            "source_context" | "sink_context" | "anchor_context" => 1_536,
+            "configuration_context" | "feature_gate_policy_context" | "framework_context" => 768,
+            _ if fact
+                .evidence_id
+                .as_deref()
+                .is_some_and(|id| id.starts_with("ev-")) =>
+            {
+                1_536
+            }
+            _ => 0,
         };
         if allowed == 0
             || fact.excerpt.len() > allowed
@@ -12162,6 +12319,20 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
 /// closes only CWE-79 on this exact output; nested operations and other rules
 /// retain their own evidence and admission decisions.
 fn closed_output_operand(item: &Evidence) -> Option<&mehscan_core::OperandFact> {
+    if item.kind == EvidenceKind::Sink
+        && item.capability == Capability::HtmlOutput
+        && item.rule_id == "csharp-aspnet-explicit-html-output"
+        && item.cwe_candidates == ["CWE-79"]
+    {
+        let capture = item.captures.get("content")?;
+        return item.context.operand_facts.iter().find(|fact| {
+            fact.kind == mehscan_core::OperandFactKind::EncodedHtmlOperand
+                && fact.role == "content"
+                && fact.location == capture.location
+                && fact.value == capture.text
+                && fact.remaining_checks == ["html_text_context_only"]
+        });
+    }
     if item.kind != EvidenceKind::Sink
         || item.capability != Capability::HtmlOutput
         || item.rule_id != "php-html-output"
@@ -22060,15 +22231,63 @@ mod tests {
             fact("reference_use_context", "same text repeated"),
         ];
         let original = facts.clone();
-        project_investigation_facts(ReviewReadiness::Assessment, &mut facts);
+        project_investigation_facts(ReviewReadiness::Assessment, &mut facts, &location);
         assert_eq!(facts, original);
-        project_investigation_facts(ReviewReadiness::Investigation, &mut facts);
+        project_investigation_facts(ReviewReadiness::Investigation, &mut facts, &location);
         assert!(facts[0].excerpt.is_empty());
         assert_eq!(facts[1].excerpt, "const x = 1;");
         assert_eq!(facts[2].excerpt, "safe: false");
         assert!(facts[3].excerpt.is_empty());
         assert!(facts.iter().all(|fact| fact.location == location));
         assert!(facts[0].provenance.engine.contains("location-only"));
+    }
+
+    #[test]
+    fn investigation_projection_retains_exact_anchor_after_artifact_ids_are_assigned() {
+        let source = format!(
+            "{}sink(user_input);\n{}",
+            "// before\n".repeat(130),
+            "// after\n".repeat(130)
+        );
+        let start = source.find("sink(user_input)").unwrap();
+        let anchor = location_from_offsets("app.cs", &source, start, start + 17);
+        let mut facts = vec![
+            ReviewNeighborhoodFact {
+                role: "helper_definition_context".into(),
+                symbol: "helper".into(),
+                location: location_from_offsets("app.cs", &source, 0, 100),
+                excerpt: source[..100].into(),
+                evidence_id: None,
+                provenance: textual_provenance("test"),
+            },
+            ReviewNeighborhoodFact {
+                role: "source_context".into(),
+                symbol: "sink".into(),
+                location: location_from_offsets("app.cs", &source, 0, source.len()),
+                excerpt: source.clone(),
+                evidence_id: None,
+                provenance: textual_provenance("test"),
+            },
+        ];
+        assign_review_fact_artifact_ids(&mut facts);
+        project_investigation_facts(ReviewReadiness::Investigation, &mut facts, &anchor);
+        assert!(facts[0].excerpt.is_empty());
+        let kept = &facts[1];
+        assert!(kept.excerpt.contains("sink(user_input)"));
+        assert!(kept.excerpt.len() <= 1_536);
+        assert_eq!(
+            source.get(kept.location.start.byte_offset..kept.location.end.byte_offset),
+            Some(kept.excerpt.as_str())
+        );
+        assert_eq!(
+            kept.location,
+            location_from_offsets(
+                "app.cs",
+                &source,
+                kept.location.start.byte_offset,
+                kept.location.end.byte_offset
+            )
+        );
     }
 
     #[test]

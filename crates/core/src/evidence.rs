@@ -494,6 +494,14 @@ pub enum OperandFactKind {
     /// Compiler-bound unchanged string slot shared by filesystem operations.
     /// This identifies repeated selection work, not a safe resource or caller.
     ImmutableFilesystemOperand,
+    /// Complete HTML-text operand is encoded or constructed from bounded encoded content.
+    EncodedHtmlOperand,
+    /// Compiler-bound destination producer shared by several request constructions.
+    /// Caller authority and request-specific behavior remain open.
+    SharedOutboundDestination,
+    /// Exact private same-file path producer shared by unchanged selectors.
+    /// Its containment policy and each operation's effects remain open.
+    SharedFilesystemProducer,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -13,7 +13,12 @@ pub(super) fn contract_keys(entry: &Value) -> Vec<(String, String, String)> {
             let value = fact["value"].as_str()?;
             let value = match kind {
                 "configured_root_path" => value.split_once(" . ")?.0,
-                "encoding_call" | "fixed_code_relative_path" | "repository_code_target" => value,
+                "encoding_call"
+                | "fixed_code_relative_path"
+                | "repository_code_target"
+                | "shared_outbound_destination"
+                | "immutable_filesystem_operand" => value,
+                "shared_filesystem_producer" => value,
                 _ => return None,
             };
             Some((format!("{kind}:{value}"), kind.into(), value.into()))
@@ -25,6 +30,19 @@ pub(super) fn contract_keys(entry: &Value) -> Vec<(String, String, String)> {
 
 fn checks(kind: &str) -> &'static [&'static str] {
     match kind {
+        "shared_outbound_destination" => &[
+            "destination_producer_and_same_owner_hooks",
+            "caller_control_and_runtime_client_base",
+            "per_operation_uri_authority_and_request_effects",
+        ],
+        "immutable_filesystem_operand" => &[
+            "root_origin_and_authority",
+            "per_operation_guards_and_effects",
+        ],
+        "shared_filesystem_producer" => &[
+            "helper_return_and_containment_policy",
+            "per_call_input_guards_and_resource_effects",
+        ],
         "encoding_call" => &[
             "callable_identity_and_contract",
             "options_and_hooks",

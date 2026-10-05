@@ -24,6 +24,9 @@ The scan lists **candidates**, not confirmed vulnerabilities. For AI review,
 process the requests listed by `manifest.json`. A subset is a scoped review,
 not a complete application assessment. See [commands](references/commands.md)
 only when creating bundles, validating responses, or producing reports.
+When C# compiler context and a Roslyn executable are supplied, add
+`--csharp-context CONTEXT --csharp-backend BACKEND` to inventory creation.
+This scans and enriches once. Reuse that inventory for selected bundles.
 
 ## Plan a repository-wide review
 
@@ -49,6 +52,10 @@ inventory: inspect producers and reopen consequential sites. Review
 `dependency_review_ids` first; unsafe or unresolved shared
 behavior reopens its dependent sites with the rebuilt ledger. Value can expand
 to Comprehensive when the source warrants it.
+For shared C# destinations or path producers, inspect the exact shared field,
+helper and hooks, then check site-specific inputs, guards and effects. Different
+options, raw URI suffixes and replaced selectors retain separate work. An
+unresolved representative reopens its dependents; keep their exact IDs visible.
 Honor a requested category. Build a same-fingerprint review ledger from prior
 run roots with `review-ledger`; pass it to inventory listing and selected bundle
 creation so finalized IDs are not selected again. For a large queue, use short source reads to rank a few inventory IDs

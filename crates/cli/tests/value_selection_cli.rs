@@ -1,6 +1,146 @@
 use std::{fs, process::Command};
 
 #[test]
+#[ignore = "requires Roslyn backend and real .NET/ASP.NET 10 refs"]
+fn shared_destinations_and_helpers_keep_exceptions_and_reopen_exact_dependents() {
+    let root =
+        std::env::temp_dir().join(format!("mehscan-csharp-producers-{}", std::process::id()));
+    let artifacts = root.with_extension("run");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&artifacts).unwrap();
+    fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/roslyn-output/App.cs"),
+        root.join("App.cs"),
+    )
+    .unwrap();
+    let context = artifacts.join("context.json");
+    fs::write(&context, serde_json::to_vec(&serde_json::json!({"projects": [{
+        "id": "app", "target_framework": "net10.0", "language_version": "14.0", "sources": ["App.cs"],
+        "references": [], "reference_directories": [std::env::var("MEHSCAN_ROSLYN_NET10_REFS").unwrap(), std::env::var("MEHSCAN_ROSLYN_ASPNET10_REFS").unwrap()], "defines": []
+    }]})).unwrap()).unwrap();
+    let run = |args: &[&str]| -> serde_json::Value {
+        let out = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+    let inventory = artifacts.join("inventory");
+    run(&[
+        "investigate",
+        "review-inventory",
+        root.to_str().unwrap(),
+        "--output",
+        inventory.to_str().unwrap(),
+        "--csharp-backend",
+        &std::env::var("MEHSCAN_ROSLYN_BACKEND").unwrap(),
+        "--csharp-context",
+        context.to_str().unwrap(),
+    ]);
+    let deferred = run(&[
+        "investigate",
+        "review-inventory-list",
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--selection",
+        "deferred",
+    ]);
+    assert_eq!(deferred["matching_count"], 4, "{deferred}");
+    let value = run(&[
+        "investigate",
+        "review-inventory-list",
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--selection",
+        "value",
+    ]);
+    for name in [
+        "RawSuffix",
+        "ReplacedUrl",
+        "DifferentHook",
+        "DifferentRoot",
+        "DeleteBypass",
+        "DeleteOther",
+        "DeleteReplaced",
+        "Read",
+    ] {
+        assert!(
+            value["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["symbol"] == name),
+            "lost exception: {name}"
+        );
+    }
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(inventory.join("inventory.json")).unwrap()).unwrap();
+    let ledger = artifacts.join("ledger.json");
+    for child in deferred["entries"].as_array().unwrap() {
+        let representative = child["value_hint"]["depends_on"].as_str().unwrap();
+        let dependent_count = deferred["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["value_hint"]["depends_on"] == representative)
+            .count();
+        for verdict in ["issue", "needs_review", "not_issue"] {
+            fs::write(&ledger, serde_json::to_vec(&serde_json::json!({
+                "schema_version": "2", "source_fingerprint": saved["source_fingerprint"], "input_fingerprint": saved["input_fingerprint"],
+                "inventory_count": saved["entries"].as_array().unwrap().len(), "reviewed": {representative: verdict}, "conflicts": []
+            })).unwrap()).unwrap();
+            let queue = run(&[
+                "investigate",
+                "review-inventory-list",
+                "--inventory",
+                inventory.to_str().unwrap(),
+                "--selection",
+                "value",
+                "--ledger",
+                ledger.to_str().unwrap(),
+            ]);
+            assert_eq!(
+                queue["reopened_count"],
+                if verdict == "not_issue" {
+                    0
+                } else {
+                    dependent_count
+                }
+            );
+            assert_eq!(
+                queue["entries"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|e| e["review_id"] == child["review_id"]),
+                verdict != "not_issue"
+            );
+        }
+        let requests = artifacts.join(format!("bundle-{}", child["review_id"].as_str().unwrap()));
+        let bundle = run(&[
+            "investigate",
+            "review-bundles",
+            root.to_str().unwrap(),
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--review-ids",
+            child["review_id"].as_str().unwrap(),
+            "--output",
+            requests.to_str().unwrap(),
+        ]);
+        assert_eq!(bundle["review_count"], 1);
+    }
+    fs::remove_dir_all(&root).unwrap();
+    fs::remove_dir_all(&artifacts).unwrap();
+}
+
+#[test]
 #[ignore = "requires Roslyn helper and real .NET 10 refs"]
 fn compiler_bound_shared_filesystem_slots_keep_exact_ids_and_reopen() {
     let root = std::env::temp_dir().join(format!("mehscan-csharp-value-{}", std::process::id()));

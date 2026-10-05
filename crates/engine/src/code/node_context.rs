@@ -215,26 +215,35 @@ impl NodeProjectContext {
                 continue;
             }
             collect_owner_field_overwrite_guards(source, &mut context.owner_field_overwrite_guards);
+            let functions = exported_functions(&root);
+            let imports = javascript_imports(path, &root);
             trace_node_context_step(path, "parameter_returns");
-            collect_parameter_return_summaries(path, &root, &mut context.parameter_returns);
+            collect_parameter_return_summaries(path, &functions, &mut context.parameter_returns);
             trace_node_context_step(path, "parameter_sinks");
-            collect_parameter_sink_summaries(path, &root, &mut context.parameter_sinks);
+            collect_parameter_sink_summaries(
+                path,
+                &root,
+                &functions,
+                &imports,
+                &mut context.parameter_sinks,
+            );
             if has_ejs_import(source) {
                 trace_node_context_step(path, "local_template_sinks");
                 collect_local_template_parameter_sinks(path, &root, &mut context.parameter_sinks);
             }
             trace_node_context_step(path, "callback_forwards");
-            collect_callback_forward_summaries(path, &root, &mut context.callback_forwards);
+            collect_callback_forward_summaries(path, &functions, &mut context.callback_forwards);
             trace_node_context_step(path, "mongo_callback_results");
             collect_mongo_callback_result_summaries(
                 path,
                 &root,
+                &functions,
                 &mut context.mongo_callback_results,
             );
             trace_node_context_step(path, "xxe_parsers");
             collect_xxe_parser_summaries(path, &root, &mut context.xxe_parsers);
             trace_node_context_step(path, "express_wrappers");
-            collect_express_wrappers(path, &root, &mut context.express_wrappers);
+            collect_express_wrappers(path, &functions, &mut context.express_wrappers);
             trace_node_context_step(path, "graphql_resolvers");
             collect_graphql_resolvers(path, &root, &mut context.graphql_resolvers);
             trace_node_context_step(path, "request_boundary_flags");
@@ -2564,13 +2573,13 @@ fn unwrap_handler(
 
 fn collect_parameter_return_summaries(
     path: &str,
-    root: &Node<'_, StrDoc<SupportLang>>,
+    functions: &[(String, Node<'_, StrDoc<SupportLang>>)],
     summaries: &mut BTreeMap<String, ParameterReturnSummary>,
 ) {
     let Some(module) = module_path(path) else {
         return;
     };
-    for (name, function) in exported_functions(root) {
+    for (name, function) in functions.iter().cloned() {
         let parameters = function_parameter_names(&function);
         let Some(expression) = single_effective_return(&function) else {
             continue;
@@ -2598,12 +2607,14 @@ fn collect_parameter_return_summaries(
 fn collect_parameter_sink_summaries(
     path: &str,
     root: &Node<'_, StrDoc<SupportLang>>,
+    functions: &[(String, Node<'_, StrDoc<SupportLang>>)],
+    imports: &BTreeMap<String, ImportTarget>,
     summaries: &mut BTreeMap<String, Vec<ParameterSinkSummary>>,
 ) {
     let Some(module) = module_path(path) else {
         return;
     };
-    for (name, function) in exported_functions(root) {
+    for (name, function) in functions.iter().cloned() {
         let parameters = function_parameter_names(&function);
         let mut matches = Vec::new();
         if !function_has_control_flow(&function) {
@@ -2627,7 +2638,12 @@ fn collect_parameter_sink_summaries(
             }));
         }
         matches.extend(legacy_mongo_parameter_sinks(root, &function, &parameters));
-        matches.extend(postgres_js_parameter_sinks(root, &function, &parameters));
+        matches.extend(postgres_js_parameter_sinks(
+            root,
+            imports,
+            &function,
+            &parameters,
+        ));
         matches.sort_by_key(|(index, sink)| (*index, *sink as u8));
         matches.dedup();
         if matches.is_empty() {
@@ -2832,13 +2848,13 @@ fn legacy_mongo_parameter_sinks(
 
 fn collect_callback_forward_summaries(
     path: &str,
-    root: &Node<'_, StrDoc<SupportLang>>,
+    functions: &[(String, Node<'_, StrDoc<SupportLang>>)],
     summaries: &mut BTreeMap<String, CallbackForwardSummary>,
 ) {
     let Some(module) = module_path(path) else {
         return;
     };
-    for (name, function) in exported_functions(root) {
+    for (name, function) in functions.iter().cloned() {
         if function_has_control_flow(&function) {
             continue;
         }
@@ -2876,6 +2892,7 @@ fn collect_callback_forward_summaries(
 fn collect_mongo_callback_result_summaries(
     path: &str,
     root: &Node<'_, StrDoc<SupportLang>>,
+    functions: &[(String, Node<'_, StrDoc<SupportLang>>)],
     summaries: &mut BTreeMap<String, MongoCallbackResultSummary>,
 ) {
     if !root.text().contains(".collection(") {
@@ -2884,7 +2901,7 @@ fn collect_mongo_callback_result_summaries(
     let Some(module) = module_path(path) else {
         return;
     };
-    for (name, function) in exported_functions(root) {
+    for (name, function) in functions.iter().cloned() {
         let parameters = function_parameter_names(&function);
         let Some(callback_index) = parameters.iter().position(|parameter| {
             matches!(
@@ -3026,10 +3043,10 @@ fn summary_sink(callee: &str) -> Option<SummarySink> {
 
 fn postgres_js_parameter_sinks(
     root: &Node<'_, StrDoc<SupportLang>>,
+    imports: &BTreeMap<String, ImportTarget>,
     function: &Node<'_, StrDoc<SupportLang>>,
     parameters: &[String],
 ) -> Vec<(usize, SummarySink)> {
-    let imports = javascript_imports("module.ts", root);
     let constructors = imports
         .iter()
         .filter_map(|(visible, target)| (target.module == "postgres").then_some(visible.as_str()))
@@ -3085,13 +3102,13 @@ fn is_identifier_character(character: char) -> bool {
 
 fn collect_express_wrappers(
     path: &str,
-    root: &Node<'_, StrDoc<SupportLang>>,
+    functions: &[(String, Node<'_, StrDoc<SupportLang>>)],
     wrappers: &mut BTreeSet<String>,
 ) {
     let Some(module) = module_path(path) else {
         return;
     };
-    for (name, function) in exported_functions(root) {
+    for (name, function) in functions.iter().cloned() {
         let parameters = function_parameter_names(&function);
         if parameters.len() != 1 || !function_returns_handler_call(&function, &parameters[0]) {
             continue;

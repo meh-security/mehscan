@@ -11,7 +11,7 @@ using Microsoft.CodeAnalysis.FlowAnalysis;
 
 // A source/reference-only semantic helper. It never evaluates a project, restores
 // dependencies, emits binaries, or loads target analyzers/generators.
-internal static class Program
+internal static partial class Program
 {
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -27,6 +27,8 @@ internal static class Program
             var elapsed = Stopwatch.StartNew();
             double filesystemMilliseconds = 0;
             int filesystemQueries = 0;
+            double outputMilliseconds = 0, destinationMilliseconds = 0;
+            int outputQueries = 0, destinationQueries = 0;
             var request = JsonSerializer.Deserialize<Request>(Console.In.ReadToEnd(), Json)
                 ?? throw new InvalidDataException("Empty semantic request");
             if (request.SchemaVersion != "1") throw new InvalidDataException("Unsupported request version");
@@ -120,6 +122,8 @@ internal static class Program
                     var facts = new List<Fact>();
                     var locallyCompletePathSelection = false;
                     var locallyCompleteSelectionIdentity = false;
+                    var locallyCompleteOutput = false;
+                    var locallyCompleteDestination = false;
                     var root = tree.GetRoot();
                     var sinkSpan = Span(source, query.Sink);
                     var sinkNode = root.FindNode(sinkSpan, getInnermostNodeForTie: true);
@@ -150,14 +154,29 @@ internal static class Program
                             var started = timed ? Stopwatch.GetTimestamp() : 0;
                             locallyCompletePathSelection = FilesystemShape(model, operand, action, query, sources, facts, errors);
                             locallyCompleteSelectionIdentity = FilesystemIdentity(model, operand, action, query, sources, facts, errors);
+                            if (locallyCompleteSelectionIdentity)
+                                FilesystemProducer(model, operand, sources, facts);
                             if (timed) { filesystemMilliseconds += Stopwatch.GetElapsedTime(started).TotalMilliseconds; filesystemQueries++; }
+                        }
+                        if (query.Role == "content")
+                        {
+                            var started = timed ? Stopwatch.GetTimestamp() : 0;
+                            locallyCompleteOutput = HtmlShape(model, operand, action, query, sources, facts, errors);
+                            if (timed) { outputMilliseconds += Stopwatch.GetElapsedTime(started).TotalMilliseconds; outputQueries++; }
+                        }
+                        if (query.Role == "endpoint")
+                        {
+                            var started = timed ? Stopwatch.GetTimestamp() : 0;
+                            locallyCompleteDestination = DestinationIdentity(model, operand, action, query, sources, facts, errors);
+                            if (timed) { destinationMilliseconds += Stopwatch.GetElapsedTime(started).TotalMilliseconds; destinationQueries++; }
                         }
                     }
                     else
                         facts.Add(new(query.Role, "operand_boundary", query.Operand,
                             "Captured operand is not one complete C# syntax node", ["exact_operand_shape"]));
                     ValueTypes(model, root, query, source, facts);
-                    observations.Add(new(query.EvidenceId, project.Id, facts, locallyCompletePathSelection, locallyCompleteSelectionIdentity));
+                    observations.Add(new(query.EvidenceId, project.Id, facts, locallyCompletePathSelection, locallyCompleteSelectionIdentity,
+                        locallyCompleteOutput, locallyCompleteDestination));
                 }
             }
             var result = new Snapshot("1", "Roslyn " + typeof(CSharpCompilation).Assembly.GetName().Version,
@@ -168,7 +187,11 @@ internal static class Program
             if (timed) Console.Error.Write(JsonSerializer.Serialize(new {
                 total_ms = elapsed.Elapsed.TotalMilliseconds,
                 filesystem_checks_ms = filesystemMilliseconds,
-                filesystem_query_count = filesystemQueries
+                filesystem_query_count = filesystemQueries,
+                output_checks_ms = outputMilliseconds,
+                output_query_count = outputQueries,
+                destination_checks_ms = destinationMilliseconds,
+                destination_query_count = destinationQueries
             }, Json));
             return 0;
         }
@@ -1004,7 +1027,8 @@ internal static class Program
     private sealed record Fact(string Role, string Kind, SourceLocation Location, string Value, string[] RemainingChecks);
     private sealed record FileHash(string Path, string Sha256);
     private sealed record ProjectRecord(string Id, string TargetFramework, string LanguageVersion, int CompilerErrors, int UnresolvedReferences, int ReferenceConflicts);
-    private sealed record Observation(string EvidenceId, string ProjectId, List<Fact> Facts, bool LocallyCompletePathSelection, bool LocallyCompleteSelectionIdentity);
+    private sealed record Observation(string EvidenceId, string ProjectId, List<Fact> Facts, bool LocallyCompletePathSelection, bool LocallyCompleteSelectionIdentity,
+        bool LocallyCompleteOutput, bool LocallyCompleteDestination);
     private sealed record DiagnosticRecord(string ProjectId, string Code, string Message, SourceLocation? Location);
     private sealed record Snapshot(string SchemaVersion, string Backend, string ContextSha256,
         FileHash[] Sources, FileHash[] References, List<ProjectRecord> Projects,

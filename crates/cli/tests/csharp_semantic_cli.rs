@@ -131,6 +131,54 @@ fn semantic_collection_import_and_saved_cards_use_real_cli() {
         "--operand-kind",
         "semantic_definition",
     ]);
+    let single_inventory = artifacts.join("single-inventory");
+    let single = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .env("MEHSCAN_TRACE_PHASES", "1")
+        .args([
+            "investigate",
+            "review-inventory",
+            root.to_str().unwrap(),
+            "--output",
+            single_inventory.to_str().unwrap(),
+            "--csharp-backend",
+            &backend,
+            "--csharp-context",
+            context.to_str().unwrap(),
+            "--timings",
+            "true",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        single.status.success(),
+        "{}",
+        String::from_utf8_lossy(&single.stderr)
+    );
+    let trace = String::from_utf8_lossy(&single.stderr);
+    assert_eq!(
+        trace
+            .lines()
+            .filter(|line| line.starts_with("mehscan_phase discovery "))
+            .count(),
+        1,
+        "native inventory rescanned"
+    );
+    assert!(
+        trace
+            .lines()
+            .any(|line| line.starts_with('{') && line.contains("native_milliseconds"))
+    );
+    let read = |dir: &std::path::Path| -> Value {
+        serde_json::from_slice(&fs::read(dir.join("inventory.json")).unwrap()).unwrap()
+    };
+    assert_eq!(
+        read(&inventory)["entries"],
+        read(&single_inventory)["entries"]
+    );
+    assert_eq!(
+        read(&inventory)["source_fingerprint"],
+        read(&single_inventory)["source_fingerprint"]
+    );
     assert_eq!(listing["matching_count"], 4);
     let id = listing["entries"]
         .as_array()

@@ -82,6 +82,10 @@ pub struct Observation {
     locally_complete_path_selection: bool,
     #[serde(default)]
     locally_complete_selection_identity: bool,
+    #[serde(default)]
+    locally_complete_output: bool,
+    #[serde(default)]
+    locally_complete_destination: bool,
 }
 
 /// Persist only the native input binding, without duplicating imported facts.
@@ -115,6 +119,12 @@ pub fn queries(scan: &ScanResult) -> Vec<Query> {
             let role = match e.capability {
                 Capability::DatabaseQuery => "query",
                 Capability::FilesystemRead | Capability::FilesystemWrite => "path",
+                Capability::HtmlOutput if e.rule_id == "csharp-aspnet-explicit-html-output" => {
+                    "content"
+                }
+                Capability::OutboundNetworkRequest if e.rule_id == "csharp-http-request-uri" => {
+                    "endpoint"
+                }
                 _ => return None,
             };
             e.captures.get(role).map(|operand| Query {
@@ -252,12 +262,20 @@ pub fn enrich(
                     | OperandFactKind::FixedFilesystemPath
                     | OperandFactKind::TemporaryFilesystemPath
                     | OperandFactKind::ImmutableFilesystemOperand
+                    | OperandFactKind::EncodedHtmlOperand
+                    | OperandFactKind::SharedOutboundDestination
+                    | OperandFactKind::SharedFilesystemProducer
             ) || fact.remaining_checks.is_empty()
             {
                 return Err(EngineError("Unsupported Roslyn navigation fact".into()));
             }
             validate_location(root, &snapshot.sources, &fact.location)?;
-            if fact.kind == OperandFactKind::ImmutableFilesystemOperand {
+            if matches!(
+                fact.kind,
+                OperandFactKind::ImmutableFilesystemOperand
+                    | OperandFactKind::SharedOutboundDestination
+                    | OperandFactKind::SharedFilesystemProducer
+            ) {
                 let query = &expected[&observation.evidence_id];
                 let prefix = format!(
                     "{}:{}:{}:",
@@ -265,28 +283,51 @@ pub fn enrich(
                     fact.location.start.byte_offset,
                     fact.location.end.byte_offset
                 );
-                let owner = fact
-                    .value
-                    .strip_prefix(&prefix)
-                    .and_then(|v| v.parse::<usize>().ok());
-                if query.role != "path"
+                let identity = fact.value.strip_prefix(&prefix);
+                let owner = identity.and_then(|v| v.split(':').next()?.parse::<usize>().ok());
+                let valid_shape = if matches!(
+                    fact.kind,
+                    OperandFactKind::SharedOutboundDestination
+                        | OperandFactKind::SharedFilesystemProducer
+                ) {
+                    identity
+                        .and_then(|v| v.split_once(':'))
+                        .is_some_and(|(_, hash)| {
+                            hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
+                        })
+                } else {
+                    identity.is_some_and(|v| v.parse::<usize>().is_ok())
+                };
+                let role = if fact.kind == OperandFactKind::SharedOutboundDestination {
+                    "endpoint"
+                } else {
+                    "path"
+                };
+                if !valid_shape
+                    || query.role != role
                     || fact.role != query.role
                     || fact.location.path != query.operand.path
                     || !owner.is_some_and(|offset| offset <= query.operand.start.byte_offset)
                 {
                     return Err(EngineError(
-                        "Roslyn filesystem identity is not bound to its declaration and callable"
+                        "Roslyn selection identity is not bound to its declaration and owner"
                             .into(),
                     ));
                 }
             }
             if matches!(
                 fact.kind,
-                OperandFactKind::FixedFilesystemPath | OperandFactKind::TemporaryFilesystemPath
+                OperandFactKind::FixedFilesystemPath
+                    | OperandFactKind::TemporaryFilesystemPath
+                    | OperandFactKind::EncodedHtmlOperand
             ) {
                 let query = &expected[&observation.evidence_id];
-                if query.role != "path" || fact.role != query.role || fact.location != query.operand
-                {
+                let role = if fact.kind == OperandFactKind::EncodedHtmlOperand {
+                    "content"
+                } else {
+                    "path"
+                };
+                if query.role != role || fact.role != query.role || fact.location != query.operand {
                     return Err(EngineError(
                         "Roslyn path fact is not bound to the complete selected path".into(),
                     ));
@@ -298,6 +339,7 @@ pub fn enrich(
                     | OperandFactKind::ReceiverReference
                     | OperandFactKind::FixedFilesystemPath
                     | OperandFactKind::TemporaryFilesystemPath
+                    | OperandFactKind::EncodedHtmlOperand
             ) {
                 let text = std::fs::read_to_string(source_path(root, &fact.location.path)?)?;
                 if text.get(fact.location.start.byte_offset..fact.location.end.byte_offset)
@@ -338,8 +380,21 @@ pub fn enrich(
                     OperandFactKind::FixedFilesystemPath | OperandFactKind::TemporaryFilesystemPath
                 );
             let locally_complete_identity = record.locally_complete_selection_identity
-                && fact.kind == OperandFactKind::ImmutableFilesystemOperand;
-            if partial && !locally_complete_path && !locally_complete_identity {
+                && matches!(
+                    fact.kind,
+                    OperandFactKind::ImmutableFilesystemOperand
+                        | OperandFactKind::SharedFilesystemProducer
+                );
+            let locally_complete_output =
+                record.locally_complete_output && fact.kind == OperandFactKind::EncodedHtmlOperand;
+            let locally_complete_destination = record.locally_complete_destination
+                && fact.kind == OperandFactKind::SharedOutboundDestination;
+            if partial
+                && !locally_complete_path
+                && !locally_complete_identity
+                && !locally_complete_output
+                && !locally_complete_destination
+            {
                 fact.remaining_checks
                     .push("partial_semantic_context".into());
             }

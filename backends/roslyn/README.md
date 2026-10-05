@@ -1,8 +1,8 @@
 # Optional Roslyn evidence
 
 Experimental source/reference-only C# backend. It adds compact compiler symbol,
-local producer/stop and source helper declaration facts to selected SQL and
-filesystem operands. Most facts guide research without changing admission.
+local producer/stop and source helper declaration facts to selected SQL,
+filesystem, explicit HTML and request-URI operands. Most facts guide research.
 Complete fixed and generated temporary selectors can close the exact CWE-22 question.
 Repeated immutable selectors can share conditional Value research. Neither
 establishes resource authorization, filesystem policy or safe runtime effects.
@@ -96,10 +96,31 @@ an explicit resolved reference set. It does not guess SDK conflict resolution.
 ## Collect and reuse
 
 ```sh
-mehscan investigate csharp-semantic ROOT --context context.json --backend BACKEND_EXE --output semantic.json
-mehscan investigate review-inventory ROOT --output inventory --csharp-semantic semantic.json --csharp-context context.json
+mehscan investigate review-inventory ROOT --output inventory --csharp-context context.json --csharp-backend BACKEND_EXE --timings true
 mehscan investigate review-bundles ROOT --inventory inventory --review-ids IDS --output review
 ```
+
+Inventory scans once, collects Roslyn facts for that result, and saves its input
+binding. Timings separate the Rust scan, native collection/import, and inventory
+preparation. Individual rendering neighborhoods are built when selected bundles
+need them. For a separately saved snapshot, use `csharp-semantic` and import it
+with `--csharp-semantic FILE --csharp-context FILE`; those separate commands
+each scan the root.
+
+For helper profiling, `MEHSCAN_ROSLYN_TIMING=1` emits total preparation and
+filesystem, HTML and destination-check durations on the helper's stderr. Total
+time includes compilation/reference setup and navigation; check timings do not.
+
+Complete HTML-text proofs cover default framework HTML encoding and bounded
+local TagBuilder content. Raw children, aliases, later unsafe mutations,
+unsafe URL attributes, active tags and application-supplied encoders stay open.
+IHtmlContent alone is not a safety proof. Shared request-URI construction facts
+identify the same base field and private hook set, with escaped variable suffixes.
+Private same-file filesystem producers can share containment research for
+unchanged selectors and identical fixed options. Value dependencies retain
+exact IDs and per-operation checks; issues and unresolved representatives reopen
+their dependents. Comprehensive keeps every admitted site. Neither producer
+identity proves caller authority, containment, runtime base URLs or safe effects.
 
 `scan ROOT --format json --csharp-semantic semantic.json --csharp-context
 context.json` also imports the facts. The inventory saves them in its normal

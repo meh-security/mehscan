@@ -567,17 +567,25 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 .unwrap_or(false);
             let semantic = parsed.optional("--csharp-semantic").map(PathBuf::from);
             let context = parsed.optional("--csharp-context").map(PathBuf::from);
-            if semantic.is_some() != context.is_some() {
+            let backend = parsed.optional("--csharp-backend").map(PathBuf::from);
+            let timings = parsed.optional_bool("--timings")?.unwrap_or(false);
+            if semantic.is_some() && backend.is_some() {
+                return Err("supply --csharp-semantic or --csharp-backend, not both".into());
+            }
+            if (semantic.is_some() || backend.is_some()) != context.is_some() {
                 return Err(
-                    "--csharp-semantic and --csharp-context must be supplied together".into(),
+                    "supply --csharp-context with --csharp-semantic or --csharp-backend".into(),
                 );
             }
             parsed.finish()?;
+            let mut profile = mehscan_engine::investigation::ReviewInventoryProfile::default();
             let inventory = engine(
-                mehscan_engine::investigation::build_review_inventory_with_semantics(
+                mehscan_engine::investigation::build_review_inventory_with_backend(
                     &root,
                     include_review_material,
                     semantic.as_deref().zip(context.as_deref()),
+                    context.as_deref().zip(backend.as_deref()),
+                    timings.then_some(&mut profile),
                 ),
             )?;
             fs::create_dir_all(&output).map_err(|error| {
@@ -669,6 +677,12 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 serde_json::to_vec(&inventory).map_err(|error| error.to_string())?,
             )
             .map_err(|error| format!("could not write scan cache: {error}"))?;
+            if timings {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&profile).map_err(|e| e.to_string())?
+                );
+            }
             print_json(
                 &serde_json::json!({"overview": output.join("overview.json"), "inventory": output.join("inventory.json"), "review_count": inventory.entries.len()}),
             )
@@ -698,6 +712,9 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         | "fixed_filesystem_path"
                         | "temporary_filesystem_path"
                         | "immutable_filesystem_operand"
+                        | "encoded_html_operand"
+                        | "shared_outbound_destination"
+                        | "shared_filesystem_producer"
                         | "configured_root_path"
                         | "repository_code_target"
                         | "output_context"
@@ -715,7 +732,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         | "unclassified"
                 )
             }) {
-                return Err("invalid --operand-kind; use fixed_code_relative_path, fixed_filesystem_path, temporary_filesystem_path, immutable_filesystem_operand, configured_root_path, repository_code_target, encoding_call, output_context, local_operand_origin, operand_boundary, query_structure, process_shell_mode, native_operand_declaration, local_call_argument, prepared_statement_use, semantic_identity, semantic_definition, receiver_reference, or unclassified".into());
+                return Err("invalid --operand-kind; use fixed_code_relative_path, fixed_filesystem_path, temporary_filesystem_path, immutable_filesystem_operand, shared_filesystem_producer, shared_outbound_destination, encoded_html_operand, configured_root_path, repository_code_target, encoding_call, output_context, local_operand_origin, operand_boundary, query_structure, process_shell_mode, native_operand_declaration, local_call_argument, prepared_statement_use, semantic_identity, semantic_definition, receiver_reference, or unclassified".into());
             }
             let limit = parsed.optional_usize("--limit")?.unwrap_or(50).min(200);
             let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
@@ -3360,7 +3377,7 @@ USAGE:
   mehscan investigate funnel [ROOT]
   mehscan investigate csharp-context [ROOT] --context SEED --output FILE
   mehscan investigate csharp-semantic [ROOT] --context FILE --backend EXE --output FILE
-  mehscan investigate review-inventory [ROOT] --output DIR [--include-review-material true|false] [--csharp-semantic FILE --csharp-context FILE]
+  mehscan investigate review-inventory [ROOT] --output DIR [--include-review-material true|false] [--csharp-backend EXE --csharp-context FILE | --csharp-semantic FILE --csharp-context FILE] [--timings true|false]
   mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--selection all|value|deferred] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--group-by contract] [--contract KEY] [--limit N] [--offset N]
   mehscan investigate review-ledger --inventory DIR --history RUN_ROOT[,RUN_ROOT] --output FILE
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]

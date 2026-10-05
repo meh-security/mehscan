@@ -16,11 +16,12 @@ source; the journals preserve the complete lookup history.
 | Candidate scan | `mehscan scan ROOT --format candidates` |
 | Review requests | `mehscan investigate review-bundles ROOT --output DIR` |
 | Large-repo inventory | `mehscan investigate review-inventory ROOT --output RUN/inventory` |
+| Inventory with supplied Roslyn context | `mehscan investigate review-inventory ROOT --output RUN/inventory --csharp-context CONTEXT --csharp-backend BACKEND` |
 | Reuse finalized IDs | `mehscan investigate review-ledger --inventory RUN/inventory --history OLD_RUN_ROOT,RUN --output RUN/review-ledger.json` |
 | Filter remaining inventory | `mehscan investigate review-inventory-list --inventory RUN/inventory --ledger RUN/review-ledger.json --cwe CWE --limit 50` |
 | Value selection / deferred work | Add `--selection value` / `--selection deferred`; Comprehensive uses `--selection all`. Inspect `dependency_review_ids`; rebuild the ledger to reopen unsafe/unresolved dependents (`reopened_count`). Deferrals retain IDs and reasons, not safe verdicts. |
 | Filter operand facts | `mehscan investigate review-inventory-list --inventory RUN/inventory --operand-kind fixed_code_relative_path --limit 50` (also `fixed_filesystem_path`, `temporary_filesystem_path`, `immutable_filesystem_operand`, `configured_root_path`, `encoding_call`, `local_operand_origin`, `operand_boundary`, `query_structure`, `process_shell_mode`, `native_operand_declaration`, `local_call_argument`, `prepared_statement_use`, `unclassified`) |
-| Shared contract queue | `mehscan investigate review-inventory-list --inventory RUN/inventory --ledger RUN/review-ledger.json --group-by contract --limit 12` |
+| Shared contract queue | `mehscan investigate review-inventory-list --inventory RUN/inventory --ledger RUN/review-ledger.json --group-by contract --limit 12` (native C# producers: `--operand-kind shared_filesystem_producer` or `shared_outbound_destination`) |
 | Contract members | `mehscan investigate review-inventory-list --inventory RUN/inventory --contract KEY --limit 50` (combine with ledger/component filters) |
 | Selected requests | `mehscan investigate review-bundles ROOT --inventory RUN/inventory --ledger RUN/review-ledger.json --review-ids ID,ID --output RUN/chunk-N` |
 | Bundle IDs | `mehscan investigate review-bundle-list --bundle REQUEST` |
