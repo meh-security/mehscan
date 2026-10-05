@@ -120,6 +120,10 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "FixedCombine",
             "FixedNumber",
             "FixedBoolean",
+            "GuidParameter",
+            "GuidFormat",
+            "GuidProvider",
+            "GuidSuffix",
         ] {
             assert!(
                 fact(method, OperandFactKind::FixedFilesystemPath),
@@ -132,6 +136,9 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "TempAlias",
             "TempFile",
             "TempReads",
+            "TempResetInTry",
+            "TempCapturedRead",
+            "TempExecutable",
         ] {
             assert!(
                 fact(method, OperandFactKind::TemporaryFilesystemPath),
@@ -143,7 +150,6 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "Accumulation",
             "UnknownRoot",
             "UnknownManifest",
-            "TempExecutable",
             "FormatInput",
             "Character",
             "RefReplacement",
@@ -151,6 +157,10 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "TryReplacement",
             "UnknownNumber",
             "Conversion",
+            "GuidUnknownRoot",
+            "GuidUnknownFilename",
+            "GuidLookalike",
+            "TempConditionalInTry",
         ] {
             assert!(
                 !fact(method, OperandFactKind::FixedFilesystemPath),
@@ -192,15 +202,26 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "TempAlias",
             "TempFile",
             "TempReads",
+            "TempResetInTry",
+            "TempCapturedRead",
+            "TempExecutable",
         ] {
-            let entry = inventory
-                .entries
-                .iter()
-                .find(|e| e.symbol.as_deref() == Some(method))
-                .unwrap();
-            assert_eq!(
-                entry.value_hint.as_ref().unwrap().reason,
-                "generated_temporary_path"
+            assert!(
+                !inventory
+                    .entries
+                    .iter()
+                    .any(|e| e.symbol.as_deref() == Some(method)),
+                "{label}: {method}"
+            );
+            assert!(
+                inventory
+                    .admission_audit
+                    .closed_operands
+                    .iter()
+                    .any(|closed| closed
+                        .operand_fact
+                        .as_ref()
+                        .is_some_and(|fact| fact.kind == OperandFactKind::TemporaryFilesystemPath))
             );
         }
         for method in [
@@ -208,7 +229,6 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "Accumulation",
             "UnknownRoot",
             "UnknownManifest",
-            "TempExecutable",
             "FormatInput",
             "Character",
             "RefReplacement",
@@ -216,6 +236,10 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "TryReplacement",
             "UnknownNumber",
             "Conversion",
+            "GuidUnknownRoot",
+            "GuidUnknownFilename",
+            "GuidLookalike",
+            "TempConditionalInTry",
         ] {
             assert!(
                 inventory
@@ -261,7 +285,7 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             )
             .unwrap();
             assert_eq!(
-                plain
+                inventory
                     .entries
                     .iter()
                     .map(|e| &e.review_id)
@@ -272,11 +296,34 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
                     .map(|e| &e.review_id)
                     .collect::<Vec<_>>()
             );
+            // Missing dependencies on an unrelated declaration do not turn
+            // bounded, uniquely resolved framework producers back into reviews.
             assert!(
                 partial_inventory
                     .entries
                     .iter()
                     .all(|e| e.value_hint.is_none())
+            );
+            std::fs::write(fixture.0.join("Helpers.cs"), "class Broken { void Unbound(string path) { Missing.Delete(path); } void BadLocal() { var path = \"known\"; Missing.Replace(ref path); System.IO.File.Delete(path); } }").unwrap();
+            let broken_scan = mehscan_engine::scan_path(&fixture.0).unwrap();
+            let broken = csharp_semantic::collect(
+                &fixture.0,
+                &context,
+                &env_path("MEHSCAN_ROSLYN_BACKEND"),
+                &broken_scan,
+            )
+            .unwrap();
+            assert!(
+                !broken
+                    .observations
+                    .iter()
+                    .flat_map(|o| &o.facts)
+                    .any(|f| f.location.path == "Helpers.cs"
+                        && matches!(
+                            f.kind,
+                            OperandFactKind::FixedFilesystemPath
+                                | OperandFactKind::TemporaryFilesystemPath
+                        ))
             );
             std::fs::write(fixture.0.join("Helpers.cs"), "").unwrap();
         }

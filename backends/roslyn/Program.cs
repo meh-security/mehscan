@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -22,6 +23,10 @@ internal static class Program
     {
         try
         {
+            var timed = Environment.GetEnvironmentVariable("MEHSCAN_ROSLYN_TIMING") == "1";
+            var elapsed = Stopwatch.StartNew();
+            double filesystemMilliseconds = 0;
+            int filesystemQueries = 0;
             var request = JsonSerializer.Deserialize<Request>(Console.In.ReadToEnd(), Json)
                 ?? throw new InvalidDataException("Empty semantic request");
             if (request.SchemaVersion != "1") throw new InvalidDataException("Unsupported request version");
@@ -90,12 +95,14 @@ internal static class Program
                 foreach (var error in errors.Take(12))
                     diagnostics.Add(new(project.Id, error.Id, error.GetMessage(),
                         error.Location.IsInSource ? Location(sources[error.Location.SourceTree!.FilePath], error.Location.SourceSpan) : null));
+                var models = trees.ToDictionary(t => t.FilePath, t => compilation.GetSemanticModel(t));
                 foreach (var query in request.Queries.Where(q => trees.Any(t => t.FilePath == q.Operand.Path)))
                 {
                     var tree = trees.Single(t => t.FilePath == query.Operand.Path);
                     var source = sources[tree.FilePath];
-                    var model = compilation.GetSemanticModel(tree);
+                    var model = models[tree.FilePath];
                     var facts = new List<Fact>();
+                    var locallyCompletePathSelection = false;
                     var root = tree.GetRoot();
                     var sinkSpan = Span(source, query.Sink);
                     var sinkNode = root.FindNode(sinkSpan, getInnermostNodeForTie: true);
@@ -121,13 +128,18 @@ internal static class Program
                     if (operand.Span == operandSpan)
                     {
                         Producers(model, operand, query, project, sources, facts);
-                        if (query.Role == "path") FilesystemShape(model, operand, action, query, sources, facts);
+                        if (query.Role == "path")
+                        {
+                            var started = timed ? Stopwatch.GetTimestamp() : 0;
+                            locallyCompletePathSelection = FilesystemShape(model, operand, action, query, sources, facts, errors);
+                            if (timed) { filesystemMilliseconds += Stopwatch.GetElapsedTime(started).TotalMilliseconds; filesystemQueries++; }
+                        }
                     }
                     else
                         facts.Add(new(query.Role, "operand_boundary", query.Operand,
                             "Captured operand is not one complete C# syntax node", ["exact_operand_shape"]));
                     ValueTypes(model, root, query, source, facts);
-                    observations.Add(new(query.EvidenceId, project.Id, facts));
+                    observations.Add(new(query.EvidenceId, project.Id, facts, locallyCompletePathSelection));
                 }
             }
             var result = new Snapshot("1", "Roslyn " + typeof(CSharpCompilation).Assembly.GetName().Version,
@@ -135,6 +147,11 @@ internal static class Program
                 referenceHashes.Select(p => new FileHash(p.Key, p.Value)).ToArray(),
                 projects, observations, diagnostics);
             Console.Write(JsonSerializer.Serialize(result, Json));
+            if (timed) Console.Error.Write(JsonSerializer.Serialize(new {
+                total_ms = elapsed.Elapsed.TotalMilliseconds,
+                filesystem_checks_ms = filesystemMilliseconds,
+                filesystem_query_count = filesystemQueries
+            }, Json));
             return 0;
         }
         catch (Exception error)
@@ -404,17 +421,21 @@ internal static class Program
 
     private enum PathShape { Unknown, Fixed, TemporaryRoot, GeneratedName, TemporaryPath }
 
-    private static void FilesystemShape(SemanticModel model, SyntaxNode operand, SyntaxNode? action,
-        Query query, SortedDictionary<string, Source> sources, List<Fact> facts)
+    private static bool FilesystemShape(SemanticModel model, SyntaxNode operand, SyntaxNode? action,
+        Query query, SortedDictionary<string, Source> sources, List<Fact> facts, Diagnostic[] errors)
     {
+        bool HasError(SyntaxNode node) => errors.Any(d => d.Location.IsInSource
+            && d.Location.SourceTree == node.SyntaxTree && d.Location.SourceSpan.IntersectsWith(node.Span));
         // A narrow path-selection fact, not a filesystem or authorization contract.
         if (action == null || Target(model.GetOperation(action)) is not IMethodSymbol sink
             || !FrameworkMethod(sink) || sink.ContainingNamespace.ToDisplayString() != "System.IO"
-            || sink.ContainingType.Name is not ("File" or "Directory" or "FileStream")) return;
+            || sink.ContainingType.Name is not ("File" or "Directory" or "FileStream")
+            || HasError(action)) return false;
         var visited = new HashSet<ILocalSymbol>(SymbolEqualityComparer.Default);
         PathShape Shape(ExpressionSyntax expression, int depth)
         {
             if (depth > 6 || expression.Span.Length > 2048) return PathShape.Unknown;
+            if (HasError(expression)) return PathShape.Unknown;
             // Never substitute a string initializer through a user-defined conversion.
             if (model.GetTypeInfo(expression).Type?.SpecialType != SpecialType.System_String) return PathShape.Unknown;
             if (model.GetConstantValue(expression) is { HasValue: true, Value: string }) return PathShape.Fixed;
@@ -431,18 +452,34 @@ internal static class Program
                     var owner = expression.Ancestors().FirstOrDefault(IsCallable);
                     if (initializer == null || owner == null || initializer.Span.End > expression.SpanStart
                         || initializer.Ancestors().FirstOrDefault(IsCallable) != owner) return PathShape.Unknown;
+                    if (owner.DescendantNodes().Any(n => n is GotoStatementSyntax or LabeledStatementSyntax)) return PathShape.Unknown;
+                    // Unrelated missing application dependencies need not invalidate
+                    // this local. Unbound uses of its name cannot establish a closed
+                    // producer set, however.
+                    if (owner.DescendantNodes().OfType<IdentifierNameSyntax>().Any(n =>
+                        n.Identifier.ValueText == local.Name && model.GetSymbolInfo(n).Symbol == null)) return PathShape.Unknown;
                     var references = owner.DescendantNodes().OfType<IdentifierNameSyntax>()
                         .Where(n => SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(n).Symbol, local)).ToArray();
-                    if (references.Any(n => n.Ancestors().FirstOrDefault(IsCallable) != owner
+                    bool Writes(IdentifierNameSyntax n) => n.Ancestors().OfType<AssignmentExpressionSyntax>().Any(a => a.Left.Span.Contains(n.Span))
+                        || n.Parent is PrefixUnaryExpressionSyntax prefix && prefix.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression
+                        || n.Parent is PostfixUnaryExpressionSyntax postfix && postfix.Kind() is SyntaxKind.PostIncrementExpression or SyntaxKind.PostDecrementExpression;
+                    if (references.Any(n => n.Ancestors().FirstOrDefault(IsCallable) != owner && Writes(n)
                         || n.Parent is RefExpressionSyntax
                         || n.Parent is ArgumentSyntax argument && !argument.RefKindKeyword.IsKind(SyntaxKind.None))) return PathShape.Unknown;
                     var writes = references.Where(n => n.SpanStart >= initializer.Span.End && n.Span.End <= expression.SpanStart)
-                        .Where(n => n.Ancestors().OfType<AssignmentExpressionSyntax>().Any(a => a.Left.Span.Contains(n.Span))
-                            || n.Parent is PrefixUnaryExpressionSyntax prefix && prefix.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression
-                            || n.Parent is PostfixUnaryExpressionSyntax postfix && postfix.Kind() is SyntaxKind.PostIncrementExpression or SyntaxKind.PostDecrementExpression)
+                        .Where(Writes)
                         .ToArray();
                     // Reads of immutable strings do not require a CFG, including inside try/catch.
                     if (writes.Length == 0) return Shape(initializer, depth + 1);
+                    // A same-block unconditional reset before this use also works
+                    // inside try/catch. A nested/conditional final write falls back
+                    // to the existing bounded CFG instead of being assumed away.
+                    var lastWrite = writes.OrderBy(n => n.SpanStart).Last();
+                    var reset = lastWrite.Parent as AssignmentExpressionSyntax;
+                    if (reset is { RawKind: (int)SyntaxKind.SimpleAssignmentExpression,
+                            Parent: ExpressionStatementSyntax { Parent: BlockSyntax resetBlock } }
+                        && reset.Left == lastWrite && resetBlock == expression.Ancestors().OfType<BlockSyntax>().FirstOrDefault())
+                        return Shape(reset.Right, depth + 1);
                     var reaching = new List<ExpressionSyntax>();
                     if (!LocalFlow(model, expression, local, owner, query, sources, new(), reaching)
                         || reaching.Count == 0) return PathShape.Unknown;
@@ -450,6 +487,19 @@ internal static class Program
                     return shapes.Length == 1 ? shapes[0] : PathShape.Unknown;
                 }
                 finally { visited.Remove(local); }
+            }
+            if (expression is BinaryExpressionSyntax binary && binary.IsKind(SyntaxKind.AddExpression))
+            {
+                var left = Shape(binary.Left, depth + 1);
+                var right = Shape(binary.Right, depth + 1);
+                bool BasenameLiteral(ExpressionSyntax e) => model.GetConstantValue(e) is { HasValue: true, Value: string text }
+                    && text.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-');
+                if (left == PathShape.TemporaryPath && BasenameLiteral(binary.Right)) return PathShape.TemporaryPath;
+                if (left == PathShape.GeneratedName && BasenameLiteral(binary.Right)
+                    || right == PathShape.GeneratedName && BasenameLiteral(binary.Left)) return PathShape.GeneratedName;
+                if ((left is PathShape.Fixed or PathShape.GeneratedName) && (right is PathShape.Fixed or PathShape.GeneratedName))
+                    return PathShape.Fixed;
+                return PathShape.Unknown;
             }
             if (model.GetOperation(expression) is not IInvocationOperation call || !FrameworkMethod(call.TargetMethod))
                 return PathShape.Unknown;
@@ -470,19 +520,18 @@ internal static class Program
                 return PathShape.GeneratedName;
             if (type == "System.IO.Path" && method == "GetTempFileName" && call.Arguments.Length == 0)
                 return PathShape.TemporaryPath;
-            if (type == "System.Guid" && method == "ToString" && call.Instance?.Syntax is ExpressionSyntax guid
-                && model.GetOperation(guid) is IInvocationOperation generated && FrameworkMethod(generated.TargetMethod)
-                && generated.TargetMethod.ContainingType.ToDisplayString() == "System.Guid"
-                && generated.TargetMethod.Name == "NewGuid" && generated.Arguments.Length == 0
-                && (call.Arguments.Length == 0 || call.Arguments.Length == 1
-                    && call.Arguments[0].Value.ConstantValue is { HasValue: true, Value: string format } && format is "N" or "D"))
+            // Every successful Guid.ToString result uses a closed alphabet, even
+            // for a caller-controlled GUID or format. Invalid formats throw;
+            // the provider is ignored by this framework API. This is a safe
+            // path segment, not an authorization proof for the selected object.
+            if (type == "System.Guid" && method == "ToString" && call.Instance?.Type?.ToDisplayString() == "System.Guid")
                 return PathShape.GeneratedName;
             if (type != "System.IO.Path" || method != "Combine" || call.Arguments.Length is < 2 or > 4
                 || call.Arguments.Any(a => a.ArgumentKind == ArgumentKind.ParamArray)) return PathShape.Unknown;
             var parts = call.Arguments.OrderBy(a => a.Parameter!.Ordinal).Select(a => a.Value.Syntax as ExpressionSyntax).ToArray();
             if (parts.Any(p => p == null)) return PathShape.Unknown;
             var shapesOfParts = parts.Select(p => Shape(p!, depth + 1)).ToArray();
-            if (shapesOfParts.All(s => s == PathShape.Fixed)) return PathShape.Fixed;
+            if (shapesOfParts.All(s => s is PathShape.Fixed or PathShape.GeneratedName)) return PathShape.Fixed;
             if (shapesOfParts[0] != PathShape.TemporaryRoot || !shapesOfParts.Skip(1).Any(s => s == PathShape.GeneratedName))
                 return PathShape.Unknown;
             for (var i = 1; i < parts.Length; i++)
@@ -493,13 +542,15 @@ internal static class Program
                     return PathShape.Unknown;
             return PathShape.TemporaryPath;
         }
-        if (operand is not ExpressionSyntax path) return;
+        if (operand is not ExpressionSyntax path) return false;
         var shape = Shape(path, 0);
+        if (shape == PathShape.GeneratedName) shape = PathShape.Fixed;
         if (shape is PathShape.Fixed or PathShape.TemporaryPath)
             facts.Add(new(query.Role, shape == PathShape.Fixed ? "fixed_filesystem_path" : "temporary_filesystem_path",
                 query.Operand, path.ToString(), shape == PathShape.Fixed
                     ? ["resource_authorization_and_sensitive_effect"]
                     : ["temporary_root_authority_and_symlinks", "resource_authorization_and_sensitive_effect"]));
+        return shape is PathShape.Fixed or PathShape.TemporaryPath;
     }
 
     private static bool FrameworkMethod(IMethodSymbol method) => !ErrorType(method)
@@ -694,7 +745,7 @@ internal static class Program
     private sealed record Fact(string Role, string Kind, SourceLocation Location, string Value, string[] RemainingChecks);
     private sealed record FileHash(string Path, string Sha256);
     private sealed record ProjectRecord(string Id, string TargetFramework, string LanguageVersion, int CompilerErrors, int UnresolvedReferences, int ReferenceConflicts);
-    private sealed record Observation(string EvidenceId, string ProjectId, List<Fact> Facts);
+    private sealed record Observation(string EvidenceId, string ProjectId, List<Fact> Facts, bool LocallyCompletePathSelection);
     private sealed record DiagnosticRecord(string ProjectId, string Code, string Message, SourceLocation? Location);
     private sealed record Snapshot(string SchemaVersion, string Backend, string ContextSha256,
         FileHash[] Sources, FileHash[] References, List<ProjectRecord> Projects,

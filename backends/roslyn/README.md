@@ -118,7 +118,10 @@ and ledger files. Inventory and ledger schema 2 reject previous files, including
 native inventories that did not retain reference/context bindings.
 
 Missing dependencies leave precise unresolved bindings. Unrelated compiler errors
-do not discard valid identities, but facts carry `partial_semantic_context`.
+do not discard valid identities. Navigation facts carry `partial_semantic_context`;
+an exact framework path-selection proof can remain locally complete when its
+operation and bounded producers bind without errors. Unresolved uses of the
+selected local, ambiguous APIs and conflicting references still prevent closure.
 When multiple project/target contexts cover one operation, import withholds its
 facts and emits a diagnostic. A declaration location does not establish runtime
 implementation or trust. For an immutable string local in a selected method,
@@ -148,22 +151,33 @@ Directory and FileStream operations can expose `fixed_filesystem_path` for
 constant selectors, immutable local aliases, supported completed resets and
 fixed Path.Combine parts. A fixed selector closes only the CWE-22 path-selection
 review; other capabilities and security questions remain independent.
+Compiler-bound Guid.ToString output is a safe path segment regardless of where
+the GUID originated. Standard formats have a closed alphabet; invalid formats
+throw and this API ignores the provider. Known-root GUID paths and fixed suffixes
+close traversal selection; unknown roots or additional filenames stay active.
 Default ToString on a constant nonnegative built-in integer or constant boolean
 also resolves a fixed selector. This does not apply to arbitrary numeric values,
 caller-selected formats/providers, character conversions or custom implicit
 conversions. These are path-selection facts, not cross-context sanitizers.
 
 `temporary_filesystem_path` recognizes the framework temporary root combined
-with Guid.NewGuid().ToString() (default, N or D), GetRandomFileName, or a framework
-GetTempFileName result. Constant child segments are limited to simple basenames.
-Comprehensive keeps these IDs; Value defers them under an explicit trusted-root
-and symlink assumption. Unknown roots/manifest properties, arbitrary ToString,
+with Guid.ToString(), GetRandomFileName, or a framework GetTempFileName result.
+Constant child segments are limited to simple basenames. These complete operands
+close standalone CWE-22 selection reviews, including routine setup and cleanup.
+This does not establish safe archive contents, authorization, symlink policy or
+execution. Unknown roots/manifest properties, arbitrary ToString,
 numeric formats, captured/ref/out locals, accumulation and unsupported flow
-receive no exclusion. Executable suffix constructions remain active.
+receive no exclusion. A constant basename suffix, including .exe or .ps1,
+does not reopen traversal selection; contents/execution remain separate.
 
-Path facts must match the exact selected source span and text. Partial compiler
-contexts and overlapping project contexts cannot change admission or Value
-selection through these facts. The backend does not resolve filesystem links,
+Path facts must match the exact selected source span and text. Only locally
+complete path proofs may change admission amid unrelated compiler errors;
+overlapping project contexts still withhold facts. A same-block unconditional
+reset is supported inside try/catch; captured reads do not imply replacement.
+Conditional and escaping writes stay open.
+Set `MEHSCAN_ROSLYN_TIMING=1` for total backend and filesystem-check timings on
+stderr. Semantic models are reused per file; collected errors are reused for
+local completeness checks. The backend does not resolve filesystem links,
 build caller trust models or import a primitive sanitizer catalog.
 Razor, generated source, implicit project imports/options and full DI/reflection
 resolution remain outside the explicit context unless already supplied as source.

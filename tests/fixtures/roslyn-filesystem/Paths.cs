@@ -9,6 +9,13 @@ class Paths
     void FixedCombine() { File.Delete(Path.Combine("data", "known.txt")); }
     void FixedNumber() { File.Delete(Path.Combine("data", 123.ToString())); }
     void FixedBoolean() { File.Delete(Path.Combine("data", true.ToString())); }
+    void GuidParameter(Guid id) { File.Delete(Path.Combine("data", id.ToString())); }
+    void GuidFormat(Guid id, string format) { File.Delete(Path.Combine("data", id.ToString(format))); }
+    void GuidProvider(Guid id, string format, IFormatProvider provider) { File.Delete(Path.Combine("data", id.ToString(format, provider))); }
+    void GuidSuffix(Guid id) { File.Delete(Path.Combine("data", id.ToString() + ".json")); }
+    void GuidUnknownFilename(Guid id, string filename) { File.Delete(Path.Combine("data", id.ToString(), filename)); }
+    void GuidUnknownRoot(Guid id, string root) { File.Delete(Path.Combine(root, id.ToString())); }
+    void GuidLookalike(CustomGuid id) { File.Delete(Path.Combine("data", id.ToString())); }
     void UnknownNumber(int number) { File.Delete(Path.Combine("data", number.ToString())); }
     void Conversion() { CustomPath path = "known.txt"; File.Delete(path); }
     void ConditionalReset(bool reset) { var path = Console.ReadLine(); if (reset) path = "known.txt"; File.Delete(path); }
@@ -20,6 +27,9 @@ class Paths
     void TempAlias() { var root = Path.GetTempPath(); var path = Path.Combine(root, Guid.NewGuid().ToString("N")); Directory.CreateDirectory(path); }
     void TempFile() { var path = Path.GetTempFileName(); File.Delete(path); }
     void TempReads() { var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()); var exists = File.Exists(path); try { File.Delete(path); } catch {} }
+    void TempResetInTry() { var path = ""; try { path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()); Directory.CreateDirectory(path); } catch {} }
+    void TempCapturedRead() { var path = ""; try { path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()); Directory.CreateDirectory(path); Action log = () => Console.WriteLine(path); log(); } catch {} }
+    void TempConditionalInTry(bool replace, string input) { var path = ""; try { if (replace) path = input; Directory.CreateDirectory(path); } catch {} }
     void TempExecutable() { File.Delete(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString() + ".exe")); }
     void FormatInput() { File.Delete(Path.Combine("data", 123.ToString(Console.ReadLine()))); }
     void Character(char input) { File.Delete(Path.Combine("data", input.ToString())); }
@@ -37,4 +47,9 @@ class CustomPath
 {
     public static implicit operator CustomPath(string value) { return new CustomPath(); }
     public static implicit operator string(CustomPath value) { return Console.ReadLine(); }
+}
+
+class CustomGuid
+{
+    public override string ToString() { return Console.ReadLine(); }
 }

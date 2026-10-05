@@ -487,9 +487,9 @@ pub enum OperandFactKind {
     SemanticDefinition,
     /// Exact source use of a compiler-resolved receiver local; no lifecycle proof.
     ReceiverReference,
-    /// Complete filesystem selector resolves to fixed strings; other effects stay open.
+    /// Complete filesystem selector resolves to constants or closed-alphabet segments; other effects stay open.
     FixedFilesystemPath,
-    /// Framework temporary root with generated basename; root policy stays open.
+    /// Framework temporary root with bounded safe basename; closes traversal selection, not root policy or other effects.
     TemporaryFilesystemPath,
 }
 

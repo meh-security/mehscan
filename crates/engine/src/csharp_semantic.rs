@@ -76,6 +76,10 @@ pub struct Observation {
     pub evidence_id: String,
     project_id: String,
     pub facts: Vec<OperandFact>,
+    /// Exact bound framework operation and its bounded path producers are
+    /// diagnostic-free, even when unrelated application code cannot compile.
+    #[serde(default)]
+    locally_complete_path_selection: bool,
 }
 
 /// Persist only the native input binding, without duplicating imported facts.
@@ -302,7 +306,12 @@ pub fn enrich(
         let partial = project.compiler_errors > 0 || project.unresolved_references > 0;
         for fact in &record.facts {
             let mut fact = fact.clone();
-            if partial {
+            let locally_complete_path = record.locally_complete_path_selection
+                && matches!(
+                    fact.kind,
+                    OperandFactKind::FixedFilesystemPath | OperandFactKind::TemporaryFilesystemPath
+                );
+            if partial && !locally_complete_path {
                 fact.remaining_checks
                     .push("partial_semantic_context".into());
             }
