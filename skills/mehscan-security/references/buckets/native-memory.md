@@ -3,6 +3,12 @@
 Match the exact operation to its authoritative extent, object and branch.
 Attacker-controlled input is not required for every memory defect.
 
+`native_operand_declaration` locates the scalar's declared type; inspect typedefs,
+promotions and the value at the operation before deciding its arithmetic domain.
+`local_call_argument` locates one direct file-local helper argument. Check its
+conversion and the helper's guards; it does not prove runtime reachability or
+all caller preconditions. A boundary names the unresolved binding or caller.
+
 | Question | Inspect |
 | --- | --- |
 | Allocation/copy overflow | Operand widths and a pre-computation division bound for every product or sum. A later check cannot undo overflow. |

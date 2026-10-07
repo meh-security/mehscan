@@ -164,12 +164,14 @@ pub(crate) fn scan_source(
     let parse_context_microseconds = parse_started.elapsed().as_micros();
 
     let mut evidence = Vec::new();
+    let mut php_operand_nodes = BTreeMap::new();
     let php_context = (language == Language::Php)
         .then(|| super::php::PhpContext::build(&root).with_project(path, php_project_context));
     let mut seen = BTreeSet::new();
     let declarative_started = Instant::now();
     let mut declarative_patterns_considered = 0;
     let mut declarative_patterns_skipped = 0;
+    let mut extended_symbols = None;
     for compiled_rule in rules {
         for compiled_pattern in &compiled_rule.patterns {
             declarative_patterns_considered += 1;
@@ -200,6 +202,11 @@ pub(crate) fn scan_source(
                         language,
                         matched.get_env().get_match("DATABASE"),
                         matched.get_env().get_match("TYPE"),
+                        matched.get_env().get_match("TYPE").map(|_| {
+                            extended_symbols.get_or_insert_with(|| {
+                                super::extended_database::ExactSymbolIndex::new(&root)
+                            }) as &_
+                        }),
                     )
                 {
                     continue;
@@ -468,6 +475,15 @@ pub(crate) fn scan_source(
                                     .next()
                             });
                     if let Some(node) = captured {
+                        if php_context.is_some()
+                            && matches!(
+                                compiled_rule.rule.id.as_str(),
+                                "php-file-inclusion" | "php-html-output"
+                            )
+                        {
+                            php_operand_nodes
+                                .insert((node.range().start, node.range().end), node.clone());
+                        }
                         literal_values.insert(semantic_name.clone(), literals.evaluate(&node));
                         captures.insert(
                             semantic_name.clone(),
@@ -929,6 +945,13 @@ pub(crate) fn scan_source(
         language,
         &comments,
         &conditional,
+        &literals,
+        &mut evidence,
+    );
+    super::csharp_mainstream::normalize_filesystem_arguments(
+        path,
+        &root,
+        language,
         &literals,
         &mut evidence,
     );
@@ -1660,6 +1683,10 @@ pub(crate) fn scan_source(
             .cmp(&right.location.start.byte_offset)
             .then_with(|| left.rule_id.cmp(&right.rule_id))
     });
+    if let Some(context) = &php_context {
+        super::php::add_operand_facts(path, &php_operand_nodes, context, &literals, &mut evidence);
+    }
+    super::node_operands::annotate(language, source, &root, &mut evidence);
     let summaries_microseconds = summaries_started.elapsed().as_micros();
     let paths_started = Instant::now();
     let mut security_paths = super::security_paths::build_security_paths(
@@ -1814,7 +1841,15 @@ pub(crate) fn scan_source(
     security_paths.append(&mut native_remaining_input_paths);
     security_paths.sort_by(|left, right| left.id.cmp(&right.id));
     let security_paths_microseconds = paths_started.elapsed().as_micros();
+    super::python_operands::annotate(language, &root, &mut evidence);
+    super::go_operands::annotate(language, &root, &mut evidence);
     super::decision_origins::annotate(language, source, &root, &mut evidence);
+    super::csharp_operands::annotate(language, &root, &mut evidence);
+    super::native_operands::annotate(language, &root, &mut evidence);
+    super::java_prepared::annotate(language, &root, &mut evidence);
+    if let Some(imports) = kotlin_imports.as_ref() {
+        super::kotlin::annotate_prepared(&root, imports, &mut evidence);
+    }
     evidence.extend(secret_evidence);
     evidence.sort_by(|left, right| {
         left.location
@@ -2589,6 +2624,7 @@ fn evidence_context<'tree>(
         reachability: Some(reachability::classify(node, literals)),
         availability: Some(conditional.availability_for(node.range())),
         literals: literal_values,
+        operand_facts: Vec::new(),
         secret: None,
         value_transform: None,
         http_routes: Vec::new(),

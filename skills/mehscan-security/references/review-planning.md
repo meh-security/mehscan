@@ -1,17 +1,229 @@
-# Plan a large-repository review
+# Plan a repository review
+
+## Modes and queue
+
+For a supplied manifest with exact IDs, review those IDs directly. Otherwise,
+before opening many requests, follow this planning guide.
+Pre-assess the source and requested scope: identify the stack and deployed
+surfaces, map inventory concentrations, and use prior same-revision verdicts
+to rank review lanes. A bounded small review can use full
+bundles; a large or uncertain one uses an inventory and small selected chunks.
+If agents are available, assign disjoint IDs with one shared whole-run plan.
+Default to Value review: map the attack surface, then cover distinct security
+relationships across relevant lanes, including access, output, data exposure,
+and state changes without a hard severity cutoff. In a
+manageable application queue, review nearly every in-scope ID; group only source-supported repeats
+and clearly inapplicable cases. In a large queue, keep the unselected work
+visible and call the review partial until every relevant lane is assessed.
+Comprehensive review gives every admitted ID a verdict within the user's scope.
+Value excludes source-proven build tooling, vendor distributions and generated
+copies from its application queue by default; keep their exact IDs and ownership
+evidence in the plan. Comprehensive includes these as separate lanes. Keep
+application wrappers and consequential build/dependency leads. See
+[scope lanes](#scope-lanes) before excluding them.
+For inventory selection in Value mode, use `--selection value` and record
+`deferred_count`. See planning for the trusted-source assumption and overrides;
+deferred IDs have explicit effort assumptions or shared dependencies, not safe
+verdicts. Ordinary PHP output/loading occurrences are conditional surface
+inventory: inspect producers and reopen consequential sites. Review
+`dependency_review_ids` first; unsafe or unresolved shared
+behavior reopens its dependent sites with the rebuilt ledger. Value can expand
+to Comprehensive when the source warrants it.
+For shared C# destinations or path producers, inspect the exact shared field,
+helper and hooks, then check site-specific inputs, guards and effects. Different
+options, raw URI suffixes and replaced selectors retain separate work. An
+unresolved representative reopens its dependents; keep their exact IDs visible.
+Honor a requested category. Build a same-fingerprint review ledger from prior
+run roots with `review-ledger`; pass it to inventory listing and selected bundle
+creation so finalized IDs are not selected again. For a large queue, use short source reads to rank a few inventory IDs
+before materializing their requests. Materialize a selected chunk with
+`mehscan investigate review-bundles ROOT --inventory RUN/inventory --review-ids ID,ID --output RUN/chunk-1`.
+Keep `RUN/review-plan.md` current with included, conditional, and deferred
+scope, progress, and a short ranked queue of review lanes. Read it first when
+resuming; choose a ready in-scope lane, then select exact IDs with small
+previews. In auto mode, continue
+the next authorized chunk without waiting for a new instruction; report the
+queue and progress so the user can redirect or stop. Re-rank when source checks
+change the picture. For one supplied review or a quick candidate scan, skip
+this planning step.
+
+After each chunk report, add consequential `reviewer_origin_leads` to the
+ranked plan as separate, unreviewed source questions. Follow
+[lead follow-up](#follow-up-on-reviewer-origin-leads)
+for their independent evidence check. Keep the originating ID's verdict intact.
+
+## Inventory and history
+
+Compare modes on the same whole-repository inventory. The final Value queue
+excludes both CLI `--selection deferred` IDs
+and confirmed scope-deferred IDs, without double counting their overlap. Persist
+their exact IDs/reasons separately and report the resulting active count;
+Comprehensive includes admitted deferred IDs within the user's scope.
 
 First inspect the requested scope, existing run artifacts, main manifests, and
-repository layout. Reuse finalized IDs only when their source fingerprint
-matches; exclude them from proposed new work. If the source and review queue are small enough to handle
+repository layout. Build a ledger with `mehscan investigate review-ledger
+--inventory RUN/inventory --history OLD_RUN_ROOT,RUN --output RUN/review-ledger.json`.
+Each history root needs a matching `inventory/overview.json`; only validated
+final responses count. Pass `--ledger RUN/review-ledger.json` to inventory
+listing and selected bundle creation. Rebuild the ledger after each chunk;
+`needs_review` remains a completed investigation with a separate follow-up.
+History without a source fingerprint needs an explicit source check before reuse.
+If the source and review queue are small enough to handle
 as a few bundles, use `review-bundles` directly. For a large or uncertain
 queue, run `mehscan investigate review-inventory ROOT --output RUN/inventory`
 once for the current source. Read `overview.json` first. Filter the queue with
 `mehscan investigate review-inventory-list --inventory RUN/inventory --cwe CWE`
-or `--capability NAME`, `--path-prefix PATH`, and `--limit N` as needed.
+or `--capability NAME`, `--path-prefix PATH`, `--operand-kind KIND`, and `--limit N` as needed.
 `inventory.json` holds the full queue; `scan-cache.json` is for Mehscan, not
 an AI review package. The inventory lists exact IDs, operation locations,
 capabilities, CWE candidates, evidence strength, and scan coverage without
 source excerpts. A source change invalidates the cache; regenerate it then.
+
+In Value mode, use `review-inventory-list --selection value`; Comprehensive
+uses `--selection all` (the CLI default). `--selection deferred` lists the exact
+IDs and `value_hint` reasons omitted by Value, including with component/CWE or
+contract filters. Count these as deferred, never as `not_issue` or scanner
+closures. `scope_count` is the filtered, unreviewed population before selection;
+`matching_count` is the selected population and `deferred_count` its heuristic
+deferral population. Contract queues use `matching_review_count`.
+
+## Scope lanes
+
+Value focuses on authored application behavior. Before selecting bundles, separate
+source-proven build/CI tooling, vendor distributions and generated copies into
+recorded lanes. Use manifests, source/output mappings, imports and ownership
+headers; directory names alone do not establish ownership or deployment.
+Use `mehscan investigate provenance ROOT --inventory RUN/inventory --limit 200`
+once when lanes are unclear. Inventory paths limit header reads and candidate output;
+this query does not validate/reuse inventory verdicts. Omit inventory for a broader
+assessment only when needed.
+It supplies candidates from package entry/scripts, source maps and generated/
+distribution headers without requiring a compiler. Match paths to inventory IDs.
+Confirm the evidence before deferring: headers can belong to authored code, build
+entry points can also run in production, and source maps may lack local originals.
+Keep conflicting roles and unresolved mappings active. Follow a mapped original
+with source lookups; the mapping does not establish output/source equivalence.
+Classify tooling at the component/entry-point level when manifests and inspected
+code establish its role; do not require each sink to be proved unreachable.
+An executable CLI or a tool launching a development host is not by itself a
+runtime conflict. Keep exceptions supported by observed cross-boundary inputs,
+production use or a concrete dependency lead; hypothetical inputs do not reopen
+every build operation. Shipped generated runtime code still needs its original
+implementation or a separate runtime review.
+Check `excluded_subtrees` and skipped/truncated inputs for coverage boundaries.
+When truncated, query relevant component prefixes rather than dumping everything.
+Review the authored source instead of its mapped output. Keep exact excluded IDs,
+reasons and representative source locations in `RUN/review-plan.md`. Apply these
+scope exclusions after `--selection value`; that CLI filter knows operand hints,
+not the agent's repository assessment.
+
+`package_build_tooling_inventory` hints already defer ordinary sinks reached
+through literal package build entries/imports. The scanner preserves observed
+runtime/export/shared-import conflicts and strong relationships. Inspect the
+manifest named by the hint when deployment scope is uncertain; reopen IDs for
+deployed tooling or concrete untrusted build inputs. This is conditional scope,
+not a safe verdict. Additional vendor/generated scope still needs assessment.
+
+Comprehensive reopens these lanes and accounts for each admitted ID within the
+requested scope. An explicit application-only scope remains application-only.
+Dependency/build exclusions never become `not_issue` verdicts. Report both the
+application queue and the total omitted IDs. Keep unmapped outputs, application
+wrappers, dangerous build inputs and observed dependency weaknesses in Value;
+reopen a lane when source or user knowledge makes its trust assumption invalid.
+
+`local_bound_query_inventory` conditionally defers a sink-only, fixed-text
+node-postgres query passed as a private local const object with separate values.
+It settles no access policy or runtime method replacement; observed inputs,
+mutations, escapes and uncertain object slots remain active. Comprehensive
+retains the exact ID. Reopen if the driver is replaced or this operation has
+another consequential relationship.
+
+The first hint, `fixed_repository_include`, covers a sink-only include whose
+whole operand resolves to an existing PHP source file in this repository.
+Runtime/upload/cache/generated directories and targets named by observed file
+writes veto it. This is a likely-false-positive effort heuristic under the
+normal trusted-repository-code assumption; it cannot rule out unknown writers
+or deployment changes. Reopen these IDs with `--selection all` when the user,
+source, or deployment indicates writable code or distrust of checked-out code.
+Do not defer the target file's own SQL, execution, output, or access findings.
+`source_default_repository_include` additionally resolves bounded source-defined
+constants and concatenations to that target, under the explicit assumption that
+runtime constants match those defaults. Conflicting, dynamic or unresolved
+definitions stay unresolved. Missing targets, variable-selected loaders and
+observed unresolved root definitions remain eligible. Existing inventories without hints remain
+fully eligible; regenerate to obtain new scanner facts.
+
+`shared_php_encoding_question` keeps an active representative for repeated
+sink-only whole encoding calls in the same observed ordinary template context.
+The name and static context are questions, not a verified protection contract.
+Review `dependency_review_ids` even when a component filter places the
+representative elsewhere. Inspect the actual implementation through delegated
+helpers, options and visible hooks; then check applicability to the deferred
+sites. Observed script/style, unquoted/event/srcdoc attributes, URL contexts
+and source-bearing groups stay active. Unknown bindings are not shared contracts.
+Use `--selection deferred` to inspect exact dependents. Rebuild the ledger after
+the representative: `issue`, `needs_review` or conflicting decisions reopen its
+unreviewed dependents in Value (`reopened_count`). `not_issue` never generates
+their verdicts: keep them conditional only when the inspected contract and each
+site's context/options support that reason. Reopen exact exceptions with
+`--selection all`. Finish the dependency/applicability check before declaring a
+Value scope complete. Expand toward Comprehensive whenever distinct unsafe or
+unresolved relationships remain; do not force a reduction percentage.
+
+`ordinary_php_sink_inventory` moves unconnected PHP echo/print occurrences and
+constant-shaped includes into conditional surface lanes. Missing source
+provenance is not trusted input. Explicit markup construction, variable-selected
+loaders, observed unresolved definitions, connected/co-occurring input and
+dangerous interpreter operations stay active. Review these conditional lanes
+through the attack-surface map: inspect actual producers (including stored
+data), entrypoints and shared rendering/loading behavior, then select distinct
+consequential sites with `--selection all`. Do not investigate each ordinary
+occurrence merely to fill a verdict. Rebuild the ledger after chunks: an issue,
+unresolved verdict or conflict in the same file and rule reopens ordinary
+conditional sites automatically. A newly found lower-trust producer or writable
+code path also reopens relevant IDs, even without a previous verdict. If that
+evidence is widespread, use Comprehensive for the affected lane or repo.
+
+The overview's `deterministic_operand_closures` counts exact output anchors
+already closed by the scanner. `inventory.json`'s `admission_audit.closed_operands`
+retains their locations and proofs. These include complete numeric PHP
+outputs with no unresolved CWE-79 operand check. Account for them separately
+from AI verdicts; they are not deferred work or a claim that the handler is safe.
+Independent command, file, access and disclosure questions still need review.
+
+Use `overview.json`'s `by_operand_fact` to see cheap operand properties before
+selecting a chunk. `fixed_code_relative_path` resolves a code-directory include
+target; its remaining question is target existence/content trust (writers and
+deployment changes), not where an HTTP path parameter originates.
+Use the checked-out application as the baseline. Follow writable/generated
+targets when source or configuration suggests that boundary; hypothetical
+filesystem tampering alone is not a reason to demand deployment research.
+`repository_code_target` resolves a source-default code target with runtime
+override and content-trust checks still open. `output_context` describes static
+template position, including embedded script/style and active attributes;
+dynamic markup can invalidate it. These contexts cover plain raw output as
+well as whole encoder calls.
+`configured_root_path` fixes only the suffix: inspect the root definition and
+overrides. `encoding_call` covers the whole captured output operand, not a
+later concatenation: inspect actual text/attribute/URL/script context, encoding
+options, and the callable contract including filters. These shadow facts do
+not suppress IDs or prove safety. `unclassified` means no supported fact,
+not an absent input source. Combine them with the surface map and selected
+mode; comprehensive still covers every admitted ID. Read the remaining checks
+from the selected evidence/card and query only facts that can change its verdict.
+`source_sink_cooccurrence` means a source and sink share an enclosing group;
+it does not establish value propagation. Actual security paths remain separate.
+
+For a concentrated queue, use `review-inventory-list --inventory RUN/inventory
+--ledger RUN/review-ledger.json --group-by contract --limit 12`. It ranks repeated
+operand questions by count, not risk. `--contract KEY` returns exact members
+and combines with the usual surface filters. Verify the shared definition/root
+once, then use [pattern sweeps](pattern-sweep.md) for each member's context,
+options, target and producer exceptions. Groups are unverified lookup queues:
+one helper name does not bind every call to one implementation. Keep the
+ungrouped count visible and use ordinary review for those IDs. Record useful
+shared facts and assumptions against the queue's source fingerprint in the
+existing review plan; reopen them when the source or policy changes.
 
 ## Choose how to run the review
 
@@ -56,7 +268,7 @@ Choose a review mode:
 | --- | --- |
 | **Focused** | Review the user's CWE, capability, component, or question. State the filter and account for matching IDs. |
 | **Value (default; one level below Comprehensive)** | Review distinct security relationships across every relevant surface lane, including access, output, disclosure, and business-state checks. In a manageable queue, cover nearly every ID. In a large queue, prioritize concrete access, injection, and state-change paths; deployment-dependent low-impact browser-policy or configuration leads can wait in the recorded queue. Group only source-supported repeats and clearly inapplicable operations. Keep unsafe SQL, shell, and code construction in scope even when reachability remains uncertain. |
-| **Comprehensive** | Review every admitted ID, including low-signal work, in small chunks until accounted for. |
+| **Comprehensive** | Review every admitted ID within the requested scope, including low-signal work and the separate build/dependency/generated lanes, in small chunks until accounted for. |
 
 Pre-assessment must state the review scope before building bundles. Its inputs
 are the source tree (manifests, framework configuration, entrypoints, routes,

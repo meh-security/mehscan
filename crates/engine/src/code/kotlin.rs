@@ -21,7 +21,7 @@ pub(crate) use jvm::okhttp_facts;
 pub(super) use jvm::process_command;
 mod ktor;
 mod network;
-pub(crate) use jdbc::prepared_facts;
+pub(super) use jdbc::annotate_prepared;
 mod path;
 mod project;
 mod scope;

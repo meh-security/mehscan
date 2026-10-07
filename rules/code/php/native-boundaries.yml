@@ -867,7 +867,7 @@
     - https://www.php.net/manual/en/function.file-get-contents.php
     - https://cwe.mitre.org/data/definitions/918.html
 - id: php-url-parsing
-  version: 1
+  version: 2
   title: PHP URL decomposition
   language: php
   kind: validation
@@ -881,6 +881,12 @@
       selector: function_call_expression
       captures:
         value: VALUE
+    - pattern: $FUNCTION($VALUE, $COMPONENT)
+      context: <?php $FUNCTION($VALUE, $COMPONENT);
+      selector: function_call_expression
+      captures:
+        value: VALUE
+        component: COMPONENT
   tags:
   - php
   - filesystem

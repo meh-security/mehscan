@@ -21,6 +21,162 @@ fn native_investigation_fixture_root() -> PathBuf {
 }
 
 #[test]
+fn symbol_queries_preserve_later_definitions_and_scope_parse_work() {
+    use mehscan_engine::investigation::{find_imports, find_symbol};
+    let root = std::env::temp_dir().join(format!("mehscan-symbols-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    for (path, source) in [
+        ("a-broken.php", "<?php function needle( {"),
+        ("b-broken.py", "import subprocess\ndef needle(\n"),
+        ("c-valid.php", "<?php function needle($v) { return $v; }"),
+        (
+            "d-valid.py",
+            "import subprocess\ndef needle(value):\n    return value\n",
+        ),
+        ("e-valid.js", "export { needle };"),
+        ("f-valid.rs", "fn needle() {}"),
+        (
+            "g-valid.kt",
+            "class Holder {\n    companion  object {\n        fun member(): Int { return 1 }\n    }\n}\n",
+        ),
+        ("h-irrelevant.php", "<?php function unrelated( {"),
+    ] {
+        std::fs::write(root.join(path), source).unwrap();
+    }
+    let broad = find_symbol(&root, "needle", None, None).unwrap();
+    assert!(broad.truncated); // Relevant parse failures remain explicit.
+    assert_eq!(broad.results.len(), 3); // Later PHP, Python and Rust definitions survive.
+    assert_eq!(broad.skipped_files, ["a-broken.php", "b-broken.py"]);
+    let scoped = find_symbol(&root, "needle", Some("c-valid.php"), None).unwrap();
+    assert_eq!(scoped.results.len(), 1);
+    assert!(!scoped.truncated);
+    assert!(scoped.skipped_files.is_empty());
+    assert!(find_symbol(&root, "needle", Some("../outside.php"), None).is_err());
+    assert!(find_symbol(&root, "needle", Some("missing.php"), None).is_err());
+    let limited = find_symbol(&root, "needle", None, Some(1)).unwrap();
+    assert!(limited.truncated);
+    assert_eq!(limited.results.len(), 1);
+    let imports = find_imports(&root, "subprocess", None).unwrap();
+    assert!(imports.truncated);
+    assert_eq!(imports.skipped_files, ["b-broken.py"]);
+    assert!(
+        imports
+            .results
+            .iter()
+            .any(|symbol| symbol.location.path == "d-valid.py")
+    );
+    // Synthetic labels need not occur verbatim in source; keep their AST path.
+    assert_eq!(
+        find_symbol(&root, "exports", Some("e-valid.js"), None)
+            .unwrap()
+            .results
+            .len(),
+        1
+    );
+    assert_eq!(
+        find_symbol(&root, "companion object", Some("g-valid.kt"), None)
+            .unwrap()
+            .results
+            .len(),
+        1
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn directory_references_find_template_producers_without_crossing_scope() {
+    use mehscan_engine::investigation::find_text_references;
+    let root = std::env::temp_dir().join(format!("mehscan-producer-scope-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("app/views/private")).unwrap();
+    std::fs::create_dir_all(root.join("app-other")).unwrap();
+    std::fs::write(root.join(".gitignore"), "app/views/private/\n").unwrap();
+    for (path, source) in [
+        ("app/client.ts", "const url = node.dataset.apiUrl;\n"),
+        (
+            "app/views/index.cshtml",
+            "<div data-api-url='@Url.Content(\"~/api/items\")'></div>\n",
+        ),
+        (
+            "app/views/index.php",
+            "<div data-api-url='/api/items'></div>\n",
+        ),
+        (
+            "app/views/index.ejs",
+            "<div data-api-url='<%= endpoint %>'></div>\n",
+        ),
+        ("app/views/index.pug", "div(data-api-url=endpoint)\n"),
+        (
+            "app/views/index.html",
+            "<div data-api-url='/api/items'></div>\n",
+        ),
+        (
+            "app/views/index.vue",
+            "<template><div data-api-url='/api/items'></div></template>\n",
+        ),
+        (
+            "app/views/index.jinja2",
+            "<div data-api-url='{{ endpoint }}'></div>\n",
+        ),
+        (
+            "app/views/index.twig",
+            "<div data-api-url='{{ endpoint }}'></div>\n",
+        ),
+        (
+            "app/views/private/hidden.cshtml",
+            "<div data-api-url='hidden'></div>\n",
+        ),
+        (
+            "app-other/copy.cshtml",
+            "<div data-api-url='outside'></div>\n",
+        ),
+    ] {
+        std::fs::write(root.join(path), source).unwrap();
+    }
+    let broad = find_text_references(&root, "data-api-url", None, None, Some(200)).unwrap();
+    let scoped =
+        find_text_references(&root, "data-api-url", None, Some("app/views/"), Some(200)).unwrap();
+    let expected: Vec<_> = broad
+        .results
+        .into_iter()
+        .filter(|row| row.location.path.starts_with("app/views/"))
+        .collect();
+    assert_eq!(scoped.results, expected);
+    assert_eq!(scoped.results.len(), 8);
+    let templates =
+        mehscan_engine::investigation::find_source_paths(&root, "index.html", None).unwrap();
+    assert_eq!(templates.results, ["app/views/index.html"]);
+    assert!(!scoped.truncated);
+    assert_eq!(scoped.provenance.resolution, Resolution::Textual);
+    assert!(
+        !scoped
+            .results
+            .iter()
+            .any(|row| row.location.path.contains("private"))
+    );
+    let limited = find_text_references(&root, "data-api-url", None, Some("app"), Some(1)).unwrap();
+    assert_eq!(limited.results.len(), 1);
+    assert!(limited.truncated);
+    for prefix in [
+        "../outside",
+        "app/../../outside",
+        "C:/outside",
+        "/outside",
+        "missing",
+        "app/client.ts",
+        "",
+    ] {
+        assert!(
+            find_text_references(&root, "data-api-url", None, Some(prefix), None).is_err(),
+            "prefix {prefix}"
+        );
+    }
+    assert!(
+        find_text_references(&root, "apiUrl", Some("app/client.ts"), Some("app"), None).is_err()
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn supports_bounded_ai_investigation_workflow() {
     let root = fixture_root();
 
@@ -74,7 +230,7 @@ fn supports_bounded_ai_investigation_workflow() {
         "review"
     );
 
-    let symbols = mehscan_engine::investigation::find_symbol(&root, "review", None)
+    let symbols = mehscan_engine::investigation::find_symbol(&root, "review", None, None)
         .expect("symbol lookup should succeed");
     assert!(symbols.results.len() >= 5);
 
@@ -84,7 +240,7 @@ fn supports_bounded_ai_investigation_workflow() {
     assert!(imports.results.iter().all(|item| item.is_import));
 
     let references =
-        mehscan_engine::investigation::find_text_references(&root, "launch", None, None)
+        mehscan_engine::investigation::find_text_references(&root, "launch", None, None, None)
             .expect("reference lookup should succeed");
     assert_eq!(references.provenance.resolution, Resolution::Textual);
     assert_eq!(references.results.len(), 2);
@@ -103,6 +259,7 @@ fn supports_bounded_ai_investigation_workflow() {
         &root,
         "launch",
         Some("python/aliases.py"),
+        None,
         None,
     )
     .expect("scoped reference search should succeed");
@@ -216,7 +373,9 @@ fn native_syntax_inventory_retains_local_matches_during_parse_recovery() {
 fn rejects_unbounded_or_out_of_root_requests() {
     let root = fixture_root();
     assert!(mehscan_engine::investigation::get_source(&root, "../planv1.md", 1, 2).is_err());
-    assert!(mehscan_engine::investigation::find_symbol(&root, "review", Some(1_001)).is_err());
+    assert!(
+        mehscan_engine::investigation::find_symbol(&root, "review", None, Some(1_001)).is_err()
+    );
     assert!(mehscan_engine::investigation::get_source(&root, "python/aliases.py", 0, 1).is_err());
     assert!(
         mehscan_engine::investigation::build_investigation_job(
@@ -281,6 +440,7 @@ fn selected_source_reads_keep_repository_ignore_rules() {
             &root,
             "secret",
             Some("src/private/hidden.ts"),
+            None,
             None,
         )
         .is_err()

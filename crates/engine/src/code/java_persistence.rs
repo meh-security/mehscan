@@ -611,6 +611,24 @@ pub(super) fn typed_database_receiver(
     canonical: &str,
     depth: usize,
 ) -> bool {
+    typed_database_receiver_inner(root, expression, canonical, depth, false)
+}
+
+/// Resource declarations are supported for navigation without expanding rule admission.
+pub(super) fn prepared_connection_receiver(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    expression: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    typed_database_receiver_inner(root, expression, "java.sql.Connection", 8, true)
+}
+
+fn typed_database_receiver_inner(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    expression: &Node<'_, StrDoc<SupportLang>>,
+    canonical: &str,
+    depth: usize,
+    resources: bool,
+) -> bool {
     if depth == 0 {
         return false;
     }
@@ -629,7 +647,13 @@ pub(super) fn typed_database_receiver(
         let operation = expression.field("name").map(|n| n.text().to_string());
         return short == "Statement"
             && operation.as_deref() == Some("createStatement")
-            && typed_database_receiver(root, &object, "java.sql.Connection", depth - 1);
+            && typed_database_receiver_inner(
+                root,
+                &object,
+                "java.sql.Connection",
+                depth - 1,
+                resources,
+            );
     }
     let name = expression.text();
     let explicit_this = name.starts_with("this.");
@@ -652,15 +676,16 @@ pub(super) fn typed_database_receiver(
     let mut locals = Vec::new();
     let mut fields = Vec::new();
     for binding in root.dfs().filter(|n| {
-        matches!(
-            n.kind().as_ref(),
-            "variable_declarator" | "formal_parameter"
-        )
+        (resources && n.kind().as_ref() == "resource")
+            || matches!(
+                n.kind().as_ref(),
+                "variable_declarator" | "formal_parameter"
+            )
     }) {
         if binding.field("name").is_none_or(|n| n.text() != name) {
             continue;
         }
-        let declaration = if binding.kind().as_ref() == "formal_parameter" {
+        let declaration = if matches!(binding.kind().as_ref(), "formal_parameter" | "resource") {
             binding.clone()
         } else {
             let Some(parent) = binding.parent() else {
@@ -685,6 +710,12 @@ pub(super) fn typed_database_receiver(
                 fields.push((binding, ty.text().to_string()));
             }
         } else if !explicit_this && binding.range().end <= expression.range().start {
+            if resources
+                && binding.kind().as_ref() != "formal_parameter"
+                && !super::context::lexical_declaration_visible_at(&binding, expression)
+            {
+                continue;
+            }
             let scope = binding.ancestors().find(|n| {
                 matches!(
                     n.kind().as_ref(),
@@ -737,9 +768,9 @@ pub(super) fn typed_database_receiver(
         return true;
     }
     ty == "var"
-        && binding
-            .field("value")
-            .is_some_and(|value| typed_database_receiver(root, &value, canonical, depth - 1))
+        && binding.field("value").is_some_and(|value| {
+            typed_database_receiver_inner(root, &value, canonical, depth - 1, resources)
+        })
 }
 
 fn receiver_types(root: &Node<'_, StrDoc<SupportLang>>) -> BTreeMap<String, String> {

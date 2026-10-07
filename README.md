@@ -6,6 +6,11 @@ Mehscan is under active development. It supports C, C++, C#, Java, JavaScript, T
 
 See [extended SQL and NoSQL coverage](docs/extended-database-coverage.md) for database query mechanics and remaining language-specific gaps.
 
+For review scoping, `mehscan investigate provenance ROOT --inventory RUN/inventory`
+collects build-entry, distribution-header and generated/source-map candidates
+without a compiler. The security skill confirms scope and preserves deferred IDs;
+these hints never assign safe verdicts or change scanner admission.
+
 ## What it does
 
 - Scans source code locally without executing build tools or application code.

@@ -8,6 +8,305 @@ use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_language::SupportLang;
 use mehscan_core::{Capture, Language};
 
+#[path = "php_value.rs"]
+mod value;
+
+/// Bounded operand facts. Only complete numeric output closes an injection
+/// question; path and encoder facts keep their explicit unresolved checks.
+pub(super) fn add_operand_facts<'a>(
+    path: &str,
+    nodes: &BTreeMap<(usize, usize), PhpNode<'a>>,
+    context: &PhpContext<'a>,
+    literals: &super::literals::LiteralEnvironment<'a, StrDoc<SupportLang>>,
+    evidence: &mut [mehscan_core::Evidence],
+) {
+    use mehscan_core::{OperandFact, OperandFactKind};
+    if nodes.is_empty() {
+        return;
+    }
+    for item in evidence {
+        let role = match item.rule_id.as_str() {
+            "php-file-inclusion" => "path",
+            "php-html-output" => "content",
+            _ => continue,
+        };
+        let Some(capture) = item.captures.get(role) else {
+            continue;
+        };
+        let Some(node) = nodes.get(&(
+            capture.location.start.byte_offset,
+            capture.location.end.byte_offset,
+        )) else {
+            continue;
+        };
+        let node = unwrap_operand(node.clone());
+        if role == "path" && value::constant_include_expression(path, &node, context) {
+            item.tags
+                .push("value-scope:constant-include-expression".into());
+        }
+        if role == "path" && value::unresolved_root(&node, context) {
+            item.tags.push("value-scope:unresolved-code-root".into());
+        }
+        if role == "path"
+            && let Some(target) = value::code_target(path, &node, context)
+        {
+            item.context.operand_facts.push(OperandFact {
+                role: role.into(),
+                kind: OperandFactKind::RepositoryCodeTarget,
+                location: capture.location.clone(),
+                value: target,
+                remaining_checks: vec![
+                    "source_defaults_match_runtime_constants".into(),
+                    "target_existence_and_content_trust".into(),
+                ],
+            });
+        }
+        if role == "content"
+            && numeric_output(&node, context).is_none()
+            && let Some(mut output_context) = value::output_context(context, &node)
+        {
+            if node
+                .field("function")
+                .is_some_and(|function| !function.text().starts_with('\\'))
+                && context.namespaced_scope(&namespace_scope(&node, &context.root))
+            {
+                output_context = format!("unknown_binding:{output_context}");
+            }
+            item.context.operand_facts.push(OperandFact {
+                role: role.into(),
+                kind: OperandFactKind::OutputContext,
+                location: capture.location.clone(),
+                value: output_context,
+                remaining_checks: vec!["runtime_markup_and_exact_control_compatibility".into()],
+            });
+        }
+        let fact = if role == "path" {
+            let Some((root, suffix)) = compound_include_path(&node, context, literals, 0) else {
+                continue;
+            };
+            if suffix.contains(['\\', ':', '\0']) {
+                continue;
+            }
+            match root {
+                IncludeRoot::CodeDirectory => {
+                    if !suffix.starts_with('/') {
+                        continue;
+                    }
+                    let Some(target) = code_relative_target(path, &suffix) else {
+                        continue;
+                    };
+                    OperandFact {
+                        role: role.into(),
+                        kind: OperandFactKind::FixedCodeRelativePath,
+                        location: capture.location.clone(),
+                        value: target,
+                        remaining_checks: vec!["target_existence_and_content_trust".into()],
+                    }
+                }
+                IncludeRoot::Configured(name) => OperandFact {
+                    role: role.into(),
+                    kind: OperandFactKind::ConfiguredRootPath,
+                    location: capture.location.clone(),
+                    value: format!("{name} . {suffix:?}"),
+                    remaining_checks: vec![
+                        "root_definition_and_overrides".into(),
+                        "target_existence_and_content_trust".into(),
+                    ],
+                },
+            }
+        } else if let Some(value) = numeric_output(&node, context) {
+            OperandFact {
+                role: role.into(),
+                kind: OperandFactKind::NumericOutput,
+                location: capture.location.clone(),
+                value,
+                remaining_checks: Vec::new(),
+            }
+        } else {
+            if node.kind().as_ref() != "function_call_expression" {
+                continue;
+            }
+            let Some(function) = node.field("function") else {
+                continue;
+            };
+            let Some(arguments) = node.field("arguments") else {
+                continue;
+            };
+            if arguments
+                .dfs()
+                .any(|n| matches!(n.kind().as_ref(), ":" | "..."))
+            {
+                continue;
+            }
+            let observed = function
+                .text()
+                .trim()
+                .trim_start_matches('\\')
+                .to_ascii_lowercase();
+            let native = ["htmlspecialchars", "htmlentities"]
+                .iter()
+                .any(|name| context.exact_function(&node, name));
+            if !native
+                && !matches!(
+                    observed.as_str(),
+                    "esc_html"
+                        | "esc_html__"
+                        | "esc_html_x"
+                        | "esc_attr"
+                        | "esc_attr__"
+                        | "esc_attr_x"
+                        | "esc_url"
+                        | "esc_textarea"
+                        | "wp_kses_post"
+                )
+            {
+                continue;
+            }
+            OperandFact {
+                role: role.into(),
+                kind: OperandFactKind::EncodingCall,
+                location: capture.location.clone(),
+                value: function.text().into_owned(),
+                remaining_checks: if native {
+                    vec!["output_context".into(), "encoding_options".into()]
+                } else {
+                    vec![
+                        "output_context".into(),
+                        "callable_contract_and_filters".into(),
+                    ]
+                },
+            }
+        };
+        item.context.operand_facts.push(fact);
+    }
+}
+
+fn numeric_output<'a>(node: &PhpNode<'a>, context: &PhpContext<'a>) -> Option<String> {
+    if node.kind().as_ref() == "cast_expression" {
+        let cast = node.field("type")?.text().to_ascii_lowercase();
+        return matches!(cast.as_str(), "int" | "integer" | "bool" | "boolean")
+            .then(|| format!("native {cast} cast"));
+    }
+    ["intval", "strlen", "count", "sizeof"]
+        .into_iter()
+        .find(|name| context.exact_function(node, name))
+        .map(|name| format!("native {name} integer result"))
+}
+
+enum IncludeRoot {
+    CodeDirectory,
+    Configured(String),
+}
+
+fn unwrap_operand(mut node: PhpNode<'_>) -> PhpNode<'_> {
+    while node.kind().as_ref() == "parenthesized_expression" {
+        let Some(child) = node.children().find(|n| n.is_named()) else {
+            break;
+        };
+        node = child;
+    }
+    node
+}
+
+fn compound_include_path<'a>(
+    node: &PhpNode<'a>,
+    context: &PhpContext<'a>,
+    literals: &super::literals::LiteralEnvironment<'a, StrDoc<SupportLang>>,
+    depth: usize,
+) -> Option<(IncludeRoot, String)> {
+    if depth >= 8 {
+        return None;
+    }
+    let node = unwrap_operand(node.clone());
+    if node.kind().as_ref() == "binary_expression"
+        && node.field("operator").is_some_and(|op| op.text() == ".")
+    {
+        let left = node.field("left")?;
+        let right = node.field("right")?;
+        let (root, mut suffix) = compound_include_path(&left, context, literals, depth + 1)?;
+        let part = include_suffix(&right, literals, depth + 1)?;
+        suffix.push_str(&part);
+        return Some((root, suffix));
+    }
+    if node.text().eq_ignore_ascii_case("__DIR__") {
+        return Some((IncludeRoot::CodeDirectory, String::new()));
+    }
+    if context.exact_function(&node, "dirname") {
+        let args = node.field("arguments")?;
+        let args = args.children().filter(|n| n.is_named()).collect::<Vec<_>>();
+        if args.len() == 1 && args[0].text().eq_ignore_ascii_case("__FILE__") {
+            return Some((IncludeRoot::CodeDirectory, String::new()));
+        }
+    }
+    let name = node.text();
+    if node.kind().as_ref() == "name"
+        && !matches!(
+            name.as_ref(),
+            "__FILE__"
+                | "__LINE__"
+                | "__CLASS__"
+                | "__TRAIT__"
+                | "__METHOD__"
+                | "__FUNCTION__"
+                | "__NAMESPACE__"
+        )
+        && name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+    {
+        return Some((IncludeRoot::Configured(name.into_owned()), String::new()));
+    }
+    None
+}
+
+// Do not inherit cross-language scalar coercion or string escape semantics.
+// PHP booleans/null/numeric literals concatenate differently, and an opaque
+// binding needs a producer trace before it can be used as a path proof.
+fn include_suffix<'a>(
+    node: &PhpNode<'a>,
+    literals: &super::literals::LiteralEnvironment<'a, StrDoc<SupportLang>>,
+    depth: usize,
+) -> Option<String> {
+    if depth >= 8 {
+        return None;
+    }
+    let node = unwrap_operand(node.clone());
+    if node.kind().as_ref() == "binary_expression"
+        && node.field("operator").is_some_and(|op| op.text() == ".")
+    {
+        let left = include_suffix(&node.field("left")?, literals, depth + 1)?;
+        let right = include_suffix(&node.field("right")?, literals, depth + 1)?;
+        return Some(format!("{left}{right}"));
+    }
+    if !matches!(node.kind().as_ref(), "string" | "encapsed_string") || node.text().contains('\\') {
+        return None;
+    }
+    match literals.evaluate(&node).value {
+        Some(mehscan_core::LiteralValue::String(value)) if !value.chars().any(char::is_control) => {
+            Some(value)
+        }
+        _ => None,
+    }
+}
+
+fn code_relative_target(path: &str, suffix: &str) -> Option<String> {
+    let parent = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+    let mut components = parent
+        .split('/')
+        .filter(|c| !c.is_empty())
+        .collect::<Vec<_>>();
+    for component in suffix.split('/') {
+        match component {
+            "" | "." => (),
+            ".." => {
+                components.pop()?;
+            }
+            value => components.push(value),
+        }
+    }
+    (!components.is_empty()).then(|| components.join("/"))
+}
+
 type PhpNode<'a> = Node<'a, StrDoc<SupportLang>>;
 type DatabaseExports = BTreeMap<String, (String, Capture)>;
 type IncludedDatabase = (Range<usize>, String, DatabaseExports);
@@ -49,6 +348,7 @@ mod tests {
 #[derive(Default)]
 pub(crate) struct PhpProjectContext {
     exports: BTreeMap<String, DatabaseExports>,
+    constants: std::sync::Arc<value::Constants>,
 }
 
 impl PhpProjectContext {
@@ -56,16 +356,23 @@ impl PhpProjectContext {
         sources: impl IntoIterator<Item = (&'s str, Language, &'s str)>,
     ) -> Self {
         let mut exports = BTreeMap::new();
+        let mut constants = value::Constants::default();
         for (path, language, source) in sources {
             if language != Language::Php || source.len() > 512 * 1024 {
                 continue;
             }
             let lower = source.to_ascii_lowercase();
-            if !lower.contains("pdo") && !lower.contains("mysqli") {
+            if !lower.contains("pdo")
+                && !lower.contains("mysqli")
+                && !lower.contains("define")
+                && !lower.contains("const")
+            {
                 continue;
             }
             let ast = AstGrep::doc(StrDoc::new(source, SupportLang::PhpMixed));
             let root = ast.root();
+            let context = PhpContext::build(&root);
+            constants.collect(path, &root, &context);
             // A config summary cannot stand in for executing arbitrary code.
             if root.dfs().any(|n| {
                 n.is_error()
@@ -84,7 +391,6 @@ impl PhpProjectContext {
             }) {
                 continue;
             }
-            let context = PhpContext::build(&root);
             if root
                 .dfs()
                 .filter(|n| n.kind().as_ref() == "object_creation_expression")
@@ -161,7 +467,10 @@ impl PhpProjectContext {
             }
             exports.insert(path.to_string(), bindings);
         }
-        Self { exports }
+        Self {
+            exports,
+            constants: std::sync::Arc::new(constants),
+        }
     }
 }
 
@@ -179,6 +488,9 @@ pub(super) struct PhpContext<'a> {
     namespaced_scopes: Vec<Range<usize>>,
     included: Vec<IncludedDatabase>,
     json_candidates: BTreeSet<(usize, usize, String)>,
+    constants: std::sync::Arc<value::Constants>,
+    template_texts: Vec<(usize, String)>,
+    markup_writes: Vec<(Range<usize>, usize)>,
 }
 
 impl<'a> PhpContext<'a> {
@@ -256,6 +568,20 @@ impl<'a> PhpContext<'a> {
             namespaced_scopes,
             included: Vec::new(),
             json_candidates: BTreeSet::new(),
+            constants: std::sync::Arc::default(),
+            template_texts: root
+                .dfs()
+                .filter(|n| n.kind().as_ref() == "text")
+                .map(|n| (n.range().end, n.text().to_string()))
+                .collect(),
+            markup_writes: root
+                .dfs()
+                .filter(|n| {
+                    matches!(n.kind().as_ref(), "echo_statement" | "print_intrinsic")
+                        && n.text().contains('<')
+                })
+                .map(|n| (function_scope(&n, root), n.range().start))
+                .collect(),
         };
         for binding in root
             .dfs()
@@ -278,6 +604,7 @@ impl<'a> PhpContext<'a> {
     }
 
     pub(super) fn with_project(mut self, path: &str, project: &PhpProjectContext) -> Self {
+        self.constants = project.constants.clone();
         for include in self.root.dfs().filter(|n| {
             matches!(
                 n.kind().as_ref(),

@@ -39,9 +39,10 @@ pub use evaluation::{
 pub use evidence::{
     Availability, AvailabilityState, Capability, Confidence, Evidence, EvidenceContext,
     EvidenceKind, FixedOutputFormat, HttpRouteAccess, HttpRouteContext, LiteralEvaluation,
-    LiteralState, LiteralValue, Provenance, Reachability, ReachabilityReason, ReachabilityState,
-    Resolution, ResourcePolicyContext, ResourcePolicyState, RuntimeEnvironment, SecretDetector,
-    SecretMetadata, SymbolConfidence, SymbolResolution, SymbolResolutionMethod, ValueTransform,
+    LiteralState, LiteralValue, OperandFact, OperandFactKind, Provenance, Reachability,
+    ReachabilityReason, ReachabilityState, Resolution, ResourcePolicyContext, ResourcePolicyState,
+    RuntimeEnvironment, SecretDetector, SecretMetadata, SymbolConfidence, SymbolResolution,
+    SymbolResolutionMethod, ValueTransform,
 };
 pub use finding::{Finding, Severity};
 pub use finding_sarif::{

@@ -518,6 +518,7 @@ fn item<'tree>(
             reachability: Some(reachability::classify(node, literals)),
             availability: Some(conditional.availability_for(node.range())),
             literals: BTreeMap::new(),
+            operand_facts: Vec::new(),
             secret: None,
             value_transform: None,
             http_routes: Vec::new(),

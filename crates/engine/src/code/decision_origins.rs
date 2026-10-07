@@ -309,6 +309,24 @@ fn object_property<'tree>(
     object: &Node<'tree, StrDoc<SupportLang>>,
     names: &[&str],
 ) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    // Spreads, computed keys and getters can replace the apparent query text.
+    // Do not normalize a partial object into a fixed SQL operand.
+    let mut keys = std::collections::BTreeSet::new();
+    for child in object
+        .children()
+        .filter(|child| child.is_named() && child.kind().as_ref() != "comment")
+    {
+        if child.kind().as_ref() != "pair" {
+            return None;
+        }
+        let key = child.field("key")?;
+        if !matches!(key.kind().as_ref(), "property_identifier" | "string")
+            || key.text().contains('\\')
+            || !keys.insert(key.text().trim_matches(['\'', '"']).to_string())
+        {
+            return None;
+        }
+    }
     let mut matches = object.children().filter_map(|child| {
         if child.kind().as_ref() != "pair" {
             return None;
@@ -933,6 +951,23 @@ fn annotate_process_semantics(language: Language, source: &str, item: &mut Evide
     let start = item.location.start.byte_offset.min(source.len());
     let end = item.location.end.byte_offset.min(source.len());
     let operation = source.get(start..end).unwrap_or_default();
+    if language == Language::Python
+        && item.context.operand_facts.iter().any(|f| {
+            f.role == "process_options" && f.kind == mehscan_core::OperandFactKind::OperandBoundary
+        })
+        && !item.captures.contains_key("shell_mode")
+    {
+        push_tag(&mut item.tags, "process-invocation:unresolved-shell");
+        return;
+    }
+    if language == Language::Python
+        && item.context.operand_facts.iter().any(|f| {
+            f.kind == mehscan_core::OperandFactKind::ProcessShellMode && f.value == "unresolved"
+        })
+    {
+        push_tag(&mut item.tags, "process-invocation:unresolved-shell");
+        return;
+    }
 
     if language == Language::Rust
         && let Some((value, offset)) = rust_command_new_operand(operation)
@@ -954,6 +989,14 @@ fn annotate_process_semantics(language: Language, source: &str, item: &mut Evide
     }
     push_tag(&mut item.tags, "shell-command-text");
     push_tag(&mut item.tags, "process-invocation:shell-command");
+
+    // The parsed options adapter already selected the actual argv operand.
+    if (item.captures.contains_key("shell_command")
+        && (item.captures.contains_key("shell_mode") || language == Language::Python))
+        || (language == Language::Python && item.captures.contains_key("posix_shell_command"))
+    {
+        return;
+    }
 
     if let Some((payload, offset)) = exact_shell_payload(language, operation) {
         insert_process_capture(item, operation, "shell_command", payload, offset);
@@ -1112,6 +1155,15 @@ fn quoted_string(value: &str) -> Option<&str> {
 }
 
 fn process_is_shell_api(language: Language, source: &str, item: &Evidence) -> bool {
+    if language == Language::Python
+        && let Some(mode) = item
+            .context
+            .operand_facts
+            .iter()
+            .find(|f| f.kind == mehscan_core::OperandFactKind::ProcessShellMode)
+    {
+        return mode.value == "true";
+    }
     if matches!(
         item.rule_id.as_str(),
         "php-command-execution" | "php-shell-command-operator"

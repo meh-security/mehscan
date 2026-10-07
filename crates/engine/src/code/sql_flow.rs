@@ -262,6 +262,7 @@ fn build_family_paths(
         .filter(|item| {
             item.kind == EvidenceKind::Sink
                 && item.capability == family.sink.capability
+                && !super::csharp_mainstream::is_duplicate_copy_source(item, evidence)
                 && (!is_identity_boundary_relation(family)
                     || item
                         .provenance
@@ -3443,6 +3444,16 @@ fn protection_belongs_to_sink(
     sink: &Evidence,
     family: &RelationContract,
 ) -> bool {
+    if protection.capability == Capability::ProcessArgumentSeparation
+        && sink.context.operand_facts.iter().any(|fact| {
+            fact.role == "process_options"
+                && (fact.kind == mehscan_core::OperandFactKind::OperandBoundary
+                    || (fact.kind == mehscan_core::OperandFactKind::ProcessShellMode
+                        && fact.value != "false"))
+        })
+    {
+        return false;
+    }
     let Some(contract) = &family.protection else {
         return false;
     };

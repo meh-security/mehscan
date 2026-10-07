@@ -5,12 +5,25 @@ implementation fact, such as a query builder, route policy, renderer, writer,
 or validation path. A shared CWE label or nearby file does not establish that
 the IDs use the same behavior.
 
-1. Run `review-bundle-list --bundle REQUEST` to get the IDs without printing
-   the request JSON. For routing across many bundles, use the existing compact
-   inventory if available to shortlist IDs by capability, file, symbol, and
-   sink strength; read cards only for plausible shared implementations. Review
+Choose shared source using [evidence packaging](evidence-packaging.md) when
+preparing a chunk: filesystem policy often fits one small implementation file;
+HTML needs renderer/writer context and exact helper binding. A supplied packet
+that covers the selected question/anchor rows replaces the initial card/sweep
+read below; inspect missing facts normally.
+
+1. Run `review-sweep --bundle REQUEST` to read the exact cards together. Read
+   each `source_contexts` window once; rows reference it through `source_context_ids`.
+   Read the row's `question_id` in `questions` for its question, category and playbook.
+   The CLI merges overlapping windows and preserves clipped windows' truncation.
+   For routing across many bundles, use the existing compact inventory's
+   `--group-by contract` queue to find repeated operand questions. Select members
+   with `--contract KEY`, existing surface filters and the ledger, then materialize
+   a small exact-ID chunk. Groups are explicitly unverified: the same observed
+   name/root can have overrides, contexts or targets that differ. Prefer repeated
+   questions whose identity can actually be checked. Review
    the other cards when their bundles are actually triaged. For the IDs being
-   reviewed, make a short table: exact operation, actor and value producer,
+   reviewed, make a short table keyed by `review_id` and anchor `path:line`:
+   exact operation, actor and value producer,
    interpreter options or selected files, control, effect, suspected shared
    implementation, and missing fact. Do not load the full bundle JSON into
    context.
@@ -33,6 +46,11 @@ the IDs use the same behavior.
    lines and which IDs the fact might affect. In this review session, reuse the
    returned text or journal for later IDs. Do not rerun a source query merely
    because another ID has a separate journal.
+   For extensible APIs, inspect repository-visible overrides/registrations once
+   and state the framework/extension assumptions within the requested scope.
+   A hypothetical external override alone should not trigger deployment research
+   for every anchor. Record an actual unavailable shared contract fact once in
+   the plan, with affected IDs, while keeping their individual verdicts honest.
 4. For each ID, test whether that fact applies to its own actor, producer,
    branch, operand, interpreter option, control, and effect. Query only the
    missing edge. Related sinks can differ because of a writer's trust, guard,
@@ -47,7 +65,9 @@ the IDs use the same behavior.
    supports each result; add the operation-specific range as needed. Empty or
    short per-ID journals are valid when earlier queries already supplied the
    evidence. The finalizer counts actual queries, not source ranges cited.
-5. Stop a group when each ID has a supported verdict or a precise unavailable
+5. Join draft decisions to that ID/anchor table, never to row or source-window
+   order. Check each summary against its own cited operation before finalizing.
+   Stop a group when each ID has a supported verdict or a precise unavailable
    fact. Write one brief draft for the bundle and finalize it. Keep a one-line
    pattern note only if it helps a later chunk avoid rediscovering the same
    control; tie it to the current source revision and recheck after changes.

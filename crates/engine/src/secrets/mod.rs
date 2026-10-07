@@ -589,6 +589,7 @@ fn candidate_to_evidence(
             reachability: None,
             availability: None,
             literals: BTreeMap::new(),
+            operand_facts: Vec::new(),
             secret: Some(SecretMetadata {
                 detector: candidate.detector,
                 fingerprint,

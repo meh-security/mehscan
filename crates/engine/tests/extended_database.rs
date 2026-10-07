@@ -18,6 +18,39 @@ fn scan(label: &str, cases: &[(&str, &str)]) -> mehscan_core::ScanResult {
 }
 
 #[test]
+fn repeated_sql_expression_identity_preserves_each_use_scope_and_file() {
+    let source = "from sqlalchemy import text as raw\ndef allowed(q):\n    raw(q)\ndef shadow(q, raw):\n    raw(q)\ndef inner(q):\n    import sqlalchemy as local\n    local.text(q)\ndef outside(q):\n    local.text(q)\ndef sibling(q):\n    raw(q)\ndef rebound(q):\n    raw = factory()\n    raw(q)\n";
+    let result = scan(
+        "indexed-identity",
+        &[
+            ("one.py", source),
+            ("two.py", "def other(q):\n    raw(q)\n"),
+        ],
+    );
+    let mut hits = result
+        .evidence
+        .iter()
+        .filter(|e| e.rule_id == "python-extended-sql-expression")
+        .map(|e| {
+            (
+                e.location.path.as_str(),
+                e.enclosing_symbol.as_deref().unwrap(),
+                e.captures["query"].text.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    hits.sort();
+    assert_eq!(
+        hits,
+        vec![
+            ("one.py", "allowed", "q"),
+            ("one.py", "inner", "q"),
+            ("one.py", "sibling", "q")
+        ]
+    );
+}
+
+#[test]
 fn extended_nosql_filters_preserve_operand_for_every_supported_language() {
     let cases = [
         (

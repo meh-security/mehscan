@@ -622,6 +622,9 @@ pub struct ReviewAdmissionAudit {
     /// Bounded deterministic examples for non-admitted dispositions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub excluded_examples: Vec<ReviewAdmissionAuditExample>,
+    /// Exact anchors closed by a complete operand proof, rather than a sample.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub closed_operands: Vec<ReviewAdmissionAuditExample>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -638,6 +641,8 @@ pub struct ReviewAdmissionAuditExample {
     pub capability: Capability,
     pub disposition: ReviewAdmissionDisposition,
     pub location: Location,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operand_fact: Option<crate::OperandFact>,
 }
 
 pub const PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION: &str = "1.3";
