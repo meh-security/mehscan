@@ -3,6 +3,14 @@
 Experimental source/reference-only C# backend. It adds compact compiler symbol,
 local producer/stop and source helper declaration facts to selected SQL,
 filesystem, explicit HTML and request-URI operands. Most facts guide research.
+Bound calls in possible local CFG producers and directly awaited producers also
+carry exact source helper locations. These are one-hop navigation edges; branch
+feasibility, call arguments and runtime dispatch remain review questions.
+String properties consumed by those helper returns can carry up to eight exact
+source assignment locations from supplied compiled projects, with a marker for
+additional writes. These candidate writers do not establish the resource instance,
+persistence, caller authority or complete writer coverage. They never close a
+security question or change Value admission.
 Complete fixed and generated temporary selectors can close the exact CWE-22 question.
 Primitive selectors include ordinary numbers, boolean, character, enum, GUID,
 nullable and date/time conversions, including fixed formats and CultureInfo

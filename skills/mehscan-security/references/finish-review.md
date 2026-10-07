@@ -50,7 +50,10 @@ verdict follows from the evidence; inspect that reasoning yourself.
 For resolved decisions, use `checks: []` and `investigation.blockers: []`;
 do not carry the resolved bundle question forward. For `needs_review`, name
 the exact missing fact in one-line checks within 300 characters. Keep each
-summary and reason on one line within 500 characters.
+summary on one line within 500 characters. Keep the brief reason concise; the
+finalizer formats up to 4000 characters into bounded inference claims without
+dropping words. Full-schema inference claims still follow their own 500-character
+limit.
 
 ## Report and account
 

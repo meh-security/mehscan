@@ -3273,6 +3273,37 @@ struct BriefSourceRef {
     end_line: usize,
 }
 
+// Format concise draft prose into the existing bounded inference contract.
+// Preserve every word; source validation and the verdict remain unchanged.
+fn brief_reason_claims(reason: &str) -> Result<Vec<String>, String> {
+    if reason.chars().count() > 4000 {
+        return Err("brief reason exceeds 4000 characters; provide concise decision prose".into());
+    }
+    let mut claims = Vec::new();
+    let mut current = String::new();
+    let mut count = 0;
+    for word in reason.split_whitespace() {
+        let length = word.chars().count();
+        if length > 500 {
+            return Err("brief reason contains a word longer than 500 characters".into());
+        }
+        if !current.is_empty() && count + 1 + length > 500 {
+            claims.push(std::mem::take(&mut current));
+            count = 0;
+        }
+        if !current.is_empty() {
+            current.push(' ');
+            count += 1;
+        }
+        current.push_str(word);
+        count += length;
+    }
+    if !current.is_empty() {
+        claims.push(current);
+    }
+    Ok(claims)
+}
+
 fn expand_brief_reviews(
     bundle: &mehscan_core::PathReviewBundle,
     brief: &BriefReviewSet,
@@ -3318,14 +3349,13 @@ fn expand_brief_reviews(
                 },
             })
             .collect();
-        let reviewer_inferences = if review.reason.trim().is_empty() {
-            Vec::new()
-        } else {
-            vec![mehscan_core::ReviewerInference {
-                claim: review.reason.clone(),
-                artifact_ids,
-            }]
-        };
+        let reviewer_inferences = brief_reason_claims(&review.reason)?
+            .into_iter()
+            .map(|claim| mehscan_core::ReviewerInference {
+                claim,
+                artifact_ids: artifact_ids.clone(),
+            })
+            .collect();
         results.push(mehscan_core::PathReviewTriageResult {
             review_id: review.review_id.clone(),
             selected_anchor_id: Some(anchor),

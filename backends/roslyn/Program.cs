@@ -42,6 +42,8 @@ internal static partial class Program
             var diagnostics = new List<DiagnosticRecord>();
             var projects = new List<ProjectRecord>();
             var inputs = CompileInputs(request, context, sources, metadata, referenceHashes);
+            var propertyWriters = new PropertyWriterNavigation(inputs.Values.SelectMany(i => i.Models)
+                .GroupBy(p => p.Key).Select(g => g.First().Value).ToArray(), sources);
             foreach (var project in context.Projects)
             {
                 if (!inputs.TryGetValue(project.Id, out var input))
@@ -103,7 +105,7 @@ internal static partial class Program
                     var operand = root.FindNode(operandSpan, getInnermostNodeForTie: true);
                     if (operand.Span == operandSpan)
                     {
-                        Producers(model, operand, query, project, sources, facts);
+                        Producers(model, operand, query, project, sources, facts, propertyWriters);
                         if (query.Role == "path")
                         {
                             var started = timed ? Stopwatch.GetTimestamp() : 0;
@@ -220,7 +222,8 @@ internal static partial class Program
     }
 
     private static void Producers(SemanticModel model, SyntaxNode operand, Query query,
-        Project project, SortedDictionary<string, Source> sources, List<Fact> facts)
+        Project project, SortedDictionary<string, Source> sources, List<Fact> facts,
+        PropertyWriterNavigation propertyWriters)
     {
         var source = sources[operand.SyntaxTree.FilePath];
         ExpressionSyntax? producer = operand as ExpressionSyntax;
@@ -254,7 +257,13 @@ internal static partial class Program
                 .ToArray();
             if (intervening.Length != 0)
             {
-                if (LocalFlow(model, operand, local, owner, query, sources, facts)) return;
+                var origins = new List<ExpressionSyntax>();
+                if (LocalFlow(model, operand, local, owner, query, sources, facts, origins: origins))
+                {
+                    foreach (var origin in origins)
+                        ProducerCall(model, origin, query, project, sources, facts, propertyWriters);
+                    return;
+                }
                 // Prefer a replacement over a later append/read so a reviewer can
                 // see resets such as sql = ... after an earlier command. Textual
                 // proximity is navigation only: a conditional write need not run,
@@ -283,6 +292,24 @@ internal static partial class Program
                 initializer.ToString(), ["reaching_assignment_and_control_flow", "producer_or_caller_control", "exact_interpretation_and_effect"]));
             producer = initializer;
         }
+        if (producer != null) ProducerCall(model, producer, query, project, sources, facts, propertyWriters);
+    }
+
+    // One source-bound call edge for navigation, including awaited CFG producers.
+    // Do not search descendants: an argument's call is not the returned producer.
+    private static void ProducerCall(SemanticModel model, ExpressionSyntax producer, Query query,
+        Project project, SortedDictionary<string, Source> sources, List<Fact> facts,
+        PropertyWriterNavigation propertyWriters)
+    {
+        var source = sources[producer.SyntaxTree.FilePath];
+        while (true)
+        {
+            if (producer is AwaitExpressionSyntax awaited) producer = awaited.Expression;
+            else if (producer is ParenthesizedExpressionSyntax parenthesized) producer = parenthesized.Expression;
+            else if (producer is PostfixUnaryExpressionSyntax suppressed
+                && suppressed.IsKind(SyntaxKind.SuppressNullableWarningExpression)) producer = suppressed.Operand;
+            else break;
+        }
         if (producer is InvocationExpressionSyntax invocation)
         {
             if (model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol method || ErrorType(method))
@@ -301,6 +328,7 @@ internal static partial class Program
                 var name = declaration is MethodDeclarationSyntax named ? named.Identifier.Span : declaration.Span;
                 facts.Add(new(query.Role, "semantic_definition", Location(helper, name),
                     method.ToDisplayString(), ["helper_return_and_effect", "runtime_dispatch_and_replacement", "producer_or_caller_control"]));
+                propertyWriters.AddReturnWriters(declaration, facts);
                 // One exact source return, with call-site arguments left explicit.
                 // No substitution, recursive summary or inferred security contract.
                 if (method.IsStatic && declaration is MethodDeclarationSyntax body)
@@ -321,7 +349,7 @@ internal static partial class Program
     // This is deliberately not path feasibility, global taint or a safe verdict.
     private static bool LocalFlow(SemanticModel model, SyntaxNode operand, ILocalSymbol local,
         SyntaxNode owner, Query query, SortedDictionary<string, Source> sources, List<Fact> facts,
-        List<ExpressionSyntax>? reaching = null)
+        List<ExpressionSyntax>? reaching = null, List<ExpressionSyntax>? origins = null)
     {
         if (local.Type.SpecialType != SpecialType.System_String || owner is not BaseMethodDeclarationSyntax
             || owner.Span.Length > 32768 || owner.DescendantNodes().Any(n => n is TryStatementSyntax)) return false;
@@ -412,6 +440,7 @@ internal static partial class Program
             var expression = definitions[offset];
             facts.Add(new(query.Role, "local_operand_origin", Location(source, expression.Span),
                 expression.ToString(), ["branch_feasibility_and_accumulation", "producer_or_caller_control", "exact_interpretation_and_effect"]));
+            if (expression is ExpressionSyntax origin) origins?.Add(origin);
         }
         // Do not reinterpret append/input sets as complete reaching expressions.
         if (reaching != null && !events.SelectMany(e => e).Any(e => e.Keep))

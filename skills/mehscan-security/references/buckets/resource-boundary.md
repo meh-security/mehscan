@@ -41,6 +41,11 @@ than rereading equivalent distributions.
   row. For a remaining string component, inspect its writers across relevant
   authored components, including import paths; a GUID-only upload path alone
   does not establish all stored values. Keep proven GUID components closed.
+  Native `property_writer` facts locate assignments to the exact source property,
+  not necessarily the selected resource instance. Follow a consequential writer
+  through persistence and caller authority; an empty or bounded candidate list
+  does not establish all writers. Reuse verified generated-key construction
+  while checking alternate assignments independently.
   Archive contents, unauthorized object selection and executable writes are distinct relationships;
   retain them when supported by source, rather than reopening mundane setup.
   Use `local_operand_origin` for exact producers and `operand_boundary` to locate

@@ -40,6 +40,150 @@ fn env_path(name: &str) -> PathBuf {
 }
 
 #[test]
+#[ignore = "requires built Roslyn helper and real .NET 8 refs"]
+fn awaited_and_cfg_producers_locate_exact_helpers_without_safety_claims() {
+    let fixture = Fixture::new("producer-navigation");
+    for file in ["App.cs", "Helpers.cs"] {
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures/roslyn-producer-navigation")
+                .join(file),
+            fixture.0.join(file),
+        )
+        .unwrap();
+    }
+    let context = fixture.context(
+        "navigation",
+        "net8.0",
+        "12.0",
+        &env_path("MEHSCAN_ROSLYN_NET8_REFS"),
+    );
+    let scan = mehscan_engine::scan_path(&fixture.0).unwrap();
+    let snapshot = csharp_semantic::collect(
+        &fixture.0,
+        &context,
+        &env_path("MEHSCAN_ROSLYN_BACKEND"),
+        &scan,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&snapshot).unwrap()["projects"][0]["compiler_errors"],
+        0
+    );
+    for (method, expected, forbidden) in [
+        ("DirectAwait", vec!["Helpers.ResolveAsync"], None),
+        ("CfgAwait", vec!["Helpers.ResolveAsync"], None),
+        ("Replaced", vec!["Other.Resolve"], Some("Helpers.Resolve")),
+        (
+            "Alternatives",
+            vec!["Helpers.Resolve", "Other.Resolve"],
+            None,
+        ),
+        ("NestedArgument", vec![], Some("Helpers.Resolve")),
+    ] {
+        let anchors: Vec<_> = scan
+            .evidence
+            .iter()
+            .filter(|e| {
+                e.capability == Capability::FilesystemWrite
+                    && e.enclosing_symbol.as_deref() == Some(method)
+            })
+            .collect();
+        assert!(!anchors.is_empty(), "missing sink: {method}");
+        for anchor in anchors {
+            let observation = snapshot
+                .observations
+                .iter()
+                .find(|o| o.evidence_id == anchor.id)
+                .unwrap();
+            let definitions: Vec<_> = observation
+                .facts
+                .iter()
+                .filter(|f| f.kind == OperandFactKind::SemanticDefinition && f.role == "path")
+                .collect();
+            for name in &expected {
+                let definition = definitions
+                    .iter()
+                    .find(|f| f.value.contains(name))
+                    .unwrap_or_else(|| panic!("{method}: missing {name}: {definitions:?}"));
+                assert_eq!(definition.location.path, "Helpers.cs");
+                assert!(
+                    definition
+                        .remaining_checks
+                        .iter()
+                        .any(|c| c == "runtime_dispatch_and_replacement")
+                );
+            }
+            if let Some(name) = forbidden {
+                assert!(
+                    !definitions.iter().any(|f| f.value.contains(name)),
+                    "{method}: wrong producer"
+                );
+            }
+            assert!(
+                serde_json::to_value(observation).unwrap()["locally_complete_path_selection"]
+                    == false,
+                "{method}: navigation must not close unknown input"
+            );
+        }
+    }
+    // A second source project owns the stored property and its writes. Same-name
+    // fields in another type are not writers to the consumed property.
+    let refs = env_path("MEHSCAN_ROSLYN_NET8_REFS");
+    std::fs::write(&context, serde_json::to_vec(&json!({"projects": [
+        {"id":"reader", "target_framework":"net8.0", "language_version":"12.0", "sources":["App.cs"], "references":[], "reference_directories":[refs], "defines":[], "project_references":["writers"]},
+        {"id":"writers", "target_framework":"net8.0", "language_version":"12.0", "sources":["Helpers.cs"], "references":[], "reference_directories":[refs], "defines":[]}
+    ]})).unwrap()).unwrap();
+    let snapshot = csharp_semantic::collect(
+        &fixture.0,
+        &context,
+        &env_path("MEHSCAN_ROSLYN_BACKEND"),
+        &scan,
+    )
+    .unwrap();
+    let selected = |method: &str| {
+        let anchor = scan
+            .evidence
+            .iter()
+            .find(|e| {
+                e.capability == Capability::FilesystemWrite
+                    && e.enclosing_symbol.as_deref() == Some(method)
+            })
+            .unwrap();
+        snapshot
+            .observations
+            .iter()
+            .find(|o| o.evidence_id == anchor.id)
+            .unwrap()
+    };
+    let stored = selected("Stored");
+    let writes: Vec<_> = stored
+        .facts
+        .iter()
+        .filter(|f| f.role == "property_writer" && f.kind == OperandFactKind::LocalOperandOrigin)
+        .collect();
+    assert_eq!(writes.len(), 2, "{writes:?}");
+    assert!(writes.iter().any(|f| f.value.contains("Guid.NewGuid()")));
+    assert!(writes.iter().any(|f| f.value.contains("source.Key")));
+    assert!(writes.iter().all(|f| {
+        f.location.path == "Helpers.cs"
+            && f.remaining_checks
+                .iter()
+                .any(|c| c == "same_resource_instance_and_persistence")
+    }));
+    assert!(serde_json::to_value(stored).unwrap()["locally_complete_path_selection"] == false);
+    let many = selected("ManyStored");
+    assert_eq!(many.facts.iter().filter(|f| f.role == "property_writer" && f.kind == OperandFactKind::LocalOperandOrigin).count(), 8);
+    assert!(many.facts.iter().any(|f| {
+        f.role == "property_writer"
+            && f.kind == OperandFactKind::OperandBoundary
+            && f.remaining_checks
+                .iter()
+                .any(|c| c == "remaining_property_writers")
+    }));
+}
+
+#[test]
 #[ignore = "requires real .NET and ASP.NET 8/10 refs plus Roslyn backend"]
 fn html_proofs_and_shared_destinations_preserve_unsafe_and_distinct_cases() {
     let fixture = Fixture::new("output-destination");
