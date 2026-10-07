@@ -34,6 +34,11 @@ impl CsharpRpcProjectContext {
             .collect::<Vec<_>>();
         let mut contracts = BTreeMap::<String, Vec<BTreeSet<String>>>::new();
         for (_, _, source) in &sources {
+            // Every supported WCF contract spelling contains this identifier.
+            // gRPC/SignalR ingress is handled independently in per-file analysis.
+            if !source.contains("ServiceContract") {
+                continue;
+            }
             let Ok(document) = StrDoc::try_new(source, SupportLang::CSharp) else {
                 continue;
             };
@@ -68,6 +73,9 @@ impl CsharpRpcProjectContext {
             })
             .collect::<BTreeMap<_, _>>();
         let mut context = Self::default();
+        if contracts.is_empty() {
+            return context;
+        }
         for (path, _, source) in sources {
             let Ok(document) = StrDoc::try_new(source, SupportLang::CSharp) else {
                 continue;

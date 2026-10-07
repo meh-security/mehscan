@@ -5,6 +5,12 @@ implementation fact, such as a query builder, route policy, renderer, writer,
 or validation path. A shared CWE label or nearby file does not establish that
 the IDs use the same behavior.
 
+Choose shared source using [evidence packaging](evidence-packaging.md) when
+preparing a chunk: filesystem policy often fits one small implementation file;
+HTML needs renderer/writer context and exact helper binding. A supplied packet
+that covers the selected question/anchor rows replaces the initial card/sweep
+read below; inspect missing facts normally.
+
 1. Run `review-sweep --bundle REQUEST` to read the exact cards together. Read
    each `source_contexts` window once; rows reference it through `source_context_ids`.
    Read the row's `question_id` in `questions` for its question, category and playbook.

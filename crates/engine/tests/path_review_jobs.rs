@@ -62,6 +62,86 @@ fn process_fixture_root() -> PathBuf {
         .join("tests/fixtures/v2-process-flow")
 }
 
+#[test]
+fn source_only_inventory_rejects_external_backend_metadata() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/review-history-markers");
+    let inventory = mehscan_engine::investigation::build_review_inventory(&root, false).unwrap();
+    let value = serde_json::to_value(&inventory).unwrap();
+    assert!(
+        serde_json::from_value::<mehscan_engine::investigation::ReviewInventory>(value.clone())
+            .is_ok()
+    );
+    for field in ["semantic_inputs", "typescript_inputs"] {
+        let mut foreign = value.clone();
+        foreign[field] = serde_json::json!({"source": "external compiler context"});
+        assert!(
+            serde_json::from_value::<mehscan_engine::investigation::ReviewInventory>(foreign)
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn history_validates_source_derived_markers_and_rejects_modified_facts() {
+    use mehscan_engine::investigation::{
+        ReviewHistoryValidator, build_path_review_bundles, build_review_inventory,
+        build_selected_review_jobs,
+    };
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/review-history-markers");
+    let inventory = build_review_inventory(&root, false).unwrap();
+    let ids = inventory
+        .entries
+        .iter()
+        .map(|entry| entry.review_id.clone())
+        .collect();
+    let job = build_selected_review_jobs(&root, &inventory, &ids, None).unwrap();
+    let bundles = build_path_review_bundles(&job, None).unwrap();
+    let validator = ReviewHistoryValidator::new(&root, &inventory).unwrap();
+    let mut checked_marker = false;
+    for bundle in bundles.bundles {
+        validator.validate_bundle(&bundle).unwrap();
+        if let PathReviewBundlePayload::Observation { reviews } = &bundle.payload {
+            for (review_index, review) in reviews.iter().enumerate() {
+                for (fact_index, fact) in review.evidence.iter().enumerate() {
+                    if !fact.tags.iter().any(|tag| tag == "review-admission-marker") {
+                        continue;
+                    }
+                    checked_marker = true;
+                    assert!(!inventory.scan.evidence.contains(fact));
+                    let mut changed = bundle.clone();
+                    let PathReviewBundlePayload::Observation { reviews } = &mut changed.payload
+                    else {
+                        unreachable!()
+                    };
+                    reviews[review_index].evidence[fact_index]
+                        .captures
+                        .get_mut("operation")
+                        .unwrap()
+                        .text
+                        .push_str(" forged");
+                    assert!(validator.validate_bundle(&changed).is_err());
+                    let mut changed = bundle.clone();
+                    let PathReviewBundlePayload::Observation { reviews } = &mut changed.payload
+                    else {
+                        unreachable!()
+                    };
+                    reviews[review_index].evidence[fact_index]
+                        .location
+                        .start
+                        .line += 1;
+                    assert!(validator.validate_bundle(&changed).is_err());
+                }
+            }
+        }
+    }
+    assert!(
+        checked_marker,
+        "exercise an admission marker absent from raw scan facts"
+    );
+}
+
 fn crapi_root() -> PathBuf {
     std::env::var_os("MEHSCAN_CRAPI_ROOT")
         .map(PathBuf::from)
@@ -690,6 +770,77 @@ fn run_budget_reserves_every_capability_and_preserves_deferred_reviews() {
     )
     .expect_err("a run too small to reserve every capability must fail clearly");
     assert!(error.to_string().contains("cannot reserve one review"));
+}
+
+#[test]
+fn deduplicates_exact_csharp_operations_without_merging_roles_or_calls() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/fixtures/review-csharp-operation-duplicates");
+    let scan = mehscan_engine::scan_path(&root).expect("C# operation fixture should scan");
+    let raw_count = |rule: &str| {
+        scan.evidence
+            .iter()
+            .filter(|item| item.rule_id == rule)
+            .count()
+    };
+    assert_eq!(raw_count("csharp-file-copy-source"), 3);
+    assert_eq!(raw_count("csharp-file-copy-destination"), 3);
+    assert_eq!(raw_count("csharp-process-start-info"), 4);
+    assert_eq!(raw_count("csharp-process-start"), 6);
+
+    let jobs = mehscan_engine::investigation::build_all_path_review_jobs(&root, Some(8), false)
+        .expect("C# operation review jobs should build");
+    let anchors = jobs
+        .observation_reviews
+        .iter()
+        .flat_map(|review| {
+            review
+                .evidence
+                .iter()
+                .filter(|item| review.anchor_evidence_ids.contains(&item.id))
+        })
+        .collect::<Vec<_>>();
+    let count = |rule: &str| anchors.iter().filter(|item| item.rule_id == rule).count();
+    assert_eq!(count("csharp-file-copy-source"), 3);
+    assert_eq!(count("csharp-file-copy-destination"), 3);
+    assert_eq!(count("csharp-file-move-source"), 1);
+    assert_eq!(count("csharp-file-move-destination"), 1);
+    assert_eq!(
+        count("csharp-filesystem-read"),
+        1,
+        "only ReadAllText needs the generic anchor"
+    );
+    assert_eq!(
+        count("csharp-process-start-info"),
+        3,
+        "separate starts remain separate jobs"
+    );
+    assert_eq!(
+        count("csharp-process-start"),
+        3,
+        "unresolved descriptor, direct overload and non-admitted companion remain"
+    );
+    for item in anchors
+        .iter()
+        .filter(|item| item.rule_id == "csharp-process-start-info")
+    {
+        assert!(item.captures.contains_key("command"));
+        assert!(item.captures.contains_key("arguments"));
+        assert!(item.captures.contains_key("shell_policy"));
+    }
+    let superseded = jobs
+        .review_coverage
+        .admission_audit
+        .counts
+        .iter()
+        .filter(|entry| entry.disposition == ReviewAdmissionDisposition::DuplicateSuperseded)
+        .map(|entry| entry.count)
+        .sum::<usize>();
+    assert_eq!(
+        superseded, 6,
+        "three copy-source and three descriptor duplicates"
+    );
 }
 
 #[test]

@@ -5,13 +5,16 @@ not answers or a limit on research. For several IDs, first follow
 [shared-pattern review](pattern-sweep.md); reuse source facts without copying
 verdicts.
 
-1. **Select the exact subject.** For several related IDs, read the exact row and
+1. **Select the exact subject.** If a source-bound packet already supplies the
+   exact selected question/anchor rows and source, use that initial view and
+   request only missing facts. Otherwise, for several related IDs, read the exact row and
    `question_id` and referenced source windows from `review-sweep --bundle REQUEST`; reuse them
    instead of issuing another card query. Otherwise run `mehscan investigate review-card --bundle
    REQUEST --review-id ID` and read its security question, anchor operation and
    operand, decision facts, and playbook. The card shows only a small excerpt
-   and locations; request further source when it can change the decision. Copy
-   `selected_anchor_id` into the response and cite it for a decisive verdict.
+   and locations; request further source when it can change the decision.
+   The finalizer adds the selected anchor and its citation to brief drafts.
+   Preserve `selected_anchor_id` and its citation when writing a full response.
    Name that exact operation in the summary. Read the matching
    [bucket guide](triage-buckets.md). Do not print the
    full request or response schema into model context; the finalizer reads the
@@ -25,7 +28,14 @@ verdicts.
    straight to its target; check that target instead of repeating input/caller
    research. An encoding call still needs the actual output context and its
    callable/options contract. Facts with remaining checks are not verdicts.
-   A `local_operand_origin` locates one initializer. `operand_boundary` names
+   A `local_operand_origin` locates a source producer. Inspect alternatives and
+   accumulated parts without treating them as a safe value. A helper return
+   still needs its call-site arguments. `local_call_argument` locates a possible
+   caller argument; verify its actual value mapping. A bounded caller list does
+   not establish all callers, parameter immutability or runtime dispatch.
+   SQL `query_value` types locate observed construction terms; inspect formatting,
+   producers and the rest of the reaching query before deciding grammar safety.
+   `operand_boundary` names
    the use or shape where reuse stopped; inspect that location. Query text and
    values remain separate questions, and `process_shell_mode` settles only
    the observed option, not executable, argument, platform or caller policy.
@@ -36,9 +46,17 @@ verdicts.
    expanding caller/producer research; otherwise follow the missing input edge.
    Use `source` for a known path, `references` for callers or uses,
    `enclosing-at` for a known file and line, and `symbol --path FILE` for a
-   definition in a known file. Prefer scoped reads after locating the helper.
+   definition in a known file. Start caller and producer searches in the authored
+   component using `--path-prefix DIR`, guided by the review plan/provenance.
+   Start with `references --summary true` for per-file locations and short previews;
+   read selected source windows for arguments and controls. Returned occurrence
+   counts cover the bounded query, not every caller. Full references remain available.
+   Follow mapped originals instead of researching each generated copy. Widen when
+   callers cross that boundary, the result is truncated, or a needed edge is absent;
+   an empty scoped search does not establish that no callers exist.
    Use `paths` only when the path is unknown, and other commands when their
-   exact question fits. Scope common identifiers to a known file and copy
+   exact question fits. Use `references --path-prefix DIR` for a known component
+   or views directory; `--path` names one file. Scope common identifiers and copy
    paths from current evidence rather
    than an installed framework layout remembered from elsewhere. Prefer a
    distinctive symbol for wider searches; a truncated hit list is not a
@@ -97,35 +115,6 @@ verdicts.
      manifest or root README before stopping. `paths` searches indexed source;
      use `source` for a known conventional filename even when scan admission
      or an empty path search omitted it.
-5. **Stop and answer briefly.** Stop when the chain is established,
-   contradicted, or blocked by a specific unavailable fact. The query journal
-   is the audit trail. Write a brief JSON draft with one result per bundle ID:
-   `{ "results": [{ "review_id": "ID", "decision": "issue", "confidence":
-   "high", "summary": "Exact operation and verdict", "reason": "Evidence chain",
-   "evidence": [{"path": "relative/file", "start_line": 10, "end_line": 14}] }] }`.
-   Use only decision-relevant source ranges already inspected. Keep each range
-   to a few lines around the operation or control (usually at most 20; hard
-   limit 40 lines and 4000 characters). Use two ranges for separated facts
-   rather than one long span. The CLI reads
-   exact source, fills artifact locations and excerpts, cites the selected
-   anchor, and attaches the query journal. Keep `summary` and `reason` concise;
-   do not reproduce source in them. For `needs_review`, add `checks` with the
-   one decision-changing missing fact and `blockers` if appropriate. The full
-   schema 1.3 draft remains available when you need explicit artifact citations
-   or reviewer-origin leads. Save drafts with shell redirection or another file
-   write that prints only the path or a short success message. Do not use a
-   patch tool for drafts: its diff echoes the full JSON into context. Avoid
-   shell one-liners that construct large JSON objects. Run
-   `review-bundle-finalize --bundle REQUEST --draft DRAFT --journal-dir RUN/journals
-   --output RESPONSE --source-root ROOT`. It attaches query counts from the
-   journal and validates the final response. Save RESPONSE as
-   `RUN/responses/REQUEST_FILENAME` so the final report can locate it directly.
-   For a separate validation check, use
-   `review-bundle-triage --bundle REQUEST --responses RESPONSE --source-root
-   ROOT --summary true`; the full response is already saved on disk.
-   If it rejects a source range, select a smaller range that contains the
-   decision-changing operation or control.
-
-The validator checks response shape, selected anchor, citation links, and exact
-source excerpts. It cannot decide whether a control works or whether your
-verdict follows from the evidence; inspect that reasoning yourself.
+5. **Finish once the chain is settled or precisely blocked.** Follow
+   [finalize and report](finish-review.md) to save the brief draft, validate it,
+   and produce the report. Load that guide at this stage.

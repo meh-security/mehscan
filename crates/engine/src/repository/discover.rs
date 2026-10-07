@@ -259,11 +259,25 @@ pub(crate) fn discover(requested_root: &Path) -> Result<Discovery, EngineError> 
 }
 
 /// Apply the same ignore and classification rules as a full discovery while
-/// walking only the ancestors of one requested file.
+/// walking only the ancestors and contents of one requested file or directory.
 pub(crate) fn discover_selected(
     requested_root: &Path,
     relative: &str,
 ) -> Result<Discovery, EngineError> {
+    let normalized = normalize_selection(relative)?;
+    discover_with_selection(requested_root, false, Some(&normalized), true)
+}
+
+/// Text navigation needs ignore/classification rules, but no compiler profile.
+pub(crate) fn discover_text(
+    requested_root: &Path,
+    relative: Option<&str>,
+) -> Result<Discovery, EngineError> {
+    let normalized = relative.map(normalize_selection).transpose()?;
+    discover_with_selection(requested_root, false, normalized.as_deref(), false)
+}
+
+fn normalize_selection(relative: &str) -> Result<String, EngineError> {
     let normalized = relative.replace('\\', "/");
     let path = Path::new(&normalized);
     if path.is_absolute()
@@ -276,20 +290,21 @@ pub(crate) fn discover_selected(
             "query path must stay inside the scan root".to_string(),
         ));
     }
-    discover_with_selection(requested_root, false, Some(&normalized))
+    Ok(normalized)
 }
 
 pub(crate) fn discover_with_options(
     requested_root: &Path,
     include_nonproduction: bool,
 ) -> Result<Discovery, EngineError> {
-    discover_with_selection(requested_root, include_nonproduction, None)
+    discover_with_selection(requested_root, include_nonproduction, None, true)
 }
 
 fn discover_with_selection(
     requested_root: &Path,
     include_nonproduction: bool,
     selected_relative: Option<&str>,
+    include_build_context: bool,
 ) -> Result<Discovery, EngineError> {
     let root = fs::canonicalize(requested_root).map_err(|error| {
         EngineError(format!(
@@ -305,7 +320,7 @@ fn discover_with_selection(
         )));
     }
 
-    let (c_family_context, compilation_diagnostic) = if metadata.is_dir() {
+    let (c_family_context, compilation_diagnostic) = if metadata.is_dir() && include_build_context {
         match CFamilyCompilationContext::load(&root) {
             Ok(context) => (context, None),
             Err(message) => (None, Some(message)),
@@ -392,9 +407,9 @@ fn walk_directory(
                 paths.push(format!("{}/", relative_path(&filter_root, entry.path())));
             }
             !ignored
-                && selected
-                    .as_ref()
-                    .is_none_or(|target| target.starts_with(entry.path()))
+                && selected.as_ref().is_none_or(|target| {
+                    target.starts_with(entry.path()) || entry.path().starts_with(target)
+                })
         });
 
     for entry in builder.build() {
@@ -566,6 +581,46 @@ pub(crate) fn relative_path(root: &Path, path: &Path) -> String {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn text_navigation_skips_compiler_profiles_but_ast_discovery_keeps_them() {
+        let root = std::env::temp_dir().join(format!(
+            "mehscan-text-discovery-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/code.c"), "int value;\n").unwrap();
+        fs::write(root.join("src/code.h"), "int value;\n").unwrap();
+        fs::write(root.join("compile_commands.json"), r#"[{"directory":".","file":"src/code.c","arguments":["cc","-DPROFILE=1","src/code.c"]}]"#).unwrap();
+        let ast = discover_selected(&root, "src/code.h").unwrap();
+        assert_eq!(ast.files[0].class, FileClass::Supported(Language::C));
+        assert_eq!(ast.files[0].build_symbols.get("PROFILE"), Some(&true));
+        let text = discover_text(&root, Some("src/code.h")).unwrap();
+        assert_eq!(text.files[0].relative, "src/code.h");
+        assert!(text.files[0].build_symbols.is_empty());
+        fs::write(
+            root.join("compile_commands.json"),
+            "broken compiler metadata",
+        )
+        .unwrap();
+        assert!(
+            discover_text(&root, Some("src/code.h"))
+                .unwrap()
+                .diagnostics
+                .is_empty()
+        );
+        assert!(
+            !discover_selected(&root, "src/code.h")
+                .unwrap()
+                .diagnostics
+                .is_empty()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn normalizes_relative_paths() {

@@ -11,6 +11,15 @@ Read shared source once and reuse its inspected location for related IDs rather
 than issuing the same query into each journal. The response cites only decisive
 source; the journals preserve the complete lookup history.
 
+Keep accounting output compact. Save reports, ledgers and large inventory lists
+to files; read counts and the relevant selected/reopened IDs, not the expanded
+report or whole remaining queue. History roots need their bound
+`inventory/overview.json`. Read request paths from the manifest's `bundles`;
+top-level JSON files such as `input-binding.json` are not review requests.
+Each chunk keeps its matching responses in `CHUNK/responses/REQUEST_FILENAME`.
+Keep follow-up chunks under the run; `review-ledger --history RUN` reads nested
+manifests too. Inspect its actual `reviewed_count` before reporting coverage.
+
 | Need | Command |
 | --- | --- |
 | Candidate scan | `mehscan scan ROOT --format candidates` |
@@ -29,9 +38,10 @@ source; the journals preserve the complete lookup history.
 | Exact source | `mehscan investigate source ROOT --path FILE --start-line N --end-line M` |
 | File outline | `mehscan investigate outline ROOT --path FILE` |
 | Find readable paths | `mehscan investigate paths ROOT --name TEXT` |
+| Code provenance candidates | `mehscan investigate provenance ROOT --inventory RUN/inventory --limit 200` (inventory scopes header reads/output; `--path-prefix DIR` scopes a component) |
 | Enclosing code at known location | `mehscan investigate enclosing-at ROOT --path FILE --line N` |
 | Enclosing code from ID only | `mehscan investigate enclosing ROOT --evidence-id ID` |
-| Identifier uses | `mehscan investigate references ROOT --symbol NAME --path FILE --limit 20` (omit `--path` for repository-wide search) |
+| Identifier or markup uses | `mehscan investigate references ROOT --symbol NAME --path-prefix DIR --limit 20 --summary true` (per-file locations/previews; `--path FILE` scopes one file; omit summary for full matches) |
 | Symbol definitions | `mehscan investigate symbol ROOT --name NAME --path FILE --limit 20` (omit `--path` only when the defining file is unknown) |
 | Import uses | `mehscan investigate imports ROOT --name NAME --limit 200` |
 | Exact syntax | `mehscan investigate structural ROOT --language LANG --pattern PATTERN --path FILE` |
@@ -49,8 +59,12 @@ finalization and `mehscan report`; do not edit the generated report directly.
 The response schema and CLI help are authoritative for the installed Mehscan
 version. Query results are JSON; inspect all `results`, `truncated`, and
 `skipped_files` before concluding that a lookup found nothing.
-Save finalized responses as `RUN/responses/REQUEST_FILENAME`; `report` reads
+Save finalized responses as `CHUNK/responses/REQUEST_FILENAME`; `report` reads
 that directory and matches each response to its manifest request filename.
+Keep `input-binding.json` with copied manifests and requests for historical
+verdict reuse. A stale source or review-contract binding requires
+fresh review; rebuilding a root overview cannot make an old chunk current.
+Regenerate older inventories and ledgers: both now require schema 2.
 For C/C++ structural calls use a complete statement such as `memcpy($DEST,
 $SRC, $SIZE);`, or use `native-call-sites` for a callee inventory. PHP structural
 patterns are parsed as one code construct; do not combine several statements.
@@ -58,12 +72,17 @@ Pass structural patterns literally so the shell preserves `$VALUE` and
 `$$$ARGS`; in PowerShell use a literal here-string for patterns containing quotes.
 `source` reads an exact requested text file under the scan root, including
 templates omitted from scan admission; repository ignore rules still apply.
-Use a known path directly, or `paths` when the path is unknown. Read the
+Use a known path directly, or `paths` when the path is unknown. Use a
+bare identifier with `symbol --name Shipment`, not `--name "class Shipment"`;
+`paths` searches filenames, not method definitions. Read the
 applicable engine contract or a repository behavior test when template
 interpretation determines the verdict.
 `--path` always names one file, never a directory. `outline` and `enclosing-at`
 need a file with a supported parser; use `source` for tests or templates that
 Mehscan reports as text-only.
+`references --path-prefix DIR` searches a component or template directory with
+repository ignore rules. Template hits are text locations, not parser or
+dataflow evidence. An empty scoped search does not establish runtime absence.
 The default brief draft needs only `results` with `review_id`, `decision`,
 `confidence`, `summary`, optional `reason`, and optional `evidence` source
 ranges (`path`, `start_line`, `end_line`). Finalization reads those exact lines,

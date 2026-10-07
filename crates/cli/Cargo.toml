@@ -12,6 +12,7 @@ name = "mehscan"
 path = "src/main.rs"
 
 [dependencies]
+fs2 = "0.4.3"
 mehscan-core = { path = "../core" }
 mehscan-engine = { path = "../engine" }
 serde.workspace = true

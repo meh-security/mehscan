@@ -6,6 +6,7 @@ mod csharp_review;
 pub mod evaluation;
 pub mod impact;
 pub mod investigation;
+pub mod provenance;
 mod report_policy;
 pub mod repository;
 pub mod rules;

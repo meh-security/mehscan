@@ -262,6 +262,7 @@ fn build_family_paths(
         .filter(|item| {
             item.kind == EvidenceKind::Sink
                 && item.capability == family.sink.capability
+                && !super::csharp_mainstream::is_duplicate_copy_source(item, evidence)
                 && (!is_identity_boundary_relation(family)
                     || item
                         .provenance

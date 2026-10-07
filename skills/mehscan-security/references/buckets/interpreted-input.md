@@ -28,8 +28,11 @@ alone does not establish what a browser will execute.
   relevant argument. Fixed query text with bound values differs from text
   concatenation. Search the actual identifier used at call sites and treat
   text references as leads; check whether aliases, dynamic dispatch, or an
-  exposed wrapper leave a caller outside that inventory. When an application
-  operation that should treat input as a value shows a variable inserted into
+  exposed wrapper leave a caller outside that inventory. Check the inserted
+  values' declared types, conversions and formatting. Source-proven restrictions
+  that prevent SQL grammar changes can settle this property without binding;
+  parameterization can remain a hardening recommendation. When an application
+  operation that should treat input as a value shows an unconstrained value inserted into
   executable SQL grammar without binding, report the
   unsafe construction as `issue` even if runtime or attacker reachability
   remains unproved after targeted checks. Use `low` confidence for that
@@ -90,6 +93,11 @@ alone does not establish what a browser will execute.
   source, escaped data, or an engine option such as a layout path; a fixed
   view name alone does not settle what the engine reads. Use the template,
   framework contract, or repository tests when its interpretation is decisive.
+  When a dependency transform decides the result, locate its manifest or resource
+  registration and version. Inspect the versioned primary implementation or
+  contract before declaring it unavailable. Record external contract evidence
+  separately from Mehscan source artifacts; a declared version is not proof of
+  the actual deployed asset, and a familiar helper name alone is not a contract.
   For unconstrained HTML output, identify who can write the exact rendered field. An
   admin-only publisher of intentionally rich content does not establish XSS
   merely because the renderer uses raw HTML. If the writer's trust or content

@@ -136,6 +136,7 @@ void Multiple(DbConnection db, string value) {
 using (var command = db.CreateCommand()) { command.CommandText = "SELECT " + value; command.ExecuteScalar(); }
 using (var command = db.CreateCommand()) { command.CommandText = "DELETE " + value; command.ExecuteNonQuery(); }
 }
+
 void Changed(DbConnection db, string value) { var command = db.CreateCommand(); command = Build(); command.CommandText = value; command.ExecuteScalar(); }
 void Escaped(DbConnection db, string value) { var command = db.CreateCommand(); Adjust(command); command.CommandText = value; command.ExecuteScalar(); }
 void Field(DbCommand command, string value) { command.CommandText = value; command.ExecuteScalar(); }
@@ -232,4 +233,29 @@ fn lookalike_command_definitions_never_receive_constructor_slot_facts() {
                 && f.value == "command_definition_identity")
     );
     assert!(!item.captures.contains_key("query_text"));
+}
+
+#[test]
+fn command_admission_follows_direct_aliases_but_requires_factory_execution() {
+    let source = r#"using System.Data.Common;
+class Review {
+DbCommand command;
+void Alias(DbCommand original, string input) { var command = original; command.CommandText = input; }
+void Chain(DbCommand original, string input) { var first = original; var command = first; command.CommandText = input; }
+void Unknown(object original, string input) { var command = original; command.CommandText = input; }
+void Factory(DbConnection db, string input) { using var command = db.CreateCommand(); command.CommandText = input; command.ExecuteScalar(); }
+void NoExecution(DbConnection db, string input) { using var command = db.CreateCommand(); command.CommandText = input; }
+void Replaced(DbCommand original, string input) { var command = original; command = Build(); command.CommandText = input; }
+void ShadowFactory(string input) { var command = Build(); command.CommandText = input; }
+}
+"#;
+    let fixture = Fixture::new("alias-admission", source);
+    let scan = mehscan_engine::scan_path(&fixture.0).unwrap();
+    let methods: std::collections::BTreeSet<_> = scan
+        .evidence
+        .iter()
+        .filter(|e| e.rule_id == "csharp-sql-command-text")
+        .filter_map(|e| e.enclosing_symbol.as_deref())
+        .collect();
+    assert_eq!(methods, ["Alias", "Chain", "Factory"].into_iter().collect());
 }

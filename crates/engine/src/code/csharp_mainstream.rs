@@ -284,7 +284,13 @@ pub(crate) fn add_mainstream_sinks<'tree>(
         if arguments.len() < 2 {
             continue;
         }
-        let mode = compact(arguments[1].text().as_ref());
+        let Some(path_argument) = formal_argument(&creation, "path", 0) else {
+            continue;
+        };
+        let Some(mode_argument) = formal_argument(&creation, "mode", 1) else {
+            continue;
+        };
+        let mode = compact(mode_argument.text().as_ref());
         let capability = if mode.ends_with("FileMode.Open") {
             Some(Capability::FilesystemRead)
         } else if ["Create", "CreateNew", "Append", "Truncate"]
@@ -307,7 +313,7 @@ pub(crate) fn add_mainstream_sinks<'tree>(
                 },
                 "CWE-22",
                 &["filesystem", "path", "filestream", "explicit-file-mode"],
-                [("path", &arguments[0]), ("mode", &arguments[1])],
+                [("path", &path_argument), ("mode", &mode_argument)],
                 comments,
                 conditional,
                 literals,
@@ -584,7 +590,22 @@ fn invocation_parts<'tree>(
     invocation: &Node<'tree, StrDoc<SupportLang>>,
 ) -> Option<(String, Vec<Node<'tree, StrDoc<SupportLang>>>)> {
     let function = invocation.field("function")?.text().into_owned();
-    Some((function, node_arguments(invocation)?))
+    let arguments = if matches!(
+        compact(&function).as_str(),
+        "File.Copy" | "System.IO.File.Copy" | "File.Move" | "System.IO.File.Move"
+    ) {
+        let mut arguments = vec![
+            formal_argument(invocation, "sourceFileName", 0)?,
+            formal_argument(invocation, "destFileName", 1)?,
+        ];
+        if let Some(overwrite) = formal_argument(invocation, "overwrite", 2) {
+            arguments.push(overwrite);
+        }
+        arguments
+    } else {
+        node_arguments(invocation)?
+    };
+    Some((function, arguments))
 }
 
 fn node_arguments<'tree>(
@@ -606,7 +627,113 @@ fn argument_expression(
     if argument.kind().as_ref() != "argument" {
         return Some(argument);
     }
-    argument.children().find(|child| child.is_named())
+    // A named argument's first identifier is its parameter label, not its value.
+    argument.children().filter(|child| child.is_named()).last()
+}
+
+fn formal_argument<'tree>(
+    node: &Node<'tree, StrDoc<SupportLang>>,
+    name: &str,
+    index: usize,
+) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    let list = node.field("arguments")?;
+    let arguments = list
+        .children()
+        .filter(|child| child.is_named())
+        .collect::<Vec<_>>();
+    let named = |argument: &Node<'tree, StrDoc<SupportLang>>| {
+        argument
+            .children()
+            .any(|child| child.text().as_ref() == ":")
+    };
+    if let Some(argument) = arguments.iter().find(|argument| {
+        named(argument)
+            && argument
+                .children()
+                .find(|child| child.is_named())
+                .is_some_and(|label| label.text().as_ref() == name)
+    }) {
+        return argument_expression(argument.clone());
+    }
+    arguments
+        .get(index)
+        .filter(|argument| !named(argument))
+        .cloned()
+        .and_then(argument_expression)
+}
+
+/// Bind known filesystem roles before local flow consumes generic rule captures.
+pub(crate) fn normalize_filesystem_arguments<'tree>(
+    path: &str,
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    language: Language,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut [Evidence],
+) {
+    if language != Language::Csharp {
+        return;
+    }
+    for item in evidence.iter_mut().filter(|e| {
+        matches!(
+            e.rule_id.as_str(),
+            "csharp-filesystem-read" | "csharp-filesystem-write"
+        )
+    }) {
+        let Some(call) = root.dfs().find(|n| {
+            n.kind().as_ref() == "invocation_expression"
+                && n.range().start == item.location.start.byte_offset
+                && n.range().end == item.location.end.byte_offset
+        }) else {
+            continue;
+        };
+        let Some(function) = call.field("function") else {
+            continue;
+        };
+        let callee = compact(function.text().as_ref());
+        let roles = if matches!(callee.as_str(), "File.Copy" | "System.IO.File.Copy") {
+            vec![
+                ("path", "sourceFileName", 0),
+                ("destination", "destFileName", 1),
+            ]
+        } else if matches!(
+            callee.as_str(),
+            "Directory.Move" | "System.IO.Directory.Move"
+        ) {
+            vec![("source", "sourceDirName", 0), ("path", "destDirName", 1)]
+        } else {
+            vec![("path", "path", 0)]
+        };
+        for (role, name, index) in roles {
+            if let Some(argument) = formal_argument(&call, name, index) {
+                item.captures.insert(
+                    role.into(),
+                    Capture {
+                        text: argument.text().into_owned(),
+                        location: location(path, &argument),
+                    },
+                );
+                item.context
+                    .literals
+                    .insert(role.into(), literals.evaluate(&argument));
+            }
+        }
+    }
+}
+
+/// Same operation, same path and same property. Raw evidence remains available.
+pub(crate) fn is_duplicate_copy_source(item: &Evidence, evidence: &[Evidence]) -> bool {
+    item.rule_id == "csharp-filesystem-read"
+        && item.kind == EvidenceKind::Sink
+        && item.captures.get("path").is_some_and(|path| {
+            evidence.iter().any(|other| {
+                other.rule_id == "csharp-file-copy-source"
+                    && other.kind == item.kind
+                    && other.capability == item.capability
+                    && other.cwe_candidates == item.cwe_candidates
+                    && other.location == item.location
+                    && other.captures.get("path") == Some(path)
+            })
+        })
 }
 
 fn dangerous_json_settings(

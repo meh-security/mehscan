@@ -477,6 +477,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 | "imports"
                 | "references"
                 | "paths"
+                | "provenance"
                 | "native-call-sites"
                 | "structural"
         )
@@ -484,6 +485,48 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
         return Err("--journal is available only for read-only investigation queries".to_string());
     }
     match operation.as_str() {
+        "provenance" => {
+            let prefix = parsed.optional("--path-prefix");
+            let limit = parsed.optional_usize("--limit")?;
+            let inventory = parsed.optional("--inventory");
+            parsed.finish()?;
+            let paths = inventory
+                .map(|directory| -> Result<BTreeSet<String>, String> {
+                    let value: serde_json::Value = serde_json::from_slice(
+                        &fs::read(Path::new(&directory).join("inventory.json"))
+                            .map_err(|e| e.to_string())?,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    value["entries"]
+                        .as_array()
+                        .ok_or("inventory entries are missing".into())
+                        .and_then(|entries| {
+                            entries
+                                .iter()
+                                .map(|entry| {
+                                    entry["path"]
+                                        .as_str()
+                                        .map(str::to_owned)
+                                        .ok_or("inventory entry path is missing".into())
+                                })
+                                .collect()
+                        })
+                })
+                .transpose()?;
+            print_logged_query(
+                engine(mehscan_engine::provenance::inspect_review_paths(
+                    &root,
+                    prefix.as_deref(),
+                    limit,
+                    paths.as_ref(),
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
+        }
         "funnel" => {
             parsed.finish()?;
             print_json(&engine(
@@ -495,11 +538,16 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let include_review_material = parsed
                 .optional_bool("--include-review-material")?
                 .unwrap_or(false);
+            let timings = parsed.optional_bool("--timings")?.unwrap_or(false);
             parsed.finish()?;
-            let inventory = engine(mehscan_engine::investigation::build_review_inventory(
-                &root,
-                include_review_material,
-            ))?;
+            let mut profile = mehscan_engine::investigation::ReviewInventoryProfile::default();
+            let inventory = engine(
+                mehscan_engine::investigation::build_review_inventory_profiled(
+                    &root,
+                    include_review_material,
+                    timings.then_some(&mut profile),
+                ),
+            )?;
             fs::create_dir_all(&output).map_err(|error| {
                 format!(
                     "could not create inventory directory {}: {error}",
@@ -509,6 +557,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let summary = serde_json::json!({
                 "schema_version": inventory.schema_version,
                 "source_fingerprint": inventory.source_fingerprint,
+                "input_fingerprint": engine(inventory.input_fingerprint())?,
                 "include_review_material": inventory.include_review_material,
                 "review_count": inventory.entries.len(),
                 "coverage": inventory.scan.coverage.totals,
@@ -559,6 +608,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let overview = serde_json::json!({
                 "schema_version": inventory.schema_version,
                 "source_fingerprint": inventory.source_fingerprint,
+                "input_fingerprint": engine(inventory.input_fingerprint())?,
                 "review_count": inventory.entries.len(),
                 "coverage": inventory.scan.coverage.totals,
                 "by_capability": by_capability,
@@ -568,7 +618,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "value_deferred_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_some()).count(),
                 "value_active_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_none()).count(),
                 "value_deferrals_by_reason": value_deferrals_by_reason,
-                "value_conditional_count": inventory.entries.iter().filter(|entry| entry.value_hint.as_ref().is_some_and(|hint| hint.depends_on.is_some() || hint.reason == "ordinary_php_sink_inventory")).count(),
+                "value_conditional_count": inventory.entries.iter().filter(|entry| entry.value_hint.as_ref().is_some_and(|hint| hint.depends_on.is_some() || matches!(hint.reason.as_str(), "ordinary_php_sink_inventory"))).count(),
                 "value_dependency_count": inventory.entries.iter().filter_map(|entry| entry.value_hint.as_ref()?.depends_on.as_deref()).collect::<BTreeSet<_>>().len(),
                 "top_areas": top_areas,
             });
@@ -587,6 +637,12 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 serde_json::to_vec(&inventory).map_err(|error| error.to_string())?,
             )
             .map_err(|error| format!("could not write scan cache: {error}"))?;
+            if timings {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&profile).map_err(|e| e.to_string())?
+                );
+            }
             print_json(
                 &serde_json::json!({"overview": output.join("overview.json"), "inventory": output.join("inventory.json"), "review_count": inventory.entries.len()}),
             )
@@ -825,6 +881,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     "--max-total-reviews cannot be used with selected review IDs".to_string(),
                 );
             }
+            let mut input_fingerprint = None;
+            let mut source_fingerprint = None;
             let (job, job_profile) =
                 if let (Some(inventory_dir), Some(ids)) = (inventory_dir, selected_ids) {
                     let cache_path = inventory_dir.join("scan-cache.json");
@@ -833,6 +891,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                             format!("could not read {}: {error}", cache_path.display())
                         })?)
                         .map_err(|error| format!("invalid review inventory: {error}"))?;
+                    input_fingerprint = Some(engine(inventory.input_fingerprint())?);
+                    source_fingerprint = Some(inventory.source_fingerprint.clone());
                     let ids = ids
                         .split(',')
                         .map(str::trim)
@@ -852,15 +912,27 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                             ));
                         }
                     }
-                    (
-                        engine(mehscan_engine::investigation::build_selected_review_jobs(
-                            &root,
-                            &inventory,
-                            &ids,
-                            context_lines,
-                        ))?,
-                        None,
-                    )
+                    if timings {
+                        let (job, profile) = engine(
+                            mehscan_engine::investigation::build_selected_review_jobs_profiled(
+                                &root,
+                                &inventory,
+                                &ids,
+                                context_lines,
+                            ),
+                        )?;
+                        (job, Some(profile))
+                    } else {
+                        (
+                            engine(mehscan_engine::investigation::build_selected_review_jobs(
+                                &root,
+                                &inventory,
+                                &ids,
+                                context_lines,
+                            ))?,
+                            None,
+                        )
+                    }
                 } else if timings {
                     let (job, profile) = engine(
                         mehscan_engine::investigation::build_all_path_review_jobs_profiled(
@@ -893,12 +965,40 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 started.elapsed().as_millis() - review_jobs_milliseconds;
             bundle_set.manifest.scope.extend(scope);
             write_path_review_bundles(&output, &bundle_set)?;
+            {
+                let source_fingerprint = match source_fingerprint {
+                    Some(value) => value,
+                    None => {
+                        engine(mehscan_engine::investigation::review_repository_fingerprint(&root))?
+                    }
+                };
+                let mut requests = BTreeMap::new();
+                for entry in &bundle_set.manifest.bundles {
+                    let bytes = fs::read(output.join("requests").join(&entry.filename))
+                        .map_err(|e| e.to_string())?;
+                    requests.insert(
+                        entry.filename.clone(),
+                        mehscan_engine::investigation::review_content_fingerprint(&bytes),
+                    );
+                }
+                fs::write(
+                    output.join("input-binding.json"),
+                    serde_json::to_vec_pretty(&ReviewChunkBinding {
+                        input_fingerprint,
+                        source_fingerprint,
+                        requests,
+                    })
+                    .map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+            }
             if timings {
                 eprintln!(
                     "{}",
                     serde_json::json!({
                         "review_jobs_milliseconds": review_jobs_milliseconds,
                         "review_job_phases": job_profile.as_ref().map(|profile| serde_json::json!({
+                            "inventory_validation_milliseconds": profile.inventory_validation_milliseconds,
                             "scan_milliseconds": profile.scan_milliseconds,
                             "source_load_milliseconds": profile.source_load_milliseconds,
                             "context_admission_milliseconds": profile.context_admission_milliseconds,
@@ -1421,15 +1521,26 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
         "references" => {
             let symbol = parsed.required("--symbol")?;
             let path = parsed.optional("--path");
+            let path_prefix = parsed.optional("--path-prefix");
             let limit = parsed.optional_usize("--limit")?;
+            let summary = parsed.optional_bool("--summary")?.unwrap_or(false);
             parsed.finish()?;
             print_logged_query(
                 engine(mehscan_engine::investigation::find_text_references(
                     &root,
                     &symbol,
                     path.as_deref(),
+                    path_prefix.as_deref(),
                     limit,
-                )),
+                ))
+                .and_then(|result| {
+                    let value = serde_json::to_value(result).map_err(|e| e.to_string())?;
+                    Ok(if summary {
+                        compact_references(value)
+                    } else {
+                        value
+                    })
+                }),
                 journal.as_deref(),
                 &operation,
                 &root,
@@ -1533,17 +1644,29 @@ fn print_logged_query<T: serde::Serialize>(
                 )
             })?;
         }
+        let mut record = serde_json::to_vec(&entry).map_err(|error| {
+            format!(
+                "could not serialize query journal {}: {error}",
+                path.display()
+            )
+        })?;
+        record.push(b'\n');
         let mut file = fs::OpenOptions::new()
             .create(true)
+            // Windows locking requires read or generic write access; append
+            // access alone cannot acquire a byte-range lock.
+            .read(true)
             .append(true)
             .open(path)
             .map_err(|error| format!("could not open query journal {}: {error}", path.display()))?;
-        serde_json::to_writer(&mut file, &entry).map_err(|error| {
+        // Separate CLI processes can share an ID's journal. Keep the whole
+        // record under one OS lock, including any partial writes.
+        fs2::FileExt::lock_exclusive(&file)
+            .map_err(|error| format!("could not lock query journal {}: {error}", path.display()))?;
+        file.write_all(&record).map_err(|error| {
             format!("could not write query journal {}: {error}", path.display())
         })?;
-        file.write_all(b"\n").map_err(|error| {
-            format!("could not finish query journal {}: {error}", path.display())
-        })?;
+        // Closing the handle releases the lock, also on an error above.
     }
     match result {
         Ok(value) => {
@@ -1558,6 +1681,36 @@ fn print_logged_query<T: serde::Serialize>(
         }
         Err(error) => Err(error),
     }
+}
+
+/// Locations/previews for navigation, not a complete caller graph or proof.
+fn compact_references(mut value: serde_json::Value) -> serde_json::Value {
+    let mut files = BTreeMap::<String, Vec<serde_json::Value>>::new();
+    for reference in value["results"].as_array().into_iter().flatten() {
+        if let Some(path) = reference["location"]["path"].as_str() {
+            files
+                .entry(path.into())
+                .or_default()
+                .push(reference.clone());
+        }
+    }
+    let mut truncated_locations = false;
+    value["results"] = serde_json::Value::Array(files.into_iter().map(|(path, references)| {
+        let lines = references.iter().filter_map(|r| r["location"]["start"]["line"].as_u64()).collect::<BTreeSet<_>>();
+        let locations_truncated = lines.len() > 20;
+        truncated_locations |= locations_truncated;
+        let previews = references.iter().filter_map(|r| {
+            Some((r["location"]["start"]["line"].as_u64()?, r["text"].as_str()?))
+        }).collect::<BTreeMap<_,_>>().into_iter().take(2).map(|(line,text)| {
+            serde_json::json!({"line":line,"text":text.chars().take(160).collect::<String>(),"clipped":text.chars().count()>160})
+        }).collect::<Vec<_>>();
+        serde_json::json!({"path":path,"returned_occurrences":references.len(),
+            "lines":lines.into_iter().take(20).collect::<Vec<_>>(),"locations_truncated":locations_truncated,"previews":previews})
+    }).collect());
+    value["summary"] = serde_json::json!(true);
+    value["truncated"] =
+        serde_json::json!(value["truncated"].as_bool().unwrap_or(false) || truncated_locations);
+    value
 }
 
 fn summarize_query_journal(
@@ -2188,9 +2341,18 @@ fn diff_path_review_bundle_runs(
 struct ReviewLedger {
     schema_version: String,
     source_fingerprint: String,
+    input_fingerprint: String,
     inventory_count: usize,
     reviewed: BTreeMap<String, String>,
     conflicts: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewChunkBinding {
+    input_fingerprint: Option<String>,
+    source_fingerprint: String,
+    requests: BTreeMap<String, String>,
 }
 
 fn load_review_ledger(path: &Path, inventory: &serde_json::Value) -> Result<ReviewLedger, String> {
@@ -2206,8 +2368,9 @@ fn load_review_ledger(path: &Path, inventory: &serde_json::Value) -> Result<Revi
         .as_array()
         .ok_or("inventory entries are missing")?
         .len();
-    if ledger.schema_version != "1"
+    if ledger.schema_version != "2"
         || ledger.source_fingerprint != fingerprint
+        || inventory["input_fingerprint"].as_str() != Some(ledger.input_fingerprint.as_str())
         || ledger.inventory_count != count
     {
         return Err("review ledger does not match this inventory; rebuild it".to_string());
@@ -2238,7 +2401,6 @@ fn review_run_directories(
 ) -> Result<(), String> {
     if root.join("manifest.json").is_file() {
         runs.push(root.to_path_buf());
-        return Ok(());
     }
     if depth == 0 {
         return Ok(());
@@ -2260,11 +2422,24 @@ fn review_run_directories(
 }
 
 fn build_review_ledger(inventory_dir: &Path, history: &str) -> Result<ReviewLedger, String> {
+    let cache: mehscan_engine::investigation::ReviewInventory = serde_json::from_slice(
+        &fs::read(inventory_dir.join("scan-cache.json"))
+            .map_err(|e| format!("could not read inventory cache: {e}"))?,
+    )
+    .map_err(|e| format!("invalid inventory cache: {e}"))?;
+    let history_validator = engine(mehscan_engine::investigation::ReviewHistoryValidator::new(
+        Path::new(&cache.scan.root),
+        &cache,
+    ))?;
+    let input_fingerprint = engine(cache.input_fingerprint())?;
     let inventory: serde_json::Value = serde_json::from_slice(
         &fs::read(inventory_dir.join("inventory.json"))
             .map_err(|error| format!("could not read inventory: {error}"))?,
     )
     .map_err(|error| format!("invalid inventory: {error}"))?;
+    if inventory["input_fingerprint"].as_str() != Some(input_fingerprint.as_str()) {
+        return Err("inventory summary does not match its source cache; regenerate it".into());
+    }
     let fingerprint = inventory["source_fingerprint"]
         .as_str()
         .ok_or("inventory source fingerprint is missing")?;
@@ -2300,11 +2475,59 @@ fn build_review_ledger(inventory_dir: &Path, history: &str) -> Result<ReviewLedg
                 root.display()
             ));
         }
+        if overview["input_fingerprint"].as_str() != Some(input_fingerprint.as_str()) {
+            return Err(format!(
+                "history {} has different review inputs; re-review it",
+                root.display()
+            ));
+        }
         let mut runs = Vec::new();
         review_run_directories(root, 3, &mut runs)?;
         for run in runs {
-            let (_, responses, _) = read_complete_bundle_responses(&run, None, true, None)?;
-            for (_, response) in responses {
+            let binding_path = run.join("input-binding.json");
+            let binding: Option<ReviewChunkBinding> = if binding_path.exists() {
+                Some(
+                    serde_json::from_slice(&fs::read(&binding_path).map_err(|e| e.to_string())?)
+                        .map_err(|e| format!("invalid history chunk binding: {e}"))?,
+                )
+            } else {
+                None
+            };
+            if binding.as_ref().is_none_or(|b| {
+                b.source_fingerprint != fingerprint
+                    || b.input_fingerprint
+                        .as_ref()
+                        .is_some_and(|value| value != &input_fingerprint)
+            }) {
+                return Err(format!(
+                    "history chunk {} has different or missing review input binding; re-review it",
+                    run.display()
+                ));
+            }
+            let (manifest, responses, _) = read_complete_bundle_responses(
+                &run,
+                None,
+                true,
+                Some(Path::new(&cache.scan.root)),
+            )?;
+            if let Some(binding) = &binding {
+                for entry in &manifest.bundles {
+                    let bytes = fs::read(run.join("requests").join(&entry.filename))
+                        .map_err(|e| e.to_string())?;
+                    if binding.requests.get(&entry.filename)
+                        != Some(&mehscan_engine::investigation::review_content_fingerprint(
+                            &bytes,
+                        ))
+                    {
+                        return Err(
+                            "history chunk request changed after input binding; re-review it"
+                                .into(),
+                        );
+                    }
+                }
+            }
+            for (bundle, response) in responses {
+                engine(history_validator.validate_bundle(&bundle))?;
                 for result in response.results {
                     if !known.contains(result.review_id.as_str()) {
                         return Err(format!(
@@ -2335,8 +2558,9 @@ fn build_review_ledger(inventory_dir: &Path, history: &str) -> Result<ReviewLedg
         reviewed.remove(id);
     }
     Ok(ReviewLedger {
-        schema_version: "1".to_string(),
+        schema_version: "2".to_string(),
         source_fingerprint: fingerprint.to_string(),
+        input_fingerprint,
         inventory_count: entries.len(),
         reviewed,
         conflicts: conflicts.into_iter().collect(),
@@ -2558,6 +2782,34 @@ fn review_card(
     review_card_from_value(bundle, review_id, &value)
 }
 
+// Receiver navigation can precede producer facts in a native snapshot. Prefer
+// the selected operand's question; array order must not redirect it to the
+// command receiver when the unresolved value is the query/path/etc.
+fn operand_lookup_fact<'a>(
+    facts: &'a [serde_json::Value],
+    captures: &serde_json::Value,
+) -> Option<&'a serde_json::Value> {
+    facts
+        .iter()
+        .filter(|fact| {
+            matches!(
+                fact["kind"].as_str(),
+                Some("operand_boundary" | "local_operand_origin")
+            )
+        })
+        .min_by_key(|fact| {
+            let role = fact["role"].as_str().unwrap_or_default();
+            let role_rank = if captures.get(role).is_some() {
+                0
+            } else if matches!(role, "receiver" | "sink") {
+                2
+            } else {
+                1
+            };
+            (role_rank, u8::from(fact["kind"] != "operand_boundary"))
+        })
+}
+
 fn review_card_from_value(
     bundle: &mehscan_core::PathReviewBundle,
     review_id: &str,
@@ -2678,16 +2930,7 @@ fn review_card_from_value(
     }
     if let Some(fact) = anchor["context"]["operand_facts"]
         .as_array()
-        .and_then(|facts| {
-            facts
-                .iter()
-                .find(|fact| fact["kind"] == "operand_boundary")
-                .or_else(|| {
-                    facts
-                        .iter()
-                        .find(|fact| fact["kind"] == "local_operand_origin")
-                })
-        })
+        .and_then(|facts| operand_lookup_fact(facts, &anchor["captures"]))
     {
         if let (Some(path), Some(line), Some(end)) = (
             fact["location"]["path"].as_str(),
@@ -2696,7 +2939,7 @@ fn review_card_from_value(
         ) {
             lookups.insert(0, serde_json::json!({
                 "operation": "source", "arguments": {"path": path, "start-line": line.saturating_sub(3).max(1).to_string(), "end-line": end.saturating_add(5).min(line.saturating_add(40)).to_string()},
-                "purpose": "Inspect the exact operand initializer or intervening use where local reuse stops."
+                "purpose": format!("Inspect the {} initializer or intervening write/reference; reaching value and control flow remain unproved.", fact["role"].as_str().unwrap_or("operand"))
             }));
             lookups.truncate(2);
         }
@@ -3140,7 +3383,7 @@ fn print_investigation_help() {
 
 USAGE:
   mehscan investigate funnel [ROOT]
-  mehscan investigate review-inventory [ROOT] --output DIR [--include-review-material true|false]
+  mehscan investigate review-inventory [ROOT] --output DIR [--include-review-material true|false] [--timings true|false]
   mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--selection all|value|deferred] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--group-by contract] [--contract KEY] [--limit N] [--offset N]
   mehscan investigate review-ledger --inventory DIR --history RUN_ROOT[,RUN_ROOT] --output FILE
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
@@ -3162,7 +3405,8 @@ USAGE:
   mehscan investigate units [ROOT] [--kind KIND] [--capability NAME] [--language LANG] [--path FILE] [--context-lines N] [--limit N]
   mehscan investigate symbol [ROOT] --name NAME [--path FILE] [--limit N]
   mehscan investigate imports [ROOT] --name NAME [--limit N]
-  mehscan investigate references [ROOT] --symbol NAME [--path FILE] [--limit N]
+  mehscan investigate references [ROOT] --symbol NAME [--path FILE | --path-prefix DIR] [--limit N] [--summary true]
+  mehscan investigate provenance [ROOT] [--inventory DIR] [--path-prefix DIR] [--limit N]
   mehscan investigate paths [ROOT] --name TEXT [--limit N]
   mehscan investigate native-call-sites [ROOT] --callee NAME [--path FILE] [--limit N]
   mehscan investigate structural [ROOT] --language LANG --pattern PATTERN [--path FILE] [--limit N]
@@ -3174,11 +3418,38 @@ Add --journal FILE to a read-only query to append its exact arguments, output or
 #[cfg(test)]
 mod tests {
     use super::{
-        BriefSourceRef, membership_changed_after_bundles, parse_capability, portable_json_value,
-        read_brief_source, validate_review_artifact_source_text,
+        BriefSourceRef, membership_changed_after_bundles, operand_lookup_fact, parse_capability,
+        portable_json_value, read_brief_source, validate_review_artifact_source_text,
     };
     use mehscan_core::Capability;
     use std::collections::{BTreeMap, BTreeSet};
+
+    #[test]
+    fn operand_navigation_prefers_captured_value_over_receiver_regardless_of_fact_order() {
+        let receiver = serde_json::json!({"role": "receiver", "kind": "operand_boundary"});
+        let query = serde_json::json!({"role": "query", "kind": "operand_boundary"});
+        let origin = serde_json::json!({"role": "query", "kind": "local_operand_origin"});
+        let captures = serde_json::json!({"query": {"text": "sql"}});
+        for facts in [
+            vec![receiver.clone(), query.clone()],
+            vec![query.clone(), receiver.clone()],
+        ] {
+            assert_eq!(operand_lookup_fact(&facts, &captures), Some(&query));
+        }
+        assert_eq!(
+            operand_lookup_fact(&[receiver.clone(), origin.clone()], &captures),
+            Some(&origin)
+        );
+        assert_eq!(
+            operand_lookup_fact(&[origin, query.clone()], &captures),
+            Some(&query)
+        );
+        assert_eq!(
+            operand_lookup_fact(&[receiver.clone()], &captures),
+            Some(&receiver)
+        );
+        assert!(operand_lookup_fact(&[], &captures).is_none());
+    }
 
     #[test]
     fn brief_source_accepts_context_over_twenty_lines_but_remains_bounded() {

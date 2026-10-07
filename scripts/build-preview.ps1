@@ -82,6 +82,9 @@ try {
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-planning.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/pattern-sweep.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-workflow.md'),
+        (Join-Path $repositoryRoot 'skills/mehscan-security/references/evidence-packaging.md'),
+        (Join-Path $repositoryRoot 'skills/mehscan-security/references/html-output-review.md'),
+        (Join-Path $repositoryRoot 'skills/mehscan-security/references/finish-review.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/triage-buckets.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets/authorization.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets/credential-state.md'),
@@ -127,6 +130,9 @@ try {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-planning.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/pattern-sweep.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-workflow.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/evidence-packaging.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/html-output-review.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/finish-review.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/triage-buckets.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references') -Recurse
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/release-pins.json') -Destination (Join-Path $stageRoot 'skills/mehscan-security/scripts')
@@ -152,6 +158,9 @@ try {
         'skills/mehscan-security/references/review-planning.md',
         'skills/mehscan-security/references/pattern-sweep.md',
         'skills/mehscan-security/references/review-workflow.md',
+        'skills/mehscan-security/references/evidence-packaging.md',
+        'skills/mehscan-security/references/html-output-review.md',
+        'skills/mehscan-security/references/finish-review.md',
         'skills/mehscan-security/references/triage-buckets.md',
         'skills/mehscan-security/references/buckets/authorization.md',
         'skills/mehscan-security/references/buckets/credential-state.md',
