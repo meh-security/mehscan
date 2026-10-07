@@ -99,13 +99,45 @@ fn html_proofs_and_shared_destinations_preserve_unsafe_and_distinct_cases() {
                 })
                 .collect::<Vec<_>>()
         };
-        for name in ["Encoded", "Child", "Fragment"] {
+        for name in [
+            "Encoded",
+            "Child",
+            "Fragment",
+            "ReadonlyHtml",
+            "ReadonlyString",
+            "EmptyHtml",
+            "EncodedRead",
+            "ImmutableHtmlRead",
+        ] {
             assert!(
                 facts(name)
                     .iter()
                     .any(|f| f.kind == OperandFactKind::EncodedHtmlOperand),
                 "missing HTML proof: {target}/{name}: {:?}",
                 facts(name)
+            );
+        }
+        for name in ["Json", "Plain"] {
+            assert!(
+                facts(name)
+                    .iter()
+                    .any(|f| f.kind == OperandFactKind::NonHtmlResponse),
+                "missing MIME proof: {target}/{name}"
+            );
+        }
+        for name in [
+            "Html",
+            "Different",
+            "Conditional",
+            "Replaced",
+            "Intervening",
+            "ArgumentMutation",
+        ] {
+            assert!(
+                !facts(name)
+                    .iter()
+                    .any(|f| f.kind == OperandFactKind::NonHtmlResponse),
+                "unsafe MIME closure: {target}/{name}"
             );
         }
         for name in [
@@ -117,6 +149,10 @@ fn html_proofs_and_shared_destinations_preserve_unsafe_and_distinct_cases() {
             "AliasedChild",
             "Link",
             "Script",
+            "ConstructorReplacement",
+            "MutableFieldHtml",
+            "RefEncoded",
+            "CapturedEncoded",
         ] {
             assert!(
                 !facts(name)
@@ -152,6 +188,11 @@ fn html_proofs_and_shared_destinations_preserve_unsafe_and_distinct_cases() {
         };
         assert!(producer("DeleteOne").is_some());
         assert_eq!(producer("DeleteOne"), producer("DeleteTwo"));
+        assert_eq!(producer("DeleteOne"), producer("DeleteInline"));
+        assert_eq!(producer("DeleteOne"), producer("ReadInline"));
+        assert_eq!(producer("DeleteBypass"), producer("DeleteInlineBypass"));
+        assert!(producer("DeleteInlineUnknownOption").is_none());
+        assert!(producer("DeleteInlineModified").is_none());
         assert_eq!(producer("DeleteOne"), producer("DeleteNamed"));
         assert_eq!(producer("DeleteBypass"), producer("DeleteNamedBypass"));
         assert_ne!(producer("DeleteOne"), producer("DeleteBypass"));
@@ -170,6 +211,37 @@ fn html_proofs_and_shared_destinations_preserve_unsafe_and_distinct_cases() {
             )),
         )
         .unwrap();
+        for name in ["Json", "Plain"] {
+            assert!(
+                plain
+                    .entries
+                    .iter()
+                    .any(|e| e.symbol.as_deref() == Some(name)),
+                "missing MIME baseline {name}"
+            );
+            assert!(
+                !native
+                    .entries
+                    .iter()
+                    .any(|e| e.symbol.as_deref() == Some(name)),
+                "MIME review retained {name}"
+            );
+        }
+        for name in [
+            "Html",
+            "Different",
+            "Conditional",
+            "Intervening",
+            "ArgumentMutation",
+        ] {
+            assert!(
+                native
+                    .entries
+                    .iter()
+                    .any(|e| e.symbol.as_deref() == Some(name)),
+                "dangerous MIME control lost {name}"
+            );
+        }
         for name in ["Encoded", "Child", "Fragment"] {
             assert!(
                 !native
@@ -218,7 +290,7 @@ fn html_proofs_and_shared_destinations_preserve_unsafe_and_distinct_cases() {
                     .is_some_and(|h| h.reason == "shared_csharp_filesystem_producer")
             })
             .collect::<Vec<_>>();
-        assert_eq!(path_shared.len(), 3);
+        assert_eq!(path_shared.len(), 6);
         assert!(
             native
                 .entries
@@ -304,6 +376,199 @@ fn declared_global_imports_bind_framework_calls_and_invalidate_snapshots() {
 
 #[test]
 #[ignore = "requires built Roslyn helper and real four-framework reference packs"]
+fn source_project_references_carry_selectors_and_bind_dependency_inputs() {
+    let fixture = Fixture::new("source-projects");
+    std::fs::write(
+        fixture.0.join("App.cs"),
+        r#"
+using System;
+using System.IO;
+class App {
+    void Known(Guid id) { File.Delete(Selectors.Path("data", id)); }
+    void Unknown(string root, Guid id) { File.Delete(Selectors.Path(root, id)); }
+    void Property(Record record) { File.Delete(Path.Combine("data", record.Name)); }
+    void UnknownProperty(Record record) { File.Delete(Path.Combine("data", record.RawName)); }
+}
+"#,
+    )
+    .unwrap();
+    let helper = r#"
+using System;
+using System.IO;
+public static class Selectors {
+    public static string Path(string root, Guid id) => System.IO.Path.Combine(root, id.ToString("N"));
+}
+public class Record {
+    public Guid Id { get; set; }
+    public string Name => Id.ToString("N") + ".json";
+    public string RawName { get; set; }
+}
+class UnrelatedGap { MissingType field; }
+"#;
+    std::fs::write(fixture.0.join("Helpers.cs"), helper).unwrap();
+    let scan = mehscan_engine::scan_path(&fixture.0).unwrap();
+    for (label, target, language, refs) in [
+        ("net8", "net8.0", "12.0", "MEHSCAN_ROSLYN_NET8_REFS"),
+        ("net10", "net10.0", "14.0", "MEHSCAN_ROSLYN_NET10_REFS"),
+        ("net48", "net48", "7.3", "MEHSCAN_ROSLYN_NET48_REFS"),
+        (
+            "standard",
+            "netstandard2.0",
+            "7.3",
+            "MEHSCAN_ROSLYN_STANDARD20_REFS",
+        ),
+    ] {
+        let refs: Vec<_> = std::fs::read_dir(env_path(refs))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension().is_some_and(|e| e == "dll")
+                    && !p
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("System.EnterpriseServices.")
+            })
+            .collect();
+        let context = fixture.0.join(format!("{label}.json"));
+        let mut declared = json!({"projects": [
+            {"id":"src/App.csproj", "target_framework":target, "language_version":language,
+             "sources":["App.cs"], "references":refs, "reference_directories":[], "defines":[],
+             "project_references":["src/Selectors.csproj"]},
+            {"id":"src/Selectors.csproj", "target_framework":target, "language_version":language,
+             "sources":["Helpers.cs"], "references":refs, "reference_directories":[], "defines":[]}
+        ]});
+        std::fs::write(&context, serde_json::to_vec(&declared).unwrap()).unwrap();
+        let snapshot = csharp_semantic::collect(
+            &fixture.0,
+            &context,
+            &env_path("MEHSCAN_ROSLYN_BACKEND"),
+            &scan,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(&snapshot).unwrap();
+        let caller = serialized["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == "src/App.csproj")
+            .unwrap();
+        assert_eq!(caller["compiler_errors"], 0);
+        assert_eq!(caller["incomplete_dependencies"], true);
+        let mut enriched = scan.clone();
+        csharp_semantic::enrich(&fixture.0, &context, &snapshot, &mut enriched).unwrap();
+        assert!(
+            enriched
+                .evidence
+                .iter()
+                .filter(|e| e.enclosing_symbol.as_deref() == Some("Unknown"))
+                .flat_map(|e| &e.context.operand_facts)
+                .any(|f| f
+                    .remaining_checks
+                    .iter()
+                    .any(|c| c == "partial_semantic_context"))
+        );
+        let path = fixture.0.join("snapshot.json");
+        std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+        let inventory = investigation::build_review_inventory_with_semantics(
+            &fixture.0,
+            false,
+            Some((&path, &context)),
+        )
+        .unwrap();
+        for closed in ["Known", "Property"] {
+            assert!(
+                !inventory
+                    .entries
+                    .iter()
+                    .any(|e| e.symbol.as_deref() == Some(closed)),
+                "{label}: normalized selector lost through referenced source project: {closed}"
+            );
+        }
+        for open in ["Unknown", "UnknownProperty"] {
+            assert!(
+                inventory
+                    .entries
+                    .iter()
+                    .any(|e| e.symbol.as_deref() == Some(open)),
+                "{label}: unknown source input incorrectly closed: {open}"
+            );
+        }
+        std::fs::write(
+            fixture.0.join("Helpers.cs"),
+            helper.replace("id.ToString(\"N\")", "Console.ReadLine()"),
+        )
+        .unwrap();
+        assert!(
+            csharp_semantic::enrich(&fixture.0, &context, &snapshot, &mut scan.clone()).is_err()
+        );
+        std::fs::write(fixture.0.join("Helpers.cs"), helper).unwrap();
+        declared["projects"][0]["project_references"] = json!([]);
+        std::fs::write(&context, serde_json::to_vec(&declared).unwrap()).unwrap();
+        let unlinked = csharp_semantic::collect(
+            &fixture.0,
+            &context,
+            &env_path("MEHSCAN_ROSLYN_BACKEND"),
+            &scan,
+        )
+        .unwrap();
+        assert!(
+            !unlinked
+                .observations
+                .iter()
+                .flat_map(|o| &o.facts)
+                .any(|f| f.kind == OperandFactKind::FixedFilesystemPath)
+        );
+        declared["projects"][0]["project_references"] = json!(["missing-context"]);
+        std::fs::write(&context, serde_json::to_vec(&declared).unwrap()).unwrap();
+        assert!(
+            csharp_semantic::collect(
+                &fixture.0,
+                &context,
+                &env_path("MEHSCAN_ROSLYN_BACKEND"),
+                &scan
+            )
+            .is_err()
+        );
+        declared["projects"][0]["project_references"] = json!(["src/Selectors.csproj"]);
+        declared["projects"][1]["assembly_name"] =
+            json!(refs[0].file_stem().unwrap().to_string_lossy());
+        std::fs::write(&context, serde_json::to_vec(&declared).unwrap()).unwrap();
+        let collision = csharp_semantic::collect(
+            &fixture.0,
+            &context,
+            &env_path("MEHSCAN_ROSLYN_BACKEND"),
+            &scan,
+        )
+        .unwrap();
+        assert!(
+            !collision
+                .observations
+                .iter()
+                .flat_map(|o| &o.facts)
+                .any(|f| f.kind == OperandFactKind::FixedFilesystemPath)
+        );
+        declared["projects"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("assembly_name");
+        declared["projects"][1]["project_references"] = json!(["src/App.csproj"]);
+        std::fs::write(&context, serde_json::to_vec(&declared).unwrap()).unwrap();
+        assert!(
+            csharp_semantic::collect(
+                &fixture.0,
+                &context,
+                &env_path("MEHSCAN_ROSLYN_BACKEND"),
+                &scan
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires built Roslyn helper and real four-framework reference packs"]
 fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
     let fixture = Fixture::new("filesystem");
     for file in ["App.cs", "Helpers.cs"] {
@@ -313,6 +578,12 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/roslyn-filesystem/Paths.cs"),
         fixture.0.join("App.cs"),
+    )
+    .unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/roslyn-filesystem/Selectors.cs"),
+        fixture.0.join("Helpers.cs"),
     )
     .unwrap();
     let scan = mehscan_engine::scan_path(&fixture.0).unwrap();
@@ -393,6 +664,30 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "UnknownNumber",
             "ParsedNumber",
             "IntegralFormat",
+            "IntegralInvariant",
+            "IntegralStandardFormat",
+            "DecimalValue",
+            "FloatingValue",
+            "DateBackupSuffix",
+            "DateDefault",
+            "DateStandard",
+            "DateOffset",
+            "Duration",
+            "NullableDate",
+            "NullableNumber",
+            "NumericCustom",
+            "CultureDate",
+            "BoxedConversion",
+            "NumericConcat",
+            "DateConcat",
+            "GuidConcat",
+            "Character",
+            "HelperGuid",
+            "HelperDate",
+            "HelperRootGuid",
+            "PropertyGuid",
+            "PropertyDate",
+            "PropertyInitialized",
             "BooleanValue",
             "ConvertedNumber",
             "EnumValue",
@@ -440,8 +735,16 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "UnknownRoot",
             "UnknownManifest",
             "FormatInput",
-            "Character",
             "RefReplacement",
+            "HelperUnknownRoot",
+            "HelperUnknownString",
+            "HelperReplacedString",
+            "HelperRecursive",
+            "PropertyUnknown",
+            "PropertyVirtual",
+            "PropertyReplaced",
+            "DateUnknownRoot",
+            "DateUnknownFormat",
             "Capture",
             "TryReplacement",
             "Conversion",
@@ -507,6 +810,30 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "UnknownNumber",
             "ParsedNumber",
             "IntegralFormat",
+            "IntegralInvariant",
+            "IntegralStandardFormat",
+            "DecimalValue",
+            "FloatingValue",
+            "DateBackupSuffix",
+            "DateDefault",
+            "DateStandard",
+            "DateOffset",
+            "Duration",
+            "NullableDate",
+            "NullableNumber",
+            "NumericCustom",
+            "CultureDate",
+            "BoxedConversion",
+            "NumericConcat",
+            "DateConcat",
+            "GuidConcat",
+            "Character",
+            "HelperGuid",
+            "HelperDate",
+            "HelperRootGuid",
+            "PropertyGuid",
+            "PropertyDate",
+            "PropertyInitialized",
             "BooleanValue",
             "ConvertedNumber",
             "EnumValue",
@@ -569,8 +896,16 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "UnknownRoot",
             "UnknownManifest",
             "FormatInput",
-            "Character",
             "RefReplacement",
+            "HelperUnknownRoot",
+            "HelperUnknownString",
+            "HelperReplacedString",
+            "HelperRecursive",
+            "PropertyUnknown",
+            "PropertyVirtual",
+            "PropertyReplaced",
+            "DateUnknownRoot",
+            "DateUnknownFormat",
             "Capture",
             "TryReplacement",
             "Conversion",
@@ -615,7 +950,10 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             );
             std::fs::write(
                 fixture.0.join("Helpers.cs"),
-                "class Broken { MissingType field; }",
+                format!(
+                    "{}\nclass Broken {{ MissingType field; }}",
+                    std::fs::read_to_string(fixture.0.join("Helpers.cs")).unwrap()
+                ),
             )
             .unwrap();
             let partial_scan = mehscan_engine::scan_path(&fixture.0).unwrap();
@@ -674,7 +1012,12 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
                                 | OperandFactKind::TemporaryFilesystemPath
                         ))
             );
-            std::fs::write(fixture.0.join("Helpers.cs"), "").unwrap();
+            std::fs::copy(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../tests/fixtures/roslyn-filesystem/Selectors.cs"),
+                fixture.0.join("Helpers.cs"),
+            )
+            .unwrap();
         }
     }
 }

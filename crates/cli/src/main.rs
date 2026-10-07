@@ -254,9 +254,25 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let mut diff_mode_explicit = false;
     let mut csharp_semantic = None;
     let mut csharp_context = None;
+    let mut typescript_semantic = None;
+    let mut typescript_context = None;
     let mut arguments = arguments.peekable();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
+            "--typescript-semantic" => {
+                typescript_semantic = Some(PathBuf::from(
+                    arguments
+                        .next()
+                        .ok_or("--typescript-semantic requires a snapshot")?,
+                ))
+            }
+            "--typescript-context" => {
+                typescript_context = Some(PathBuf::from(
+                    arguments
+                        .next()
+                        .ok_or("--typescript-context requires a context")?,
+                ))
+            }
             "--csharp-semantic" => {
                 csharp_semantic = Some(PathBuf::from(
                     arguments
@@ -333,6 +349,16 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     }
 
     let root = root.unwrap_or_else(|| PathBuf::from("."));
+    if typescript_semantic.is_some() != typescript_context.is_some() {
+        return Err(
+            "--typescript-semantic and --typescript-context must be supplied together".into(),
+        );
+    }
+    if typescript_semantic.is_some() && diff_mode == mehscan_engine::ImpactDiffMode::Impact {
+        return Err(
+            "TypeScript snapshot import requires full scan context; use --diff-mode full".into(),
+        );
+    }
     if csharp_semantic.is_some() != csharp_context.is_some() {
         return Err("--csharp-semantic and --csharp-context must be supplied together".into());
     }
@@ -389,6 +415,15 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     if let (Some(facts), Some(context)) = (csharp_semantic, csharp_context) {
         let snapshot = engine(mehscan_engine::csharp_semantic::load(&facts))?;
         engine(mehscan_engine::csharp_semantic::enrich(
+            &root,
+            &context,
+            &snapshot,
+            &mut result,
+        ))?;
+    }
+    if let (Some(facts), Some(context)) = (typescript_semantic, typescript_context) {
+        let snapshot = engine(mehscan_engine::typescript_semantic::load(&facts))?;
+        engine(mehscan_engine::typescript_semantic::enrich(
             &root,
             &context,
             &snapshot,
@@ -511,6 +546,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 | "imports"
                 | "references"
                 | "paths"
+                | "provenance"
                 | "native-call-sites"
                 | "structural"
         )
@@ -518,6 +554,48 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
         return Err("--journal is available only for read-only investigation queries".to_string());
     }
     match operation.as_str() {
+        "provenance" => {
+            let prefix = parsed.optional("--path-prefix");
+            let limit = parsed.optional_usize("--limit")?;
+            let inventory = parsed.optional("--inventory");
+            parsed.finish()?;
+            let paths = inventory
+                .map(|directory| -> Result<BTreeSet<String>, String> {
+                    let value: serde_json::Value = serde_json::from_slice(
+                        &fs::read(Path::new(&directory).join("inventory.json"))
+                            .map_err(|e| e.to_string())?,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    value["entries"]
+                        .as_array()
+                        .ok_or("inventory entries are missing".into())
+                        .and_then(|entries| {
+                            entries
+                                .iter()
+                                .map(|entry| {
+                                    entry["path"]
+                                        .as_str()
+                                        .map(str::to_owned)
+                                        .ok_or("inventory entry path is missing".into())
+                                })
+                                .collect()
+                        })
+                })
+                .transpose()?;
+            print_logged_query(
+                engine(mehscan_engine::provenance::inspect_review_paths(
+                    &root,
+                    prefix.as_deref(),
+                    limit,
+                    paths.as_ref(),
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
+        }
         "funnel" => {
             parsed.finish()?;
             print_json(&engine(
@@ -531,6 +609,34 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             print_json(&engine(mehscan_engine::csharp_context::prepare(
                 &root, &seed, &output,
             ))?)
+        }
+        "typescript-semantic" => {
+            let context = PathBuf::from(parsed.required("--context")?);
+            let backend = PathBuf::from(parsed.required("--backend")?);
+            let output = PathBuf::from(parsed.required("--output")?);
+            parsed.finish()?;
+            let scan = engine(mehscan_engine::scan_path(&root))?;
+            let snapshot = engine(mehscan_engine::typescript_semantic::collect(
+                &root, &context, &backend, &scan,
+            ))?;
+            let requested = mehscan_engine::typescript_semantic::queries(&scan).len();
+            let covered = snapshot
+                .observations
+                .iter()
+                .map(|o| &o.evidence_id)
+                .collect::<BTreeSet<_>>()
+                .len();
+            fs::write(
+                &output,
+                serde_json::to_vec_pretty(&snapshot).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            print_json(
+                &serde_json::json!({"snapshot": output, "backend": snapshot.backend,
+                "requested_operands": requested, "covered_operands": covered,
+                "uncovered_operands": requested.saturating_sub(covered),
+                "observations": snapshot.observations.len(), "diagnostics": snapshot.diagnostics.len()}),
+            )
         }
         "csharp-semantic" => {
             let context = PathBuf::from(parsed.required("--context")?);
@@ -568,6 +674,9 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let semantic = parsed.optional("--csharp-semantic").map(PathBuf::from);
             let context = parsed.optional("--csharp-context").map(PathBuf::from);
             let backend = parsed.optional("--csharp-backend").map(PathBuf::from);
+            let ts_semantic = parsed.optional("--typescript-semantic").map(PathBuf::from);
+            let ts_context = parsed.optional("--typescript-context").map(PathBuf::from);
+            let ts_backend = parsed.optional("--typescript-backend").map(PathBuf::from);
             let timings = parsed.optional_bool("--timings")?.unwrap_or(false);
             if semantic.is_some() && backend.is_some() {
                 return Err("supply --csharp-semantic or --csharp-backend, not both".into());
@@ -577,14 +686,37 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     "supply --csharp-context with --csharp-semantic or --csharp-backend".into(),
                 );
             }
+            if ts_semantic.is_some() && ts_backend.is_some() {
+                return Err(
+                    "supply --typescript-semantic or --typescript-backend, not both".into(),
+                );
+            }
+            if (ts_semantic.is_some() || ts_backend.is_some()) != ts_context.is_some() {
+                return Err("supply --typescript-context with --typescript-semantic or --typescript-backend".into());
+            }
+            let ts_input = if let Some((snapshot, context)) =
+                ts_semantic.as_deref().zip(ts_context.as_deref())
+            {
+                Some(mehscan_engine::typescript_semantic::Input::Snapshot(
+                    snapshot, context,
+                ))
+            } else {
+                ts_context
+                    .as_deref()
+                    .zip(ts_backend.as_deref())
+                    .map(|(context, backend)| {
+                        mehscan_engine::typescript_semantic::Input::Backend(context, backend)
+                    })
+            };
             parsed.finish()?;
             let mut profile = mehscan_engine::investigation::ReviewInventoryProfile::default();
             let inventory = engine(
-                mehscan_engine::investigation::build_review_inventory_with_backend(
+                mehscan_engine::investigation::build_review_inventory_with_native_backends(
                     &root,
                     include_review_material,
                     semantic.as_deref().zip(context.as_deref()),
                     context.as_deref().zip(backend.as_deref()),
+                    ts_input,
                     timings.then_some(&mut profile),
                 ),
             )?;
@@ -658,7 +790,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "value_deferred_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_some()).count(),
                 "value_active_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_none()).count(),
                 "value_deferrals_by_reason": value_deferrals_by_reason,
-                "value_conditional_count": inventory.entries.iter().filter(|entry| entry.value_hint.as_ref().is_some_and(|hint| hint.depends_on.is_some() || hint.reason == "ordinary_php_sink_inventory")).count(),
+                "value_conditional_count": inventory.entries.iter().filter(|entry| entry.value_hint.as_ref().is_some_and(|hint| hint.depends_on.is_some() || matches!(hint.reason.as_str(), "ordinary_php_sink_inventory" | "ordinary_browser_request_inventory"))).count(),
                 "value_dependency_count": inventory.entries.iter().filter_map(|entry| entry.value_hint.as_ref()?.depends_on.as_deref()).collect::<BTreeSet<_>>().len(),
                 "top_areas": top_areas,
             });
@@ -730,6 +862,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         | "receiver_reference"
                         | "local_call_argument"
                         | "unclassified"
+                        | "browser_request_context"
                 )
             }) {
                 return Err("invalid --operand-kind; use fixed_code_relative_path, fixed_filesystem_path, temporary_filesystem_path, immutable_filesystem_operand, shared_filesystem_producer, shared_outbound_destination, encoded_html_operand, configured_root_path, repository_code_target, encoding_call, output_context, local_operand_origin, operand_boundary, query_structure, process_shell_mode, native_operand_declaration, local_call_argument, prepared_statement_use, semantic_identity, semantic_definition, receiver_reference, or unclassified".into());
@@ -802,7 +935,11 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let reopened = |entry: &&serde_json::Value| {
                 (matches!(
                     entry["value_hint"]["reason"].as_str(),
-                    Some("ordinary_php_sink_inventory" | "local_bound_query_inventory")
+                    Some(
+                        "ordinary_php_sink_inventory"
+                            | "local_bound_query_inventory"
+                            | "ordinary_browser_request_inventory"
+                    )
                 ) && reopen_surfaces
                     .contains(&(entry["path"].as_str(), entry["rule_id"].as_str())))
                     || entry["value_hint"]["depends_on"]
@@ -961,15 +1098,27 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                             ));
                         }
                     }
-                    (
-                        engine(mehscan_engine::investigation::build_selected_review_jobs(
-                            &root,
-                            &inventory,
-                            &ids,
-                            context_lines,
-                        ))?,
-                        None,
-                    )
+                    if timings {
+                        let (job, profile) = engine(
+                            mehscan_engine::investigation::build_selected_review_jobs_profiled(
+                                &root,
+                                &inventory,
+                                &ids,
+                                context_lines,
+                            ),
+                        )?;
+                        (job, Some(profile))
+                    } else {
+                        (
+                            engine(mehscan_engine::investigation::build_selected_review_jobs(
+                                &root,
+                                &inventory,
+                                &ids,
+                                context_lines,
+                            ))?,
+                            None,
+                        )
+                    }
                 } else if timings {
                     let (job, profile) = engine(
                         mehscan_engine::investigation::build_all_path_review_jobs_profiled(
@@ -1035,6 +1184,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     serde_json::json!({
                         "review_jobs_milliseconds": review_jobs_milliseconds,
                         "review_job_phases": job_profile.as_ref().map(|profile| serde_json::json!({
+                            "inventory_validation_milliseconds": profile.inventory_validation_milliseconds,
                             "scan_milliseconds": profile.scan_milliseconds,
                             "source_load_milliseconds": profile.source_load_milliseconds,
                             "context_admission_milliseconds": profile.context_admission_milliseconds,
@@ -1557,15 +1707,26 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
         "references" => {
             let symbol = parsed.required("--symbol")?;
             let path = parsed.optional("--path");
+            let path_prefix = parsed.optional("--path-prefix");
             let limit = parsed.optional_usize("--limit")?;
+            let summary = parsed.optional_bool("--summary")?.unwrap_or(false);
             parsed.finish()?;
             print_logged_query(
                 engine(mehscan_engine::investigation::find_text_references(
                     &root,
                     &symbol,
                     path.as_deref(),
+                    path_prefix.as_deref(),
                     limit,
-                )),
+                ))
+                .and_then(|result| {
+                    let value = serde_json::to_value(result).map_err(|e| e.to_string())?;
+                    Ok(if summary {
+                        compact_references(value)
+                    } else {
+                        value
+                    })
+                }),
                 journal.as_deref(),
                 &operation,
                 &root,
@@ -1669,17 +1830,29 @@ fn print_logged_query<T: serde::Serialize>(
                 )
             })?;
         }
+        let mut record = serde_json::to_vec(&entry).map_err(|error| {
+            format!(
+                "could not serialize query journal {}: {error}",
+                path.display()
+            )
+        })?;
+        record.push(b'\n');
         let mut file = fs::OpenOptions::new()
             .create(true)
+            // Windows locking requires read or generic write access; append
+            // access alone cannot acquire a byte-range lock.
+            .read(true)
             .append(true)
             .open(path)
             .map_err(|error| format!("could not open query journal {}: {error}", path.display()))?;
-        serde_json::to_writer(&mut file, &entry).map_err(|error| {
+        // Separate CLI processes can share an ID's journal. Keep the whole
+        // record under one OS lock, including any partial writes.
+        fs2::FileExt::lock_exclusive(&file)
+            .map_err(|error| format!("could not lock query journal {}: {error}", path.display()))?;
+        file.write_all(&record).map_err(|error| {
             format!("could not write query journal {}: {error}", path.display())
         })?;
-        file.write_all(b"\n").map_err(|error| {
-            format!("could not finish query journal {}: {error}", path.display())
-        })?;
+        // Closing the handle releases the lock, also on an error above.
     }
     match result {
         Ok(value) => {
@@ -1694,6 +1867,36 @@ fn print_logged_query<T: serde::Serialize>(
         }
         Err(error) => Err(error),
     }
+}
+
+/// Locations/previews for navigation, not a complete caller graph or proof.
+fn compact_references(mut value: serde_json::Value) -> serde_json::Value {
+    let mut files = BTreeMap::<String, Vec<serde_json::Value>>::new();
+    for reference in value["results"].as_array().into_iter().flatten() {
+        if let Some(path) = reference["location"]["path"].as_str() {
+            files
+                .entry(path.into())
+                .or_default()
+                .push(reference.clone());
+        }
+    }
+    let mut truncated_locations = false;
+    value["results"] = serde_json::Value::Array(files.into_iter().map(|(path, references)| {
+        let lines = references.iter().filter_map(|r| r["location"]["start"]["line"].as_u64()).collect::<BTreeSet<_>>();
+        let locations_truncated = lines.len() > 20;
+        truncated_locations |= locations_truncated;
+        let previews = references.iter().filter_map(|r| {
+            Some((r["location"]["start"]["line"].as_u64()?, r["text"].as_str()?))
+        }).collect::<BTreeMap<_,_>>().into_iter().take(2).map(|(line,text)| {
+            serde_json::json!({"line":line,"text":text.chars().take(160).collect::<String>(),"clipped":text.chars().count()>160})
+        }).collect::<Vec<_>>();
+        serde_json::json!({"path":path,"returned_occurrences":references.len(),
+            "lines":lines.into_iter().take(20).collect::<Vec<_>>(),"locations_truncated":locations_truncated,"previews":previews})
+    }).collect());
+    value["summary"] = serde_json::json!(true);
+    value["truncated"] =
+        serde_json::json!(value["truncated"].as_bool().unwrap_or(false) || truncated_locations);
+    value
 }
 
 fn summarize_query_journal(
@@ -2384,7 +2587,6 @@ fn review_run_directories(
 ) -> Result<(), String> {
     if root.join("manifest.json").is_file() {
         runs.push(root.to_path_buf());
-        return Ok(());
     }
     if depth == 0 {
         return Ok(());
@@ -2484,7 +2686,8 @@ fn build_review_ledger(inventory_dir: &Path, history: &str) -> Result<ReviewLedg
                     || b.input_fingerprint
                         .as_ref()
                         .is_some_and(|value| value != &input_fingerprint)
-                    || cache.semantic_inputs.is_some() && b.input_fingerprint.is_none()
+                    || (cache.semantic_inputs.is_some() || cache.typescript_inputs.is_some())
+                        && b.input_fingerprint.is_none()
             }) {
                 return Err(format!(
                     "history chunk {} has different or missing semantic input binding; re-review it",
@@ -3351,6 +3554,9 @@ fn print_scan_help() {
         "Optional C# facts: --csharp-semantic SNAPSHOT --csharp-context CONTEXT (full scan context only)."
     );
     println!(
+        "Optional TS/JS facts: --typescript-semantic SNAPSHOT --typescript-context CONTEXT (full scan context only)."
+    );
+    println!(
         "USAGE:\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--timings] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact]\n\n'json' preserves raw evidence and SecurityPath data. 'candidates' emits only reviewable bounded relationships plus coverage. 'sarif-candidates' emits one SARIF 2.1.0 review result per candidate, never one result per raw observation; legacy 'sarif' remains an alias. Use 'mehscan report --format sarif' for confirmed post-triage findings. Secret detection is currently disabled; secret-only text is reported as ignored. '--timings' emits one machine-readable phase profile to stderr without changing stdout. Directory scans honor repository-local .gitignore, nested .gitignore, .ignore, and .git/info/exclude rules, but not global user ignores. Built-in dependency and generated-tree exclusions remain mandatory. By default, test, fixture, sample, generated, and bundled sources are excluded from SAST. '--include-tests' promotes those supported source files into full SAST. '--jobs N' overrides automatic per-file worker selection. '--changed-from REF' includes tracked changes since REF and untracked files. '--files-from PATH' accepts one repository-relative path per line; a missing path is treated as a deletion. Diff mode 'full' is the default: analyze the complete repository, then return evidence and paths touching changed lines. Diff mode 'impact' analyzes changed files, small same-directory context, and direct importers. Both modes return all full-scan results when deletions, renames, project-wide configuration, or central entrypoint changes make changed-location filtering unsafe; impact mode also falls back for large or broad expansions. Scope, result policy, fallback reasons, and Git changed-line ranges are retained in JSON, candidate, and SARIF run metadata."
     );
 }
@@ -3375,7 +3581,9 @@ USAGE:
   mehscan investigate funnel [ROOT]
   mehscan investigate csharp-context [ROOT] --context SEED --output FILE
   mehscan investigate csharp-semantic [ROOT] --context FILE --backend EXE --output FILE
+  mehscan investigate typescript-semantic [ROOT] --context FILE --backend SCRIPT --output FILE
   mehscan investigate review-inventory [ROOT] --output DIR [--include-review-material true|false] [--csharp-backend EXE --csharp-context FILE | --csharp-semantic FILE --csharp-context FILE] [--timings true|false]
+    Optional TS/JS: [--typescript-backend SCRIPT --typescript-context FILE | --typescript-semantic FILE --typescript-context FILE]
   mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--selection all|value|deferred] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--group-by contract] [--contract KEY] [--limit N] [--offset N]
   mehscan investigate review-ledger --inventory DIR --history RUN_ROOT[,RUN_ROOT] --output FILE
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
@@ -3397,7 +3605,8 @@ USAGE:
   mehscan investigate units [ROOT] [--kind KIND] [--capability NAME] [--language LANG] [--path FILE] [--context-lines N] [--limit N]
   mehscan investigate symbol [ROOT] --name NAME [--path FILE] [--limit N]
   mehscan investigate imports [ROOT] --name NAME [--limit N]
-  mehscan investigate references [ROOT] --symbol NAME [--path FILE] [--limit N]
+  mehscan investigate references [ROOT] --symbol NAME [--path FILE | --path-prefix DIR] [--limit N] [--summary true]
+  mehscan investigate provenance [ROOT] [--inventory DIR] [--path-prefix DIR] [--limit N]
   mehscan investigate paths [ROOT] --name TEXT [--limit N]
   mehscan investigate native-call-sites [ROOT] --callee NAME [--path FILE] [--limit N]
   mehscan investigate structural [ROOT] --language LANG --pattern PATTERN [--path FILE] [--limit N]

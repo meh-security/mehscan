@@ -20,6 +20,38 @@ class Paths
     void UnknownNumber(int number) { File.Delete(Path.Combine("data", number.ToString())); }
     void ParsedNumber(string input) { File.Delete(Path.Combine("data", int.Parse(input).ToString())); }
     void IntegralFormat(int number) { File.Delete(Path.Combine("data", number.ToString("D8"))); }
+    void IntegralInvariant(int number) { File.Delete(Path.Combine("data", number.ToString(System.Globalization.CultureInfo.InvariantCulture))); }
+    void IntegralStandardFormat(int number) { File.Delete(Path.Combine("data", number.ToString("N2", System.Globalization.CultureInfo.InvariantCulture))); }
+    void DecimalValue(decimal number) { File.Delete(Path.Combine("data", number.ToString())); }
+    void FloatingValue(double number) { File.Delete(Path.Combine("data", number.ToString("G", System.Globalization.CultureInfo.InvariantCulture))); }
+    void DateBackupSuffix(DateTime time) { File.Delete(Path.Combine("data", time.ToString("dd-MM-yyyy-HH.mm.ss.bak"))); }
+    void DateDefault(DateTime time) { File.Delete(Path.Combine("data", time.ToString())); }
+    void DateStandard(DateTime time) { File.Delete(Path.Combine("data", time.ToString("D"))); }
+    void DateOffset(DateTimeOffset time) { File.Delete(Path.Combine("data", time.ToString("O"))); }
+    void Duration(TimeSpan time) { File.Delete(Path.Combine("data", time.ToString())); }
+    void NullableDate(DateTime? time) { File.Delete(Path.Combine("data", time.ToString())); }
+    void NullableNumber(int? number) { File.Delete(Path.Combine("data", number.ToString())); }
+    void NumericCustom(decimal number) { File.Delete(Path.Combine("data", number.ToString("0000'.bak'"))); }
+    void CultureDate(DateTime time, System.Globalization.CultureInfo culture) { File.Delete(Path.Combine("data", time.ToString("D", culture))); }
+    void BoxedConversion(int number) { File.Delete(Path.Combine("data", Convert.ToString((object)number))); }
+    void NumericConcat(int number) { File.Delete("data/file-" + number); }
+    void DateConcat(DateTime date) { File.Delete("data/backup-" + date); }
+    void GuidConcat(Guid id) { File.Delete("data/item-" + id); }
+    void HelperGuid(Guid id) { File.Delete(Path.Combine("data", SelectorHelpers.GuidName(id))); }
+    void HelperDate(DateTime date) { File.Delete(Path.Combine("data", SelectorHelpers.DateName(date))); }
+    void HelperRootGuid(Guid id) { File.Delete(SelectorHelpers.FilePath("data", id)); }
+    void HelperUnknownRoot(string root, Guid id) { File.Delete(SelectorHelpers.FilePath(root, id)); }
+    void HelperUnknownString(string name) { File.Delete(SelectorHelpers.StringPath(name)); }
+    void HelperReplacedString(string root) { File.Delete(SelectorHelpers.Replaced(root)); }
+    void HelperRecursive(string path) { File.Delete(SelectorHelpers.Recursive(path)); }
+    void PropertyGuid(SelectorRecord record) { File.Delete(Path.Combine("data", record.GuidName)); }
+    void PropertyDate(SelectorRecord record) { File.Delete(Path.Combine("data", record.DateName)); }
+    void PropertyUnknown(SelectorRecord record) { File.Delete(Path.Combine("data", record.Filename)); }
+    void PropertyVirtual(SelectorRecord record) { File.Delete(Path.Combine("data", record.VirtualName)); }
+    void PropertyInitialized(SelectorRecord record) { File.Delete(Path.Combine("data", record.InitializedName)); }
+    void PropertyReplaced(SelectorRecord record) { File.Delete(Path.Combine("data", record.ReplacedName)); }
+    void DateUnknownRoot(DateTime date, string root) { File.Delete(Path.Combine(root, date.ToString())); }
+    void DateUnknownFormat(DateTime date, string format) { File.Delete(Path.Combine("data", date.ToString(format))); }
     void BooleanValue(bool value) { File.Delete(Path.Combine("data", value.ToString())); }
     void ConvertedNumber(int number) { File.Delete(Path.Combine("data", Convert.ToString(number))); }
     void EnumValue(FileMode mode) { File.Delete(Path.Combine("data", mode.ToString())); }

@@ -8,6 +8,18 @@ Establish where the request executes before calling an outbound request
 SSRF. A browser or desktop client fetch is not a server-side request merely
 because it uses an HTTP client; identify any separate privileged network
 boundary before applying CWE-918.
+For native browser requests, inspect `endpoint` producer facts and request options.
+`browser_request_context` supports conditional Value selection of ordinary GET/HEAD,
+not a safe destination verdict. Headers, bearer tokens, cookies/credentials,
+mutations and unknown options retain their own relationship. Follow the URL/config
+producer when those effects make the destination consequential; do not investigate
+every browser GET as though the server executed it.
+For DOM configuration, follow the name conversion into its markup producer:
+`dataset.apiUrl` corresponds to `data-api-url`. Use `references --symbol data-api-url
+--path-prefix COMPONENT` to locate its views/templates, then read the returned
+source. These are textual leads, not proof of destination ownership.
+When wider references include generated copies, follow the authored source rather
+than rereading equivalent distributions.
 
 - For files, inspect path joining, normalization, containment, symlinks and
   the exact storage or read root relevant to this question. A framework render
@@ -24,8 +36,12 @@ boundary before applying CWE-918.
   Supported scalar formatting, known runtime roots and closed-root enumeration
   can also settle traversal syntax; they do not settle object ownership. Do not
   reopen these proven selectors merely because a variable reaches a file API.
-  Check any unknown root or additional filename separately. Archive contents,
-  unauthorized object selection and executable writes are distinct relationships;
+  Check any unknown root or additional filename separately.
+  A record ID constrains selection, not the stored path text in the selected
+  row. For a remaining string component, inspect its writers across relevant
+  authored components, including import paths; a GUID-only upload path alone
+  does not establish all stored values. Keep proven GUID components closed.
+  Archive contents, unauthorized object selection and executable writes are distinct relationships;
   retain them when supported by source, rather than reopening mundane setup.
   Use `local_operand_origin` for exact producers and `operand_boundary` to locate
   the missing edge. Path.Combine and arbitrary ToString calls alone do not prove

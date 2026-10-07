@@ -1,6 +1,101 @@
 use std::{fs, process::Command};
 
 #[test]
+fn build_scope_defers_ordinary_sinks_and_preserves_runtime_and_connected_work() {
+    let root = std::env::temp_dir().join(format!("mehscan-build-scope-{}", std::process::id()));
+    let output = root.with_extension("inventory");
+    fs::create_dir_all(root.join("tools")).unwrap();
+    fs::write(
+        root.join("package.json"),
+        r#"{"main":"app.js","scripts":{"build":"node tools/build.js","start":"node app.js"}}"#,
+    )
+    .unwrap();
+    fs::write(root.join("tools/build.js"), "require('./render'); const fs=require('fs'); function build(path,data) { fs.writeFileSync(path,data); }").unwrap();
+    fs::write(root.join("tools/render.js"), "const fs=require('fs'); module.exports=function render(path) { return fs.readFileSync(path); };").unwrap();
+    fs::write(
+        root.join("app.js"),
+        "const fs=require('fs'); function read(path) { return fs.readFileSync(path); }",
+    )
+    .unwrap();
+    let inventory = |output: &std::path::Path| {
+        let command = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args([
+                "investigate",
+                "review-inventory",
+                root.to_str().unwrap(),
+                "--output",
+                output.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            command.status.success(),
+            "{}",
+            String::from_utf8_lossy(&command.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(
+            &fs::read(output.join("inventory.json")).unwrap(),
+        )
+        .unwrap()
+    };
+    let saved = inventory(&output);
+    let entries = saved["entries"].as_array().unwrap();
+    for path in ["tools/build.js", "tools/render.js"] {
+        assert!(
+            entries.iter().any(|e| e["path"] == path
+                && e["value_hint"]["reason"] == "package_build_tooling_inventory"),
+            "missing build hint for {path}: {saved}"
+        );
+    }
+    assert!(
+        entries
+            .iter()
+            .any(|e| e["path"] == "app.js" && e["value_hint"].is_null())
+    );
+    let listed = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-inventory-list",
+            "--inventory",
+            output.to_str().unwrap(),
+            "--selection",
+            "value",
+        ])
+        .output()
+        .unwrap();
+    assert!(listed.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert!(
+        value["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["path"] == "app.js")
+    );
+    fs::write(root.join("app.js"), "require('./tools/render'); const fs=require('fs'); function read(path) { return fs.readFileSync(path); }").unwrap();
+    let shared = inventory(&root.with_extension("shared-inventory"));
+    assert!(
+        shared["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["path"] == "tools/render.js" && e["value_hint"].is_null())
+    );
+    fs::write(root.join("tools/build.js"), "const express=require('express'); const fs=require('fs'); const app=express(); app.get('/file',(req,res)=>res.send(fs.readFileSync(req.query.path))); ").unwrap();
+    let strong = inventory(&root.with_extension("strong-inventory"));
+    assert!(
+        strong["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["path"] == "tools/build.js"
+                && e["evidence_strength"] != "sink"
+                && e["value_hint"].is_null()),
+        "connected build work must remain active: {strong}"
+    );
+}
+
+#[test]
 #[ignore = "requires Roslyn backend and real .NET/ASP.NET 10 refs"]
 fn shared_destinations_and_helpers_keep_exceptions_and_reopen_exact_dependents() {
     let root =
@@ -51,7 +146,7 @@ fn shared_destinations_and_helpers_keep_exceptions_and_reopen_exact_dependents()
         "--selection",
         "deferred",
     ]);
-    assert_eq!(deferred["matching_count"], 4, "{deferred}");
+    assert_eq!(deferred["matching_count"], 7, "{deferred}");
     let value = run(&[
         "investigate",
         "review-inventory-list",
@@ -66,6 +161,8 @@ fn shared_destinations_and_helpers_keep_exceptions_and_reopen_exact_dependents()
         "DifferentHook",
         "DifferentRoot",
         "DeleteBypass",
+        "DeleteInlineUnknownOption",
+        "DeleteInlineModified",
         "DeleteOther",
         "DeleteReplaced",
         "Read",

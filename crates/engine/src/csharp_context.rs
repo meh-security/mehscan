@@ -5,12 +5,12 @@ use crate::{
 };
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
 /// Resolve only the selected target's compile metadata. Sources/options/framework
-/// references remain supplied by the caller; project-reference placeholders are gaps.
+/// references and source-project links remain supplied by the caller.
 pub fn prepare(root: &Path, seed_path: &Path, output: &Path) -> Result<Value, EngineError> {
     let seed_bytes = read(seed_path)?;
     let mut document: Value = serde_json::from_slice(&seed_bytes).map_err(err)?;
@@ -27,12 +27,44 @@ pub fn prepare(root: &Path, seed_path: &Path, output: &Path) -> Result<Value, En
         .get_mut("projects")
         .and_then(Value::as_array_mut)
         .ok_or_else(|| err("Context requires projects"))?;
+    let mut source_names = BTreeMap::new();
+    for project in projects.iter() {
+        let id = text(&project["id"])?;
+        let normalized = id.replace('\\', "/");
+        let leaf = normalized.rsplit('/').next().unwrap();
+        let default_name = if leaf.to_ascii_lowercase().ends_with(".csproj") {
+            &leaf[..leaf.len() - 7]
+        } else {
+            leaf
+        };
+        let assembly = project["assembly_name"]
+            .as_str()
+            .unwrap_or(default_name)
+            .to_owned();
+        if source_names.insert(id, assembly).is_some() {
+            return Err(err("Context project IDs must be unique"));
+        }
+    }
     let mut summaries = Vec::new();
     for project in projects {
         for path in strings(&project["sources"])? {
             source_path(root, &path)?;
         }
         let id = text(&project["id"])?;
+        let linked: BTreeSet<_> = project
+            .get("project_references")
+            .map(strings)
+            .transpose()?
+            .unwrap_or_default()
+            .into_iter()
+            .map(|id| {
+                source_names.get(&id).cloned().ok_or_else(|| {
+                    err(format!(
+                        "Source project reference has no supplied context: {id}"
+                    ))
+                })
+            })
+            .collect::<Result<_, _>>()?;
         let framework = text(&project["target_framework"])?;
         let assets_path = PathBuf::from(text(&project["assets_file"])?);
         if !assets_path.is_absolute() {
@@ -73,12 +105,19 @@ pub fn prepare(root: &Path, seed_path: &Path, output: &Path) -> Result<Value, En
             .collect();
         let mut missing = BTreeSet::new();
         let mut resolved = 0;
+        let mut resolved_source_projects = BTreeSet::new();
         for (library, entry) in target {
             let Some(compile) = entry.get("compile").and_then(Value::as_object) else {
                 continue;
             };
             for asset in compile.keys().filter(|p| p.ends_with(".dll")) {
                 if entry["type"] != "package" {
+                    if entry["type"] == "project"
+                        && linked.contains(library.split('/').next().unwrap())
+                    {
+                        resolved_source_projects.insert(library.clone());
+                        continue;
+                    }
                     missing.insert(format!(
                         "{library}: project compile reference requires explicit source or metadata"
                     ));
@@ -126,7 +165,8 @@ pub fn prepare(root: &Path, seed_path: &Path, output: &Path) -> Result<Value, En
         object.insert("references".into(), json!(references));
         object.insert("unresolved_references".into(), json!(missing));
         summaries.push(json!({"project_id": id, "assets_target": target_key,
-            "resolved_compile_assets": resolved, "unresolved_references": missing}));
+            "resolved_compile_assets": resolved, "resolved_source_projects": resolved_source_projects.len(),
+            "unresolved_references": missing}));
     }
     document.as_object_mut().unwrap().remove("context_files");
     if output.exists()

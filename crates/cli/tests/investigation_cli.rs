@@ -34,6 +34,136 @@ fn fixture_root() -> PathBuf {
         .join("tests/fixtures/aliases")
 }
 
+#[test]
+fn provenance_query_is_bounded_read_only_and_journaled() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let journal = std::env::temp_dir().join(format!(
+        "mehscan-provenance-cli-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&journal);
+    let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "provenance",
+            root.to_str().unwrap(),
+            "--path-prefix",
+            "backends/typescript",
+            "--limit",
+            "2",
+            "--journal",
+            journal.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["operation"], "code_provenance");
+    assert_eq!(value["candidates_only"], true);
+    assert!(value["candidates"].as_array().unwrap().len() <= 2);
+    let entry: serde_json::Value =
+        serde_json::from_str(fs::read_to_string(&journal).unwrap().trim()).unwrap();
+    assert_eq!(entry["operation"], "provenance");
+    assert_eq!(entry["status"], "ok");
+    let invalid = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "provenance",
+            root.to_str().unwrap(),
+            "--path-prefix",
+            "../outside",
+        ])
+        .output()
+        .unwrap();
+    assert!(!invalid.status.success());
+    let _ = fs::remove_file(journal);
+}
+
+#[test]
+fn compact_references_preserve_scope_counts_and_truncation() {
+    let root = fixture_root();
+    let query = |extra: &[&str]| {
+        let mut args = vec![
+            "investigate",
+            "references",
+            root.to_str().unwrap(),
+            "--symbol",
+            "command",
+            "--path-prefix",
+            "python",
+        ];
+        if !extra.contains(&"--limit") {
+            args.extend_from_slice(&["--limit", "100"]);
+        }
+        args.extend_from_slice(extra);
+        let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output.stderr);
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let full = query(&[]);
+    let compact = query(&["--summary", "true"]);
+    assert_eq!(compact["summary"], true);
+    assert_eq!(full["truncated"], compact["truncated"]);
+    let mut expected = std::collections::BTreeMap::<&str, usize>::new();
+    for result in full["results"].as_array().unwrap() {
+        *expected
+            .entry(result["location"]["path"].as_str().unwrap())
+            .or_default() += 1;
+    }
+    for result in compact["results"].as_array().unwrap() {
+        let path = result["path"].as_str().unwrap();
+        assert_eq!(
+            result["returned_occurrences"].as_u64().unwrap() as usize,
+            expected[path]
+        );
+        assert!(
+            result["previews"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|p| p["text"].as_str().unwrap().chars().count() <= 160)
+        );
+    }
+    let limited = query(&["--summary", "true", "--limit", "1"]);
+    assert_eq!(limited["truncated"], true);
+    assert_eq!(limited["results"][0]["returned_occurrences"], 1);
+    let temp =
+        std::env::temp_dir().join(format!("mehscan-reference-summary-{}", std::process::id()));
+    fs::create_dir_all(&temp).unwrap();
+    fs::write(
+        temp.join("uses.py"),
+        (0..30)
+            .map(|_| format!("# command {}\n", "🙂".repeat(200)))
+            .collect::<String>(),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "references",
+            temp.to_str().unwrap(),
+            "--symbol",
+            "command",
+            "--limit",
+            "100",
+            "--summary",
+            "true",
+        ])
+        .output()
+        .unwrap();
+    let _ = fs::remove_dir_all(&temp);
+    assert!(output.status.success());
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["truncated"], true);
+    assert_eq!(result["results"][0]["returned_occurrences"], 30);
+    assert_eq!(result["results"][0]["locations_truncated"], true);
+    assert_eq!(result["results"][0]["lines"].as_array().unwrap().len(), 20);
+    assert_eq!(result["results"][0]["previews"][0]["clipped"], true);
+}
+
 fn selected_anchor(review: &serde_json::Value) -> serde_json::Value {
     if !review["candidate"].is_null() {
         return review["candidate"]["sink"]["id"].clone();
@@ -121,6 +251,21 @@ fn locates_files_before_reads_and_scopes_broad_reference_searches() {
             .iter()
             .all(|row| { row["location"]["path"] == "python/aliases.py" })
     );
+    let directory = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "references",
+            root,
+            "--symbol",
+            "launch",
+            "--path-prefix",
+            "python",
+        ])
+        .output()
+        .unwrap();
+    assert!(directory.status.success(), "{:?}", directory.stderr);
+    let directory: serde_json::Value = serde_json::from_slice(&directory.stdout).unwrap();
+    assert_eq!(directory["results"], references["results"]);
 }
 
 #[test]
@@ -160,6 +305,72 @@ fn journals_exact_investigation_queries_without_changing_stdout() {
     assert_eq!(rows[0]["output"]["results"], stdout["results"]);
     assert!(rows[0]["elapsed_ms"].is_number());
     let _ = fs::remove_file(&journal);
+}
+
+#[test]
+fn concurrent_queries_preserve_complete_shared_journal_records() {
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-concurrent-query-journal-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    // Larger, quote-rich source produces realistic multi-write serialized
+    // entries and exposes interleaving that tiny source windows may miss.
+    let source = (0..320)
+        .map(|i| {
+            format!("value_{i} = \"a moderately long source value with quotes and \\\\ escapes\"\n")
+        })
+        .collect::<String>();
+    fs::write(root.join("source.py"), source).unwrap();
+    let journal = root.join("queries.jsonl");
+    let _ = fs::remove_file(&journal);
+    let workers = (0..24)
+        .map(|_| {
+            let root = root.clone();
+            let journal = journal.clone();
+            std::thread::spawn(move || {
+                let result = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+                    .args([
+                        "investigate",
+                        "source",
+                        root.to_str().unwrap(),
+                        "--path",
+                        "source.py",
+                        "--start-line",
+                        "1",
+                        "--end-line",
+                        "400",
+                        "--journal",
+                        journal.to_str().unwrap(),
+                    ])
+                    .output()
+                    .unwrap();
+                assert!(
+                    result.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap()
+            })
+        })
+        .collect::<Vec<_>>();
+    let outputs = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect::<Vec<_>>();
+    let records = fs::read_to_string(&journal).unwrap();
+    let rows = records
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), outputs.len());
+    for row in rows {
+        assert_eq!(row["operation"], "source");
+        assert_eq!(row["output"]["results"], outputs[0]["results"]);
+    }
+    fs::remove_file(journal).unwrap();
+    fs::remove_file(root.join("source.py")).unwrap();
+    fs::remove_dir(root).unwrap();
 }
 
 #[test]
@@ -989,6 +1200,64 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
         ledger["reviewed"].as_object().unwrap().len(),
         manifest["review_count"].as_u64().unwrap() as usize
     );
+
+    // A parent manifest must not hide separately bound follow-up chunks.
+    let followup = output_dir.join("followups/chunk-1");
+    fs::create_dir_all(followup.join("requests")).unwrap();
+    fs::create_dir_all(followup.join("responses")).unwrap();
+    for name in ["manifest.json", "input-binding.json"] {
+        fs::copy(output_dir.join(name), followup.join(name)).unwrap();
+    }
+    for entry in manifest["bundles"].as_array().unwrap() {
+        let name = entry["filename"].as_str().unwrap();
+        fs::copy(
+            output_dir.join("requests").join(name),
+            followup.join("requests").join(name),
+        )
+        .unwrap();
+    }
+    fs::rename(&response_path, followup.join("responses").join(filename)).unwrap();
+    let nested_ledger = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-ledger",
+            "--inventory",
+            inventory_dir.to_str().unwrap(),
+            "--history",
+            output_dir.to_str().unwrap(),
+            "--output",
+            ledger_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(nested_ledger.status.success(), "{:?}", nested_ledger.stderr);
+    let nested: serde_json::Value =
+        serde_json::from_slice(&fs::read(&ledger_path).unwrap()).unwrap();
+    assert_eq!(nested["reviewed"], ledger["reviewed"]);
+    assert!(nested["conflicts"].as_array().unwrap().is_empty());
+    let binding_path = followup.join("input-binding.json");
+    let original_binding = fs::read(&binding_path).unwrap();
+    let mut stale_binding: serde_json::Value = serde_json::from_slice(&original_binding).unwrap();
+    stale_binding["source_fingerprint"] = serde_json::json!("stale");
+    fs::write(&binding_path, serde_json::to_vec(&stale_binding).unwrap()).unwrap();
+    let stale_nested = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-ledger",
+            "--inventory",
+            inventory_dir.to_str().unwrap(),
+            "--history",
+            output_dir.to_str().unwrap(),
+            "--output",
+            ledger_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!stale_nested.status.success());
+    assert!(String::from_utf8_lossy(&stale_nested.stderr).contains("binding"));
+    fs::write(binding_path, original_binding).unwrap();
+    fs::rename(followup.join("responses").join(filename), &response_path).unwrap();
+
     let remaining_output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
         .args([
             "investigate",

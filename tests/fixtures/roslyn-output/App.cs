@@ -5,9 +5,95 @@ using System.Text;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Html;
 using Microsoft.AspNetCore.Mvc.Rendering;
+using Microsoft.AspNetCore.Http;
+using System.Net.Mime;
+using System.Threading.Tasks;
+
+public class ResponseFormats
+{
+    public async Task Json(HttpContext context, string input)
+    {
+        context.Response.ContentType = MediaTypeNames.Application.Json;
+        await context.Response.WriteAsync(input);
+    }
+    public async Task Plain(HttpResponse response, string input)
+    {
+        response.ContentType = "text/plain; charset=utf-8";
+        await response.WriteAsync(input);
+    }
+    public async Task Html(HttpContext context, string input)
+    {
+        context.Response.ContentType = "text/html";
+        await context.Response.WriteAsync(input);
+    }
+    public async Task Different(HttpContext context, HttpContext other, string input)
+    {
+        other.Response.ContentType = "application/json";
+        await context.Response.WriteAsync(input);
+    }
+    public async Task Conditional(HttpContext context, string input, bool json)
+    {
+        if (json) context.Response.ContentType = "application/json";
+        await context.Response.WriteAsync(input);
+    }
+    public async Task Replaced(HttpContext context, string input)
+    {
+        context.Response.ContentType = "application/json";
+        context.Response.ContentType = "text/html";
+        await context.Response.WriteAsync(input);
+    }
+    public async Task Intervening(HttpContext context, string input)
+    {
+        context.Response.ContentType = "application/json";
+        Mutate(context);
+        await context.Response.WriteAsync(input);
+    }
+    public async Task ArgumentMutation(HttpContext context)
+    {
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsync(Mutate(context));
+    }
+    private string Mutate(HttpContext context) { context.Response.ContentType = "text/html"; return "value"; }
+}
 
 public class Rendering
 {
+    private static readonly HtmlString Space = new(" ");
+    private readonly string Literal = "constant";
+    private readonly HtmlString ReplacedField = new(" ");
+    private readonly TagBuilder MutableField = new("span");
+    public Rendering(string input = "") { ReplacedField = new HtmlString(input); }
+    public IHtmlContent ReadonlyHtml() { var b = new HtmlContentBuilder(); b.AppendHtml(Space); return b; }
+    public IHtmlContent ReadonlyString() => new HtmlString(Literal);
+    public IHtmlContent EmptyHtml() { var b = new HtmlContentBuilder(); b.AppendHtml(HtmlString.Empty); return b; }
+    public IHtmlContent ConstructorReplacement() { var b = new HtmlContentBuilder(); b.AppendHtml(ReplacedField); return b; }
+    public IHtmlContent MutableFieldHtml(string input) { MutableField.InnerHtml.AppendHtml(input); var b = new HtmlContentBuilder(); b.AppendHtml(MutableField); return b; }
+    public IHtmlContent EncodedRead(string input)
+    {
+        var encoded = HtmlEncoder.Default.Encode(input);
+        Console.WriteLine(encoded);
+        var alias = encoded;
+        return new HtmlString(alias);
+    }
+    public IHtmlContent ImmutableHtmlRead(string input)
+    {
+        var encoded = new HtmlString(HtmlEncoder.Default.Encode(input));
+        Console.WriteLine(encoded);
+        var b = new HtmlContentBuilder(); b.AppendHtml(encoded); return b;
+    }
+    public IHtmlContent RefEncoded(string input)
+    {
+        var encoded = HtmlEncoder.Default.Encode(input);
+        Replace(ref encoded, input);
+        return new HtmlString(encoded);
+    }
+    public IHtmlContent CapturedEncoded(string input)
+    {
+        var encoded = HtmlEncoder.Default.Encode(input);
+        Action replace = () => encoded = input; replace();
+        return new HtmlString(encoded);
+    }
+    private void Replace(ref string output, string input) => output = input;
     public IHtmlContent Encoded(string input) => new HtmlString(HtmlEncoder.Default.Encode(input));
     public IHtmlContent Raw(string input) => new HtmlString(input);
     public IHtmlContent SuppliedEncoder(HtmlEncoder encoder, string input) => new HtmlString(encoder.Encode(input));
@@ -156,6 +242,11 @@ public class Storage
     private string Physical(string path, bool bypass = false) => path;
     private string OtherPhysical(string path) => path;
     public void DeleteOne(string path) { var physical = Physical(path); File.Delete(physical); }
+    public void DeleteInline(string path) { File.Delete(Physical(path)); }
+    public void DeleteInlineBypass(string path) { File.Delete(Physical(path, true)); }
+    public void DeleteInlineUnknownOption(string path, bool bypass) { File.Delete(Physical(path, bypass)); }
+    public void DeleteInlineModified(string path) { File.Delete(Physical(path) + path); }
+    public void ReadInline(string path) { File.ReadAllText(Physical(path)); }
     public void DeleteTwo(string path) { var physical = Physical(path); File.Delete(physical); }
     public void DeleteNamed(string path) { var physical = Physical(bypass: false, path: path); File.Delete(physical); }
     public void DeleteNamedBypass(string path) { var physical = Physical(bypass: true, path: path); File.Delete(physical); }

@@ -41,84 +41,34 @@ internal static partial class Program
             var observations = new List<Observation>();
             var diagnostics = new List<DiagnosticRecord>();
             var projects = new List<ProjectRecord>();
-            var ids = new HashSet<string>();
+            var inputs = CompileInputs(request, context, sources, metadata, referenceHashes);
             foreach (var project in context.Projects)
             {
-                if (string.IsNullOrWhiteSpace(project.Id) || !ids.Add(project.Id))
-                    throw new InvalidDataException("Project IDs must be nonempty and unique");
-                if (string.IsNullOrWhiteSpace(project.TargetFramework))
-                    throw new InvalidDataException("An explicit target_framework is required");
-                if (!LanguageVersionFacts.TryParse(project.LanguageVersion, out var language)
-                    || language is LanguageVersion.Default or LanguageVersion.Latest or LanguageVersion.Preview
-                    or LanguageVersion.LatestMajor)
-                    throw new InvalidDataException("An explicit supported numeric language_version is required");
-                var parseOptions = new CSharpParseOptions(language, preprocessorSymbols: project.Defines);
-                var trees = project.Sources.Select(p => p.Replace('\\', '/')).Distinct().Order().Select(path =>
-                {
-                    path = path.Replace('\\', '/');
-                    if (!sources.TryGetValue(path, out var source))
-                    {
-                        var full = SourcePath(request.Root, path);
-                        var bytes = File.ReadAllBytes(full);
-                        if (bytes.Length > 2 * 1024 * 1024) throw new InvalidDataException("Source exceeds 2 MiB");
-                        source = new Source(path, new UTF8Encoding(false, true).GetString(bytes), Hash(bytes));
-                        sources.Add(path, source);
-                    }
-                    return CSharpSyntaxTree.ParseText(source.Text, parseOptions, path);
-                }).ToArray();
-                var references = References(project).Select(path =>
-                {
-                    if (!metadata.TryGetValue(path, out var reference))
-                    {
-                        referenceHashes[path] = Hash(File.ReadAllBytes(path));
-                        metadata[path] = reference = MetadataReference.CreateFromFile(path);
-                    }
-                    return reference;
-                }).ToArray();
-                var compilationTrees = trees.AsEnumerable();
-                if (project.GlobalUsings is { Length: > 0 } imports)
-                {
-                    if (imports.Length > 64 || imports.Any(n => string.IsNullOrWhiteSpace(n)
-                        || n.Any(c => !(char.IsLetterOrDigit(c) || c is '.' or '_'))
-                        || SyntaxFactory.ParseName(n).ContainsDiagnostics))
-                        throw new InvalidDataException("global_usings must contain namespace names");
-                    compilationTrees = compilationTrees.Append(CSharpSyntaxTree.ParseText(
-                        string.Join("\n", imports.Distinct().Select(n => $"global using {n};")), parseOptions));
-                }
-                var compilation = CSharpCompilation.Create(project.Id, compilationTrees, references,
-                    new CSharpCompilationOptions(project.OutputKind switch {
-                        "library" => OutputKind.DynamicallyLinkedLibrary,
-                        "console" => OutputKind.ConsoleApplication,
-                        "windows" => OutputKind.WindowsApplication,
-                        _ => throw new InvalidDataException("output_kind must be library, console or windows") },
-                        allowUnsafe: project.AllowUnsafe,
-                        nullableContextOptions: project.Nullable ? NullableContextOptions.Enable : NullableContextOptions.Disable));
-                // A restore graph is not the final compiler ReferencePath. Do not
-                // guess SDK conflict resolution or let old facades shadow target refs.
-                var conflicts = references.Select(r => ReferenceName(r.FilePath!)).Where(n => n != null)
-                    .GroupBy(n => n, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).ToArray();
+                var input = inputs[project.Id];
+                var trees = input.Trees;
+                var conflicts = input.Conflicts;
                 if (conflicts.Length > 0)
                 {
                     projects.Add(new(project.Id, project.TargetFramework, project.LanguageVersion, 0,
                         project.UnresolvedReferences?.Length ?? 0, conflicts.Length));
                     foreach (var conflict in conflicts.Take(12))
                         diagnostics.Add(new(project.Id, "MEHSCAN_REFERENCE_CONFLICT",
-                            $"Multiple metadata files define {conflict.Key}; provide an explicit resolved reference set. Project facts withheld.", null));
+                            $"Multiple references define {conflict}; provide an explicit resolved reference set. Project facts withheld.", null));
                     continue;
                 }
-                var errors = compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
+                var errors = input.Errors;
                 projects.Add(new(project.Id, project.TargetFramework, project.LanguageVersion, errors.Length,
-                    project.UnresolvedReferences?.Length ?? 0, 0));
+                    project.UnresolvedReferences?.Length ?? 0, 0, input.IncompleteDependencies));
                 foreach (var error in errors.Take(12))
                     diagnostics.Add(new(project.Id, error.Id, error.GetMessage(),
                         error.Location.IsInSource && sources.TryGetValue(error.Location.SourceTree!.FilePath, out var errorSource)
                             ? Location(errorSource, error.Location.SourceSpan) : null));
-                var models = trees.ToDictionary(t => t.FilePath, t => compilation.GetSemanticModel(t));
+                var models = input.Models;
                 foreach (var query in request.Queries.Where(q => trees.Any(t => t.FilePath == q.Operand.Path)))
                 {
                     var tree = trees.Single(t => t.FilePath == query.Operand.Path);
                     var source = sources[tree.FilePath];
-                    var model = models[tree.FilePath];
+                    var model = models[tree];
                     var facts = new List<Fact>();
                     var locallyCompletePathSelection = false;
                     var locallyCompleteSelectionIdentity = false;
@@ -152,16 +102,17 @@ internal static partial class Program
                         if (query.Role == "path")
                         {
                             var started = timed ? Stopwatch.GetTimestamp() : 0;
-                            locallyCompletePathSelection = FilesystemShape(model, operand, action, query, sources, facts, errors);
+                            locallyCompletePathSelection = FilesystemShape(model, operand, action, query, sources, facts, input.ScopeErrors, models);
                             locallyCompleteSelectionIdentity = FilesystemIdentity(model, operand, action, query, sources, facts, errors);
-                            if (locallyCompleteSelectionIdentity)
-                                FilesystemProducer(model, operand, sources, facts);
+                            locallyCompleteSelectionIdentity = FilesystemProducer(model, operand, action,
+                                locallyCompleteSelectionIdentity, sources, facts, errors) || locallyCompleteSelectionIdentity;
                             if (timed) { filesystemMilliseconds += Stopwatch.GetElapsedTime(started).TotalMilliseconds; filesystemQueries++; }
                         }
                         if (query.Role == "content")
                         {
                             var started = timed ? Stopwatch.GetTimestamp() : 0;
-                            locallyCompleteOutput = HtmlShape(model, operand, action, query, sources, facts, errors);
+                            locallyCompleteOutput = NonHtmlResponse(model, operand, action, query, facts, errors)
+                                || HtmlShape(model, operand, action, query, sources, facts, errors);
                             if (timed) { outputMilliseconds += Stopwatch.GetElapsedTime(started).TotalMilliseconds; outputQueries++; }
                         }
                         if (query.Role == "endpoint")
@@ -504,8 +455,10 @@ internal static partial class Program
     }
 
     private static bool FilesystemShape(SemanticModel model, SyntaxNode operand, SyntaxNode? action,
-        Query query, SortedDictionary<string, Source> sources, List<Fact> facts, Diagnostic[] errors)
+        Query query, SortedDictionary<string, Source> sources, List<Fact> facts, Diagnostic[] errors,
+        Dictionary<SyntaxTree, SemanticModel> models)
     {
+        // Reuse project diagnostics/models for cross-file producers as well.
         bool HasError(SyntaxNode node) => errors.Any(d => d.Location.IsInSource
             && d.Location.SourceTree == node.SyntaxTree && d.Location.SourceSpan.IntersectsWith(node.Span));
         // A narrow path-selection fact, not a filesystem or authorization contract.
@@ -514,6 +467,8 @@ internal static partial class Program
             || sink.ContainingType.Name is not ("File" or "Directory" or "FileStream")
             || HasError(action)) return false;
         var visited = new HashSet<ILocalSymbol>(SymbolEqualityComparer.Default);
+        var members = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+        var arguments = new Dictionary<IParameterSymbol, (SemanticModel Model, ExpressionSyntax Value)>(SymbolEqualityComparer.Default);
         bool Closed(PathShape s) => s != PathShape.Unknown;
         PathShape Merge(IEnumerable<PathShape> values)
         {
@@ -525,19 +480,89 @@ internal static partial class Program
             or SpecialType.System_UInt32 or SpecialType.System_UInt64 or SpecialType.System_Int16
             or SpecialType.System_UInt16 or SpecialType.System_Byte or SpecialType.System_SByte
             or SpecialType.System_IntPtr or SpecialType.System_UIntPtr;
+        bool Numeric(ITypeSymbol? t) => Integral(t) || t?.SpecialType is SpecialType.System_Single
+            or SpecialType.System_Double or SpecialType.System_Decimal;
         PathShape Scalar(ITypeSymbol? type, string? format)
         {
+            if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+                type = nullable.TypeArguments[0];
             if (type?.ToDisplayString() == "System.Guid" && type.DeclaringSyntaxReferences.Length == 0
                     && type.ContainingAssembly.Identity.PublicKeyToken.Length > 0
                 || type?.SpecialType == SpecialType.System_Boolean
                 || type?.TypeKind == TypeKind.Enum) return PathShape.GeneratedName;
-            if (Integral(type) && (string.IsNullOrEmpty(format)
-                || "dDgGxX".Contains(format[0]) && format.Skip(1).All(char.IsAsciiDigit))) return PathShape.GeneratedName;
+            // Practical primitive normalization, as in Dotnetarium. Ordinary
+            // framework formatting does not preserve arbitrary input path text.
+            // Date separators and fixed custom formats are not traversal evidence.
+            // Fixed here closes only path selection, not ownership or effects.
+            if (Numeric(type)) return string.IsNullOrEmpty(format)
+                || "cCdDeEfFgGnNpPrRxXbB".Contains(format[0]) && format.Skip(1).All(char.IsAsciiDigit)
+                    ? PathShape.GeneratedName : PathShape.Fixed;
+            if (type?.SpecialType == SpecialType.System_Char) return PathShape.Fixed;
             if (type?.ToDisplayString() is "System.DateTime" or "System.DateTimeOffset"
-                && format is { Length: > 1 } && !format.Contains("MMM") && !format.Contains("ddd")
-                && format.All(c => "yMdHhmsfF-._0123456789".Contains(c)))
-                return PathShape.GeneratedName;
+                    or "System.DateOnly" or "System.TimeOnly" or "System.TimeSpan"
+                && type.DeclaringSyntaxReferences.Length == 0
+                && type.ContainingAssembly.Identity.PublicKeyToken.Length > 0) return PathShape.Fixed;
             return PathShape.Unknown;
+        }
+        PathShape InModel(SemanticModel target, ExpressionSyntax value, int depth)
+        {
+            var previous = model;
+            try { model = target; return Shape(value, depth); }
+            finally { model = previous; }
+        }
+        ExpressionSyntax? ReturnValue(SyntaxNode declaration)
+        {
+            var (arrow, body) = declaration switch {
+                MethodDeclarationSyntax m => (m.ExpressionBody, m.Body),
+                PropertyDeclarationSyntax p => (p.ExpressionBody, p.AccessorList?.Accessors
+                    .SingleOrDefault(a => a.IsKind(SyntaxKind.GetAccessorDeclaration))?.Body),
+                AccessorDeclarationSyntax a => (a.ExpressionBody, a.Body),
+                _ => ((ArrowExpressionClauseSyntax?)null, (BlockSyntax?)null)
+            };
+            if (arrow != null) return arrow.Expression;
+            if (body?.Statements.LastOrDefault() is not ReturnStatementSyntax returned
+                || body.Statements.Take(body.Statements.Count - 1).Any(s => s is not LocalDeclarationStatementSyntax)) return null;
+            return returned.Expression;
+        }
+        PathShape Member(ISymbol symbol, SyntaxNode declaration, int depth, IInvocationOperation? call = null)
+        {
+            if (depth > 6 || declaration.Span.Length > 8192 || members.Count >= 4
+                || !sources.ContainsKey(declaration.SyntaxTree.FilePath) || !members.Add(symbol)) return PathShape.Unknown;
+            var added = new List<IParameterSymbol>();
+            try
+            {
+                var target = models[declaration.SyntaxTree];
+                if (HasError(declaration) || ReturnValue(declaration) is not ExpressionSyntax value) return PathShape.Unknown;
+                if (call != null)
+                {
+                    var declaredMethod = declaration is MethodDeclarationSyntax methodDeclaration
+                        ? target.GetDeclaredSymbol(methodDeclaration) : null;
+                    foreach (var argument in call.Arguments)
+                    {
+                        if (argument.Parameter is not { RefKind: RefKind.None } calledParameter || declaredMethod == null
+                            || argument.Value is IConversionOperation { OperatorMethod: not null }
+                            || argument.Value.Syntax is not ExpressionSyntax input) return PathShape.Unknown;
+                        // CompilationReference may retarget symbols; substitute
+                        // the parameter belonging to the declaration's model.
+                        var parameter = declaredMethod.Parameters[calledParameter.Ordinal];
+                        // No substitution through mutation or capture of a parameter.
+                        if (declaration.DescendantNodes().OfType<IdentifierNameSyntax>().Any(n =>
+                            SymbolEqualityComparer.Default.Equals(target.GetSymbolInfo(n).Symbol, parameter)
+                            && (n.Ancestors().OfType<AssignmentExpressionSyntax>().Any(a => a.Left.Span.Contains(n.Span))
+                                || n.Parent is RefExpressionSyntax
+                                || n.Parent is ArgumentSyntax a && !a.RefKindKeyword.IsKind(SyntaxKind.None)
+                                || n.Ancestors().FirstOrDefault(IsCallable) != declaration))) return PathShape.Unknown;
+                        arguments.Add(parameter, (model, input));
+                        added.Add(parameter);
+                    }
+                }
+                return InModel(target, value, depth + 1);
+            }
+            finally
+            {
+                foreach (var parameter in added) arguments.Remove(parameter);
+                members.Remove(symbol);
+            }
         }
         PathShape Collection(ExpressionSyntax expression, int depth)
         {
@@ -589,6 +614,9 @@ internal static partial class Program
             // Never substitute a string initializer through a user-defined conversion.
             if (model.GetTypeInfo(expression).Type?.SpecialType != SpecialType.System_String) return PathShape.Unknown;
             if (model.GetConstantValue(expression) is { HasValue: true, Value: string }) return PathShape.Fixed;
+            if (model.GetSymbolInfo(expression).Symbol is IParameterSymbol mappedParameter
+                && arguments.TryGetValue(mappedParameter, out var argument))
+                return InModel(argument.Model, argument.Value, depth + 1);
             if (expression is ParenthesizedExpressionSyntax parenthesized) return Shape(parenthesized.Expression, depth + 1);
             if (expression is PostfixUnaryExpressionSyntax postfix && postfix.IsKind(SyntaxKind.SuppressNullableWarningExpression))
                 return Shape(postfix.Operand, depth + 1);
@@ -609,6 +637,29 @@ internal static partial class Program
                 }
                 // No arbitrary formatter participates in an ordinary string interpolation.
                 return PathShape.Fixed;
+            }
+            if (model.GetOperation(expression) is IPropertyReferenceOperation selected
+                && !selected.Property.IsVirtual && !selected.Property.IsAbstract && !selected.Property.IsOverride
+                && selected.Property.Parameters.Length == 0 && selected.Property.GetMethod != null
+                && selected.Property.RefKind == RefKind.None && selected.Property.DeclaringSyntaxReferences.Length == 1
+                && selected.Property.DeclaringSyntaxReferences.SingleOrDefault()?.GetSyntax() is PropertyDeclarationSyntax definition)
+            {
+                if (HasError(definition)) return PathShape.Unknown;
+                // Computed getters retain their actual producers; a writable
+                // auto-property or unknown record field is never a closed path.
+                if (definition.ExpressionBody != null) return Member(selected.Property, definition, depth);
+                var getter = definition.AccessorList?.Accessors.SingleOrDefault(a => a.IsKind(SyntaxKind.GetAccessorDeclaration));
+                if (getter?.Body != null || getter?.ExpressionBody != null) return Member(selected.Property, getter, depth);
+                if (selected.Property.SetMethod == null && definition.Initializer?.Value is ExpressionSyntax initial)
+                {
+                    var target = models[definition.SyntaxTree];
+                    var owner = definition.Parent;
+                    if (owner == null || selected.Property.ContainingType.DeclaringSyntaxReferences.Length != 1
+                        || owner is TypeDeclarationSyntax t && t.Modifiers.Any(SyntaxKind.PartialKeyword)
+                        || owner.DescendantNodes().OfType<AssignmentExpressionSyntax>().Any(a =>
+                            SymbolEqualityComparer.Default.Equals(target.GetSymbolInfo(a.Left).Symbol, selected.Property))) return PathShape.Unknown;
+                    return InModel(target, initial, depth + 1);
+                }
             }
             if (model.GetOperation(expression) is IPropertyReferenceOperation property
                 && property.Property.DeclaringSyntaxReferences.Length == 0
@@ -767,8 +818,10 @@ internal static partial class Program
             }
             if (expression is BinaryExpressionSyntax binary && binary.IsKind(SyntaxKind.AddExpression))
             {
-                var left = Shape(binary.Left, depth + 1);
-                var right = Shape(binary.Right, depth + 1);
+                PathShape Part(ExpressionSyntax value) => model.GetTypeInfo(value).Type is { } type
+                    && type.SpecialType != SpecialType.System_String ? Scalar(type, null) : Shape(value, depth + 1);
+                var left = Part(binary.Left);
+                var right = Part(binary.Right);
                 bool BasenameLiteral(ExpressionSyntax e) => model.GetConstantValue(e) is { HasValue: true, Value: string text }
                     && text.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-');
                 if (left == PathShape.TemporaryPath && BasenameLiteral(binary.Right)) return PathShape.TemporaryPath;
@@ -778,21 +831,44 @@ internal static partial class Program
                     return PathShape.Fixed;
                 return PathShape.Unknown;
             }
-            if (model.GetOperation(expression) is not IInvocationOperation call || !FrameworkMethod(call.TargetMethod))
-                return PathShape.Unknown;
+            if (model.GetOperation(expression) is not IInvocationOperation call) return PathShape.Unknown;
+            if (!FrameworkMethod(call.TargetMethod))
+            {
+                var helper = call.TargetMethod;
+                if (ErrorType(helper) || helper.IsVirtual || helper.IsAbstract || helper.IsOverride || helper.IsGenericMethod
+                    || helper.ReturnType.SpecialType != SpecialType.System_String
+                    || helper.RefKind != RefKind.None || helper.DeclaringSyntaxReferences.Length != 1
+                    || helper.DeclaringSyntaxReferences.SingleOrDefault()?.GetSyntax() is not MethodDeclarationSyntax helperDefinition)
+                    return PathShape.Unknown;
+                return Member(helper, helperDefinition, depth, call);
+            }
             var type = call.TargetMethod.ContainingType.ToDisplayString();
             var method = call.TargetMethod.Name;
             if (method == "ToString" && call.Instance != null)
             {
                 var format = call.Arguments.FirstOrDefault(a => a.Parameter?.Name == "format");
-                if (call.Arguments.All(a => a == format) && (format == null || format.Value.ConstantValue is { HasValue: true }))
+                bool KnownProvider(IArgumentOperation argument)
+                {
+                    if (argument.Parameter?.Type.ToDisplayString().TrimEnd('?') != "System.IFormatProvider") return false;
+                    var value = argument.Value;
+                    while (value is IConversionOperation { OperatorMethod: null } conversion) value = conversion.Operand;
+                    return value.ConstantValue is { HasValue: true, Value: null }
+                        || value.Type?.ToDisplayString() == "System.Globalization.CultureInfo"
+                            && value.Type.DeclaringSyntaxReferences.Length == 0;
+                }
+                if (call.Arguments.All(a => a == format || KnownProvider(a))
+                    && (format == null || format.Value.ConstantValue is { HasValue: true }))
                 {
                     var shape = Scalar(call.Instance.Type, format?.Value.ConstantValue.Value as string);
                     if (Closed(shape)) return shape;
                 }
             }
             if (type == "System.Convert" && method == "ToString" && call.Arguments.Length == 1)
-                return Scalar(call.Arguments[0].Value.Type, null);
+            {
+                var value = call.Arguments[0].Value;
+                while (value is IConversionOperation { OperatorMethod: null } conversion) value = conversion.Operand;
+                return Scalar(value.Type, null);
+            }
             if (type == "System.Convert" && method == "ToHexString") return PathShape.GeneratedName;
             if (type == "System.Environment" && method == "GetFolderPath" && call.Arguments.FirstOrDefault()?.Value.Type?.TypeKind == TypeKind.Enum)
                 return PathShape.Fixed;
@@ -1019,14 +1095,16 @@ internal static partial class Program
     private sealed record Context(Project[] Projects);
     private sealed record Project(string Id, string TargetFramework, string LanguageVersion, string[] Sources,
         string[] References, string[] ReferenceDirectories, string[] Defines, bool AllowUnsafe = false, bool Nullable = false,
-        string[]? UnresolvedReferences = null, string OutputKind = "library", string[]? GlobalUsings = null);
+        string[]? UnresolvedReferences = null, string OutputKind = "library", string[]? GlobalUsings = null,
+        string[]? ProjectReferences = null, string? AssemblyName = null);
     private sealed record Query(string EvidenceId, string Role, SourceLocation Sink, SourceLocation Operand, SourceLocation? Composition = null);
     private sealed record Source(string Path, string Text, string Hash);
     private sealed record Position(int Line, int Column, int ByteOffset);
     private sealed record SourceLocation(string Path, Position Start, Position End);
     private sealed record Fact(string Role, string Kind, SourceLocation Location, string Value, string[] RemainingChecks);
     private sealed record FileHash(string Path, string Sha256);
-    private sealed record ProjectRecord(string Id, string TargetFramework, string LanguageVersion, int CompilerErrors, int UnresolvedReferences, int ReferenceConflicts);
+    private sealed record ProjectRecord(string Id, string TargetFramework, string LanguageVersion, int CompilerErrors,
+        int UnresolvedReferences, int ReferenceConflicts, bool IncompleteDependencies = false);
     private sealed record Observation(string EvidenceId, string ProjectId, List<Fact> Facts, bool LocallyCompletePathSelection, bool LocallyCompleteSelectionIdentity,
         bool LocallyCompleteOutput, bool LocallyCompleteDestination);
     private sealed record DiagnosticRecord(string ProjectId, string Code, string Message, SourceLocation? Location);

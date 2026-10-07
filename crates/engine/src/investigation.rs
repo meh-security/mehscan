@@ -41,7 +41,7 @@ use mehscan_core::{
 mod review_admission;
 
 use crate::repository::{
-    Discovery, FileClass, discover, discover_selected, is_sast_excluded_source,
+    Discovery, FileClass, discover, discover_selected, discover_text, is_sast_excluded_source,
 };
 use crate::rules::parser_language;
 use crate::{EngineError, code::executable_deserializer, csharp_review, scan_path};
@@ -174,16 +174,17 @@ pub struct ReviewInventoryEntry {
     pub value_hint: Option<ValueReviewHint>,
 }
 
-fn complete_csharp_path_fact(anchor: &Evidence, kind: mehscan_core::OperandFactKind) -> bool {
+fn complete_native_path_fact(anchor: &Evidence, kind: mehscan_core::OperandFactKind) -> bool {
     let Some(path) = anchor.captures.get("path") else {
         return false;
     };
-    anchor.location.path.ends_with(".cs")
-        && matches!(
-            anchor.capability,
-            Capability::FilesystemRead | Capability::FilesystemWrite
-        )
-        && anchor.cwe_candidates == ["CWE-22"]
+    matches!(
+        anchor.location.path.rsplit('.').next(),
+        Some("cs" | "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts")
+    ) && matches!(
+        anchor.capability,
+        Capability::FilesystemRead | Capability::FilesystemWrite
+    ) && anchor.cwe_candidates == ["CWE-22"]
         && anchor.context.operand_facts.iter().any(|fact| {
             fact.kind == kind
                 && fact.role == "path"
@@ -196,13 +197,13 @@ fn complete_csharp_path_fact(anchor: &Evidence, kind: mehscan_core::OperandFactK
         })
 }
 
-fn closed_csharp_path_fact(anchor: &Evidence) -> Option<&mehscan_core::OperandFact> {
+fn closed_native_path_fact(anchor: &Evidence) -> Option<&mehscan_core::OperandFact> {
     [
         mehscan_core::OperandFactKind::FixedFilesystemPath,
         mehscan_core::OperandFactKind::TemporaryFilesystemPath,
     ]
     .into_iter()
-    .find(|kind| complete_csharp_path_fact(anchor, kind.clone()))
+    .find(|kind| complete_native_path_fact(anchor, kind.clone()))
     .and_then(|kind| {
         let path = &anchor.captures["path"];
         anchor.context.operand_facts.iter().find(|fact| {
@@ -475,6 +476,33 @@ fn local_bound_query_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
     })
 }
 
+fn ordinary_browser_request_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
+    if anchor.capability != Capability::OutboundNetworkRequest
+        || anchor.cwe_candidates != ["CWE-918"]
+    {
+        return None;
+    }
+    let operand = anchor.captures.get("endpoint")?;
+    let fact = anchor.context.operand_facts.iter().find(|f| {
+        f.kind == mehscan_core::OperandFactKind::BrowserRequestContext
+            && f.location == operand.location
+            && f.value == operand.text
+            && [
+                "explicit_browser_runtime",
+                "dom_fetch_binding",
+                "ordinary_get_head",
+            ]
+            .iter()
+            .all(|marker| f.remaining_checks.iter().any(|c| c == marker))
+    })?;
+    Some(ValueReviewHint {
+        reason: "ordinary_browser_request_inventory".into(),
+        target: fact.location.path.clone(),
+        assumption: "browser_get_head_surface; not_server_ssrf; inspect_destination_authority_and_consequential_effects_then_reopen".into(),
+        depends_on: None,
+    })
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReviewInventory {
     pub schema_version: String,
@@ -486,6 +514,8 @@ pub struct ReviewInventory {
     pub scan: mehscan_core::ScanResult,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub semantic_inputs: Option<crate::csharp_semantic::InputBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typescript_inputs: Option<crate::typescript_semantic::InputBinding>,
 }
 
 impl ReviewInventory {
@@ -514,6 +544,9 @@ fn validate_review_inventory_sources(
         ));
     }
     if let Some(binding) = &inventory.semantic_inputs {
+        binding.validate(root)?;
+    }
+    if let Some(binding) = &inventory.typescript_inputs {
         binding.validate(root)?;
     }
     if review_source_fingerprint(sources) != inventory.source_fingerprint {
@@ -637,6 +670,24 @@ pub fn build_review_inventory_with_backend(
     include_review_material: bool,
     semantics: Option<(&Path, &Path)>,
     native_backend: Option<(&Path, &Path)>,
+    profile: Option<&mut ReviewInventoryProfile>,
+) -> Result<ReviewInventory, EngineError> {
+    build_review_inventory_with_native_backends(
+        root,
+        include_review_material,
+        semantics,
+        native_backend,
+        None,
+        profile,
+    )
+}
+
+pub fn build_review_inventory_with_native_backends(
+    root: &Path,
+    include_review_material: bool,
+    semantics: Option<(&Path, &Path)>,
+    native_backend: Option<(&Path, &Path)>,
+    typescript: Option<crate::typescript_semantic::Input<'_>>,
     mut profile: Option<&mut ReviewInventoryProfile>,
 ) -> Result<ReviewInventory, EngineError> {
     if semantics.is_some() && native_backend.is_some() {
@@ -665,6 +716,19 @@ pub fn build_review_inventory_with_backend(
             context, &snapshot,
         )?);
     }
+    let typescript_inputs = if let Some(input) = typescript {
+        use crate::typescript_semantic as ts;
+        let (context, snapshot) = match input {
+            ts::Input::Snapshot(facts, context) => (context, ts::load(facts)?),
+            ts::Input::Backend(context, backend) => {
+                (context, ts::collect(root, context, backend, &scan)?)
+            }
+        };
+        ts::enrich(root, context, &snapshot, &mut scan)?;
+        Some(ts::InputBinding::capture(context, &snapshot)?)
+    } else {
+        None
+    };
     if let Some(profile) = profile.as_deref_mut() {
         profile.native_milliseconds = native_started.elapsed().as_millis();
     }
@@ -682,6 +746,7 @@ pub fn build_review_inventory_with_backend(
         Some(scan.clone()),
         None,
         Some(&mut entries),
+        Some(sources),
     )?;
     if let Some(profile) = profile {
         profile.inventory_milliseconds = inventory_started.elapsed().as_millis();
@@ -694,6 +759,7 @@ pub fn build_review_inventory_with_backend(
         admission_audit: job.review_coverage.admission_audit,
         scan,
         semantic_inputs,
+        typescript_inputs,
     })
 }
 
@@ -703,10 +769,42 @@ pub fn build_selected_review_jobs(
     review_ids: &BTreeSet<String>,
     context_lines: Option<usize>,
 ) -> Result<PathReviewJob, EngineError> {
+    build_selected_review_jobs_internal(root, inventory, review_ids, context_lines, None)
+}
+
+pub fn build_selected_review_jobs_profiled(
+    root: &Path,
+    inventory: &ReviewInventory,
+    review_ids: &BTreeSet<String>,
+    context_lines: Option<usize>,
+) -> Result<(PathReviewJob, ReviewJobProfile), EngineError> {
+    let mut profile = ReviewJobProfile::default();
+    let job = build_selected_review_jobs_internal(
+        root,
+        inventory,
+        review_ids,
+        context_lines,
+        Some(&mut profile),
+    )?;
+    Ok((job, profile))
+}
+
+fn build_selected_review_jobs_internal(
+    root: &Path,
+    inventory: &ReviewInventory,
+    review_ids: &BTreeSet<String>,
+    context_lines: Option<usize>,
+    mut profile: Option<&mut ReviewJobProfile>,
+) -> Result<PathReviewJob, EngineError> {
     if review_ids.is_empty() {
         return Err(EngineError("select at least one review ID".to_string()));
     }
-    validate_review_inventory(root, inventory)?;
+    let validation_started = std::time::Instant::now();
+    let sources = RepositorySources::load(root)?;
+    validate_review_inventory_sources(root, inventory, &sources)?;
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.inventory_validation_milliseconds = validation_started.elapsed().as_millis();
+    }
     let known = inventory
         .entries
         .iter()
@@ -725,12 +823,21 @@ pub fn build_selected_review_jobs(
         None,
         0,
         inventory.include_review_material,
-        None,
+        profile,
         Some(inventory.scan.clone()),
         Some(review_ids),
         None,
+        Some(sources),
     )?;
     if let Some(binding) = &inventory.semantic_inputs {
+        let identity = serde_json::to_vec(&(&job.fingerprint, binding))
+            .map_err(|e| EngineError(e.to_string()))?;
+        job.fingerprint = format!(
+            "path-reviewpack-{}",
+            crate::csharp_semantic::digest(&identity)
+        );
+    }
+    if let Some(binding) = &inventory.typescript_inputs {
         let identity = serde_json::to_vec(&(&job.fingerprint, binding))
             .map_err(|e| EngineError(e.to_string()))?;
         job.fingerprint = format!(
@@ -891,7 +998,7 @@ pub fn get_source(
     // An explicitly requested text file can be useful review evidence even
     // when its suffix is not admitted to the scanner (for example, an Angular
     // HTML template). Keep discovery's repository ignore and path rules.
-    let discovery = discover_selected(root, path)?;
+    let discovery = discover_text(root, Some(path))?;
     let display_root = display_path(&discovery.root);
     let normalized = normalize_relative(path);
     let discovered = discovery
@@ -1216,6 +1323,7 @@ pub fn build_path_review_jobs_page(
         None,
         None,
         None,
+        None,
     )
 }
 
@@ -1236,11 +1344,13 @@ pub fn build_all_path_review_jobs(
         None,
         None,
         None,
+        None,
     )
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct ReviewJobProfile {
+    pub inventory_validation_milliseconds: u128,
     pub scan_milliseconds: u128,
     pub source_load_milliseconds: u128,
     pub context_admission_milliseconds: u128,
@@ -1271,6 +1381,7 @@ pub fn build_all_path_review_jobs_profiled(
         None,
         None,
         None,
+        None,
     )?;
     Ok((job, profile))
 }
@@ -1285,6 +1396,7 @@ fn build_path_review_jobs_internal(
     supplied_scan: Option<mehscan_core::ScanResult>,
     selected_ids: Option<&BTreeSet<String>>,
     mut inventory_entries: Option<&mut Vec<ReviewInventoryEntry>>,
+    supplied_sources: Option<RepositorySources>,
 ) -> Result<PathReviewJob, EngineError> {
     let started = std::time::Instant::now();
     let context_lines =
@@ -1312,7 +1424,12 @@ fn build_path_review_jobs_internal(
         .iter()
         .map(|evidence| (evidence.id.as_str(), evidence))
         .collect::<BTreeMap<_, _>>();
-    let sources = RepositorySources::load(root)?;
+    // Selected work uses the exact source snapshot whose freshness was checked.
+    // Inventory construction can also reuse its fingerprinted snapshot.
+    let sources = match supplied_sources {
+        Some(sources) => sources,
+        None => RepositorySources::load(root)?,
+    };
     if let Some(profile) = profile.as_deref_mut() {
         profile.source_load_milliseconds =
             started.elapsed().as_millis() - profile.scan_milliseconds;
@@ -1338,7 +1455,7 @@ fn build_path_review_jobs_internal(
                     .is_some_and(|sink| closed_output_operand(sink).is_some())
                 && !evidence_by_id
                     .get(candidate.sink.id.as_str())
-                    .is_some_and(|sink| closed_csharp_path_fact(sink).is_some())
+                    .is_some_and(|sink| closed_native_path_fact(sink).is_some())
                 && (include_review_material
                     || !is_review_material_path(&candidate.primary_location.path))
         })
@@ -1388,7 +1505,33 @@ fn build_path_review_jobs_internal(
     let excluded_observations = all_observation_count.saturating_sub(observation_groups.len());
     let indexed_references =
         review_reference_tokens(&candidates, &sources, &evidence_by_id, context_lines);
-    let review_context = ReviewContextIndex::build(&sources, &indexed_references)?;
+    let mut context_names = ReviewContextNameCache::new(&sources);
+    // One raw search can serve both primary-name sets. Each consumer still
+    // projects its own names before expanding helpers, so preloading cannot
+    // broaden admission or review evidence. Do not prewarm unselected pages.
+    if let Some(ids) = selected_ids {
+        let mut primary_names = indexed_references.clone();
+        for group in observation_groups.iter().filter(|group| {
+            ids.contains(&observation_review_id(
+                &group.path,
+                &group.symbol,
+                &group.anchor_evidence_ids,
+            ))
+        }) {
+            primary_names.extend(observation_group_references(
+                group,
+                &sources,
+                context_lines,
+            )?);
+        }
+        context_names.ensure(&primary_names);
+    }
+    let frameworks = collect_framework_context(&sources);
+    let review_context = ReviewContextIndex::build_with_cached_names(
+        &indexed_references,
+        &frameworks,
+        &mut context_names,
+    )?;
     if let Some(profile) = profile.as_deref_mut() {
         profile.context_admission_milliseconds = started.elapsed().as_millis()
             - profile.scan_milliseconds
@@ -1480,6 +1623,7 @@ fn build_path_review_jobs_internal(
                         fixed_include_value_hint(anchor, &sources, &write_paths)
                             .or_else(|| ordinary_php_sink_hint(anchor))
                             .or_else(|| local_bound_query_hint(anchor))
+                            .or_else(|| ordinary_browser_request_hint(anchor))
                     })
                     .flatten(),
             })
@@ -1487,6 +1631,35 @@ fn build_path_review_jobs_internal(
         share_php_output_questions(entries);
         share_csharp_filesystem_questions(entries);
         share_csharp_destination_questions(entries);
+        // Scope hints affect Value selection only. Strong relationships and
+        // decision-critical operations remain active even in build components.
+        if entries.iter().any(|e| {
+            e.evidence_strength == "sink"
+                && matches!(
+                    e.path.rsplit('.').next(),
+                    Some("js" | "ts" | "jsx" | "tsx" | "mjs" | "cjs")
+                )
+        }) {
+            let files = sources
+                .files
+                .iter()
+                .map(|(p, f)| (p.as_str(), f.source.as_str()))
+                .collect();
+            let build_only = crate::provenance::build_only(&files);
+            for entry in entries
+                .iter_mut()
+                .filter(|e| e.evidence_strength == "sink" && e.value_hint.is_none())
+            {
+                if let Some(manifest) = build_only.get(&entry.path) {
+                    entry.value_hint = Some(ValueReviewHint {
+                        reason: "package_build_tooling_inventory".into(),
+                        target: manifest.clone(),
+                        assumption: "Literal package build entry/import chain; no observed runtime/export/shared importer. Conditional Value scope, not safety or complete reachability. Reopen for deployed tooling, untrusted build inputs or external/dynamic consumers; Comprehensive retains exact IDs.".into(),
+                        depends_on: None,
+                    });
+                }
+            }
+        }
     }
     let total_reviews = candidates.len() + observation_groups.len();
     if let Some(ids) = selected_ids {
@@ -1944,6 +2117,7 @@ fn build_path_review_jobs_internal(
             context_lines,
             &rules_by_id,
             &review_context.frameworks,
+            &mut context_names,
             profile.as_deref_mut(),
         )?
     };
@@ -8620,6 +8794,7 @@ fn build_observation_reviews(
     context_lines: usize,
     rules_by_id: &BTreeMap<&str, &Rule>,
     framework_context: &[FrameworkContextFact],
+    context_names: &mut ReviewContextNameCache<'_>,
     mut profile: Option<&mut ReviewJobProfile>,
 ) -> Result<Vec<ObservationReview>, EngineError> {
     let index_started = std::time::Instant::now();
@@ -8628,12 +8803,19 @@ fn build_observation_reviews(
     for group in &groups {
         indexed_references.extend(observation_group_references(group, sources, context_lines)?);
     }
-    let review_context =
-        ReviewContextIndex::build_with_frameworks(sources, &indexed_references, framework_context)?;
-    let bounded_callers = groups
+    let review_context = ReviewContextIndex::build_with_cached_names(
+        &indexed_references,
+        framework_context,
+        context_names,
+    )?;
+    let caller_languages = groups
         .iter()
-        .any(|group| decision_critical_origin(&group.evidence).is_some())
-        .then(|| BoundedCallerIndex::build(sources));
+        .filter(|group| decision_critical_origin(&group.evidence).is_some())
+        .filter_map(|group| languages.get(group.path.as_str()).copied())
+        .filter(|language| *language != Language::Csharp)
+        .collect::<BTreeSet<_>>();
+    let bounded_callers = (!caller_languages.is_empty())
+        .then(|| BoundedCallerIndex::build(sources, &caller_languages));
     if let Some(profile) = profile.as_deref_mut() {
         profile.observation_index_milliseconds = index_started.elapsed().as_millis();
         eprintln!(
@@ -9897,7 +10079,7 @@ fn java_request_entity_writer_facts(
 }
 
 impl BoundedCallerIndex {
-    fn build(sources: &RepositorySources) -> Self {
+    fn build(sources: &RepositorySources, languages: &BTreeSet<Language>) -> Self {
         #[derive(Clone)]
         struct Definition {
             language: Language,
@@ -9910,7 +10092,8 @@ impl BoundedCallerIndex {
         let mut records = Vec::new();
         let mut definitions: BTreeMap<(Language, String), Vec<BoundedDefinition>> = BTreeMap::new();
         for file in sources.files.values().filter(|file| {
-            file.language.is_some()
+            file.language
+                .is_some_and(|language| languages.contains(&language))
                 && file.source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES
                 && !is_nonproduction_review_context_path(&file.path)
         }) {
@@ -11751,7 +11934,7 @@ fn review_admission_audit(
                 disposition,
                 location: item.location.clone(),
                 operand_fact: closed_output_operand(item)
-                    .or_else(|| closed_csharp_path_fact(item))
+                    .or_else(|| closed_native_path_fact(item))
                     .cloned(),
             }
         })
@@ -12254,7 +12437,7 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
     if closed_output_operand(item).is_some() {
         return true;
     }
-    if closed_csharp_path_fact(item).is_some() {
+    if closed_native_path_fact(item).is_some() {
         return true;
     }
     if item.capability == Capability::DatabaseQuery && item.rule_id == "csharp-extended-nosql-json"
@@ -12360,16 +12543,21 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
 fn closed_output_operand(item: &Evidence) -> Option<&mehscan_core::OperandFact> {
     if item.kind == EvidenceKind::Sink
         && item.capability == Capability::HtmlOutput
-        && item.rule_id == "csharp-aspnet-explicit-html-output"
+        && matches!(
+            item.rule_id.as_str(),
+            "csharp-aspnet-explicit-html-output" | "csharp-html-output"
+        )
         && item.cwe_candidates == ["CWE-79"]
     {
         let capture = item.captures.get("content")?;
         return item.context.operand_facts.iter().find(|fact| {
-            fact.kind == mehscan_core::OperandFactKind::EncodedHtmlOperand
+            (fact.kind == mehscan_core::OperandFactKind::EncodedHtmlOperand
+                && fact.remaining_checks == ["html_text_context_only"]
+                || fact.kind == mehscan_core::OperandFactKind::NonHtmlResponse
+                    && fact.remaining_checks == ["explicit_non_html_response"])
                 && fact.role == "content"
                 && fact.location == capture.location
                 && fact.value == capture.text
-                && fact.remaining_checks == ["html_text_context_only"]
         });
     }
     if item.kind != EvidenceKind::Sink
@@ -15314,6 +15502,57 @@ fn contains_sensitive_config_key(value: &str) -> bool {
     .any(|marker| lower.contains(marker))
 }
 
+// Raw name searches are independent: each name has the same file order,
+// reference cap and definitions regardless of its neighboring query names.
+// Share only these searches, never the expanded review-specific index.
+struct ReviewContextNameCache<'a> {
+    sources: &'a RepositorySources,
+    indexed: BTreeSet<String>,
+    definitions: BTreeMap<String, Vec<OutlineSymbol>>,
+    registrations: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
+    usages: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
+}
+
+impl<'a> ReviewContextNameCache<'a> {
+    fn new(sources: &'a RepositorySources) -> Self {
+        Self {
+            sources,
+            indexed: BTreeSet::new(),
+            definitions: BTreeMap::new(),
+            registrations: BTreeMap::new(),
+            usages: BTreeMap::new(),
+        }
+    }
+
+    fn ensure(&mut self, wanted: &BTreeSet<String>) {
+        let missing = wanted
+            .difference(&self.indexed)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if missing.is_empty() {
+            return;
+        }
+        index_review_context_names(
+            self.sources,
+            &missing,
+            &mut self.definitions,
+            &mut self.registrations,
+            &mut self.usages,
+        );
+        self.indexed.extend(missing);
+    }
+}
+
+fn project_context_names<T: Clone>(
+    values: &BTreeMap<String, T>,
+    names: &BTreeSet<String>,
+) -> BTreeMap<String, T> {
+    names
+        .iter()
+        .filter_map(|name| values.get(name).map(|value| (name.clone(), value.clone())))
+        .collect()
+}
+
 fn index_review_context_names(
     sources: &RepositorySources,
     wanted: &BTreeSet<String>,
@@ -16019,26 +16258,33 @@ fn relative_review_import_paths(
 }
 
 impl ReviewContextIndex {
+    #[cfg(test)]
     fn build(sources: &RepositorySources, wanted: &BTreeSet<String>) -> Result<Self, EngineError> {
         let frameworks = collect_framework_context(sources);
         Self::build_with_frameworks(sources, wanted, &frameworks)
     }
 
+    #[cfg(test)]
     fn build_with_frameworks(
         sources: &RepositorySources,
         wanted: &BTreeSet<String>,
         frameworks: &[FrameworkContextFact],
     ) -> Result<Self, EngineError> {
-        let mut definitions: BTreeMap<String, Vec<OutlineSymbol>> = BTreeMap::new();
-        let mut registrations: BTreeMap<String, Vec<ReviewNeighborhoodFact>> = BTreeMap::new();
-        let mut usages: BTreeMap<String, Vec<ReviewNeighborhoodFact>> = BTreeMap::new();
-        index_review_context_names(
-            sources,
+        Self::build_with_cached_names(
             wanted,
-            &mut definitions,
-            &mut registrations,
-            &mut usages,
-        );
+            frameworks,
+            &mut ReviewContextNameCache::new(sources),
+        )
+    }
+
+    fn build_with_cached_names(
+        wanted: &BTreeSet<String>,
+        frameworks: &[FrameworkContextFact],
+        names: &mut ReviewContextNameCache<'_>,
+    ) -> Result<Self, EngineError> {
+        names.ensure(wanted);
+        let sources = names.sources;
+        let mut definitions = project_context_names(&names.definitions, wanted);
 
         // One additional lexical hop is enough to expose small wrappers such
         // as isChallengeEnabled -> getChallengeEnablementStatus without
@@ -16065,14 +16311,12 @@ impl ReviewContextIndex {
             .cloned()
             .collect::<BTreeSet<_>>();
         if !second_hop.is_empty() {
-            index_review_context_names(
-                sources,
-                &second_hop,
-                &mut definitions,
-                &mut registrations,
-                &mut usages,
-            );
+            names.ensure(&second_hop);
+            definitions.extend(project_context_names(&names.definitions, &second_hop));
         }
+        let all_names = wanted.union(&second_hop).cloned().collect();
+        let mut registrations = project_context_names(&names.registrations, &all_names);
+        let mut usages = project_context_names(&names.usages, &all_names);
         for symbols in definitions.values_mut() {
             symbols.sort_by(|left, right| {
                 left.location.path.cmp(&right.location.path).then_with(|| {
@@ -20292,7 +20536,11 @@ pub fn find_imports(
     let mut skipped_files = Vec::new();
     let mut truncated = false;
     'files: for file in sources.files.values() {
-        if file.language.is_none() {
+        // For a single identifier, import names/signatures contain its source
+        // spelling. Text only narrows parsing; AST extraction still establishes
+        // the import. Compound queries can match normalized signature text and
+        // retain the full search (e.g. multiline Java `import static`).
+        if file.language.is_none() || (is_plain_identifier(name) && !file.source.contains(name)) {
             continue;
         }
         let symbols = match outlines.extract(file) {
@@ -20328,6 +20576,7 @@ pub fn find_text_references(
     root: &Path,
     symbol: &str,
     path: Option<&str>,
+    path_prefix: Option<&str>,
     limit: Option<usize>,
 ) -> Result<QueryResponse<Vec<TextReference>>, EngineError> {
     if symbol.is_empty() {
@@ -20335,11 +20584,18 @@ pub fn find_text_references(
             "reference symbol must not be empty".to_string(),
         ));
     }
+    if path.is_some() && path_prefix.is_some() {
+        return Err(EngineError(
+            "choose either --path or --path-prefix".to_string(),
+        ));
+    }
     let limit = bounded_limit(limit.or(Some(20)))?;
     let sources = if let Some(path) = path {
-        RepositorySources::load_selected(root, path)?
+        RepositorySources::from_discovery(discover_text(root, Some(path))?, true)?
+    } else if let Some(prefix) = path_prefix {
+        RepositorySources::load_directory(root, prefix)?
     } else {
-        RepositorySources::load(root)?
+        RepositorySources::from_discovery(discover_text(root, None)?, true)?
     };
     let requested_path = path.map(normalize_relative);
     if let Some(path) = &requested_path {
@@ -20399,7 +20655,7 @@ pub fn find_source_paths(
         return Err(EngineError("path name must not be empty".to_string()));
     }
     let limit = bounded_limit(limit)?;
-    let discovery = discover(root)?;
+    let discovery = discover_text(root, None)?;
     let display_root = display_path(&discovery.root);
     let needle = name.to_lowercase();
     let mut matches = discovery
@@ -20412,6 +20668,9 @@ pub fn find_source_paths(
             | FileClass::EmbeddedJavascriptTemplate
             | FileClass::Razor
             | FileClass::WebForms => crate::code::read_secret_text(&file.absolute).is_ok(),
+            FileClass::Ignored if is_investigation_template(&file.relative) => {
+                crate::code::read_secret_text(&file.absolute).is_ok()
+            }
             FileClass::UnsupportedSource | FileClass::Ignored => false,
         })
         .map(|file| file.relative)
@@ -20856,14 +21115,31 @@ fn native_expression_context(
 
 impl RepositorySources {
     fn load(root: &Path) -> Result<Self, EngineError> {
-        Self::from_discovery(discover(root)?)
+        Self::from_discovery(discover(root)?, false)
     }
 
     fn load_selected(root: &Path, path: &str) -> Result<Self, EngineError> {
-        Self::from_discovery(discover_selected(root, path)?)
+        Self::from_discovery(discover_selected(root, path)?, true)
     }
 
-    fn from_discovery(discovery: Discovery) -> Result<Self, EngineError> {
+    fn load_directory(root: &Path, prefix: &str) -> Result<Self, EngineError> {
+        if prefix.trim().is_empty() {
+            return Err(EngineError("query directory must not be empty".to_string()));
+        }
+        let discovery = discover_text(root, Some(prefix))?;
+        let selected =
+            fs::canonicalize(discovery.root.join(prefix.replace('\\', "/"))).map_err(|error| {
+                EngineError(format!("cannot access query directory {prefix:?}: {error}"))
+            })?;
+        if !selected.starts_with(&discovery.root) || !selected.is_dir() {
+            return Err(EngineError(
+                "--path-prefix must name a directory inside the scan root".to_string(),
+            ));
+        }
+        Self::from_discovery(discovery, true)
+    }
+
+    fn from_discovery(discovery: Discovery, include_templates: bool) -> Result<Self, EngineError> {
         let display_root = display_path(&discovery.root);
         let mut files = BTreeMap::new();
         for file in discovery.files {
@@ -20880,6 +21156,14 @@ impl RepositorySources {
                 | FileClass::EmbeddedJavascriptTemplate
                 | FileClass::Razor
                 | FileClass::WebForms => {
+                    let Ok(source) = crate::code::read_secret_text(&file.absolute) else {
+                        continue;
+                    };
+                    (None, source)
+                }
+                FileClass::Ignored
+                    if include_templates && is_investigation_template(&file.relative) =>
+                {
                     let Ok(source) = crate::code::read_secret_text(&file.absolute) else {
                         continue;
                     };
@@ -21261,6 +21545,29 @@ fn bounded_context_lines(context_lines: Option<usize>) -> Result<usize, EngineEr
     Ok(context_lines)
 }
 
+// Navigation-only template text. This does not add a scanner language or claim
+// template evaluation/dataflow semantics; repository ignore rules still apply.
+fn is_investigation_template(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "html"
+                    | "htm"
+                    | "vue"
+                    | "svelte"
+                    | "twig"
+                    | "liquid"
+                    | "jinja"
+                    | "jinja2"
+                    | "j2"
+                    | "mustache"
+            )
+        })
+}
+
 fn normalize_relative(path: &str) -> String {
     path.replace('\\', "/").trim_start_matches("./").to_string()
 }
@@ -21571,6 +21878,101 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn named_import_prefilter_preserves_unfiltered_ast_results() {
+        let root = std::env::temp_dir().join(format!(
+            "mehscan-import-control-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        for (path, source) in [
+            ("imports.c", "#include \"needle.h\"\n"),
+            ("imports.cpp", "#include <needle.hpp>\n"),
+            ("imports.cs", "using needle;\n"),
+            (
+                "Imports.java",
+                "import needle.Widget;\nimport\nstatic needle.Helper.call;\nclass Imports {}\n",
+            ),
+            ("imports.kt", "import needle.helper as localAlias\n"),
+            (
+                "imports.js",
+                "import { helper as localAlias } from 'needle';\n",
+            ),
+            (
+                "imports.ts",
+                "import { helper as localAlias } from 'needle';\n",
+            ),
+            (
+                "imports.tsx",
+                "import { helper as localAlias } from 'needle';\nconst view = <div />;\n",
+            ),
+            ("imports.py", "from needle import helper as localAlias\n"),
+            ("imports.php", "<?php use needle\\Thing as LocalAlias;\n"),
+            (
+                "imports.go",
+                "package sample\nimport localAlias \"needle\"\n",
+            ),
+            ("imports.rs", "use needle::Thing as LocalAlias;\n"),
+            ("lookalike.js", "const text = 'needle'; // import needle\n"),
+        ] {
+            fs::write(root.join(path), source).unwrap();
+        }
+        let sources = RepositorySources::load(&root).unwrap();
+        let outlines = OutlineExtractors::build().unwrap();
+        let mut imports = Vec::new();
+        let mut languages = BTreeSet::new();
+        for file in sources.files.values() {
+            for symbol in outlines.extract(file).unwrap() {
+                if symbol.is_import {
+                    languages.insert(file.language.unwrap());
+                    imports.push(symbol);
+                }
+            }
+        }
+        assert_eq!(languages.len(), all_languages().len());
+        assert!(
+            !imports
+                .iter()
+                .any(|symbol| symbol.location.path == "lookalike.js")
+        );
+        assert!(
+            imports
+                .iter()
+                .any(|symbol| symbol.signature.contains("import static"))
+        );
+        for query in [
+            "needle",
+            "need",
+            "localAlias",
+            "LocalAlias",
+            "missing",
+            "import",
+            "import static",
+            "needle.Widget",
+        ] {
+            let expected: Vec<_> = imports
+                .iter()
+                .filter(|symbol| symbol.name.contains(query) || symbol.signature.contains(query))
+                .cloned()
+                .collect();
+            for limit in [1, 3, 200] {
+                let actual = find_imports(&root, query, Some(limit)).unwrap();
+                assert_eq!(
+                    actual.results,
+                    expected.iter().take(limit).cloned().collect::<Vec<_>>(),
+                    "query {query}, limit {limit}"
+                );
+                assert_eq!(actual.truncated, expected.len() > limit, "query {query}");
+                assert!(actual.skipped_files.is_empty());
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn inventory_selection_preserves_reviews_and_rejects_changed_source() {
@@ -24461,6 +24863,122 @@ mod tests {
                 && fact.symbol == "EnableMethodSecurity"
                 && fact.location.path == "services/auth/src/Security.java"
         }));
+    }
+
+    #[test]
+    fn selected_caller_languages_preserve_chains_and_ambiguity() {
+        let files = [
+            (
+                "app.js",
+                Language::Javascript,
+                "function render(value) {\n return value;\n}\nfunction entry(input) {\n return render(input);\n}\nfunction ambiguous(value) {\n return value;\n}\n",
+            ),
+            (
+                "duplicate.js",
+                Language::Javascript,
+                "function ambiguous(value) {\n return value;\n}\n",
+            ),
+            (
+                "app.cs",
+                Language::Csharp,
+                "string render(string value) {\n return value;\n}\nstring entry(string input) {\n return render(input);\n}\n",
+            ),
+        ];
+        let sources = RepositorySources {
+            root: ".".into(),
+            files: files
+                .into_iter()
+                .map(|(path, language, source)| {
+                    (
+                        path.into(),
+                        SourceFile {
+                            path: path.into(),
+                            language: Some(language),
+                            source: source.into(),
+                        },
+                    )
+                })
+                .collect(),
+        };
+        let full = BoundedCallerIndex::build(
+            &sources,
+            &BTreeSet::from([Language::Javascript, Language::Csharp]),
+        );
+        let selected = BoundedCallerIndex::build(&sources, &BTreeSet::from([Language::Javascript]));
+        assert!(
+            selected
+                .definitions
+                .keys()
+                .all(|(language, _)| *language == Language::Javascript)
+        );
+        let query = |index: &BoundedCallerIndex, symbol| {
+            index.facts(Language::Javascript, "app.js", symbol, None, "value", 4)
+        };
+        let chain = query(&full, "render");
+        assert!(
+            !chain.0.is_empty(),
+            "control must contain an actual caller chain"
+        );
+        assert_eq!(query(&selected, "render"), chain);
+        let ambiguous = query(&full, "ambiguous");
+        assert!(ambiguous.0.is_empty());
+        assert_eq!(query(&selected, "ambiguous"), ambiguous);
+    }
+
+    #[test]
+    fn shared_context_names_preserve_query_scope_caps_and_helper_depth() {
+        let files = [
+            ("app.js", "function render(value) {\n return getPolicy(value);\n}\napp.get('/render', render);\n".to_string()),
+            ("duplicate.js", "function render(value) {\n return getPolicy(value);\n}\n".to_string()),
+            ("policy.js", "function getPolicy(value) {\n return decodePayload(value);\n}\n".to_string()),
+            ("decoder.js", "function decodePayload(value) {\n return value;\n}\n".to_string()),
+            ("calls.js", "render(input);\n".repeat(30)),
+        ];
+        let sources = RepositorySources {
+            root: ".".into(),
+            files: files
+                .into_iter()
+                .map(|(path, source)| {
+                    (
+                        path.into(),
+                        SourceFile {
+                            path: path.into(),
+                            language: Some(Language::Javascript),
+                            source,
+                        },
+                    )
+                })
+                .collect(),
+        };
+        let frameworks = collect_framework_context(&sources);
+        let wanted = BTreeSet::from(["render".to_string(), "absentHelper".to_string()]);
+        let independent = ReviewContextIndex::build(&sources, &wanted).unwrap();
+        let mut names = ReviewContextNameCache::new(&sources);
+        // Another review has already requested the deeper helper. It must not
+        // become part of this review's single-hop expansion merely via caching.
+        names.ensure(&BTreeSet::from([
+            "decodePayload".into(),
+            "getPolicy".into(),
+            "absentHelper".into(),
+        ]));
+        let shared =
+            ReviewContextIndex::build_with_cached_names(&wanted, &frameworks, &mut names).unwrap();
+        assert_eq!(shared.definitions, independent.definitions);
+        assert_eq!(shared.registrations, independent.registrations);
+        assert_eq!(shared.usages, independent.usages);
+        assert_eq!(shared.definitions["render"].len(), 2);
+        assert_eq!(shared.usages["render"].len(), 24);
+        assert!(!shared.registrations["render"].is_empty());
+        assert!(shared.definitions.contains_key("getPolicy"));
+        assert!(!shared.definitions.contains_key("decodePayload"));
+        assert!(names.indexed.contains("absentHelper"));
+        let indexed = names.indexed.clone();
+        let repeated =
+            ReviewContextIndex::build_with_cached_names(&wanted, &frameworks, &mut names).unwrap();
+        assert_eq!(repeated.definitions, shared.definitions);
+        assert_eq!(repeated.registrations, shared.registrations);
+        assert_eq!(repeated.usages, shared.usages);
+        assert_eq!(names.indexed, indexed);
     }
 
     #[test]

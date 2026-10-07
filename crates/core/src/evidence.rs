@@ -465,6 +465,8 @@ pub enum OperandFactKind {
     EncodingCall,
     /// Static template context; runtime markup and callable behavior remain open.
     OutputContext,
+    /// Compiler-bound response write immediately preceded by a non-HTML MIME assignment.
+    NonHtmlResponse,
     /// The complete emitted operand has a native integer/boolean result.
     NumericOutput,
     /// A source-located initializer for a single local operand alias.
@@ -502,6 +504,8 @@ pub enum OperandFactKind {
     /// Exact private same-file path producer shared by unchanged selectors.
     /// Its containment policy and each operation's effects remain open.
     SharedFilesystemProducer,
+    /// Explicit browser context and resolved DOM fetch request shape; not URL trust or a safety verdict.
+    BrowserRequestContext,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

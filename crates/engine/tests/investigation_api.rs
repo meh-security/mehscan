@@ -58,6 +58,7 @@ fn symbol_queries_preserve_later_definitions_and_scope_parse_work() {
     assert_eq!(limited.results.len(), 1);
     let imports = find_imports(&root, "subprocess", None).unwrap();
     assert!(imports.truncated);
+    assert_eq!(imports.skipped_files, ["b-broken.py"]);
     assert!(
         imports
             .results
@@ -78,6 +79,99 @@ fn symbol_queries_preserve_later_definitions_and_scope_parse_work() {
             .results
             .len(),
         1
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn directory_references_find_template_producers_without_crossing_scope() {
+    use mehscan_engine::investigation::find_text_references;
+    let root = std::env::temp_dir().join(format!("mehscan-producer-scope-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("app/views/private")).unwrap();
+    std::fs::create_dir_all(root.join("app-other")).unwrap();
+    std::fs::write(root.join(".gitignore"), "app/views/private/\n").unwrap();
+    for (path, source) in [
+        ("app/client.ts", "const url = node.dataset.apiUrl;\n"),
+        (
+            "app/views/index.cshtml",
+            "<div data-api-url='@Url.Content(\"~/api/items\")'></div>\n",
+        ),
+        (
+            "app/views/index.php",
+            "<div data-api-url='/api/items'></div>\n",
+        ),
+        (
+            "app/views/index.ejs",
+            "<div data-api-url='<%= endpoint %>'></div>\n",
+        ),
+        ("app/views/index.pug", "div(data-api-url=endpoint)\n"),
+        (
+            "app/views/index.html",
+            "<div data-api-url='/api/items'></div>\n",
+        ),
+        (
+            "app/views/index.vue",
+            "<template><div data-api-url='/api/items'></div></template>\n",
+        ),
+        (
+            "app/views/index.jinja2",
+            "<div data-api-url='{{ endpoint }}'></div>\n",
+        ),
+        (
+            "app/views/index.twig",
+            "<div data-api-url='{{ endpoint }}'></div>\n",
+        ),
+        (
+            "app/views/private/hidden.cshtml",
+            "<div data-api-url='hidden'></div>\n",
+        ),
+        (
+            "app-other/copy.cshtml",
+            "<div data-api-url='outside'></div>\n",
+        ),
+    ] {
+        std::fs::write(root.join(path), source).unwrap();
+    }
+    let broad = find_text_references(&root, "data-api-url", None, None, Some(200)).unwrap();
+    let scoped =
+        find_text_references(&root, "data-api-url", None, Some("app/views/"), Some(200)).unwrap();
+    let expected: Vec<_> = broad
+        .results
+        .into_iter()
+        .filter(|row| row.location.path.starts_with("app/views/"))
+        .collect();
+    assert_eq!(scoped.results, expected);
+    assert_eq!(scoped.results.len(), 8);
+    let templates =
+        mehscan_engine::investigation::find_source_paths(&root, "index.html", None).unwrap();
+    assert_eq!(templates.results, ["app/views/index.html"]);
+    assert!(!scoped.truncated);
+    assert_eq!(scoped.provenance.resolution, Resolution::Textual);
+    assert!(
+        !scoped
+            .results
+            .iter()
+            .any(|row| row.location.path.contains("private"))
+    );
+    let limited = find_text_references(&root, "data-api-url", None, Some("app"), Some(1)).unwrap();
+    assert_eq!(limited.results.len(), 1);
+    assert!(limited.truncated);
+    for prefix in [
+        "../outside",
+        "app/../../outside",
+        "C:/outside",
+        "/outside",
+        "missing",
+        "app/client.ts",
+        "",
+    ] {
+        assert!(
+            find_text_references(&root, "data-api-url", None, Some(prefix), None).is_err(),
+            "prefix {prefix}"
+        );
+    }
+    assert!(
+        find_text_references(&root, "apiUrl", Some("app/client.ts"), Some("app"), None).is_err()
     );
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -146,7 +240,7 @@ fn supports_bounded_ai_investigation_workflow() {
     assert!(imports.results.iter().all(|item| item.is_import));
 
     let references =
-        mehscan_engine::investigation::find_text_references(&root, "launch", None, None)
+        mehscan_engine::investigation::find_text_references(&root, "launch", None, None, None)
             .expect("reference lookup should succeed");
     assert_eq!(references.provenance.resolution, Resolution::Textual);
     assert_eq!(references.results.len(), 2);
@@ -165,6 +259,7 @@ fn supports_bounded_ai_investigation_workflow() {
         &root,
         "launch",
         Some("python/aliases.py"),
+        None,
         None,
     )
     .expect("scoped reference search should succeed");
@@ -345,6 +440,7 @@ fn selected_source_reads_keep_repository_ignore_rules() {
             &root,
             "secret",
             Some("src/private/hidden.ts"),
+            None,
             None,
         )
         .is_err()

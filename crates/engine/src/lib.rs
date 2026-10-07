@@ -8,10 +8,12 @@ pub mod csharp_semantic;
 pub mod evaluation;
 pub mod impact;
 pub mod investigation;
+pub mod provenance;
 mod report_policy;
 pub mod repository;
 pub mod rules;
 pub mod secrets;
+pub mod typescript_semantic;
 
 use std::fmt::{Display, Formatter};
 use std::path::Path;

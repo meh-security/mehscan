@@ -4,6 +4,10 @@ Experimental source/reference-only C# backend. It adds compact compiler symbol,
 local producer/stop and source helper declaration facts to selected SQL,
 filesystem, explicit HTML and request-URI operands. Most facts guide research.
 Complete fixed and generated temporary selectors can close the exact CWE-22 question.
+Primitive selectors include ordinary numbers, boolean, character, enum, GUID,
+nullable and date/time conversions, including fixed formats and CultureInfo
+overloads. This is a practical normalization filter for path selection.
+User-supplied formatter strings and unknown roots remain separate inputs.
 Repeated immutable selectors can share conditional Value research. Neither
 establishes resource authorization, filesystem policy or safe runtime effects.
 
@@ -40,6 +44,22 @@ Create a JSON file outside the scanned source tree, for example:
 }
 ```
 
+For helpers/models in another source project, add `"project_references":
+["helpers-net8"]` to the caller and supply that project's own context under
+`projects`. Links are exact context IDs. Roslyn uses in-memory compilation
+references, preserving each project's sources, language options and metadata;
+it does not emit a DLL or run project tasks. Missing project contexts and cycles
+are rejected. A source reference and metadata with the same assembly identity
+withhold facts, including when a dependency has conflicting references.
+
+`assembly_name` can supply the target assembly identity. Otherwise it defaults
+to the ID's last path component, removing a `.csproj` suffix. This also avoids
+invalid assembly-name diagnostics when IDs are repository paths. Supply the
+actual name when the project overrides it or relies on assembly-specific access.
+Source graph expansion is optional: add relevant dependencies when bindings are
+missing, rather than loading every project by default. It improves compiler
+facts and sharing; it does not make unknown configuration roots or filenames safe.
+
 `output_kind` can be `library` (default), `console` or `windows`. Choose the
 application's actual output kind; top-level programs need `console` or `windows`.
 
@@ -67,7 +87,9 @@ project in a context seed:
 ```
 
 Run `mehscan investigate csharp-context ROOT --context SEED --output CONTEXT`.
-It resolves only the selected target's exact `compile` DLL paths. Package roots
+It resolves only the selected target's exact `compile` DLL paths. Explicit
+`project_references` are preserved; matching supplied assembly names satisfy
+project compile placeholders. Unlinked placeholders remain documented gaps. Package roots
 are optional and default to the assets file's cache locations; explicit roots
 allow a relocated cache with the same package/version/asset paths. It never
 substitutes runtime assets, newer packages, project output placeholders or
@@ -181,11 +203,12 @@ Compiler-bound Guid.ToString output is a safe path segment regardless of where
 the GUID originated. Standard formats have a closed alphabet; invalid formats
 throw and this API ignores the provider. Known-root GUID paths and fixed suffixes
 close traversal selection; unknown roots or additional filenames stay active.
-Built-in integer default/D/G/X formatting, booleans, enum formatting and
-Convert.ToString of these types constrain filename syntax. Numeric-only fixed
-date formats and ordinary string interpolation of supported values also qualify.
-Integer formatting assumes ordinary framework culture conventions; explicit
-arbitrary formats/providers, chars, floats and custom conversions stay open.
+Built-in numeric, boolean, character, enum, GUID and date/time formatting,
+nullable forms and Convert.ToString of supported values qualify. Ordinary
+DateTime, DateTimeOffset, DateOnly, TimeOnly and TimeSpan formatting is normalized;
+date separators or localized names alone do not justify traversal research.
+Fixed custom formats and framework CultureInfo providers are supported.
+Additional unknown formatter strings/providers and custom conversions stay open.
 These facts concern traversal syntax, not object ownership or other sink contexts.
 
 Known runtime roots (application base, current directory, special folders and
@@ -201,12 +224,21 @@ source constructions in one complete outer type. Unknown arguments, public
 construction, partial types, parameter replacement and ref/out block this proof.
 This does not model reflection or arbitrary factories across files.
 
+Small compiler-bound source helpers and nonvirtual computed properties can
+carry these selectors across supplied source files. Helpers map unchanged
+arguments into one return expression (optionally after local declarations).
+Get-only property initializers require no constructor replacement in a complete
+nonpartial source type. Unknown string arguments/record fields, parameter
+mutation, virtual dispatch, recursion and unsupported bodies retain review.
+The bounds are six expression levels, four active members and 8,192 characters
+per member. These rules preserve path-selection facts, not helper security policy.
+
 `temporary_filesystem_path` recognizes the framework temporary root combined
 with Guid.ToString(), GetRandomFileName, or a framework GetTempFileName result.
 Constant child segments are limited to simple basenames. These complete operands
 close standalone CWE-22 selection reviews, including routine setup and cleanup.
 This does not establish safe archive contents, authorization, symlink policy or
-execution. Unknown roots/manifest properties, arbitrary ToString or formats,
+execution. Unknown roots/manifest properties, arbitrary custom ToString or unknown formats,
 captured writes/ref/out locals and unsupported flow
 receive no exclusion. A constant basename suffix, including .exe or .ps1,
 does not reopen traversal selection; contents/execution remain separate.
@@ -229,7 +261,8 @@ Set `MEHSCAN_ROSLYN_TIMING=1` for total backend and filesystem-check timings on
 stderr. Metadata references are loaded once across project contexts. Semantic
 models are reused per file; collected errors are reused for
 local completeness checks. The backend does not resolve filesystem links,
-build caller trust models or import a primitive sanitizer catalog.
+build caller trust models. Primitive normalization uses framework types rather
+than a global sink-independent sanitizer catalog.
 Razor, missing generated source/options and full DI/reflection resolution remain
 outside the explicit context unless already supplied.
 
@@ -247,7 +280,7 @@ These are source navigation facts: branches, API contracts, reaching state and
 effective execution still require review. Absence of a connection assignment
 is not a safety verdict. A connection passed to a constructor, a later write,
 a different local connection and a handoff must be distinguished using source
-and the applicable API contract. Native facts do not change admission or Value
+and the applicable API contract. These receiver facts do not change admission or Value
 selection. The independent source scanner recognizes bounded direct command/
 connection aliases; inferred factories still require a later execution site.
 
@@ -275,7 +308,26 @@ The validated target baselines are .NET 8/C# 12, Framework 4.8/C# 7.3,
 the target framework does not have to run. Other explicit versions may work
 when matching references and language options are supplied; they are not
 certified by this baseline. Existing deterministic C# rules work without .NET.
-Optional semantic queries currently enrich admitted SQL operands only.
+Optional semantic queries cover selected SQL, filesystem, explicit C# HTML
+and HTTP request-URI operands.
+Response writes also receive a narrow HTML closure when the compiler binds the
+framework `WriteAsync` and the immediately preceding statement sets the same
+response's `ContentType` to JSON or plain text. Different receivers, conditional
+assignments, intervening calls, HTML MIME and context-mutating arguments remain
+open. This closes only the HTML interpretation question, not response disclosure
+or other security effects; unrelated compiler errors do not invalidate a locally
+complete proof.
+HTML-text encoding proofs also survive ordinary reads of immutable strings and
+framework `HtmlString` values. Source readonly fields require a complete single
+type declaration and no constructor/ref replacement; constants and independently
+proven encoding are followed through initializers. Mutable `TagBuilder` fields,
+raw model values, captured/reassigned locals and unknown sanitizers stay open.
+Filesystem policy sharing covers unchanged local aliases and complete inline
+calls to the same source-bound private string helper. Fixed options distinguish
+policies; modified results, unknown options and dynamic/public producers stay
+separate. Value keeps a representative per filesystem capability and preserves
+every dependent ID for reopening. This reuses helper research; it does not prove
+containment or transfer a safety verdict between callers.
 The asset-selection checks run without .NET:
 
 ```sh

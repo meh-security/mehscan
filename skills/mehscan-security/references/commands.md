@@ -11,12 +11,22 @@ Read shared source once and reuse its inspected location for related IDs rather
 than issuing the same query into each journal. The response cites only decisive
 source; the journals preserve the complete lookup history.
 
+Keep accounting output compact. Save reports, ledgers and large inventory lists
+to files; read counts and the relevant selected/reopened IDs, not the expanded
+report or whole remaining queue. History roots need their bound
+`inventory/overview.json`. Read request paths from the manifest's `bundles`;
+top-level JSON files such as `input-binding.json` are not review requests.
+Each chunk keeps its matching responses in `CHUNK/responses/REQUEST_FILENAME`.
+Keep follow-up chunks under the run; `review-ledger --history RUN` reads nested
+manifests too. Inspect its actual `reviewed_count` before reporting coverage.
+
 | Need | Command |
 | --- | --- |
 | Candidate scan | `mehscan scan ROOT --format candidates` |
 | Review requests | `mehscan investigate review-bundles ROOT --output DIR` |
 | Large-repo inventory | `mehscan investigate review-inventory ROOT --output RUN/inventory` |
 | Inventory with supplied Roslyn context | `mehscan investigate review-inventory ROOT --output RUN/inventory --csharp-context CONTEXT --csharp-backend BACKEND` |
+| Inventory with supplied TS/JS context | `mehscan investigate review-inventory ROOT --output RUN/inventory --typescript-context CONTEXT --typescript-backend SCRIPT` |
 | Reuse finalized IDs | `mehscan investigate review-ledger --inventory RUN/inventory --history OLD_RUN_ROOT,RUN --output RUN/review-ledger.json` |
 | Filter remaining inventory | `mehscan investigate review-inventory-list --inventory RUN/inventory --ledger RUN/review-ledger.json --cwe CWE --limit 50` |
 | Value selection / deferred work | Add `--selection value` / `--selection deferred`; Comprehensive uses `--selection all`. Inspect `dependency_review_ids`; rebuild the ledger to reopen unsafe/unresolved dependents (`reopened_count`). Deferrals retain IDs and reasons, not safe verdicts. |
@@ -30,9 +40,10 @@ source; the journals preserve the complete lookup history.
 | Exact source | `mehscan investigate source ROOT --path FILE --start-line N --end-line M` |
 | File outline | `mehscan investigate outline ROOT --path FILE` |
 | Find readable paths | `mehscan investigate paths ROOT --name TEXT` |
+| Code provenance candidates | `mehscan investigate provenance ROOT --inventory RUN/inventory --limit 200` (inventory scopes header reads/output; `--path-prefix DIR` scopes a component) |
 | Enclosing code at known location | `mehscan investigate enclosing-at ROOT --path FILE --line N` |
 | Enclosing code from ID only | `mehscan investigate enclosing ROOT --evidence-id ID` |
-| Identifier uses | `mehscan investigate references ROOT --symbol NAME --path FILE --limit 20` (omit `--path` for repository-wide search) |
+| Identifier or markup uses | `mehscan investigate references ROOT --symbol NAME --path-prefix DIR --limit 20 --summary true` (per-file locations/previews; `--path FILE` scopes one file; omit summary for full matches) |
 | Symbol definitions | `mehscan investigate symbol ROOT --name NAME --path FILE --limit 20` (omit `--path` only when the defining file is unknown) |
 | Import uses | `mehscan investigate imports ROOT --name NAME --limit 200` |
 | Exact syntax | `mehscan investigate structural ROOT --language LANG --pattern PATTERN --path FILE` |
@@ -50,7 +61,7 @@ finalization and `mehscan report`; do not edit the generated report directly.
 The response schema and CLI help are authoritative for the installed Mehscan
 version. Query results are JSON; inspect all `results`, `truncated`, and
 `skipped_files` before concluding that a lookup found nothing.
-Save finalized responses as `RUN/responses/REQUEST_FILENAME`; `report` reads
+Save finalized responses as `CHUNK/responses/REQUEST_FILENAME`; `report` reads
 that directory and matches each response to its manifest request filename.
 Keep `input-binding.json` with copied manifests and requests for historical
 verdict reuse. A stale source, native input or review-contract binding requires
@@ -71,6 +82,9 @@ interpretation determines the verdict.
 `--path` always names one file, never a directory. `outline` and `enclosing-at`
 need a file with a supported parser; use `source` for tests or templates that
 Mehscan reports as text-only.
+`references --path-prefix DIR` searches a component or template directory with
+repository ignore rules. Template hits are text locations, not parser or
+dataflow evidence. An empty scoped search does not establish runtime absence.
 The default brief draft needs only `results` with `review_id`, `decision`,
 `confidence`, `summary`, optional `reason`, and optional `evidence` source
 ranges (`path`, `start_line`, `end_line`). Finalization reads those exact lines,

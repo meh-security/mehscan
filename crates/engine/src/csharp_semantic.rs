@@ -70,6 +70,8 @@ struct ProjectRecord {
     unresolved_references: usize,
     #[serde(default)]
     reference_conflicts: usize,
+    #[serde(default)]
+    incomplete_dependencies: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Observation {
@@ -119,7 +121,12 @@ pub fn queries(scan: &ScanResult) -> Vec<Query> {
             let role = match e.capability {
                 Capability::DatabaseQuery => "query",
                 Capability::FilesystemRead | Capability::FilesystemWrite => "path",
-                Capability::HtmlOutput if e.rule_id == "csharp-aspnet-explicit-html-output" => {
+                Capability::HtmlOutput
+                    if matches!(
+                        e.rule_id.as_str(),
+                        "csharp-aspnet-explicit-html-output" | "csharp-html-output"
+                    ) =>
+                {
                     "content"
                 }
                 Capability::OutboundNetworkRequest if e.rule_id == "csharp-http-request-uri" => {
@@ -263,6 +270,7 @@ pub fn enrich(
                     | OperandFactKind::TemporaryFilesystemPath
                     | OperandFactKind::ImmutableFilesystemOperand
                     | OperandFactKind::EncodedHtmlOperand
+                    | OperandFactKind::NonHtmlResponse
                     | OperandFactKind::SharedOutboundDestination
                     | OperandFactKind::SharedFilesystemProducer
             ) || fact.remaining_checks.is_empty()
@@ -320,9 +328,13 @@ pub fn enrich(
                 OperandFactKind::FixedFilesystemPath
                     | OperandFactKind::TemporaryFilesystemPath
                     | OperandFactKind::EncodedHtmlOperand
+                    | OperandFactKind::NonHtmlResponse
             ) {
                 let query = &expected[&observation.evidence_id];
-                let role = if fact.kind == OperandFactKind::EncodedHtmlOperand {
+                let role = if matches!(
+                    fact.kind,
+                    OperandFactKind::EncodedHtmlOperand | OperandFactKind::NonHtmlResponse
+                ) {
                     "content"
                 } else {
                     "path"
@@ -340,6 +352,7 @@ pub fn enrich(
                     | OperandFactKind::FixedFilesystemPath
                     | OperandFactKind::TemporaryFilesystemPath
                     | OperandFactKind::EncodedHtmlOperand
+                    | OperandFactKind::NonHtmlResponse
             ) {
                 let text = std::fs::read_to_string(source_path(root, &fact.location.path)?)?;
                 if text.get(fact.location.start.byte_offset..fact.location.end.byte_offset)
@@ -371,7 +384,9 @@ pub fn enrich(
         if project.reference_conflicts > 0 {
             continue;
         }
-        let partial = project.compiler_errors > 0 || project.unresolved_references > 0;
+        let partial = project.compiler_errors > 0
+            || project.unresolved_references > 0
+            || project.incomplete_dependencies;
         for fact in &record.facts {
             let mut fact = fact.clone();
             let locally_complete_path = record.locally_complete_path_selection
@@ -385,8 +400,11 @@ pub fn enrich(
                     OperandFactKind::ImmutableFilesystemOperand
                         | OperandFactKind::SharedFilesystemProducer
                 );
-            let locally_complete_output =
-                record.locally_complete_output && fact.kind == OperandFactKind::EncodedHtmlOperand;
+            let locally_complete_output = record.locally_complete_output
+                && matches!(
+                    fact.kind,
+                    OperandFactKind::EncodedHtmlOperand | OperandFactKind::NonHtmlResponse
+                );
             let locally_complete_destination = record.locally_complete_destination
                 && fact.kind == OperandFactKind::SharedOutboundDestination;
             if partial

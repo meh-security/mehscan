@@ -72,6 +72,41 @@ fn selects_only_exact_compile_assets_and_records_context_inputs() {
 }
 
 #[test]
+fn explicit_source_links_replace_only_matching_project_placeholders() {
+    let f = Fixture::new("source-links");
+    std::fs::write(f.root.join("Helpers.cs"), "public class Helper {}").unwrap();
+    let mut seed = f.read(&f.seed);
+    let mut child = seed["projects"][0].clone();
+    child["id"] = json!("src/Project.csproj");
+    child["sources"] = json!(["Helpers.cs"]);
+    seed["projects"][0]["project_references"] = json!(["src/Project.csproj"]);
+    seed["projects"].as_array_mut().unwrap().push(child);
+    f.write(&f.seed, &seed);
+    let mut assets = f.read(&f.assets);
+    assets["targets"]["net8.0"]["Project/1.0"] =
+        json!({"type":"project", "compile":{"bin/placeholder/Project.dll":{}}});
+    assets["targets"]["net8.0"]["OtherProject/1.0"] =
+        json!({"type":"project", "compile":{"bin/placeholder/OtherProject.dll":{}}});
+    f.write(&f.assets, &assets);
+    let summary = f.prepare().unwrap();
+    assert_eq!(summary["projects"][0]["resolved_source_projects"], 1);
+    assert_eq!(
+        summary["projects"][0]["unresolved_references"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        f.read(&f.output)["projects"][0]["project_references"],
+        json!(["src/Project.csproj"])
+    );
+    seed["projects"][0]["project_references"] = json!(["not-supplied"]);
+    f.write(&f.seed, &seed);
+    assert!(f.prepare().is_err());
+}
+
+#[test]
 fn missing_versions_and_project_placeholders_stay_gaps_without_runtime_fallback() {
     let f = Fixture::new("missing");
     std::fs::remove_file(f.root.join("packages/example/1.0/ref/net8.0/Example.dll")).unwrap();

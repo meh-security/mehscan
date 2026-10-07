@@ -8,6 +8,13 @@ See [extended SQL and NoSQL coverage](docs/extended-database-coverage.md) for da
 
 An experimental [optional Roslyn backend](backends/roslyn/README.md) adds compiler-backed C# navigation facts from explicitly supplied source and references.
 
+An experimental [optional TypeScript backend](backends/typescript/README.md) resolves selected TS/TSX and JavaScript operands, import aliases and small source helpers. Cached facts guide follow-ups; source-proven fixed Node paths can remove traversal-only questions. Types alone do not establish safety.
+
+For review scoping, `mehscan investigate provenance ROOT --inventory RUN/inventory`
+collects build-entry, distribution-header and generated/source-map candidates
+without a compiler. The security skill confirms scope and preserves deferred IDs;
+these hints never assign safe verdicts or change scanner admission.
+
 ## What it does
 
 - Scans source code locally without executing build tools or application code.
