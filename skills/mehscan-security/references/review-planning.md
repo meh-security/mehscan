@@ -52,10 +52,55 @@ ranked plan as separate, unreviewed source questions. Follow
 [lead follow-up](#follow-up-on-reviewer-origin-leads)
 for their independent evidence check. Keep the originating ID's verdict intact.
 
+## Time and workload
+
+Before launching triage, put the active/deferred counts and a short lane table
+in the review plan: area/category, active IDs, shared question or representative,
+status, and next action. IDs are workload anchors, not independent research jobs.
+Use `review-inventory-list --selection value --group-by implementation --limit 12`
+to find source neighborhoods with exact IDs, without creating bundles. Combine
+with component/category and ledger filters. These file/reported-symbol groups
+are reading opportunities, not verified callable identities or shared verdicts.
+Use source-supported implementation groups and scope exclusions before packaging
+many requests; keep SQL construction, raw/stored interpretation and sensitive
+effects visible. A large sink-only lane warrants producer/implementation research
+first, rather than one model invocation per occurrence.
+Reuse supplied compiler facts first. When a missing symbol/producer warrants
+fresh collection, use `csharp-semantic` or `typescript-semantic` with the current
+`--inventory` and selected `--evidence-ids` from card `anchor.id`. This avoids a
+Rust rescan and limits requested operands; keep whole project/caller source scope.
+The result is scoped follow-up evidence, not a replacement for other languages'
+or unselected inventory facts. Do not run it per ID when one collection can
+cover the selected implementation chunk.
+
+Start with a small coherent chunk spanning useful relationships. Measure elapsed
+preparation and review time separately. After it, update the remaining queue and
+use the observed pace for similar lanes to give a rough remaining-time range;
+label untested lanes unknown. Do not infer hours from ID counts alone. If the
+projection is impractical, reduce the next Value pass to distinct consequential
+relationships, defer evidenced repeats, or recommend a narrower area/category.
+Explain the coverage tradeoff. Comprehensive still owes all in-scope IDs.
+
+Honor the user's time budget. At its end, finalize completed decisions and save
+exact unreviewed/deferred IDs, missing facts, and the next recommended chunk.
+Budget exhaustion leaves work unreviewed; it does not establish `not_issue` or
+`needs_review`. In auto mode, continue within the stated pass/budget and re-rank
+after chunks. With no supplied budget, state a bounded initial pass and its
+coverage before starting; do not silently commit to reviewing the whole backlog.
+
 ## Inventory and history
 
+For a new large review without an enriched inventory, start with a source-only
+inventory, choose Value lanes and implementation chunks, then collect compiler
+facts only for relevant unresolved operands. Available compiler contexts do not
+require immediate whole-repository semantic collection. Selected collection
+returns compact `selected_observations`; use those facts for the chunk while
+keeping its original review IDs and source binding. It does not update the
+inventory's admission or deferrals automatically. Reuse already enriched
+inventories when available; avoid discarding facts or repeating collection.
+
 For a mixed stack, preserve every supplied native context when regenerating the
-whole-repository inventory. A language-specific experiment can leave the other
+whole-repository enriched inventory. A language-specific experiment can leave the other
 language's closures and deferrals unapplied. Compare modes on the same enriched
 inventory. The final Value queue excludes both CLI `--selection deferred` IDs
 and confirmed scope-deferred IDs, without double counting their overlap. Persist

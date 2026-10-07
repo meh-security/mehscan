@@ -78,8 +78,22 @@ absolute input paths and are not portable between machines.
 For a separately saved snapshot, use `investigate typescript-semantic ROOT
 --context FILE --backend SCRIPT --output FILE`, then import it with
 `--typescript-semantic FILE --typescript-context FILE` on `scan` or
-`investigate review-inventory`. Separate commands each scan the root. Snapshot
+`investigate review-inventory`. Without an inventory, separate commands each scan the root. Snapshot
 import requires full scan context; reduced `--diff-mode impact` is unsupported.
+
+Directed follow-ups can reuse a bound inventory without a Rust rescan:
+
+```sh
+mehscan investigate typescript-semantic ROOT --inventory inventory --evidence-ids ID,ID --context context.json --backend SCRIPT --output selected-semantic.json
+```
+
+Use scanner evidence IDs from the review card's `anchor.id`. Unknown, empty or
+unsupported selections fail. The compiler retains supplied project sources,
+imports and caller scope; only requested operands change. Keep this snapshot
+as scoped follow-up evidence, not a replacement for the full enriched inventory.
+Selected collection returns compact `selected_observations` on stdout; input
+binding metadata stays in the saved snapshot.
+Absent observations do not establish safety or unreachability.
 
 The helper is bounded to 60 seconds, 8 MiB output, 2 MiB per compiler source read
 and 8 KiB source helper declarations. Narrow large projects to relevant contexts.

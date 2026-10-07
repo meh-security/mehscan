@@ -126,12 +126,34 @@ Inventory scans once, collects Roslyn facts for that result, and saves its input
 binding. Timings separate the Rust scan, native collection/import, and inventory
 preparation. Individual rendering neighborhoods are built when selected bundles
 need them. For a separately saved snapshot, use `csharp-semantic` and import it
-with `--csharp-semantic FILE --csharp-context FILE`; those separate commands
-each scan the root.
+with `--csharp-semantic FILE --csharp-context FILE`. Without a supplied inventory,
+separate collection/import commands each scan the root.
+
+For a directed follow-up, reuse a saved inventory and select scanner evidence
+IDs from the review card's `anchor.id`:
+
+```sh
+mehscan investigate csharp-semantic ROOT --inventory inventory --evidence-ids ID,ID --context context.json --backend BACKEND_EXE --output selected-semantic.json
+```
+
+This validates the cached source binding, binds the supplied compiler context
+afresh, avoids a Rust rescan, and
+collects only those operands, returning compact `selected_observations` on
+stdout. Unknown, empty or unsupported selections fail.
+Project source scope remains intact. Read the resulting observations as scoped
+evidence; do not replace a whole-repository enriched inventory with this subset
+or interpret absent observations as safe/unreachable operations.
 
 For helper profiling, `MEHSCAN_ROSLYN_TIMING=1` emits total preparation and
 filesystem, HTML and destination-check durations on the helper's stderr. Total
 time includes compilation/reference setup and navigation; check timings do not.
+It also reports declared, compiled and skipped project counts. Only contexts
+containing requested operands and their explicit source-project dependencies
+are compiled. Other projects carry `semantic_analysis: "not_requested"`;
+their zero error count is not a clean-compilation claim. All declared source
+and reference inputs remain hashed and bound, and the complete project graph
+is validated. Relevant projects keep all supplied sources and compiler options;
+caller scope is not narrowed to sink files.
 
 Complete HTML-text proofs cover default framework HTML encoding and bounded
 local TagBuilder content. Raw children, aliases, later unsafe mutations,

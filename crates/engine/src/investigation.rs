@@ -533,6 +533,33 @@ pub fn validate_review_inventory(
     validate_review_inventory_sources(root, inventory, &RepositorySources::load(root)?)
 }
 
+/// Validate the raw source snapshot for fresh compiler collection only.
+/// Collectors consume source captures, not cached compiler facts or verdicts.
+/// Bundle/history reuse still requires full source/native validation above.
+pub fn validate_review_inventory_for_collection(
+    root: &Path,
+    inventory: &ReviewInventory,
+) -> Result<(), EngineError> {
+    validate_inventory_source_binding(inventory, &RepositorySources::load(root)?)
+}
+
+fn validate_inventory_source_binding(
+    inventory: &ReviewInventory,
+    sources: &RepositorySources,
+) -> Result<(), EngineError> {
+    if inventory.schema_version != "2" {
+        return Err(EngineError(
+            "unsupported review inventory version; regenerate it".into(),
+        ));
+    }
+    if review_source_fingerprint(sources) != inventory.source_fingerprint {
+        return Err(EngineError(
+            "review inventory is stale: source files changed; regenerate it".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_review_inventory_sources(
     root: &Path,
     inventory: &ReviewInventory,
@@ -549,12 +576,7 @@ fn validate_review_inventory_sources(
     if let Some(binding) = &inventory.typescript_inputs {
         binding.validate(root)?;
     }
-    if review_source_fingerprint(sources) != inventory.source_fingerprint {
-        return Err(EngineError(
-            "review inventory is stale: source files changed; regenerate it".into(),
-        ));
-    }
-    Ok(())
+    validate_inventory_source_binding(inventory, sources)
 }
 
 /// Reconstruct admission evidence once for an entire history, using the same

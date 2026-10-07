@@ -96,10 +96,85 @@ pub(super) fn contract_queue(
             .cmp(&a["review_count"].as_u64())
             .then_with(|| a["contract"].as_str().cmp(&b["contract"].as_str()))
     });
+    let returned_count = groups.len().saturating_sub(offset).min(limit);
+    let next_offset = (offset.saturating_add(returned_count) < groups.len())
+        .then_some(offset.saturating_add(returned_count));
     json!({"source_fingerprint": fingerprint, "matching_review_count": entries.len(),
         "grouped_review_count": entries.len() - ungrouped, "ungrouped_review_count": ungrouped,
-        "contract_count": groups.len(), "offset": offset,
+        "contract_count": groups.len(), "offset": offset, "returned_count": returned_count,
+        "next_offset": next_offset,
         "groups": groups.into_iter().skip(offset).take(limit).collect::<Vec<_>>()})
+}
+
+/// Source neighborhoods for planning reads, not shared security contracts.
+/// Partition by exact file, callable, capability and CWE set. Every ID remains
+/// independent, including distinct guards/operands inside the same callable.
+pub(super) fn implementation_queue(
+    entries: &[&Value],
+    fingerprint: &Value,
+    offset: usize,
+    limit: usize,
+) -> Value {
+    let mut grouped = BTreeMap::<String, Vec<&Value>>::new();
+    for entry in entries {
+        let key = json!([
+            entry["path"],
+            entry["symbol"],
+            entry["capability"],
+            entry["cwe_candidates"]
+        ])
+        .to_string();
+        grouped.entry(key).or_default().push(entry);
+    }
+    let mut groups: Vec<Value> = grouped.into_values().map(|mut members| {
+        members.sort_by(|a, b| a["line"].as_u64().cmp(&b["line"].as_u64())
+            .then_with(|| a["review_id"].as_str().cmp(&b["review_id"].as_str())));
+        let first = members[0];
+        let contracts: BTreeSet<_> = members.iter().flat_map(|entry| contract_keys(entry))
+            .map(|(key, _, _)| key).collect();
+        json!({"path": first["path"], "symbol": first["symbol"],
+            "capability": first["capability"], "cwe_candidates": first["cwe_candidates"],
+            "review_count": members.len(), "verified": false,
+            "representative_review_id": first["review_id"],
+            "review_ids": members.iter().map(|entry| &entry["review_id"]).collect::<Vec<_>>(),
+            "contracts": contracts,
+            "checks": ["shared_implementation_and_producer", "per_site_operand_context_guards_and_effects"]})
+    }).collect();
+    groups.sort_by(|a, b| {
+        b["review_count"]
+            .as_u64()
+            .cmp(&a["review_count"].as_u64())
+            .then_with(|| a["path"].as_str().cmp(&b["path"].as_str()))
+            .then_with(|| {
+                a["representative_review_id"]
+                    .as_str()
+                    .cmp(&b["representative_review_id"].as_str())
+            })
+    });
+    let mut by_capability = BTreeMap::<String, (u64, usize)>::new();
+    for group in &groups {
+        let counts = by_capability
+            .entry(group["capability"].as_str().unwrap_or("unknown").into())
+            .or_default();
+        counts.0 += group["review_count"].as_u64().unwrap_or(0);
+        counts.1 += 1;
+    }
+    let by_capability: BTreeMap<_, _> = by_capability
+        .into_iter()
+        .map(|(capability, (review_count, implementation_count))| {
+            (
+                capability,
+                json!({"review_count": review_count, "implementation_count": implementation_count}),
+            )
+        })
+        .collect();
+    let returned_count = groups.len().saturating_sub(offset).min(limit);
+    let next_offset = (offset.saturating_add(returned_count) < groups.len())
+        .then_some(offset.saturating_add(returned_count));
+    json!({"source_fingerprint": fingerprint, "matching_review_count": entries.len(),
+        "implementation_count": groups.len(), "grouping": "source_neighborhood",
+        "by_capability": by_capability, "offset": offset, "returned_count": returned_count,
+        "next_offset": next_offset, "groups": groups.into_iter().skip(offset).take(limit).collect::<Vec<_>>()})
 }
 
 pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, String> {

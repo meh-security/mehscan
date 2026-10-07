@@ -217,6 +217,78 @@ fn semantic_collection_import_and_saved_cards_use_real_cli() {
             .iter()
             .any(|f| f["kind"] == "semantic_definition")
     );
+    let selected_snapshot = artifacts.join("selected-semantic.json");
+    let selected = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .env("MEHSCAN_TRACE_PHASES", "1")
+        .args([
+            "investigate",
+            "csharp-semantic",
+            root.to_str().unwrap(),
+            "--context",
+            context.to_str().unwrap(),
+            "--backend",
+            &backend,
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--evidence-ids",
+            card["anchor"]["id"].as_str().unwrap(),
+            "--output",
+            selected_snapshot.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        selected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&selected.stderr)
+    );
+    assert!(
+        !String::from_utf8_lossy(&selected.stderr).contains("mehscan_phase discovery "),
+        "selected collection rescanned"
+    );
+    let selected_summary: Value = serde_json::from_slice(&selected.stdout).unwrap();
+    assert_eq!(selected_summary["scan_reused"], true);
+    assert_eq!(selected_summary["requested_operands"], 1);
+    assert_eq!(
+        selected_summary["selected_observations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let selected_facts: Value =
+        serde_json::from_slice(&fs::read(&selected_snapshot).unwrap()).unwrap();
+    let full_facts: Value = serde_json::from_slice(&fs::read(&snapshot).unwrap()).unwrap();
+    assert_eq!(selected_facts["observations"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        &selected_facts["observations"][0],
+        full_facts["observations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|o| o["evidence_id"] == card["anchor"]["id"])
+            .unwrap()
+    );
+    let unknown = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "csharp-semantic",
+            root.to_str().unwrap(),
+            "--context",
+            context.to_str().unwrap(),
+            "--backend",
+            &backend,
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--evidence-ids",
+            "not-an-evidence-id",
+            "--output",
+            selected_snapshot.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!unknown.status.success());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown evidence ID"));
     let draft = artifacts.join("draft.json");
     let journals = artifacts.join("journals");
     fs::create_dir_all(&journals).unwrap();
@@ -341,6 +413,42 @@ fn semantic_collection_import_and_saved_cards_use_real_cli() {
         .unwrap();
     assert!(!stale.status.success());
     assert!(String::from_utf8_lossy(&stale.stderr).contains("input metadata is stale"));
+    // Fresh collection consumes source captures, not obsolete native facts.
+    // Old bundle/history reuse above still rejects stale native metadata.
+    fs::write(
+        &assets,
+        serde_json::to_vec(&json!({"targets":{"net8.0":{}},"libraries":{},
+        "packageFolders":{},"project":{"frameworks":{"net8.0":{}}},"changed":true}))
+        .unwrap(),
+    )
+    .unwrap();
+    run(&[
+        "investigate",
+        "csharp-context",
+        root.to_str().unwrap(),
+        "--context",
+        seed.to_str().unwrap(),
+        "--output",
+        context.to_str().unwrap(),
+    ]);
+    let fresh = run(&[
+        "investigate",
+        "csharp-semantic",
+        root.to_str().unwrap(),
+        "--context",
+        context.to_str().unwrap(),
+        "--backend",
+        &backend,
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--evidence-ids",
+        card["anchor"]["id"].as_str().unwrap(),
+        "--output",
+        selected_snapshot.to_str().unwrap(),
+    ]);
+    assert_eq!(fresh["scan_reused"], true);
+    assert_eq!(fresh["requested_operands"], 1);
+    assert_eq!(fresh["covered_operands"], 1);
     fs::remove_dir_all(root).unwrap();
     fs::remove_dir_all(artifacts).unwrap();
 }

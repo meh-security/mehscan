@@ -614,12 +614,20 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let context = PathBuf::from(parsed.required("--context")?);
             let backend = PathBuf::from(parsed.required("--backend")?);
             let output = PathBuf::from(parsed.required("--output")?);
+            let inventory = parsed.optional("--inventory").map(PathBuf::from);
+            let selected = parsed.optional("--evidence-ids");
             parsed.finish()?;
-            let scan = engine(mehscan_engine::scan_path(&root))?;
+            let scan = semantic_scan(&root, inventory.as_deref(), selected.as_deref())?;
+            let requested = mehscan_engine::typescript_semantic::queries(&scan).len();
+            if selected.is_some() && requested != scan.evidence.len() {
+                return Err(
+                    "selected evidence includes an unsupported TypeScript/JavaScript operand"
+                        .into(),
+                );
+            }
             let snapshot = engine(mehscan_engine::typescript_semantic::collect(
                 &root, &context, &backend, &scan,
             ))?;
-            let requested = mehscan_engine::typescript_semantic::queries(&scan).len();
             let covered = snapshot
                 .observations
                 .iter()
@@ -634,6 +642,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             print_json(
                 &serde_json::json!({"snapshot": output, "backend": snapshot.backend,
                 "requested_operands": requested, "covered_operands": covered,
+                "scan_reused": inventory.is_some(),
+                "selected_observations": selected.as_ref().map(|_| &snapshot.observations),
                 "uncovered_operands": requested.saturating_sub(covered),
                 "observations": snapshot.observations.len(), "diagnostics": snapshot.diagnostics.len()}),
             )
@@ -642,12 +652,17 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let context = PathBuf::from(parsed.required("--context")?);
             let backend = PathBuf::from(parsed.required("--backend")?);
             let output = PathBuf::from(parsed.required("--output")?);
+            let inventory = parsed.optional("--inventory").map(PathBuf::from);
+            let selected = parsed.optional("--evidence-ids");
             parsed.finish()?;
-            let scan = engine(mehscan_engine::scan_path(&root))?;
+            let scan = semantic_scan(&root, inventory.as_deref(), selected.as_deref())?;
+            let requested = mehscan_engine::csharp_semantic::queries(&scan).len();
+            if selected.is_some() && requested != scan.evidence.len() {
+                return Err("selected evidence includes an unsupported C# operand".into());
+            }
             let snapshot = engine(mehscan_engine::csharp_semantic::collect(
                 &root, &context, &backend, &scan,
             ))?;
-            let requested = mehscan_engine::csharp_semantic::queries(&scan).len();
             let covered = snapshot
                 .observations
                 .iter()
@@ -662,6 +677,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             print_json(
                 &serde_json::json!({"snapshot": output, "backend": snapshot.backend,
                 "requested_operands": requested, "covered_operands": covered,
+                "scan_reused": inventory.is_some(),
+                "selected_observations": selected.as_ref().map(|_| &snapshot.observations),
                 "uncovered_operands": requested.saturating_sub(covered),
                 "observations": snapshot.observations.len(), "diagnostics": snapshot.diagnostics.len()}),
             )
@@ -834,8 +851,11 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             if !matches!(selection.as_str(), "all" | "value" | "deferred") {
                 return Err("invalid --selection; use all, value, or deferred".into());
             }
-            if group_by.as_deref().is_some_and(|value| value != "contract") {
-                return Err("invalid --group-by; use contract".into());
+            if group_by
+                .as_deref()
+                .is_some_and(|value| !matches!(value, "contract" | "implementation"))
+            {
+                return Err("invalid --group-by; use contract or implementation".into());
             }
             if operand_kind.as_deref().is_some_and(|kind| {
                 !matches!(
@@ -973,12 +993,13 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 _ => true,
             });
             if group_by.is_some() {
-                let mut queue = review_sweep::contract_queue(
-                    &matching,
-                    &inventory["source_fingerprint"],
-                    offset,
-                    limit,
-                );
+                let queue_builder = if group_by.as_deref() == Some("implementation") {
+                    review_sweep::implementation_queue
+                } else {
+                    review_sweep::contract_queue
+                };
+                let mut queue =
+                    queue_builder(&matching, &inventory["source_fingerprint"], offset, limit);
                 queue["selection"] = serde_json::json!(selection);
                 queue["scope_count"] = serde_json::json!(scope_count);
                 queue["deferred_count"] = serde_json::json!(deferred_count);
@@ -2175,6 +2196,47 @@ fn write_text(value: &str, output: Option<&Path>) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// Reuse a source-bound scan, then select operands without rebuilding bundles
+/// or application analysis. Backend project sources/caller scope stay intact.
+fn semantic_scan(
+    root: &Path,
+    inventory: Option<&Path>,
+    evidence_ids: Option<&str>,
+) -> Result<mehscan_core::ScanResult, String> {
+    let mut scan = if let Some(directory) = inventory {
+        let inventory: mehscan_engine::investigation::ReviewInventory = serde_json::from_slice(
+            &fs::read(directory.join("scan-cache.json")).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| format!("invalid review inventory: {e}"))?;
+        engine(
+            mehscan_engine::investigation::validate_review_inventory_for_collection(
+                root, &inventory,
+            ),
+        )?;
+        inventory.scan
+    } else {
+        engine(mehscan_engine::scan_path(root))?
+    };
+    if let Some(ids) = evidence_ids {
+        let ids: BTreeSet<_> = ids
+            .split(',')
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .collect();
+        if ids.is_empty() {
+            return Err("select at least one evidence ID".into());
+        }
+        let known: BTreeSet<_> = scan.evidence.iter().map(|e| e.id.as_str()).collect();
+        for id in &ids {
+            if !known.contains(id) {
+                return Err(format!("unknown evidence ID {id:?} in scan"));
+            }
+        }
+        scan.evidence.retain(|e| ids.contains(e.id.as_str()));
+    }
+    Ok(scan)
 }
 
 fn write_path_review_bundles(
@@ -3580,11 +3642,11 @@ fn print_investigation_help() {
 USAGE:
   mehscan investigate funnel [ROOT]
   mehscan investigate csharp-context [ROOT] --context SEED --output FILE
-  mehscan investigate csharp-semantic [ROOT] --context FILE --backend EXE --output FILE
-  mehscan investigate typescript-semantic [ROOT] --context FILE --backend SCRIPT --output FILE
+  mehscan investigate csharp-semantic [ROOT] --context FILE --backend EXE --output FILE [--inventory DIR] [--evidence-ids ID,ID]
+  mehscan investigate typescript-semantic [ROOT] --context FILE --backend SCRIPT --output FILE [--inventory DIR] [--evidence-ids ID,ID]
   mehscan investigate review-inventory [ROOT] --output DIR [--include-review-material true|false] [--csharp-backend EXE --csharp-context FILE | --csharp-semantic FILE --csharp-context FILE] [--timings true|false]
     Optional TS/JS: [--typescript-backend SCRIPT --typescript-context FILE | --typescript-semantic FILE --typescript-context FILE]
-  mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--selection all|value|deferred] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--group-by contract] [--contract KEY] [--limit N] [--offset N]
+  mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--selection all|value|deferred] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--group-by contract|implementation] [--contract KEY] [--limit N] [--offset N]
   mehscan investigate review-ledger --inventory DIR --history RUN_ROOT[,RUN_ROOT] --output FILE
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate review-tasks [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]

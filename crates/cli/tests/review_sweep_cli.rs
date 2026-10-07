@@ -128,6 +128,80 @@ add_filter('esc_html', 'unsafe_callback');
     ]);
     assert_eq!(queue["matching_review_count"], saved["review_count"]);
     assert_eq!(queue["ungrouped_review_count"], 1); // Mixed raw concatenation remains independent.
+    let neighborhoods = run(&[
+        "investigate",
+        "review-inventory-list",
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--group-by",
+        "implementation",
+        "--limit",
+        "100",
+    ]);
+    assert_eq!(
+        neighborhoods["matching_review_count"],
+        saved["review_count"]
+    );
+    let first_page = run(&[
+        "investigate",
+        "review-inventory-list",
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--group-by",
+        "implementation",
+        "--limit",
+        "1",
+    ]);
+    assert_eq!(first_page["returned_count"], 1);
+    assert_eq!(first_page["next_offset"], 1);
+    assert_eq!(first_page["by_capability"], neighborhoods["by_capability"]);
+    let counted: u64 = first_page["by_capability"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|v| v["review_count"].as_u64().unwrap())
+        .sum();
+    assert_eq!(counted, saved["review_count"].as_u64().unwrap());
+    assert_eq!(neighborhoods["next_offset"], Value::Null);
+    let neighborhood_ids: Vec<_> = neighborhoods["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|group| group["review_ids"].as_array().unwrap())
+        .map(|id| id.as_str().unwrap())
+        .collect();
+    let saved_ids: BTreeSet<_> = saved["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["review_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(neighborhood_ids.len(), saved_ids.len());
+    assert_eq!(
+        neighborhood_ids.iter().copied().collect::<BTreeSet<_>>(),
+        saved_ids
+    );
+    assert!(
+        neighborhoods["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|g| g["verified"] == false)
+    );
+    // Distinct functions remain separate, even with a common configured root.
+    assert_eq!(
+        neighborhoods["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|g| g["contracts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|key| key == "configured_root_path:APP_ROOT"))
+            .count(),
+        2
+    );
     assert!(
         queue["groups"]
             .as_array()
@@ -174,6 +248,27 @@ add_filter('esc_html', 'unsafe_callback');
     ]);
     assert_eq!(remaining["matching_review_count"], 2);
     assert_eq!(remaining["groups"][0]["review_count"], 2);
+    let remaining_implementation = run(&[
+        "investigate",
+        "review-inventory-list",
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--ledger",
+        ledger.to_str().unwrap(),
+        "--group-by",
+        "implementation",
+        "--contract",
+        "encoding_call:esc_html",
+    ]);
+    assert_eq!(remaining_implementation["matching_review_count"], 2);
+    assert_eq!(remaining_implementation["groups"][0]["review_count"], 2);
+    assert!(
+        !remaining_implementation["groups"][0]["review_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|id| id == reviewed_id)
+    );
 
     let chunk = output.join("chunk");
     let selected_ids = saved["entries"]

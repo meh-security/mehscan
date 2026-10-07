@@ -58,7 +58,9 @@ review, not a complete application assessment.
 
 Candidates are leads, not confirmed vulnerabilities. Default to Value mode;
 honor Comprehensive or a requested category. Planning maps the stack and attack
-surface, ranks work, accounts for deferred IDs and chooses small chunks or
+surface and workload before triage; use a small first chunk to measure review
+pace and plan the next pass within the user's time budget.
+Planning ranks work, accounts for deferred IDs and chooses small chunks or
 disjoint agent assignments when requested. Read it for repository scope or
 queue decisions, then use the supplied-bundle flow for each selected chunk.
 Keep the whole-run plan current and continue authorized work in auto mode.

@@ -44,7 +44,12 @@ internal static partial class Program
             var inputs = CompileInputs(request, context, sources, metadata, referenceHashes);
             foreach (var project in context.Projects)
             {
-                var input = inputs[project.Id];
+                if (!inputs.TryGetValue(project.Id, out var input))
+                {
+                    projects.Add(new(project.Id, project.TargetFramework, project.LanguageVersion, 0,
+                        project.UnresolvedReferences?.Length ?? 0, 0, SemanticAnalysis: "not_requested"));
+                    continue;
+                }
                 var trees = input.Trees;
                 var conflicts = input.Conflicts;
                 if (conflicts.Length > 0)
@@ -142,7 +147,10 @@ internal static partial class Program
                 output_checks_ms = outputMilliseconds,
                 output_query_count = outputQueries,
                 destination_checks_ms = destinationMilliseconds,
-                destination_query_count = destinationQueries
+                destination_query_count = destinationQueries,
+                declared_project_count = context.Projects.Length,
+                compiled_project_count = inputs.Count,
+                skipped_project_count = context.Projects.Length - inputs.Count
             }, Json));
             return 0;
         }
@@ -1104,7 +1112,8 @@ internal static partial class Program
     private sealed record Fact(string Role, string Kind, SourceLocation Location, string Value, string[] RemainingChecks);
     private sealed record FileHash(string Path, string Sha256);
     private sealed record ProjectRecord(string Id, string TargetFramework, string LanguageVersion, int CompilerErrors,
-        int UnresolvedReferences, int ReferenceConflicts, bool IncompleteDependencies = false);
+        int UnresolvedReferences, int ReferenceConflicts, bool IncompleteDependencies = false,
+        string SemanticAnalysis = "performed");
     private sealed record Observation(string EvidenceId, string ProjectId, List<Fact> Facts, bool LocallyCompletePathSelection, bool LocallyCompleteSelectionIdentity,
         bool LocallyCompleteOutput, bool LocallyCompleteDestination);
     private sealed record DiagnosticRecord(string ProjectId, string Code, string Message, SourceLocation? Location);

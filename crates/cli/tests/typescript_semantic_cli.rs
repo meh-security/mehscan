@@ -270,6 +270,58 @@ fn compiler_collection_import_and_cached_cards_use_real_cli() {
             .any(|f| f["kind"] == "semantic_definition" && f["location"]["path"] == "helpers.ts")
     );
     assert_eq!(fs::read_to_string(&counter).unwrap(), "1");
+    let selected_snapshot = artifacts.join("selected-semantic.json");
+    let selected = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .env("MEHSCAN_TRACE_PHASES", "1")
+        .args([
+            "investigate",
+            "typescript-semantic",
+            root.to_str().unwrap(),
+            "--context",
+            context.to_str().unwrap(),
+            "--backend",
+            &backend,
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--evidence-ids",
+            card["anchor"]["id"].as_str().unwrap(),
+            "--output",
+            selected_snapshot.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        selected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&selected.stderr)
+    );
+    assert!(
+        !String::from_utf8_lossy(&selected.stderr).contains("mehscan_phase discovery "),
+        "selected collection rescanned"
+    );
+    let selected_summary: Value = serde_json::from_slice(&selected.stdout).unwrap();
+    assert_eq!(selected_summary["scan_reused"], true);
+    assert_eq!(selected_summary["requested_operands"], 1);
+    assert_eq!(
+        selected_summary["selected_observations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let selected_facts: Value =
+        serde_json::from_slice(&fs::read(&selected_snapshot).unwrap()).unwrap();
+    let full_facts: Value = serde_json::from_slice(&fs::read(&snapshot).unwrap()).unwrap();
+    assert_eq!(selected_facts["observations"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        &selected_facts["observations"][0],
+        full_facts["observations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|o| o["evidence_id"] == card["anchor"]["id"])
+            .unwrap()
+    );
     fs::write(
         root.join("helpers.ts"),
         "export function makeQuery(v: string) { return v; }\n",
@@ -291,6 +343,26 @@ fn compiler_collection_import_and_cached_cards_use_real_cli() {
         .unwrap();
     assert!(!stale.status.success());
     assert!(String::from_utf8_lossy(&stale.stderr).contains("stale"));
+    let stale_semantic = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "typescript-semantic",
+            root.to_str().unwrap(),
+            "--context",
+            context.to_str().unwrap(),
+            "--backend",
+            &backend,
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--evidence-ids",
+            card["anchor"]["id"].as_str().unwrap(),
+            "--output",
+            selected_snapshot.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!stale_semantic.status.success());
+    assert!(String::from_utf8_lossy(&stale_semantic.stderr).contains("stale"));
     fs::remove_dir_all(root).unwrap();
     fs::remove_dir_all(artifacts).unwrap();
 }

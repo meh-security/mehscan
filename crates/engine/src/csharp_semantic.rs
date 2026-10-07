@@ -72,6 +72,8 @@ struct ProjectRecord {
     reference_conflicts: usize,
     #[serde(default)]
     incomplete_dependencies: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    semantic_analysis: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Observation {
@@ -253,6 +255,13 @@ pub fn enrich(
             return Err(EngineError(
                 "Roslyn snapshot contains an unknown operation/project; regenerate it".into(),
             ));
+        }
+        if projects[observation.project_id.as_str()]
+            .semantic_analysis
+            .as_deref()
+            == Some("not_requested")
+        {
+            return Err(err("Roslyn observation belongs to an unanalyzed project"));
         }
         observed
             .entry(&observation.evidence_id)

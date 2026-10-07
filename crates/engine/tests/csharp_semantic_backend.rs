@@ -406,6 +406,8 @@ public class Record {
 class UnrelatedGap { MissingType field; }
 "#;
     std::fs::write(fixture.0.join("Helpers.cs"), helper).unwrap();
+    let dormant = "class UnqueriedProject { UnknownType field; }";
+    std::fs::write(fixture.0.join("Dormant.cs"), dormant).unwrap();
     let scan = mehscan_engine::scan_path(&fixture.0).unwrap();
     for (label, target, language, refs) in [
         ("net8", "net8.0", "12.0", "MEHSCAN_ROSLYN_NET8_REFS"),
@@ -437,7 +439,9 @@ class UnrelatedGap { MissingType field; }
              "sources":["App.cs"], "references":refs, "reference_directories":[], "defines":[],
              "project_references":["src/Selectors.csproj"]},
             {"id":"src/Selectors.csproj", "target_framework":target, "language_version":language,
-             "sources":["Helpers.cs"], "references":refs, "reference_directories":[], "defines":[]}
+             "sources":["Helpers.cs"], "references":refs, "reference_directories":[], "defines":[]},
+            {"id":"src/Dormant.csproj", "target_framework":target, "language_version":language,
+             "sources":["Dormant.cs"], "references":refs, "reference_directories":[], "defines":[]}
         ]});
         std::fs::write(&context, serde_json::to_vec(&declared).unwrap()).unwrap();
         let snapshot = csharp_semantic::collect(
@@ -456,6 +460,39 @@ class UnrelatedGap { MissingType field; }
             .unwrap();
         assert_eq!(caller["compiler_errors"], 0);
         assert_eq!(caller["incomplete_dependencies"], true);
+        assert_eq!(caller["semantic_analysis"], "performed");
+        let records = serialized["projects"].as_array().unwrap();
+        assert_eq!(
+            records
+                .iter()
+                .find(|p| p["id"] == "src/Selectors.csproj")
+                .unwrap()["semantic_analysis"],
+            "performed"
+        );
+        assert_eq!(
+            records
+                .iter()
+                .find(|p| p["id"] == "src/Dormant.csproj")
+                .unwrap()["semantic_analysis"],
+            "not_requested"
+        );
+        assert!(
+            serialized["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s["path"] == "Dormant.cs")
+        );
+        // Skipped project inputs remain bound, and cannot supply observations.
+        std::fs::write(fixture.0.join("Dormant.cs"), "class Changed {}").unwrap();
+        assert!(
+            csharp_semantic::enrich(&fixture.0, &context, &snapshot, &mut scan.clone()).is_err()
+        );
+        std::fs::write(fixture.0.join("Dormant.cs"), dormant).unwrap();
+        let mut forged = serialized.clone();
+        forged["projects"][0]["semantic_analysis"] = json!("not_requested");
+        let forged: csharp_semantic::Snapshot = serde_json::from_value(forged).unwrap();
+        assert!(csharp_semantic::enrich(&fixture.0, &context, &forged, &mut scan.clone()).is_err());
         let mut enriched = scan.clone();
         csharp_semantic::enrich(&fixture.0, &context, &snapshot, &mut enriched).unwrap();
         assert!(
@@ -553,6 +590,18 @@ class UnrelatedGap { MissingType field; }
             .as_object_mut()
             .unwrap()
             .remove("assembly_name");
+        declared["projects"][2]["project_references"] = json!(["src/Dormant.csproj"]);
+        std::fs::write(&context, serde_json::to_vec(&declared).unwrap()).unwrap();
+        assert!(
+            csharp_semantic::collect(
+                &fixture.0,
+                &context,
+                &env_path("MEHSCAN_ROSLYN_BACKEND"),
+                &scan
+            )
+            .is_err()
+        );
+        declared["projects"][2]["project_references"] = json!([]);
         declared["projects"][1]["project_references"] = json!(["src/App.csproj"]);
         std::fs::write(&context, serde_json::to_vec(&declared).unwrap()).unwrap();
         assert!(
