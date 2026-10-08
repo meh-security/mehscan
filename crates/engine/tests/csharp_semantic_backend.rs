@@ -1131,9 +1131,11 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
                     .iter()
                     .any(|e| e.symbol.as_deref() == Some(method)
                         && (e.value_hint.is_none()
-                            || e.value_hint.as_ref().is_some_and(
-                                |h| h.reason == "ordinary_directory_creation_inventory"
-                            ))),
+                            || e.value_hint.as_ref().is_some_and(|h| matches!(
+                                h.reason.as_str(),
+                                "ordinary_directory_creation_inventory"
+                                    | "ordinary_directory_listing_inventory"
+                            )))),
                 "{label}: {method}"
             );
         }
@@ -1201,9 +1203,13 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             // bounded, uniquely resolved framework producers back into reviews.
             assert!(partial_inventory.entries.iter().all(|e| {
                 e.value_hint.is_none()
-                    || e.value_hint
-                        .as_ref()
-                        .is_some_and(|h| h.reason == "ordinary_directory_creation_inventory")
+                    || e.value_hint.as_ref().is_some_and(|h| {
+                        matches!(
+                            h.reason.as_str(),
+                            "ordinary_directory_creation_inventory"
+                                | "ordinary_directory_listing_inventory"
+                        )
+                    })
             }));
             std::fs::write(fixture.0.join("Helpers.cs"), "class Broken { void Unbound(string path) { Missing.Delete(path); } void BadLocal() { var path = \"known\"; Missing.Replace(ref path); System.IO.File.Delete(path); } }").unwrap();
             let broken_scan = mehscan_engine::scan_path(&fixture.0).unwrap();

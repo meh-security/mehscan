@@ -18,8 +18,10 @@ Default to Value review: map the attack surface, then cover distinct security
 relationships across relevant lanes, including access, output, data exposure,
 and state changes without a hard severity cutoff. Review distinct consequential
 relationships; an occurrence count is not a target for Value coverage. Keep
-ordinary sink-only directory creation and scanner-deferred bookkeeping in
-Comprehensive. Reopen when input, writable code or a consequential effect connects
+ordinary sink-only directory creation, simple filename/directory listings, and
+scanner-deferred bookkeeping in Comprehensive. Recursive or option-selected
+collectors and file-content reads remain useful root-selection work. Reopen when
+input, writable code or a consequential effect connects
 them to a security boundary. In a large queue, keep the unselected work
 visible and call the review partial until every relevant lane is assessed.
 Comprehensive review gives every admitted ID a verdict within the user's scope.

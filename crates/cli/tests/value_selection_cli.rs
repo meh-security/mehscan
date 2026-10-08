@@ -1,6 +1,128 @@
 use std::{fs, process::Command};
 
 #[test]
+fn ordinary_owned_directory_creation_is_deferred_without_losing_writes_or_inputs() {
+    let root =
+        std::env::temp_dir().join(format!("mehscan-directory-priority-{}", std::process::id()));
+    let artifacts = root.with_extension("inventory");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("app.js"), "const fs=require('fs');\nfunction mkdir(path){fs.mkdirSync(path);}\nfunction write(path,data){fs.writeFileSync(path,data);}\nfunction endpoint(req,res){fs.mkdirSync(req.query.path);}").unwrap();
+    fs::write(root.join("app.php"), "<?php function make_dir($path){mkdir($path,0755);} function write_file($path,$data){file_put_contents($path,$data);} function endpoint(){mkdir($_GET['path'],0755);}").unwrap();
+    fs::write(root.join("app.ts"), "import * as fs from 'fs';\nfunction make(path:string){fs.mkdirSync(path);}\nfunction write(path:string,data:string){fs.writeFileSync(path,data);}").unwrap();
+    fs::write(root.join("App.java"), "import java.nio.file.Files; import java.nio.file.Path; class App { void make(Path path) throws Exception { Files.createDirectories(path); } void write(Path path,byte[] data) throws Exception { Files.write(path,data); } }").unwrap();
+    fs::write(root.join("app.go"), "package app\nimport \"os\"\nfunc makeDir(path string){os.MkdirAll(path,0755)}\nfunc write(path string,data []byte){os.WriteFile(path,data,0600)}").unwrap();
+    fs::write(
+        root.join("lookalike.js"),
+        "const fs={mkdirSync(path){return eval(path)}}; function custom(path){fs.mkdirSync(path);}",
+    )
+    .unwrap();
+    fs::write(root.join("lookalike.php"), "<?php namespace Custom; function mkdir($path,$mode){return eval($path);} function custom($path){mkdir($path,0755);}").unwrap();
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    run(&[
+        "investigate",
+        "review-inventory",
+        root.to_str().unwrap(),
+        "--output",
+        artifacts.to_str().unwrap(),
+    ]);
+    let list = |selection| {
+        run(&[
+            "investigate",
+            "review-inventory-list",
+            "--inventory",
+            artifacts.to_str().unwrap(),
+            "--selection",
+            selection,
+            "--limit",
+            "100",
+        ])
+    };
+    let deferred = list("deferred");
+    let entries = deferred["entries"].as_array().unwrap();
+    for path in ["app.js", "app.ts", "app.php", "App.java", "app.go"] {
+        assert!(
+            entries.iter().any(|e| e["path"] == path
+                && e["value_hint"]["reason"] == "ordinary_directory_creation_inventory"),
+            "missing {path}: {deferred}"
+        );
+    }
+    assert!(
+        entries
+            .iter()
+            .all(|e| !e["path"].as_str().unwrap().starts_with("lookalike")),
+        "{deferred}"
+    );
+    let value = list("value");
+    let active = value["entries"].as_array().unwrap();
+    for path in ["app.js", "app.ts", "app.php", "App.java", "app.go"] {
+        assert!(
+            active
+                .iter()
+                .any(|e| e["path"] == path && e["capability"] == "filesystem_write"),
+            "lost write {path}: {value}"
+        );
+    }
+    for path in ["app.js", "app.php"] {
+        assert!(
+            active
+                .iter()
+                .any(|e| e["path"] == path && e["symbol"] == "endpoint"),
+            "lost connected directory {path}: {value}"
+        );
+    }
+    let all = list("all");
+    assert_eq!(
+        all["matching_count"].as_u64().unwrap(),
+        value["matching_count"].as_u64().unwrap() + deferred["matching_count"].as_u64().unwrap()
+    );
+    // Deferral retains exact IDs and can reopen after an unresolved/unsafe
+    // result on the same file/rule surface. No safe verdict was manufactured.
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(artifacts.join("inventory.json")).unwrap()).unwrap();
+    let representative = active
+        .iter()
+        .find(|e| e["path"] == "app.php" && e["symbol"] == "write_file")
+        .unwrap()["review_id"]
+        .as_str()
+        .unwrap();
+    let ledger = artifacts.join("ledger.json");
+    fs::write(&ledger, serde_json::to_vec(&serde_json::json!({"schema_version":"2","source_fingerprint":saved["source_fingerprint"],"input_fingerprint":saved["input_fingerprint"],"inventory_count":saved["entries"].as_array().unwrap().len(),"reviewed":{representative:"needs_review"},"conflicts":[]})).unwrap()).unwrap();
+    let reopened = run(&[
+        "investigate",
+        "review-inventory-list",
+        "--inventory",
+        artifacts.to_str().unwrap(),
+        "--selection",
+        "value",
+        "--ledger",
+        ledger.to_str().unwrap(),
+        "--limit",
+        "100",
+    ]);
+    assert!(
+        reopened["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["path"] == "app.php" && e["symbol"] == "make_dir"),
+        "{reopened}"
+    );
+    fs::remove_dir_all(&root).unwrap();
+    fs::remove_dir_all(&artifacts).unwrap();
+}
+
+#[test]
 fn build_scope_defers_ordinary_sinks_and_preserves_runtime_and_connected_work() {
     let root = std::env::temp_dir().join(format!("mehscan-build-scope-{}", std::process::id()));
     let output = root.with_extension("inventory");
@@ -257,6 +379,10 @@ class App {
  void MakeDirectory(string path) { Directory.CreateDirectory(path); }
  void RemoveDirectory(string path) { Directory.Delete(path); }
  void MixedDirectory(string path) { Directory.CreateDirectory(path); Directory.Delete(path); }
+ void ListDirectory(string path) { Directory.GetFiles(path); }
+ void ReadFile(string path) { File.ReadAllText(path); }
+ void MixedRead(string path) { Directory.GetFiles(path); File.ReadAllText(path); }
+ void RecursiveList(string path) { Directory.GetFiles(path,"*",SearchOption.AllDirectories); }
 }"#,
     )
     .unwrap();
@@ -315,7 +441,16 @@ class App {
     };
     let all = list("all", &[]);
     let deferred = list("deferred", &[]);
-    assert_eq!(deferred["matching_count"], 3, "{deferred}");
+    assert_eq!(deferred["matching_count"], 5, "{deferred}");
+    assert!(
+        deferred["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["symbol"] == "ListDirectory"
+                && e["value_hint"]["reason"] == "ordinary_directory_listing_inventory"),
+        "{deferred}"
+    );
     let child = deferred["entries"]
         .as_array()
         .unwrap()
@@ -339,7 +474,7 @@ class App {
     let value = list("value", &[]);
     assert_eq!(
         all["matching_count"].as_u64().unwrap(),
-        value["matching_count"].as_u64().unwrap() + 3
+        value["matching_count"].as_u64().unwrap() + 5
     );
     for symbol in [
         "Mutable",
@@ -347,6 +482,9 @@ class App {
         "Other",
         "RemoveDirectory",
         "MixedDirectory",
+        "ReadFile",
+        "MixedRead",
+        "RecursiveList",
     ] {
         assert!(
             value["entries"]
@@ -356,6 +494,22 @@ class App {
                 .any(|e| e["symbol"] == symbol)
         );
     }
+    assert!(
+        value["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["symbol"] == "MixedRead"
+                && e["operand_facts"]
+                    .as_array()
+                    .is_some_and(
+                        |facts| facts.iter().any(|f| f["kind"] == "semantic_identity"
+                            && f["value"]
+                                .as_str()
+                                .is_some_and(|v| v.starts_with("System.IO.File.ReadAllText(")))
+                    )),
+        "content read must not depend on low-value listing: {value}"
+    );
     let saved: serde_json::Value =
         serde_json::from_slice(&fs::read(inventory.join("inventory.json")).unwrap()).unwrap();
     let ledger = artifacts.join("ledger.json");

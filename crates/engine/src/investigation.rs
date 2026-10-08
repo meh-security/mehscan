@@ -341,10 +341,13 @@ fn share_csharp_filesystem_questions(entries: &mut [ReviewInventoryEntry]) {
     for entry in entries.iter_mut().filter(|entry| {
         entry.path.ends_with(".cs")
             && entry.evidence_strength == "sink"
-            && entry
-                .value_hint
-                .as_ref()
-                .is_none_or(|hint| hint.reason != "ordinary_directory_creation_inventory")
+            && entry.value_hint.as_ref().is_none_or(|hint| {
+                !matches!(
+                    hint.reason.as_str(),
+                    "ordinary_directory_creation_inventory"
+                        | "ordinary_directory_listing_inventory"
+                )
+            })
             && entry.cwe_candidates == ["CWE-22"]
             && matches!(
                 entry.capability,
@@ -515,45 +518,115 @@ fn ordinary_browser_request_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
     })
 }
 
-fn directory_creation_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
+fn signed_dotnet_directory_api(anchor: &Evidence, methods: &[&str]) -> bool {
+    anchor.context.operand_facts.iter().any(|fact| {
+        fact.kind == mehscan_core::OperandFactKind::SemanticIdentity
+            && methods.iter().any(|method| fact.value.starts_with(method))
+            && [
+                "[assembly=System.Runtime,",
+                "[assembly=System.IO.FileSystem,",
+                "[assembly=System.Private.CoreLib,",
+                "[assembly=mscorlib,",
+                "[assembly=netstandard,",
+            ]
+            .iter()
+            .any(|name| fact.value.contains(name))
+            && [
+                "PublicKeyToken=b03f5f7f11d50a3a",
+                "PublicKeyToken=b77a5c561934e089",
+                "PublicKeyToken=cc7b13ffcd2ddd51",
+                "PublicKeyToken=7cec85d7bea7798e",
+            ]
+            .iter()
+            .any(|token| fact.value.contains(token))
+    })
+}
+
+fn directory_creation_hint(
+    anchor: &Evidence,
+    sources: &RepositorySources,
+) -> Option<ValueReviewHint> {
     // A workload choice, not containment proof. Keep connected input and other
     // effects in Value; the caller only invokes this for single sink-only IDs.
-    if anchor.rule_id != "csharp-filesystem-write"
+    if anchor.capability != Capability::FilesystemWrite
         || anchor.cwe_candidates != ["CWE-22"]
         || anchor
             .tags
             .iter()
             .any(|tag| tag == "review-origin:decision-critical")
-        || !anchor.context.operand_facts.iter().any(|fact| {
-            fact.kind == mehscan_core::OperandFactKind::SemanticIdentity
-                && fact
-                    .value
-                    .starts_with("System.IO.Directory.CreateDirectory(")
-                && [
-                    "[assembly=System.Runtime,",
-                    "[assembly=System.IO.FileSystem,",
-                    "[assembly=System.Private.CoreLib,",
-                    "[assembly=mscorlib,",
-                    "[assembly=netstandard,",
-                ]
-                .iter()
-                .any(|name| fact.value.contains(name))
-                && [
-                    "PublicKeyToken=b03f5f7f11d50a3a",
-                    "PublicKeyToken=b77a5c561934e089",
-                    "PublicKeyToken=cc7b13ffcd2ddd51",
-                    "PublicKeyToken=7cec85d7bea7798e",
-                ]
-                .iter()
-                .any(|token| fact.value.contains(token))
-        })
     {
+        return None;
+    }
+    let signed_directory = anchor.rule_id == "csharp-filesystem-write"
+        && signed_dotnet_directory_api(anchor, &["System.IO.Directory.CreateDirectory("]);
+    // Source normalizers already distinguish imported APIs from local aliases
+    // and shadowed names. This is priority admission, not a sanitizer contract.
+    let normalized_directory = anchor.symbol_resolution.as_ref().is_some_and(|symbol| {
+        symbol.confidence != mehscan_core::SymbolConfidence::Ambiguous
+            && matches!(
+                (anchor.rule_id.as_str(), symbol.canonical.as_str()),
+                (
+                    "java-filesystem-write",
+                    "java.nio.file.Files.createDirectory" | "java.nio.file.Files.createDirectories"
+                ) | (
+                    "javascript-filesystem-write"
+                        | "typescript-filesystem-write"
+                        | "tsx-filesystem-write",
+                    "fs.mkdir" | "fs.mkdirSync" | "fs.promises.mkdir" | "fs/promises.mkdir"
+                ) | ("go-filesystem-write", "os.Mkdir" | "os.MkdirAll")
+            )
+    });
+    // PHP's rule admission resolves native functions and rejects local and
+    // namespaced lookalikes. Only direct native spellings are needed here;
+    // imported aliases remain active until their identity is exposed.
+    let native_php_directory = anchor.rule_id == "php-filesystem-write"
+        && sources
+            .file(&anchor.location.path)
+            .ok()
+            .is_some_and(|file| {
+                file.source
+                    .get(anchor.location.start.byte_offset..anchor.location.end.byte_offset)
+                    .and_then(|text| text.split_once('('))
+                    .is_some_and(|(name, _)| {
+                        name.trim()
+                            .trim_start_matches('\\')
+                            .eq_ignore_ascii_case("mkdir")
+                    })
+            });
+    if !signed_directory && !normalized_directory && !native_php_directory {
         return None;
     }
     Some(ValueReviewHint {
         reason: "ordinary_directory_creation_inventory".into(),
         target: anchor.location.path.clone(),
         assumption: "Sink-only directory creation deferred by Value priority, not proven safe. Comprehensive retains exact IDs. Reopen with a consequential input, writable-code relationship, or issue on this surface.".into(),
+        depends_on: None,
+    })
+}
+
+fn directory_listing_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
+    if anchor.rule_id != "csharp-filesystem-read"
+        || anchor.cwe_candidates != ["CWE-22"]
+        || anchor
+            .tags
+            .iter()
+            .any(|tag| tag == "review-origin:decision-critical")
+        || !signed_dotnet_directory_api(anchor, &[
+            "System.IO.Directory.GetFiles(", "System.IO.Directory.GetDirectories(", "System.IO.Directory.EnumerateFiles("
+        ])
+        || anchor.context.operand_facts.iter().any(|fact| {
+            fact.kind == mehscan_core::OperandFactKind::SemanticIdentity
+                // Recursive/option-selected collectors commonly feed archive
+                // export and recursive file work. Keep that root question.
+                && (fact.value.contains("System.IO.SearchOption") || fact.value.contains("System.IO.EnumerationOptions"))
+        })
+    {
+        return None;
+    }
+    Some(ValueReviewHint {
+        reason: "ordinary_directory_listing_inventory".into(),
+        target: anchor.location.path.clone(),
+        assumption: "Sink-only filename/directory listing deferred by Value priority, not proven safe. File content reads stay active. Comprehensive retains exact IDs; reopen for connected input, a consequential effect or an unsafe/unresolved finding on this surface.".into(),
         depends_on: None,
     })
 }
@@ -1701,7 +1774,8 @@ fn build_path_review_jobs_internal(
                             .or_else(|| ordinary_php_sink_hint(anchor))
                             .or_else(|| local_bound_query_hint(anchor))
                             .or_else(|| ordinary_browser_request_hint(anchor))
-                            .or_else(|| directory_creation_hint(anchor))
+                            .or_else(|| directory_creation_hint(anchor, &sources))
+                            .or_else(|| directory_listing_hint(anchor))
                     })
                     .flatten(),
             })

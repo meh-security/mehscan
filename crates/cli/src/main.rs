@@ -961,6 +961,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                             | "local_bound_query_inventory"
                             | "ordinary_browser_request_inventory"
                             | "ordinary_directory_creation_inventory"
+                            | "ordinary_directory_listing_inventory"
                     )
                 ) && reopen_surfaces
                     .contains(&(entry["path"].as_str(), entry["rule_id"].as_str())))
