@@ -8,7 +8,12 @@ Pre-assess the source and requested scope: identify the stack and deployed
 surfaces, map inventory concentrations, and use prior same-revision verdicts
 to rank review lanes. A bounded small review can use full
 bundles; a large or uncertain one uses an inventory and small selected chunks.
-If agents are available, assign disjoint IDs with one shared whole-run plan.
+If parallel review is authorized, assign disjoint IDs with one shared whole-run
+plan. Start with a small pool (three reviewers is a useful initial setting),
+refilling a slot when its independent package completes. Keep a shared producer
+and its caller/effect checks in one job; split different producers or controls.
+Do not launch one reviewer per occurrence. Queue status is ready, running,
+completed, or blocked on a named fact; unstarted IDs remain unreviewed.
 Default to Value review: map the attack surface, then cover distinct security
 relationships across relevant lanes, including access, output, data exposure,
 and state changes without a hard severity cutoff. Review distinct consequential
@@ -82,6 +87,15 @@ label untested lanes unknown. Do not infer hours from ID counts alone. If the
 projection is impractical, reduce the next Value pass to distinct consequential
 relationships, defer evidenced repeats, or recommend a narrower area/category.
 Explain the coverage tradeoff. Comprehensive still owes all in-scope IDs.
+
+For parallel work, measure completion through the last validated report,
+longest package, aggregate tokens and duplicated research as well as individual
+job times. Put independent expensive jobs first when their cost is known. A
+hundred-second package resolving many related operations may be worthwhile;
+repeated small jobs reopening the same policy question need one shared follow-up.
+Reuse bound inventories and prepared evidence; count bundle export in preparation
+and avoid rebuilding native evidence for each reviewer. Shared facts do not
+transfer verdicts across different effects or output contexts.
 
 Honor the user's time budget. At its end, finalize completed decisions and save
 exact unreviewed/deferred IDs, missing facts, and the next recommended chunk.
