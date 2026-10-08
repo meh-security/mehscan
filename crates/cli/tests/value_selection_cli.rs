@@ -254,6 +254,9 @@ class App {
  void Ref(string path) { File.Delete(path); Change(ref path); File.Delete(path); }
  void Change(ref string path) { path = "changed"; }
  void Other(string path) { File.Delete(path); }
+ void MakeDirectory(string path) { Directory.CreateDirectory(path); }
+ void RemoveDirectory(string path) { Directory.Delete(path); }
+ void MixedDirectory(string path) { Directory.CreateDirectory(path); Directory.Delete(path); }
 }"#,
     )
     .unwrap();
@@ -312,8 +315,21 @@ class App {
     };
     let all = list("all", &[]);
     let deferred = list("deferred", &[]);
-    assert_eq!(deferred["matching_count"], 1, "{deferred}");
-    let child = &deferred["entries"][0];
+    assert_eq!(deferred["matching_count"], 3, "{deferred}");
+    let child = deferred["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["symbol"] == "Shared")
+        .unwrap();
+    assert!(
+        deferred["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["symbol"] == "MakeDirectory"
+                && e["value_hint"]["reason"] == "ordinary_directory_creation_inventory")
+    );
     assert_eq!(child["symbol"], "Shared");
     assert_eq!(
         child["value_hint"]["reason"],
@@ -323,9 +339,15 @@ class App {
     let value = list("value", &[]);
     assert_eq!(
         all["matching_count"].as_u64().unwrap(),
-        value["matching_count"].as_u64().unwrap() + 1
+        value["matching_count"].as_u64().unwrap() + 3
     );
-    for symbol in ["Mutable", "Ref", "Other"] {
+    for symbol in [
+        "Mutable",
+        "Ref",
+        "Other",
+        "RemoveDirectory",
+        "MixedDirectory",
+    ] {
         assert!(
             value["entries"]
                 .as_array()
@@ -345,7 +367,7 @@ class App {
         let queue = list("value", &["--ledger", ledger.to_str().unwrap()]);
         assert_eq!(
             queue["reopened_count"],
-            if verdict == "not_issue" { 0 } else { 1 }
+            if verdict == "not_issue" { 0 } else { 3 }
         );
         assert_eq!(queue["reviewed_count"], 1);
         assert_eq!(

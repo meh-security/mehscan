@@ -29,6 +29,10 @@ read below; inspect missing facts normally.
    context.
    Do this within the existing pre-assessment or bundle review; a separate
    routing run over the same IDs is unnecessary in normal operation.
+   Bound-producer groups include exact definition identity and every member's
+   ID, caller and capability across files. Read the producer and stored-property
+   writers once, then inspect differing arguments, receivers, guards and effects.
+   These navigation groups never defer members or establish runtime equivalence.
 2. Group IDs by a concrete shared implementation question. An ID without that
    shared question gets its own group. Keep the grouping note small; it is a
    working map, not a second response format.
@@ -71,6 +75,29 @@ read below; inspect missing facts normally.
    fact. Write one brief draft for the bundle and finalize it. Keep a one-line
    pattern note only if it helps a later chunk avoid rediscovering the same
    control; tie it to the current source revision and recheck after changes.
+
+## Reuse facts between chunks
+
+For an expensive contract that another chunk will actually reuse, optionally
+save only the useful source fact,
+its citations and remaining checks. Use `review-facts` to bind it to the inventory
+and embed current cited source. Next chunk loads the matching contract, checks
+the reasoning and caller applicability, and queries only the missing edge.
+Do not save a neighboring verdict as the contract. One inspected GUID writer
+does not establish that a stored string property has only GUID writers.
+
+Notes input:
+
+```json
+{"facts":[{"contract":"KEY_FROM_CONTRACT_QUEUE","statement":"What the inspected implementation does","citations":[{"path":"src/Helper.cs","start_line":20,"end_line":35}],"remaining_checks":["caller authority", "alternate writers"]}]}
+```
+
+Record: `mehscan investigate review-facts ROOT --inventory DIR --notes notes.json --output facts.json`.
+Reuse: `mehscan investigate review-facts ROOT --inventory DIR --facts facts.json --contract KEY`.
+Binding or source changes require fresh inspection. Binding validates source
+reuse, not the author's conclusion. Skip notes for a one-off question.
+Do not add a separate note-writing model pass or require this for every chunk.
+Fewer lookups alone is not a time saving; use notes when measured reuse pays off.
 
 ## Focused exception audit for a broad review
 

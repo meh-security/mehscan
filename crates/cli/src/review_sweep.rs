@@ -11,6 +11,24 @@ pub(super) fn contract_keys(entry: &Value) -> Vec<(String, String, String)> {
         .filter_map(|fact| {
             let kind = fact["kind"].as_str()?;
             let value = fact["value"].as_str()?;
+            if kind == "semantic_definition" {
+                let location = &fact["location"];
+                let path = location["path"].as_str()?;
+                let start = location["start"]["byte_offset"].as_u64()?;
+                let end = location["end"]["byte_offset"].as_u64()?;
+                let role = fact["role"].as_str()?;
+                // Definition navigation is not security equivalence. Do not
+                // group names alone or receiver declarations with producers.
+                if role == "receiver" || end <= start {
+                    return None;
+                }
+                let identity = format!("{path}:{start}:{end}:{role}:{value}");
+                return Some((
+                    format!("bound_producer:{identity}"),
+                    "bound_producer".into(),
+                    identity,
+                ));
+            }
             let value = match kind {
                 "configured_root_path" => value.split_once(" . ")?.0,
                 "encoding_call"
@@ -30,6 +48,11 @@ pub(super) fn contract_keys(entry: &Value) -> Vec<(String, String, String)> {
 
 fn checks(kind: &str) -> &'static [&'static str] {
     match kind {
+        "bound_producer" => &[
+            "producer_return_and_stored_property_writers",
+            "per_call_arguments_receiver_and_runtime_dispatch",
+            "per_site_control_guards_and_effects",
+        ],
         "shared_outbound_destination" => &[
             "destination_producer_and_same_owner_hooks",
             "caller_control_and_runtime_client_base",
@@ -64,7 +87,7 @@ pub(super) fn contract_queue(
     offset: usize,
     limit: usize,
 ) -> Value {
-    let mut groups = BTreeMap::<String, (String, String, usize, BTreeSet<String>)>::new();
+    let mut groups = BTreeMap::<String, (String, String, Vec<Value>, BTreeSet<String>)>::new();
     let mut ungrouped = 0;
     for entry in entries {
         let keys = contract_keys(entry);
@@ -74,8 +97,12 @@ pub(super) fn contract_queue(
         for (key, kind, value) in keys {
             let group = groups
                 .entry(key)
-                .or_insert((kind, value, 0, BTreeSet::new()));
-            group.2 += 1;
+                .or_insert((kind, value, Vec::new(), BTreeSet::new()));
+            group
+                .2
+                .push(json!({"review_id":entry["review_id"], "path":entry["path"],
+                "line":entry["line"], "symbol":entry["symbol"],
+                "capability":entry["capability"], "evidence_strength":entry["evidence_strength"]}));
             if let Some(path) = entry["path"].as_str() {
                 group.3.insert(path.into());
             }
@@ -83,9 +110,11 @@ pub(super) fn contract_queue(
     }
     let mut groups: Vec<_> = groups
         .into_iter()
-        .map(|(key, (kind, value, count, paths))| {
+        .map(|(key, (kind, value, members, paths))| {
             json!({
-                "contract": key, "kind": kind, "value": value, "review_count": count,
+                "contract": key, "kind": kind, "value": value, "review_count": members.len(),
+                "review_ids": members.iter().map(|m| &m["review_id"]).collect::<Vec<_>>(),
+                "members":members,
                 "file_count": paths.len(), "verified": false, "checks": checks(&kind),
             })
         })
@@ -308,6 +337,24 @@ pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bound_producers_group_cross_file_members_without_transferring_safety() {
+        let fact = json!({"kind":"semantic_definition", "role":"path", "value":"Store.Resolve(string)",
+            "location":{"path":"Store.cs","start":{"byte_offset":10},"end":{"byte_offset":17}}});
+        let a = json!({"review_id":"a","path":"Read.cs","capability":"filesystem_read","operand_facts":[fact.clone()]});
+        let b = json!({"review_id":"b","path":"Write.cs","capability":"filesystem_write","operand_facts":[fact.clone()]});
+        let mut unrelated = fact.clone();
+        unrelated["location"]["path"] = json!("OtherStore.cs");
+        let c = json!({"review_id":"c","path":"Other.cs","operand_facts":[unrelated]});
+        let result = contract_queue(&[&a, &b, &c], &json!("revision"), 0, 20);
+        assert_eq!(result["contract_count"], 2);
+        assert_eq!(result["groups"][0]["review_ids"], json!(["a", "b"]));
+        assert_eq!(result["groups"][0]["verified"], false);
+        assert_eq!(result["groups"][0]["file_count"], 2);
+        let receiver = json!({"operand_facts":[{"kind":"semantic_definition","value":"Store.Resolve(string)","role":"receiver","location":fact["location"]}]});
+        assert!(contract_keys(&receiver).is_empty());
+    }
 
     fn card(text: &str, truncated: bool) -> Value {
         json!({"review_id":text,"source_context":{"location":{"path":"view.php","start_line":10,"end_line":10},"excerpt":text,"truncated":truncated}})

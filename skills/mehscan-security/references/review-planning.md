@@ -11,9 +11,11 @@ bundles; a large or uncertain one uses an inventory and small selected chunks.
 If agents are available, assign disjoint IDs with one shared whole-run plan.
 Default to Value review: map the attack surface, then cover distinct security
 relationships across relevant lanes, including access, output, data exposure,
-and state changes without a hard severity cutoff. In a
-manageable application queue, review nearly every in-scope ID; group only source-supported repeats
-and clearly inapplicable cases. In a large queue, keep the unselected work
+and state changes without a hard severity cutoff. Review distinct consequential
+relationships; an occurrence count is not a target for Value coverage. Keep
+ordinary sink-only directory creation and scanner-deferred bookkeeping in
+Comprehensive. Reopen when input, writable code or a consequential effect connects
+them to a security boundary. In a large queue, keep the unselected work
 visible and call the review partial until every relevant lane is assessed.
 Comprehensive review gives every admitted ID a verdict within the user's scope.
 Value excludes source-proven build tooling, vendor distributions and generated

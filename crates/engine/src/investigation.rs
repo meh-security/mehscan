@@ -106,6 +106,10 @@ struct ObservationGroup {
 pub struct ReviewOperandSummary {
     pub kind: mehscan_core::OperandFactKind,
     pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<Location>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
 }
 
 fn operand_summaries(evidence: &Evidence) -> Vec<ReviewOperandSummary> {
@@ -127,6 +131,10 @@ fn operand_summaries(evidence: &Evidence) -> Vec<ReviewOperandSummary> {
         .map(|fact| ReviewOperandSummary {
             kind: fact.kind.clone(),
             value: fact.value.clone(),
+            location: (fact.kind == mehscan_core::OperandFactKind::SemanticDefinition)
+                .then(|| fact.location.clone()),
+            role: (fact.kind == mehscan_core::OperandFactKind::SemanticDefinition)
+                .then(|| fact.role.clone()),
         })
         .collect()
 }
@@ -333,6 +341,10 @@ fn share_csharp_filesystem_questions(entries: &mut [ReviewInventoryEntry]) {
     for entry in entries.iter_mut().filter(|entry| {
         entry.path.ends_with(".cs")
             && entry.evidence_strength == "sink"
+            && entry
+                .value_hint
+                .as_ref()
+                .is_none_or(|hint| hint.reason != "ordinary_directory_creation_inventory")
             && entry.cwe_candidates == ["CWE-22"]
             && matches!(
                 entry.capability,
@@ -499,6 +511,49 @@ fn ordinary_browser_request_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
         reason: "ordinary_browser_request_inventory".into(),
         target: fact.location.path.clone(),
         assumption: "browser_get_head_surface; not_server_ssrf; inspect_destination_authority_and_consequential_effects_then_reopen".into(),
+        depends_on: None,
+    })
+}
+
+fn directory_creation_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
+    // A workload choice, not containment proof. Keep connected input and other
+    // effects in Value; the caller only invokes this for single sink-only IDs.
+    if anchor.rule_id != "csharp-filesystem-write"
+        || anchor.cwe_candidates != ["CWE-22"]
+        || anchor
+            .tags
+            .iter()
+            .any(|tag| tag == "review-origin:decision-critical")
+        || !anchor.context.operand_facts.iter().any(|fact| {
+            fact.kind == mehscan_core::OperandFactKind::SemanticIdentity
+                && fact
+                    .value
+                    .starts_with("System.IO.Directory.CreateDirectory(")
+                && [
+                    "[assembly=System.Runtime,",
+                    "[assembly=System.IO.FileSystem,",
+                    "[assembly=System.Private.CoreLib,",
+                    "[assembly=mscorlib,",
+                    "[assembly=netstandard,",
+                ]
+                .iter()
+                .any(|name| fact.value.contains(name))
+                && [
+                    "PublicKeyToken=b03f5f7f11d50a3a",
+                    "PublicKeyToken=b77a5c561934e089",
+                    "PublicKeyToken=cc7b13ffcd2ddd51",
+                    "PublicKeyToken=7cec85d7bea7798e",
+                ]
+                .iter()
+                .any(|token| fact.value.contains(token))
+        })
+    {
+        return None;
+    }
+    Some(ValueReviewHint {
+        reason: "ordinary_directory_creation_inventory".into(),
+        target: anchor.location.path.clone(),
+        assumption: "Sink-only directory creation deferred by Value priority, not proven safe. Comprehensive retains exact IDs. Reopen with a consequential input, writable-code relationship, or issue on this surface.".into(),
         depends_on: None,
     })
 }
@@ -1646,6 +1701,7 @@ fn build_path_review_jobs_internal(
                             .or_else(|| ordinary_php_sink_hint(anchor))
                             .or_else(|| local_bound_query_hint(anchor))
                             .or_else(|| ordinary_browser_request_hint(anchor))
+                            .or_else(|| directory_creation_hint(anchor))
                     })
                     .flatten(),
             })

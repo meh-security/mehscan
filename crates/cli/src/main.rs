@@ -9,6 +9,7 @@ use std::time::Instant;
 use mehscan_core::{Capability, EvidenceFilter, EvidenceKind, Language};
 use serde::{Deserialize, Serialize};
 
+mod review_facts;
 mod review_sweep;
 
 fn main() -> ExitCode {
@@ -959,6 +960,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         "ordinary_php_sink_inventory"
                             | "local_bound_query_inventory"
                             | "ordinary_browser_request_inventory"
+                            | "ordinary_directory_creation_inventory"
                     )
                 ) && reopen_surfaces
                     .contains(&(entry["path"].as_str(), entry["rule_id"].as_str())))
@@ -1010,6 +1012,27 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             print_json(
                 &serde_json::json!({"selection": selection, "scope_count": scope_count, "deferred_count": deferred_count, "reopened_count": reopened_count, "dependency_review_ids": dependency_review_ids, "matching_count": matching.len(), "reviewed_count": ledger.as_ref().map_or(0, |ledger| ledger.reviewed.len()), "offset": offset, "entries": matching.into_iter().skip(offset).take(limit).collect::<Vec<_>>()}),
             )
+        }
+        "review-facts" => {
+            let inventory = PathBuf::from(parsed.required("--inventory")?);
+            let notes = parsed.optional("--notes").map(PathBuf::from);
+            let facts = parsed.optional("--facts").map(PathBuf::from);
+            let output = parsed.optional("--output").map(PathBuf::from);
+            let contract = parsed.optional("--contract");
+            parsed.finish()?;
+            if notes.is_some() == facts.is_some() || (notes.is_some() && output.is_none()) {
+                return Err(
+                    "use --notes INPUT --output FILE to record, or --facts FILE to reuse".into(),
+                );
+            }
+            print_json(&review_facts::run(
+                &root,
+                &inventory,
+                notes.as_deref(),
+                facts.as_deref(),
+                contract.as_deref(),
+                output.as_deref(),
+            )?)
         }
         "review-ledger" => {
             let inventory_dir = PathBuf::from(parsed.required("--inventory")?);
@@ -3681,6 +3704,7 @@ USAGE:
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate review-tasks [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
   mehscan investigate review-bundles [ROOT] --output DIR [--inventory DIR --review-ids ID,ID --ledger FILE] [--context-lines N] [--max-bytes N] [--max-reviews N] [--max-total-reviews N] [--timings true|false] [--include-review-material true|false] [--scope-label TEXT] [--project NAME] [--revision REF]
+  mehscan investigate review-facts [ROOT] --inventory DIR (--notes INPUT --output FILE | --facts FILE) [--contract KEY]
   mehscan investigate review-bundle-diff --before DIR --after DIR
   mehscan investigate review-bundle-list --bundle PATH
   mehscan investigate review-card --bundle PATH --review-id ID

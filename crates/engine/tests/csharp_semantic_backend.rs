@@ -181,6 +181,14 @@ fn awaited_and_cfg_producers_locate_exact_helpers_without_safety_claims() {
                 .iter()
                 .any(|c| c == "remaining_property_writers")
     }));
+    let snapshot_file = fixture.0.join("writer-snapshot.json");
+    std::fs::write(&snapshot_file, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    investigation::build_review_inventory_with_semantics(
+        &fixture.0,
+        false,
+        Some((&snapshot_file, &context)),
+    )
+    .expect("writer navigation must pass exact-source inventory validation");
 }
 
 #[test]
@@ -1105,7 +1113,6 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             "GuidUnknownRoot",
             "GuidUnknownFilename",
             "GuidLookalike",
-            "TempConditionalInTry",
             "UnknownInterpolation",
             "UnknownNumericFormat",
             "UnknownNumericProvider",
@@ -1122,10 +1129,24 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
                 inventory
                     .entries
                     .iter()
-                    .any(|e| e.symbol.as_deref() == Some(method) && e.value_hint.is_none()),
+                    .any(|e| e.symbol.as_deref() == Some(method)
+                        && (e.value_hint.is_none()
+                            || e.value_hint.as_ref().is_some_and(
+                                |h| h.reason == "ordinary_directory_creation_inventory"
+                            ))),
                 "{label}: {method}"
             );
         }
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|e| e.symbol.as_deref() == Some("TempConditionalInTry")
+                    && e.value_hint
+                        .as_ref()
+                        .is_some_and(|h| h.reason == "ordinary_directory_creation_inventory")),
+            "{label}: unknown directory creation stays in Comprehensive, not safely suppressed"
+        );
         if label == "net10" {
             let mut malformed = serde_json::to_value(&snapshot).unwrap();
             let fact = malformed["observations"]
@@ -1178,12 +1199,12 @@ fn filesystem_proofs_are_complete_and_unknown_paths_stay_reviewable() {
             );
             // Missing dependencies on an unrelated declaration do not turn
             // bounded, uniquely resolved framework producers back into reviews.
-            assert!(
-                partial_inventory
-                    .entries
-                    .iter()
-                    .all(|e| e.value_hint.is_none())
-            );
+            assert!(partial_inventory.entries.iter().all(|e| {
+                e.value_hint.is_none()
+                    || e.value_hint
+                        .as_ref()
+                        .is_some_and(|h| h.reason == "ordinary_directory_creation_inventory")
+            }));
             std::fs::write(fixture.0.join("Helpers.cs"), "class Broken { void Unbound(string path) { Missing.Delete(path); } void BadLocal() { var path = \"known\"; Missing.Replace(ref path); System.IO.File.Delete(path); } }").unwrap();
             let broken_scan = mehscan_engine::scan_path(&fixture.0).unwrap();
             let broken = csharp_semantic::collect(

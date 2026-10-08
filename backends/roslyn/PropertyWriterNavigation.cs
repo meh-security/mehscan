@@ -60,11 +60,10 @@ internal static partial class Program
                             break;
                         }
                         // Large RHS expressions stay locations, not packet payload.
-                        writes.Add(new("property_writer", "local_operand_origin", location,
-                            $"Candidate source write to {property.ToDisplayString()}: "
-                                + (assignment.Right.Span.Length <= 512 ? assignment.Right.ToString() : "large assigned expression"),
+                        writes.Add(new("property_writer", assignment.Right.Span.Length <= 512 ? "local_operand_origin" : "operand_boundary", location,
+                            assignment.Right.Span.Length <= 512 ? assignment.Right.ToString() : $"Large candidate assigned expression for {property.ToDisplayString()}",
                             ["same_resource_instance_and_persistence", "writer_reachability_and_authority",
-                             "supplied_compiled_sources_only", "other_writers_and_runtime_overrides"]));
+                             "supplied_compiled_sources_only", "other_writers_and_runtime_overrides", $"property:{property.ToDisplayString()}"]));
                     }
                     cache[key!] = writes;
                 }
