@@ -335,37 +335,6 @@ pub(crate) fn is_exact_actix_html_response(
     ) && canonical_path(root, builder) == "actix_web::HttpResponse"
 }
 
-pub(crate) fn is_exact_file_log_write(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    matched: &Node<'_, StrDoc<SupportLang>>,
-) -> bool {
-    let Some(function) = enclosing_call(matched).and_then(|call| call.field("function")) else {
-        return false;
-    };
-    let observed = compact(function.text().as_ref());
-    let Some((writer, method)) = observed.rsplit_once('.') else {
-        return false;
-    };
-    if method != "write_all" || !is_identifier(writer) {
-        return false;
-    }
-    let has_write_trait = rust_imports(root)
-        .get("Write")
-        .is_some_and(|path| path == "std::io::Write");
-    let scope = enclosing_request_scope(matched).or_else(|| {
-        matched
-            .ancestors()
-            .find(|node| node.kind().as_ref() == "function_item")
-    });
-    has_write_trait
-        && scope.is_some_and(|scope| {
-            let text = compact(scope.text().as_ref());
-            text.contains(&format!("letmut{writer}=matchOpenOptions::new()"))
-                || text.contains(&format!("letmut{writer}=OpenOptions::new()"))
-                || text.contains(&format!("letmut{writer}=File::create("))
-        })
-}
-
 pub(crate) fn is_exact_review_control(
     root: &Node<'_, StrDoc<SupportLang>>,
     matched: &Node<'_, StrDoc<SupportLang>>,
@@ -408,94 +377,6 @@ pub(crate) fn is_exact_process_execution(
         canonical_path(root, &observed).as_str(),
         "std::process::Command::new" | "tokio::process::Command::new"
     )
-}
-
-pub(crate) fn is_reviewable_safety_boundary(
-    matched: &Node<'_, StrDoc<SupportLang>>,
-    include_nonproduction: bool,
-) -> bool {
-    include_nonproduction
-        || !std::iter::once(matched.clone())
-            .chain(matched.ancestors())
-            .filter(|node| matches!(node.kind().as_ref(), "function_item" | "mod_item"))
-            .any(|node| {
-                node.prev_all()
-                    .take_while(|previous| previous.kind().as_ref() == "attribute_item")
-                    .map(|attribute| compact(attribute.text().as_ref()))
-                    .any(|attribute| attribute == "#[test]" || attribute == "#[cfg(test)]")
-            })
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn add_rust_safety_function_observations<'tree>(
-    path: &str,
-    root: &Node<'tree, StrDoc<SupportLang>>,
-    language: Language,
-    include_nonproduction: bool,
-    comments: &CommentRanges,
-    conditional: &ConditionalRegions,
-    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
-    evidence: &mut Vec<Evidence>,
-) {
-    if language != Language::Rust {
-        return;
-    }
-    let rule_id = "rust-unsafe-boundary";
-    for function in root.dfs().filter(|node| {
-        node.kind().as_ref() == "function_item"
-            && node.children().any(|child| {
-                child.kind().as_ref() == "function_modifiers"
-                    && compact(child.text().as_ref()).contains("unsafe")
-            })
-    }) {
-        if comments.is_in_comment(function.range())
-            || !is_reviewable_safety_boundary(&function, include_nonproduction)
-            || evidence.iter().any(|item| {
-                item.rule_id == rule_id
-                    && item.location.start.byte_offset == function.range().start
-                    && item.location.end.byte_offset == function.range().end
-            })
-        {
-            continue;
-        }
-        let mut captures = BTreeMap::new();
-        if let Some(name) = function.field("name") {
-            captures.insert("function".to_string(), capture(path, &name));
-        }
-        if let Some(body) = function.field("body") {
-            captures.insert("body".to_string(), capture(path, &body));
-        }
-        evidence.push(Evidence {
-            id: evidence_id(path, rule_id, function.range().start, function.range().end),
-            kind: EvidenceKind::SensitiveOperation,
-            capability: Capability::MemorySafetyBoundary,
-            location: location(path, &function),
-            enclosing_symbol: enclosing_symbol(&function),
-            captures,
-            cwe_candidates: vec!["CWE-119".to_string()],
-            tags: vec![
-                "rust".to_string(),
-                "unsafe".to_string(),
-                "memory-safety".to_string(),
-                "review".to_string(),
-            ],
-            confidence: Confidence::Medium,
-            provenance: Provenance {
-                resolution: Resolution::Ast,
-                engine: "mehscan bounded-rust-safety 1".to_string(),
-                rule_version: 1,
-            },
-            context: EvidenceContext {
-                comment: false,
-                reachability: Some(reachability::classify(&function, literals)),
-                availability: Some(conditional.availability_for(function.range())),
-                ..EvidenceContext::default()
-            },
-            symbol_resolution: None,
-            rule_id: rule_id.to_string(),
-            related_evidence: Vec::new(),
-        });
-    }
 }
 
 pub(crate) fn annotate_rust_build_script(

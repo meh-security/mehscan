@@ -16,7 +16,7 @@ const ESTABLISHED_WEB_LANGUAGES: [Language; 7] = [
 // corpus provides exact API and safe-control truth. Keep its closed MVP
 // surface explicit so parity does not become a lowest-common-denominator or
 // force method-name-only observations.
-const RUST_MVP_SURFACE: [Capability; 22] = [
+const RUST_MVP_SURFACE: [Capability; 19] = [
     Capability::HttpRequestData,
     Capability::ExternalInput,
     Capability::DatabaseQuery,
@@ -34,11 +34,8 @@ const RUST_MVP_SURFACE: [Capability; 22] = [
     Capability::HtmlOutput,
     Capability::HtmlEncoding,
     Capability::Deserialization,
-    Capability::Logging,
     Capability::CorsConfiguration,
     Capability::TlsConfiguration,
-    Capability::MemorySafetyBoundary,
-    Capability::NativeInteropBoundary,
 ];
 
 // C and C++ share portable application-security relationships where native

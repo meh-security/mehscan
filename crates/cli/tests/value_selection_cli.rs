@@ -1,7 +1,7 @@
 use std::{fs, process::Command};
 
 #[test]
-fn ordinary_owned_directory_creation_is_deferred_without_losing_writes_or_inputs() {
+fn ordinary_owned_directory_creation_is_excluded_from_both_modes_without_losing_file_effects() {
     let root =
         std::env::temp_dir().join(format!("mehscan-directory-priority-{}", std::process::id()));
     let artifacts = root.with_extension("inventory");
@@ -50,13 +50,10 @@ fn ordinary_owned_directory_creation_is_deferred_without_losing_writes_or_inputs
     };
     let deferred = list("deferred");
     let entries = deferred["entries"].as_array().unwrap();
-    for path in ["app.js", "app.ts", "app.php", "App.java", "app.go"] {
-        assert!(
-            entries.iter().any(|e| e["path"] == path
-                && e["value_hint"]["reason"] == "ordinary_directory_creation_inventory"),
-            "missing {path}: {deferred}"
-        );
-    }
+    assert!(
+        entries.is_empty(),
+        "ordinary setup must not be pending Comprehensive work: {deferred}"
+    );
     assert!(
         entries
             .iter()
@@ -77,8 +74,8 @@ fn ordinary_owned_directory_creation_is_deferred_without_losing_writes_or_inputs
         assert!(
             active
                 .iter()
-                .any(|e| e["path"] == path && e["symbol"] == "endpoint"),
-            "lost connected directory {path}: {value}"
+                .all(|e| e["path"] != path || e["symbol"] != "endpoint"),
+            "input alone must not admit directory setup {path}: {value}"
         );
     }
     let all = list("all");
@@ -86,38 +83,32 @@ fn ordinary_owned_directory_creation_is_deferred_without_losing_writes_or_inputs
         all["matching_count"].as_u64().unwrap(),
         value["matching_count"].as_u64().unwrap() + deferred["matching_count"].as_u64().unwrap()
     );
-    // Deferral retains exact IDs and can reopen after an unresolved/unsafe
-    // result on the same file/rule surface. No safe verdict was manufactured.
-    let saved: serde_json::Value =
-        serde_json::from_slice(&fs::read(artifacts.join("inventory.json")).unwrap()).unwrap();
-    let representative = active
-        .iter()
-        .find(|e| e["path"] == "app.php" && e["symbol"] == "write_file")
-        .unwrap()["review_id"]
-        .as_str()
-        .unwrap();
-    let ledger = artifacts.join("ledger.json");
-    fs::write(&ledger, serde_json::to_vec(&serde_json::json!({"schema_version":"2","source_fingerprint":saved["source_fingerprint"],"input_fingerprint":saved["input_fingerprint"],"inventory_count":saved["entries"].as_array().unwrap().len(),"reviewed":{representative:"needs_review"},"conflicts":[]})).unwrap()).unwrap();
-    let reopened = run(&[
-        "investigate",
-        "review-inventory-list",
-        "--inventory",
-        artifacts.to_str().unwrap(),
-        "--selection",
-        "value",
-        "--ledger",
-        ledger.to_str().unwrap(),
-        "--limit",
-        "100",
-    ]);
     assert!(
-        reopened["entries"]
-            .as_array()
+        all["entries"].as_array().unwrap().iter().all(|e| !matches!(
+            e["symbol"].as_str(),
+            Some("mkdir" | "make_dir" | "make" | "makeDir" | "endpoint")
+        ) || e["path"]
+            .as_str()
             .unwrap()
-            .iter()
-            .any(|e| e["path"] == "app.php" && e["symbol"] == "make_dir"),
-        "{reopened}"
+            .starts_with("lookalike")),
+        "{all}"
     );
+    let metadata_path = artifacts.join("inventory.json");
+    let mut old: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+    old["schema_version"] = serde_json::json!("2");
+    fs::write(&metadata_path, serde_json::to_vec(&old).unwrap()).unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-inventory-list",
+            "--inventory",
+            artifacts.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("regenerate"));
     fs::remove_dir_all(&root).unwrap();
     fs::remove_dir_all(&artifacts).unwrap();
 }
@@ -441,15 +432,14 @@ class App {
     };
     let all = list("all", &[]);
     let deferred = list("deferred", &[]);
-    assert_eq!(deferred["matching_count"], 5, "{deferred}");
+    assert_eq!(deferred["matching_count"], 1, "{deferred}");
     assert!(
-        deferred["entries"]
+        all["entries"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|e| e["symbol"] == "ListDirectory"
-                && e["value_hint"]["reason"] == "ordinary_directory_listing_inventory"),
-        "{deferred}"
+            .all(|e| e["symbol"] != "ListDirectory" && e["symbol"] != "MakeDirectory"),
+        "ordinary directory jobs must be absent from both modes: {all}"
     );
     let child = deferred["entries"]
         .as_array()
@@ -457,14 +447,6 @@ class App {
         .iter()
         .find(|e| e["symbol"] == "Shared")
         .unwrap();
-    assert!(
-        deferred["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|e| e["symbol"] == "MakeDirectory"
-                && e["value_hint"]["reason"] == "ordinary_directory_creation_inventory")
-    );
     assert_eq!(child["symbol"], "Shared");
     assert_eq!(
         child["value_hint"]["reason"],
@@ -474,7 +456,7 @@ class App {
     let value = list("value", &[]);
     assert_eq!(
         all["matching_count"].as_u64().unwrap(),
-        value["matching_count"].as_u64().unwrap() + 5
+        value["matching_count"].as_u64().unwrap() + 1
     );
     for symbol in [
         "Mutable",
@@ -521,7 +503,7 @@ class App {
         let queue = list("value", &["--ledger", ledger.to_str().unwrap()]);
         assert_eq!(
             queue["reopened_count"],
-            if verdict == "not_issue" { 0 } else { 3 }
+            if verdict == "not_issue" { 0 } else { 1 }
         );
         assert_eq!(queue["reviewed_count"], 1);
         assert_eq!(

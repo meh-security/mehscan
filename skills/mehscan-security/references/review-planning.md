@@ -18,11 +18,14 @@ Default to Value review: map the attack surface, then cover distinct security
 relationships across relevant lanes, including access, output, data exposure,
 and state changes without a hard severity cutoff. Review distinct consequential
 relationships; an occurrence count is not a target for Value coverage. Keep
-ordinary sink-only directory creation, simple filename/directory listings, and
-scanner-deferred bookkeeping in Comprehensive. Recursive or option-selected
-collectors and file-content reads remain useful root-selection work. Reopen when
-input, writable code or a consequential effect connects
-them to a security boundary. In a large queue, keep the unselected work
+stronger signals, clearly justified fixes and promising high-impact leads in Value.
+Ordinary directory setup/listing, normal data decoding, syntax-only unsafe/extern,
+nonsecurity hashes, positive controls and generic log formatting are supporting
+facts, not standalone jobs in either mode. Comprehensive needs a plausible
+medium-or-higher mechanism, such as sensitive disclosure, meaningful log forgery
+or a cookie-authenticated sensitive state change. Input alone does not turn a
+low-effect operation into mandatory review. File-content, unsafe interpretation
+and consequential export/permission relationships remain useful. In a large queue, keep the unselected work
 visible and call the review partial until every relevant lane is assessed.
 Comprehensive review gives every admitted ID a verdict within the user's scope.
 Value excludes source-proven build tooling, vendor distributions and generated
@@ -362,8 +365,8 @@ Choose a review mode:
 | Mode | Scope |
 | --- | --- |
 | **Focused** | Review the user's CWE, capability, component, or question. State the filter and account for matching IDs. |
-| **Value (default; one level below Comprehensive)** | Review distinct security relationships across every relevant surface lane, including access, output, disclosure, and business-state checks. In a manageable queue, cover nearly every ID. In a large queue, prioritize concrete access, injection, and state-change paths; deployment-dependent low-impact browser-policy or configuration leads can wait in the recorded queue. Group only source-supported repeats and clearly inapplicable operations. Keep unsafe SQL, shell, and code construction in scope even when reachability remains uncertain. |
-| **Comprehensive** | Review every admitted ID within the requested scope, including low-signal work and the separate build/dependency/generated lanes, in small chunks until accounted for. |
+| **Value (default; one level below Comprehensive)** | Prioritize distinct stronger signals, clearly justified fixes and promising high-impact relationships across relevant surfaces. Useful medium issues can qualify. Keep unsafe SQL, shell, executable object loading and code construction despite uncertain reachability. Account for genuine medium-impact deferred relationships; do not make occurrence coverage a target. |
+| **Comprehensive** | Review every admitted plausible medium-or-higher issue within scope, including weaker consequential leads and relevant build/dependency/generated lanes. Ordinary low-effect observations remain context, not pending verdict jobs. |
 
 Pre-assessment must state the review scope before building bundles. Its inputs
 are the source tree (manifests, framework configuration, entrypoints, routes,

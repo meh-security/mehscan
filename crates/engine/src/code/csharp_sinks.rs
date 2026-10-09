@@ -341,6 +341,121 @@ fn add_http_request_uri_properties<'tree>(
             related_evidence: Vec::new(),
         });
     }
+    // RequestUri is producer evidence. Anchor review at the actual dispatch,
+    // carrying its exact endpoint and the original setter as related context.
+    let producers = evidence
+        .iter()
+        .filter(|item| item.rule_id == RULE && item.location.path == path)
+        .cloned()
+        .collect::<Vec<_>>();
+    let request_events = root
+        .dfs()
+        .filter(|node| {
+            matches!(
+                node.kind().as_ref(),
+                "invocation_expression" | "assignment_expression"
+            )
+        })
+        .collect::<Vec<_>>();
+    for invocation in root
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "invocation_expression")
+    {
+        if comments.is_in_comment(invocation.range()) {
+            continue;
+        }
+        let Some((receiver, method, request)) = typed_instance_call(&invocation) else {
+            continue;
+        };
+        if !matches!(method.as_str(), "Send" | "SendAsync")
+            || !receiver_is_http_client(root, &invocation, &receiver)
+        {
+            continue;
+        }
+        let symbol = enclosing_symbol(&invocation);
+        let scope = scope_range(&invocation, root);
+        let Some(producer) = producers
+            .iter()
+            .filter(|item| {
+                item.enclosing_symbol == symbol
+                    && item.location.start.byte_offset >= scope.start
+                    && item.location.end.byte_offset <= scope.end
+                    && item.location.start.byte_offset < invocation.range().start
+                    && item
+                        .captures
+                        .get("request")
+                        .is_some_and(|r| r.text.trim() == request.text().trim())
+            })
+            .max_by_key(|item| item.location.start.byte_offset)
+        else {
+            // The message can come from a helper, parameter or field. Keep the
+            // actual typed dispatch as an unresolved request-object operation;
+            // absence of a local URI setter is not absence of network I/O.
+            push_call_sink(
+                path,
+                &invocation,
+                &request,
+                "request",
+                "csharp-http-request-dispatch",
+                Capability::OutboundNetworkRequest,
+                "CWE-918",
+                &[
+                    "http",
+                    "network",
+                    "ssrf",
+                    "httpclient",
+                    "typed-receiver",
+                    "request-object-dispatch",
+                ],
+                comments,
+                conditional,
+                literals,
+                evidence,
+            );
+            evidence.last_mut().expect("dispatch was just emitted").kind =
+                EvidenceKind::SensitiveOperation;
+            continue;
+        };
+        let mut dispatch = producer.clone();
+        dispatch.rule_id = "csharp-http-request-dispatch".into();
+        dispatch.id = evidence_id_for(
+            &dispatch.rule_id,
+            path,
+            invocation.range().start,
+            invocation.range().end,
+        );
+        dispatch.location = location(path, &invocation);
+        dispatch.related_evidence = vec![producer.id.clone()];
+        dispatch.tags.retain(|tag| tag != "request-uri-property");
+        dispatch.tags.push("request-object-dispatch".into());
+        // A helper receiving the request (or replacement of that variable)
+        // can change its authority after the setter. Do not close dispatch
+        // using the initial literal in that common extension-hook pattern.
+        let escaped = request_events.iter().any(|node| {
+            if node.range().start <= producer.location.end.byte_offset
+                || node.range().end >= invocation.range().start
+            {
+                return false;
+            }
+            match node.kind().as_ref() {
+                "invocation_expression" => invocation_arguments(&node)
+                    .iter()
+                    .any(|arg| arg.text().trim() == request.text().trim()),
+                "assignment_expression" => node
+                    .field("left")
+                    .is_some_and(|left| left.text().trim() == request.text().trim()),
+                _ => false,
+            }
+        });
+        if escaped {
+            dispatch.context.literals.clear();
+            dispatch
+                .tags
+                .push("request-authority-after-hook-unresolved".into());
+        }
+        dispatch.context.reachability = Some(reachability::classify(&invocation, literals));
+        evidence.push(dispatch);
+    }
 }
 
 /// Marks locally visible SQL string construction on every admitted C# query
@@ -1111,7 +1226,7 @@ fn receiver_has_type(
     receiver: &str,
     predicate: fn(&str) -> bool,
 ) -> bool {
-    receiver_has_type_inner(root, use_site, receiver, predicate, 4)
+    receiver_has_type_inner(root, use_site, receiver, predicate, 0)
 }
 
 fn receiver_has_type_inner(

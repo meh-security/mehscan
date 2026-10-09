@@ -204,8 +204,6 @@ pub enum Capability {
     /// A printf-family operation where the format string controls how later
     /// arguments are interpreted.
     FormatStringOutput,
-    MemorySafetyBoundary,
-    NativeInteropBoundary,
     TlsConfiguration,
     FileUpload,
     UploadedFileContent,

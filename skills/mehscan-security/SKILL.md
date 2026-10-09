@@ -57,7 +57,11 @@ review, not a complete application assessment.
 | Repository AI review | [Review planning](references/review-planning.md) |
 
 Candidates are leads, not confirmed vulnerabilities. Default to Value mode;
-honor Comprehensive or a requested category. Planning maps the stack and attack
+honor Comprehensive or a requested category. Value prioritizes stronger signals,
+clearly justified fixes and promising high-impact leads, including useful medium
+issues. Comprehensive covers admitted plausible medium-or-higher issues; it is
+not a queue for every raw sink occurrence. Excluded observations remain supporting
+facts, not safe verdicts or mandatory deferred reviews. Planning maps the stack and attack
 surface and workload before triage; use a small first chunk to measure review
 pace and plan the next pass within the user's time budget.
 Planning ranks work, accounts for deferred IDs and chooses small chunks or

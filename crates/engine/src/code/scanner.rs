@@ -687,7 +687,6 @@ pub(crate) fn scan_profiled(
         &php_project_context,
         &dotnet_project_context,
         options.scan_secrets,
-        options.include_tests,
         worker_count,
     )?;
     for (file, outcome) in analysis_prepared.into_iter().zip(outcomes) {
@@ -847,7 +846,6 @@ fn analyze_prepared_files(
     php_project_context: &super::php::PhpProjectContext,
     dotnet_project_context: &DotnetProjectContext,
     scan_secrets: bool,
-    include_nonproduction: bool,
     worker_count: usize,
 ) -> Result<Vec<ParseOutcome>, EngineError> {
     if prepared.is_empty() {
@@ -877,7 +875,6 @@ fn analyze_prepared_files(
                     php_project_context,
                     dotnet_project_context,
                     scan_secrets,
-                    include_nonproduction,
                 )
             })
             .collect());
@@ -918,7 +915,6 @@ fn analyze_prepared_files(
                                 php_project_context,
                                 dotnet_project_context,
                                 scan_secrets,
-                                include_nonproduction,
                             ),
                         ));
                     }
@@ -958,7 +954,6 @@ fn scan_prepared_file(
     php_project_context: &super::php::PhpProjectContext,
     dotnet_project_context: &DotnetProjectContext,
     scan_secrets: bool,
-    include_nonproduction: bool,
 ) -> ParseOutcome {
     scan_source(
         &file.relative,
@@ -972,7 +967,6 @@ fn scan_prepared_file(
             project_symbols,
             secret_allowlist,
             scan_secrets,
-            include_nonproduction,
             relations,
             node_context,
             object_input_context,
@@ -1183,8 +1177,6 @@ fn capability_name(capability: Capability) -> &'static str {
         Capability::OwnershipFlagRegistration => "ownership_flag_registration",
         Capability::OwnershipGatedRelease => "ownership_gated_release",
         Capability::FormatStringOutput => "format_string_output",
-        Capability::MemorySafetyBoundary => "memory_safety_boundary",
-        Capability::NativeInteropBoundary => "native_interop_boundary",
         Capability::TlsConfiguration => "tls_configuration",
         Capability::FileUpload => "file_upload",
         Capability::UploadedFileContent => "uploaded_file_content",

@@ -38,6 +38,7 @@ use mehscan_core::{
     SecurityPathStepKind, Severity, SeveritySource, SourceSlice, StructuralMatch, TextReference,
 };
 
+mod practical_admission;
 mod review_admission;
 
 use crate::repository::{
@@ -341,13 +342,6 @@ fn share_csharp_filesystem_questions(entries: &mut [ReviewInventoryEntry]) {
     for entry in entries.iter_mut().filter(|entry| {
         entry.path.ends_with(".cs")
             && entry.evidence_strength == "sink"
-            && entry.value_hint.as_ref().is_none_or(|hint| {
-                !matches!(
-                    hint.reason.as_str(),
-                    "ordinary_directory_creation_inventory"
-                        | "ordinary_directory_listing_inventory"
-                )
-            })
             && entry.cwe_candidates == ["CWE-22"]
             && matches!(
                 entry.capability,
@@ -389,7 +383,7 @@ fn share_csharp_destination_questions(entries: &mut [ReviewInventoryEntry]) {
     for entry in entries.iter_mut().filter(|entry| {
         entry.path.ends_with(".cs")
             && entry.evidence_strength == "sink"
-            && entry.rule_id == "csharp-http-request-uri"
+            && entry.rule_id == "csharp-http-request-dispatch"
             && entry.cwe_candidates == ["CWE-918"]
             && entry.capability == Capability::OutboundNetworkRequest
     }) {
@@ -542,20 +536,10 @@ fn signed_dotnet_directory_api(anchor: &Evidence, methods: &[&str]) -> bool {
     })
 }
 
-fn directory_creation_hint(
-    anchor: &Evidence,
-    sources: &RepositorySources,
-) -> Option<ValueReviewHint> {
-    // A workload choice, not containment proof. Keep connected input and other
-    // effects in Value; the caller only invokes this for single sink-only IDs.
-    if anchor.capability != Capability::FilesystemWrite
-        || anchor.cwe_candidates != ["CWE-22"]
-        || anchor
-            .tags
-            .iter()
-            .any(|tag| tag == "review-origin:decision-critical")
-    {
-        return None;
+fn ordinary_directory_creation(anchor: &Evidence, sources: &RepositorySources) -> bool {
+    // This distinguishes low-effect operations, never path containment.
+    if anchor.capability != Capability::FilesystemWrite || anchor.cwe_candidates != ["CWE-22"] {
+        return false;
     }
     let signed_directory = anchor.rule_id == "csharp-filesystem-write"
         && signed_dotnet_directory_api(anchor, &["System.IO.Directory.CreateDirectory("]);
@@ -593,24 +577,12 @@ fn directory_creation_hint(
                             .eq_ignore_ascii_case("mkdir")
                     })
             });
-    if !signed_directory && !normalized_directory && !native_php_directory {
-        return None;
-    }
-    Some(ValueReviewHint {
-        reason: "ordinary_directory_creation_inventory".into(),
-        target: anchor.location.path.clone(),
-        assumption: "Sink-only directory creation deferred by Value priority, not proven safe. Comprehensive retains exact IDs. Reopen with a consequential input, writable-code relationship, or issue on this surface.".into(),
-        depends_on: None,
-    })
+    signed_directory || normalized_directory || native_php_directory
 }
 
-fn directory_listing_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
+fn ordinary_directory_listing(anchor: &Evidence) -> bool {
     if anchor.rule_id != "csharp-filesystem-read"
         || anchor.cwe_candidates != ["CWE-22"]
-        || anchor
-            .tags
-            .iter()
-            .any(|tag| tag == "review-origin:decision-critical")
         || !signed_dotnet_directory_api(anchor, &[
             "System.IO.Directory.GetFiles(", "System.IO.Directory.GetDirectories(", "System.IO.Directory.EnumerateFiles("
         ])
@@ -621,14 +593,9 @@ fn directory_listing_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
                 && (fact.value.contains("System.IO.SearchOption") || fact.value.contains("System.IO.EnumerationOptions"))
         })
     {
-        return None;
+        return false;
     }
-    Some(ValueReviewHint {
-        reason: "ordinary_directory_listing_inventory".into(),
-        target: anchor.location.path.clone(),
-        assumption: "Sink-only filename/directory listing deferred by Value priority, not proven safe. File content reads stay active. Comprehensive retains exact IDs; reopen for connected input, a consequential effect or an unsafe/unresolved finding on this surface.".into(),
-        depends_on: None,
-    })
+    true
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -654,6 +621,8 @@ impl ReviewInventory {
     }
 }
 
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "3";
+
 pub fn validate_review_inventory(
     root: &Path,
     inventory: &ReviewInventory,
@@ -675,7 +644,7 @@ fn validate_inventory_source_binding(
     inventory: &ReviewInventory,
     sources: &RepositorySources,
 ) -> Result<(), EngineError> {
-    if inventory.schema_version != "2" {
+    if inventory.schema_version != REVIEW_INVENTORY_SCHEMA_VERSION {
         return Err(EngineError(
             "unsupported review inventory version; regenerate it".into(),
         ));
@@ -693,7 +662,7 @@ fn validate_review_inventory_sources(
     inventory: &ReviewInventory,
     sources: &RepositorySources,
 ) -> Result<(), EngineError> {
-    if inventory.schema_version != "2" {
+    if inventory.schema_version != REVIEW_INVENTORY_SCHEMA_VERSION {
         return Err(EngineError(
             "unsupported review inventory version; regenerate it".into(),
         ));
@@ -902,7 +871,7 @@ pub fn build_review_inventory_with_native_backends(
         profile.inventory_milliseconds = inventory_started.elapsed().as_millis();
     }
     Ok(ReviewInventory {
-        schema_version: "2".to_string(),
+        schema_version: REVIEW_INVENTORY_SCHEMA_VERSION.to_string(),
         source_fingerprint,
         include_review_material,
         entries,
@@ -1551,10 +1520,11 @@ fn build_path_review_jobs_internal(
     let started = std::time::Instant::now();
     let context_lines =
         bounded_context_lines(context_lines.or(Some(DEFAULT_REVIEW_CONTEXT_LINES)))?;
-    let scan = match supplied_scan {
+    let mut scan = match supplied_scan {
         Some(scan) => scan,
         None => scan_path(root)?,
     };
+    practical_admission::carry_dispatch_contracts(&mut scan.evidence);
     if let Some(profile) = profile.as_deref_mut() {
         profile.scan_milliseconds = started.elapsed().as_millis();
         eprintln!(
@@ -1596,10 +1566,28 @@ fn build_path_review_jobs_internal(
         .collect::<BTreeMap<_, _>>();
     let triage_contract = path_review_triage_contract();
     let all_candidates = report.candidates;
+    let connected_sink_ids = all_candidates
+        .iter()
+        .map(|candidate| candidate.sink.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let practical_exclusions = scan
+        .evidence
+        .iter()
+        .filter(|item| {
+            practical_admission::inventory_only(
+                item,
+                &sources,
+                connected_sink_ids.contains(item.id.as_str()),
+                &scan.evidence,
+            )
+        })
+        .map(|item| (item.id.clone(), ReviewAdmissionDisposition::InventoryOnly))
+        .collect::<BTreeMap<_, _>>();
     let mut candidates = all_candidates
         .iter()
         .filter(|candidate| {
-            !is_closed_native_ownership_proof(candidate.capability, candidate.state)
+            !practical_exclusions.contains_key(&candidate.sink.id)
+                && !is_closed_native_ownership_proof(candidate.capability, candidate.state)
                 && !evidence_by_id
                     .get(candidate.sink.id.as_str())
                     .is_some_and(|sink| closed_output_operand(sink).is_some())
@@ -1617,8 +1605,15 @@ fn build_path_review_jobs_internal(
     });
     let excluded_candidates = all_candidates.len().saturating_sub(candidates.len());
     let used_ids = candidate_evidence_ids(&all_candidates, &scan.evidence, &sources);
-    let (mut observation_groups, observation_exclusions) =
+    let (mut observation_groups, mut observation_exclusions) =
         observation_groups(&scan.evidence, &used_ids, &all_candidates, &sources);
+    observation_groups.retain(|group| {
+        !group
+            .anchor_evidence_ids
+            .iter()
+            .any(|id| practical_exclusions.contains_key(id))
+    });
+    observation_exclusions.extend(practical_exclusions);
     observation_groups.extend(review_admission::marker_groups(&sources, &scan.evidence));
     observation_groups.sort_by(|left, right| {
         left.review_material
@@ -1738,7 +1733,9 @@ fn build_path_review_jobs_internal(
                 operand_facts: evidence_by_id
                     .get(candidate.sink.id.as_str())
                     .map_or_else(Vec::new, |sink| operand_summaries(sink)),
-                value_hint: None,
+                value_hint: evidence_by_id
+                    .get(candidate.sink.id.as_str())
+                    .and_then(|sink| practical_admission::comprehensive_hint(sink)),
             }
         }));
         entries.extend(observation_groups.iter().filter_map(|group| {
@@ -1768,16 +1765,16 @@ fn build_path_review_jobs_internal(
                 }
                 .to_string(),
                 operand_facts: operand_summaries(anchor),
-                value_hint: (group.priority == 2 && group.anchor_evidence_ids.len() == 1)
-                    .then(|| {
-                        fixed_include_value_hint(anchor, &sources, &write_paths)
-                            .or_else(|| ordinary_php_sink_hint(anchor))
-                            .or_else(|| local_bound_query_hint(anchor))
-                            .or_else(|| ordinary_browser_request_hint(anchor))
-                            .or_else(|| directory_creation_hint(anchor, &sources))
-                            .or_else(|| directory_listing_hint(anchor))
-                    })
-                    .flatten(),
+                value_hint: practical_admission::comprehensive_hint(anchor).or_else(|| {
+                    (group.priority == 2 && group.anchor_evidence_ids.len() == 1)
+                        .then(|| {
+                            fixed_include_value_hint(anchor, &sources, &write_paths)
+                                .or_else(|| ordinary_php_sink_hint(anchor))
+                                .or_else(|| local_bound_query_hint(anchor))
+                                .or_else(|| ordinary_browser_request_hint(anchor))
+                        })
+                        .flatten()
+                }),
             })
         }));
         share_php_output_questions(entries);
@@ -12068,6 +12065,10 @@ fn review_admission_audit(
                     && is_review_material_path(&item.location.path))
             {
                 ReviewAdmissionDisposition::ExcludedReviewMaterial
+            } else if observation_exclusions.get(&item.id)
+                == Some(&ReviewAdmissionDisposition::InventoryOnly)
+            {
+                ReviewAdmissionDisposition::InventoryOnly
             } else if all_candidate_evidence_ids.contains(item.id.as_str()) {
                 // Candidate construction can establish a safe closed native
                 // ownership proof or the exact C# query-only redirect helper.

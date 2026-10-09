@@ -63,7 +63,6 @@ pub(crate) struct ScanDependencies<'a> {
     pub project_symbols: &'a ProjectSymbolEnvironment,
     pub secret_allowlist: &'a SecretAllowlist,
     pub scan_secrets: bool,
-    pub include_nonproduction: bool,
     pub relations: &'a [RelationContract],
     pub node_context: &'a NodeProjectContext,
     pub object_input_context: &'a ObjectInputProjectContext,
@@ -107,7 +106,6 @@ pub(crate) fn scan_source(
         project_symbols,
         secret_allowlist,
         scan_secrets,
-        include_nonproduction,
         relations,
         node_context,
         object_input_context,
@@ -317,12 +315,6 @@ pub(crate) fn scan_source(
                     continue;
                 }
                 if language == Language::Rust
-                    && compiled_rule.rule.id == "rust-file-log-write"
-                    && !super::rust_context::is_exact_file_log_write(&root, matched.get_node())
-                {
-                    continue;
-                }
-                if language == Language::Rust
                     && compiled_rule.rule.id == "rust-process-execution"
                     && !super::rust_context::is_exact_process_execution(&root, matched.get_node())
                 {
@@ -339,18 +331,6 @@ pub(crate) fn scan_source(
                         &root,
                         matched.get_node(),
                         &compiled_rule.rule.id,
-                    )
-                {
-                    continue;
-                }
-                if language == Language::Rust
-                    && matches!(
-                        compiled_rule.rule.id.as_str(),
-                        "rust-unsafe-boundary" | "rust-native-interop-boundary"
-                    )
-                    && !super::rust_context::is_reviewable_safety_boundary(
-                        matched.get_node(),
-                        include_nonproduction,
                     )
                 {
                     continue;
@@ -443,6 +423,20 @@ pub(crate) fn scan_source(
                     continue;
                 }
                 let deduplication_key = (compiled_rule.rule.id.clone(), range.start, range.end);
+                // Literal spellings and alias matches need the same ownership
+                // check. A local object named fs/crypto/etc is not that SDK.
+                if !compiled_rule.rule.symbols.is_empty()
+                    && matches!(
+                        language,
+                        Language::Javascript | Language::Typescript | Language::Tsx
+                    )
+                    && call_site(matched.get_node().clone()).is_some_and(|call| {
+                        symbol_environment.has_declared_receiver(&call.observed)
+                            && !symbol_environment.has_import_alias_receiver(&call.observed)
+                    })
+                {
+                    continue;
+                }
                 if !super::extended_boundaries::is_rule(&compiled_rule.rule.id)
                     && kotlin_imports.as_ref().is_some_and(|imports| {
                         !super::kotlin::accept(
@@ -1427,16 +1421,6 @@ pub(crate) fn scan_source(
         path,
         &root,
         language,
-        &comments,
-        &conditional,
-        &literals,
-        &mut evidence,
-    );
-    super::rust_context::add_rust_safety_function_observations(
-        path,
-        &root,
-        language,
-        include_nonproduction,
         &comments,
         &conditional,
         &literals,

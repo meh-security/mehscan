@@ -165,6 +165,7 @@ public class Rendering
 
 public class Client
 {
+    private readonly HttpClient _httpClient = new();
     private string _baseUrl = "/";
     private string _otherUrl = "/";
     public string BaseUrl { get => _baseUrl; set => _baseUrl = value; }
@@ -179,6 +180,7 @@ public class Client
         var url = builder.ToString();
         var request = new HttpRequestMessage();
         request.RequestUri = new Uri(url, UriKind.RelativeOrAbsolute);
+        _httpClient.SendAsync(request);
         return request;
     }
     public HttpRequestMessage Second(string id)
@@ -190,6 +192,7 @@ public class Client
         var url = builder.ToString();
         var request = new HttpRequestMessage();
         request.RequestUri = new Uri(url, UriKind.RelativeOrAbsolute);
+        _httpClient.SendAsync(request);
         return request;
     }
     public HttpRequestMessage DifferentHook(string id)
@@ -201,6 +204,7 @@ public class Client
         var url = builder.ToString();
         var request = new HttpRequestMessage();
         request.RequestUri = new Uri(url, UriKind.RelativeOrAbsolute);
+        _httpClient.SendAsync(request);
         return request;
     }
     public HttpRequestMessage DifferentRoot(string id)
@@ -212,6 +216,7 @@ public class Client
         var url = builder.ToString();
         var request = new HttpRequestMessage();
         request.RequestUri = new Uri(url, UriKind.RelativeOrAbsolute);
+        _httpClient.SendAsync(request);
         return request;
     }
     public HttpRequestMessage RawSuffix(string suffix)
@@ -222,6 +227,7 @@ public class Client
         var url = builder.ToString();
         var request = new HttpRequestMessage();
         request.RequestUri = new Uri(url, UriKind.RelativeOrAbsolute);
+        _httpClient.SendAsync(request);
         return request;
     }
     public HttpRequestMessage ReplacedUrl(string input)
@@ -233,6 +239,7 @@ public class Client
         url = input;
         var request = new HttpRequestMessage();
         request.RequestUri = new Uri(url, UriKind.RelativeOrAbsolute);
+        _httpClient.SendAsync(request);
         return request;
     }
 }

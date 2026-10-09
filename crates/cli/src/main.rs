@@ -895,6 +895,11 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 .map_err(|error| format!("could not read inventory: {error}"))?;
             let inventory: serde_json::Value = serde_json::from_slice(&source)
                 .map_err(|error| format!("invalid inventory: {error}"))?;
+            if inventory["schema_version"].as_str()
+                != Some(mehscan_engine::investigation::REVIEW_INVENTORY_SCHEMA_VERSION)
+            {
+                return Err("unsupported review inventory version; regenerate it".into());
+            }
             let entries = inventory["entries"]
                 .as_array()
                 .ok_or("inventory entries are missing")?;
@@ -960,8 +965,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         "ordinary_php_sink_inventory"
                             | "local_bound_query_inventory"
                             | "ordinary_browser_request_inventory"
-                            | "ordinary_directory_creation_inventory"
-                            | "ordinary_directory_listing_inventory"
+                            | "medium_impact_relationship"
                     )
                 ) && reopen_surfaces
                     .contains(&(entry["path"].as_str(), entry["rule_id"].as_str())))

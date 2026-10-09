@@ -113,11 +113,16 @@ fn emits_precise_review_questions_for_node_closure_evidence() {
         "CR, LF",
         "paired executable login branches",
         "listed sensitive fields",
-        "authoritative proxy, gateway",
     ] {
         assert!(
             questions.iter().any(|question| question.contains(phrase)),
             "missing question containing {phrase:?}: {questions:#?}"
         );
     }
+    assert!(!jobs.observation_reviews.iter().any(|review| {
+        review.evidence.iter().any(|e| {
+            review.anchor_evidence_ids.contains(&e.id)
+                && e.rule_id.ends_with("http-listener-deployment-review")
+        })
+    }));
 }
