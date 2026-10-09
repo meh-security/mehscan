@@ -3,7 +3,7 @@
 Use the executable and root supplied for the task. `ROOT` is the source
 repository, not the directory containing a saved bundle.
 Regenerate older inventories with this executable: current admission uses
-inventory schema 13. Reuse verdicts only through a source-bound ledger.
+inventory schema 14. Reuse verdicts only through a source-bound ledger.
 Append `--journal JOURNAL.jsonl` to source, outline, references, paths, and
 other code-evidence lookups while reviewing a bundle. Bundle listing, cards,
 finalization, and validation do not accept `--journal`. Name the journal for

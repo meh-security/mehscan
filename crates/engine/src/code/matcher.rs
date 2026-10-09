@@ -1669,6 +1669,7 @@ pub(crate) fn scan_source(
     super::filesystem_operands::annotate(language, &root, &literals, &mut evidence);
     super::python_operands::annotate(language, &root, &mut evidence);
     super::process_cleanup::annotate(language, source, &root, &literals, &mut evidence);
+    super::outbound_cleanup::annotate(language, &root, &literals, &mut evidence);
     super::native_query::annotate(language, &root, &literals, &mut evidence);
     super::database_cleanup::annotate(language, &root, &mut evidence);
     super::extended_database::attach_query_construction(&root, &mut evidence);

@@ -73,6 +73,27 @@ Reopen that question when the repository shows a less-trusted executable,
 search directory, environment writer or real privilege boundary. There is no
 tool-name allowlist, cross-file builder evaluation or compiler requirement here.
 
+## Outbound construction and dispatch
+
+Go `NewRequest`, Java JDK/Apache request constructors and Rust Reqwest client
+methods create supporting destination context. They receive no standalone job
+in either queue. Actual `Do`, `send`/`sendAsync`, `execute` and Reqwest `.send`
+own the review. A returned builder alone is not a consequential network effect.
+Direct Reqwest free functions already send and keep their review boundary.
+
+At a dispatch, use its `endpoint` and related constructor evidence. Bounded
+unchanged local bindings or inline chains can carry the endpoint. The tag
+`outbound-request:unresolved-producer` asks for the request producer/mutations;
+do not borrow a constructor's fixed URL across a helper or rewrite. Aliases
+retain an observed consumer but do not establish unchanged shared state.
+URL parsing is syntax context, not SSRF protection or local redirect approval.
+Actual local-redirect guards retain their bounded control attachment.
+
+C# already accounts for HttpRequestMessage setters/dispatch and PHP cURL for
+same-handle execution. Legacy WebRequest/URL connections, lazy reactive clients,
+Kotlin OkHttp construction and native cURL setters need separate accounting;
+this slice does not certify or remove their current leads.
+
 ## Filesystem effects
 
 Ordinary directory creation and simple names-only listing no longer produce

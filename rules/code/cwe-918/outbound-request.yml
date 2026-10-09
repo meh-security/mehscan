@@ -291,7 +291,7 @@
       - https://docs.python.org/3/library/urllib.request.html#urllib.request.urlopen
 
 - id: go-outbound-http
-  version: 1
+  version: 2
   title: Go outbound HTTP request
   language: go
   kind: sink
@@ -333,13 +333,13 @@
   tags: [http, network, ssrf]
   ai: *outbound_guidance
   provenance:
-    note: Go net/http client APIs mapped to the CWE-918 investigation surface.
+    note: Go net/http dispatch is the review boundary; NewRequest construction retains destination context for bounded unchanged local request consumers.
     references:
       - https://cwe.mitre.org/data/definitions/918.html
       - https://pkg.go.dev/net/http
 
 - id: rust-outbound-http
-  version: 1
+  version: 2
   title: Rust outbound HTTP request
   language: rust
   kind: sink
@@ -384,7 +384,7 @@
   tags: [http, network, ssrf, rust, reqwest]
   ai: *outbound_guidance
   provenance:
-    note: Exact Reqwest free functions, inline clients, imported aliases, and locally proven client receivers mapped to outbound destination review.
+    note: Exact Reqwest free functions dispatch directly; owned Client methods construct destination context linked to bounded local or inline RequestBuilder.send consumers.
     references:
       - https://cwe.mitre.org/data/definitions/918.html
       - https://docs.rs/reqwest/latest/reqwest/

@@ -34,8 +34,8 @@ class Probe { void Run(string url) {
     std::fs::write(
         root.join("Probe.java"),
         r#"import java.net.URI; import java.net.http.HttpRequest;
-class Probe { void run(String program, String url) {
-    ProcessBuilder process = new ProcessBuilder(); process.command(program);
+class Probe { void run(String program, String url) throws Exception {
+    ProcessBuilder process = new ProcessBuilder(); process.command(program); process.start();
     HttpRequest.Builder request = HttpRequest.newBuilder(); request.uri(URI.create(url));
     HttpRequest.newBuilder().uri(URI.create(url));
 } }"#,
@@ -97,7 +97,7 @@ func run(program string, argv []string, content string) {
     std::fs::write(
         root.join("app.rs"),
         r#"use tokio::process::Command as TokioCommand;
-fn run(command: &str, url: &str) { TokioCommand::new(command); tokio::process::Command::new(command); let client = reqwest::Client::new(); client.put(url); }"#,
+fn run(command: &str, url: &str) { TokioCommand::new(command).spawn(); tokio::process::Command::new(command).spawn(); let client = reqwest::Client::new(); client.put(url).send(); }"#,
     )
     .unwrap();
 
@@ -140,6 +140,13 @@ fn run(command: &str, url: &str) { TokioCommand::new(command); tokio::process::C
         1
     );
     assert_eq!(count_rule(&result, "java-jdk-http-request-builder"), 2);
+    assert!(
+        result
+            .evidence
+            .iter()
+            .filter(|e| e.rule_id == "java-jdk-http-request-builder")
+            .all(|e| e.kind == mehscan_core::EvidenceKind::Resource)
+    );
     for path in ["app.js", "app.ts", "app.tsx"] {
         assert_eq!(
             result
@@ -217,6 +224,7 @@ fn run(command: &str, url: &str) { TokioCommand::new(command); tokio::process::C
             .evidence
             .iter()
             .filter(|item| item.location.path == "app.rs"
+                && item.kind == mehscan_core::EvidenceKind::Sink
                 && item.capability == Capability::ProcessExecution)
             .count(),
         2
@@ -226,6 +234,7 @@ fn run(command: &str, url: &str) { TokioCommand::new(command); tokio::process::C
             .evidence
             .iter()
             .filter(|item| item.location.path == "app.rs"
+                && item.kind == mehscan_core::EvidenceKind::Sink
                 && item.capability == Capability::OutboundNetworkRequest)
             .count(),
         1

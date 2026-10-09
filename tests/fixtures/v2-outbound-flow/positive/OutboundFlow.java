@@ -1,20 +1,22 @@
 import java.net.URI;
 import java.net.http.HttpRequest;
+import java.net.http.HttpClient;
+import java.net.http.HttpResponse;
 
 class OutboundFlow {
-    Object direct(HttpServletRequest request) {
-        return HttpRequest.newBuilder(request.getParameter("direct"));
+    Object direct(HttpServletRequest request, HttpClient client) throws Exception {
+        return client.send(HttpRequest.newBuilder(URI.create(request.getParameter("direct"))).build(), HttpResponse.BodyHandlers.ofString());
     }
 
-    Object propagated(HttpServletRequest request) {
+    Object propagated(HttpServletRequest request, HttpClient client) throws Exception {
         String requested = request.getParameter("propagated");
         String alias = requested;
-        return HttpRequest.newBuilder(alias);
+        return client.send(HttpRequest.newBuilder(URI.create(alias)).build(), HttpResponse.BodyHandlers.ofString());
     }
 
-    Object parsed(HttpServletRequest request) {
+    Object parsed(HttpServletRequest request, HttpClient client) throws Exception {
         URI parsed = URI.create(request.getParameter("parsed"));
-        return HttpRequest.newBuilder(parsed);
+        return client.send(HttpRequest.newBuilder(parsed).build(), HttpResponse.BodyHandlers.ofString());
     }
 
     boolean validScheme(URI parsed) {

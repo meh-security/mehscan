@@ -66,6 +66,13 @@ than rereading equivalent distributions.
   and destination after any parsing or rewrite. Fixed release URLs selected
   by OS or architecture do not become attacker-selected merely because a
   variable holds them.
+  URL parsing alone is not destination approval. Review the dispatch, using
+  `endpoint` and its related construction facts. When
+  `outbound-request:unresolved-producer` is present, inspect the supplied
+  `request` origin and helper/mutation before choosing a verdict. A fixed URL
+  in supporting constructor evidence does not close an unresolved final request.
+  Request builders are context without an extra verdict. Establish the
+  server/privileged actor and consequence independently of dispatch accounting.
 - For resource access, identify whether the selected object belongs to the
   verified subject or another tenant. A sensitive read or existence oracle
   can matter without a mutation. Inspect earlier middleware on every matching

@@ -167,7 +167,7 @@ pub(super) fn inventory_only(
 fn routine_builder(item: &Evidence, sources: &RepositorySources) -> bool {
     let text = anchor_text(item, sources);
     match item.rule_id.as_str() {
-        "csharp-http-request-uri" | "java-jdk-http-request-builder" => true,
+        "csharp-http-request-uri" => true,
         "python-dynamic-code" => text.starts_with("compile("),
         _ => false,
     }

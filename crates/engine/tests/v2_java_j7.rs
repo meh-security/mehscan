@@ -20,7 +20,12 @@ fn models_exact_java_outbound_destination_and_transport_policy() {
     let j7 = result
         .evidence
         .iter()
-        .filter(|evidence| evidence.provenance.engine == "mehscan java-network-transport-policy 1")
+        .filter(|evidence| {
+            evidence
+                .provenance
+                .engine
+                .starts_with("mehscan java-network-transport-policy 1")
+        })
         .collect::<Vec<_>>();
     let counts = j7.iter().fold(BTreeMap::new(), |mut counts, evidence| {
         *counts.entry(evidence.rule_id.as_str()).or_insert(0usize) += 1;

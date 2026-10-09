@@ -276,30 +276,25 @@
   strategy: bounded_local_value
 
 - id: cwe-918-remote-request-to-outbound-network
-  version: 3
+  version: 4
   source: { capabilities: [http_request_data, rpc_request_data, external_input] }
   sink:
     capability: outbound_network_request
     input_roles: [endpoint]
-  protection:
-    capability: url_parsing
-    application: value_transform
-    relation_role: endpoint
-    value_roles: [value]
   cwe_candidates: [CWE-918]
   strategy: bounded_local_value
 
 - id: cwe-601-remote-request-to-redirect
-  version: 2
+  version: 3
   source: { capabilities: [http_request_data, rpc_request_data] }
   sink:
     capability: redirect
     input_roles: [location]
   protection:
-    capability: url_parsing
-    application: value_transform
+    capability: redirect_destination_validation
+    application: related_capture
     relation_role: location
-    value_roles: [value]
+    value_roles: [location]
   cwe_candidates: [CWE-601]
   strategy: bounded_local_value
 

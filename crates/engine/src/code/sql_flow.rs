@@ -290,6 +290,9 @@ fn build_family_paths(
                         // These PHP APIs retain useful control evidence but do
                         // not establish output-context safety or containment.
                         && !matches!(item.rule_id.as_str(), "php-html-encoding" | "php-path-canonicalization")
+                        // URL parsers preserve a destination; they do not
+                        // approve its authority or confine a redirect.
+                        && item.capability != Capability::UrlParsing
                         && (item.capability == protection.capability
                             || (family.sink.capability == Capability::Redirect
                                 && item.capability == Capability::RedirectDestinationValidation)
@@ -1010,23 +1013,7 @@ fn build_family_paths(
             }
 
             let applicable_protections = if family.sink.capability == Capability::Redirect {
-                let mut applicable = protections
-                    .iter()
-                    .copied()
-                    .filter(|protection| {
-                        protection.capability == Capability::UrlParsing
-                            && (contains_range(
-                                location_range(&protection.location),
-                                source_range.clone(),
-                            ) || protection_contains_bound_parameter(
-                                root, source, protection, family,
-                            ))
-                    })
-                    .collect::<Vec<_>>();
-                applicable.extend(attached_protections.iter().copied());
-                applicable.sort_by(|left, right| left.id.cmp(&right.id));
-                applicable.dedup_by(|left, right| left.id == right.id);
-                applicable
+                attached_protections.clone()
             } else if family.protection.as_ref().is_some_and(|protection| {
                 protection.application == ProtectionApplication::ValueTransform
             }) {

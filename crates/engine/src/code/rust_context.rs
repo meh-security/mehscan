@@ -213,7 +213,7 @@ pub(crate) fn is_exact_reqwest_request(
     };
     if !matches!(
         method,
-        "get" | "post" | "put" | "patch" | "delete" | "head" | "request"
+        "get" | "post" | "put" | "patch" | "delete" | "head" | "request" | "execute"
     ) {
         return false;
     }
