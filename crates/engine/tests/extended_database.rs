@@ -1,4 +1,4 @@
-use mehscan_core::Capability;
+use mehscan_core::{Capability, EvidenceKind};
 
 fn scan(label: &str, cases: &[(&str, &str)]) -> mehscan_core::ScanResult {
     let root =
@@ -90,7 +90,7 @@ fn extended_nosql_filters_preserve_operand_for_every_supported_language() {
         ),
         (
             "app.php",
-            "<?php use MongoDB\\Driver\\Query as Filter; function run($filter) { new Filter($filter); new \\MongoDB\\Driver\\Query($filter, []); }",
+            "<?php use MongoDB\\Driver\\Query as Filter; use MongoDB\\Driver\\Manager; function run(Manager $manager, $filter) { $manager->executeQuery('app.users', new Filter($filter)); $manager->executeQuery('app.users', new \\MongoDB\\Driver\\Query($filter, [])); }",
             2,
         ),
         (
@@ -125,6 +125,10 @@ fn extended_nosql_filters_preserve_operand_for_every_supported_language() {
             .iter()
             .filter(|e| {
                 e.location.path == path
+                    && matches!(
+                        e.kind,
+                        EvidenceKind::Sink | EvidenceKind::SensitiveOperation
+                    )
                     && e.capability == Capability::DatabaseQuery
                     && e.cwe_candidates.iter().any(|c| c == "CWE-943")
             })
@@ -275,7 +279,7 @@ fn extended_dynamodb_rules_separate_expression_syntax_from_bound_attribute_value
         &[
             (
                 "app.ts",
-                "import { QueryCommand as Query, ScanCommand } from '@aws-sdk/lib-dynamodb'; function run(expression: string, value: unknown, input: any) { new Query({ TableName: 't', KeyConditionExpression: expression, ExpressionAttributeValues: { ':id': value } }); new ScanCommand(input); new Query({TableName: 't', KeyConditionExpression: 'id = :id', ExpressionAttributeValues: { ':id': value }}); }",
+                "import { QueryCommand as Query, ScanCommand } from '@aws-sdk/lib-dynamodb'; import { DynamoDBClient } from '@aws-sdk/client-dynamodb'; const client = new DynamoDBClient({}); function run(expression: string, value: unknown, input: any) { client.send(new Query({ TableName: 't', KeyConditionExpression: expression, ExpressionAttributeValues: { ':id': value } })); client.send(new ScanCommand(input)); client.send(new Query({TableName: 't', KeyConditionExpression: 'id = :id', ExpressionAttributeValues: { ':id': value }})); }",
             ),
             (
                 "app.js",
@@ -291,7 +295,11 @@ fn extended_dynamodb_rules_separate_expression_syntax_from_bound_attribute_value
         let hits: Vec<_> = result
             .evidence
             .iter()
-            .filter(|e| e.location.path == path && e.rule_id.contains("-extended-nosql-"))
+            .filter(|e| {
+                e.location.path == path
+                    && e.kind == EvidenceKind::Sink
+                    && e.rule_id.contains("-extended-nosql-")
+            })
             .collect();
         assert_eq!(hits.len(), expected, "{path}: {hits:#?}");
         assert!(
@@ -340,6 +348,177 @@ fn imported_sdk_names_do_not_override_local_parameter_or_producer_shadows() {
         "{:?}",
         result.evidence
     );
+}
+
+#[test]
+fn command_construction_reviews_the_dispatch_and_preserves_uncertain_uses() {
+    let root =
+        std::env::temp_dir().join(format!("mehscan-command-consumers-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let source = r#"
+import { QueryCommand as Query, ScanCommand, DynamoDBDocumentClient as DocClient } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBClient, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
+const raw = new DynamoDBClient({});
+const client = DocClient.from(raw);
+function build(input) { return new Query(input); }
+function run(input, expression) {
+    new Query(input);
+    client.send(new Query({FilterExpression: expression, ExpressionAttributeValues: {':id': input}}));
+    const selected = new ScanCommand(input);
+    client.send(selected);
+    client.send(selected);
+    const changed = new Query({FilterExpression: 'fixed = :id'});
+    changed.input.FilterExpression = expression;
+    client.send(changed);
+    client.send(build(input));
+    const alias = selected;
+    client.send(alias);
+    client.send(new Query({FilterExpression: 'fixed = :id', [input]: expression}));
+    client.send(new Query({FilterExpression: 'fixed = :id', FilterExpression: expression}));
+    client.send(new Query({FilterExpression: 'fixed = :id', ...input}));
+    client.send(new DeleteItemCommand({TableName: 't', Key: input}));
+    fake.send(new Query(input));
+}
+function shadow(Query, DynamoDBClient, input) {
+    const client = new DynamoDBClient({});
+    client.send(new Query(input));
+}
+function unused(req) { new Query(req.body); }
+"#;
+    for extension in ["js", "ts", "tsx"] {
+        std::fs::write(root.join(format!("app.{extension}")), source).unwrap();
+    }
+    let inventory = mehscan_engine::investigation::build_review_inventory(&root, false).unwrap();
+    assert_eq!(inventory.scan.coverage.totals.parse_failed, 0);
+    for extension in ["js", "ts", "tsx"] {
+        let path = format!("app.{extension}");
+        let dispatches = inventory
+            .scan
+            .evidence
+            .iter()
+            .filter(|e| e.location.path == path && e.rule_id.ends_with("-extended-nosql-dispatch"))
+            .collect::<Vec<_>>();
+        assert_eq!(dispatches.len(), 9, "{path}: {dispatches:#?}");
+        assert_eq!(dispatches[0].captures["nosql_query"].text, "expression");
+        assert_eq!(dispatches[1].captures["nosql_query"].text, "input");
+        assert_eq!(dispatches[2].captures["nosql_query"].text, "selected");
+        assert_eq!(dispatches[3].captures["nosql_query"].text, "changed");
+        assert_eq!(dispatches[4].captures["nosql_query"].text, "build(input)");
+        assert_eq!(dispatches[5].captures["nosql_query"].text, "alias");
+        for dispatch in &dispatches[6..] {
+            assert!(
+                dispatch.captures["nosql_query"].text.starts_with('{'),
+                "overrides must retain the whole construction: {dispatch:#?}"
+            );
+        }
+        for dispatch in &dispatches {
+            assert!(
+                dispatch
+                    .tags
+                    .iter()
+                    .any(|t| t == "review-origin:decision-critical"),
+                "{dispatch:#?}"
+            );
+            assert!(
+                inventory
+                    .entries
+                    .iter()
+                    .any(|e| e.path == path && e.line == dispatch.location.start.line),
+                "lost consumer review: {dispatch:#?}"
+            );
+        }
+        assert!(
+            !inventory
+                .entries
+                .iter()
+                .any(|e| e.path == path && e.rule_id.ends_with("-extended-nosql-command"))
+        );
+        assert!(
+            !inventory
+                .scan
+                .evidence
+                .iter()
+                .any(|e| e.location.path == path
+                    && e.rule_id.ends_with("-extended-nosql-command")
+                    && [8, 23, 27].contains(&e.location.start.line)),
+            "unused/fake/shadowed builders must not persist"
+        );
+        assert!(
+            !inventory
+                .scan
+                .evidence
+                .iter()
+                .any(|e| e.location.path == path
+                    && e.enclosing_symbol.as_deref() == Some("unused")
+                    && e.rule_id.ends_with("-extended-nosql-request-object-source")),
+            "excluded construction must not synthesize orphan input rows"
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn php_query_objects_attach_to_owned_execution_without_separate_reviews() {
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-php-query-consumers-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("app.php"), r#"<?php
+use MongoDB\Driver\Query as Filter;
+use MongoDB\Driver\Manager as Client;
+use MongoDB\Driver\Server;
+function run($filter, $unknown) {
+    $manager = new Client('mongodb://localhost');
+    new Filter($filter);
+    $manager->executeQuery('db.users', new Filter($filter));
+    $query = new Filter($filter);
+    $manager->executeQuery('db.users', $query);
+    $manager->executeQuery('db.users', $unknown);
+    $manager->executeQuery('db.users', factory($filter));
+}
+function onServer(Server $server, $query) { $server->executeQuery('db.users', $query, []); }
+function fake(Fake $manager, $filter) { $manager->executeQuery('db.users', new Filter($filter)); }
+function replaced(Client $manager, $query) { $manager = new Fake; $manager->executeQuery('db.users', $query); }
+function named(Client $manager, $query) { $manager->executeQuery(query: $query, namespace: 'db.users'); }
+function unpacked(Client $manager, $args) { $manager->executeQuery(...$args); }
+"#).unwrap();
+    let inventory = mehscan_engine::investigation::build_review_inventory(&root, false).unwrap();
+    assert_eq!(inventory.scan.coverage.totals.parse_failed, 0);
+    let consumers = inventory
+        .scan
+        .evidence
+        .iter()
+        .filter(|e| e.rule_id == "php-extended-nosql-execution")
+        .collect::<Vec<_>>();
+    assert_eq!(consumers.len(), 5, "{consumers:#?}");
+    assert_eq!(consumers[0].captures["nosql_query"].text, "$filter");
+    assert_eq!(consumers[1].captures["nosql_query"].text, "$filter");
+    for consumer in consumers {
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|e| e.rule_id == consumer.rule_id && e.line == consumer.location.start.line),
+            "actual/opaque consumer lost: {consumer:#?}"
+        );
+    }
+    assert!(
+        !inventory
+            .entries
+            .iter()
+            .any(|e| e.rule_id == "php-extended-nosql-query")
+    );
+    assert_eq!(
+        inventory
+            .scan
+            .evidence
+            .iter()
+            .filter(|e| e.rule_id == "php-extended-nosql-query")
+            .count(),
+        2
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -526,13 +705,13 @@ fn extended_dynamodb_secondary_expressions_reach_only_nosql_security_paths() {
         "dynamodb-paths",
         &[(
             "app.ts",
-            "import { QueryCommand } from '@aws-sdk/lib-dynamodb'; function handler(req: any, res: any) { new QueryCommand({TableName: 't', KeyConditionExpression: req.body.key, FilterExpression: req.body.filter, ExpressionAttributeValues: {':value': req.body.value}}); }",
+            "import { QueryCommand } from '@aws-sdk/lib-dynamodb'; import { DynamoDBClient } from '@aws-sdk/client-dynamodb'; const client = new DynamoDBClient({}); function handler(req: any, res: any) { client.send(new QueryCommand({TableName: 't', KeyConditionExpression: req.body.key, FilterExpression: req.body.filter, ExpressionAttributeValues: {':value': req.body.value}})); }",
         )],
     );
     let sink = result
         .evidence
         .iter()
-        .find(|e| e.rule_id == "typescript-extended-nosql-command")
+        .find(|e| e.rule_id == "typescript-extended-nosql-dispatch")
         .unwrap();
     let paths: Vec<_> = result
         .security_paths

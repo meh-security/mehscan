@@ -1188,69 +1188,6 @@ pub(crate) fn scan_source(
     );
     // Prefer an existing specialized selector/predicate over its whole-filter
     // extension, and an exact extended SDK query over the old syntax fallback.
-    if matches!(
-        language,
-        Language::Javascript | Language::Typescript | Language::Tsx
-    ) {
-        let request_objects: Vec<_> = evidence
-            .iter()
-            .filter(|e| {
-                super::extended_database::is_rule(&e.rule_id)
-                    && e.cwe_candidates.iter().any(|c| c == "CWE-943")
-            })
-            .filter_map(|e| {
-                root.dfs().find(|n| {
-                    n.range().start == e.location.start.byte_offset
-                        && n.range().end == e.location.end.byte_offset
-                })
-            })
-            .flat_map(|sink| super::extended_database::request_objects(&root, &sink))
-            .collect();
-        for request in request_objects {
-            let prefix = match language {
-                Language::Javascript => "javascript",
-                Language::Typescript => "typescript",
-                _ => "tsx",
-            };
-            let rule_id = format!("{prefix}-extended-nosql-request-object-source");
-            let id = evidence_id(path, &rule_id, request.range().start, request.range().end);
-            if evidence.iter().any(|e| e.id == id) {
-                continue;
-            }
-            evidence.push(Evidence {
-                id,
-                kind: EvidenceKind::Source,
-                capability: Capability::HttpRequestData,
-                location: location(path, &request),
-                enclosing_symbol: enclosing_symbol(&request),
-                captures: BTreeMap::from([(
-                    "field".into(),
-                    Capture {
-                        text: request.text().into_owned(),
-                        location: location(path, &request),
-                    },
-                )]),
-                cwe_candidates: vec!["CWE-20".into()],
-                tags: vec!["request-object".into(), "nosql".into()],
-                confidence: Confidence::Medium,
-                provenance: Provenance {
-                    resolution: Resolution::Ast,
-                    engine: "ast-grep 0.45.1 + bounded-nosql-request-object".into(),
-                    rule_version: 1,
-                },
-                context: evidence_context(
-                    &request,
-                    &comments,
-                    &conditional,
-                    &literals,
-                    BTreeMap::new(),
-                ),
-                symbol_resolution: None,
-                rule_id,
-                related_evidence: vec![],
-            });
-        }
-    }
     let specialized: BTreeSet<_> = evidence
         .iter()
         .filter(|e| {
@@ -1676,6 +1613,70 @@ pub(crate) fn scan_source(
     super::node_operands::annotate(language, source, &root, &mut evidence);
     super::native_query::annotate(language, &root, &literals, &mut evidence);
     super::extended_database::attach_document_construction(&root, &mut evidence);
+    if matches!(
+        language,
+        Language::Javascript | Language::Typescript | Language::Tsx
+    ) {
+        let request_objects: Vec<_> = evidence
+            .iter()
+            .filter(|e| {
+                e.kind == EvidenceKind::Sink
+                    && super::extended_database::is_rule(&e.rule_id)
+                    && e.cwe_candidates.iter().any(|c| c == "CWE-943")
+            })
+            .filter_map(|e| {
+                root.dfs().find(|n| {
+                    n.range().start == e.location.start.byte_offset
+                        && n.range().end == e.location.end.byte_offset
+                })
+            })
+            .flat_map(|sink| super::extended_database::request_objects(&root, &sink))
+            .collect();
+        for request in request_objects {
+            let prefix = match language {
+                Language::Javascript => "javascript",
+                Language::Typescript => "typescript",
+                _ => "tsx",
+            };
+            let rule_id = format!("{prefix}-extended-nosql-request-object-source");
+            let id = evidence_id(path, &rule_id, request.range().start, request.range().end);
+            if evidence.iter().any(|e| e.id == id) {
+                continue;
+            }
+            evidence.push(Evidence {
+                id,
+                kind: EvidenceKind::Source,
+                capability: Capability::HttpRequestData,
+                location: location(path, &request),
+                enclosing_symbol: enclosing_symbol(&request),
+                captures: BTreeMap::from([(
+                    "field".into(),
+                    Capture {
+                        text: request.text().into_owned(),
+                        location: location(path, &request),
+                    },
+                )]),
+                cwe_candidates: vec!["CWE-20".into()],
+                tags: vec!["request-object".into(), "nosql".into()],
+                confidence: Confidence::Medium,
+                provenance: Provenance {
+                    resolution: Resolution::Ast,
+                    engine: "ast-grep 0.45.1 + bounded-nosql-request-object".into(),
+                    rule_version: 1,
+                },
+                context: evidence_context(
+                    &request,
+                    &comments,
+                    &conditional,
+                    &literals,
+                    BTreeMap::new(),
+                ),
+                symbol_resolution: None,
+                rule_id,
+                related_evidence: vec![],
+            });
+        }
+    }
     let summaries_microseconds = summaries_started.elapsed().as_micros();
     let paths_started = Instant::now();
     let mut security_paths = super::security_paths::build_security_paths(

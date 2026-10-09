@@ -157,10 +157,10 @@
       - https://cwe.mitre.org/data/definitions/943.html
 
 - id: javascript-extended-nosql-command
-  version: 1
+  version: 2
   title: Extended DynamoDB query command construction
   language: javascript
-  kind: sink
+  kind: resource
   capability: database_query
   confidence: medium
   cwe: [CWE-943]
@@ -243,10 +243,10 @@
       - https://cwe.mitre.org/data/definitions/943.html
 
 - id: typescript-extended-nosql-command
-  version: 1
+  version: 2
   title: Extended DynamoDB query command construction
   language: typescript
-  kind: sink
+  kind: resource
   capability: database_query
   confidence: medium
   cwe: [CWE-943]
@@ -313,10 +313,10 @@
       - https://cwe.mitre.org/data/definitions/943.html
 
 - id: tsx-extended-nosql-command
-  version: 1
+  version: 2
   title: Extended DynamoDB query command construction
   language: tsx
-  kind: sink
+  kind: resource
   capability: database_query
   confidence: medium
   cwe: [CWE-943]
@@ -907,10 +907,10 @@
       - https://cwe.mitre.org/data/definitions/943.html
 
 - id: php-extended-nosql-query
-  version: 1
+  version: 2
   title: Extended MongoDB driver query filters
   language: php
-  kind: sink
+  kind: resource
   capability: database_query
   confidence: medium
   cwe: [CWE-943]
@@ -931,6 +931,84 @@
     references:
       - https://www.php.net/manual/en/mongodb-driver-query.construct.php
       - https://cwe.mitre.org/data/definitions/943.html
+
+- id: javascript-extended-nosql-dispatch
+  version: 1
+  title: DynamoDB query command dispatch
+  language: javascript
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match: &extended_nosql_dispatch
+    any:
+      - pattern: "$DATABASE.send($QUERY)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE.send($QUERY, $$$ARGS)"
+        captures: { database: DATABASE, nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Owned DynamoDB dispatch with an observed query-command producer; standalone construction is supporting context.
+    references:
+      - https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/javascript_dynamodb_code_examples.html
+
+- id: typescript-extended-nosql-dispatch
+  version: 1
+  title: DynamoDB query command dispatch
+  language: typescript
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match: *extended_nosql_dispatch
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Owned DynamoDB dispatch with an observed query-command producer; standalone construction is supporting context.
+    references:
+      - https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/javascript_dynamodb_code_examples.html
+
+- id: tsx-extended-nosql-dispatch
+  version: 1
+  title: DynamoDB query command dispatch
+  language: tsx
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match: *extended_nosql_dispatch
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Owned DynamoDB dispatch with an observed query-command producer; standalone construction is supporting context.
+    references:
+      - https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/javascript_dynamodb_code_examples.html
+
+- id: php-extended-nosql-execution
+  version: 1
+  title: MongoDB driver query execution
+  language: php
+  kind: sink
+  capability: database_query
+  confidence: medium
+  cwe: [CWE-943]
+  match:
+    any:
+      - pattern: "$DATABASE->executeQuery($NAMESPACE, $QUERY)"
+        context: "<?php $DATABASE->executeQuery($NAMESPACE, $QUERY);"
+        selector: member_call_expression
+        captures: { database: DATABASE, nosql_query: QUERY }
+      - pattern: "$DATABASE->executeQuery($NAMESPACE, $QUERY, $$$ARGS)"
+        context: "<?php $DATABASE->executeQuery($NAMESPACE, $QUERY, $$$ARGS);"
+        selector: member_call_expression
+        captures: { database: DATABASE, nosql_query: QUERY }
+  tags: [database, extended-rules, nosql, query-filter]
+  ai: *extended_nosql_guidance
+  provenance:
+    note: Owned MongoDB Manager/Server execution; constructor facts attach to this operation.
+    references:
+      - https://www.php.net/manual/en/mongodb-driver-manager.executequery.php
 
 - id: php-extended-sql-facade
   version: 1

@@ -854,6 +854,16 @@ impl<'a> PhpContext<'a> {
                     .find(|n| n.is_named() && n.kind().as_ref() != "arguments")
                     .is_some_and(|name| self.sdk_class_exact(&name, "mongodb\\driver\\query"));
         }
+        if rule == "php-extended-nosql-execution" {
+            return node.field("object").is_some_and(|receiver| {
+                self.sdk_receiver(
+                    &receiver,
+                    node,
+                    &["mongodb\\driver\\manager", "mongodb\\driver\\server"],
+                    8,
+                )
+            });
+        }
         if rule == "php-extended-sql-facade" {
             return node.field("scope").is_some_and(|name| {
                 self.sdk_class_exact(&name, "illuminate\\support\\facades\\db")
@@ -1114,6 +1124,12 @@ impl<'a> PhpContext<'a> {
     ) -> bool {
         if depth == 0 {
             return false;
+        }
+        if receiver.kind().as_ref() == "object_creation_expression" {
+            return receiver
+                .children()
+                .find(|n| n.is_named() && n.kind().as_ref() != "arguments")
+                .is_some_and(|name| types.iter().any(|ty| self.sdk_class_exact(&name, ty)));
         }
         if receiver.kind().as_ref() == "scoped_call_expression" {
             return receiver.field("scope").is_some_and(|scope| {

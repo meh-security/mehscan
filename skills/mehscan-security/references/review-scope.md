@@ -124,14 +124,39 @@ or intervening write, so no blanket owner-flag cut is added. Python's exclusive
 queryset narrowing retains directly observed request selectors and bounded local
 aliases; unknown cross-file callers still require separate authority research.
 Java/Kotlin MongoDB document construction and C# BSON/JSON filter construction
-are supporting facts, not injection sinks. Unused parser/constructor rows leave
-both queues and the scan evidence. Inline construction and unchanged local first
-uses attach their origin to the actual collection operation; used construction
+are supporting facts, not injection sinks. JS/TS/TSX DynamoDB Query/Scan/PartiQL
+command construction and PHP MongoDB driver `Query` construction follow the same
+rule. Unused parser/constructor rows leave
+both queues and the scan evidence. Inline construction and bounded local
+uses attach their origin to the actual database operation; used construction
 rows remain context without their own review ID. Opaque helper consumers remain
 reviewable: missing construction facts do not establish safe operators or input
 types. This attachment is file-local and does not follow arbitrary helpers or
 cross-file producers. Raw SQL constructors and other query-builder families
 still need separate consumer coverage checks before the same cleanup.
+
+JS/TS/TSX reviews anchor to `send` on an owned SDK v3 DynamoDB client with an
+observed query-command producer. Recognize inline commands, local bindings and a
+single directly returned constructor from an unshadowed local helper. One direct
+local alias preserves a lead without transferring fixed facts. Helper
+input binding remains a question. Reused, mutated or escaped local commands keep
+the unresolved command operand; do not copy fixed expression facts through an
+uncertain use. Computed/spread/duplicate/escaped object keys keep the whole input.
+Unrelated AWS commands do not become NoSQL injection reviews. External helper
+producers, longer alias chains, properties and CommonJS v3 construction are beyond
+this bounded producer resolution; absence of a review does not certify them.
+Source/category research can still inspect them. Existing SDK v2 query/scan
+operations remain separate, with expression syntax distinct from bound values.
+
+PHP reviews anchor to `executeQuery` on an owned MongoDB `Manager`/`Server`.
+Inline/local query objects attach their filter; opaque query/helper operands
+remain reviewable. Preserve identity gates for imports, typed receivers,
+reassignments and includes, and do not guess named/unpacked argument positions.
+Python, Go, Rust and C/C++ NoSQL rules already represent collection/table calls;
+there is no standalone document-constructor review to retire in those profiles.
+Keep their actual filter/pipeline consumers. This NoSQL slice does not close
+operator injection or independently settle resource authority.
+
 Modern EF Core `SqlQuery<T>(FormattableString)` parameterizes interpolation;
 legacy EF string overloads and `SqlQueryRaw` differ. The current native emitter
 does not reliably separate them. Bind the SDK/overload before excluding the
