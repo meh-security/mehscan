@@ -96,6 +96,38 @@ operations. Treat those assignments as implementation gaps to test, not reasons
 to weaken this policy. Changes should follow actual snippets and protective
 controls rather than a language-wide blanket cut.
 
+## Database exclusions and remaining cleanup
+
+Judge **query grammar** and **resource authority** separately. Closing injection
+does not prove access rights; a possible access question does not reopen fixed
+SQL as injection. Do not create an authorization review for every ordinary query.
+
+| Pattern | Intended queue / reason | Evidence that retains work |
+| --- | --- | --- |
+| Fixed SQL, including a complete immutable query object with separate values | Neither for injection: runtime values remain data. Request values in the binding array are ordinary, not a reason for another SQL verdict. | Replaced query methods, object mutation/escape/overrides, unknown driver identity, dynamic SQL text or identifiers. Independently selected protected records keep their own authority question. |
+| Query text or document assembled without a consuming operation | Supporting context, not a standalone injection verdict. Attach useful construction/binding facts to the consumer. | An observed executable consumer, escaped query handle with a concrete execution lead, or unsafe construction used by a real application operation. Missing local execution facts alone do not prove unused code. |
+| SDK equality predicates, fixed operators and separately bound expression values | Neither for grammar when the owned API keeps these values in data positions. | Raw operator-capable documents, computed/spread keys, executable predicates, raw expression text or unknown construction. A fixed key with `req.body.id` is not proof of a scalar value. |
+| Exact authenticated owner predicate that survives through the selected operation | Neither for that ownership property once the control is established. Keep its supporting control fact. | Alternate callers/routes, missing authentication, predicate overrides, later selector writes or a different sensitive property/effect. A column named `owner` or an `owner_scoped` hint alone is insufficient. |
+| Reload of an already selected resource during an authorized operation | Review the operation's authority once; an identity-preserving reload is not a new actor/resource boundary. | A changed key, independent selected instance, exposed fields, broader query scope or an effect outside the inspected permission contract. |
+| Fixed/configuration-owned identifiers quoted by an owned dialect | Neither for injection after checking the complete identifier construction and quoting contract. | Untrusted names reaching raw identifiers, grammar-bearing fragments, unverified helper behavior or a runtime SQL template whose values are rendered into syntax. Parameter binding does not cover identifiers. |
+
+Current gaps are explicit: local `pg` query objects still defer to Comprehensive;
+native C/C++ named literal queries are not folded; raw SQL/BSON constructors can
+be promoted without a bound consumer; and some owner-scope facts use syntax or
+text heuristics that do not rule out overrides. These are cleanup candidates,
+not implemented blanket exclusions. Tighten the control facts before using them
+to remove jobs. The Python request-selected queryset gap above remains open.
+Modern EF Core `SqlQuery<T>(FormattableString)` parameterizes interpolation;
+legacy EF string overloads and `SqlQueryRaw` differ. The current native emitter
+does not reliably separate them. Bind the SDK/overload before excluding the
+modern form, rather than transferring safety from the method name alone.
+
+Apply the same distinctions to ADO.NET/Dapper/EF, JDBC/JPA/Hibernate/Exposed,
+Node drivers/query builders, DB-API/Django/SQLAlchemy, PDO/mysqli/Laravel,
+database/sql/GORM/pgx/sqlx, Rust drivers and native database APIs. Preserve exact
+SDK identities, argument roles and language-specific construction facts; do not
+transfer one driver's binding, quoting or equality contract to another by name.
+
 ## Supporting evidence is not a third review queue
 
 `source`, `symbol` and `references` read repository text. They do not require
