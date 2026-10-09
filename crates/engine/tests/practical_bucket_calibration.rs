@@ -126,17 +126,21 @@ function Input() { return <a href={window.location.hash}>link</a>; }
             )
     }));
     for symbol in ["Ordinary", "Area"] {
-        let entry = inventory
-            .entries
-            .iter()
-            .find(|entry| {
+        assert!(
+            !inventory.entries.iter().any(|entry| {
                 entry.symbol.as_deref() == Some(symbol)
                     && entry.rule_id.ends_with("react-url-attribute-output")
-            })
-            .expect("link research retained");
-        assert_eq!(
-            entry.value_hint.as_ref().map(|hint| hint.reason.as_str()),
-            Some("unconnected_browser_link_destination")
+            }),
+            "ordinary parameter forwarding is not mandatory research"
+        );
+        assert!(
+            inventory
+                .scan
+                .evidence
+                .iter()
+                .any(|item| item.enclosing_symbol.as_deref() == Some(symbol)
+                    && item.rule_id.ends_with("react-url-attribute-output")),
+            "scope exclusion must not pretend this URL is proven safe"
         );
     }
     for symbol in [
@@ -159,6 +163,89 @@ function Input() { return <a href={window.location.hash}>link</a>; }
         assert!(
             entries.iter().all(|entry| entry.value_hint.is_none()),
             "unexpected deferral for {symbol}"
+        );
+    }
+}
+
+#[test]
+fn django_selector_used_only_to_narrow_a_queryset_is_not_an_authorization_sink() {
+    let fixture = Fixture::new(
+        "narrowing",
+        r#"
+def scalar(qs, code):
+    locale_id = (
+        Locale.objects.filter(language_code=code)
+        .values_list('pk', flat=True)
+        .get()
+    )
+    return qs.filter(locale_id=locale_id)
+def record(objects, code):
+    selected = Locale.objects.get(language_code=code)
+    objects = objects.filter(locale=selected)
+    return objects
+def disclosure(qs, code):
+    selected = Page.objects.get(pk=code)
+    print(selected.title)
+    return qs.filter(parent=selected)
+def returned(qs, code):
+    selected = Page.objects.get(pk=code)
+    return selected
+def mutation(qs, code):
+    selected = Page.objects.get(pk=code)
+    selected.delete()
+    return qs.filter(parent=selected)
+def selected_receiver(qs, code):
+    selected = Page.objects.get(pk=code)
+    return selected.children.filter(pk=qs)
+def wrapped(qs, code):
+    selected = serialize(Page.objects.get(pk=code))
+    return qs.filter(parent=selected)
+def chained_delete(qs, code):
+    selected = Page.objects.get(pk=code)
+    return qs.filter(parent=selected).delete()
+def later_delete(qs, code):
+    selected = Page.objects.get(pk=code)
+    qs = qs.filter(parent=selected)
+    return qs.delete()
+def chained_read(qs, code):
+    selected = Page.objects.get(pk=code)
+    return qs.filter(parent=selected).first().private_note
+def projected_data(qs, code):
+    selected = Account.objects.filter(pk=code).values_list('api_key', flat=True).get()
+    return qs.filter(access_key=selected)
+"#,
+        "py",
+    );
+    let inventory = build_review_inventory(&fixture.0, false).unwrap();
+    for symbol in ["scalar", "record"] {
+        assert!(
+            !inventory
+                .scan
+                .evidence
+                .iter()
+                .any(|item| item.rule_id == "python-django-orm-resource-access"
+                    && item.enclosing_symbol.as_deref() == Some(symbol)),
+            "unused sink extraction for {symbol}"
+        );
+    }
+    for symbol in [
+        "disclosure",
+        "returned",
+        "mutation",
+        "selected_receiver",
+        "wrapped",
+        "chained_delete",
+        "later_delete",
+        "chained_read",
+        "projected_data",
+    ] {
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|entry| entry.rule_id == "python-django-orm-resource-access"
+                    && entry.symbol.as_deref() == Some(symbol)),
+            "lost actual record use {symbol}"
         );
     }
 }

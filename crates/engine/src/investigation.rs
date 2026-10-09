@@ -315,14 +315,16 @@ fn local_bound_query_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
     })
 }
 
-fn ordinary_browser_request_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
+fn ordinary_browser_request(anchor: &Evidence) -> bool {
     if anchor.capability != Capability::OutboundNetworkRequest
         || anchor.cwe_candidates != ["CWE-918"]
     {
-        return None;
+        return false;
     }
-    let operand = anchor.captures.get("endpoint")?;
-    let fact = anchor.context.operand_facts.iter().find(|f| {
+    let Some(operand) = anchor.captures.get("endpoint") else {
+        return false;
+    };
+    anchor.context.operand_facts.iter().any(|f| {
         f.kind == mehscan_core::OperandFactKind::BrowserRequestContext
             && f.location == operand.location
             && f.value == operand.text
@@ -333,16 +335,10 @@ fn ordinary_browser_request_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
             ]
             .iter()
             .all(|marker| f.remaining_checks.iter().any(|c| c == marker))
-    })?;
-    Some(ValueReviewHint {
-        reason: "ordinary_browser_request_inventory".into(),
-        target: fact.location.path.clone(),
-        assumption: "browser_get_head_surface; not_server_ssrf; inspect_destination_authority_and_consequential_effects_then_reopen".into(),
-        depends_on: None,
     })
 }
 
-fn ordinary_browser_link_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
+fn ordinary_browser_link(anchor: &Evidence) -> bool {
     if anchor.capability != Capability::HtmlOutput
         || anchor.cwe_candidates != ["CWE-79"]
         || !anchor.rule_id.ends_with("react-url-attribute-output")
@@ -359,15 +355,17 @@ fn ordinary_browser_link_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
             .literals
             .get("content")
             .is_none_or(|literal| literal.state != LiteralState::Unknown)
+        || anchor.context.operand_facts.iter().any(|fact| {
+            matches!(
+                fact.kind,
+                mehscan_core::OperandFactKind::LocalCallArgument
+                    | mehscan_core::OperandFactKind::LocalOperandOrigin
+            )
+        })
     {
-        return None;
+        return false;
     }
-    Some(ValueReviewHint {
-        reason: "unconnected_browser_link_destination".into(),
-        target: anchor.location.path.clone(),
-        assumption: "Ordinary link destination without an observed input relationship. Comprehensive checks URL authority/scheme and consequential uses; source-proven unsafe destinations or credential/effect chains warrant Value. No safe verdict.".into(),
-        depends_on: None,
-    })
+    true
 }
 
 fn signed_dotnet_directory_api(anchor: &Evidence, methods: &[&str]) -> bool {
@@ -479,7 +477,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "5";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "6";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -1437,6 +1435,18 @@ fn build_path_review_jobs_internal(
                 .flat_map(|group| group.anchor_evidence_ids.iter().map(String::as_str)),
         )
         .collect::<BTreeSet<_>>();
+    // An ordinary browser occurrence is not a mandatory investigation merely
+    // because its caller/URL is unknown. Preserve actual paths, input
+    // co-occurrences and consequential options; exclude only standalone rows.
+    let ordinary_browser_ids = observation_groups
+        .iter()
+        .filter(|group| group.priority == 2 && group.anchor_evidence_ids.len() == 1)
+        .filter_map(|group| {
+            let id = &group.anchor_evidence_ids[0];
+            let anchor = evidence_by_id.get(id.as_str())?;
+            (ordinary_browser_link(anchor) || ordinary_browser_request(anchor)).then(|| id.clone())
+        })
+        .collect::<BTreeSet<_>>();
     let written_code_targets = scan
         .evidence
         .iter()
@@ -1465,13 +1475,14 @@ fn build_path_review_jobs_internal(
         .evidence
         .iter()
         .filter(|item| {
-            practical_admission::inventory_only(
-                item,
-                &sources,
-                connected_sink_ids.contains(item.id.as_str()),
-                &scan.evidence,
-                &written_code_targets,
-            )
+            ordinary_browser_ids.contains(&item.id)
+                || practical_admission::inventory_only(
+                    item,
+                    &sources,
+                    connected_sink_ids.contains(item.id.as_str()),
+                    &scan.evidence,
+                    &written_code_targets,
+                )
         })
         .map(|item| (item.id.clone(), ReviewAdmissionDisposition::InventoryOnly))
         .collect::<BTreeMap<_, _>>();
@@ -1649,11 +1660,7 @@ fn build_path_review_jobs_internal(
                 operand_facts: operand_summaries(anchor),
                 value_hint: practical_admission::comprehensive_hint(anchor).or_else(|| {
                     (group.priority == 2 && group.anchor_evidence_ids.len() == 1)
-                        .then(|| {
-                            local_bound_query_hint(anchor)
-                                .or_else(|| ordinary_browser_request_hint(anchor))
-                                .or_else(|| ordinary_browser_link_hint(anchor))
-                        })
+                        .then(|| local_bound_query_hint(anchor))
                         .flatten()
                 }),
             })

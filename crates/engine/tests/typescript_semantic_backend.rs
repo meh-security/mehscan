@@ -112,7 +112,7 @@ fn incoming_parameter_navigation_preserves_queue_and_binds_caller_source() {
 
 #[test]
 #[ignore = "requires Node and MEHSCAN_TYPESCRIPT_BACKEND / MEHSCAN_TYPESCRIPT_COMPILER"]
-fn browser_request_value_hint_is_conditional_and_comprehensive_keeps_ids() {
+fn ordinary_browser_requests_leave_both_queues_and_consequential_requests_remain() {
     let fixture = Fixture::new("browser");
     fs::write(fixture.root.join("browser.ts"), r#"
 export function ordinary(url: string) { return fetch(url); }
@@ -122,9 +122,17 @@ export function mutate(url: string) { return fetch(url, {method: 'POST'}); }
 export function options(url: string, init: RequestInit) { return fetch(url, init); }
 export function connected(req: any) { return fetch(req.query.url); }
 "#).unwrap();
+    fs::write(
+        fixture.root.join("links.tsx"),
+        r#"
+export function Linked(url: string) { return <a href={url}>link</a>; }
+export function caller(storedUrl: string) { return Linked(storedUrl); }
+"#,
+    )
+    .unwrap();
     let context = json!({"typescript_path": std::env::var("MEHSCAN_TYPESCRIPT_COMPILER").unwrap(),
-        "projects": [{"id": "browser", "runtime": "browser", "sources": ["browser.ts"],
-            "compiler_options": {"target": "ES2022", "module": "commonjs", "strict": true}}]});
+        "projects": [{"id": "browser", "runtime": "browser", "sources": ["browser.ts", "links.tsx"],
+            "compiler_options": {"target": "ES2022", "module": "commonjs", "jsx": "preserve", "strict": true}}]});
     fs::write(&fixture.context, serde_json::to_vec(&context).unwrap()).unwrap();
     let baseline = investigation::build_review_inventory(&fixture.root, true).unwrap();
     let native = investigation::build_review_inventory_with_native_backends(
@@ -136,28 +144,20 @@ export function connected(req: any) { return fetch(req.query.url); }
         None,
     )
     .unwrap();
-    assert_eq!(
-        baseline
-            .entries
-            .iter()
-            .map(|e| &e.review_id)
-            .collect::<Vec<_>>(),
-        native
-            .entries
-            .iter()
-            .map(|e| &e.review_id)
-            .collect::<Vec<_>>()
-    );
     for name in ["ordinary", "head"] {
-        let entry = native
-            .entries
-            .iter()
-            .find(|e| e.path == "browser.ts" && e.symbol.as_deref() == Some(name))
-            .unwrap();
-        assert_eq!(
-            entry.value_hint.as_ref().map(|h| h.reason.as_str()),
-            Some("ordinary_browser_request_inventory"),
-            "{entry:?}"
+        assert!(
+            baseline
+                .entries
+                .iter()
+                .any(|entry| entry.path == "browser.ts" && entry.symbol.as_deref() == Some(name)),
+            "unknown runtime must retain {name}"
+        );
+        assert!(
+            !native
+                .entries
+                .iter()
+                .any(|e| e.path == "browser.ts" && e.symbol.as_deref() == Some(name)),
+            "ordinary DOM request has no standalone SSRF question: {name}"
         );
     }
     for name in ["bearer", "mutate", "options", "connected"] {
@@ -172,6 +172,21 @@ export function connected(req: any) { return fetch(req.query.url); }
             "must keep {name}"
         );
     }
+    let linked = native
+        .entries
+        .iter()
+        .find(|entry| entry.path == "links.tsx" && entry.symbol.as_deref() == Some("Linked"))
+        .expect("observed caller arguments must preserve the URL writer question");
+    assert!(linked.value_hint.is_none());
+    assert!(native.scan.evidence.iter().any(|item| {
+        item.location.path == "links.tsx"
+            && item.enclosing_symbol.as_deref() == Some("Linked")
+            && item
+                .context
+                .operand_facts
+                .iter()
+                .any(|fact| fact.kind == OperandFactKind::LocalCallArgument)
+    }));
     let scan = mehscan_engine::scan_path(&fixture.root).unwrap();
     let snapshot = ts::collect(&fixture.root, &fixture.context, &fixture.backend(), &scan).unwrap();
     let mut server = context;

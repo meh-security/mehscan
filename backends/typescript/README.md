@@ -12,7 +12,8 @@ mutated contents and project errors retain explicit checks.
 Requests and browser navigation also receive destination/producer navigation.
 Declare `runtime: "browser"` on a project only with source/build evidence of its
 browser execution. DOM-bound ordinary fetch GET/HEAD operations without other
-options receive a conditional Value hint; Comprehensive keeps their exact IDs.
+options leave both review queues when they are standalone occurrences without
+represented input relationships. Raw context remains available to admitted work.
 This is not destination trust or an operation-safety verdict. Credentials,
 headers/body, mutation methods, unknown options, replaced/custom fetch and
 Node/SSR scope remain active. Browser declarations alone do not establish runtime.

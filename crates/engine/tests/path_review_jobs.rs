@@ -1617,11 +1617,27 @@ fn observed_conditional_encoding_and_quoting_are_not_proven_controls() {
         .join("tests/fixtures/review-control-observation");
     let jobs = mehscan_engine::investigation::build_all_path_review_jobs(&root, Some(8), true)
         .expect("conditional control observations should build");
-    for sink_rule in [
-        "php-command-execution",
-        "php-html-output",
-        "python-html-output",
-    ] {
+    // The current PHP admission policy excludes this unbound ordinary output.
+    // Its conditional encoder remains raw evidence, not a proved safety control.
+    // Do not require a mandatory review to test whether a control was observed.
+    let scan = mehscan_engine::scan_path(&root).unwrap();
+    assert!(
+        scan.evidence
+            .iter()
+            .any(|item| item.rule_id == "php-html-output")
+    );
+    assert!(
+        scan.evidence
+            .iter()
+            .any(|item| item.location.path == "app.php" && item.kind == EvidenceKind::Sanitizer)
+    );
+    assert!(!jobs.observation_reviews.iter().any(|review| {
+        review
+            .evidence
+            .iter()
+            .any(|item| item.rule_id == "php-html-output")
+    }));
+    for sink_rule in ["php-command-execution", "python-html-output"] {
         let review = jobs
             .observation_reviews
             .iter()

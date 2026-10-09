@@ -52,8 +52,8 @@ establish, not different standards for what constitutes a useful issue.
 | **C#** | Optional Roslyn supplies actual SDK identity, scalar/Guid/date normalization, closed selectors, helper/property/argument origins and actual HTTP dispatch. Shared filesystem/destination questions defer repetitions, preserving exact Comprehensive IDs. URI setters and directory setup are context. | Facts require a bound compiler context; missing facts do not prove custom calls safe. A record key is not the path string stored in its selected record. Check response destinations before assigning HTML; optional backend facts are not required for the base workflow. |
 | **Java** | Inspect query text separately from prepared-statement bindings. Actual `send` is an effect; an HTTP builder alone is context. Ordinary Jackson reading is excluded unless project-visible unsafe polymorphic/default-typing policy warrants research. | A policy elsewhere is a lead until tied to the mapper. Framework guards, wrappers and annotations still need exact binding. |
 | **Kotlin** | Apply the same JVM interpreter, mapper and filesystem distinctions. Kotlin unsafe Jackson policy syntax can retain research even without a dedicated policy emitter. Owned ordinary directory setup is excluded. | Java/Kotlin API interoperability does not establish identical framework coverage. Do not infer absent policy from a missing Java-only detector. |
-| **JavaScript / TypeScript / TSX** | Preserve raw DOM/trusted HTML and real process/filesystem effects. Proven build/vendor/generated ownership can remove ordinary application Value work. Fixed `pg` query objects with separate values defer their grammar question. Owned `js-yaml` v4 default data schemas are ordinary decoding; custom/unknown policies retain their question. Explicit browser GET/HEAD context prevents automatic server-SSRF interpretation. Unconnected intrinsic `a`/`area` hrefs that merely forward an unchanged parameter defer to Comprehensive. Custom component href props are not direct browser sinks. Optional TypeScript facts improve identity, producers and literal selectors. | Link deferral is not a scheme/authority proof. Constructed, defaulted or reassigned operands, observed input relationships, resource hrefs and raw HTML remain active. Template/custom renderer controls and alternate writers need source checks. Browser GET deferral currently retains Comprehensive IDs even when no sensitive effect has been shown; audit that lane against the family criteria. |
-| **Python** | Executable pickle/unsafe loader behavior differs from normal data parsing. Supported autoescaped Django responses close the exact output property. Owned trusted-markup calls containing only fixed whitespace/`&nbsp;` repetition do not create an XSS review. Marshal inventory is excluded without a connection and is otherwise research, not automatic code execution. `compile` alone is context. | Fixed padding does not close arbitrary `mark_safe`, formatting or dynamic text. HTML attribute escaping does not establish safe attribute names/event handlers/URL semantics. Shell behavior depends on actual options/interpreter/platform. Custom serializers, autoescape settings and dynamic template inputs need exact evidence. |
+| **JavaScript / TypeScript / TSX** | Preserve raw DOM/trusted HTML and real process/filesystem effects. Proven build/vendor/generated ownership can remove ordinary application Value work. Fixed `pg` query objects with separate values defer their grammar question. Owned `js-yaml` v4 default data schemas are ordinary decoding; custom/unknown policies retain their question. Standalone DOM GET/HEAD in an explicit browser context leaves both queues when options show no sensitive effect. Unconnected intrinsic `a`/`area` hrefs merely forwarding an unchanged parameter with no observed producer leave both queues. Custom component href props are not direct browser sinks. Optional TypeScript facts improve identity, producers and literal selectors. | Ordinary-link exclusion is a scope decision, not scheme/authority proof. Constructed, defaulted or reassigned operands, observed input relationships or producer facts, resource hrefs and raw HTML remain active. Credentials, request mutations, unknown options and Node/SSR/unknown runtime prevent the browser-request cut. Template/custom renderer controls and alternate writers need source checks. |
+| **Python** | Executable pickle/unsafe loader behavior differs from normal data parsing. Supported autoescaped Django responses close the exact output property. Owned trusted-markup calls containing only fixed whitespace/`&nbsp;` repetition do not create an XSS review. A Django-style lookup assigned locally and used exclusively as a keyword filter predicate on a supplied queryset does not create an authorization sink. Marshal inventory is excluded without a connection and is otherwise research, not automatic code execution. `compile` alone is context. | Queryset narrowing does not establish caller authorization. Returning records, reading fields, errors, mutations, aliases, wrappers or other consumers prevent that cut. Fixed padding does not close arbitrary `mark_safe`, formatting or dynamic text. HTML attribute escaping does not establish safe attribute names/event handlers/URL semantics. Shell behavior depends on actual options/interpreter/platform. Custom serializers, autoescape settings and dynamic template inputs need exact evidence. |
 | **PHP** | Value keeps shown raw request-to-output/code-selection constructs. Comprehensive retains represented flows/co-occurrences, bound local stored/helper reads, runtime-selected loaders, matched write/load targets and active interpreted output contexts. Ordinary unbound output/constant-shaped includes leave both queues. Complete native numeric output closes its own output property. | Producer navigation is bounded and mostly same-file/native-reader based. Framework and cross-file property/writer chains can be missed. Known important renderers/loaders may warrant a category sweep; queue exhaustion is not complete XSS/include coverage. |
 | **Go** | Use owned API identities and concrete effects. Ordinary mkdir and effect-free resource filters are excluded. Unconnected gob inventory is excluded; connected gob is research unless a real impact qualifies it. | No optional Go compiler backend is assumed. Imports/helpers and data decoding do not by themselves prove destination authority or significant impact. |
 | **Rust** | Keep concrete command/filesystem/trusted-output and represented unsafe effects. Ordinary directory setup/listing and Serde data decoding are excluded. Syntax-only unsafe/interop rules were retired. | Direct process launch is not shell injection. CLI command authority and custom data consumers may need research. No Rust compiler backend or full borrow/CFG analysis is assumed. |
@@ -135,7 +135,8 @@ A source-only scan of Wagtail at `e5117ba8` produced 154 Value/154 Comprehensive
 IDs. The generic changes above produce **103 Value/153 Comprehensive**: 34
 redirect questions and 16 unchanged link parameters defer; one fixed-padding
 candidate leaves both queues. No compiler backend or application/path allowlist
-was used. Regenerate inventory and ledgers with inventory schema 5.
+was used. This first calibration used inventory schema 5; the follow-up below
+supersedes its ordinary-link deferral.
 
 Skill review covered 23 selected IDs, not the whole application: two guarded
 redirects, fixed padding, a narrowing locale lookup and sixteen links sharing the
@@ -150,3 +151,30 @@ whose metadata or effect crosses authority is worthwhile. The scanner does not
 yet prove the former downstream-use restriction, so this calibration does not
 add a blanket `.get()`/record-key exclusion. Next test that effect distinction
 against real caller uses, retaining invalid-form and error-response disclosures.
+
+#### Follow-up: ordinary work can leave Comprehensive too
+
+Do not keep an ordinary occurrence solely to assign it a future verdict. Bare
+unchanged anchor parameters without a bound producer/input lead and ordinary
+DOM GET/HEAD without consequential options leave both queues. Their raw facts
+remain evidence for actual consumers; their exclusion does not certify all
+possible URL writers or callers. Strengthen source facts or explicitly scope a
+category sweep when a project exposes a consequential URL writer.
+
+Exclusive queryset narrowing now avoids extracting an unused ORM authorization
+sink. The selected value must have no field read, return, error output, mutation,
+alias or wrapped consumer; all uses are filter predicates on supplied querysets.
+The filter returns a queryset or reassigns that same parameter. Chained terminal
+reads/deletes and other observed terminal uses of that parameter veto the cut.
+Projected values must be a single flat `pk`/`id`; other columns remain data
+relationships, even if their value is later used as a predicate.
+Broader bookkeeping/metadata patterns remain source-review decisions until a
+cheap generic fact supports exclusion. Unknown dynamic redirects remain credible
+medium-impact research. Do not discard those merely because two inspected
+destinations were guarded. Regenerate inventory and ledgers with schema 6.
+
+The follow-up release inventory is **101 Value/135 Comprehensive**, down from
+103/153: sixteen ordinary link occurrences and two narrowing-only lookups leave
+both queues. All remaining IDs and priorities are unchanged. Eight focused ORM
+source reviews resolved seven cases and retained the denied-parent title question;
+that is a scoped calibration, not a whole-application vulnerability assessment.

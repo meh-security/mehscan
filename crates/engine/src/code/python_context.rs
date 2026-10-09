@@ -749,6 +749,12 @@ fn push_django_orm_observations<'tree>(
         if django_lookup_is_authentication_credential(&call, &filter_name) {
             continue;
         }
+        if django_lookup_only_narrows_queryset(&call) {
+            // No record content escapes this lookup: its result is used only
+            // as a predicate on a supplied queryset. Do not extract a separate
+            // authorization sink for ordinary filter construction.
+            continue;
+        }
         let owner_basis = django_owner_scope_basis(&call, &filter_name, filter.text().trim());
         let owner_scoped = owner_basis.is_some();
         let rule_id = if owner_scoped {
@@ -824,6 +830,148 @@ fn push_django_orm_observations<'tree>(
             related_evidence: Vec::new(),
         });
     }
+}
+
+fn django_lookup_only_narrows_queryset(call: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    let mut result = call.clone();
+    while let Some(parent) = result.parent() {
+        if parent.kind().as_ref() == "parenthesized_expression" {
+            result = parent;
+        } else if parent.kind().as_ref() == "attribute"
+            && parent
+                .field("object")
+                .is_some_and(|object| object.range() == result.range())
+            && parent.field("attribute").is_some_and(|method| {
+                matches!(method.text().as_ref(), "values_list" | "get" | "first")
+            })
+            && let Some(next) = parent
+                .parent()
+                .filter(|next| next.kind().as_ref() == "call")
+        {
+            if parent
+                .field("attribute")
+                .is_some_and(|method| method.text() == "values_list")
+            {
+                let arguments = python_call_arguments(&next);
+                if arguments.len() != 2
+                    || !matches!(
+                        arguments[0].text().trim(),
+                        "'pk'" | "\"pk\"" | "'id'" | "\"id\""
+                    )
+                    || !arguments[1]
+                        .field("name")
+                        .is_some_and(|name| name.text() == "flat")
+                    || !arguments[1]
+                        .field("value")
+                        .is_some_and(|value| value.text() == "True")
+                {
+                    return false;
+                }
+            }
+            result = next;
+        } else {
+            break;
+        }
+    }
+    let Some(assignment) = result.parent().filter(|parent| {
+        parent.kind().as_ref() == "assignment"
+            && parent
+                .field("right")
+                .is_some_and(|right| right.range() == result.range())
+    }) else {
+        return false;
+    };
+    let Some(target) = assignment
+        .field("left")
+        .filter(|left| left.kind().as_ref() == "identifier")
+    else {
+        return false;
+    };
+    let Some(function) = assignment
+        .ancestors()
+        .find(|node| node.kind().as_ref() == "function_definition")
+    else {
+        return false;
+    };
+    let Some(parameters) = function.field("parameters") else {
+        return false;
+    };
+    let mut uses = 0;
+    for occurrence in function
+        .dfs()
+        .filter(|node| node.kind().as_ref() == "identifier" && node.text() == target.text())
+    {
+        if occurrence.range() == target.range() {
+            continue;
+        }
+        if occurrence.parent().is_some_and(|parent| {
+            parent.kind().as_ref() == "keyword_argument"
+                && parent
+                    .field("name")
+                    .is_some_and(|name| name.range() == occurrence.range())
+        }) {
+            continue;
+        }
+        let Some(keyword) = occurrence.parent().filter(|parent| {
+            parent.kind().as_ref() == "keyword_argument"
+                && parent
+                    .field("value")
+                    .is_some_and(|value| value.range() == occurrence.range())
+        }) else {
+            return false;
+        };
+        let Some(consumer) = keyword.parent().and_then(|arguments| arguments.parent()) else {
+            return false;
+        };
+        let Some(callee) = consumer.field("function").filter(|callee| {
+            consumer.kind().as_ref() == "call"
+                && callee.kind().as_ref() == "attribute"
+                && callee
+                    .field("attribute")
+                    .is_some_and(|method| method.text() == "filter")
+        }) else {
+            return false;
+        };
+        let Some(receiver) = callee
+            .field("object")
+            .filter(|object| object.kind().as_ref() == "identifier")
+        else {
+            return false;
+        };
+        if !parameters.children().any(|parameter| {
+            parameter.kind().as_ref() == "identifier" && parameter.text() == receiver.text()
+        }) {
+            return false;
+        }
+        let queryset_result = consumer.parent().is_some_and(|parent| {
+            parent.kind().as_ref() == "return_statement"
+                || (parent.kind().as_ref() == "assignment"
+                    && parent
+                        .field("right")
+                        .is_some_and(|right| right.range() == consumer.range())
+                    && parent
+                        .field("left")
+                        .is_some_and(|left| left.text() == receiver.text()))
+        });
+        if !queryset_result
+            || function.dfs().any(|node| {
+                node.kind().as_ref() == "call"
+                    && node.field("function").is_some_and(|callee| {
+                        callee.kind().as_ref() == "attribute"
+                            && callee
+                                .field("object")
+                                .is_some_and(|object| object.text() == receiver.text())
+                            && callee.field("attribute").is_some_and(|method| {
+                                !matches!(method.text().as_ref(), "filter" | "none")
+                            })
+                    })
+            })
+        {
+            return false;
+        }
+        uses += 1;
+    }
+    uses > 0
 }
 
 fn django_filter_has_resource_terminal(call: &Node<'_, StrDoc<SupportLang>>) -> bool {

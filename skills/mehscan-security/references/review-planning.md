@@ -214,14 +214,14 @@ Prepare only relevant projects and their source dependencies. Declare
 code stays unspecified or separate. Types and missing implementations do not
 prove safe values. Reuse the resulting inventory; never start a compiler per ID.
 
-`ordinary_browser_request_inventory` defers sink-only requests resolved to DOM
+Exclude standalone requests resolved to DOM
 fetch in an explicitly supplied browser context, using default GET or literal
-GET/HEAD options without other options. This settles no URL trust, application
+GET/HEAD options without other options from both queues. This settles no URL trust, application
 authorization or state effect. Browser fetch is not server-side SSRF. Explicit
 credentials, headers/body, mutation methods, unknown options, replaced fetch,
-Node/SSR scope and connected input relationships remain active. Inspect browser
-request/configuration lanes once, reopen consequential destinations or effects,
-and use Comprehensive for per-occurrence verdicts.
+Node/SSR scope and connected input relationships remain active. Investigate
+browser destinations when evidence shows those consequential effects; ordinary
+requests do not need per-occurrence Comprehensive verdicts.
 
 ## Operand selection hints
 
@@ -240,7 +240,7 @@ retains the exact ID. Reopen if the driver is replaced or this operation has
 another consequential relationship.
 
 PHP queue conditions and their limits are in [review scope](review-scope.md).
-Inventory schema 5 requires a fresh scan; do not reuse an older inventory or its
+Inventory schema 6 requires a fresh scan; do not reuse an older inventory or its
 ledger. Use `--selection all` for `php_relationship_research`. Verify its bounded
 producer navigation against the actual writes, transformations, writer and actor.
 Same-file/rule `issue`, `needs_review` or conflicting verdicts reopen retained
