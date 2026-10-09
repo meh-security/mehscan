@@ -362,16 +362,18 @@ pub(crate) fn is_exact_review_control(
     }
 }
 
-pub(crate) fn is_exact_process_execution(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    matched: &Node<'_, StrDoc<SupportLang>>,
+pub(crate) fn is_exact_process_execution<'a>(
+    root: &Node<'a, StrDoc<SupportLang>>,
+    matched: &Node<'a, StrDoc<SupportLang>>,
 ) -> bool {
     let Some(function) = enclosing_call(matched).and_then(|call| call.field("function")) else {
         return false;
     };
     let observed = compact(function.text().as_ref());
     if observed.ends_with(".arg") || observed.ends_with(".args") {
-        return true;
+        return function.field("value").is_some_and(|receiver| {
+            super::process_cleanup::owned_rust_receiver(root, &receiver, 8)
+        });
     }
     matches!(
         canonical_path(root, &observed).as_str(),

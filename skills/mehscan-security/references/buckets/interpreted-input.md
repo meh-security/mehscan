@@ -47,6 +47,12 @@ alone does not establish what a browser will execute.
   statement's bindings do not apply. Read source for conditions, resets and
   execution order. Missing use facts do not prove the statement is unused.
 - **Command or executable:** Separate a fixed executable from its arguments.
+  `process-invocation:actual-launch` anchors execution; linked builder resources
+  supply argv/configuration context without another verdict. Read those exact
+  locations before repeating producer searches. `process-invocation:unresolved-execution` marks
+  a factory lead: find its launch/consumer when the construction is consequential;
+  do not claim that it executes. Separate argv does not close a selected
+  executable, explicit shell or dangerous child-program options.
   A command-line option proves the program accepts a value; inspect who
   controls the invocation before calling it attacker-controlled. In-repository
   callers that pass a fixed value do not cover direct or external invocations

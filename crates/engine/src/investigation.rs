@@ -460,7 +460,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "11";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "12";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -3926,7 +3926,7 @@ fn human_boundary_finding_title(
     let has = |cwe: &str| cwes.iter().any(|item| item == cwe);
     match capability {
         Capability::ProcessExecution if has("CWE-78") => {
-            "Runtime values can alter shell command syntax"
+            "Process executable or arguments require review"
         }
         Capability::DatabaseQuery if has("CWE-89") => {
             "Runtime values can alter executable SQL syntax"
@@ -12476,6 +12476,34 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
     if item.kind != EvidenceKind::Sink {
         return false;
     }
+    if item.capability == Capability::ProcessExecution {
+        // Fixed program selection alone says nothing about dynamic shell text,
+        // child-program options or overridden builder state.
+        return !item.tags.iter().any(|t| {
+            matches!(
+                t.as_str(),
+                "process-invocation:unresolved-builder-state"
+                    | "process-invocation:unresolved-shell"
+                    | "process-invocation:unresolved-execution"
+            )
+        }) && item.captures.contains_key("command")
+            && !item.context.operand_facts.iter().any(|f| {
+                f.role == "process_options"
+                    && (f.kind == mehscan_core::OperandFactKind::OperandBoundary
+                        || f.value == "unresolved")
+            })
+            && item
+                .captures
+                .iter()
+                .filter(|(role, _)| !matches!(role.as_str(), "context" | "shell_mode"))
+                .all(|(role, c)| {
+                    item.context
+                        .literals
+                        .get(role)
+                        .is_some_and(|f| f.state == LiteralState::Known)
+                        || is_process_constant_operand(&c.text)
+                });
+    }
     if closed_output_operand(item).is_some() {
         return true;
     }
@@ -12524,10 +12552,8 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
     }
     let literal_role = match item.capability {
         Capability::DatabaseQuery => "query",
-        // A fixed executable or fixed format string remains valuable inventory
-        // but cannot establish command or format-string injection without a
-        // controllable value in that semantic role.
-        Capability::ProcessExecution => "command",
+        // A fixed format string remains inventory but cannot establish format
+        // injection without control over that semantic role.
         Capability::FormatStringOutput => "format",
         // Fixed program text does not become code injection merely because the
         // sandbox data consumed by that program is dynamic. Other operations
@@ -12577,6 +12603,34 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
         || (item.capability == Capability::Redirect
             && literal.is_some_and(has_fixed_internal_redirect_prefix))
         || is_fixed_python_local_path(item, sources)
+}
+
+// Accept only a complete plain string token. Concatenations, interpolation,
+// collections and unresolved options remain reviewable unless the AST literal
+// evaluator has proved their complete value.
+fn is_process_constant_operand(text: &str) -> bool {
+    let text = text.trim();
+    let Some(quote @ (b'\'' | b'"')) = text.as_bytes().first().copied() else {
+        return false;
+    };
+    let mut escaped = false;
+    for (i, b) in text.bytes().enumerate().skip(1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if b == b'\\' {
+            escaped = true;
+            continue;
+        }
+        if b == b'$' {
+            return false;
+        }
+        if b == quote {
+            return i == text.len() - 1;
+        }
+    }
+    false
 }
 
 /// A complete numeric operand cannot introduce HTML/script delimiters. This
@@ -15354,7 +15408,7 @@ fn missing_protection_question(capability: Capability) -> &'static str {
             "Does the shown code parse the destination and enforce an allowlist that excludes internal, loopback, link-local, and metadata targets before the request?"
         }
         Capability::ProcessExecution => {
-            "Does the shown code avoid a command shell and pass source-derived values only as separately structured process arguments?"
+            "Who controls the executable, shell mode and child-program options? Separate arguments prevent shell parsing only when no shell/interpreter is invoked; check the target program's argument semantics."
         }
         Capability::DynamicCodeExecution => {
             "Does the shown code prevent source-derived text from being interpreted as executable code?"

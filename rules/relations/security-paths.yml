@@ -13,11 +13,11 @@
   strategy: bounded_local_value
 
 - id: cwe-78-remote-request-to-process-execution
-  version: 3
+  version: 4
   source: { capabilities: [http_request_data, rpc_request_data, external_input] }
   sink:
     capability: process_execution
-    input_roles: [command, arguments]
+    input_roles: [command, arguments, executable]
   protection:
     capability: process_argument_separation
     application: related_capture
@@ -27,11 +27,11 @@
   strategy: bounded_local_value
 
 - id: cwe-78-stored-user-content-to-process-execution
-  version: 1
+  version: 2
   source: { capability: stored_user_content }
   sink:
     capability: process_execution
-    input_roles: [command, arguments]
+    input_roles: [command, arguments, executable]
   protection:
     capability: process_argument_separation
     application: related_capture

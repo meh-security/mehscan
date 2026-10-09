@@ -38,7 +38,7 @@ func repeated(value string) template.HTML { output := value; inspect(template.HT
 func parameters(output string) template.HTML { return template.HTML(output) }
 func query(db *sql.DB, value string) { query := fmt.Sprintf("SELECT * FROM users WHERE name='%s'", value); db.Query(query) }
 func fixed(db *sql.DB, value string) { query := "SELECT * FROM users WHERE name=?"; db.Query(query, value) }
-func program(value string) { command := policy(value); exec.Command(command) }
+func program(value string) { command := policy(value); exec.Command(command).Run() }
 "#;
     let fixture = Fixture::new("edges", source);
     let result = mehscan_engine::scan_path(&fixture.0).unwrap();
@@ -46,7 +46,11 @@ func program(value string) { command := policy(value); exec.Command(command) }
         result
             .evidence
             .iter()
-            .find(|e| e.rule_id == rule && e.enclosing_symbol.as_deref() == Some(name))
+            .find(|e| {
+                e.kind == mehscan_core::EvidenceKind::Sink
+                    && e.rule_id == rule
+                    && e.enclosing_symbol.as_deref() == Some(name)
+            })
             .unwrap()
     };
     for (name, rule, role) in [

@@ -41,6 +41,38 @@ A decision-critical producer question does not itself promote an ordinary
 medium-impact redirect into Value. Keep its exact Comprehensive ID and origin
 question; promote when evidence shows a consequential credential/effect chain.
 
+## Process execution
+
+- **Value:** shown shell/interpreter text or executable selection with a dynamic
+  operand, or a consequential input-to-launch relationship. Reachability and
+  actor control can remain open questions; they are not fabricated facts.
+- **Comprehensive:** an actual launch with a concrete unresolved argument,
+  option, environment or executable-authority question that could have medium
+  impact. A fixed executable alone does not close dynamic target arguments.
+- **Neither:** discarded/unread local builders, unrelated `.arg`/`.args`
+  methods, and complete fixed invocations. Construction consumed by an observed
+  launch is supporting context, without a second review ID.
+
+Java `ProcessBuilder`, Go `exec.Command`/`CommandContext` and Rust `Command`
+construction attach to observed `start`, `Run`/`Start`/`Output`/`CombinedOutput`,
+or `spawn`/`status`/`output`. Bounded local bindings and receiver chains are
+supported. Returns, helper handoffs, conditional changes and unresolved builder
+state retain a factory/operand question. They do not prove execution or exposure.
+Kotlin process-builder rules already anchor to `start`; C#, Node, Python,
+PHP and native C/C++ process rules retain their actual invocation boundaries.
+
+Argument separation is a fact to use in context. It does not protect a
+deliberately invoked shell, a controlled executable, or target-program options
+that interpret code, load plugins, select output paths or dispatch subprocesses.
+Shell options are read before paths are classified. PHP `pcntl_exec` and inline
+`proc_open` arrays are direct launches; string shell commands remain distinct,
+and opaque `proc_open` operands keep shell mode unresolved.
+
+Do not invent a PATH hijack or environment attack for ordinary tool discovery.
+Reopen that question when the repository shows a less-trusted executable,
+search directory, environment writer or real privilege boundary. There is no
+tool-name allowlist, cross-file builder evaluation or compiler requirement here.
+
 ## Ordinary patterns excluded from both queues
 
 These belong in **Neither**, rather than becoming permanent Comprehensive work.

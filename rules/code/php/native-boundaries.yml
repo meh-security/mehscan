@@ -83,8 +83,8 @@
     - https://www.php.net/manual/en/function.json-decode.php
     - https://www.php.net/manual/en/wrappers.php.php
 - id: php-command-execution
-  version: 1
-  title: PHP shell command execution
+  version: 2
+  title: PHP process or shell execution
   language: php
   kind: sink
   capability: process_execution

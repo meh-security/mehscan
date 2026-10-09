@@ -996,13 +996,23 @@ fn process_operand_is_dynamic(item: &Evidence) -> bool {
     if item.tags.iter().any(|tag| tag == "shell-command-text") {
         return capture_is_dynamic(item, &["shell_command", "arguments", "command"]);
     }
-    // Rust builder-chain matches also contain the nested Command::new call.
-    // The constructor owns executable selection; later .arg/.args matches do
-    // not create another dynamic-executable question for the same launch.
-    if item.rule_id == "rust-process-execution" && item.captures.contains_key("arguments") {
-        return false;
+    // An escaping Rust chain carries a recovered executable. A standalone
+    // arg call on a typed/opaque builder does not establish program selection.
+    if item.rule_id == "rust-process-execution"
+        && item.captures.contains_key("arguments")
+        && !item
+            .tags
+            .iter()
+            .any(|t| t == "process-invocation:actual-launch")
+    {
+        return capture_is_dynamic(item, &["executable"]);
     }
-    if capture_is_dynamic(item, &["executable", "command"]) {
+    let executable_role = if item.captures.contains_key("executable") {
+        "executable"
+    } else {
+        "command"
+    };
+    if capture_is_dynamic(item, &[executable_role]) {
         return true;
     }
     fixed_literal_string(item, "command").is_some_and(is_shell_name)
@@ -1011,8 +1021,9 @@ fn process_operand_is_dynamic(item: &Evidence) -> bool {
 
 /// Recovers exact local launch semantics that variadic AST captures cannot
 /// represent on their own. This stays inside the matched invocation or Rust
-/// builder chain and does not infer values across statements or call sites.
-fn annotate_process_semantics(language: Language, source: &str, item: &mut Evidence) {
+/// builder chain. The local construction pass may supply earlier operands;
+/// this function does not itself traverse statements or call sites.
+pub(super) fn annotate_process_semantics(language: Language, source: &str, item: &mut Evidence) {
     let start = item.location.start.byte_offset.min(source.len());
     let end = item.location.end.byte_offset.min(source.len());
     let operation = source.get(start..end).unwrap_or_default();
@@ -1040,14 +1051,14 @@ fn annotate_process_semantics(language: Language, source: &str, item: &mut Evide
         insert_process_capture(item, operation, "executable", value, offset);
     }
 
-    let shell_api = item.tags.iter().any(|tag| tag == "shell-command-text")
-        || process_is_shell_api(language, source, item);
     let shell_executable = item
         .captures
         .get("executable")
         .or_else(|| item.captures.get("command"))
         .and_then(|capture| quoted_string(capture.text.trim()))
         .is_some_and(is_shell_name);
+    let shell_api = process_is_shell_api(language, source, item)
+        || (!shell_executable && item.tags.iter().any(|tag| tag == "shell-command-text"));
     if !shell_api && !shell_executable {
         push_tag(&mut item.tags, "process-invocation:executable-selection");
         return;
@@ -1056,8 +1067,7 @@ fn annotate_process_semantics(language: Language, source: &str, item: &mut Evide
     push_tag(&mut item.tags, "process-invocation:shell-command");
 
     // The parsed options adapter already selected the actual argv operand.
-    if (item.captures.contains_key("shell_command")
-        && (item.captures.contains_key("shell_mode") || language == Language::Python))
+    if item.captures.contains_key("shell_command")
         || (language == Language::Python && item.captures.contains_key("posix_shell_command"))
     {
         return;
@@ -1233,7 +1243,12 @@ fn process_is_shell_api(language: Language, source: &str, item: &Evidence) -> bo
         item.rule_id.as_str(),
         "php-command-execution" | "php-shell-command-operator"
     ) {
-        return true;
+        return !item.tags.iter().any(|t| {
+            matches!(
+                t.as_str(),
+                "process-invocation:direct-api" | "process-invocation:unresolved-shell"
+            )
+        });
     }
     if item
         .symbol_resolution

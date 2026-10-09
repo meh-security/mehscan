@@ -6,7 +6,7 @@ import (
 )
 
 func run(ctx context.Context, command string) {
-	exec.Command(command)
-	exec.CommandContext(ctx, command, "--version")
+	exec.Command(command).Run()
+	exec.CommandContext(ctx, command, "--version").Run()
 }
 

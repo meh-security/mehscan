@@ -305,8 +305,8 @@ fn builds_language_neutral_self_contained_path_reviews() {
             .iter()
             .filter(|review| review.candidate.protections.is_empty())
             .all(|review| review.open_questions.iter().any(|question| {
-                question.contains("avoid a command shell")
-                    && question.contains("structured process arguments")
+                question.contains("Who controls the executable")
+                    && question.contains("target program's argument semantics")
             }))
     );
 }
@@ -793,13 +793,13 @@ fn deduplicates_exact_csharp_operations_without_merging_roles_or_calls() {
     );
     assert_eq!(
         count("csharp-process-start-info"),
-        3,
-        "separate starts remain separate jobs"
+        4,
+        "separate starts and fixed executables with dynamic argv remain separate jobs"
     );
     assert_eq!(
         count("csharp-process-start"),
-        3,
-        "unresolved descriptor, direct overload and non-admitted companion remain"
+        2,
+        "unresolved descriptor and direct overload remain; admitted descriptors own companions"
     );
     for item in anchors
         .iter()
@@ -818,8 +818,8 @@ fn deduplicates_exact_csharp_operations_without_merging_roles_or_calls() {
         .map(|entry| entry.count)
         .sum::<usize>();
     assert_eq!(
-        superseded, 6,
-        "three copy-source and three descriptor duplicates"
+        superseded, 7,
+        "three copy-source and four descriptor duplicates"
     );
 }
 

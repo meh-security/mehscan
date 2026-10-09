@@ -456,6 +456,47 @@ pub(crate) fn scan_source(
                 let mut captures = BTreeMap::new();
                 let mut literal_values = BTreeMap::new();
                 for (semantic_name, variable_name) in &compiled_pattern.specification.captures {
+                    if compiled_rule.rule.capability == Capability::ProcessExecution {
+                        let multiple = matched.get_env().get_multiple_matches(variable_name);
+                        if multiple.len() > 1 {
+                            let first = &multiple[0];
+                            let last = multiple.last().expect("nonempty capture");
+                            let mut capture_location = location(path, first);
+                            capture_location.end = location(path, last).end;
+                            captures.insert(
+                                semantic_name.clone(),
+                                Capture {
+                                    text: source[first.range().start..last.range().end].into(),
+                                    location: capture_location,
+                                },
+                            );
+                            let values = multiple
+                                .iter()
+                                .map(|n| literals.evaluate(n))
+                                .collect::<Vec<_>>();
+                            let known = values.iter().all(|f| {
+                                f.state == mehscan_core::LiteralState::Known && f.value.is_some()
+                            });
+                            literal_values.insert(
+                                semantic_name.clone(),
+                                mehscan_core::LiteralEvaluation {
+                                    state: if known {
+                                        mehscan_core::LiteralState::Known
+                                    } else {
+                                        mehscan_core::LiteralState::Unknown
+                                    },
+                                    value: known.then(|| {
+                                        mehscan_core::LiteralValue::Array(
+                                            values.into_iter().filter_map(|f| f.value).collect(),
+                                        )
+                                    }),
+                                    constant_fragments: Vec::new(),
+                                    references: Vec::new(),
+                                },
+                            );
+                            continue;
+                        }
+                    }
                     let captured =
                         matched
                             .get_env()
@@ -473,6 +514,7 @@ pub(crate) fn scan_source(
                             && matches!(
                                 compiled_rule.rule.id.as_str(),
                                 "php-file-inclusion"
+                                    | "php-command-execution"
                                     | "php-html-output"
                                     | "php-filesystem-write"
                                     | "php-filesystem-copy-write"
@@ -1611,6 +1653,8 @@ pub(crate) fn scan_source(
         super::php::add_operand_facts(path, &php_operand_nodes, context, &literals, &mut evidence);
     }
     super::node_operands::annotate(language, source, &root, &mut evidence);
+    super::python_operands::annotate(language, &root, &mut evidence);
+    super::process_cleanup::annotate(language, source, &root, &literals, &mut evidence);
     super::native_query::annotate(language, &root, &literals, &mut evidence);
     super::database_cleanup::annotate(language, &root, &mut evidence);
     super::extended_database::attach_query_construction(&root, &mut evidence);
@@ -1833,7 +1877,6 @@ pub(crate) fn scan_source(
     security_paths.append(&mut native_remaining_input_paths);
     security_paths.sort_by(|left, right| left.id.cmp(&right.id));
     let security_paths_microseconds = paths_started.elapsed().as_micros();
-    super::python_operands::annotate(language, &root, &mut evidence);
     super::go_operands::annotate(language, &root, &mut evidence);
     super::decision_origins::annotate(language, source, &root, &mut evidence);
     super::csharp_operands::annotate(language, &root, &mut evidence);

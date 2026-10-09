@@ -32,6 +32,20 @@ pub(super) fn add_operand_facts<'a>(
         .any(|item| item.rule_id == "php-html-output")
         .then(|| review::Producers::collect(&context.root));
     for item in evidence {
+        if item.rule_id == "php-command-execution" {
+            if let Some(node) = item.captures.get("command").and_then(|c| {
+                nodes.get(&(c.location.start.byte_offset, c.location.end.byte_offset))
+            }) {
+                let node = unwrap_operand(node.clone());
+                if let Some(call) = node
+                    .ancestors()
+                    .find(|n| n.kind().as_ref() == "function_call_expression")
+                {
+                    process_operands(item, &call, context, literals);
+                }
+            }
+            continue;
+        }
         let role = match item.rule_id.as_str() {
             "php-file-inclusion" => "path",
             "php-html-output" => "content",
@@ -223,6 +237,108 @@ pub(super) fn add_operand_facts<'a>(
         };
         item.context.operand_facts.push(fact);
     }
+}
+
+fn process_operands<'a>(
+    item: &mut mehscan_core::Evidence,
+    call: &PhpNode<'a>,
+    context: &PhpContext<'a>,
+    literals: &super::literals::LiteralEnvironment<'a, StrDoc<SupportLang>>,
+) {
+    let Some(api) = call
+        .field("function")
+        .and_then(|n| context.resolve(&n, true))
+    else {
+        return;
+    };
+    let Some(args) = call_arguments(call) else {
+        item.tags.push("process-invocation:unresolved-shell".into());
+        return;
+    };
+    let roles: &[(usize, &str)] = match api.as_str() {
+        "pcntl_exec" => &[(1, "arguments"), (2, "environment")],
+        "proc_open" => &[
+            (3, "working_directory"),
+            (4, "environment"),
+            (5, "process_options_operand"),
+        ],
+        _ => return,
+    };
+    for (index, role) in roles {
+        if let Some(n) = args.get(*index) {
+            item.captures.insert(
+                (*role).into(),
+                Capture {
+                    text: n.text().into_owned(),
+                    location: super::matcher::location(&item.location.path, n),
+                },
+            );
+            item.context
+                .literals
+                .insert((*role).into(), literals.evaluate(n));
+        }
+    }
+    if api == "pcntl_exec" {
+        item.tags.push("process-invocation:direct-api".into());
+    } else if let Some(argv) = args
+        .first()
+        .filter(|n| n.kind().as_ref() == "array_creation_expression")
+    {
+        let values = argv
+            .children()
+            .filter(|n| n.kind().as_ref() == "array_element_initializer")
+            .collect::<Vec<_>>();
+        if !values.is_empty()
+            && values.iter().all(|n| {
+                n.children().filter(|n| n.is_named()).count() == 1 && !n.text().contains("...")
+            })
+        {
+            let first = values[0].children().find(|n| n.is_named()).unwrap();
+            item.captures.insert(
+                "command".into(),
+                Capture {
+                    text: first.text().into_owned(),
+                    location: super::matcher::location(&item.location.path, &first),
+                },
+            );
+            item.context
+                .literals
+                .insert("command".into(), literals.evaluate(&first));
+            item.captures.insert(
+                "arguments".into(),
+                Capture {
+                    text: argv.text().into_owned(),
+                    location: super::matcher::location(&item.location.path, argv),
+                },
+            );
+            item.context
+                .literals
+                .insert("arguments".into(), literals.evaluate(argv));
+            item.tags.push("process-invocation:direct-api".into());
+        } else {
+            item.tags.push("process-invocation:unresolved-shell".into());
+        }
+    } else if args
+        .first()
+        .is_none_or(|n| !matches!(n.kind().as_ref(), "string" | "encapsed_string"))
+        || args.get(5).is_some()
+    {
+        item.tags.push("process-invocation:unresolved-shell".into());
+    }
+}
+
+fn call_arguments<'a>(call: &PhpNode<'a>) -> Option<Vec<PhpNode<'a>>> {
+    let args = call
+        .field("arguments")?
+        .children()
+        .filter(|n| n.is_named())
+        .collect::<Vec<_>>();
+    if args.iter().any(|n| {
+        n.field("name").is_some() || n.dfs().any(|c| c.kind().as_ref() == "variadic_unpacking")
+    }) {
+        return None;
+    }
+    Some(args.into_iter().map(unwrap_operand).collect())
 }
 
 fn numeric_output<'a>(node: &PhpNode<'a>, context: &PhpContext<'a>) -> Option<String> {

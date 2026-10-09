@@ -22,7 +22,7 @@ class Operations
         // No descriptor definition: the generic observation remains necessary.
         Process.Start(unknown);
         Process.Start(executable, arguments);
-        // A non-admitted fixed-executable companion must not consume this job.
+        // A fixed executable still leaves dynamic arguments; its descriptor owns this job.
         Process.Start(new ProcessStartInfo("chmod", arguments) { UseShellExecute = false });
     }
 }

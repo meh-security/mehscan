@@ -3446,12 +3446,33 @@ fn protection_belongs_to_sink(
     family: &RelationContract,
 ) -> bool {
     if protection.capability == Capability::ProcessArgumentSeparation
-        && sink.context.operand_facts.iter().any(|fact| {
-            fact.role == "process_options"
-                && (fact.kind == mehscan_core::OperandFactKind::OperandBoundary
-                    || (fact.kind == mehscan_core::OperandFactKind::ProcessShellMode
-                        && fact.value != "false"))
-        })
+        && protection.rule_id != "php-shell-argument-quoting"
+        && (!(sink
+            .context
+            .literals
+            .get(if sink.captures.contains_key("executable") {
+                "executable"
+            } else {
+                "command"
+            })
+            .is_some_and(|f| {
+                f.state == mehscan_core::LiteralState::Known
+                    && matches!(f.value, Some(mehscan_core::LiteralValue::String(_)))
+            }))
+            || sink.tags.iter().any(|tag| {
+                matches!(
+                    tag.as_str(),
+                    "process-invocation:shell-command"
+                        | "process-invocation:unresolved-shell"
+                        | "process-invocation:unresolved-builder-state"
+                )
+            })
+            || sink.context.operand_facts.iter().any(|fact| {
+                fact.role == "process_options"
+                    && (fact.kind == mehscan_core::OperandFactKind::OperandBoundary
+                        || (fact.kind == mehscan_core::OperandFactKind::ProcessShellMode
+                            && fact.value != "false"))
+            }))
     {
         return false;
     }
