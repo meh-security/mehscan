@@ -169,9 +169,17 @@ Keep their actual filter/pipeline consumers. This NoSQL slice does not close
 operator injection or independently settle resource authority.
 
 Modern EF Core `SqlQuery<T>(FormattableString)` parameterizes interpolation;
-legacy EF string overloads and `SqlQueryRaw` differ. The current native emitter
-does not reliably separate them. Bind the SDK/overload before excluding the
-modern form, rather than transferring safety from the method name alone.
+owned EF Core `SqlQuery` and `FromSql` with direct compiler interpolation or an
+unchanged local compiler-built `FormattableString` leave both injection queues.
+The native emitter checks context inheritance, visible framework imports and
+conflicting declarations/overrides; this does not require Roslyn. No separate
+sink/control row is extracted for that ordinary bound operation. Raw APIs,
+legacy EF string APIs, ordinary string variables and unknown SDK/overloads keep
+their construction question. Helper/factory-produced formats, reassignments,
+ref/out escapes and local operands used inside nested functions are unresolved;
+the type `FormattableString` alone is not a fixed-format proof. Independently
+shown resource-authority effects remain separate. Refresh inventories with
+schema 10 when resuming repository review.
 
 Apply the same distinctions to ADO.NET/Dapper/EF, JDBC/JPA/Hibernate/Exposed,
 Node drivers/query builders, DB-API/Django/SQLAlchemy, PDO/mysqli/Laravel,
