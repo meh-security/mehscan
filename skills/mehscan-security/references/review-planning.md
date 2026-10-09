@@ -2,6 +2,10 @@
 
 ## Modes and queue
 
+For membership and rationale, use [review scope policy](review-scope.md).
+Current queue assignments can be broader than that policy; inspect concentrated
+lanes with real snippets and record useful refinements in the existing plan.
+
 For a supplied manifest with exact IDs, review those IDs directly. Otherwise,
 before opening many requests, follow this planning guide.
 Pre-assess the source and requested scope: identify the stack and deployed
@@ -235,29 +239,15 @@ mutations, escapes and uncertain object slots remain active. Comprehensive
 retains the exact ID. Reopen if the driver is replaced or this operation has
 another consequential relationship.
 
-PHP output and includes use admission before packaging. Ordinary unbound output
-and fixed-code includes remain raw searchable evidence, not mandatory jobs in
-either mode and not safe verdicts. Their target files' independent SQL, execution,
-file and access leads remain eligible. Inventory schema 4 requires a fresh scan;
-do not reuse an older inventory or its ledger.
-
-`php_relationship_research` retains source/sink co-occurrence, bound local
-stored/helper producers, runtime-selected loaders, observed write/load targets
-and active interpretation contexts in Comprehensive. Producer facts are bounded
-navigation: verify the reaching writes, transformations, actual writer and actor.
-They do not establish taint, a vulnerability or protection. Value keeps shown
-raw request-to-output/code-selection constructs plus independently dangerous
-families; consequential relationships alone do not make all PHP output Value work.
-
-Use the attack-surface map to inspect shared rendering/loading implementations,
-not every occurrence. Promote a shown unsafe mechanism, justified fix or
-consequential reviewer-origin lead. Use `--selection all` for retained research;
-use source/symbol/references for raw excluded observations. Same-file/rule
-`issue`, `needs_review` or conflicting verdicts reopen retained research in Value.
-Raw exclusions have no review IDs to reopen: record new exact locations as
-reviewer-origin leads. Unknown cross-file/framework producers may need an
-explicit category sweep. Neither mode claims complete PHP XSS or inclusion
-coverage merely because its queue is exhausted.
+PHP queue conditions and their limits are in [review scope](review-scope.md).
+Inventory schema 4 requires a fresh scan; do not reuse an older inventory or its
+ledger. Use `--selection all` for `php_relationship_research`. Verify its bounded
+producer navigation against the actual writes, transformations, writer and actor.
+Same-file/rule `issue`, `needs_review` or conflicting verdicts reopen retained
+research in Value. Excluded locations have no review IDs to reopen: use
+source/symbol/references and record consequential discoveries as reviewer-origin
+leads. Inspect shared renderers/loaders through the attack-surface map; a known
+cross-file/framework gap can justify a category sweep.
 
 The overview's `deterministic_operand_closures` counts exact output anchors
 already closed by the scanner. `inventory.json`'s `admission_audit.closed_operands`

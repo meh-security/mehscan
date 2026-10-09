@@ -69,6 +69,10 @@ disjoint agent assignments when requested. Read it for repository scope or
 queue decisions, then use the supplied-bundle flow for each selected chunk.
 Keep the whole-run plan current and continue authorized work in auto mode.
 
+Use [review scope policy](references/review-scope.md) when choosing modes or
+reconsidering a noisy family. It defines practical admission and language
+differences; load it once for those decisions, not for each supplied bundle.
+
 Reuse an inventory enriched with supplied Roslyn or TypeScript context;
 do not rerun a compiler per ID. Planning describes context flags and scope
 lanes. Never turn deferred work into a safe verdict.
