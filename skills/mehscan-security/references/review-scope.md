@@ -37,6 +37,10 @@ effect is worthwhile; it does not override an ordinary/low-effect exclusion.
 Do not require theoretical format, environment or plugin attacks to keep a case.
 Reopen when source or repository knowledge supplies the missing practical edge.
 
+A decision-critical producer question does not itself promote an ordinary
+medium-impact redirect into Value. Keep its exact Comprehensive ID and origin
+question; promote when evidence shows a consequential credential/effect chain.
+
 ## Language and backend differences
 
 The impact test is shared. Differences below concern facts the scanner can
@@ -48,8 +52,8 @@ establish, not different standards for what constitutes a useful issue.
 | **C#** | Optional Roslyn supplies actual SDK identity, scalar/Guid/date normalization, closed selectors, helper/property/argument origins and actual HTTP dispatch. Shared filesystem/destination questions defer repetitions, preserving exact Comprehensive IDs. URI setters and directory setup are context. | Facts require a bound compiler context; missing facts do not prove custom calls safe. A record key is not the path string stored in its selected record. Check response destinations before assigning HTML; optional backend facts are not required for the base workflow. |
 | **Java** | Inspect query text separately from prepared-statement bindings. Actual `send` is an effect; an HTTP builder alone is context. Ordinary Jackson reading is excluded unless project-visible unsafe polymorphic/default-typing policy warrants research. | A policy elsewhere is a lead until tied to the mapper. Framework guards, wrappers and annotations still need exact binding. |
 | **Kotlin** | Apply the same JVM interpreter, mapper and filesystem distinctions. Kotlin unsafe Jackson policy syntax can retain research even without a dedicated policy emitter. Owned ordinary directory setup is excluded. | Java/Kotlin API interoperability does not establish identical framework coverage. Do not infer absent policy from a missing Java-only detector. |
-| **JavaScript / TypeScript / TSX** | Preserve raw DOM/trusted HTML and real process/filesystem effects. Proven build/vendor/generated ownership can remove ordinary application Value work. Fixed `pg` query objects with separate values defer their grammar question. Owned `js-yaml` v4 default data schemas are ordinary decoding; custom/unknown policies retain their question. Explicit browser GET/HEAD context prevents automatic server-SSRF interpretation. Optional TypeScript facts improve identity, producers and literal selectors. | Template/custom renderer controls and alternate writers need source checks. Browser GET deferral currently retains Comprehensive IDs even when no sensitive effect has been shown; audit that lane against the family criteria. |
-| **Python** | Executable pickle/unsafe loader behavior differs from normal data parsing. Supported autoescaped Django responses close the exact output property. Marshal inventory is excluded without a connection and is otherwise research, not automatic code execution. `compile` alone is context. | Shell behavior depends on actual options/interpreter/platform. Custom serializers, autoescape settings and dynamic template inputs need exact evidence. |
+| **JavaScript / TypeScript / TSX** | Preserve raw DOM/trusted HTML and real process/filesystem effects. Proven build/vendor/generated ownership can remove ordinary application Value work. Fixed `pg` query objects with separate values defer their grammar question. Owned `js-yaml` v4 default data schemas are ordinary decoding; custom/unknown policies retain their question. Explicit browser GET/HEAD context prevents automatic server-SSRF interpretation. Unconnected intrinsic `a`/`area` hrefs that merely forward an unchanged parameter defer to Comprehensive. Custom component href props are not direct browser sinks. Optional TypeScript facts improve identity, producers and literal selectors. | Link deferral is not a scheme/authority proof. Constructed, defaulted or reassigned operands, observed input relationships, resource hrefs and raw HTML remain active. Template/custom renderer controls and alternate writers need source checks. Browser GET deferral currently retains Comprehensive IDs even when no sensitive effect has been shown; audit that lane against the family criteria. |
+| **Python** | Executable pickle/unsafe loader behavior differs from normal data parsing. Supported autoescaped Django responses close the exact output property. Owned trusted-markup calls containing only fixed whitespace/`&nbsp;` repetition do not create an XSS review. Marshal inventory is excluded without a connection and is otherwise research, not automatic code execution. `compile` alone is context. | Fixed padding does not close arbitrary `mark_safe`, formatting or dynamic text. HTML attribute escaping does not establish safe attribute names/event handlers/URL semantics. Shell behavior depends on actual options/interpreter/platform. Custom serializers, autoescape settings and dynamic template inputs need exact evidence. |
 | **PHP** | Value keeps shown raw request-to-output/code-selection constructs. Comprehensive retains represented flows/co-occurrences, bound local stored/helper reads, runtime-selected loaders, matched write/load targets and active interpreted output contexts. Ordinary unbound output/constant-shaped includes leave both queues. Complete native numeric output closes its own output property. | Producer navigation is bounded and mostly same-file/native-reader based. Framework and cross-file property/writer chains can be missed. Known important renderers/loaders may warrant a category sweep; queue exhaustion is not complete XSS/include coverage. |
 | **Go** | Use owned API identities and concrete effects. Ordinary mkdir and effect-free resource filters are excluded. Unconnected gob inventory is excluded; connected gob is research unless a real impact qualifies it. | No optional Go compiler backend is assumed. Imports/helpers and data decoding do not by themselves prove destination authority or significant impact. |
 | **Rust** | Keep concrete command/filesystem/trusted-output and represented unsafe effects. Ordinary directory setup/listing and Serde data decoding are excluded. Syntax-only unsafe/interop rules were retired. | Direct process launch is not shell injection. CLI command authority and custom data consumers may need research. No Rust compiler backend or full borrow/CFG analysis is assumed. |
@@ -124,3 +128,25 @@ Next admission refinements should establish the first five patterns generically,
 starting with actual output receivers and closed path producers. Do not add an
 extra model pass to classify ordinary operations. Prefer dropping a wrong sink
 classification over deferring it to Comprehensive.
+
+### Wagtail calibration (2026-10-09)
+
+A source-only scan of Wagtail at `e5117ba8` produced 154 Value/154 Comprehensive
+IDs. The generic changes above produce **103 Value/153 Comprehensive**: 34
+redirect questions and 16 unchanged link parameters defer; one fixed-padding
+candidate leaves both queues. No compiler backend or application/path allowlist
+was used. Regenerate inventory and ledgers with inventory schema 5.
+
+Skill review covered 23 selected IDs, not the whole application: two guarded
+redirects, fixed padding, a narrowing locale lookup and sixteen links sharing the
+same default story URL were resolved as not issues in that scope. Three questions
+remain: image attribute-writer authority, RawHTMLBlock publishing authority and
+metadata exposure on denied parent selection. Those meaningful questions remain
+in Value. The story result does not certify arbitrary overridden URL arguments.
+
+The 62 ORM resource-access IDs remain the largest lane. A scalar selector used
+only to narrow an existing queryset can be ordinary; a request-selected record
+whose metadata or effect crosses authority is worthwhile. The scanner does not
+yet prove the former downstream-use restriction, so this calibration does not
+add a blanket `.get()`/record-key exclusion. Next test that effect distinction
+against real caller uses, retaining invalid-form and error-response disclosures.

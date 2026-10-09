@@ -415,10 +415,13 @@ fn anchor_line<'a>(item: &Evidence, sources: &'a RepositorySources) -> &'a str {
 }
 
 pub(super) fn comprehensive_hint(item: &Evidence) -> Option<ValueReviewHint> {
+    // An origin can decide the redirect verdict without making ordinary
+    // navigation high-value. Keep the question and exact Comprehensive ID.
     if item
         .tags
         .iter()
         .any(|tag| tag == "review-origin:decision-critical")
+        && item.cwe_candidates != ["CWE-601"]
     {
         return None;
     }

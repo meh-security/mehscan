@@ -500,8 +500,20 @@ pub(crate) fn add_browser_observations<'tree>(
         }
 
         if kind == "jsx_attribute"
+            && jsx_attribute_is_on_intrinsic_element(&node)
             && let Some(content) = jsx_url_attribute_content(&node)
         {
+            let element = jsx_attribute_element_name(&node).unwrap_or_default();
+            let url_context = if matches!(element.as_str(), "a" | "area") {
+                "url-consumer:link-navigation"
+            } else {
+                "url-consumer:element-href"
+            };
+            let origin_context = if unchanged_link_parameter(&content) {
+                "link-origin:unchanged-parameter"
+            } else {
+                "link-origin:producer-unresolved"
+            };
             let content_text = normalized(&content.text());
             if react_state.contains(&content_text) {
                 push_observation(
@@ -533,7 +545,14 @@ pub(crate) fn add_browser_observations<'tree>(
                 &format!("{}-react-url-attribute-output", language_prefix(language)),
                 "content",
                 "React href attribute",
-                &["browser", "react", "url-attribute", "xss"],
+                &[
+                    "browser",
+                    "react",
+                    "url-attribute",
+                    "xss",
+                    url_context,
+                    origin_context,
+                ],
                 Confidence::High,
                 "React href attribute",
                 comments,
@@ -1582,6 +1601,16 @@ fn vue_render_inner_html_content<'tree>(
 }
 
 fn jsx_attribute_is_on_intrinsic_element(attribute: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    jsx_attribute_element_name(attribute).is_some_and(|name| {
+        !name.contains('.')
+            && name
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_ascii_lowercase())
+    })
+}
+
+fn jsx_attribute_element_name(attribute: &Node<'_, StrDoc<SupportLang>>) -> Option<String> {
     attribute
         .ancestors()
         .find(|ancestor| {
@@ -1590,16 +1619,8 @@ fn jsx_attribute_is_on_intrinsic_element(attribute: &Node<'_, StrDoc<SupportLang
                 "jsx_opening_element" | "jsx_self_closing_element"
             )
         })
-        .and_then(|element| {
-            normalized(&element.text())
-                .trim_start_matches('<')
-                .split(|character: char| {
-                    character.is_whitespace() || matches!(character, '>' | '/')
-                })
-                .next()
-                .and_then(|name| name.chars().next())
-        })
-        .is_some_and(|character| character.is_ascii_lowercase())
+        .and_then(|element| element.field("name"))
+        .map(|name| name.text().trim().to_string())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1682,6 +1703,47 @@ fn jsx_url_attribute_content<'tree>(
     attribute: &Node<'tree, StrDoc<SupportLang>>,
 ) -> Option<Node<'tree, StrDoc<SupportLang>>> {
     jsx_attribute_content(attribute, "href")
+}
+
+fn unchanged_link_parameter(value: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    if value.kind().as_ref() != "identifier" {
+        return false;
+    }
+    let name = value.text();
+    let Some(function) = value.ancestors().find(is_function) else {
+        return false;
+    };
+    let Some(parameters) = function
+        .field("parameters")
+        .or_else(|| function.field("parameter"))
+    else {
+        return false;
+    };
+    if parameters.dfs().any(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "assignment_pattern" | "object_assignment_pattern"
+        ) || (matches!(
+            node.kind().as_ref(),
+            "required_parameter" | "optional_parameter"
+        ) && node.field("value").is_some())
+    }) || !parameters.dfs().any(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "identifier" | "shorthand_property_identifier_pattern"
+        ) && node.text() == name
+    }) {
+        return false;
+    }
+    !function.dfs().any(|node| {
+        let target = match node.kind().as_ref() {
+            "assignment_expression" | "augmented_assignment_expression" => node.field("left"),
+            "variable_declarator" => node.field("name"),
+            "update_expression" => node.field("argument"),
+            _ => None,
+        };
+        target.is_some_and(|target| target.dfs().any(|part| part.text() == name))
+    })
 }
 
 fn jsx_attribute_content<'tree>(
@@ -1855,13 +1917,16 @@ fn push_observation<'tree>(
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
     evidence: &mut Vec<Evidence>,
 ) {
+    let operand_literal = (kind == EvidenceKind::Sink
+        && matches!(
+            capability,
+            Capability::HtmlOutput | Capability::BrowserNavigation
+        ))
+    .then(|| literals.evaluate(value));
     if comments.is_in_comment(anchor.range())
-        || (kind == EvidenceKind::Sink
-            && matches!(
-                capability,
-                Capability::HtmlOutput | Capability::BrowserNavigation
-            )
-            && matches!(literals.evaluate(value).state, LiteralState::Known))
+        || operand_literal
+            .as_ref()
+            .is_some_and(|literal| literal.state == LiteralState::Known)
         || evidence.iter().any(|item| {
             item.capability == capability
                 && item.location.start.byte_offset == anchor.range().start
@@ -1903,6 +1968,9 @@ fn push_observation<'tree>(
             comment: false,
             reachability: Some(reachability::classify(anchor, literals)),
             availability: Some(conditional.availability_for(anchor.range())),
+            literals: operand_literal.map_or_else(BTreeMap::new, |literal| {
+                BTreeMap::from([(role.to_string(), literal)])
+            }),
             ..EvidenceContext::default()
         },
         symbol_resolution: Some(SymbolResolution {

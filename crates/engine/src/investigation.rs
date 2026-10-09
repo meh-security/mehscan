@@ -342,6 +342,34 @@ fn ordinary_browser_request_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
     })
 }
 
+fn ordinary_browser_link_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
+    if anchor.capability != Capability::HtmlOutput
+        || anchor.cwe_candidates != ["CWE-79"]
+        || !anchor.rule_id.ends_with("react-url-attribute-output")
+        || !anchor
+            .tags
+            .iter()
+            .any(|tag| tag == "url-consumer:link-navigation")
+        || !anchor
+            .tags
+            .iter()
+            .any(|tag| tag == "link-origin:unchanged-parameter")
+        || anchor
+            .context
+            .literals
+            .get("content")
+            .is_none_or(|literal| literal.state != LiteralState::Unknown)
+    {
+        return None;
+    }
+    Some(ValueReviewHint {
+        reason: "unconnected_browser_link_destination".into(),
+        target: anchor.location.path.clone(),
+        assumption: "Ordinary link destination without an observed input relationship. Comprehensive checks URL authority/scheme and consequential uses; source-proven unsafe destinations or credential/effect chains warrant Value. No safe verdict.".into(),
+        depends_on: None,
+    })
+}
+
 fn signed_dotnet_directory_api(anchor: &Evidence, methods: &[&str]) -> bool {
     anchor.context.operand_facts.iter().any(|fact| {
         fact.kind == mehscan_core::OperandFactKind::SemanticIdentity
@@ -451,7 +479,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "4";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "5";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -1624,6 +1652,7 @@ fn build_path_review_jobs_internal(
                         .then(|| {
                             local_bound_query_hint(anchor)
                                 .or_else(|| ordinary_browser_request_hint(anchor))
+                                .or_else(|| ordinary_browser_link_hint(anchor))
                         })
                         .flatten()
                 }),
@@ -12435,6 +12464,15 @@ fn is_context_only_uploaded_filename_check(item: &Evidence, group: &[Evidence]) 
 }
 
 fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &RepositorySources) -> bool {
+    if item.capability == Capability::HtmlOutput
+        && item.cwe_candidates == ["CWE-79"]
+        && item
+            .tags
+            .iter()
+            .any(|tag| tag == "html-origin:fixed-padding")
+    {
+        return true;
+    }
     if item.kind != EvidenceKind::Sink {
         return false;
     }

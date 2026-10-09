@@ -240,7 +240,7 @@ retains the exact ID. Reopen if the driver is replaced or this operation has
 another consequential relationship.
 
 PHP queue conditions and their limits are in [review scope](review-scope.md).
-Inventory schema 4 requires a fresh scan; do not reuse an older inventory or its
+Inventory schema 5 requires a fresh scan; do not reuse an older inventory or its
 ledger. Use `--selection all` for `php_relationship_research`. Verify its bounded
 producer navigation against the actual writes, transformations, writer and actor.
 Same-file/rule `issue`, `needs_review` or conflicting verdicts reopen retained

@@ -34,6 +34,23 @@ pub(crate) fn annotate(
         }
         if item.capability == Capability::HtmlOutput {
             annotate_html_semantics(source, item);
+            if language == Language::Python
+                && item.rule_id == "python-trusted-markup-bypass"
+                && item.symbol_resolution.as_ref().is_some_and(|symbol| {
+                    matches!(
+                        symbol.canonical.as_str(),
+                        "django.utils.safestring.mark_safe" | "markupsafe.Markup" | "flask.Markup"
+                    )
+                })
+                && item
+                    .captures
+                    .get("content")
+                    .and_then(|capture| capture_node(root, capture))
+                    .is_some_and(|node| python_fixed_html_padding(&node, 0))
+            {
+                push_tag(&mut item.tags, "html-origin:fixed-padding");
+                continue;
+            }
         }
 
         if has_marker(item) {
@@ -70,6 +87,53 @@ pub(crate) fn annotate(
                 &format!("review-language:{}", language_tag(language)),
             );
         }
+    }
+}
+
+/// String repetition changes the amount of fixed whitespace, not HTML grammar.
+/// Keep formatting, interpolation and variable text outside this narrow closure.
+fn python_fixed_html_padding(node: &Node<'_, StrDoc<SupportLang>>, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match node.kind().as_ref() {
+        "string" => {
+            let text = node.text();
+            if text
+                .trim_start()
+                .chars()
+                .take_while(|character| character.is_ascii_alphabetic())
+                .any(|character| matches!(character, 'b' | 'B'))
+                || node.dfs().any(|child| {
+                    matches!(child.kind().as_ref(), "interpolation" | "escape_sequence")
+                })
+            {
+                return false;
+            }
+            let contents = node
+                .children()
+                .filter(|child| child.kind().as_ref() == "string_content")
+                .map(|child| child.text().into_owned())
+                .collect::<String>();
+            !contents.is_empty()
+                && contents
+                    .replace("&nbsp;", " ")
+                    .chars()
+                    .all(char::is_whitespace)
+        }
+        "parenthesized_expression" => node
+            .children()
+            .find(|child| child.is_named())
+            .is_some_and(|child| python_fixed_html_padding(&child, depth + 1)),
+        "binary_operator"
+            if node
+                .field("operator")
+                .is_some_and(|operator| operator.text() == "*") =>
+        {
+            node.field("left")
+                .is_some_and(|left| python_fixed_html_padding(&left, depth + 1))
+        }
+        _ => false,
     }
 }
 
