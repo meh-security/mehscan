@@ -6,5 +6,5 @@ const prefix = "safe/"
 const command = prefix + "tool"
 
 func review() {
-	exec.Command(command)
+    exec.Command(command).Run()
 }

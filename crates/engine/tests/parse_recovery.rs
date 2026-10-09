@@ -34,7 +34,10 @@ fn retains_valid_security_evidence_outside_recovered_syntax_errors() {
     let recovered_evidence = result
         .evidence
         .iter()
-        .filter(|item| item.capability == Capability::ProcessExecution)
+        .filter(|item| {
+            item.capability == Capability::ProcessExecution
+                && item.kind == mehscan_core::EvidenceKind::Sink
+        })
         .collect::<Vec<_>>();
     assert_eq!(recovered_evidence.len(), expected.len());
     let recovered = recovered_evidence

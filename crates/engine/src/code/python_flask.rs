@@ -730,7 +730,6 @@ fn add_session_and_cookie_policy<'tree>(
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
     evidence: &mut Vec<Evidence>,
 ) {
-    let root_text = root.text().into_owned();
     let mut unsigned_session_emitted = false;
     let mut authenticated_session_emitted = false;
     for call in root.dfs().filter(|node| node.kind().as_ref() == "call") {
@@ -738,26 +737,61 @@ fn add_session_and_cookie_policy<'tree>(
             .field("function")
             .map(|node| node.text().into_owned())
             .unwrap_or_default();
+        let function = call
+            .ancestors()
+            .find(|node| node.kind().as_ref() == "function_definition");
+        let function_text = function
+            .as_ref()
+            .map(|node| node.text().into_owned())
+            .unwrap_or_default();
+        let cookie_operand = call.field("arguments").is_some_and(|arguments| {
+            arguments
+                .children()
+                .filter(|node| node.is_named())
+                .any(|argument| {
+                    if argument.text().contains("request.cookies") {
+                        return true;
+                    }
+                    argument.kind().as_ref() == "identifier"
+                        && function.as_ref().is_some_and(|function| {
+                            function
+                                .dfs()
+                                .filter(|node| node.kind().as_ref() == "assignment")
+                                .filter(|node| node.range().end < call.range().start)
+                                .filter(|node| {
+                                    node.field("left")
+                                        .is_some_and(|left| left.text() == argument.text())
+                                })
+                                .last()
+                                .is_some_and(|node| {
+                                    node.field("right").is_some_and(|right| {
+                                        right.text().contains("request.cookies")
+                                    })
+                                })
+                        })
+                })
+        });
         if !unsigned_session_emitted
             && callee.ends_with("base64.b64decode")
-            && root_text.contains("request.cookies")
-            && root_text.contains("json.loads")
-            && !root_text.contains("hmac.compare_digest")
-            && !root_text.contains("Fernet(")
+            && cookie_operand
+            && function_text.contains("json.loads")
+            && !function_text.contains("hmac.compare_digest")
         {
             push(
                 path,
                 &call,
-                EvidenceKind::SecurityConfiguration,
+                // Decoded cookie data does not establish an identity decision.
+                // Actual trust of its fields needs a consumer relationship.
+                EvidenceKind::Resource,
                 Capability::Authentication,
                 "python-flask-unsigned-client-session",
                 &["CWE-345", "CWE-565"],
                 vec![
                     "flask",
                     "session",
-                    "client-controlled-identity",
+                    "client-controlled-data",
                     "encoding-without-authentication",
-                    "recommendation:fix-application",
+                    "identity-consumer-not-established",
                 ],
                 "session",
                 comments,
@@ -767,9 +801,51 @@ fn add_session_and_cookie_policy<'tree>(
             );
             unsigned_session_emitted = true;
         } else if !authenticated_session_emitted
-            && callee.ends_with("decrypt")
-            && root_text.contains("Fernet(")
-            && root_text.contains("request.cookies")
+            && callee.strip_suffix(".decrypt").is_some_and(|receiver| {
+                if function
+                    .as_ref()
+                    .and_then(|node| node.field("parameters"))
+                    .is_some_and(|parameters| {
+                        parameters.dfs().any(|node| {
+                            node.kind().as_ref() == "identifier" && node.text() == receiver
+                        })
+                    })
+                {
+                    return false;
+                }
+                root.dfs()
+                    .filter(|node| node.kind().as_ref() == "assignment")
+                    .filter(|node| node.range().end < call.range().start)
+                    .filter(|node| {
+                        node.field("left")
+                            .is_some_and(|left| left.text() == receiver)
+                    })
+                    .filter(|node| {
+                        let owner = node
+                            .ancestors()
+                            .find(|ancestor| ancestor.kind().as_ref() == "function_definition");
+                        owner.is_none()
+                            || owner.as_ref().map(Node::range) == function.as_ref().map(Node::range)
+                    })
+                    .last()
+                    .is_some_and(|assignment| {
+                        let unconditional = assignment
+                            .ancestors()
+                            .find(|node| matches!(node.kind().as_ref(), "block" | "module"))
+                            .is_some_and(|block| {
+                                block.range().start <= call.range().start
+                                    && call.range().end <= block.range().end
+                            });
+                        unconditional
+                            && assignment.field("right").is_some_and(|value| {
+                                value.kind().as_ref() == "call"
+                                    && value
+                                        .field("function")
+                                        .is_some_and(|constructor| constructor.text() == "Fernet")
+                            })
+                    })
+            })
+            && cookie_operand
         {
             push(
                 path,

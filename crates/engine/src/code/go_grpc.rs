@@ -131,7 +131,7 @@ pub(crate) fn add_go_grpc_observations<'tree>(
                 if protected {
                     EvidenceKind::Validation
                 } else {
-                    EvidenceKind::SecurityConfiguration
+                    EvidenceKind::Resource
                 },
                 Capability::TlsConfiguration,
                 BTreeMap::from([("server".to_string(), capture(path, &call.node))]),

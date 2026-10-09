@@ -74,11 +74,11 @@ fn classifies_factory_commands_and_identity_account_policy() {
         ("csharp-identity-lockout-control", EvidenceKind::Validation),
         (
             "csharp-identity-password-policy-review",
-            EvidenceKind::SecurityConfiguration,
+            EvidenceKind::Resource,
         ),
         (
             "csharp-identity-lockout-policy-review",
-            EvidenceKind::SecurityConfiguration,
+            EvidenceKind::Resource,
         ),
     ] {
         assert_eq!(identity.get(&expected), Some(&1), "missing {expected:?}");

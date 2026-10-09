@@ -379,7 +379,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "21";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "22";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -6217,9 +6217,6 @@ fn observation_decision_facts(
         .find_map(|item| explicit_cookie_omission(&item.rule_id));
     let non_enforcing_rejection = evidence.iter().find_map(|item| {
         match item.rule_id.as_str() {
-            "typescript-password-confirmation-not-enforced-review" => Some(
-                "The supplied middleware excerpt explicitly establishes that a password-confirmation mismatch is used only for challenge telemetry before execution continues through `next()`; the required rejection is not enforced."
-            ),
             "typescript-registration-rejection-fallthrough-review" => Some(
                 "The supplied registration excerpt explicitly establishes that an invalid-input response is sent without returning before execution continues through `next()` to later registration middleware."
             ),
@@ -14447,24 +14444,20 @@ fn observation_review_questions(
     let has_node_weak_password = evidence
         .iter()
         .any(|item| item.rule_id.ends_with("weak-password-policy"));
-    let has_node_password_storage_policy = evidence
-        .iter()
-        .any(|item| item.rule_id.ends_with("password-storage-policy-review"));
+
     let has_node_registration_fallthrough = evidence.iter().any(|item| {
         item.rule_id
             .ends_with("registration-rejection-fallthrough-review")
     });
-    let has_node_password_confirmation = evidence.iter().any(|item| {
-        item.rule_id
-            .ends_with("password-confirmation-not-enforced-review")
-    });
+
     let has_node_knowledge_recovery = evidence.iter().any(|item| {
         item.rule_id
             .ends_with("knowledge-based-password-recovery-review")
     });
-    let has_node_session_cookie = evidence
-        .iter()
-        .any(|item| item.rule_id.contains("session-cookie-policy-"));
+    let has_node_session_cookie = evidence.iter().any(|item| {
+        item.kind == EvidenceKind::SecurityConfiguration
+            && item.rule_id.contains("session-cookie-policy-")
+    });
     let has_node_csrf_review = evidence
         .iter()
         .any(|item| item.rule_id.ends_with("cookie-session-csrf-review"));
@@ -14503,9 +14496,7 @@ fn observation_review_questions(
         && facts.iter().any(|fact| fact.role == "exact_caller_context");
     let has_precise_node_boundary = has_node_session_fixation
         || has_node_weak_password
-        || has_node_password_storage_policy
         || has_node_registration_fallthrough
-        || has_node_password_confirmation
         || has_node_knowledge_recovery
         || has_node_session_cookie
         || has_node_csrf_review
@@ -14579,24 +14570,14 @@ fn observation_review_questions(
                 .to_string(),
         );
     }
-    if has_node_password_storage_policy {
-        questions.push(
-            "Before this password storage boundary, does every account-creation path enforce an effective password-strength policy, or can an attacker submit an arbitrarily weak non-empty password? Hashing is storage protection, not strength validation."
-                .to_string(),
-        );
-    }
+
     if has_node_registration_fallthrough {
         questions.push(
             "After sending the invalid-registration response, does execution return or otherwise stop before the persistence middleware runs? Calling `next()` after the rejection can preserve the invalid account despite the response status."
                 .to_string(),
         );
     }
-    if has_node_password_confirmation {
-        questions.push(
-            "Does a password/repeated-password mismatch reach an executable rejection before account creation, or is the comparison used only for telemetry, challenge tracking, or logging before `next()` continues?"
-                .to_string(),
-        );
-    }
+
     if has_node_knowledge_recovery {
         questions.push(
             "Can publicly discoverable or guessable personal knowledge satisfy this security-answer check and reset an account password, and does effective per-account throttling materially prevent guessing? Verify the recovery design, not only whether the submitted answer matches its stored HMAC."

@@ -85,7 +85,8 @@ pub(crate) fn add_native_loaded_extent_observations<'tree>(
         }) {
             continue;
         }
-        let validation = overflow_validation(&scope, &extent, &load);
+        let validation = overflow_validation(&scope, &extent, &load)
+            .filter(|check| super::context::precedes_in_block(check, &extent.declaration));
 
         let source = make_evidence(
             path,
@@ -333,6 +334,7 @@ fn overflow_validation<'tree>(
             node.range().start > load.binding.range().end
                 && node.range().end < extent.declaration.range().start
         })
+        .filter(|node| super::context::precedes_in_block(node, &extent.declaration))
         .filter(|node| {
             node.field("consequence")
                 .is_some_and(|branch| branch_terminates(&branch))

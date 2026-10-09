@@ -24,16 +24,14 @@ fn admits_only_bounded_registration_and_recovery_policy_reviews() {
         .filter(|item| {
             item.kind == EvidenceKind::SecurityConfiguration
                 && [
-                    "password-storage-policy-review",
                     "registration-rejection-fallthrough-review",
-                    "password-confirmation-not-enforced-review",
                     "knowledge-based-password-recovery-review",
                 ]
                 .iter()
                 .any(|suffix| item.rule_id.ends_with(suffix))
         })
         .collect::<Vec<_>>();
-    assert_eq!(policy.len(), 4, "{policy:#?}");
+    assert_eq!(policy.len(), 2, "{policy:#?}");
     assert!(
         policy
             .iter()
@@ -48,8 +46,6 @@ fn admits_only_bounded_registration_and_recovery_policy_reviews() {
         suffixes,
         [
             "knowledge-based-password-recovery-review",
-            "password-confirmation-not-enforced-review",
-            "password-storage-policy-review",
             "registration-rejection-fallthrough-review",
         ]
         .into_iter()
@@ -77,7 +73,7 @@ fn keeps_non_enforcing_registration_checks_in_the_fail_open_contract() {
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(reviews.len(), 2, "{reviews:#?}");
+    assert_eq!(reviews.len(), 1, "{reviews:#?}");
     assert!(reviews.iter().all(|review| {
         review.title == "Review non-enforcing security decision"
             && review

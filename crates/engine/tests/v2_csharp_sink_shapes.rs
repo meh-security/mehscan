@@ -30,8 +30,10 @@ fn completes_typed_and_framework_csharp_sink_shapes_without_lookalike_paths() {
     assert_eq!(rule_counts["csharp-dapper-database-query"], 4);
     assert_eq!(rule_counts["csharp-aspnet-explicit-html-output"], 2);
     assert_eq!(rule_counts["csharp-controller-http-redirect"], 2);
-    assert_eq!(rule_counts["csharp-filesystem-read"], 2);
-    assert_eq!(rule_counts["csharp-filesystem-write"], 2);
+    // Ordinary directory listing is excluded; file content reads remain.
+    assert_eq!(rule_counts["csharp-filesystem-read"], 1);
+    // Directory creation is setup; the destructive file effect remains.
+    assert_eq!(rule_counts["csharp-filesystem-write"], 1);
     assert_eq!(rule_counts["csharp-webclient-outbound-http"], 2);
 
     let typed_sinks = result.evidence.iter().filter(|item| {
@@ -76,7 +78,7 @@ fn completes_typed_and_framework_csharp_sink_shapes_without_lookalike_paths() {
                 .any(|reason| reason == "aspnet_parameter_binding_is_syntactic")
         })
         .collect::<Vec<_>>();
-    assert_eq!(paths.len(), 19);
+    assert_eq!(paths.len(), 17);
     assert!(paths.iter().all(|path| {
         path.state == SecurityPathState::Propagated
             && path
@@ -92,8 +94,8 @@ fn completes_typed_and_framework_csharp_sink_shapes_without_lookalike_paths() {
     assert_eq!(by_capability[&Capability::DatabaseQuery], 9);
     assert_eq!(by_capability[&Capability::HtmlOutput], 2);
     assert_eq!(by_capability[&Capability::Redirect], 2);
-    assert_eq!(by_capability[&Capability::FilesystemRead], 2);
-    assert_eq!(by_capability[&Capability::FilesystemWrite], 2);
+    assert_eq!(by_capability[&Capability::FilesystemRead], 1);
+    assert_eq!(by_capability[&Capability::FilesystemWrite], 1);
     assert_eq!(by_capability[&Capability::OutboundNetworkRequest], 2);
 
     let stored_procedure = result

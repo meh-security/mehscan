@@ -14,6 +14,7 @@ pub(super) fn annotate(
         matches!(
             e.rule_id.as_str(),
             "csharp-null-fallback-authorization-review"
+                | "csharp-null-default-authorization-review"
                 | "csharp-auth-middleware-order-review"
                 | "csharp-forwarded-headers-order-review"
                 | "csharp-session-cookie-policy-review"

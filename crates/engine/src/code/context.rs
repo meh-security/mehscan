@@ -3,6 +3,19 @@ use mehscan_core::{
     Availability, AvailabilityState, EvidenceContext, Reachability, ReachabilityState,
 };
 
+/// A check nested in an unrelated branch cannot protect a later operation.
+/// This is a bounded block test, not a whole-program control-flow proof.
+pub(super) fn precedes_in_block<D: Doc>(check: &Node<'_, D>, consumer: &Node<'_, D>) -> bool {
+    check.range().end <= consumer.range().start
+        && check
+            .ancestors()
+            .find(|node| node.kind().as_ref() == "compound_statement")
+            .is_some_and(|block| {
+                block.range().start <= consumer.range().start
+                    && consumer.range().end <= block.range().end
+            })
+}
+
 pub(crate) fn enclosing_symbol<D: Doc>(node: &Node<'_, D>) -> Option<String> {
     const SYMBOL_KINDS: &[&str] = &[
         "method_declaration",

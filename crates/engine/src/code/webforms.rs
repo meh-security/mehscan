@@ -137,7 +137,7 @@ fn add_request_validation_directives(
                 start..end,
                 start..end,
                 "csharp-webforms-request-validation-disabled",
-                EvidenceKind::SecurityConfiguration,
+                EvidenceKind::Resource,
                 Capability::HttpRequestHandling,
                 "setting",
                 &[

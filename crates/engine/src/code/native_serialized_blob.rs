@@ -94,9 +94,12 @@ pub(crate) fn add_native_serialized_blob_observations<'tree>(
         {
             continue;
         }
-        let guard = length.as_deref().and_then(|length| {
-            length_guard(&scope, length, extent, load.range().end, copy.range().start)
-        });
+        let guard = length
+            .as_deref()
+            .and_then(|length| {
+                length_guard(&scope, length, extent, load.range().end, copy.range().start)
+            })
+            .filter(|check| super::context::precedes_in_block(check, &copy));
 
         let source = make_evidence(
             path,

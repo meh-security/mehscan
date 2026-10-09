@@ -952,6 +952,7 @@
     note: Owned DynamoDB dispatch with an observed query-command producer; standalone construction is supporting context.
     references:
       - https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/javascript_dynamodb_code_examples.html
+      - https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/dynamodb/command/QueryCommand/
 
 - id: typescript-extended-nosql-dispatch
   version: 1
@@ -968,6 +969,7 @@
     note: Owned DynamoDB dispatch with an observed query-command producer; standalone construction is supporting context.
     references:
       - https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/javascript_dynamodb_code_examples.html
+      - https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/dynamodb/command/QueryCommand/
 
 - id: tsx-extended-nosql-dispatch
   version: 1
@@ -984,6 +986,7 @@
     note: Owned DynamoDB dispatch with an observed query-command producer; standalone construction is supporting context.
     references:
       - https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/javascript_dynamodb_code_examples.html
+      - https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/dynamodb/command/QueryCommand/
 
 - id: php-extended-nosql-execution
   version: 1
@@ -1009,6 +1012,7 @@
     note: Owned MongoDB Manager/Server execution; constructor facts attach to this operation.
     references:
       - https://www.php.net/manual/en/mongodb-driver-manager.executequery.php
+      - https://www.php.net/manual/en/mongodb-driver-server.executequery.php
 
 - id: php-extended-sql-facade
   version: 1

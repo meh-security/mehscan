@@ -168,7 +168,7 @@ fn add_cookie_store_context<'tree>(
                 path,
                 &call.node,
                 "go-cookie-store-default-options-review",
-                EvidenceKind::SecurityConfiguration,
+                EvidenceKind::Resource,
                 Capability::CookieConfiguration,
                 BTreeMap::from([("store".to_string(), capture(path, &call.node))]),
                 &["CWE-614", "CWE-1004"],
@@ -408,7 +408,7 @@ fn add_route_policy_context<'tree>(
             path,
             &unwrapped.node,
             "go-route-security-middleware-coverage-review",
-            EvidenceKind::SecurityConfiguration,
+            EvidenceKind::Resource,
             Capability::HttpRequestHandling,
             BTreeMap::from([
                 (
@@ -451,7 +451,7 @@ fn add_route_policy_context<'tree>(
             path,
             &route.node,
             "go-state-changing-get-route-review",
-            EvidenceKind::SensitiveOperation,
+            EvidenceKind::Resource,
             Capability::HttpRequestHandling,
             BTreeMap::from([
                 ("route".to_string(), capture(path, &route.route)),

@@ -9,7 +9,7 @@ fn reviewer_notes_embed_source_reject_stale_inputs_and_do_not_change_inventory()
     fs::create_dir_all(&artifacts).unwrap();
     fs::write(
         root.join("App.php"),
-        "<?php\nfunction render($s) { echo htmlspecialchars($s); }\n",
+        "<?php\nfunction render($s) { ?><script>let value=\"<?php echo htmlspecialchars($s); ?>\";</script><?php }\n",
     )
     .unwrap();
     let run = |args: &[&str]| {

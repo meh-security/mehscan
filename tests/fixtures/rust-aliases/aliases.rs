@@ -1,7 +1,7 @@
 use std::process::Command as Process;
 
 fn rust_alias_case(command: &str) {
-    Process::new(command);
+    Process::new(command).status();
 }
 
 mod lookalike {

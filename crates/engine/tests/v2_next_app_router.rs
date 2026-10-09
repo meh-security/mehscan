@@ -97,14 +97,11 @@ fn models_next_app_router_boundaries_postgres_js_and_production_test_routes() {
         "typescript-nextjs-client-controlled-privilege-assignment",
         "typescript-nextjs-whole-body-persistence",
         "typescript-nextjs-web-file-uploaded-path",
-        "typescript-nextjs-graphql-introspection-review",
-        "typescript-nextjs-graphql-complexity-review",
         "typescript-nextjs-client-controlled-financial-amount-review",
         "typescript-nextjs-read-check-write-race-review",
         "typescript-manual-jwt-weak-fallback-secret",
         "typescript-manual-jwt-without-expiry",
         "typescript-manual-jwt-alg-none-acceptance",
-        "typescript-nextjs-auth-rate-limit-review",
         "typescript-nextjs-distinct-login-response-review",
         "typescript-nextjs-literal-default-credential",
         "typescript-nextjs-reset-token-response",
@@ -113,6 +110,13 @@ fn models_next_app_router_boundaries_postgres_js_and_production_test_routes() {
             result.evidence.iter().any(|item| item.rule_id == rule),
             "missing {rule}"
         );
+    }
+    for removed in [
+        "typescript-nextjs-graphql-introspection-review",
+        "typescript-nextjs-graphql-complexity-review",
+        "typescript-nextjs-auth-rate-limit-review",
+    ] {
+        assert!(!result.evidence.iter().any(|item| item.rule_id == removed));
     }
     let financial = result
         .evidence

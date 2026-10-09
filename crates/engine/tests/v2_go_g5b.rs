@@ -71,21 +71,30 @@ fn models_go_web_identity_template_and_route_policy() {
             .iter()
             .any(|fact| fact.excerpt.contains("********"))
     );
-    let route_policy = jobs
-        .observation_reviews
-        .iter()
-        .find(|review| {
-            review
+    for rule in [
+        "go-cookie-store-default-options-review",
+        "go-route-security-middleware-coverage-review",
+        "go-state-changing-get-route-review",
+    ] {
+        assert!(
+            result
                 .evidence
                 .iter()
-                .any(|item| item.rule_id == "go-state-changing-get-route-review")
-        })
-        .expect("route-policy review should be admitted");
-    assert!(route_policy.facts.iter().any(|fact| {
-        fact.role == "helper_definition_context"
-            && fact.symbol == "addFriend"
-            && fact.excerpt.contains("func addFriend")
-    }));
+                .filter(|item| item.rule_id == rule)
+                .all(|item| item.kind == EvidenceKind::Resource)
+        );
+        assert!(
+            !jobs.observation_reviews.iter().any(|review| {
+                review.anchor_evidence_ids.iter().any(|id| {
+                    result
+                        .evidence
+                        .iter()
+                        .any(|item| item.id == *id && item.rule_id == rule)
+                })
+            }),
+            "ordinary setup/handler names must not create work: {rule}"
+        );
+    }
 }
 
 #[test]

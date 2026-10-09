@@ -458,10 +458,17 @@ pub(crate) fn link_native_allocation_paths(evidence: &mut Vec<Evidence>) -> Vec<
                     .is_some_and(|capture| capture.text == input)
         }) {
             let protection = validations.iter().find(|validation| {
-                validation
-                    .related_evidence
-                    .iter()
-                    .any(|id| id == &source.id)
+                // A validator in another callable is a lead, not proof that
+                // this allocation is guarded. No caller edge was established.
+                source.location.path == sink.location.path
+                    && source.enclosing_symbol.is_some()
+                    && source.enclosing_symbol == sink.enclosing_symbol
+                    && validation.enclosing_symbol == sink.enclosing_symbol
+                    && validation.location.start.byte_offset < sink.location.start.byte_offset
+                    && validation
+                        .related_evidence
+                        .iter()
+                        .any(|id| id == &source.id)
             });
             if let Some(item) = evidence.iter_mut().find(|item| item.id == sink.id) {
                 item.related_evidence.push(source.id.clone());

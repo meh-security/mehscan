@@ -22,6 +22,7 @@ fn shared_question_queue_and_sweep_preserve_exceptions_and_exact_source() {
     let source = r#"<?php
 function esc_html($value) { return $value; }
 function renderer($stored, $raw) {
+    $raw = $_GET['raw'];
     // esc_html($stored) occurs before the real output.
     $unused = 'context';
     ?><p><?php echo esc_html($stored); ?></p>
@@ -30,8 +31,8 @@ function renderer($stored, $raw) {
     <div data-value=<?php echo esc_attr($raw); ?>></div>
     <p><?php echo esc_html($stored) . $raw; ?></p><?php
 }
-function first_include() { require APP_ROOT . '/helper.php'; }
-function second_include() { require APP_ROOT . '/other.php'; }
+function first_include() { require APP_ROOT . '/' . $_GET['module']; }
+function second_include() { require APP_ROOT . '/' . $_GET['plugin']; }
 add_filter('esc_html', 'unsafe_callback');
 "#;
     fs::write(root.join("src/view.php"), source).unwrap();
@@ -127,7 +128,9 @@ add_filter('esc_html', 'unsafe_callback');
         "contract",
     ]);
     assert_eq!(queue["matching_review_count"], saved["review_count"]);
-    assert_eq!(queue["ungrouped_review_count"], 1); // Mixed raw concatenation remains independent.
+    // Mixed raw output and the two request-selected code loaders have no
+    // shared verified contract; they remain independent.
+    assert_eq!(queue["ungrouped_review_count"], 3);
     let neighborhoods = run(&[
         "investigate",
         "review-inventory-list",
@@ -153,7 +156,7 @@ add_filter('esc_html', 'unsafe_callback');
         "1",
     ]);
     assert_eq!(first_page["returned_count"], 1);
-    assert_eq!(first_page["next_offset"], 1);
+    assert_eq!(first_page["next_offset"], 1, "{first_page:#?}");
     assert_eq!(first_page["by_capability"], neighborhoods["by_capability"]);
     let counted: u64 = first_page["by_capability"]
         .as_object()
@@ -188,17 +191,16 @@ add_filter('esc_html', 'unsafe_callback');
             .iter()
             .all(|g| g["verified"] == false)
     );
-    // Distinct functions remain separate, even with a common configured root.
+    // Distinct code-loader functions remain separate, even with a common prefix.
     assert_eq!(
         neighborhoods["groups"]
             .as_array()
             .unwrap()
             .iter()
-            .filter(|g| g["contracts"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|key| key == "configured_root_path:APP_ROOT"))
+            .filter(|g| matches!(
+                g["symbol"].as_str(),
+                Some("first_include" | "second_include")
+            ))
             .count(),
         2
     );
@@ -217,10 +219,9 @@ add_filter('esc_html', 'unsafe_callback');
         "--contract",
         "configured_root_path:APP_ROOT",
     ]);
-    assert_eq!(includes["matching_count"], 2);
-    assert_ne!(
-        includes["entries"][0]["operand_facts"][0]["value"],
-        includes["entries"][1]["operand_facts"][0]["value"]
+    assert_eq!(
+        includes["matching_count"], 0,
+        "a fixed prefix does not prove a shared selection contract"
     );
     let encoded = run(&[
         "investigate",

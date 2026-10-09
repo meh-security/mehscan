@@ -89,8 +89,9 @@ pub(crate) fn add_native_remaining_input_observations<'tree>(
         ) {
             continue;
         }
-        let effective =
-            check.kind == CheckKind::NonWrappingSubtraction && cursor_within_total(&scope, &check);
+        let effective = check.kind == CheckKind::NonWrappingSubtraction
+            && super::context::precedes_in_block(&check.statement, &sink_call)
+            && cursor_within_total(&scope, &check);
 
         let source = make_evidence(
             path,
@@ -280,6 +281,7 @@ fn cursor_within_total(scope: &Node<'_, StrDoc<SupportLang>>, check: &BoundsChec
         .dfs()
         .filter(|node| node.kind().as_ref() == "if_statement")
         .filter(|node| node.range().end < check.statement.range().start)
+        .filter(|node| super::context::precedes_in_block(node, &check.statement))
         .filter(|node| {
             node.field("consequence")
                 .is_some_and(|branch| branch_terminates(&branch))

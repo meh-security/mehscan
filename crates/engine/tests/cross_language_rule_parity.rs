@@ -181,6 +181,12 @@ fn established_web_languages_keep_the_common_declarative_surface() {
             .expect("priority language should have declarative rules");
         let missing = COMMON_DECLARATIVE_SURFACE
             .iter()
+            // Java network consumers now have typed runtime emitters rather
+            // than a generic constructor/URL rule. Their concrete I/O and
+            // alias/shadow controls are exercised by Java network tests.
+            .filter(|capability| {
+                !(language == Language::Java && **capability == Capability::OutboundNetworkRequest)
+            })
             .filter(|capability| !present.contains(capability))
             .collect::<Vec<_>>();
         assert!(

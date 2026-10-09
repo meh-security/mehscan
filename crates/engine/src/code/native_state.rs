@@ -393,6 +393,12 @@ pub(crate) fn link_native_state_paths(evidence: &mut Vec<Evidence>) -> Vec<Secur
                             && capture_value(item, "member") == Some(member)
                             && same_c_family_language(&source.location.path, &item.location.path)
                             && source.location.path == item.location.path
+                            && item.enclosing_symbol.is_some()
+                            && (item.enclosing_symbol == source.enclosing_symbol
+                                && item.related_evidence.contains(&source.id)
+                                || item.enclosing_symbol == handoff.enclosing_symbol
+                                    && item.location.end.byte_offset
+                                        < handoff.location.start.byte_offset)
                     })
                     .collect::<Vec<_>>();
                 retained.extend([source.id.clone(), handoff.id.clone(), sink.id.clone()]);

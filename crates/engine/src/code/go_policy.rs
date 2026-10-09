@@ -143,8 +143,30 @@ pub(crate) fn add_go_policy_observations<'tree>(
         }
         if uses_io && call.callee == "io.ReadAll" && is_request_body(call.arguments.first()) {
             let protected = enclosing_function(&call.node).is_some_and(|function| {
-                let text = function.text();
-                text.contains("http.MaxBytesReader(") || text.contains("io.LimitReader(")
+                let body = call.arguments[0].text().trim().to_string();
+                function
+                    .dfs()
+                    .filter(|node| node.kind().as_ref() == "assignment_statement")
+                    .filter(|node| node.range().end < call.node.range().start)
+                    .filter(|node| {
+                        node.field("left")
+                            .is_some_and(|left| left.text().trim() == body)
+                    })
+                    .last()
+                    .is_some_and(|assignment| {
+                        assignment
+                            .ancestors()
+                            .find(|node| node.kind().as_ref() == "block")
+                            .is_some_and(|block| {
+                                block.range().start <= call.node.range().start
+                                    && call.node.range().end <= block.range().end
+                            })
+                            && assignment.field("right").is_some_and(|right| {
+                                let text = compact(right.text().as_ref());
+                                text.starts_with("http.MaxBytesReader(")
+                                    && text.contains(&format!(",{body},"))
+                            })
+                    })
             });
             push(
                 path,
@@ -251,7 +273,7 @@ pub(crate) fn add_go_policy_observations<'tree>(
                 } else {
                     "go-http-server-plaintext-fallback-review"
                 },
-                EvidenceKind::SecurityConfiguration,
+                EvidenceKind::Resource,
                 Capability::TlsConfiguration,
                 captures(path, &call, if tls { &["certificate", "key"] } else { &[] }),
                 if tls { &[] } else { &["CWE-319"] },
@@ -344,7 +366,7 @@ pub(crate) fn add_go_policy_observations<'tree>(
                 } else {
                     "go-http-server-timeout-review"
                 },
-                EvidenceKind::SecurityConfiguration,
+                EvidenceKind::Resource,
                 Capability::HttpRequestHandling,
                 BTreeMap::from([("server".to_string(), capture(path, &node))]),
                 if read && write { &[] } else { &["CWE-400"] },
@@ -481,7 +503,7 @@ pub(crate) fn add_go_policy_observations<'tree>(
                 path,
                 &node,
                 "go-mongodb-plaintext-uri-review",
-                EvidenceKind::SecurityConfiguration,
+                EvidenceKind::Resource,
                 Capability::TlsConfiguration,
                 BTreeMap::from([("connection".to_string(), capture(path, &node))]),
                 &["CWE-319"],

@@ -48,6 +48,19 @@ effect is worthwhile; it does not override an ordinary/low-effect exclusion.
 Do not require theoretical format, environment or plugin attacks to keep a case.
 Reopen when source or repository knowledge supplies the missing practical edge.
 
+Record **Value**, **Comprehensive-only**, or **excluded**, and the reason, when
+calibrating each rule or relationship. Supporting sources/guards/Resource facts
+own no independent review. A relationship follows its concrete sink and evidence;
+its CWE name alone does not settle the bucket. Preserve the inventory's exact ID
+and initial selection hint when planning reviews.
+
+Retained PHP output/include research starts Comprehensive-only unless a shown
+decision-critical mechanism promotes it. Connected Go gob/Python marshal also
+starts Comprehensive-only. Ordinary logging, redirects, cookie transport/script
+access, CORS and CSRF start there; consequential chains can justify promotion.
+Shared producer/dependency hints defer repeated research without sharing a safe
+verdict. Comprehensive includes Value; exclusion removes ordinary work from both.
+
 A decision-critical producer question does not itself promote an ordinary
 medium-impact redirect into Value. Keep its exact Comprehensive ID and origin
 question; promote when evidence shows a consequential credential/effect chain.
@@ -136,6 +149,26 @@ setters and consumer locations. Rewrites, resets, proxies and unknown producers
 retain research; a known URL does not prove policy for a shared handle.
 
 ## Routine policy context
+
+Framework setup and missing local controls are context until a consequential
+consumer supplies a security question. Normal route policies, HTML-input
+acceptance, shared privileged-client construction, plaintext server setup,
+default cookie options and missing local timeouts/GraphQL limits do not create
+standalone work in either queue. A decoded cookie is data until its fields are
+actually trusted as identity. Keep explicit weak credentials, disabled checks,
+bound identity issuance, raw/interpreted templates, request-driven persistence
+and actual unbounded body reads independently.
+
+Cross-site cookie support (`SameSite=None`) alone does not establish CSRF.
+Review shown cookie-authenticated effects and their effective request integrity
+controls instead. Password confirmation telemetry is not a medium-impact
+security boundary; hashing without a local strength check does not establish
+the effective password policy. Concrete weak passwords/KDFs remain leads.
+
+Native validators in another callable or an optional branch are leads, not
+proof that an allocation, dereference or copy is guarded. Follow the named
+missing caller/control edge. Do not turn preserved unknown relationships or
+exclusions into safe verdicts.
 
 Affirmative TLS/cookie flags and shown XML hardening do not need independent
 verdicts. They settle only the named control, never the complete client/parser.

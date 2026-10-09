@@ -1359,7 +1359,7 @@ fn recovered_cpp_multiplication_keeps_the_bounded_memory_handoff() {
 }
 
 #[test]
-fn architecture_limit_validation_protects_macro_derived_allocation_size() {
+fn an_uncalled_architecture_validator_does_not_protect_an_allocation() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
@@ -1456,7 +1456,7 @@ fn architecture_limit_validation_protects_macro_derived_allocation_size() {
         .collect::<Vec<_>>();
     assert_eq!(fixed_paths.len(), 2);
     assert!(fixed_paths.iter().all(|path| {
-        path.state == SecurityPathState::Protected && path.protection_evidence_ids.len() == 1
+        path.state == SecurityPathState::Unknown && path.protection_evidence_ids.is_empty()
     }));
     assert_eq!(fixed.evidence, repeated.evidence);
     assert_eq!(fixed.security_paths, repeated.security_paths);
@@ -1717,8 +1717,7 @@ fn exceptional_state_requires_fatal_rejection_before_indexed_dereference() {
             .iter()
             .filter(|path| { path.capability == Capability::StateDependentDereference })
             .all(|path| {
-                path.state == SecurityPathState::Protected
-                    && !path.protection_evidence_ids.is_empty()
+                path.state == SecurityPathState::Unknown && path.protection_evidence_ids.is_empty()
             })
     );
 

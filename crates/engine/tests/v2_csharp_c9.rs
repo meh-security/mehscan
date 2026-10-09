@@ -82,7 +82,7 @@ fn inventories_razor_escape_hatches_and_classifies_session_cookie_policy() {
         ),
         (
             "csharp-session-cookie-policy-review",
-            EvidenceKind::SecurityConfiguration,
+            EvidenceKind::Resource,
         ),
     ] {
         assert_eq!(session.get(&expected), Some(&1), "missing {expected:?}");

@@ -5344,52 +5344,6 @@ fn add_registration_and_recovery_policy<'tree>(
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
     evidence: &mut Vec<Evidence>,
 ) {
-    for property in root.dfs() {
-        let (Some(key), Some(value)) = (property.field("key"), property.field("value")) else {
-            continue;
-        };
-        if normalize_property_name(key.text().as_ref()) != "password"
-            || !matches!(value.kind().as_ref(), "object" | "object_expression")
-            || comments.is_in_comment(value.range())
-        {
-            continue;
-        }
-        let normalized = compact(value.text().as_ref()).to_ascii_lowercase();
-        let stores_hashed_password = normalized.contains("setdatavalue('password'")
-            || normalized.contains("setdatavalue(\"password\"");
-        let has_hash = normalized.contains("hash(") || normalized.contains("digest(");
-        let has_local_policy = normalized.contains("validate:")
-            || normalized.contains("isstrongpassword")
-            || normalized.contains(".length<")
-            || normalized.contains(".length<=")
-            || normalized.contains(".test(")
-            || normalized.contains(".min(");
-        if !stores_hashed_password || !has_hash || has_local_policy {
-            continue;
-        }
-        push_request_policy_evidence(
-            path,
-            language,
-            "password-storage-policy-review",
-            &value,
-            EvidenceKind::SecurityConfiguration,
-            Capability::Authentication,
-            vec!["CWE-521".to_string()],
-            vec![
-                "password-policy".to_string(),
-                "password-storage-boundary".to_string(),
-                "local-strength-validation-not-observed".to_string(),
-                "recommendation:review-effective-policy".to_string(),
-            ],
-            Confidence::Medium,
-            BTreeMap::from([("password_field".to_string(), capture(path, &value))]),
-            comments,
-            conditional,
-            literals,
-            evidence,
-        );
-    }
-
     for call in root.dfs().filter_map(call_site) {
         if terminal_symbol(&call.callee) != "post" || comments.is_in_comment(call.node.range()) {
             continue;
@@ -5453,71 +5407,6 @@ fn add_registration_and_recovery_policy<'tree>(
                 literals,
                 evidence,
             );
-        }
-    }
-
-    for comparison in root
-        .dfs()
-        .filter(|node| node.kind().as_ref() == "binary_expression")
-    {
-        if comments.is_in_comment(comparison.range()) {
-            continue;
-        }
-        let is_inequality = comparison
-            .children()
-            .filter(|child| !child.is_named())
-            .any(|operator| matches!(operator.text().trim(), "!=" | "!=="));
-        let normalized = compact(comparison.text().as_ref()).to_ascii_lowercase();
-        if !normalized.contains("passwordrepeat")
-            || !normalized.contains("password")
-            || !is_inequality
-        {
-            continue;
-        }
-        let Some((function, function_text)) = comparison
-            .ancestors()
-            .filter(is_function_node)
-            .map(|function| {
-                let text = compact(function.text().as_ref()).to_ascii_lowercase();
-                (function, text)
-            })
-            .find(|(_, text)| text.contains("next()"))
-        else {
-            continue;
-        };
-        let mismatch_is_only_observed = function_text.contains("next()")
-            && !function_text.contains("res.status(")
-            && !function_text.contains("throw")
-            && !function_text.contains("next(newerror");
-        if !mismatch_is_only_observed {
-            continue;
-        }
-        push_request_policy_evidence(
-            path,
-            language,
-            "password-confirmation-not-enforced-review",
-            &comparison,
-            EvidenceKind::SecurityConfiguration,
-            Capability::Authentication,
-            vec!["CWE-20".to_string()],
-            vec![
-                "registration".to_string(),
-                "password-confirmation".to_string(),
-                "mismatch-not-rejected".to_string(),
-                "recommendation:fix-application".to_string(),
-            ],
-            Confidence::High,
-            BTreeMap::from([("comparison".to_string(), capture(path, &comparison))]),
-            comments,
-            conditional,
-            literals,
-            evidence,
-        );
-        let rule_id = language_rule(language, "password-confirmation-not-enforced-review");
-        if let Some(item) = evidence.iter_mut().find(|item| {
-            item.rule_id == rule_id && item.location.start.byte_offset == comparison.range().start
-        }) {
-            item.enclosing_symbol = enclosing_symbol(&function);
         }
     }
 
@@ -5667,9 +5556,8 @@ fn add_express_session_policy<'tree>(
             .as_ref()
             .and_then(|cookie| object_property(cookie, "sameSite"))
             .map(|value| compact(value.text().as_ref()).to_ascii_lowercase());
-        let explicitly_weak = http_only.as_deref() == Some("false")
-            || secure.as_deref() == Some("false")
-            || matches!(same_site.as_deref(), Some("false" | "'none'" | "\"none\""));
+        let explicitly_weak =
+            http_only.as_deref() == Some("false") || secure.as_deref() == Some("false");
         let explicitly_hardened = http_only.as_deref() == Some("true")
             && secure.as_deref() == Some("true")
             && same_site.as_deref().is_some_and(|value| {
@@ -5702,7 +5590,7 @@ fn add_express_session_policy<'tree>(
             )
         } else {
             (
-                EvidenceKind::SecurityConfiguration,
+                EvidenceKind::Resource,
                 "session-cookie-policy-review",
                 vec![
                     "session-cookie".to_string(),
@@ -5974,13 +5862,6 @@ fn language_rule(language: Language, suffix: &str) -> &'static str {
         (Language::Javascript, "weak-password-policy") => "javascript-weak-password-policy",
         (Language::Typescript, "weak-password-policy") => "typescript-weak-password-policy",
         (Language::Tsx, "weak-password-policy") => "tsx-weak-password-policy",
-        (Language::Javascript, "password-storage-policy-review") => {
-            "javascript-password-storage-policy-review"
-        }
-        (Language::Typescript, "password-storage-policy-review") => {
-            "typescript-password-storage-policy-review"
-        }
-        (Language::Tsx, "password-storage-policy-review") => "tsx-password-storage-policy-review",
         (Language::Javascript, "registration-rejection-fallthrough-review") => {
             "javascript-registration-rejection-fallthrough-review"
         }
@@ -5989,15 +5870,6 @@ fn language_rule(language: Language, suffix: &str) -> &'static str {
         }
         (Language::Tsx, "registration-rejection-fallthrough-review") => {
             "tsx-registration-rejection-fallthrough-review"
-        }
-        (Language::Javascript, "password-confirmation-not-enforced-review") => {
-            "javascript-password-confirmation-not-enforced-review"
-        }
-        (Language::Typescript, "password-confirmation-not-enforced-review") => {
-            "typescript-password-confirmation-not-enforced-review"
-        }
-        (Language::Tsx, "password-confirmation-not-enforced-review") => {
-            "tsx-password-confirmation-not-enforced-review"
         }
         (Language::Javascript, "knowledge-based-password-recovery-review") => {
             "javascript-knowledge-based-password-recovery-review"

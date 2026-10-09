@@ -171,7 +171,7 @@ fn csharp_constructor_and_reassignment_facts_survive_saved_inventory_and_cards()
 }
 
 #[test]
-fn node_alias_facts_support_precise_followup_and_reopening() {
+fn node_alias_facts_support_followup_without_reopening_excluded_queries() {
     let root =
         std::env::temp_dir().join(format!("mehscan-node-operand-cli-{}", std::process::id()));
     let artifacts = root.with_file_name(format!(
@@ -216,11 +216,10 @@ fn node_alias_facts_support_precise_followup_and_reopening() {
             .as_str()
             .unwrap()
     };
-    let fixed = id("fixed");
-    assert_eq!(
-        list(&["--selection", "deferred"])["entries"][0]["review_id"],
-        fixed
-    );
+    // Fixed, bound SQL is excluded from both queues, not retained as a
+    // conditional review merely to exercise reopening.
+    assert!(!entries.iter().any(|entry| entry["symbol"] == "fixed"));
+    assert_eq!(list(&["--selection", "deferred"])["matching_count"], 0);
     for kind in [
         "local_operand_origin",
         "operand_boundary",
@@ -288,18 +287,14 @@ fn node_alias_facts_support_precise_followup_and_reopening() {
     for decision in ["issue", "needs_review", "not_issue"] {
         fs::write(&ledger, serde_json::to_vec(&serde_json::json!({"schema_version": "2", "source_fingerprint": saved["source_fingerprint"], "input_fingerprint": saved["input_fingerprint"], "inventory_count": entries.len(), "reviewed": {id("composed"): decision}, "conflicts": []})).unwrap()).unwrap();
         let queue = list(&["--selection", "value", "--ledger", ledger.to_str().unwrap()]);
-        assert_eq!(
-            queue["entries"]
+        assert!(
+            !queue["entries"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|e| e["review_id"] == fixed),
-            decision != "not_issue"
+                .any(|e| e["symbol"] == "fixed")
         );
-        assert_eq!(
-            queue["reopened_count"],
-            if decision == "not_issue" { 0 } else { 1 }
-        );
+        assert_eq!(queue["reopened_count"], 0);
     }
     fs::remove_dir_all(root).unwrap();
     fs::remove_dir_all(artifacts).unwrap();

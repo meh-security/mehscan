@@ -50,7 +50,12 @@ fn models_exact_java_html_output_encoding_and_template_boundaries() {
     assert!(
         j9.iter()
             .filter(|evidence| evidence.rule_id.contains("render-boundary"))
-            .all(|evidence| evidence.kind == EvidenceKind::SensitiveOperation
+            .all(|evidence| evidence.kind
+                == if evidence.rule_id == "java-velocity-render-boundary" {
+                    EvidenceKind::SensitiveOperation
+                } else {
+                    EvidenceKind::Resource
+                }
                 && evidence.capability == Capability::HtmlOutput)
     );
 

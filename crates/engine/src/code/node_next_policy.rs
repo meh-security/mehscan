@@ -141,16 +141,6 @@ pub(crate) fn add_next_policy_observations<'tree>(
             literals,
             evidence,
         );
-        add_graphql_policy_reviews(
-            path,
-            &function,
-            language,
-            &route,
-            comments,
-            conditional,
-            literals,
-            evidence,
-        );
         add_business_policy_reviews(
             path,
             &function,
@@ -182,39 +172,6 @@ fn add_auth_endpoint_policy_reviews<'tree>(
         return;
     }
     let text = compact(&function.text());
-    let has_rate_limit = function.dfs().filter_map(call_site).any(|call| {
-        let callee = call.callee.to_ascii_lowercase();
-        ["ratelimit", "throttle", "consume", "checklimit"]
-            .iter()
-            .any(|marker| callee.contains(marker))
-    });
-    if !has_rate_limit {
-        push_fact(
-            path,
-            language,
-            "nextjs-auth-rate-limit-review",
-            function,
-            EvidenceKind::SecurityConfiguration,
-            Capability::Authentication,
-            vec!["CWE-307"],
-            vec![
-                "nextjs",
-                "authentication",
-                "login-or-reset",
-                "rate-limit-not-observed",
-                "gateway-or-identity-provider-may-own-control",
-                "recommendation:review-then-fix-application",
-            ],
-            Confidence::Medium,
-            BTreeMap::from([("auth_handler".to_string(), capture(path, function))]),
-            vec![route.clone()],
-            Vec::new(),
-            comments,
-            conditional,
-            literals,
-            evidence,
-        );
-    }
     if login
         && text.contains("status:404")
         && text.contains("status:401")
@@ -226,7 +183,7 @@ fn add_auth_endpoint_policy_reviews<'tree>(
             language,
             "nextjs-distinct-login-response-review",
             function,
-            EvidenceKind::SecurityConfiguration,
+            EvidenceKind::Resource,
             Capability::Authentication,
             vec!["CWE-203"],
             vec![
@@ -508,7 +465,7 @@ fn add_supabase_service_role_review<'tree>(
         language,
         "supabase-service-role-shared-module-review",
         &admin,
-        EvidenceKind::SecurityConfiguration,
+        EvidenceKind::Resource,
         Capability::Authorization,
         vec!["CWE-269"],
         vec![
@@ -582,7 +539,7 @@ fn add_middleware_coverage_review<'tree>(
         language,
         "nextjs-middleware-auth-coverage-review",
         &config,
-        EvidenceKind::SecurityConfiguration,
+        EvidenceKind::Resource,
         Capability::Authorization,
         vec!["CWE-862"],
         vec![
@@ -916,6 +873,25 @@ fn add_route_authorization_review<'tree>(
     if !administrative && !resource_by_id && !task_collection {
         return;
     }
+    let effect = resource_by_id
+        || task_collection
+        || evidence.iter().any(|item| {
+            matches!(
+                item.kind,
+                EvidenceKind::Sink | EvidenceKind::SensitiveOperation
+            ) && matches!(
+                item.capability,
+                Capability::DatabaseQuery
+                    | Capability::ResourceAccess
+                    | Capability::FilesystemRead
+                    | Capability::FilesystemWrite
+                    | Capability::ProcessExecution
+                    | Capability::DynamicCodeExecution
+                    | Capability::CredentialMaterial
+            ) && item.location.path == path
+                && function.range().start <= item.location.start.byte_offset
+                && item.location.end.byte_offset <= function.range().end
+        });
     let (cwe, policy, confidence) = if resource_by_id {
         (
             "CWE-639",
@@ -940,7 +916,11 @@ fn add_route_authorization_review<'tree>(
         language,
         "nextjs-route-authorization-review",
         function,
-        EvidenceKind::SecurityConfiguration,
+        if effect {
+            EvidenceKind::SecurityConfiguration
+        } else {
+            EvidenceKind::Resource
+        },
         Capability::Authorization,
         vec![cwe],
         vec![
@@ -1135,93 +1115,6 @@ fn add_web_file_upload_roles<'tree>(
             ],
             Confidence::High,
             BTreeMap::from([("path".to_string(), capture(path, &filename))]),
-            vec![route.clone()],
-            Vec::new(),
-            comments,
-            conditional,
-            literals,
-            evidence,
-        );
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn add_graphql_policy_reviews<'tree>(
-    path: &str,
-    function: &Node<'tree, StrDoc<SupportLang>>,
-    language: Language,
-    route: &HttpRouteContext,
-    comments: &CommentRanges,
-    conditional: &ConditionalRegions,
-    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
-    evidence: &mut Vec<Evidence>,
-) {
-    let text = compact(&function.text());
-    if !text.contains("__schema") && !text.contains("__type") {
-        return;
-    }
-    if let Some(branch) = function.dfs().find(|node| {
-        node.kind().as_ref() == "if_statement"
-            && node.field("condition").is_some_and(|condition| {
-                let condition = compact(&condition.text());
-                condition.contains("__schema") || condition.contains("__type")
-            })
-    }) {
-        push_fact(
-            path,
-            language,
-            "nextjs-graphql-introspection-review",
-            &branch,
-            EvidenceKind::SecurityConfiguration,
-            Capability::HttpRequestHandling,
-            vec!["CWE-200"],
-            vec![
-                "nextjs",
-                "graphql",
-                "introspection-response",
-                "configuration-sensitive",
-                "recommendation:review-application-policy",
-            ],
-            Confidence::Medium,
-            BTreeMap::from([("introspection_branch".to_string(), capture(path, &branch))]),
-            vec![route.clone()],
-            Vec::new(),
-            comments,
-            conditional,
-            literals,
-            evidence,
-        );
-    }
-    let has_complexity_control = function.dfs().filter_map(call_site).any(|call| {
-        let callee = call.callee.to_ascii_lowercase();
-        [
-            "depthlimit",
-            "maxdepth",
-            "complexitylimit",
-            "querycomplexity",
-        ]
-        .iter()
-        .any(|control| callee.contains(control))
-    });
-    if !has_complexity_control {
-        push_fact(
-            path,
-            language,
-            "nextjs-graphql-complexity-review",
-            function,
-            EvidenceKind::SecurityConfiguration,
-            Capability::HttpRequestHandling,
-            vec!["CWE-400"],
-            vec![
-                "nextjs",
-                "graphql",
-                "request-query-accepted",
-                "depth-or-complexity-limit-not-observed",
-                "gateway-or-graphql-runtime-may-own-control",
-                "recommendation:review-then-fix-application",
-            ],
-            Confidence::Medium,
-            BTreeMap::from([("graphql_handler".to_string(), capture(path, function))]),
             vec![route.clone()],
             Vec::new(),
             comments,

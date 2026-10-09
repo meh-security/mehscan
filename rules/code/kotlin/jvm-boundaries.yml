@@ -931,7 +931,7 @@
     note: Exact declared client receiver; request construction and consumer behavior require source review.
     references:
       - https://cwe.mitre.org/data/definitions/918.html
-      - https://square.github.io/okhttp/recipes/
+      - https://raw.githubusercontent.com/square/okhttp/parent-4.12.0/docs/recipes.md
 
 - id: kotlin-okhttp-dispatch
   version: 1
@@ -958,6 +958,7 @@
     note: Canonical Call declarations and immutable-local or inline newCall/clone factories; destination and client policy use bounded source facts, not compiler or deployed flow proof.
     references:
       - https://raw.githubusercontent.com/square/okhttp/parent-4.12.0/okhttp/src/main/kotlin/okhttp3/Call.kt
+      - https://raw.githubusercontent.com/square/okhttp/parent-4.12.0/docs/recipes.md
 
 - id: kotlin-html-encoding
   version: 1

@@ -247,32 +247,18 @@ fn xml_policy_reviews_keep_distinct_factory_settings_in_source_context() {
                 && f.excerpt.contains("exposed.setFeature")
                 && f.excerpt.contains("exposed.newDocumentBuilder().parse"))
     );
-    let guarded = jobs
-        .observation_reviews
+    let guarded = scan
+        .evidence
         .iter()
-        .find(|r| {
-            r.evidence.iter().any(|e| {
-                e.rule_id == "kotlin-xml-configuration"
-                    && e.location.start.line == 29
-                    && r.anchor_evidence_ids.contains(&e.id)
-            })
-        })
+        .find(|e| e.rule_id == "kotlin-xml-configuration" && e.location.start.line == 29)
         .unwrap();
+    assert_eq!(guarded.captures["value"].text, "true");
     assert!(
-        guarded
-            .facts
+        !jobs
+            .observation_reviews
             .iter()
-            .any(|f| f.role == "matched_xml_operation"
-                && f.excerpt.starts_with("guarded.setFeature(")
-                && f.excerpt.ends_with("true)"))
-    );
-    assert!(
-        guarded
-            .decision_facts
-            .established
-            .iter()
-            .any(|f| f.contains("captured value true")
-                && f.contains("Judge this setter and its receiver"))
+            .any(|review| { review.anchor_evidence_ids.contains(&guarded.id) }),
+        "positive XML configuration is context, not independent review work"
     );
     let parse_anchors = wrong
         .facts

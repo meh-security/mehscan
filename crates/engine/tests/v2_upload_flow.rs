@@ -53,9 +53,11 @@ fn inventories_uploaded_paths_and_builds_bounded_storage_paths() {
             *counts.entry(path.state).or_insert(0usize) += 1;
             counts
         });
+    // Canonicalizing a path does not enforce a containing root or filename
+    // policy. Those seven writes remain propagated relationships, not Protected.
     assert_eq!(states[&SecurityPathState::Direct], 7);
-    assert_eq!(states[&SecurityPathState::Propagated], 7);
-    assert_eq!(states[&SecurityPathState::Protected], 7);
+    assert_eq!(states[&SecurityPathState::Propagated], 14);
+    assert!(!states.contains_key(&SecurityPathState::Protected));
 
     assert!(storage_paths.iter().all(|path| {
         path.steps
@@ -73,13 +75,6 @@ fn inventories_uploaded_paths_and_builds_bounded_storage_paths() {
     assert!(
         storage_paths
             .iter()
-            .filter(|path| path.state == SecurityPathState::Protected)
-            .all(|path| {
-                path.protection_evidence_ids.len() == 1
-                    && path
-                        .steps
-                        .iter()
-                        .any(|step| step.kind == SecurityPathStepKind::Protection)
-            })
+            .all(|path| path.protection_evidence_ids.is_empty())
     );
 }
