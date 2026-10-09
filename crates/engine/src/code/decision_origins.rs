@@ -179,7 +179,8 @@ fn annotate_dynamic_sql(
     root: &Node<'_, StrDoc<SupportLang>>,
     item: &mut Evidence,
 ) {
-    if item.tags.iter().any(|tag| tag == "nosql")
+    if super::closed_query(item)
+        || item.tags.iter().any(|tag| tag == "nosql")
         || item
             .tags
             .iter()

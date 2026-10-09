@@ -298,23 +298,6 @@ fn share_csharp_destination_questions(entries: &mut [ReviewInventoryEntry]) {
     }
 }
 
-fn local_bound_query_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
-    if !anchor
-        .tags
-        .iter()
-        .any(|tag| tag == "value-scope:local-pg-bound-query")
-        || anchor.cwe_candidates.iter().any(|cwe| cwe != "CWE-89")
-    {
-        return None;
-    }
-    Some(ValueReviewHint {
-        reason: "local_bound_query_inventory".into(),
-        target: format!("{}:{}", anchor.location.path, anchor.location.start.line),
-        assumption: "exact_local_const_object_and_pg_identity; values_are_separate_data; matched_driver_method_is_not_replaced; data_access_policy_is_not_proven".into(),
-        depends_on: None,
-    })
-}
-
 fn ordinary_browser_request(anchor: &Evidence) -> bool {
     if anchor.capability != Capability::OutboundNetworkRequest
         || anchor.cwe_candidates != ["CWE-918"]
@@ -477,7 +460,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "6";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "7";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -1658,11 +1641,7 @@ fn build_path_review_jobs_internal(
                 }
                 .to_string(),
                 operand_facts: operand_summaries(anchor),
-                value_hint: practical_admission::comprehensive_hint(anchor).or_else(|| {
-                    (group.priority == 2 && group.anchor_evidence_ids.len() == 1)
-                        .then(|| local_bound_query_hint(anchor))
-                        .flatten()
-                }),
+                value_hint: practical_admission::comprehensive_hint(anchor),
             })
         }));
         share_csharp_filesystem_questions(entries);
@@ -3243,6 +3222,7 @@ fn reported_finding(
             let title = presentation
                 .as_ref()
                 .map_or(title, |value| value.title.to_string());
+            let title = unresolved_database_title(status, &presentation_cwes, title);
             let remediation =
                 report_remediation(presentation, candidate.capability, &presentation_cwes);
             let mut evidence_ids = vec![candidate.source.id.clone(), candidate.sink.id.clone()];
@@ -3362,6 +3342,7 @@ fn reported_finding(
             let title = presentation
                 .as_ref()
                 .map_or(title, |value| value.title.to_string());
+            let title = unresolved_database_title(status, &anchor.cwe_candidates, title);
             let remediation =
                 report_remediation(presentation, anchor.capability, &anchor.cwe_candidates);
             let anchor_ids = review.anchor_evidence_ids.iter().collect::<BTreeSet<_>>();
@@ -3789,6 +3770,18 @@ fn review_scope(job: &PathReviewJob) -> Vec<String> {
         }
     }
     scope
+}
+
+fn unresolved_database_title(status: FindingStatus, cwes: &[String], title: String) -> String {
+    if status == FindingStatus::NeedsReview {
+        if cwes.iter().any(|cwe| cwe == "CWE-89") {
+            return "Review SQL construction and parameter binding".into();
+        }
+        if cwes.iter().any(|cwe| cwe == "CWE-943") {
+            return "Review database selector construction and input types".into();
+        }
+    }
+    title
 }
 
 fn report_presentation(

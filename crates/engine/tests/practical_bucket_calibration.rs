@@ -213,6 +213,14 @@ def chained_read(qs, code):
 def projected_data(qs, code):
     selected = Account.objects.filter(pk=code).values_list('api_key', flat=True).get()
     return qs.filter(access_key=selected)
+def requested_tenant(qs, request):
+    selected = Tenant.objects.get(pk=request.GET['tenant'])
+    return qs.filter(tenant=selected)
+def requested_alias(qs, request):
+    tenant_id = request.GET['tenant']
+    selected_id = tenant_id
+    selected = Tenant.objects.get(pk=selected_id)
+    return qs.filter(tenant=selected)
 "#,
         "py",
     );
@@ -238,6 +246,8 @@ def projected_data(qs, code):
         "later_delete",
         "chained_read",
         "projected_data",
+        "requested_tenant",
+        "requested_alias",
     ] {
         assert!(
             inventory

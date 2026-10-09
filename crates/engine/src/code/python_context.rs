@@ -833,6 +833,14 @@ fn push_django_orm_observations<'tree>(
 }
 
 fn django_lookup_only_narrows_queryset(call: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    // Request-selected resources retain the authority relationship even when
+    // their IDs are used only to refine a lazy queryset.
+    if python_call_arguments(call).iter().any(|argument| {
+        let value = argument.field("value").unwrap_or_else(|| argument.clone());
+        python_value_is_request_controlled(call, value.text().trim())
+    }) {
+        return false;
+    }
     let mut result = call.clone();
     while let Some(parent) = result.parent() {
         if parent.kind().as_ref() == "parenthesized_expression" {
@@ -1276,12 +1284,23 @@ fn push_sensitive_field_mutations<'tree>(
 }
 
 fn python_value_is_request_controlled(node: &Node<'_, StrDoc<SupportLang>>, value: &str) -> bool {
+    python_request_origin(node, value, 4)
+}
+
+fn python_request_origin(
+    node: &Node<'_, StrDoc<SupportLang>>,
+    value: &str,
+    remaining: usize,
+) -> bool {
     if value.contains("request.data")
         || value.contains("request.POST")
         || value.contains("request.GET")
         || value.contains("request.query_params")
     {
         return true;
+    }
+    if remaining == 0 {
+        return false;
     }
     let identifiers = value
         .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
@@ -1303,11 +1322,7 @@ fn python_value_is_request_controlled(node: &Node<'_, StrDoc<SupportLang>>, valu
                 .field("left")
                 .is_some_and(|left| identifiers.contains(left.text().trim()))
             && candidate.field("right").is_some_and(|right| {
-                let text = right.text();
-                text.contains("request.data")
-                    || text.contains("request.POST")
-                    || text.contains("request.GET")
-                    || text.contains("request.query_params")
+                python_request_origin(&candidate, right.text().trim(), remaining - 1)
             })
     })
 }

@@ -85,6 +85,7 @@ mod native_loaded_extent;
 mod native_multiplication;
 mod native_operands;
 mod native_ownership;
+mod native_query;
 mod native_region_bounds;
 mod native_remaining_input;
 mod native_serialized_blob;
@@ -120,3 +121,14 @@ mod webforms;
 
 pub use scanner::{FileAnalysisProfile, ScanProfile};
 pub(crate) use scanner::{read_secret_text, scan_profiled};
+
+pub(crate) fn closed_query(item: &mehscan_core::Evidence) -> bool {
+    item.capability == mehscan_core::Capability::DatabaseQuery
+        && item.cwe_candidates == ["CWE-89"]
+        && item.tags.iter().any(|tag| {
+            matches!(
+                tag.as_str(),
+                "query-closure:pg-fixed-bound-object" | "query-closure:native-local-literal"
+            )
+        })
+}

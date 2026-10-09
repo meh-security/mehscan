@@ -76,17 +76,17 @@ fn extended_nosql_filters_preserve_operand_for_every_supported_language() {
         (
             "Probe.java",
             "import com.mongodb.client.MongoCollection; import org.bson.Document; class Probe { void run(MongoCollection<Document> store, String filter, Document selector) { store.find(selector); store.deleteMany(selector); Document.parse(filter); } }",
-            3,
+            2,
         ),
         (
             "app.kt",
             "import com.mongodb.client.MongoCollection\nimport org.bson.Document\nfun run(store: MongoCollection<Document>, filter: String, selector: Document) { store.find(selector); store.deleteMany(selector); Document.parse(filter) }",
-            3,
+            2,
         ),
         (
             "Probe.cs",
             "using MongoDB.Driver; using MongoDB.Bson; class Probe { void Run(IMongoCollection<BsonDocument> store, string filter, BsonDocument selector) { store.Find(selector); store.DeleteMany(selector); BsonDocument.Parse(filter); } }",
-            3,
+            2,
         ),
         (
             "app.php",
@@ -393,7 +393,7 @@ fn extended_python_orm_and_rust_client_text_entrypoints_preserve_binding_roles()
 }
 
 #[test]
-fn extended_raw_document_query_constructors_keep_the_executable_or_json_operand() {
+fn isolated_document_construction_does_not_extract_an_unused_database_boundary() {
     let result = scan(
         "documents",
         &[
@@ -411,19 +411,83 @@ fn extended_raw_document_query_constructors_keep_the_executable_or_json_operand(
             ),
         ],
     );
-    for (path, expected) in [("Probe.java", 2), ("app.kt", 2), ("Probe.cs", 1)] {
-        let hits: Vec<_> = result
+    assert!(
+        !result
             .evidence
             .iter()
-            .filter(|e| e.location.path == path && e.rule_id.ends_with("extended-nosql-json"))
-            .collect();
-        assert_eq!(hits.len(), expected, "{path}: {hits:#?}");
-        assert!(hits.iter().all(|hit| {
-            hit.captures
-                .get("nosql_query")
-                .is_some_and(|q| q.text == "filter")
-        }));
+            .any(|e| e.rule_id.ends_with("extended-nosql-json"))
+    );
+    assert!(
+        result.security_paths.is_empty(),
+        "parsing must not create an execution relationship"
+    );
+}
+
+#[test]
+fn document_construction_attaches_to_consumers_without_its_own_review() {
+    let directory =
+        std::env::temp_dir().join(format!("mehscan-document-consumers-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    for (path, source) in [
+        (
+            "Probe.java",
+            "import com.mongodb.client.MongoCollection; import org.bson.Document; class Probe { void run(MongoCollection<Document> store, String json) { store.find(Document.parse(json)); Document selected = Document.parse(json); store.find(selected); } Document helper(String json) { return Document.parse(json); } void indirect(MongoCollection<Document> store, String json) { store.find(helper(json)); } }",
+        ),
+        (
+            "Probe.cs",
+            "using MongoDB.Driver; using MongoDB.Bson; class Probe { void Run(IMongoCollection<BsonDocument> store, string json) { store.Find(BsonDocument.Parse(json)); var selected = BsonDocument.Parse(json); store.Find(selected); } BsonDocument Helper(string json) { return BsonDocument.Parse(json); } void Indirect(IMongoCollection<BsonDocument> store, string json) { store.Find(Helper(json)); } }",
+        ),
+        (
+            "app.kt",
+            "import com.mongodb.client.MongoCollection\nimport org.bson.Document\nfun run(store: MongoCollection<Document>, json: String) { store.find(Document.parse(json)); val selected = Document.parse(json); store.find(selected) }\nfun helper(json: String): Document { return Document.parse(json) }\nfun indirect(store: MongoCollection<Document>, json: String) { store.find(helper(json)) }",
+        ),
+    ] {
+        std::fs::write(directory.join(path), source).unwrap();
     }
+    let inventory =
+        mehscan_engine::investigation::build_review_inventory(&directory, false).unwrap();
+    assert_eq!(inventory.scan.coverage.totals.parse_failed, 0);
+    for path in ["Probe.java", "Probe.cs", "app.kt"] {
+        let consumers = inventory
+            .scan
+            .evidence
+            .iter()
+            .filter(|e| e.location.path == path && e.rule_id.ends_with("extended-nosql-query"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            consumers.len(),
+            3,
+            "must preserve inline, local and helper consumers: {path}"
+        );
+        for consumer in &consumers {
+            assert!(
+                inventory
+                    .entries
+                    .iter()
+                    .any(|e| e.path == path && e.rule_id == consumer.rule_id),
+                "lost {path} consumer"
+            );
+        }
+        for consumer in &consumers[..2] {
+            assert!(
+                consumer
+                    .context
+                    .operand_facts
+                    .iter()
+                    .any(|f| f.value.starts_with("raw_document_construction:")),
+                "missing bounded construction origin: {path}: {:?}",
+                consumer.captures
+            );
+        }
+        assert!(
+            !inventory
+                .entries
+                .iter()
+                .any(|e| e.path == path && e.rule_id.ends_with("extended-nosql-json")),
+            "parser must not own a review"
+        );
+    }
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

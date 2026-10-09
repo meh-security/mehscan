@@ -49,6 +49,9 @@ pub(super) fn inventory_only(
     evidence: &[Evidence],
     written_code_targets: &BTreeSet<String>,
 ) -> bool {
+    if crate::code::closed_query(item) {
+        return true;
+    }
     if matches!(
         item.rule_id.as_str(),
         "php-html-output" | "php-file-inclusion"

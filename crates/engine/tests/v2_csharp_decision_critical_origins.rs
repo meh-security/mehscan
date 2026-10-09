@@ -30,7 +30,6 @@ fn retains_unknown_origin_only_for_strong_csharp_interpreter_boundaries() {
         "csharp-razor-html-raw-output",
         "csharp-dynamic-code",
         "csharp-binaryformatter-deserialization",
-        "csharp-extended-nosql-json",
         "csharp-directory-searcher-filter",
         "csharp-process-start",
         "csharp-process-start-info",

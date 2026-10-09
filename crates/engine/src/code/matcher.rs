@@ -1674,6 +1674,8 @@ pub(crate) fn scan_source(
         super::php::add_operand_facts(path, &php_operand_nodes, context, &literals, &mut evidence);
     }
     super::node_operands::annotate(language, source, &root, &mut evidence);
+    super::native_query::annotate(language, &root, &literals, &mut evidence);
+    super::extended_database::attach_document_construction(&root, &mut evidence);
     let summaries_microseconds = summaries_started.elapsed().as_micros();
     let paths_started = Instant::now();
     let mut security_paths = super::security_paths::build_security_paths(

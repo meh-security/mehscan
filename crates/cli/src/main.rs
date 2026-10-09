@@ -961,11 +961,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let reopened = |entry: &&serde_json::Value| {
                 (matches!(
                     entry["value_hint"]["reason"].as_str(),
-                    Some(
-                        "php_relationship_research"
-                            | "local_bound_query_inventory"
-                            | "medium_impact_relationship"
-                    )
+                    Some("php_relationship_research" | "medium_impact_relationship")
                 ) && reopen_surfaces
                     .contains(&(entry["path"].as_str(), entry["rule_id"].as_str())))
                     || entry["value_hint"]["depends_on"]

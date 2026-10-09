@@ -668,10 +668,10 @@
       - https://cwe.mitre.org/data/definitions/943.html
 
 - id: java-extended-nosql-json
-  version: 1
+  version: 2
   title: Extended MongoDB raw document query construction
   language: java
-  kind: sink
+  kind: resource
   capability: database_query
   confidence: medium
   cwe: [CWE-943]
@@ -798,10 +798,10 @@
       - https://cwe.mitre.org/data/definitions/943.html
 
 - id: kotlin-extended-nosql-json
-  version: 1
+  version: 2
   title: Extended MongoDB raw document query construction
   language: kotlin
-  kind: sink
+  kind: resource
   capability: database_query
   confidence: medium
   cwe: [CWE-943]
@@ -823,10 +823,10 @@
       - https://cwe.mitre.org/data/definitions/943.html
 
 - id: csharp-extended-nosql-json
-  version: 1
+  version: 2
   title: Extended MongoDB raw JSON filter construction
   language: csharp
-  kind: sink
+  kind: resource
   capability: database_query
   confidence: medium
   cwe: [CWE-943]

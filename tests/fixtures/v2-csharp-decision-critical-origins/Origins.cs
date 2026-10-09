@@ -16,6 +16,7 @@ public class OriginCases : Controller
     private string program;
     private Stream payload;
     private string document;
+    private IMongoCollection<BsonDocument> documents;
     private string filter;
     private string value;
     private string executable;
@@ -37,9 +38,9 @@ public class OriginCases : Controller
         return new BinaryFormatter().Deserialize(payload);
     }
 
-    public BsonDocument RawNoSql()
+    public object RawNoSql()
     {
-        return BsonDocument.Parse(document);
+        return documents.Find(BsonDocument.Parse(document));
     }
 
     public DirectorySearcher LdapFilter()

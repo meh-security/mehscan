@@ -1,11 +1,187 @@
-//! Identity gates for the extended database rules. Query construction is an
-//! investigation boundary, not proof that a document or constant is injectable.
+//! Identity gates for the extended database rules. Query construction is a
+//! consumer fact, not proof that a document or constant is injectable.
 use ast_grep_core::{Node, tree_sitter::StrDoc};
 use ast_grep_language::SupportLang;
 use mehscan_core::Language;
 use std::collections::BTreeMap;
 
 type DbNode<'a> = Node<'a, StrDoc<SupportLang>>;
+
+/// Parser/constructor occurrences are context, not database interpretation.
+/// Attach inline and direct local origins to real collection operations. Source
+/// lookups can find other producers without persisting unused construction rows.
+pub(super) fn attach_document_construction(
+    root: &DbNode<'_>,
+    evidence: &mut Vec<mehscan_core::Evidence>,
+) {
+    use mehscan_core::{EvidenceKind, OperandFact, OperandFactKind};
+    let builders = evidence
+        .iter()
+        .filter(|e| e.rule_id.ends_with("-extended-nosql-json"))
+        .cloned()
+        .collect::<Vec<_>>();
+    if builders.is_empty() {
+        return;
+    }
+    let queries = evidence
+        .iter()
+        .filter(|e| e.kind == EvidenceKind::Sink && e.cwe_candidates == ["CWE-943"])
+        .filter_map(|e| e.captures.get("nosql_query"))
+        .collect::<Vec<_>>();
+    if queries.is_empty() {
+        evidence.retain(|e| !e.rule_id.ends_with("-extended-nosql-json"));
+        return;
+    }
+    let ranges = builders
+        .iter()
+        .map(|e| (e.location.start.byte_offset, e.location.end.byte_offset))
+        .chain(
+            queries
+                .iter()
+                .map(|q| (q.location.start.byte_offset, q.location.end.byte_offset)),
+        )
+        .collect::<std::collections::BTreeSet<_>>();
+    let names = queries
+        .iter()
+        .map(|q| q.text.trim())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut nodes = BTreeMap::new();
+    let mut uses = BTreeMap::<String, Vec<std::ops::Range<usize>>>::new();
+    for node in root.dfs() {
+        let range = node.range();
+        if ranges.contains(&(range.start, range.end)) {
+            nodes.insert((range.start, range.end), node.clone());
+        }
+        if matches!(node.kind().as_ref(), "identifier" | "simple_identifier")
+            && names.contains(node.text().as_ref())
+        {
+            uses.entry(node.text().into_owned())
+                .or_default()
+                .push(node.range());
+        }
+    }
+    drop(names);
+    drop(queries);
+    let mut used = std::collections::BTreeSet::new();
+    for sink in evidence
+        .iter_mut()
+        .filter(|e| e.kind == EvidenceKind::Sink && e.cwe_candidates == ["CWE-943"])
+    {
+        let Some(query) = sink.captures.get("nosql_query") else {
+            continue;
+        };
+        for builder in &builders {
+            let inline = query.location.start.byte_offset <= builder.location.start.byte_offset
+                && query.location.end.byte_offset >= builder.location.end.byte_offset;
+            let local = !inline
+                && nodes
+                    .get(&(
+                        builder.location.start.byte_offset,
+                        builder.location.end.byte_offset,
+                    ))
+                    .zip(nodes.get(&(
+                        query.location.start.byte_offset,
+                        query.location.end.byte_offset,
+                    )))
+                    .is_some_and(|(node, target)| {
+                        direct_document_origin(node, target, query, &uses)
+                    });
+            if !inline && !local {
+                continue;
+            }
+            used.insert(builder.id.clone());
+            sink.related_evidence.push(builder.id.clone());
+            sink.context.operand_facts.push(OperandFact {
+                kind: OperandFactKind::QueryStructure,
+                role: "nosql_query".into(),
+                location: builder.location.clone(),
+                value: format!(
+                    "raw_document_construction:{}",
+                    builder.captures["nosql_query"].text
+                ),
+                remaining_checks: vec![
+                    "operator_shape".into(),
+                    "input_types".into(),
+                    "record_authority".into(),
+                ],
+            });
+        }
+    }
+    evidence.retain(|e| !e.rule_id.ends_with("-extended-nosql-json") || used.contains(&e.id));
+}
+
+fn direct_document_origin(
+    node: &DbNode<'_>,
+    target: &DbNode<'_>,
+    query: &mehscan_core::Capture,
+    uses: &BTreeMap<String, Vec<std::ops::Range<usize>>>,
+) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    let binding = if parent.kind().as_ref() == "equals_value_clause" {
+        parent.parent()
+    } else {
+        Some(parent)
+    };
+    let Some(binding) = binding.filter(|n| {
+        matches!(
+            n.kind().as_ref(),
+            "variable_declarator" | "property_declaration"
+        )
+    }) else {
+        return false;
+    };
+    let name = binding.field("name").or_else(|| {
+        binding
+            .children()
+            .find(|n| n.kind().as_ref() == "variable_declaration")
+            .and_then(|n| {
+                n.children()
+                    .find(|n| n.kind().as_ref() == "simple_identifier")
+            })
+    });
+    if !name.is_some_and(|n| n.text().trim() == query.text.trim()) {
+        return false;
+    }
+    let Some(function) = binding.ancestors().find(|n| {
+        matches!(
+            n.kind().as_ref(),
+            "method_declaration" | "function_declaration"
+        )
+    }) else {
+        return false;
+    };
+    if query.location.start.byte_offset < binding.range().end
+        || query.location.end.byte_offset > function.range().end
+    {
+        return false;
+    }
+    if target
+        .ancestors()
+        .take_while(|n| n.range() != function.range())
+        .any(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "lambda_expression"
+                    | "lambda_literal"
+                    | "method_declaration"
+                    | "function_declaration"
+            )
+        })
+    {
+        return false;
+    }
+    // Prior uses include writes, aliases and helpers; a direct first use is the
+    // only local attachment supported here. This is no whole-program taint.
+    !uses
+        .get(query.text.trim())
+        .into_iter()
+        .flatten()
+        .any(|range| {
+            range.start >= binding.range().end && range.start < query.location.start.byte_offset
+        })
+}
 
 /// File-local AST references only; visibility is still checked at each use.
 pub(super) struct ExactSymbolIndex<'a> {

@@ -232,15 +232,14 @@ reopens dependents. Different effects still need their own guard checks. No
 dependent gets a safe verdict; Comprehensive retains all exact IDs. Native
 closed-selector exclusions are separate and already removed from admission.
 
-`local_bound_query_inventory` conditionally defers a sink-only, fixed-text
-node-postgres query passed as a private local const object with separate values.
-It settles no access policy or runtime method replacement; observed inputs,
-mutations, escapes and uncertain object slots remain active. Comprehensive
-retains the exact ID. Reopen if the driver is replaced or this operation has
-another consequential relationship.
+Proven fixed node-postgres query objects leave both queues, including request
+values in separate binding slots. Unknown driver identity, method replacement,
+object mutation/escape/overrides and dynamic text remain reviewable. An injection
+closure does not settle an independently identified record-authority question.
+See [database scope](review-scope.md#database-exclusions-and-remaining-cleanup).
 
 PHP queue conditions and their limits are in [review scope](review-scope.md).
-Inventory schema 6 requires a fresh scan; do not reuse an older inventory or its
+Inventory schema 7 requires a fresh scan; do not reuse an older inventory or its
 ledger. Use `--selection all` for `php_relationship_research`. Verify its bounded
 producer navigation against the actual writes, transformations, writer and actor.
 Same-file/rule `issue`, `needs_review` or conflicting verdicts reopen retained

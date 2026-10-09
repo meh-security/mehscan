@@ -3952,6 +3952,32 @@ fn collect_owner_field_overwrite_guards(source: &str, guards: &mut BTreeSet<Stri
     }
 }
 
+fn closed_resource_filter_properties<'a>(
+    filter: &Node<'a, StrDoc<SupportLang>>,
+) -> Option<Vec<Node<'a, StrDoc<SupportLang>>>> {
+    let mut keys = BTreeSet::new();
+    let mut properties = Vec::new();
+    for property in filter
+        .children()
+        .filter(|n| n.is_named() && n.kind().as_ref() != "comment")
+    {
+        if property.kind().as_ref() != "pair" {
+            return None;
+        }
+        let key = property.field("key")?;
+        if !matches!(
+            key.kind().as_ref(),
+            "property_identifier" | "string" | "number"
+        ) || key.dfs().any(|n| n.kind().as_ref() == "escape_sequence")
+            || !keys.insert(normalize_property_name(key.text().as_ref()))
+        {
+            return None;
+        }
+        properties.push(property);
+    }
+    Some(properties)
+}
+
 fn resource_filter_has_owner_scope(root: &Node<'_, StrDoc<SupportLang>>, sink: &Evidence) -> bool {
     let Some(filter) = sink.captures.get("filter") else {
         return false;
@@ -3963,42 +3989,29 @@ fn resource_filter_has_owner_scope(root: &Node<'_, StrDoc<SupportLang>>, sink: &
         return false;
     }
     let scope = function_scope(&filter_node, root);
-    filter_node
-        .children()
-        .filter(|child| child.is_named())
-        .any(|property| {
-            let shorthand = matches!(
-                property.kind().as_ref(),
-                "shorthand_property_identifier" | "shorthand_property_identifier_pattern"
-            );
-            let key = property
-                .field("key")
-                .or_else(|| shorthand.then(|| property.clone()));
-            let Some(key) = key else { return false };
-            if !matches!(
-                normalize_property_name(key.text().as_ref()).as_str(),
-                "userid"
-                    | "ownerid"
-                    | "accountid"
-                    | "tenantid"
-                    | "organizationid"
-                    | "organisationid"
-            ) {
-                return false;
-            }
-            let value = property
-                .field("value")
-                .or_else(|| shorthand.then_some(property));
-            value.is_some_and(|value| {
-                resource_owner_value_is_authenticated(
-                    root,
-                    value,
-                    sink.location.start.byte_offset,
-                    &scope,
-                    2,
-                )
-            })
+    let Some(properties) = closed_resource_filter_properties(&filter_node) else {
+        return false;
+    };
+    properties.into_iter().any(|property| {
+        let key = property.field("key");
+        let Some(key) = key else { return false };
+        if !matches!(
+            normalize_property_name(key.text().as_ref()).as_str(),
+            "userid" | "ownerid" | "accountid" | "tenantid" | "organizationid" | "organisationid"
+        ) {
+            return false;
+        }
+        let value = property.field("value");
+        value.is_some_and(|value| {
+            resource_owner_value_is_authenticated(
+                root,
+                value,
+                sink.location.start.byte_offset,
+                &scope,
+                2,
+            )
         })
+    })
 }
 
 fn resource_filter_has_route_bound_owner_scope(
@@ -4026,27 +4039,47 @@ fn resource_filter_has_route_bound_owner_scope(
     if !matches!(filter_node.kind().as_ref(), "object" | "object_expression") {
         return false;
     }
+    let scope = function_scope(&filter_node, root);
+    if root.dfs().any(|node| {
+        node.range().start >= scope.start
+            && node.range().end < sink.location.start.byte_offset
+            && matches!(
+                node.kind().as_ref(),
+                "assignment_expression" | "augmented_assignment_expression" | "update_expression"
+            )
+            && node
+                .field("left")
+                .or_else(|| node.field("argument"))
+                .is_some_and(|left| {
+                    matches!(
+                        compact(left.text().as_ref()).as_str(),
+                        "req" | "req.body" | "req.body.UserId" | "req.body.userId"
+                    )
+                })
+    }) {
+        return false;
+    }
     let model_is_user = sink.captures.get("model").is_some_and(|capture| {
         matches!(
             terminal_symbol(capture.text.trim()),
             "User" | "UserModel" | "Account" | "AccountModel"
         )
     });
-    filter_node
-        .children()
-        .filter(|child| child.is_named())
-        .any(|property| {
-            let Some(key) = property.field("key") else {
-                return false;
-            };
-            let key = normalize_property_name(key.text().as_ref());
-            if key != "userid" && !(key == "id" && model_is_user) {
-                return false;
-            }
-            property.field("value").is_some_and(|value| {
-                compact(value.text().as_ref()).replace("?.", ".") == "req.body.UserId"
-            })
+    let Some(properties) = closed_resource_filter_properties(&filter_node) else {
+        return false;
+    };
+    properties.into_iter().any(|property| {
+        let Some(key) = property.field("key") else {
+            return false;
+        };
+        let key = normalize_property_name(key.text().as_ref());
+        if key != "userid" && !(key == "id" && model_is_user) {
+            return false;
+        }
+        property.field("value").is_some_and(|value| {
+            compact(value.text().as_ref()).replace("?.", ".") == "req.body.UserId"
         })
+    })
 }
 
 fn resource_owner_value_is_authenticated(
@@ -4056,6 +4089,12 @@ fn resource_owner_value_is_authenticated(
     scope: &std::ops::Range<usize>,
     remaining_hops: usize,
 ) -> bool {
+    if !matches!(
+        value.kind().as_ref(),
+        "identifier" | "member_expression" | "call_expression"
+    ) {
+        return false;
+    }
     let text = compact(value.text().as_ref()).replace("?.", ".");
     let lower = text.to_ascii_lowercase();
     if text.starts_with("req.user.")
@@ -4071,9 +4110,18 @@ fn resource_owner_value_is_authenticated(
     {
         return true;
     }
-    if value.dfs().filter_map(call_site).any(|call| {
+    let mut origin = value.clone();
+    while origin.kind().as_ref() == "member_expression" {
+        let Some(object) = origin.field("object") else {
+            return false;
+        };
+        origin = object;
+    }
+    if call_site(origin).is_some_and(|call| {
         call.callee.contains("authenticatedUsers.")
             && matches!(terminal_symbol(&call.callee), "from" | "get")
+            && call.arguments.len() == 1
+            && matches!(call.arguments[0].text().trim(), "req" | "request")
     }) {
         return true;
     }
@@ -6419,6 +6467,34 @@ mod tests {
                 ""
             ),
             (true, false)
+        );
+        for predicate in [
+            "{ UserId: req.user.id, ...req.body }",
+            "{ UserId: req.user.id, UserId: req.body.id }",
+            "{ UserId: req.user.id, [req.body.key]: req.body.value }",
+            "{ UserId: req.body.UserId, ...req.body }",
+            r"{ UserId: req.user.id, '\u0055serId': req.body.id }",
+            "{ UserId: req.user.id || req.body.id }",
+            "{ UserId: choose(authenticatedUsers.get(req), req.body.id) }",
+        ] {
+            assert_eq!(
+                owner_scope_classifications(
+                    &format!(
+                        "function handler(req) {{ return Wallet.findOne({{ where: {predicate} }}) }}"
+                    ),
+                    "export const appendUserId = () => (req, res, next) => { req.body.UserId = authenticatedUsers.get(req).data.id; next() }"
+                ),
+                (false, false),
+                "owner overrides must retain authority work: {predicate}"
+            );
+        }
+        assert_eq!(
+            owner_scope_classifications(
+                "function handler(req) { req.body.UserId = req.body.target; return Wallet.findOne({ where: { UserId: req.body.UserId } }) }",
+                "export const appendUserId = () => (req, res, next) => { req.body.UserId = authenticatedUsers.get(req).data.id; next() }"
+            ),
+            (false, false),
+            "a handler write invalidates the earlier middleware overwrite"
         );
 
         let source = "function update(req) { const { userId } = req.session; profile.updateUser(parseInt(userId)); }";
