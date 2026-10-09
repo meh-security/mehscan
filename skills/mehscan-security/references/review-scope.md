@@ -41,6 +41,34 @@ A decision-critical producer question does not itself promote an ordinary
 medium-impact redirect into Value. Keep its exact Comprehensive ID and origin
 question; promote when evidence shows a consequential credential/effect chain.
 
+## Ordinary patterns excluded from both queues
+
+These belong in **Neither**, rather than becoming permanent Comprehensive work.
+An ordinary occurrence is not an AI safe verdict for every possible caller.
+
+| Pattern | Why exclude it | Keep review work when |
+| --- | --- | --- |
+| Intrinsic `a`/`area` href merely forwards an unchanged parameter, without a represented input or producer relationship | Normal link presentation does not supply an unsafe construction or a concrete lower-trust writer to investigate. Unknown callers alone are insufficient. | URL construction/default/reassignment, input relationships, bound incoming arguments/origins, resource contexts or a consequential writer supply a real lead. |
+| DOM-bound GET/HEAD in an explicit browser context, without other options or an input relationship | The operation is an ordinary client request and supplies no server-side SSRF question. | Credentials/headers/body, mutations, unknown options, input relationships, privileged effects or Node/SSR/unknown runtime make the destination consequential. |
+| Django-style non-authority lookup used exclusively as a predicate to refine a supplied queryset | Ordinary query construction should not get a separate verdict just for using a record key, when there is no represented protected-resource selection or sensitive consumer. | Request-selected owner/tenant/account boundaries, selected fields/records escaping, metadata in errors, wrappers/aliases, non-ID projections or terminal read/destructive consumers supply a practical edge. |
+| Owned trusted-markup call containing only fixed whitespace/nonbreaking-space padding | Variable repetition changes padding quantity, without a dynamic HTML producer or interpreted construction. | Dynamic text, formatting, interpolation, escaped bytes or other markup remain in the operand. |
+
+Directory setup, names-only listing, positive security controls and effect-free
+builders follow the same principle in the family table above. Keep supporting
+extraction only when an admitted relationship or compiler fact actually consumes
+it; text search does not require ordinary review IDs. Broader timestamp,
+routing-metadata or parent-inheritance exclusions need consumer facts, not method
+or field-name allowlists copied from one application's verdicts.
+
+Queryset refinement alone does not prove authorization. For example, a request
+choosing a tenant and returning `qs.filter(tenant=tenant)` can select protected
+resources if `qs` was not scoped to the actor. Keep that concrete authority
+question; do not classify it as ordinary just because evaluation happens later.
+The current Python exclusion checks local uses and terminal consumers, but does
+not establish caller permissions or fully propagate request/authority facts.
+Treat guarding those connected selections as an implementation gap, not as a
+safe verdict or a reason to retain every ordinary query-builder occurrence.
+
 ## Language and backend differences
 
 The impact test is shared. Differences below concern facts the scanner can
