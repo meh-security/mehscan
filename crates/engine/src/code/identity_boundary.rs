@@ -25,13 +25,18 @@ pub(crate) fn add_identity_boundary_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    symbols: &super::symbols::FileSymbolEnvironment,
     evidence: &mut Vec<Evidence>,
 ) {
     if !is_node_language(language) || is_non_runtime_example_path(path) {
         return;
     }
     let lower = source.to_ascii_lowercase();
-    if lower.contains(".sign(") || lower.contains(".verify(") || lower.contains(".decode(") {
+    if lower.contains("jsonwebtoken")
+        || lower.contains("sign(")
+        || lower.contains("verify(")
+        || lower.contains("decode(")
+    {
         add_jwt_observations(
             path,
             root,
@@ -39,6 +44,7 @@ pub(crate) fn add_identity_boundary_observations<'tree>(
             comments,
             conditional,
             literals,
+            symbols,
             evidence,
         );
     }
@@ -118,6 +124,7 @@ fn add_jwt_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    symbols: &super::symbols::FileSymbolEnvironment,
     evidence: &mut Vec<Evidence>,
 ) {
     for node in root.dfs() {
@@ -127,8 +134,14 @@ fn add_jwt_observations<'tree>(
         if comments.is_in_comment(call.node.range()) {
             continue;
         }
-        let callee = compact(&call.callee).to_ascii_lowercase();
-        if callee.ends_with("jwt.sign") || callee == "jwt.sign" {
+        let callee = compact(&call.callee);
+        let owned = |method: &str| {
+            symbols
+                .resolve(&callee, &format!("jsonwebtoken.{method}"))
+                .is_some_and(|r| r.confidence != mehscan_core::SymbolConfidence::Ambiguous)
+                && !symbols.has_shadowing_parameter(&call.node, &callee, language)
+        };
+        if owned("sign") {
             if let Some(key) = call.arguments.get(1) {
                 let options = call
                     .arguments
@@ -141,16 +154,13 @@ fn add_jwt_observations<'tree>(
                     .as_deref()
                     .is_some_and(|text| text.to_ascii_lowercase().contains("algorithm:"));
                 if !has_expiry {
-                    push_pair(
+                    let start = evidence.len();
+                    push_configuration(
                         path,
                         language,
-                        "jwt-signing-key",
                         "jwt-without-expiry",
-                        key,
                         &call.node,
-                        Capability::CredentialMaterial,
                         Capability::TokenGeneration,
-                        "expiry_key",
                         "CWE-613",
                         vec!["jwt".into(), "signing".into(), "missing-expiry".into()],
                         comments,
@@ -158,6 +168,10 @@ fn add_jwt_observations<'tree>(
                         literals,
                         evidence,
                     );
+                    // Claim context, not a violation without a lifetime contract.
+                    if let Some(item) = evidence.get_mut(start) {
+                        item.kind = EvidenceKind::Resource;
+                    }
                 } else {
                     push_control(
                         path,
@@ -208,7 +222,7 @@ fn add_jwt_observations<'tree>(
                     );
                 }
             }
-        } else if callee.ends_with("jwt.verify") || callee == "jwt.verify" {
+        } else if owned("verify") {
             let Some(token) = call.arguments.first() else {
                 continue;
             };
@@ -297,27 +311,30 @@ fn add_jwt_observations<'tree>(
                     evidence,
                 );
             } else {
-                push_pair(
+                let start = evidence.len();
+                push_configuration(
                     path,
                     language,
-                    "jwt-token-input",
-                    "jwt-verify-without-algorithm-allowlist",
-                    token,
+                    "jwt-verification-context",
                     &call.node,
-                    Capability::HttpRequestData,
                     Capability::Authentication,
-                    "token",
                     "CWE-347",
                     vec![
                         "jwt".into(),
                         "verification".into(),
-                        "missing-algorithm-allowlist".into(),
+                        "algorithm-policy-context".into(),
                     ],
                     comments,
                     conditional,
                     literals,
                     evidence,
                 );
+                // The SDK applies key-dependent algorithm defaults. Absence of
+                // an explicit list is not a bypass, nor proof of request input.
+                if let Some(item) = evidence.get_mut(start) {
+                    item.kind = EvidenceKind::Resource;
+                    item.captures.insert("token".into(), capture(path, token));
+                }
             }
         } else if callee.ends_with("jwt.decode")
             || callee == "jwt.decode"

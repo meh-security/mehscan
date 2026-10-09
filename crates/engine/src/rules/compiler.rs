@@ -22,7 +22,7 @@ pub(crate) fn compile_for_language(
     let parser_language = parser_language(language);
     rules
         .iter()
-        .filter(|rule| rule.language == language)
+        .filter(|rule| rule.language == language && !implemented_by_frontend(language, &rule.id))
         .map(|rule| {
             let patterns = rule
                 .match_spec
@@ -63,6 +63,38 @@ pub(crate) fn compile_for_language(
             })
         })
         .collect()
+}
+
+// These observations are replaced unconditionally by the built-in ownership
+// frontends. Keep catalog metadata/guidance, but do not run discarded patterns.
+// Conditional overlap replacements (e.g. database adapters) must stay compiled.
+fn implemented_by_frontend(language: Language, id: &str) -> bool {
+    match language {
+        Language::Java => matches!(
+            id,
+            "java-html-output"
+                | "java-html-encoding"
+                | "java-hash-algorithm-selection"
+                | "java-url-destination-validation"
+                | "java-object-deserialization"
+                | "java-deserialization-restriction"
+                | "java-filesystem-read"
+                | "java-filesystem-write"
+                | "java-path-canonicalization"
+                | "java-path-containment-check"
+                | "java-cookie-secure-flag"
+                | "java-cookie-httponly-flag"
+        ),
+        Language::Csharp => matches!(
+            id,
+            "csharp-zip-entry-full-name"
+                | "csharp-binary-deserialization"
+                | "csharp-multipart-section-body"
+                | "csharp-multipart-content-disposition-filename"
+                | "csharp-streamed-upload-file-copy"
+        ),
+        _ => false,
+    }
 }
 
 fn required_source_text(pattern: &str) -> Option<String> {
@@ -133,7 +165,35 @@ pub(crate) fn parser_language(language: Language) -> SupportLang {
 
 #[cfg(test)]
 mod tests {
-    use super::required_source_text;
+    use super::{compile_for_language, implemented_by_frontend, required_source_text};
+    use mehscan_core::Language;
+
+    #[test]
+    fn owned_frontends_keep_metadata_without_discarded_pattern_work() {
+        let rules = crate::rules::load_builtin_rules().unwrap();
+        let mut skipped = 0;
+        for language in [Language::Java, Language::Csharp] {
+            let compiled = compile_for_language(&rules, language).unwrap();
+            for rule in rules.iter().filter(|r| r.language == language) {
+                if implemented_by_frontend(language, &rule.id) {
+                    skipped += 1;
+                    assert!(!compiled.iter().any(|r| r.rule.id == rule.id));
+                } else {
+                    assert!(compiled.iter().any(|r| r.rule.id == rule.id));
+                }
+            }
+        }
+        assert_eq!(skipped, 17);
+        // Other language adapters and conditional Java persistence are unaffected.
+        assert!(!implemented_by_frontend(
+            Language::Java,
+            "java-database-query"
+        ));
+        assert!(!implemented_by_frontend(
+            Language::Kotlin,
+            "kotlin-html-output"
+        ));
+    }
 
     #[test]
     fn extracts_only_literal_pattern_identifiers() {

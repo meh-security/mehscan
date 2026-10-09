@@ -223,7 +223,10 @@ fn suitable_digest_selection(item: &Evidence, sources: &RepositorySources) -> bo
     if !item.rule_id.ends_with("hash-algorithm-selection")
         && !matches!(
             item.rule_id.as_str(),
-            "c-openssl-hash-selection" | "cpp-openssl-hash-selection"
+            "c-openssl-hash-selection"
+                | "cpp-openssl-hash-selection"
+                | "kotlin-message-digest"
+                | "php-weak-hash-selection"
         )
     {
         return false;

@@ -1193,6 +1193,7 @@ pub(crate) fn scan_source(
         &comments,
         &conditional,
         &literals,
+        &symbol_environment,
         &mut evidence,
     );
     super::file_roles::add_file_role_observations(
@@ -1663,6 +1664,7 @@ pub(crate) fn scan_source(
     super::outbound_cleanup::annotate(language, &root, &literals, &mut evidence);
     super::native_curl::annotate(language, &root, &mut evidence);
     super::reactive_cleanup::annotate(language, &root, &mut evidence);
+    super::issuance_cleanup::annotate(language, &root, &symbol_environment, &mut evidence);
     if language == Language::Kotlin {
         super::kotlin::annotate_outbound(&root, &literals, &mut evidence);
     }

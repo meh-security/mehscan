@@ -21,6 +21,17 @@ Keep conditional activation/exposure in the verdict and confidence.
 
 ## Conditions by security family
 
+Unused synchronous JWT results and known console/StringWriter buffers are
+supporting context. Credential returns/handoffs, callback delivery and actual
+HTTP/trusted-markup consumers remain reviewable. Missing `exp` alone does not
+prove a lifetime violation: check credential use and the effective lifetime or
+revocation contract. `StreamWriter`/`TextWriter` types alone cannot exclude HTML;
+they may wrap a response. Unknown signer/writer ownership is not a safety proof.
+Omitting an explicit jsonwebtoken algorithm list is normal policy context; the
+SDK uses key-dependent defaults. Keep explicit weakened verification options
+and key/credential relationships, without inventing HTTP input from a token
+argument alone.
+
 | Family | Value | Comprehensive-only research | Exclude ordinary work |
 | --- | --- | --- | --- |
 | SQL, commands and code interpreters | Variable-built interpreter grammar, a dangerous execution target, or an actual input/execution relationship. Inspect wrappers/callers; a raw API alone is not a confirmed injection. | A consequential interpreter/loader relationship whose input, authority or protection remains unresolved. | Fixed grammar with data binding; unused builders; parsing/compilation without execution, unless another sensitive effect is shown. |

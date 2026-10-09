@@ -379,7 +379,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "19";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "20";
 
 pub fn validate_review_inventory(
     root: &Path,

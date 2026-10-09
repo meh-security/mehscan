@@ -56,7 +56,7 @@ fn validate_relations(relations: &[RelationContract], rules: &[Rule]) -> Result<
     capture_roles
         .entry((EvidenceKind::Sink, Capability::TokenGeneration))
         .or_default()
-        .extend(["signing_key".to_string(), "expiry_key".to_string()]);
+        .insert("signing_key".to_string());
     capture_roles
         .entry((EvidenceKind::Sink, Capability::Authentication))
         .or_default()
@@ -353,7 +353,7 @@ mod tests {
     fn built_in_relations_validate_against_matcher_roles() {
         let rules = super::super::load_builtin_rules().expect("rules should load");
         let relations = load_builtin_relations(&rules).expect("relations should validate");
-        assert_eq!(relations.len(), 52);
+        assert_eq!(relations.len(), 51);
         assert_eq!(
             relations
                 .iter()

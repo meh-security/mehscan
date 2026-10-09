@@ -63,7 +63,9 @@ fn models_next_app_router_boundaries_postgres_js_and_production_test_routes() {
                 .iter()
                 .any(|step| step.location.path == "src/app/api/webhooks/test/route.ts")
     }));
-    assert!(!result.security_paths.iter().any(|path| {
+    // URL construction is not destination approval. The same-origin throw/catch
+    // guard here requires source review; this frontend does not prove that CFG.
+    assert!(result.security_paths.iter().any(|path| {
         path.capability == Capability::Redirect
             && path
                 .steps

@@ -145,19 +145,22 @@ fn suitable_integrity_digests_do_not_hide_weak_or_fast_password_hashes() {
                 "app.py",
                 "import hashlib\ndef integrity():\n    return hashlib.new('sha256')\ndef passwordHash():\n    return hashlib.new('sha256')\ndef weakSignature():\n    return hashlib.new('md5')\ndef tokenHash(algorithm):\n    return hashlib.new(algorithm)\n",
             ),
+            (
+                "App.kt",
+                "import java.security.MessageDigest\nfun tokenIntegrity()=MessageDigest.getInstance(\"SHA-256\")\nfun passwordHash()=MessageDigest.getInstance(\"SHA-256\")\nfun weakSignature()=MessageDigest.getInstance(\"MD5\")\nfun tokenHash(algorithm:String)=MessageDigest.getInstance(algorithm)\n",
+            ),
         ],
     );
     let inventory = build_review_inventory(&fixture.0, false).unwrap();
     assert!(
-        !inventory
-            .entries
-            .iter()
-            .any(|e| e.symbol.as_deref() == Some("integrity")
-                && e.capability == Capability::CryptographicHash),
+        !inventory.entries.iter().any(|e| matches!(
+            e.symbol.as_deref(),
+            Some("integrity" | "tokenIntegrity")
+        ) && e.capability == Capability::CryptographicHash),
         "{:#?}",
         inventory.entries
     );
-    for file in ["app.js", "app.py"] {
+    for file in ["app.js", "app.py", "App.kt"] {
         for method in ["passwordHash", "weakSignature", "tokenHash"] {
             assert!(
                 inventory.entries.iter().any(|e| e.path == file

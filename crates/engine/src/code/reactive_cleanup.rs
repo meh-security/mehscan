@@ -5,7 +5,14 @@ use mehscan_core::{Capture, Evidence, EvidenceKind, Language};
 type N<'a> = Node<'a, StrDoc<SupportLang>>;
 
 pub(super) fn annotate(language: Language, root: &N<'_>, evidence: &mut [Evidence]) {
-    if !matches!(language, Language::Java | Language::Kotlin) {
+    if !matches!(language, Language::Java | Language::Kotlin)
+        || !evidence.iter().any(|e| {
+            matches!(
+                e.rule_id.as_str(),
+                "java-spring-webclient-outbound-request" | "kotlin-webclient-uri"
+            )
+        })
+    {
         return;
     }
     let identifiers = root

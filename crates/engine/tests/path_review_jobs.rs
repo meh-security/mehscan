@@ -1156,18 +1156,22 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
             .iter()
             .any(|evidence| { evidence.enclosing_symbol.as_deref() == Some("dynamicDirectory") })
     );
-    assert!(anchored.iter().all(|evidence| {
-        evidence.location.path != "fixed_sinks.py"
-            || (evidence
-                .context
-                .literals
-                .values()
-                .all(|literal| literal.state != mehscan_core::LiteralState::Known)
-                && evidence
-                    .captures
-                    .get("path")
-                    .is_none_or(|capture| capture.text != "fixed_path"))
-    }));
+    assert!(
+        anchored.iter().all(|evidence| {
+            evidence.location.path != "fixed_sinks.py"
+                || (evidence
+                    .context
+                    .literals
+                    .iter()
+                    .filter(|(role, _)| matches!(role.as_str(), "path" | "endpoint"))
+                    .all(|(_, literal)| literal.state != mehscan_core::LiteralState::Known)
+                    && evidence
+                        .captures
+                        .get("path")
+                        .is_none_or(|capture| capture.text != "fixed_path"))
+        }),
+        "fixed path/endpoint must close; other literal roles (e.g. I/O mode) do not close a dynamic selector: {anchored:#?}"
+    );
     assert!(
         anchored
             .iter()

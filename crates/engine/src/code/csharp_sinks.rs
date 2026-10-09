@@ -24,6 +24,13 @@ const CALL_ENGINE: &str = "mehscan csharp-call-summary 1";
 
 mod legacy_requests;
 
+pub(super) fn declared_receiver_type<'a>(
+    root: &Node<'a, StrDoc<SupportLang>>,
+    site: &Node<'a, StrDoc<SupportLang>>,
+) -> Option<String> {
+    legacy_requests::binding_type(root, site)
+}
+
 #[derive(Clone)]
 struct QueryComposition<'tree> {
     expression: Node<'tree, StrDoc<SupportLang>>,

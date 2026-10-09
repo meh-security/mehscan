@@ -41,7 +41,7 @@ fn reports_bounded_identity_and_request_boundary_candidates_with_safe_controls()
         .iter()
         .filter(|item| item.kind == EvidenceKind::Sink)
         .collect::<Vec<_>>();
-    assert_eq!(sinks.len(), 11, "{sinks:#?}");
+    assert_eq!(sinks.len(), 9, "{sinks:#?}");
     assert!(
         sinks
             .iter()
@@ -49,8 +49,8 @@ fn reports_bounded_identity_and_request_boundary_candidates_with_safe_controls()
     );
 
     let expected_cwes = [
-        "CWE-307", "CWE-321", "CWE-345", "CWE-347", "CWE-352", "CWE-613", "CWE-614", "CWE-640",
-        "CWE-942", "CWE-1004",
+        "CWE-307", "CWE-321", "CWE-345", "CWE-352", "CWE-613", "CWE-614", "CWE-640", "CWE-942",
+        "CWE-1004",
     ]
     .into_iter()
     .collect::<BTreeSet<_>>();
@@ -65,7 +65,7 @@ fn reports_bounded_identity_and_request_boundary_candidates_with_safe_controls()
         .iter()
         .filter(is_identity_path)
         .collect::<Vec<_>>();
-    assert_eq!(paths.len(), 11, "{paths:#?}");
+    assert_eq!(paths.len(), 9, "{paths:#?}");
     assert!(
         paths
             .iter()

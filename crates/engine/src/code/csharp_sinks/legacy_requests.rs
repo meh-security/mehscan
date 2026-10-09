@@ -169,7 +169,7 @@ fn binding<'a>(root: &N<'a>, site: &N<'a>) -> Option<N<'a>> {
     locals.pop().or_else(|| fields.into_iter().next())
 }
 
-fn binding_type<'a>(root: &N<'a>, site: &N<'a>) -> Option<String> {
+pub(super) fn binding_type<'a>(root: &N<'a>, site: &N<'a>) -> Option<String> {
     let n = binding(root, site)?;
     n.field("type")
         .or_else(|| n.parent()?.field("type"))

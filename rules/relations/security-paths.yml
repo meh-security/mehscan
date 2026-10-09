@@ -462,15 +462,6 @@
   cwe_candidates: [CWE-613]
   strategy: bounded_local_value
 
-- id: cwe-613-credential-to-token-without-expiry
-  version: 1
-  source: { capability: credential_material }
-  sink:
-    capability: token_generation
-    input_roles: [expiry_key]
-  cwe_candidates: [CWE-613]
-  strategy: bounded_local_value
-
 - id: cwe-347-request-token-to-jwt-verification
   version: 1
   source: { capability: http_request_data }

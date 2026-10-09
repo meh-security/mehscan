@@ -38,6 +38,7 @@ mod go_policy;
 mod go_vulnerability;
 mod go_web;
 mod identity_boundary;
+mod issuance_cleanup;
 mod java_context;
 mod java_crypto;
 mod java_filesystem;

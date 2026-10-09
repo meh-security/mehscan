@@ -1330,7 +1330,6 @@ fn is_identity_boundary_relation(relation: &RelationContract) -> bool {
         relation.id.as_str(),
         "cwe-321-credential-to-hardcoded-jwt-signing"
             | "cwe-613-credential-to-session-lifecycle"
-            | "cwe-613-credential-to-token-without-expiry"
             | "cwe-345-request-token-to-unverified-identity"
             | "cwe-347-request-token-to-jwt-verification"
             | "cwe-614-credential-to-cookie-transport"
