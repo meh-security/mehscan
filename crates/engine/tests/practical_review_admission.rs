@@ -1,4 +1,4 @@
-use mehscan_core::{Capability, ReviewAdmissionDisposition};
+use mehscan_core::Capability;
 use mehscan_engine::investigation::build_review_inventory;
 use std::{fs, path::PathBuf};
 
@@ -21,7 +21,7 @@ impl Drop for Fixture {
 }
 
 #[test]
-fn ordinary_directories_are_context_in_both_modes_but_file_effects_survive() {
+fn ordinary_directories_are_not_extracted_but_file_effects_survive() {
     let fixture = Fixture::new(
         "directories",
         &[
@@ -85,20 +85,20 @@ fn ordinary_directories_are_context_in_both_modes_but_file_effects_survive() {
                 .collect::<Vec<_>>()
         );
     }
+    assert!(!inventory.scan.evidence.iter().any(|e| matches!(
+        e.enclosing_symbol.as_deref(),
+        Some("setup" | "Setup" | "list" | "List")
+    ) && matches!(
+        e.capability,
+        Capability::FilesystemRead | Capability::FilesystemWrite
+    )));
     assert!(
         inventory
             .scan
             .evidence
             .iter()
             .any(|e| e.rule_id == "rust-filesystem-write"
-                && e.enclosing_symbol.as_deref() == Some("setup"))
-    );
-    assert!(
-        inventory
-            .admission_audit
-            .counts
-            .iter()
-            .any(|c| c.disposition == ReviewAdmissionDisposition::InventoryOnly && c.count > 0)
+                && e.enclosing_symbol.as_deref() == Some("write"))
     );
     let mut previous = inventory.clone();
     previous.schema_version = "2".into();

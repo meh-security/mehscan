@@ -41,12 +41,6 @@ public class SafeAndLookalikeController : ControllerBase
     }
 
     [HttpPost]
-    public void AmbiguousFileMode([FromQuery] string path)
-    {
-        using var stream = new FileStream(path, FileMode.OpenOrCreate);
-    }
-
-    [HttpPost]
     public void Lookalike([FromQuery] string path, FakeZipEntry entry)
     {
         entry.ExtractToFile(path);

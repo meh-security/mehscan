@@ -653,6 +653,19 @@ pub(crate) fn scan_source(
                 if symbol_resolution.confidence == SymbolConfidence::Ambiguous {
                     continue;
                 }
+                // Names-only collectors are not filesystem-content boundaries.
+                // Keep option-selected/recursive roots, which can feed export.
+                if compiled_rule.rule.id == "csharp-filesystem-read"
+                    && matches!(
+                        symbol.canonical.as_str(),
+                        "System.IO.Directory.GetFiles"
+                            | "System.IO.Directory.GetDirectories"
+                            | "System.IO.Directory.EnumerateFiles"
+                    )
+                    && call.arguments.len() < 3
+                {
+                    continue;
+                }
                 let range = call.node.range();
                 let key = (compiled_rule.rule.id.as_str(), range.start, range.end);
                 if let Some(existing) = evidence.iter_mut().find(|item| {
@@ -1653,6 +1666,7 @@ pub(crate) fn scan_source(
         super::php::add_operand_facts(path, &php_operand_nodes, context, &literals, &mut evidence);
     }
     super::node_operands::annotate(language, source, &root, &mut evidence);
+    super::filesystem_operands::annotate(language, &root, &literals, &mut evidence);
     super::python_operands::annotate(language, &root, &mut evidence);
     super::process_cleanup::annotate(language, source, &root, &literals, &mut evidence);
     super::native_query::annotate(language, &root, &literals, &mut evidence);

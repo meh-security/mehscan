@@ -73,6 +73,36 @@ Reopen that question when the repository shows a less-trusted executable,
 search directory, environment writer or real privilege boundary. There is no
 tool-name allowlist, cross-file builder evaluation or compiler requirement here.
 
+## Filesystem effects
+
+Ordinary directory creation and simple names-only listing no longer produce
+filesystem sinks. This applies to owned C#/JVM/Node/Go/Rust/PHP APIs; it does not
+declare their paths contained. Content reads, truncation/overwrite, deletion,
+copy/move targets, upload/archive paths and concrete permission effects remain.
+An unconnected Java `Files.walk` or C# option-selected enumeration retains an
+exact Comprehensive root/export question; a connected input relationship stays
+in Value. Follow the content/export/disclosure consumer before assigning impact.
+
+Read effective modes before describing an operation. Supported Go `OpenFile`
+flags, Python `codecs.open` modes and Java `RandomAccessFile` modes classify one
+effect; unknown modes remain explicit. C# `FileStream(path, FileMode.Open)` opens
+with ReadWrite access by default; read-only requires `FileAccess.Read`.
+`OpenOrCreate` is a creation boundary. Broader overloads/helpers are not a full
+filesystem model.
+
+`filesystem_source` identifies the independently affected source of a move or
+rename. A fixed destination does not close that source. Copy read/destination
+roles stay separate; one operand's fixed selection or containment cannot settle
+the other. The current multi-operand move relation does not transfer a destination
+guard into a Protected verdict for the whole operation.
+
+Normalization (`Clean`, `resolve`, `realpath`, `GetFullPath`, `normalize`,
+`canonicalize`) preserves selection influence and is supporting context.
+It never establishes allowed-root containment by itself. Inspect whether an
+actual root check gates the same value and effect; a nearby or ignored boolean
+check is not a protection. Symlink policy and resource authorization remain
+separate when the source supplies a practical concern.
+
 ## Ordinary patterns excluded from both queues
 
 These belong in **Neither**, rather than becoming permanent Comprehensive work.

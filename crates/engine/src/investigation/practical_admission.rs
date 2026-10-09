@@ -92,7 +92,7 @@ pub(super) fn inventory_only(
             });
         return !connected && !consequential && !interpretation && !writable_code;
     }
-    if ordinary_directory(item, sources) || ordinary_decoder(item, evidence, sources) {
+    if ordinary_decoder(item, evidence, sources) {
         return true;
     }
     if known_data_only_yaml(item, sources) {
@@ -253,53 +253,6 @@ fn known_data_only_yaml(item: &Evidence, sources: &RepositorySources) -> bool {
     false
 }
 
-fn ordinary_directory(item: &Evidence, sources: &RepositorySources) -> bool {
-    if !matches!(
-        item.capability,
-        Capability::FilesystemRead | Capability::FilesystemWrite
-    ) || item.cwe_candidates != ["CWE-22"]
-    {
-        return false;
-    }
-    if ordinary_directory_creation(item, sources) || ordinary_directory_listing(item) {
-        return true;
-    }
-    let canonical = item
-        .symbol_resolution
-        .as_ref()
-        .filter(|s| s.confidence != mehscan_core::SymbolConfidence::Ambiguous)
-        .map(|s| s.canonical.as_str());
-    if canonical == Some("System.IO.Directory.CreateDirectory") {
-        return true;
-    }
-    if matches!(
-        canonical,
-        Some(
-            "System.IO.Directory.GetFiles"
-                | "System.IO.Directory.GetDirectories"
-                | "System.IO.Directory.EnumerateFiles"
-        )
-    ) {
-        let text = anchor_text(item, sources);
-        return !text.contains("SearchOption")
-            && !text.contains("EnumerationOptions")
-            && text.matches(',').count() < 2;
-    }
-    // These Rust/Kotlin rules already require the owned standard-library API
-    // at scan time. Do not classify custom methods by their suffix globally.
-    let text = anchor_text(item, sources);
-    match item.rule_id.as_str() {
-        "rust-filesystem-write" => {
-            text.starts_with("std::fs::create_dir(") || text.starts_with("std::fs::create_dir_all(")
-        }
-        "rust-filesystem-read" => text.starts_with("std::fs::read_dir("),
-        "kotlin-files-write" => text.split_once('(').is_some_and(|(call, _)| {
-            call.ends_with(".createDirectory") || call.ends_with(".createDirectories")
-        }),
-        _ => false,
-    }
-}
-
 fn ordinary_decoder(item: &Evidence, evidence: &[Evidence], sources: &RepositorySources) -> bool {
     if item.capability != Capability::Deserialization || executable_deserializer(item) {
         return false;
@@ -415,6 +368,25 @@ fn anchor_line<'a>(item: &Evidence, sources: &'a RepositorySources) -> &'a str {
             file.source.get(from..to)
         })
         .unwrap_or("")
+}
+
+pub(super) fn filesystem_research_hint(item: &Evidence) -> Option<ValueReviewHint> {
+    let recursive = item.rule_id == "java-filesystem-read" && item.tags.iter().any(|t| t == "walk")
+        || item.rule_id == "csharp-filesystem-read"
+            && item.symbol_resolution.as_ref().is_some_and(|s| {
+                matches!(
+                    s.canonical.as_str(),
+                    "System.IO.Directory.GetFiles"
+                        | "System.IO.Directory.GetDirectories"
+                        | "System.IO.Directory.EnumerateFiles"
+                )
+            });
+    recursive.then(|| ValueReviewHint {
+        reason: "recursive_filesystem_root_research".into(),
+        target: item.location.path.clone(),
+        assumption: "Unconnected recursive/option-selected enumeration retains a Comprehensive root/export question. Review an actual content, export or sensitive disclosure consumer; no root containment or safe verdict is inferred.".into(),
+        depends_on: None,
+    })
 }
 
 pub(super) fn comprehensive_hint(item: &Evidence) -> Option<ValueReviewHint> {

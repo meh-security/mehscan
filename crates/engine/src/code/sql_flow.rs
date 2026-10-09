@@ -3445,6 +3445,23 @@ fn protection_belongs_to_sink(
     sink: &Evidence,
     family: &RelationContract,
 ) -> bool {
+    if protection.capability == Capability::PathCanonicalization
+        && matches!(
+            sink.capability,
+            Capability::FilesystemRead | Capability::FilesystemWrite
+        )
+    {
+        // Normalization preserves target influence. It does not confine a path
+        // to an authorized root. Keep the fact, without a Protected verdict.
+        return false;
+    }
+    if protection.capability == Capability::PathContainmentCheck
+        && sink.captures.contains_key("filesystem_source")
+    {
+        // The current relation has one protection state for the operation.
+        // A destination guard cannot settle its independently affected source.
+        return false;
+    }
     if protection.capability == Capability::ProcessArgumentSeparation
         && protection.rule_id != "php-shell-argument-quoting"
         && (!(sink

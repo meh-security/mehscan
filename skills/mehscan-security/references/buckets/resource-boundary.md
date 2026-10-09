@@ -28,6 +28,13 @@ than rereading equivalent distributions.
   engine or closing that path. A writer
   elsewhere in the repository is a lead until its destination can reach the
   read target.
+  Read the actual open flags/mode before calling it a read or write. An
+  `filesystem-mode:unresolved` tag asks for the effective mode, not an invented
+  effect. Normalization alone is not root containment. For moves/renames, inspect
+  both `path` and `filesystem_source`; a fixed destination or its guard does not
+  close an independently selected source. For a Comprehensive recursive-root
+  question, follow the content/export/disclosure consumer instead of researching
+  every listed filename. Ordinary setup/listing sinks are omitted at extraction.
 - C# native `fixed_filesystem_path` establishes fixed selection for that exact
   operand, not authorization or safe contents/effects. Complete
   `temporary_filesystem_path` closes routine generated-path traversal selection.

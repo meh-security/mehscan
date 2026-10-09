@@ -184,6 +184,11 @@ pub struct ReviewInventoryEntry {
 }
 
 fn complete_native_path_fact(anchor: &Evidence, kind: mehscan_core::OperandFactKind) -> bool {
+    if anchor.captures.contains_key("filesystem_source") {
+        // A compiler's destination fact remains useful context, but cannot
+        // close the independent source affected by a move.
+        return false;
+    }
     let Some(path) = anchor.captures.get("path") else {
         return false;
     };
@@ -351,92 +356,6 @@ fn ordinary_browser_link(anchor: &Evidence) -> bool {
     true
 }
 
-fn signed_dotnet_directory_api(anchor: &Evidence, methods: &[&str]) -> bool {
-    anchor.context.operand_facts.iter().any(|fact| {
-        fact.kind == mehscan_core::OperandFactKind::SemanticIdentity
-            && methods.iter().any(|method| fact.value.starts_with(method))
-            && [
-                "[assembly=System.Runtime,",
-                "[assembly=System.IO.FileSystem,",
-                "[assembly=System.Private.CoreLib,",
-                "[assembly=mscorlib,",
-                "[assembly=netstandard,",
-            ]
-            .iter()
-            .any(|name| fact.value.contains(name))
-            && [
-                "PublicKeyToken=b03f5f7f11d50a3a",
-                "PublicKeyToken=b77a5c561934e089",
-                "PublicKeyToken=cc7b13ffcd2ddd51",
-                "PublicKeyToken=7cec85d7bea7798e",
-            ]
-            .iter()
-            .any(|token| fact.value.contains(token))
-    })
-}
-
-fn ordinary_directory_creation(anchor: &Evidence, sources: &RepositorySources) -> bool {
-    // This distinguishes low-effect operations, never path containment.
-    if anchor.capability != Capability::FilesystemWrite || anchor.cwe_candidates != ["CWE-22"] {
-        return false;
-    }
-    let signed_directory = anchor.rule_id == "csharp-filesystem-write"
-        && signed_dotnet_directory_api(anchor, &["System.IO.Directory.CreateDirectory("]);
-    // Source normalizers already distinguish imported APIs from local aliases
-    // and shadowed names. This is priority admission, not a sanitizer contract.
-    let normalized_directory = anchor.symbol_resolution.as_ref().is_some_and(|symbol| {
-        symbol.confidence != mehscan_core::SymbolConfidence::Ambiguous
-            && matches!(
-                (anchor.rule_id.as_str(), symbol.canonical.as_str()),
-                (
-                    "java-filesystem-write",
-                    "java.nio.file.Files.createDirectory" | "java.nio.file.Files.createDirectories"
-                ) | (
-                    "javascript-filesystem-write"
-                        | "typescript-filesystem-write"
-                        | "tsx-filesystem-write",
-                    "fs.mkdir" | "fs.mkdirSync" | "fs.promises.mkdir" | "fs/promises.mkdir"
-                ) | ("go-filesystem-write", "os.Mkdir" | "os.MkdirAll")
-            )
-    });
-    // PHP's rule admission resolves native functions and rejects local and
-    // namespaced lookalikes. Only direct native spellings are needed here;
-    // imported aliases remain active until their identity is exposed.
-    let native_php_directory = anchor.rule_id == "php-filesystem-write"
-        && sources
-            .file(&anchor.location.path)
-            .ok()
-            .is_some_and(|file| {
-                file.source
-                    .get(anchor.location.start.byte_offset..anchor.location.end.byte_offset)
-                    .and_then(|text| text.split_once('('))
-                    .is_some_and(|(name, _)| {
-                        name.trim()
-                            .trim_start_matches('\\')
-                            .eq_ignore_ascii_case("mkdir")
-                    })
-            });
-    signed_directory || normalized_directory || native_php_directory
-}
-
-fn ordinary_directory_listing(anchor: &Evidence) -> bool {
-    if anchor.rule_id != "csharp-filesystem-read"
-        || anchor.cwe_candidates != ["CWE-22"]
-        || !signed_dotnet_directory_api(anchor, &[
-            "System.IO.Directory.GetFiles(", "System.IO.Directory.GetDirectories(", "System.IO.Directory.EnumerateFiles("
-        ])
-        || anchor.context.operand_facts.iter().any(|fact| {
-            fact.kind == mehscan_core::OperandFactKind::SemanticIdentity
-                // Recursive/option-selected collectors commonly feed archive
-                // export and recursive file work. Keep that root question.
-                && (fact.value.contains("System.IO.SearchOption") || fact.value.contains("System.IO.EnumerationOptions"))
-        })
-    {
-        return false;
-    }
-    true
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReviewInventory {
     pub schema_version: String,
@@ -460,7 +379,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "12";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "13";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -1641,7 +1560,11 @@ fn build_path_review_jobs_internal(
                 }
                 .to_string(),
                 operand_facts: operand_summaries(anchor),
-                value_hint: practical_admission::comprehensive_hint(anchor),
+                value_hint: practical_admission::comprehensive_hint(anchor).or_else(|| {
+                    (group.priority == 2)
+                        .then(|| practical_admission::filesystem_research_hint(anchor))
+                        .flatten()
+                }),
             })
         }));
         share_csharp_filesystem_questions(entries);
@@ -12585,6 +12508,16 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
         Capability::FilesystemRead | Capability::FilesystemWrite
             if item.cwe_candidates.iter().any(|cwe| cwe == "CWE-22") =>
         {
+            if item.captures.contains_key("filesystem_source") {
+                // A fixed destination does not close an independently selected
+                // file/directory moved out of its original location.
+                return ["path", "filesystem_source"].iter().all(|role| {
+                    item.context.literals.get(*role).is_some_and(|f| {
+                        f.state == LiteralState::Known
+                            && matches!(f.value, Some(LiteralValue::String(_)))
+                    })
+                });
+            }
             if item.capability == Capability::FilesystemRead
                 && is_directory_enumerated_child_path(item, sources)
             {
@@ -23816,6 +23749,39 @@ mod tests {
         ));
         assert_eq!(evidence.kind, EvidenceKind::Sink);
         assert_eq!(evidence.capability, Capability::DatabaseQuery);
+    }
+
+    #[test]
+    fn native_destination_fact_does_not_close_an_independent_move_source() {
+        let root =
+            std::env::temp_dir().join(format!("mehscan-native-move-fact-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("App.cs"), "using System.IO; class App { void Move(string input){Directory.Move(input,\"fixed\");} }").unwrap();
+        let scan = crate::scan_path(&root);
+        std::fs::remove_dir_all(&root).unwrap();
+        let mut item = scan
+            .unwrap()
+            .evidence
+            .into_iter()
+            .find(|e| e.rule_id == "csharp-filesystem-write")
+            .unwrap();
+        let path = item.captures["path"].clone();
+        item.context.operand_facts.push(mehscan_core::OperandFact {
+            kind: mehscan_core::OperandFactKind::FixedFilesystemPath,
+            role: "path".into(),
+            value: path.text,
+            location: path.location,
+            remaining_checks: Vec::new(),
+        });
+        let sources = RepositorySources {
+            root: "fixture".into(),
+            files: BTreeMap::new(),
+        };
+        assert!(closed_native_path_fact(&item).is_none());
+        assert!(!is_non_actionable_fixed_sink_observation(&item, &sources));
+        item.captures.remove("filesystem_source");
+        assert!(closed_native_path_fact(&item).is_some());
+        assert!(is_non_actionable_fixed_sink_observation(&item, &sources));
     }
 
     #[test]

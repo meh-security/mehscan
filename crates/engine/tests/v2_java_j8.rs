@@ -50,7 +50,6 @@ fn models_exact_java_filesystem_archive_and_containment_policy() {
     for rule in [
         "java-file-stream-read",
         "java-file-reader-read",
-        "java-random-access-file",
         "java-file-stream-write",
         "java-file-writer-write",
         "java-spring-filesystem-resource",
@@ -58,7 +57,8 @@ fn models_exact_java_filesystem_archive_and_containment_policy() {
         assert_eq!(counts[rule], 1, "{rule}");
     }
     assert_eq!(counts["java-random-access-file-write"], 1);
-    assert_eq!(j8.len(), 40);
+    assert!(!counts.contains_key("java-random-access-file"));
+    assert_eq!(j8.len(), 39);
 
     let archive_paths = result
         .security_paths

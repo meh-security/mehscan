@@ -38,7 +38,6 @@ fn covers_mainstream_csharp_sinks_and_keeps_safe_siblings_out_of_paths() {
         "csharp-xmlreader-external-entity",
         "csharp-powershell-addscript",
         "csharp-filestream-read",
-        "csharp-filestream-write",
         "csharp-file-copy-source",
         "csharp-file-copy-destination",
         "csharp-file-move-source",
@@ -47,6 +46,7 @@ fn covers_mainstream_csharp_sinks_and_keeps_safe_siblings_out_of_paths() {
         assert_eq!(rules[rule], 1, "unexpected count for {rule}");
     }
     assert_eq!(rules["csharp-process-start-info"], 2);
+    assert_eq!(rules["csharp-filestream-write"], 2);
     assert_eq!(
         result
             .evidence
@@ -69,7 +69,7 @@ fn covers_mainstream_csharp_sinks_and_keeps_safe_siblings_out_of_paths() {
                 .is_some_and(|step| step.location.path == "positive/Mainstream.cs")
         })
         .collect::<Vec<_>>();
-    assert_eq!(paths.len(), 11);
+    assert_eq!(paths.len(), 12);
     assert!(paths.iter().all(|path| {
         path.state == SecurityPathState::Propagated
             && path
@@ -103,7 +103,7 @@ fn covers_mainstream_csharp_sinks_and_keeps_safe_siblings_out_of_paths() {
     assert_eq!(capabilities[&Capability::DynamicCodeExecution], 1);
     assert_eq!(capabilities[&Capability::ProcessExecution], 1);
     assert_eq!(capabilities[&Capability::FilesystemRead], 3);
-    assert_eq!(capabilities[&Capability::FilesystemWrite], 4);
+    assert_eq!(capabilities[&Capability::FilesystemWrite], 5);
 }
 
 #[test]

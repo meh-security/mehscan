@@ -65,7 +65,7 @@
       - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/nio/file/Files.html
 
 - id: kotlin-files-write
-  version: 1
+  version: 2
   title: Kotlin JVM filesystem write
   language: kotlin
   kind: sink
@@ -84,14 +84,10 @@
       - pattern: $FILES.copy($SOURCE, $PATH)
         captures: { source: SOURCE, path: PATH }
       - pattern: $FILES.move($SOURCE, $PATH)
-        captures: { source: SOURCE, path: PATH }
+        captures: { source: SOURCE, filesystem_source: SOURCE, path: PATH }
       - pattern: $FILES.delete($PATH)
         captures: { path: PATH }
       - pattern: $FILES.deleteIfExists($PATH)
-        captures: { path: PATH }
-      - pattern: $FILES.createDirectory($PATH)
-        captures: { path: PATH }
-      - pattern: $FILES.createDirectories($PATH)
         captures: { path: PATH }
   tags: [kotlin, jvm, filesystem]
   ai:

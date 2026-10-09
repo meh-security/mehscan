@@ -484,7 +484,7 @@
     - https://www.php.net/manual/en/security.php
     - https://cwe.mitre.org/data/definitions/22.html
 - id: php-filesystem-write
-  version: 1
+  version: 2
   title: PHP filesystem write
   language: php
   kind: sink
@@ -498,6 +498,7 @@
       selector: function_call_expression
       captures:
         source: SOURCE
+        filesystem_source: SOURCE
         path: PATH
     - pattern: unlink($PATH)
       context: <?php unlink($PATH);
@@ -506,11 +507,6 @@
         path: PATH
     - pattern: rmdir($PATH)
       context: <?php rmdir($PATH);
-      selector: function_call_expression
-      captures:
-        path: PATH
-    - pattern: mkdir($PATH, $$$REST)
-      context: <?php mkdir($PATH, $$$REST);
       selector: function_call_expression
       captures:
         path: PATH

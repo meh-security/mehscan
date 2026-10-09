@@ -1177,7 +1177,7 @@ impl<'a> PhpContext<'a> {
             "php-weak-hash-selection" => matches!(canonical.as_str(), "md5" | "sha1"),
             "php-filesystem-write" => matches!(
                 canonical.as_str(),
-                "file_put_contents" | "rename" | "unlink" | "rmdir" | "mkdir" | "touch"
+                "file_put_contents" | "rename" | "unlink" | "rmdir" | "touch"
             ),
             "php-filesystem-copy-read" | "php-filesystem-copy-write" => canonical == "copy",
             "php-extended-ldap-query" => {
