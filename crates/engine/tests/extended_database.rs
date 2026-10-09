@@ -162,7 +162,7 @@ fn extended_sql_drivers_capture_query_text_instead_of_context_or_binding_values(
         (
             "app.js",
             "const knex = require('knex'); const db = knex({client:'pg'}); const sqlite = require('better-sqlite3'); const store = new sqlite('db'); function run(sql, value) { db('users').whereRaw(sql, [value]); db.raw(sql); store.prepare(sql); }",
-            3,
+            2, // ignored Knex raw construction is not execution
         ),
         (
             "app.ts",
@@ -177,7 +177,7 @@ fn extended_sql_drivers_capture_query_text_instead_of_context_or_binding_values(
         (
             "Probe.java",
             "import org.hibernate.Session; import javax.jdo.Query; import io.vertx.sqlclient.SqlConnection; class Probe { void run(Session session, Query query, SqlConnection db, String sql) { session.createNativeQuery(sql); query.setFilter(sql); db.preparedQuery(sql); } }",
-            3,
+            1, // ignored Hibernate/Vertx query handles do not execute
         ),
         (
             "app.kt",

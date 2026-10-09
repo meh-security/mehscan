@@ -132,8 +132,8 @@ uses attach their origin to the actual database operation; used construction
 rows remain context without their own review ID. Opaque helper consumers remain
 reviewable: missing construction facts do not establish safe operators or input
 types. This attachment is file-local and does not follow arbitrary helpers or
-cross-file producers. Other query-builder families still need separate consumer
-coverage checks before the same cleanup.
+cross-file producers. Additional SQL builder coverage and scalar equality closure
+are described below; other families still need explicit consumer contracts.
 
 Python SQLAlchemy `text` and Django `RawSQL` constructors do not own a second
 review when an observed SQL executor consumes them. Retain useful construction
@@ -165,8 +165,8 @@ remain reviewable. Preserve identity gates for imports, typed receivers,
 reassignments and includes, and do not guess named/unpacked argument positions.
 Python, Go, Rust and C/C++ NoSQL rules already represent collection/table calls;
 there is no standalone document-constructor review to retire in those profiles.
-Keep their actual filter/pipeline consumers. This NoSQL slice does not close
-operator injection or independently settle resource authority.
+Keep their actual filter/pipeline consumers. Construction attachment alone does
+not close operator injection or independently settle resource authority.
 
 Modern EF Core `SqlQuery<T>(FormattableString)` parameterizes interpolation;
 owned EF Core `SqlQuery` and `FromSql` with direct compiler interpolation or an
@@ -179,7 +179,43 @@ their construction question. Helper/factory-produced formats, reassignments,
 ref/out escapes and local operands used inside nested functions are unresolved;
 the type `FormattableString` alone is not a fixed-format proof. Independently
 shown resource-authority effects remain separate. Refresh inventories with
-schema 10 when resuming repository review.
+schema 11 when resuming repository review.
+
+### Bounded construction, equality and reload cleanup
+
+Owned Laravel `DB::raw`, Knex `raw`, and represented Java/Kotlin JPA/Hibernate,
+JDBC or Vertx query constructors drop only ignored expressions and unread
+function-local bindings. Awaited Knex work, terminal execution, returns,
+embedded expressions, closure uses and unknown consumers stay. When an observed
+SQL executor consumes a builder, the executor owns one review and the builder is
+linked context. A terminal on a query handle is navigation to execution, not
+parameterization proof. Do not transfer another SDK's grammar/binding contract
+through an unknown wrapper; construction context can remain unresolved.
+
+For owned MongoDB filter consumers, fixed nonoperator fields with scalar values
+can leave both injection queues: JS/TS/TSX/Python literal or native scalar
+conversion, PHP casts, and Java/Kotlin/C# enforced scalar types. Supported SDK
+`eq`/`Eq` and Java/C# document construction follow the same bound. TypeScript and
+Python annotations alone are not runtime scalar proof. Basic .NET primitive,
+GUID and date values are ordinary data; do not invent exotic formatting attacks.
+Bounded unchanged local origins work; mutable/escaped documents, shadowed casts,
+computed/spread/duplicate keys, raw input objects and unknown helpers retain work.
+`$eq` is supported; other operators, executable predicates, raw JSON, pipelines
+and DynamoDB expression syntax are not covered by this equality cut. It closes
+the represented filter grammar question only, never authorization or write policy.
+Go/Rust/C/C++ BSON constructors remain outside this proof; keep their consumers.
+
+An adjacent repeated EF `Find`/`FindAsync`, Django `get(pk/id=...)` or Sequelize
+`findOne(where: {id: ...})` with the same proven scalar selector and exact
+context/model can share the original authority question. The initial lookup
+must bind locally. The reload stays linked evidence without a second review ID;
+the original remains unresolved, with resource-authority and operation-effect
+checks. Changed keys/models/contexts, intervening statements, extra query options,
+deletes and arbitrary aliases do not qualify. Owner hints do not close authority,
+and `selected.Id` is not inferred to be the model's primary key.
+
+These cuts are ordinary-engine facts with focused scanner/inventory controls.
+They do not require optional compilers or establish whole-application coverage.
 
 Apply the same distinctions to ADO.NET/Dapper/EF, JDBC/JPA/Hibernate/Exposed,
 Node drivers/query builders, DB-API/Django/SQLAlchemy, PDO/mysqli/Laravel,

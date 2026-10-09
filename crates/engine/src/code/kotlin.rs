@@ -36,6 +36,15 @@ pub(crate) use numeric::query_fact;
 pub(super) use identity::Imports;
 use identity::{KNode, binding_type, receiver_unchanged};
 
+pub(super) fn exact_symbol(
+    root: &KNode<'_>,
+    site: &KNode<'_>,
+    observed: &str,
+    canonical: &str,
+) -> bool {
+    Imports::build(root).exact(root, site, observed, canonical)
+}
+
 pub(crate) fn html_encoder_facts(
     path: &str,
     source: &str,

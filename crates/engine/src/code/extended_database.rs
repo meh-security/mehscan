@@ -17,7 +17,7 @@ pub(super) fn attach_query_construction(
     use mehscan_core::{EvidenceKind, OperandFact, OperandFactKind};
     let builders = evidence
         .iter()
-        .filter(|e| construction_rule(&e.rule_id))
+        .filter(|e| construction(e))
         .cloned()
         .collect::<Vec<_>>();
     if builders.is_empty() {
@@ -26,16 +26,12 @@ pub(super) fn attach_query_construction(
     }
     let queries = evidence
         .iter()
-        .filter(|e| e.kind == EvidenceKind::Sink && !construction_rule(&e.rule_id)
+        .filter(|e| e.kind == EvidenceKind::Sink && !construction(e)
             && matches!(e.cwe_candidates.as_slice(), [cwe] if cwe == "CWE-943" || cwe == "CWE-89"))
         .filter_map(|e| e.captures.get(query_role(e)))
         .collect::<Vec<_>>();
-    if queries.is_empty()
-        && !builders
-            .iter()
-            .any(|e| e.rule_id == "python-extended-sql-expression")
-    {
-        evidence.retain(|e| !construction_rule(&e.rule_id));
+    if queries.is_empty() && !builders.iter().any(sql_construction) {
+        evidence.retain(|e| !construction(e));
         return;
     }
     let ranges = builders
@@ -87,7 +83,7 @@ pub(super) fn attach_query_construction(
     let mut dispatched = std::collections::BTreeSet::new();
     for sink in evidence.iter_mut().filter(|e| {
         e.kind == EvidenceKind::Sink
-            && !construction_rule(&e.rule_id)
+            && !construction(e)
             && matches!(e.cwe_candidates.as_slice(), [cwe] if cwe == "CWE-943" || cwe == "CWE-89")
     }) {
         let role = query_role(sink);
@@ -216,28 +212,39 @@ pub(super) fn attach_query_construction(
     // lead. A discarded expression or unread function-local binding is not work.
     let unused_sql = builders
         .iter()
-        .filter(|e| e.rule_id == "python-extended-sql-expression")
+        .filter(|e| sql_construction(e))
         .filter(|e| {
             nodes
                 .get(&(e.location.start.byte_offset, e.location.end.byte_offset))
-                .is_some_and(python_sql_constructor_is_unused)
+                .is_some_and(|node| {
+                    if e.rule_id == "python-extended-sql-expression" {
+                        python_sql_constructor_is_unused(node)
+                    } else {
+                        super::database_cleanup::unused_local_builder(node)
+                    }
+                })
         })
         .map(|e| e.id.clone())
         .collect::<std::collections::BTreeSet<_>>();
-    for item in evidence
-        .iter_mut()
-        .filter(|e| e.rule_id == "python-extended-sql-expression")
-    {
+    for item in evidence.iter_mut().filter(|e| construction(e)) {
         if used.contains(&item.id) {
             item.kind = EvidenceKind::Resource;
-        } else if !unused_sql.contains(&item.id) {
-            item.tags.push("query-consumer:unresolved".into());
+            item.tags.push("query-construction:consumed".into());
+        } else if sql_construction(item) && !unused_sql.contains(&item.id) {
+            item.tags.push(
+                if item.captures.contains_key("query_execution") {
+                    "query-consumer:local-execution-lead"
+                } else {
+                    "query-consumer:unresolved"
+                }
+                .into(),
+            );
         }
     }
     evidence.retain(|e| {
-        (!construction_rule(&e.rule_id)
+        (!construction(e)
             || used.contains(&e.id)
-            || (e.rule_id == "python-extended-sql-expression" && !unused_sql.contains(&e.id)))
+            || (sql_construction(e) && !unused_sql.contains(&e.id)))
             && (!e.rule_id.ends_with("-extended-nosql-dispatch") || dispatched.contains(&e.id))
     });
 }
@@ -315,6 +322,22 @@ fn construction_rule(rule: &str) -> bool {
         || rule.ends_with("-extended-nosql-command")
         || rule == "php-extended-nosql-query"
         || rule == "python-extended-sql-expression"
+}
+
+fn construction(item: &mehscan_core::Evidence) -> bool {
+    construction_rule(&item.rule_id)
+        || item
+            .tags
+            .iter()
+            .any(|t| t == "query-construction:sql-builder")
+}
+
+fn sql_construction(item: &mehscan_core::Evidence) -> bool {
+    item.rule_id == "python-extended-sql-expression"
+        || item
+            .tags
+            .iter()
+            .any(|t| t == "query-construction:sql-builder")
 }
 
 fn direct_document_origin(
@@ -796,6 +819,9 @@ fn exact_symbol_with_index(
         .next()
         .unwrap_or("")
         .to_string();
+    if language == Language::Kotlin {
+        return super::kotlin::exact_symbol(root, use_site, &observed, canonical);
+    }
     let head = observed.split('.').next().unwrap_or(&observed);
     // A local name or declared lookalike must not inherit an imported SDK identity.
     let shadowed = if let Some(symbols) = symbols {

@@ -1612,7 +1612,9 @@ pub(crate) fn scan_source(
     }
     super::node_operands::annotate(language, source, &root, &mut evidence);
     super::native_query::annotate(language, &root, &literals, &mut evidence);
+    super::database_cleanup::annotate(language, &root, &mut evidence);
     super::extended_database::attach_query_construction(&root, &mut evidence);
+    super::database_cleanup::close_equalities(language, &root, &mut evidence);
     if matches!(
         language,
         Language::Javascript | Language::Typescript | Language::Tsx

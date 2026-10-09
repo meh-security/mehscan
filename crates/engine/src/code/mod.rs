@@ -19,6 +19,7 @@ mod csharp_rpc;
 mod csharp_sinks;
 mod csharp_standalone;
 mod csharp_streaming_upload;
+mod database_cleanup;
 mod database_receiver;
 mod decision_origins;
 pub(crate) use decision_origins::executable_deserializer;
