@@ -799,7 +799,6 @@ fn scans_c_and_cpp_with_portable_and_native_security_relationships() {
             Capability::BufferWrite,
             Capability::FilesystemRead,
             Capability::DatabaseQuery,
-            Capability::OutboundNetworkRequest,
         ] {
             assert!(
                 result.security_paths.iter().any(|path| {
@@ -814,6 +813,24 @@ fn scans_c_and_cpp_with_portable_and_native_security_relationships() {
             );
         }
     }
+
+    // This fixture only configures cURL; actual transfer coverage is tested in
+    // native_curl_dispatch. A URL option alone is no longer a network path.
+    assert!(
+        !result
+            .security_paths
+            .iter()
+            .any(|p| p.capability == Capability::OutboundNetworkRequest)
+    );
+    assert_eq!(
+        result
+            .evidence
+            .iter()
+            .filter(|e| e.rule_id.ends_with("libcurl-outbound-request")
+                && e.kind == mehscan_core::EvidenceKind::Resource)
+            .count(),
+        2
+    );
 
     assert!(result.security_paths.iter().all(|path| {
         path.state == SecurityPathState::Protected

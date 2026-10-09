@@ -111,8 +111,18 @@ helper return keeps its producer question. Proxy changes, helper handoffs and
 replacement prevent borrowing a constructor's fixed URL. Ordinary Method,
 Timeout and content settings do not replace its immutable URI.
 
-Lazy reactive clients and native cURL setters still need separate accounting;
-those other current leads are not certified or removed.
+Reactive Java/Kotlin WebClient URI evidence keeps returned publishers and
+request/publisher handoffs as consequential subscription questions. Inline
+block/subscribe/await consumers are captured with their locations. Demonstrably
+unused local publishers and discarded newly constructed chains are context in
+both modes. A mutable spec setter alone is not proven unused; inspect its uses.
+This is bounded setup cleanup, not full reactive dataflow or runtime dispatch.
+
+Native cURL URL setters are resources. Easy perform and multi perform/socket
+pumps own request reviews; bounded same-handle setup supplies endpoints.
+Multi addition alone does not transfer data. Inspect `client`/`multi`, related
+setters and consumer locations. Rewrites, resets, proxies and unknown producers
+retain research; a known URL does not prove policy for a shared handle.
 
 ## Filesystem effects
 

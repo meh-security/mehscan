@@ -1661,6 +1661,8 @@ pub(crate) fn scan_source(
     super::python_operands::annotate(language, &root, &mut evidence);
     super::process_cleanup::annotate(language, source, &root, &literals, &mut evidence);
     super::outbound_cleanup::annotate(language, &root, &literals, &mut evidence);
+    super::native_curl::annotate(language, &root, &mut evidence);
+    super::reactive_cleanup::annotate(language, &root, &mut evidence);
     if language == Language::Kotlin {
         super::kotlin::annotate_outbound(&root, &literals, &mut evidence);
     }

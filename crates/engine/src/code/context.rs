@@ -20,6 +20,17 @@ pub(crate) fn enclosing_symbol<D: Doc>(node: &Node<'_, D>) -> Option<String> {
         ancestor
             .field("name")
             .or_else(|| {
+                (ancestor.kind().as_ref() == "function_definition")
+                    .then(|| {
+                        ancestor
+                            .field("declarator")?
+                            .dfs()
+                            .find(|n| n.kind().as_ref() == "function_declarator")?
+                            .field("declarator")
+                    })
+                    .flatten()
+            })
+            .or_else(|| {
                 (ancestor.kind().as_ref() == "function_declaration")
                     .then(|| {
                         ancestor

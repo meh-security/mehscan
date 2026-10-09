@@ -369,10 +369,10 @@
       - https://docs.rs/reqwest/latest/reqwest/
 
 - id: c-libcurl-outbound-request
-  version: 1
-  title: C libcurl outbound destination
+  version: 2
+  title: C libcurl destination construction
   language: c
-  kind: sink
+  kind: resource
   capability: outbound_network_request
   cwe: [CWE-918]
   match: &libcurl_url_match
@@ -394,19 +394,64 @@
     exclude:
       - do not claim SSRF from a CURLOPT_URL observation without controllable destination evidence
   provenance: &libcurl_provenance
-    note: libcurl CURLOPT_URL configuration is mapped to the shared outbound-destination evidence surface.
+    note: libcurl CURLOPT_URL configures supporting destination context; easy and multi transfer consumers own the request review.
     references:
       - https://cwe.mitre.org/data/definitions/918.html
       - https://curl.se/libcurl/c/CURLOPT_URL.html
 
 - id: cpp-libcurl-outbound-request
-  version: 1
-  title: C++ libcurl outbound destination
+  version: 2
+  title: C++ libcurl destination construction
   language: cpp
-  kind: sink
+  kind: resource
   capability: outbound_network_request
   cwe: [CWE-918]
   match: *libcurl_url_match
   tags: [http, network, ssrf, libcurl, native, cpp]
+  ai: *libcurl_guidance
+  provenance: *libcurl_provenance
+
+- id: c-libcurl-request-dispatch
+  version: 1
+  title: C libcurl network transfer
+  language: c
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match: &libcurl_dispatch_match
+    any:
+      - pattern: curl_easy_perform($HANDLE)
+        context: |
+          void pattern_context() { curl_easy_perform($HANDLE); }
+        selector: call_expression
+        captures: { request: HANDLE }
+      - pattern: curl_multi_perform($MULTI, $RUNNING)
+        context: |
+          void pattern_context() { curl_multi_perform($MULTI, $RUNNING); }
+        selector: call_expression
+        captures: { request: MULTI }
+      - pattern: curl_multi_socket_action($MULTI, $SOCKET, $EVENTS, $RUNNING)
+        context: |
+          void pattern_context() { curl_multi_socket_action($MULTI, $SOCKET, $EVENTS, $RUNNING); }
+        selector: call_expression
+        captures: { request: MULTI }
+      - pattern: curl_multi_socket_all($MULTI, $RUNNING)
+        context: |
+          void pattern_context() { curl_multi_socket_all($MULTI, $RUNNING); }
+        selector: call_expression
+        captures: { request: MULTI }
+  tags: [http, network, libcurl, native, 'outbound-request:dispatch']
+  ai: *libcurl_guidance
+  provenance: *libcurl_provenance
+
+- id: cpp-libcurl-request-dispatch
+  version: 1
+  title: C++ libcurl network transfer
+  language: cpp
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match: *libcurl_dispatch_match
+  tags: [http, network, libcurl, native, cpp, 'outbound-request:dispatch']
   ai: *libcurl_guidance
   provenance: *libcurl_provenance
