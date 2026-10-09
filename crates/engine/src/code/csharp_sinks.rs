@@ -22,6 +22,8 @@ const WEBCLIENT_RULE_ID: &str = "csharp-webclient-outbound-http";
 const HTTPCLIENT_RULE_ID: &str = "csharp-httpclient-outbound-http";
 const CALL_ENGINE: &str = "mehscan csharp-call-summary 1";
 
+mod legacy_requests;
+
 #[derive(Clone)]
 struct QueryComposition<'tree> {
     expression: Node<'tree, StrDoc<SupportLang>>,
@@ -41,6 +43,8 @@ pub(crate) fn add_typed_property_sinks<'tree>(
     if language != Language::Csharp {
         return;
     }
+
+    legacy_requests::add(path, root, comments, conditional, literals, evidence);
 
     for assignment in root
         .dfs()

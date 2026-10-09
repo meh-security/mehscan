@@ -11,7 +11,10 @@ pub(super) fn annotate<'a>(
     literals: &super::literals::LiteralEnvironment<'a, StrDoc<SupportLang>>,
     evidence: &mut Vec<Evidence>,
 ) {
-    if !matches!(language, Language::Go | Language::Java | Language::Rust) {
+    if !matches!(
+        language,
+        Language::Go | Language::Java | Language::Rust | Language::Csharp
+    ) {
         return;
     }
     let calls = root.dfs().filter(is_call).collect::<Vec<_>>();
@@ -23,7 +26,9 @@ pub(super) fn annotate<'a>(
                 n.range() == (e.location.start.byte_offset..e.location.end.byte_offset)
             })?;
             let builder = match e.rule_id.as_str() {
-                "java-jdk-http-request-builder" | "java-apache-http-request" => true,
+                "java-jdk-http-request-builder"
+                | "java-apache-http-request"
+                | "csharp-outbound-http" => true,
                 "go-outbound-http" => matches!(
                     method(node).as_deref(),
                     Some("NewRequest" | "NewRequestWithContext")
@@ -46,10 +51,14 @@ pub(super) fn annotate<'a>(
                 && e.location.end.byte_offset == call.range().end
                 && (matches!(
                     e.rule_id.as_str(),
-                    "java-jdk-http-client-dispatch" | "java-apache-http-dispatch"
+                    "java-jdk-http-client-dispatch"
+                        | "java-apache-http-dispatch"
+                        | "csharp-webrequest-dispatch"
                 ) || language == Language::Go && operation.as_deref() == Some("Do"))
         });
-        let request = if language == Language::Rust && operation.as_deref() == Some("send") {
+        let request = if language == Language::Csharp && existing.is_some()
+            || language == Language::Rust && operation.as_deref() == Some("send")
+        {
             receiver(call)
         } else if language == Language::Rust
             && operation.as_deref() == Some("execute")
@@ -174,7 +183,7 @@ pub(super) fn annotate<'a>(
     evidence.extend(dispatches);
 }
 
-fn origin<'a>(
+pub(super) fn origin<'a>(
     root: &N<'a>,
     value: &N<'a>,
     producers: &[(usize, N<'a>)],
@@ -182,6 +191,28 @@ fn origin<'a>(
 ) -> Option<(usize, Option<(N<'a>, N<'a>)>)> {
     if depth == 0 {
         return None;
+    }
+    if matches!(
+        value.kind().as_ref(),
+        "parenthesized_expression" | "cast_expression"
+    ) {
+        return origin(
+            root,
+            &value
+                .field("value")
+                .or_else(|| value.field("expression"))
+                .or_else(|| {
+                    value
+                        .children()
+                        .filter(|n| {
+                            n.is_named()
+                                && value.field("type").is_none_or(|ty| ty.range() != n.range())
+                        })
+                        .last()
+                })?,
+            producers,
+            depth - 1,
+        );
     }
     if let Some((index, _)) = producers
         .iter()
@@ -236,7 +267,15 @@ fn local_initializer<'a>(root: &N<'a>, site: &N<'a>) -> Option<(N<'a>, N<'a>)> {
         .filter_map(|n| {
             let (name, value) = match n.kind().as_ref() {
                 "let_declaration" => (n.field("pattern")?, n.field("value")?),
-                "variable_declarator" => (n.field("name")?, n.field("value")?),
+                "variable_declarator" => (
+                    n.field("name")?,
+                    n.field("value").or_else(|| {
+                        n.children().filter(|n| n.is_named()).last().filter(|last| {
+                            n.field("name")
+                                .is_none_or(|name| name.range() != last.range())
+                        })
+                    })?,
+                ),
                 "short_var_declaration" => (
                     n.field("left")?.children().find(|n| n.is_named())?,
                     n.field("right")?.children().find(|n| n.is_named())?,
@@ -263,16 +302,62 @@ fn unchanged(root: &N<'_>, declaration: &N<'_>, site: &N<'_>, consumer: &N<'_>) 
                 && super::context::lexical_declaration_visible_at(declaration, n)
         })
         .all(|n| {
+            // Ordinary legacy request setup cannot replace its immutable URI.
+            // Proxy, aliases and arbitrary helper handoffs still veto closure.
+            if n.ancestors()
+                .find(|p| p.kind().as_ref() == "assignment_expression")
+                .and_then(|a| a.field("left"))
+                .is_some_and(|left| {
+                    left.kind().as_ref() == "member_access_expression"
+                        && left
+                            .field("expression")
+                            .is_some_and(|r| r.range() == n.range())
+                        && left.field("name").is_some_and(|name| {
+                            matches!(
+                                name.text().as_ref(),
+                                "Method"
+                                    | "Timeout"
+                                    | "ContentType"
+                                    | "ContentLength"
+                                    | "ReadWriteTimeout"
+                            )
+                        })
+                })
+            {
+                return true;
+            }
             // Earlier dispatch does not replace a request. All other uses,
             // including field writes, helpers, mutable aliases and conditional
             // URI setters, prevent carrying a fixed authority into this send.
             n.ancestors().find(is_call).is_some_and(|call| {
                 matches!(
                     method(&call).as_deref(),
-                    Some("Do" | "send" | "sendAsync" | "execute")
+                    Some(
+                        "Do" | "send"
+                            | "sendAsync"
+                            | "execute"
+                            | "GetResponse"
+                            | "GetResponseAsync"
+                            | "GetRequestStream"
+                            | "GetRequestStreamAsync"
+                            | "BeginGetResponse"
+                            | "BeginGetRequestStream"
+                    )
                 ) && call
                     .field("arguments")
                     .is_some_and(|a| a.children().any(|a| a.range() == n.range()))
+                    || receiver(&call).is_some_and(|r| r.range() == n.range())
+                        && matches!(
+                            method(&call).as_deref(),
+                            Some(
+                                "GetResponse"
+                                    | "GetResponseAsync"
+                                    | "GetRequestStream"
+                                    | "GetRequestStreamAsync"
+                                    | "BeginGetResponse"
+                                    | "BeginGetRequestStream"
+                            )
+                        )
             })
         })
 }
@@ -280,7 +365,10 @@ fn unchanged(root: &N<'_>, declaration: &N<'_>, site: &N<'_>, consumer: &N<'_>) 
 fn is_call(n: &N<'_>) -> bool {
     matches!(
         n.kind().as_ref(),
-        "call_expression" | "method_invocation" | "object_creation_expression"
+        "call_expression"
+            | "method_invocation"
+            | "object_creation_expression"
+            | "invocation_expression"
     )
 }
 fn method(n: &N<'_>) -> Option<String> {
@@ -293,8 +381,11 @@ fn method(n: &N<'_>) -> Option<String> {
 }
 fn receiver<'a>(n: &N<'a>) -> Option<N<'a>> {
     n.field("object").or_else(|| {
-        n.field("function")
-            .and_then(|f| f.field("value").or_else(|| f.field("operand")))
+        n.field("function").and_then(|f| {
+            f.field("value")
+                .or_else(|| f.field("operand"))
+                .or_else(|| f.field("expression"))
+        })
     })
 }
 fn scope(n: &N<'_>) -> Option<usize> {

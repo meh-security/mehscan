@@ -1,16 +1,24 @@
 - id: csharp-outbound-http
-  version: 1
-  title: .NET outbound HTTP request
+  version: 2
+  title: .NET legacy request construction
   language: csharp
-  kind: sink
+  kind: resource
   capability: outbound_network_request
   cwe: [CWE-918]
   match:
     any:
       - pattern: WebRequest.Create($URL)
         captures: { endpoint: URL }
+      - pattern: WebRequest.CreateHttp($URL)
+        captures: { endpoint: URL }
+      - pattern: WebRequest.CreateDefault($URL)
+        captures: { endpoint: URL }
   symbols:
     - canonical: System.Net.WebRequest.Create
+      captures: { endpoint: 0 }
+    - canonical: System.Net.WebRequest.CreateHttp
+      captures: { endpoint: 0 }
+    - canonical: System.Net.WebRequest.CreateDefault
       captures: { endpoint: 0 }
   tags: [http, network, ssrf]
   ai: &outbound_guidance
@@ -19,7 +27,7 @@
       - redirects, DNS behavior, private ranges, and metadata endpoints
       - authentication material and sensitive response handling
   provenance:
-    note: Legacy static WebRequest construction is mapped here; HttpClient instance calls are emitted by the typed C# call summary to avoid same-name lookalikes.
+    note: Legacy WebRequest factories create context; review typed GetResponse/GetRequestStream or asynchronous initiation consumers. HttpClient has separate typed dispatch accounting.
     references:
       - https://cwe.mitre.org/data/definitions/918.html
       - https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpclient

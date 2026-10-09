@@ -104,8 +104,15 @@ anchor actual effects. Typed unknown connections retain a `connection` producer
 question; fixed syntax does not settle an explicitly selected unknown `proxy`.
 Ordinary setup/getURL/request-property reads do not trigger network reviews.
 
-Legacy C# WebRequest, lazy reactive clients and native cURL setters still need
-separate accounting; those other current leads are not certified or removed.
+Legacy C# WebRequest.Create/CreateHttp/CreateDefault are supporting resources.
+Owned GetResponse/GetRequestStream and their Async/Begin forms anchor network
+I/O; End forms only complete an existing operation. An unknown typed request or
+helper return keeps its producer question. Proxy changes, helper handoffs and
+replacement prevent borrowing a constructor's fixed URL. Ordinary Method,
+Timeout and content settings do not replace its immutable URI.
+
+Lazy reactive clients and native cURL setters still need separate accounting;
+those other current leads are not certified or removed.
 
 ## Filesystem effects
 
