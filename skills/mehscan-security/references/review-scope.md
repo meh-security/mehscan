@@ -90,9 +90,17 @@ URL parsing is syntax context, not SSRF protection or local redirect approval.
 Actual local-redirect guards retain their bounded control attachment.
 
 C# already accounts for HttpRequestMessage setters/dispatch and PHP cURL for
-same-handle execution. Legacy WebRequest/URL connections, lazy reactive clients,
-Kotlin OkHttp construction and native cURL setters need separate accounting;
-this slice does not certify or remove their current leads.
+same-handle execution. Kotlin `openConnection` and OkHttp `newCall` are supporting
+resources; connect/I/O methods and Kotlin I/O properties, or `execute`/`enqueue`,
+own the review. Unchanged local producers can supply the destination. With an
+opaque OkHttp client, `initial_endpoint` is context and
+`outbound-request:unresolved-client-policy` asks for the captured `client` policy;
+do not treat its initial fixed URL as proof of the effective destination.
+Mutable request builders and helper returns retain a producer question.
+
+Legacy C# WebRequest and Java URL connections, lazy reactive clients and native
+cURL setters still need separate accounting. This Kotlin slice does not certify
+or remove those other current leads.
 
 ## Filesystem effects
 

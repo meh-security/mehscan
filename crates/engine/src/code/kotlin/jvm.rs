@@ -31,77 +31,6 @@ pub(in crate::code) fn process_command<'a>(
     operand(root, receiver, 8)
 }
 
-pub(crate) fn okhttp_facts(
-    path: &str,
-    source: &str,
-    sink: &mehscan_core::Evidence,
-) -> Vec<mehscan_core::ReviewNeighborhoodFact> {
-    use ast_grep_core::tree_sitter::LanguageExt;
-    use mehscan_core::{QueryProvenance, Resolution, ReviewNeighborhoodFact};
-    if sink.rule_id != "kotlin-okhttp-request" {
-        return vec![];
-    }
-    let ast = ast_grep_language::SupportLang::Kotlin.ast_grep(source);
-    let root = ast.root();
-    if root.dfs().any(|n| n.is_error() || n.is_missing()) {
-        return vec![];
-    }
-    let Some(anchor) = root.dfs().find(|n| {
-        n.kind().as_ref() == "call_expression"
-            && n.range() == (sink.location.start.byte_offset..sink.location.end.byte_offset)
-    }) else {
-        return vec![];
-    };
-    let Some(scope) = identity::callable(&anchor) else {
-        return vec![];
-    };
-    fn origin<'a>(root: &KNode<'a>, expression: &KNode<'a>, depth: usize) -> Option<KNode<'a>> {
-        if depth == 0 {
-            return None;
-        }
-        if let Some(call) = identity::call(expression) {
-            if call.callee.text().rsplit('.').next() == Some("newCall")
-                && accepts(root, "kotlin-okhttp-request", expression)
-            {
-                return Some(expression.clone());
-            }
-            return None;
-        }
-        if expression.kind().as_ref() != "simple_identifier"
-            || !identity::receiver_unchanged(root, expression, &expression.text())
-        {
-            return None;
-        }
-        let binding = identity::binding(root, expression, &expression.text())?;
-        if identity::callable(&binding).map(|n| n.range())
-            != identity::callable(expression).map(|n| n.range())
-        {
-            return None;
-        }
-        let property = binding
-            .parent()
-            .filter(|n| n.kind().as_ref() == "property_declaration")?;
-        if !property.children().any(|n| n.text().as_ref() == "val") {
-            return None;
-        }
-        origin(
-            root,
-            &property.children().filter(|n| n.is_named()).last()?,
-            depth - 1,
-        )
-    }
-    scope.dfs().filter(|n| n.kind().as_ref() == "call_expression" && identity::callable(n).is_some_and(|f| f.range() == scope.range()))
-        .filter_map(|node| {
-            let call = identity::call(&node)?;
-            let text = call.callee.text();
-            let method = text.rsplit('.').next()?;
-            if !((method == "execute" && call.arguments.is_empty()) || (method == "enqueue" && call.arguments.len() == 1)) { return None; }
-            let receiver = call.callee.children().find(|n| n.is_named())?;
-            if origin(&root, &receiver, 8)?.range() != anchor.range() || node.range().len() > 4096 { return None; }
-            Some(ReviewNeighborhoodFact { role: "okhttp_call_execution_context".into(), symbol: receiver.text().into_owned(), location: crate::code::matcher::location(path, &node), excerpt: node.text().into_owned(), evidence_id: Some(sink.id.clone()), provenance: QueryProvenance { resolution: Resolution::Ast, engine: "Kotlin exact same-callable immutable OkHttp call origin and consumer; source context 1".into() } })
-        }).take(8).collect()
-}
-
 pub(super) fn file_operands<'a>(
     root: &KNode<'a>,
     expression: &KNode<'a>,
@@ -123,6 +52,40 @@ pub(crate) fn owned<'a>(
 ) -> bool {
     if depth == 0 {
         return false;
+    }
+    if expression.kind().as_ref() == "parenthesized_expression" {
+        return expression
+            .children()
+            .find(|n| n.is_named())
+            .is_some_and(|n| owned(root, &n, canonical, depth - 1));
+    }
+    if expression.kind().as_ref() == "as_expression"
+        && matches!(
+            canonical,
+            "java.net.URLConnection"
+                | "java.net.HttpURLConnection"
+                | "javax.net.ssl.HttpsURLConnection"
+                | "okhttp3.Call"
+        )
+    {
+        let imports = Imports::build(root);
+        return expression
+            .children()
+            .filter(|n| n.is_named())
+            .last()
+            .is_some_and(|ty| {
+                let observed = ty.text();
+                imports.exact(root, expression, observed.trim_end_matches('?'), canonical)
+                    || canonical == "java.net.URLConnection"
+                        && [
+                            "java.net.HttpURLConnection",
+                            "javax.net.ssl.HttpsURLConnection",
+                        ]
+                        .iter()
+                        .any(|ty| {
+                            imports.exact(root, expression, observed.trim_end_matches('?'), ty)
+                        })
+            });
     }
     let imports = Imports::build(root);
     let symbol = expression.text();
@@ -347,6 +310,16 @@ pub(crate) fn owned<'a>(
                 return true;
             }
         }
+        if canonical == "okhttp3.Call"
+            && ((method == "newCall"
+                && call.arguments.len() == 1
+                && owned(root, &receiver, "okhttp3.OkHttpClient", depth - 1))
+                || method == "clone"
+                    && call.arguments.is_empty()
+                    && owned(root, &receiver, canonical, depth - 1))
+        {
+            return true;
+        }
         if canonical == WEBCLIENT_BUILDER
             && ((method == "mutate"
                 && call.arguments.is_empty()
@@ -496,12 +469,35 @@ pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> boo
         "kotlin-xml-configuration" => &["setFeature", "setAttribute", "setExpandEntityReferences"],
         "kotlin-tls-hostname-verifier" => &["setHostnameVerifier"],
         "kotlin-servlet-redirect" => &["sendRedirect"],
-        "kotlin-url-connection-consumer" => &["connect", "getInputStream", "getContent"],
+        "kotlin-url-connection-consumer" => &[
+            "connect",
+            "getInputStream",
+            "getContent",
+            "getOutputStream",
+            "getResponseCode",
+            "getResponseMessage",
+            "getHeaderField",
+            "getHeaderFields",
+        ],
         "kotlin-http-client-request" => &["send", "sendAsync"],
         "kotlin-okhttp-request" => &["newCall"],
+        "kotlin-okhttp-dispatch" => &["execute", "enqueue"],
         _ => return false,
     };
     if !methods.contains(&method) {
+        return false;
+    }
+    if rule == "kotlin-okhttp-dispatch" && call.arguments.len() != usize::from(method == "enqueue")
+    {
+        return false;
+    }
+    if rule == "kotlin-url-connection-consumer"
+        && (if method == "getContent" {
+            call.arguments.len() > 1
+        } else {
+            call.arguments.len() != usize::from(method == "getHeaderField")
+        })
+    {
         return false;
     }
     if matches!(rule, "kotlin-file-read" | "kotlin-file-write") {
@@ -572,13 +568,48 @@ pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> boo
         ],
         "kotlin-http-client-request" => &["java.net.http.HttpClient"],
         "kotlin-okhttp-request" => &["okhttp3.OkHttpClient"],
+        "kotlin-okhttp-dispatch" => &["okhttp3.Call"],
         _ => return false,
     };
     types.iter().any(|canonical| {
         !(rule == "kotlin-xml-configuration"
             && *canonical == "javax.xml.parsers.SAXParserFactory"
             && method != "setFeature")
+            && !(matches!(method, "getResponseCode" | "getResponseMessage")
+                && *canonical == "java.net.URLConnection")
             && owned(root, &receiver, canonical, 8)
+    })
+}
+
+pub(super) fn connection_property<'a>(root: &KNode<'a>, node: &KNode<'a>) -> bool {
+    if node.kind().as_ref() != "navigation_expression" {
+        return false;
+    }
+    let property = node.text().rsplit('.').next().unwrap_or("").to_owned();
+    if !matches!(
+        property.as_str(),
+        "inputStream"
+            | "outputStream"
+            | "content"
+            | "headerFields"
+            | "responseCode"
+            | "responseMessage"
+    ) {
+        return false;
+    }
+    let Some(receiver) = node.children().find(|n| n.is_named()) else {
+        return false;
+    };
+    [
+        "java.net.URLConnection",
+        "java.net.HttpURLConnection",
+        "javax.net.ssl.HttpsURLConnection",
+    ]
+    .iter()
+    .any(|ty| {
+        !(matches!(property.as_str(), "responseCode" | "responseMessage")
+            && *ty == "java.net.URLConnection")
+            && owned(root, &receiver, ty, 8)
     })
 }
 

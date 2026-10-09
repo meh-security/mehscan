@@ -379,7 +379,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "14";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "15";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -3351,17 +3351,12 @@ fn kotlin_caller_locations(
             matches!(
                 fact.role.as_str(),
                 "exact_caller_context"
-                    | "okhttp_call_execution_context"
                     | "webclient_request_mutation_context"
                     | "webclient_direct_exchange_argument_context"
             )
         })
         .map(|fact| FindingRelatedLocation {
-            role: if fact.role == "okhttp_call_execution_context" {
-                EvidenceKind::Sink
-            } else {
-                EvidenceKind::Source
-            },
+            role: EvidenceKind::Source,
             location: fact.location.clone(),
             evidence_id: (fact.role == "exact_caller_context")
                 .then(|| fact.evidence_id.clone())
@@ -3505,10 +3500,10 @@ fn kotlin_finding_description(
         "kotlin-url-read" => {
             "Impact: Reading a URL with request-influenced destination syntax can expose resources accessible through the server's network reach and process privileges, subject to URL protocol handling. Control may concern the complete URL or only an interpolated component; inspect the exact shown construction rather than assuming every component is caller-selected. Verification: For the affected read, confirm approved destinations work and disallowed schemes, hosts, ports and resolved addresses are rejected; exercise redirect handling with disposable local targets. Deployment reach and external exploit reproduction are not established."
         }
-        "kotlin-url-connection" | "kotlin-url-connection-consumer" => {
+        "kotlin-url-connection-consumer" => {
             "Impact: The reviewed connection consumer can access caller-selected resources using the server's network reach and process privileges, subject to URL protocol handling. Verification: Test the affected connect/read consumer with approved and rejected schemes, hosts, ports and resolved addresses; exercise redirect handling with disposable local targets. Deployment reach and external exploit reproduction are not established."
         }
-        "kotlin-ktor-client-request" | "kotlin-http-client-request" | "kotlin-okhttp-request" => {
+        "kotlin-ktor-client-request" | "kotlin-http-client-request" | "kotlin-okhttp-dispatch" => {
             "Impact: Caller-selected destinations can expose resources accessible through the server's network reach; access to any particular internal service is not established. Verification: Exercise the named client operation with approved destinations and rejected schemes, hosts, ports and resolved addresses, including redirect revalidation against disposable local targets."
         }
         "kotlin-ktor-redirect" => {
@@ -3596,10 +3591,7 @@ fn kotlin_finding_description(
             description.push_str(&format!(" Matched operation: {operation}."));
         }
     }
-    if matches!(
-        rule,
-        "kotlin-url-read" | "kotlin-url-connection" | "kotlin-url-connection-consumer"
-    ) {
+    if matches!(rule, "kotlin-url-read" | "kotlin-url-connection-consumer") {
         for fact in facts
             .iter()
             .filter(|fact| fact.role == "source_context")
@@ -3618,13 +3610,6 @@ fn kotlin_finding_description(
             .take(4)
         {
             description.push_str(&format!(" Candidate request mutation: {}:{}: {}. Inspect the forwarded request and filter order; an unused replacement is not an effective destination change.", fact.location.path, fact.location.start.line, fact.excerpt.lines().last().unwrap_or(&fact.excerpt)));
-        }
-        for fact in facts
-            .iter()
-            .filter(|f| f.role == "okhttp_call_execution_context")
-            .take(8)
-        {
-            description.push_str(&format!(" Supplied call consumer: {}:{}: {}. This is bounded same-callable source context, not verified runtime dispatch.", fact.location.path, fact.location.start.line, fact.excerpt));
         }
         for fact in facts
             .iter()
@@ -9019,11 +9004,6 @@ fn build_observation_reviews(
                         item,
                     ));
                     facts.extend(crate::code::kotlin_scope_facts(
-                        &group.path,
-                        &file.source,
-                        item,
-                    ));
-                    facts.extend(crate::code::kotlin_okhttp_facts(
                         &group.path,
                         &file.source,
                         item,

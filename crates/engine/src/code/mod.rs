@@ -63,7 +63,6 @@ pub(crate) use kotlin::function_range as kotlin_function_range;
 pub(crate) use kotlin::html_encoder_facts as kotlin_html_encoder_facts;
 pub(crate) use kotlin::jwt_facts as kotlin_jwt_facts;
 pub(crate) use kotlin::member_receiver_facts as kotlin_member_receiver_facts;
-pub(crate) use kotlin::okhttp_facts as kotlin_okhttp_facts;
 pub(crate) use kotlin::query_fact as kotlin_numeric_query_fact;
 pub(crate) use kotlin::scope_facts as kotlin_scope_facts;
 pub(crate) use kotlin::tls_facts as kotlin_tls_facts;

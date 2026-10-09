@@ -173,10 +173,10 @@
       - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/net/URL.html
 
 - id: kotlin-url-connection
-  version: 1
+  version: 2
   title: Kotlin JVM URL connection construction
   language: kotlin
-  kind: sink
+  kind: resource
   capability: outbound_network_request
   cwe: [CWE-918]
   match:
@@ -589,7 +589,7 @@
       - https://docs.oracle.com/en/java/javase/25/docs/api/index.html
       - https://cwe.mitre.org/data/definitions/601.html
 - id: kotlin-url-connection-consumer
-  version: 1
+  version: 2
   title: Kotlin JVM URLConnection resource consumer
   language: kotlin
   kind: sink
@@ -603,6 +603,30 @@
         captures: {"endpoint": "CONNECTION"}
       - pattern: "$CONNECTION.getContent()"
         captures: {"endpoint": "CONNECTION"}
+      - pattern: "$CONNECTION.getContent($TYPES)"
+        captures: {endpoint: CONNECTION, content_types: TYPES}
+      - pattern: "$CONNECTION.getOutputStream()"
+        captures: {"endpoint": "CONNECTION"}
+      - pattern: "$CONNECTION.getResponseCode()"
+        captures: {"endpoint": "CONNECTION"}
+      - pattern: "$CONNECTION.getResponseMessage()"
+        captures: {"endpoint": "CONNECTION"}
+      - pattern: "$CONNECTION.getHeaderField($NAME)"
+        captures: {"endpoint": "CONNECTION"}
+      - pattern: "$CONNECTION.getHeaderFields()"
+        captures: {"endpoint": "CONNECTION"}
+      - pattern: $CONNECTION.inputStream
+        captures: {endpoint: CONNECTION}
+      - pattern: $CONNECTION.outputStream
+        captures: {endpoint: CONNECTION}
+      - pattern: $CONNECTION.content
+        captures: {endpoint: CONNECTION}
+      - pattern: $CONNECTION.headerFields
+        captures: {endpoint: CONNECTION}
+      - pattern: $CONNECTION.responseCode
+        captures: {endpoint: CONNECTION}
+      - pattern: $CONNECTION.responseMessage
+        captures: {endpoint: CONNECTION}
   tags: [kotlin, jvm]
   ai:
     investigate:
@@ -884,22 +908,22 @@
       - https://docs.oracle.com/en/java/javase/25/docs/api/java.net.http/java/net/http/HttpClient.html
 
 - id: kotlin-okhttp-request
-  version: 1
-  title: Kotlin HTTP client request boundary
+  version: 2
+  title: Kotlin OkHttp lazy call construction
   language: kotlin
-  kind: sink
+  kind: resource
   capability: outbound_network_request
   cwe: [CWE-918]
   match:
     any:
       - pattern: $CLIENT.newCall($REQUEST)
-        captures: { endpoint: REQUEST }
+        captures: { request: REQUEST }
   tags: [kotlin, jvm, network]
   ai:
     investigate:
       - Resolve the request URL, canonical client identity, effective execution and destination policy from supplied source.
     verify:
-      - Java HttpClient send performs I/O; OkHttp newCall constructs a lazy call. Require execute or enqueue before claiming resource access.
+      - OkHttp newCall constructs a lazy call. Require execute or enqueue before claiming resource access.
       - Verify schemes, exact destinations, ports, resolved addresses and redirect revalidation.
     exclude:
       - Exclude fixed approved destinations, unused lazy calls and unavailable input or consumer evidence.
@@ -908,6 +932,32 @@
     references:
       - https://cwe.mitre.org/data/definitions/918.html
       - https://square.github.io/okhttp/recipes/
+
+- id: kotlin-okhttp-dispatch
+  version: 1
+  title: Kotlin OkHttp executed or scheduled request
+  language: kotlin
+  kind: sink
+  capability: outbound_network_request
+  cwe: [CWE-918]
+  match:
+    any:
+      - pattern: $CALL.execute()
+        captures: { request: CALL }
+      - pattern: $CALL.enqueue($CALLBACK)
+        captures: { request: CALL, callback: CALLBACK }
+  tags: [kotlin, jvm, network, dispatch]
+  ai:
+    investigate:
+      - Resolve the supplied call/request destination and consequential actor at this execute/enqueue consumer.
+    verify:
+      - An initial URL does not settle interceptor rewrites or redirects. Follow an unresolved request or client-policy producer before concluding.
+    exclude:
+      - Construction-only calls, lookalike receivers and fixed effective destinations are not independent SSRF reviews.
+  provenance:
+    note: Canonical Call declarations and immutable-local or inline newCall/clone factories; destination and client policy use bounded source facts, not compiler or deployed flow proof.
+    references:
+      - https://raw.githubusercontent.com/square/okhttp/parent-4.12.0/okhttp/src/main/kotlin/okhttp3/Call.kt
 
 - id: kotlin-html-encoding
   version: 1

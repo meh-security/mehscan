@@ -73,6 +73,15 @@ than rereading equivalent distributions.
   in supporting constructor evidence does not close an unresolved final request.
   Request builders are context without an extra verdict. Establish the
   server/privileged actor and consequence independently of dispatch accounting.
+  For Kotlin OkHttp, `initial_endpoint` with
+  `outbound-request:unresolved-client-policy` locates the initial request URL,
+  not the final destination. Follow the captured `client` and its configured
+  interceptors/rewrites before closing the request. A shown input relationship
+  into that initial URL remains a lead, with final-destination uncertainty;
+  unknown client policy does not erase the supplied input flow.
+  Kotlin connection properties
+  such as `inputStream` and `responseCode` can perform I/O; their read sites are
+  real consumers, while `openConnection` alone remains construction context.
 - For resource access, identify whether the selected object belongs to the
   verified subject or another tenant. A sensitive read or existence oracle
   can matter without a mutation. Inspect earlier middleware on every matching

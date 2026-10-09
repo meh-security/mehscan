@@ -87,26 +87,29 @@ fn jvm_client_factories_and_process_mutator_chains_keep_owned_boundaries() {
     assert_eq!(fixed.captures["command"].text, "\"whoami\"");
     let jobs =
         mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
-    for owner in ["rawOkhttp", "rawOkhttpBuilder", "lazyOkhttp"] {
+    for owner in ["rawOkhttp", "rawOkhttpBuilder"] {
         let review = jobs
-            .observation_reviews
+            .reviews
             .iter()
             .find(|r| {
-                r.evidence.iter().any(|e| {
-                    e.rule_id == "kotlin-okhttp-request"
-                        && e.enclosing_symbol.as_deref() == Some(owner)
-                        && r.anchor_evidence_ids.contains(&e.id)
-                })
+                r.candidate.sink.rule_id == "kotlin-okhttp-dispatch"
+                    && r.candidate.sink.enclosing_symbol.as_deref() == Some(owner)
             })
             .unwrap();
-        let consumers = review
-            .facts
+        let sink = scan
+            .evidence
             .iter()
-            .filter(|f| f.role == "okhttp_call_execution_context")
-            .collect::<Vec<_>>();
-        assert_eq!(consumers.len(), usize::from(owner != "lazyOkhttp"));
-        assert!(consumers.iter().all(|f| f.excerpt.ends_with(".execute()")));
+            .find(|e| e.id == review.candidate.sink.id)
+            .unwrap();
+        assert_eq!(sink.captures["endpoint"].text, "url");
+        assert!(!sink.related_evidence.is_empty());
     }
+    assert!(!jobs.observation_reviews.iter().any(|r| {
+        r.evidence.iter().any(|e| {
+            e.enclosing_symbol.as_deref() == Some("lazyOkhttp")
+                && r.anchor_evidence_ids.contains(&e.id)
+        })
+    }));
 }
 
 #[test]
@@ -567,20 +570,24 @@ fn url_boundaries_preserve_endpoint_flow_and_lazy_construction() {
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         path_owners,
-        [
-            "rawStream",
-            "constructorStream",
-            "rawConnection",
-            "connectionOnly"
-        ]
-        .into_iter()
-        .collect()
+        ["rawStream", "constructorStream", "rawConnection"]
+            .into_iter()
+            .collect()
     );
-    // Construction-only remains a review lead, never a native finding or proof
-    // of a request. Coroutine handoff is observation context, not a native path.
+    // Construction is context without a review. Both actual rawConnection
+    // consumers survive. Coroutine handoff remains observation context.
     let jobs =
         mehscan_engine::investigation::build_all_path_review_jobs(&fixture, None, true).unwrap();
+    assert_eq!(jobs.reviews.len(), 4);
+    // Existing URL.openStream observations are outside this construction slice:
+    // fixed/selector handling and the coroutine helper remain research work.
+    assert_eq!(jobs.observation_reviews.len(), 3);
     assert_eq!(jobs.total_reviews, 7);
+    assert!(!jobs.observation_reviews.iter().any(|r| {
+        r.evidence
+            .iter()
+            .any(|e| e.enclosing_symbol.as_deref() == Some("connectionOnly"))
+    }));
     let fetch = jobs
         .observation_reviews
         .iter()
