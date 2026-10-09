@@ -235,51 +235,29 @@ mutations, escapes and uncertain object slots remain active. Comprehensive
 retains the exact ID. Reopen if the driver is replaced or this operation has
 another consequential relationship.
 
-The first hint, `fixed_repository_include`, covers a sink-only include whose
-whole operand resolves to an existing PHP source file in this repository.
-Runtime/upload/cache/generated directories and targets named by observed file
-writes veto it. This is a likely-false-positive effort heuristic under the
-normal trusted-repository-code assumption; it cannot rule out unknown writers
-or deployment changes. Reopen these IDs with `--selection all` when the user,
-source, or deployment indicates writable code or distrust of checked-out code.
-Do not defer the target file's own SQL, execution, output, or access findings.
-`source_default_repository_include` additionally resolves bounded source-defined
-constants and concatenations to that target, under the explicit assumption that
-runtime constants match those defaults. Conflicting, dynamic or unresolved
-definitions stay unresolved. Missing targets, variable-selected loaders and
-observed unresolved root definitions remain eligible. Existing inventories without hints remain
-fully eligible; regenerate to obtain new scanner facts.
+PHP output and includes use admission before packaging. Ordinary unbound output
+and fixed-code includes remain raw searchable evidence, not mandatory jobs in
+either mode and not safe verdicts. Their target files' independent SQL, execution,
+file and access leads remain eligible. Inventory schema 4 requires a fresh scan;
+do not reuse an older inventory or its ledger.
 
-`shared_php_encoding_question` keeps an active representative for repeated
-sink-only whole encoding calls in the same observed ordinary template context.
-The name and static context are questions, not a verified protection contract.
-Review `dependency_review_ids` even when a component filter places the
-representative elsewhere. Inspect the actual implementation through delegated
-helpers, options and visible hooks; then check applicability to the deferred
-sites. Observed script/style, unquoted/event/srcdoc attributes, URL contexts
-and source-bearing groups stay active. Unknown bindings are not shared contracts.
-Use `--selection deferred` to inspect exact dependents. Rebuild the ledger after
-the representative: `issue`, `needs_review` or conflicting decisions reopen its
-unreviewed dependents in Value (`reopened_count`). `not_issue` never generates
-their verdicts: keep them conditional only when the inspected contract and each
-site's context/options support that reason. Reopen exact exceptions with
-`--selection all`. Finish the dependency/applicability check before declaring a
-Value scope complete. Expand toward Comprehensive whenever distinct unsafe or
-unresolved relationships remain; do not force a reduction percentage.
+`php_relationship_research` retains source/sink co-occurrence, bound local
+stored/helper producers, runtime-selected loaders, observed write/load targets
+and active interpretation contexts in Comprehensive. Producer facts are bounded
+navigation: verify the reaching writes, transformations, actual writer and actor.
+They do not establish taint, a vulnerability or protection. Value keeps shown
+raw request-to-output/code-selection constructs plus independently dangerous
+families; consequential relationships alone do not make all PHP output Value work.
 
-`ordinary_php_sink_inventory` moves unconnected PHP echo/print occurrences and
-constant-shaped includes into conditional surface lanes. Missing source
-provenance is not trusted input. Explicit markup construction, variable-selected
-loaders, observed unresolved definitions, connected/co-occurring input and
-dangerous interpreter operations stay active. Review these conditional lanes
-through the attack-surface map: inspect actual producers (including stored
-data), entrypoints and shared rendering/loading behavior, then select distinct
-consequential sites with `--selection all`. Do not investigate each ordinary
-occurrence merely to fill a verdict. Rebuild the ledger after chunks: an issue,
-unresolved verdict or conflict in the same file and rule reopens ordinary
-conditional sites automatically. A newly found lower-trust producer or writable
-code path also reopens relevant IDs, even without a previous verdict. If that
-evidence is widespread, use Comprehensive for the affected lane or repo.
+Use the attack-surface map to inspect shared rendering/loading implementations,
+not every occurrence. Promote a shown unsafe mechanism, justified fix or
+consequential reviewer-origin lead. Use `--selection all` for retained research;
+use source/symbol/references for raw excluded observations. Same-file/rule
+`issue`, `needs_review` or conflicting verdicts reopen retained research in Value.
+Raw exclusions have no review IDs to reopen: record new exact locations as
+reviewer-origin leads. Unknown cross-file/framework producers may need an
+explicit category sweep. Neither mode claims complete PHP XSS or inclusion
+coverage merely because its queue is exhausted.
 
 The overview's `deterministic_operand_closures` counts exact output anchors
 already closed by the scanner. `inventory.json`'s `admission_audit.closed_operands`

@@ -1,4 +1,4 @@
-use std::{fs, process::Command};
+use std::{fs, path::PathBuf, process::Command};
 
 #[test]
 fn ordinary_owned_directory_creation_is_excluded_from_both_modes_without_losing_file_effects() {
@@ -547,71 +547,10 @@ class App {
 }
 
 #[test]
-fn source_defaults_and_shared_questions_preserve_gaps_and_reopen_dependents() {
-    let root = std::env::temp_dir().join(format!("mehscan-value-questions-{}", std::process::id()));
-    let artifacts = std::env::temp_dir().join(format!(
-        "mehscan-value-questions-run-{}",
-        std::process::id()
-    ));
-    fs::create_dir_all(root.join("src/uploads")).unwrap();
-    fs::write(
-        root.join("src/constants.php"),
-        r#"<?php
-if (!defined('APP_ROOT')) { define('APP_ROOT', __DIR__ . '/'); }
-const LIBRARY = 'helper.php';
-define('CONFLICT_ROOT', __DIR__ . '/');
-define('CONFLICT_ROOT', $_GET['root']);
-define('DYNAMIC_ROOT', $_GET['root']);
-define('CYCLE_ROOT', CYCLE_ROOT);
-define('BAD_SIGNATURE', __DIR__ . '/');
-define('BAD_SIGNATURE', $_GET['root'], true);
-define('__CODE_ROOT__', dirname(__FILE__) . '/');
-"#,
-    )
-    .unwrap();
-    fs::write(root.join("src/helper.php"), "<?php return true;").unwrap();
-    fs::write(root.join("src/uploads/item.php"), "<?php return true;").unwrap();
-    fs::write(
-        root.join("src/loaders.php"),
-        r#"<?php
-function source_default() { require APP_ROOT . LIBRARY; }
-function conflict() { require CONFLICT_ROOT . 'helper.php'; }
-function dynamic() { require DYNAMIC_ROOT . 'helper.php'; }
-function cycle() { require CYCLE_ROOT . 'helper.php'; }
-function missing() { require APP_ROOT . 'missing.php'; }
-function upload() { require APP_ROOT . 'uploads/item.php'; }
-function traversal() { require APP_ROOT . '../../../outside.php'; }
-function bad_signature() { require BAD_SIGNATURE . 'helper.php'; }
-function magic_like_name() { require __CODE_ROOT__ . 'helper.php'; }
-"#,
-    )
-    .unwrap();
-    fs::write(
-        root.join("src/views.php"),
-        r#"<?php function esc_html($x) { return $x; }
-function views($a, $b, $raw) { ?>
-<p><?php echo esc_html($a); ?></p>
-<p><?php echo esc_html($b); ?></p>
-<script><?php echo esc_html($raw); ?></script>
-<script><?php echo esc_html($b); ?></script>
-<script><?php echo $raw; ?></script>
-<p onclick="<?php echo $raw; ?>">x</p>
-<style><?php echo esc_html($raw); ?></style>
-<textarea><?php echo esc_html($raw); ?></textarea>
-<p title=<?php echo esc_html($raw); ?>>x</p>
-<p onclick="<?php echo esc_html($raw); ?>">x</p>
-<iframe srcdoc="<?php echo esc_html($raw); ?>"></iframe>
-<a href="<?php echo esc_html($raw); ?>">x</a>
-<a href="<?php echo esc_html($b); ?>">x</a>
-<svg><a xlink:href="<?php echo esc_html($raw); ?>">x</a></svg>
-<svg><a xlink:href="<?php echo esc_html($b); ?>">x</a></svg>
-<p><?php echo esc_html($a) . $raw; ?></p>
-<p><?php echo $raw; ?></p>
-<p data-note=">" title="<?php echo esc_html($a); ?>">x</p>
-<?php }
-"#,
-    )
-    .unwrap();
+fn php_tiers_preserve_research_and_reopen_exact_surface_without_safe_verdicts() {
+    let root =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/php-review-tiers");
+    let artifacts = std::env::temp_dir().join(format!("mehscan-php-tiers-{}", std::process::id()));
     let run = |args: &[&str]| {
         let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
             .args(args)
@@ -648,219 +587,88 @@ function views($a, $b, $raw) { ?>
     let all = list("all", &[]);
     let value = list("value", &[]);
     let deferred = list("deferred", &[]);
-    assert_eq!(deferred["matching_count"], 5, "{deferred}");
     assert_eq!(
         all["matching_count"].as_u64().unwrap(),
-        value["matching_count"].as_u64().unwrap() + 5
-    );
-    let entries = deferred["entries"].as_array().unwrap();
-    assert!(
-        entries
-            .iter()
-            .any(|entry| entry["symbol"] == "source_default"
-                && entry["value_hint"]["reason"] == "source_default_repository_include")
-    );
-    let repeated = entries
-        .iter()
-        .find(|entry| entry["value_hint"]["reason"] == "shared_php_encoding_question")
-        .unwrap();
-    let representative = repeated["value_hint"]["depends_on"].as_str().unwrap();
-    assert_eq!(
-        value["dependency_review_ids"],
-        serde_json::json!([representative])
+        value["matching_count"].as_u64().unwrap() + deferred["matching_count"].as_u64().unwrap()
     );
     let values = value["entries"].as_array().unwrap();
-    for symbol in [
-        "conflict",
-        "dynamic",
-        "cycle",
-        "missing",
-        "upload",
-        "traversal",
-        "bad_signature",
+    for name in [
+        "raw_request",
+        "request_loader",
+        "other_dangerous_operations",
     ] {
         assert!(
-            values.iter().any(|entry| entry["symbol"] == symbol),
-            "lost {symbol}"
+            values.iter().any(|e| e["symbol"] == name),
+            "lost strong lead: {name}"
         );
     }
-    // A no-op encoder, wrong contexts and raw/mixed output cannot become safe
-    // through a name match. Unconnected raw/mixed output is conditional surface
-    // inventory; dangerous observed contexts stay individually active.
-    assert_eq!(
-        entries
-            .iter()
-            .filter(|entry| entry["symbol"] == "views")
-            .count(),
-        3
-    );
-    let title = values
-        .iter()
-        .find(|entry| {
-            entry["operand_facts"].as_array().is_some_and(|facts| {
-                facts
-                    .iter()
-                    .any(|fact| fact["value"] == "html_attribute:title:\"")
-            })
-        })
-        .unwrap();
-    assert_eq!(title["symbol"], "views");
-    let filtered = list("value", &["--path-prefix", "src/views.php"]);
-    assert_eq!(
-        filtered["dependency_review_ids"],
-        serde_json::json!([representative])
-    );
+    let research = deferred["entries"].as_array().unwrap();
+    for name in [
+        "stored_row",
+        "render_stored_helper",
+        "render_argument",
+        "runtime_loader",
+        "load_written_code",
+        "raw_script",
+    ] {
+        assert!(
+            research
+                .iter()
+                .any(|e| e["symbol"] == name
+                    && e["value_hint"]["reason"] == "php_relationship_research"),
+            "lost research: {name}"
+        );
+    }
+    for name in [
+        "ordinary_layout",
+        "fixed_include",
+        "different_case",
+        "fake_reader",
+    ] {
+        assert!(
+            !all["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["symbol"] == name)
+        );
+    }
     let inventory: serde_json::Value =
         serde_json::from_slice(&fs::read(artifacts.join("inventory.json")).unwrap()).unwrap();
-    let ledger_path = artifacts.join("ledger.json");
+    assert_eq!(inventory["schema_version"], "4");
+    let id = values
+        .iter()
+        .find(|e| e["symbol"] == "raw_request")
+        .unwrap()["review_id"]
+        .as_str()
+        .unwrap();
+    let ledger = artifacts.join("ledger.json");
     for decision in ["issue", "needs_review", "not_issue"] {
-        fs::write(
-            &ledger_path,
-            serde_json::to_vec(&serde_json::json!({
-                "schema_version": "2", "source_fingerprint": inventory["source_fingerprint"],
-                "input_fingerprint": inventory["input_fingerprint"],
-                "inventory_count": inventory["entries"].as_array().unwrap().len(),
-                "reviewed": {representative: decision}, "conflicts": []
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-        let queue = list("value", &["--ledger", ledger_path.to_str().unwrap()]);
-        let opened = decision != "not_issue";
-        assert_eq!(queue["reopened_count"], if opened { 3 } else { 0 });
-        assert_eq!(
-            queue["entries"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|entry| entry["review_id"] == repeated["review_id"]),
-            opened
-        );
-        // No verdict is generated for a dependent, including after not_issue.
+        fs::write(&ledger, serde_json::to_vec(&serde_json::json!({
+            "schema_version": "2", "source_fingerprint": inventory["source_fingerprint"],
+            "input_fingerprint": inventory["input_fingerprint"], "inventory_count": inventory["entries"].as_array().unwrap().len(),
+            "reviewed": {id: decision}, "conflicts": []
+        })).unwrap()).unwrap();
+        let queue = list("value", &["--ledger", ledger.to_str().unwrap()]);
         assert_eq!(queue["reviewed_count"], 1);
+        if decision == "not_issue" {
+            assert_eq!(queue["reopened_count"], 0);
+        } else {
+            assert!(queue["reopened_count"].as_u64().unwrap() > 0);
+        }
     }
-    fs::remove_dir_all(root).unwrap();
-    fs::remove_dir_all(artifacts).unwrap();
-}
-
-#[test]
-fn value_defers_fixed_code_but_preserves_writers_missing_targets_and_dangerous_operations() {
-    let root = std::env::temp_dir().join(format!("mehscan-value-source-{}", std::process::id()));
-    let artifacts = std::env::temp_dir().join(format!("mehscan-value-run-{}", std::process::id()));
-    fs::create_dir_all(root.join("src/uploads")).unwrap();
-    fs::create_dir_all(root.join("src/generated")).unwrap();
-    fs::write(
-        root.join("src/main.php"),
-        r#"<?php
-function fixed() { require __DIR__ . '/helper.php'; }
-function missing() { require __DIR__ . '/missing.php'; }
-function writable() { require __DIR__ . '/uploads/item.php'; }
-function generated() { require __DIR__ . '/generated/item.php'; }
-function named_writer() { require __DIR__ . '/edited.php'; }
-function root_config() { require BASE_PATH . '/helper.php'; }
-function dynamic() { require $_GET['page']; }
-function helper_selected() { require choose_file(); }
-function edit($content) { file_put_contents(__DIR__ . '/EDITED.php', $content); }
-function disclosure() { readfile($_GET['file']); }
-function stored_output($stored) { echo $stored; }
-function encoded_output($stored) { echo esc_html($stored); }
-"#,
-    )
-    .unwrap();
-    // Deferring the include must never defer the included file's own sinks.
-    fs::write(root.join("src/helper.php"), "<?php function raw_sql($sql) { mysqli_query($db, $sql); } function execute($cmd) { system($cmd); }").unwrap();
-    for path in [
-        "src/edited.php",
-        "src/uploads/item.php",
-        "src/generated/item.php",
-    ] {
-        fs::write(root.join(path), "<?php return true;").unwrap();
-    }
-    let run = |args: &[&str]| {
-        let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{:?}", output.stderr);
-        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
-    };
-    run(&[
+    // Scope exclusions still support precise source research.
+    let source = run(&[
         "investigate",
-        "review-inventory",
+        "source",
         root.to_str().unwrap(),
-        "--output",
-        artifacts.to_str().unwrap(),
+        "--path",
+        "app.php",
+        "--start-line",
+        "2",
+        "--end-line",
+        "4",
     ]);
-    let list = |selection: &str, extra: &[&str]| {
-        let mut args = vec![
-            "investigate",
-            "review-inventory-list",
-            "--inventory",
-            artifacts.to_str().unwrap(),
-            "--selection",
-            selection,
-        ];
-        args.extend_from_slice(extra);
-        run(&args)
-    };
-    let all = list("all", &[]);
-    let value = list("value", &[]);
-    let deferred = list("deferred", &[]);
-    assert_eq!(deferred["matching_count"], 4, "{deferred}");
-    let fixed = deferred["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["symbol"] == "fixed")
-        .unwrap();
-    assert_eq!(fixed["value_hint"]["reason"], "fixed_repository_include");
-    assert_eq!(
-        all["matching_count"].as_u64().unwrap(),
-        value["matching_count"].as_u64().unwrap() + 4
-    );
-    let symbols: Vec<_> = value["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|entry| entry["symbol"].as_str())
-        .collect();
-    for symbol in [
-        "missing",
-        "writable",
-        "generated",
-        "named_writer",
-        "dynamic",
-        "helper_selected",
-        "disclosure",
-        "raw_sql",
-        "execute",
-    ] {
-        assert!(symbols.contains(&symbol), "lost {symbol}: {value}");
-    }
-    for symbol in ["root_config", "stored_output", "encoded_output"] {
-        assert!(
-            deferred["entries"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|entry| entry["symbol"] == symbol
-                    && entry["value_hint"]["reason"] == "ordinary_php_sink_inventory")
-        );
-    }
-    let grouped = list(
-        "value",
-        &[
-            "--group-by",
-            "contract",
-            "--operand-kind",
-            "fixed_code_relative_path",
-        ],
-    );
-    assert_eq!(grouped["scope_count"], 5);
-    assert_eq!(grouped["matching_review_count"], 4);
-    assert_eq!(grouped["deferred_count"], 1);
-    let filtered = list("deferred", &["--path-prefix", "src/helper.php"]);
-    assert_eq!(filtered["matching_count"], 0);
-    fs::remove_dir_all(root).unwrap();
+    assert!(source.to_string().contains("ordinary_layout"));
     fs::remove_dir_all(artifacts).unwrap();
 }

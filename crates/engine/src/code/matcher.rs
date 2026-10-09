@@ -472,7 +472,10 @@ pub(crate) fn scan_source(
                         if php_context.is_some()
                             && matches!(
                                 compiled_rule.rule.id.as_str(),
-                                "php-file-inclusion" | "php-html-output"
+                                "php-file-inclusion"
+                                    | "php-html-output"
+                                    | "php-filesystem-write"
+                                    | "php-filesystem-copy-write"
                             )
                         {
                             php_operand_nodes

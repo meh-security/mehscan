@@ -309,7 +309,7 @@ fn preserves_dangerous_effects_without_requiring_a_known_caller() {
         &[
             (
                 "app.php",
-                "<?php function query($db,$value){return mysqli_query($db,\"SELECT * FROM users WHERE name='\".$value.\"'\");} function raw($value){echo $value;}",
+                "<?php function query($db,$value){return mysqli_query($db,\"SELECT * FROM users WHERE name='\".$value.\"'\");} function raw($value){echo $value;} function stored(PDOStatement $rows){echo $rows->fetchColumn();}",
             ),
             (
                 "app.rs",

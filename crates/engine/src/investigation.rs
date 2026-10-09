@@ -228,115 +228,6 @@ fn closed_native_path_fact(anchor: &Evidence) -> Option<&mehscan_core::OperandFa
     })
 }
 
-fn fixed_include_value_hint(
-    anchor: &Evidence,
-    sources: &RepositorySources,
-    write_paths: &BTreeSet<String>,
-) -> Option<ValueReviewHint> {
-    if anchor.rule_id != "php-file-inclusion" {
-        return None;
-    }
-    let target = &anchor
-        .context
-        .operand_facts
-        .iter()
-        .find(|fact| {
-            matches!(
-                fact.kind,
-                mehscan_core::OperandFactKind::FixedCodeRelativePath
-                    | mehscan_core::OperandFactKind::RepositoryCodeTarget
-            )
-        })?
-        .value;
-    if sources.files.get(target)?.language != Some(Language::Php) {
-        return None;
-    }
-    // Directory roles are only conservative vetoes, never proofs of safety.
-    if target.split('/').any(|part| {
-        matches!(
-            part.to_ascii_lowercase().as_str(),
-            "upload"
-                | "uploads"
-                | "cache"
-                | "caches"
-                | "tmp"
-                | "temp"
-                | "generated"
-                | "storage"
-                | "data"
-                | "runtime"
-        )
-    }) {
-        return None;
-    }
-    let basename = target.rsplit('/').next()?.to_ascii_lowercase();
-    if write_paths.iter().any(|path| path.contains(&basename)) {
-        return None;
-    }
-    Some(ValueReviewHint {
-        reason: if anchor.context.operand_facts.iter().any(|fact| fact.kind == mehscan_core::OperandFactKind::RepositoryCodeTarget) { "source_default_repository_include" } else { "fixed_repository_include" }.into(),
-        target: target.clone(),
-        assumption:
-            "repository_code_is_trusted; source_defaults_match_runtime_constants; unknown writers and deployment changes are not ruled out"
-                .into(),
-        depends_on: None,
-    })
-}
-
-fn share_php_output_questions(entries: &mut [ReviewInventoryEntry]) {
-    use mehscan_core::OperandFactKind;
-    let mut representatives: BTreeMap<String, String> = BTreeMap::new();
-    // Source-bearing and unsupported cases remain individual work. A shared
-    // question is conditional on its representative, never transferred safety.
-    for entry in entries
-        .iter_mut()
-        .filter(|entry| entry.rule_id == "php-html-output" && entry.evidence_strength == "sink")
-    {
-        let Some(encoder) = entry
-            .operand_facts
-            .iter()
-            .find(|f| f.kind == OperandFactKind::EncodingCall)
-        else {
-            continue;
-        };
-        let Some(context) = entry
-            .operand_facts
-            .iter()
-            .find(|f| f.kind == OperandFactKind::OutputContext)
-        else {
-            continue;
-        };
-        // URL interpretation needs more than HTML encoding. Keep these sites
-        // individually selected until a URL control contract is established.
-        if context.value != "html_text" && !context.value.starts_with("html_attribute:") {
-            continue;
-        }
-        if let Some(attribute) = context.value.strip_prefix("html_attribute:") {
-            let name = attribute.split(':').next().unwrap_or_default();
-            if !matches!(
-                name,
-                "title" | "alt" | "class" | "id" | "value" | "name" | "placeholder"
-            ) && !name.starts_with("aria-")
-                && !name.starts_with("data-")
-            {
-                continue;
-            }
-        }
-        let key = format!("{}:{}", encoder.value, context.value);
-        if let Some(representative) = representatives.get(&key) {
-            entry.value_hint = Some(ValueReviewHint {
-                reason: "shared_php_encoding_question".into(),
-                target: key,
-                assumption: "conditional_on_shared_callable_review_and_per_site_applicability; escaping_and_runtime_markup_are_not_proven".into(),
-                depends_on: Some(representative.clone()),
-            });
-        } else {
-            entry.value_hint = None;
-            representatives.insert(key, entry.review_id.clone());
-        }
-    }
-}
-
 fn share_csharp_filesystem_questions(entries: &mut [ReviewInventoryEntry]) {
     let mut representatives = BTreeMap::<String, String>::new();
     for entry in entries.iter_mut().filter(|entry| {
@@ -405,67 +296,6 @@ fn share_csharp_destination_questions(entries: &mut [ReviewInventoryEntry]) {
             representatives.insert(key, entry.review_id.clone());
         }
     }
-}
-
-fn ordinary_php_sink_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
-    if !matches!(
-        anchor.rule_id.as_str(),
-        "php-html-output" | "php-file-inclusion"
-    ) || anchor.tags.iter().any(|tag| {
-        matches!(
-            tag.as_str(),
-            "review-origin:decision-critical" | "value-scope:unresolved-code-root"
-        )
-    }) {
-        return None;
-    }
-    let role = if anchor.rule_id == "php-file-inclusion" {
-        "path"
-    } else {
-        "content"
-    };
-    let operand = &anchor.captures.get(role)?.text;
-    if role == "path" {
-        // Variable-selected loaders remain consequential. Missing/writable
-        // resolved targets were vetoed by the stronger include check above.
-        if !anchor
-            .tags
-            .iter()
-            .any(|tag| tag == "value-scope:constant-include-expression")
-            || operand.contains('$')
-            || operand.contains("..")
-            || operand.contains(':')
-            || operand.contains('\\')
-            || anchor.context.operand_facts.iter().any(|fact| {
-                matches!(
-                    fact.kind,
-                    mehscan_core::OperandFactKind::FixedCodeRelativePath
-                        | mehscan_core::OperandFactKind::RepositoryCodeTarget
-                )
-            })
-        {
-            return None;
-        }
-    } else {
-        // Keep explicit markup construction and observed dangerous contexts.
-        // Bare echo/print occurrences with unknown producers are conditional
-        // inventory; this is a scope choice, never proof of trusted input.
-        if operand.contains('<')
-            || anchor.context.operand_facts.iter().any(|fact| {
-                fact.kind == mehscan_core::OperandFactKind::OutputContext
-                    && fact.value != "html_text"
-                    && !fact.value.starts_with("html_attribute:")
-            })
-        {
-            return None;
-        }
-    }
-    Some(ValueReviewHint {
-        reason: "ordinary_php_sink_inventory".into(),
-        target: anchor.location.path.clone(),
-        assumption: "conditional_surface_inventory; unknown_input_is_not_trusted; inspect_surface_and_producers_then_reopen_consequential_sites".into(),
-        depends_on: None,
-    })
 }
 
 fn local_bound_query_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
@@ -621,7 +451,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "3";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "4";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -1566,9 +1396,42 @@ fn build_path_review_jobs_internal(
         .collect::<BTreeMap<_, _>>();
     let triage_contract = path_review_triage_contract();
     let all_candidates = report.candidates;
+    let used_ids = candidate_evidence_ids(&all_candidates, &scan.evidence, &sources);
+    let (mut observation_groups, mut observation_exclusions) =
+        observation_groups(&scan.evidence, &used_ids, &all_candidates, &sources);
     let connected_sink_ids = all_candidates
         .iter()
         .map(|candidate| candidate.sink.id.as_str())
+        .chain(
+            observation_groups
+                .iter()
+                .filter(|group| group.priority == 0)
+                .flat_map(|group| group.anchor_evidence_ids.iter().map(String::as_str)),
+        )
+        .collect::<BTreeSet<_>>();
+    let written_code_targets = scan
+        .evidence
+        .iter()
+        .filter(|item| {
+            item.location.path.ends_with(".php")
+                && item.capability == Capability::FilesystemWrite
+                && (item.captures.contains_key("content") || item.captures.contains_key("source"))
+        })
+        .flat_map(|item| &item.context.operand_facts)
+        .filter(|fact| {
+            matches!(
+                fact.kind,
+                mehscan_core::OperandFactKind::FixedCodeRelativePath
+                    | mehscan_core::OperandFactKind::RepositoryCodeTarget
+            )
+        })
+        .map(|fact| {
+            if cfg!(windows) {
+                fact.value.to_ascii_lowercase()
+            } else {
+                fact.value.clone()
+            }
+        })
         .collect::<BTreeSet<_>>();
     let practical_exclusions = scan
         .evidence
@@ -1579,6 +1442,7 @@ fn build_path_review_jobs_internal(
                 &sources,
                 connected_sink_ids.contains(item.id.as_str()),
                 &scan.evidence,
+                &written_code_targets,
             )
         })
         .map(|item| (item.id.clone(), ReviewAdmissionDisposition::InventoryOnly))
@@ -1604,9 +1468,6 @@ fn build_path_review_jobs_internal(
             .cmp(&is_review_material_path(&right.primary_location.path))
     });
     let excluded_candidates = all_candidates.len().saturating_sub(candidates.len());
-    let used_ids = candidate_evidence_ids(&all_candidates, &scan.evidence, &sources);
-    let (mut observation_groups, mut observation_exclusions) =
-        observation_groups(&scan.evidence, &used_ids, &all_candidates, &sources);
     observation_groups.retain(|group| {
         !group
             .anchor_evidence_ids
@@ -1712,13 +1573,6 @@ fn build_path_review_jobs_internal(
         &observation_exclusions,
     );
     if let Some(entries) = inventory_entries.as_mut() {
-        let write_paths = scan
-            .evidence
-            .iter()
-            .filter(|e| e.capability == Capability::FilesystemWrite)
-            .filter_map(|e| e.captures.get("path"))
-            .map(|capture| capture.text.to_ascii_lowercase())
-            .collect::<BTreeSet<_>>();
         entries.extend(candidates.iter().map(|candidate| {
             ReviewInventoryEntry {
                 review_id: candidate.id.replacen("path-", "review-", 1),
@@ -1768,16 +1622,13 @@ fn build_path_review_jobs_internal(
                 value_hint: practical_admission::comprehensive_hint(anchor).or_else(|| {
                     (group.priority == 2 && group.anchor_evidence_ids.len() == 1)
                         .then(|| {
-                            fixed_include_value_hint(anchor, &sources, &write_paths)
-                                .or_else(|| ordinary_php_sink_hint(anchor))
-                                .or_else(|| local_bound_query_hint(anchor))
+                            local_bound_query_hint(anchor)
                                 .or_else(|| ordinary_browser_request_hint(anchor))
                         })
                         .flatten()
                 }),
             })
         }));
-        share_php_output_questions(entries);
         share_csharp_filesystem_questions(entries);
         share_csharp_destination_questions(entries);
         // Scope hints affect Value selection only. Strong relationships and

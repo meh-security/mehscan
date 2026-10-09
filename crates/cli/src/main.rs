@@ -808,7 +808,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "value_deferred_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_some()).count(),
                 "value_active_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_none()).count(),
                 "value_deferrals_by_reason": value_deferrals_by_reason,
-                "value_conditional_count": inventory.entries.iter().filter(|entry| entry.value_hint.as_ref().is_some_and(|hint| hint.depends_on.is_some() || matches!(hint.reason.as_str(), "ordinary_php_sink_inventory" | "ordinary_browser_request_inventory"))).count(),
+                "value_conditional_count": inventory.entries.iter().filter(|entry| entry.value_hint.as_ref().is_some_and(|hint| hint.depends_on.is_some() || matches!(hint.reason.as_str(), "php_relationship_research" | "ordinary_browser_request_inventory"))).count(),
                 "value_dependency_count": inventory.entries.iter().filter_map(|entry| entry.value_hint.as_ref()?.depends_on.as_deref()).collect::<BTreeSet<_>>().len(),
                 "top_areas": top_areas,
             });
@@ -962,7 +962,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 (matches!(
                     entry["value_hint"]["reason"].as_str(),
                     Some(
-                        "ordinary_php_sink_inventory"
+                        "php_relationship_research"
                             | "local_bound_query_inventory"
                             | "ordinary_browser_request_inventory"
                             | "medium_impact_relationship"

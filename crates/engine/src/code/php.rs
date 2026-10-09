@@ -8,6 +8,8 @@ use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_language::SupportLang;
 use mehscan_core::{Capture, Language};
 
+#[path = "php_review.rs"]
+mod review;
 #[path = "php_value.rs"]
 mod value;
 
@@ -24,10 +26,16 @@ pub(super) fn add_operand_facts<'a>(
     if nodes.is_empty() {
         return;
     }
+    // Build producer navigation only for files with an actual output anchor.
+    let producers = evidence
+        .iter()
+        .any(|item| item.rule_id == "php-html-output")
+        .then(|| review::Producers::collect(&context.root));
     for item in evidence {
         let role = match item.rule_id.as_str() {
             "php-file-inclusion" => "path",
             "php-html-output" => "content",
+            "php-filesystem-write" | "php-filesystem-copy-write" => "path",
             _ => continue,
         };
         let Some(capture) = item.captures.get(role) else {
@@ -40,12 +48,48 @@ pub(super) fn add_operand_facts<'a>(
             continue;
         };
         let node = unwrap_operand(node.clone());
-        if role == "path" && value::constant_include_expression(path, &node, context) {
+        if item.rule_id == "php-file-inclusion"
+            && !value::constant_include_expression(path, &node, context)
+        {
             item.tags
-                .push("value-scope:constant-include-expression".into());
+                .push("review-origin:runtime-code-selection".into());
         }
-        if role == "path" && value::unresolved_root(&node, context) {
-            item.tags.push("value-scope:unresolved-code-root".into());
+        if (role == "content" && numeric_output(&node, context).is_none()
+            || item.rule_id == "php-file-inclusion")
+            && review::direct_request(&node)
+        {
+            item.tags.push("review-origin:decision-critical".into());
+        }
+        if role == "content"
+            && numeric_output(&node, context).is_none()
+            && let Some((kind, producer)) =
+                producers.as_ref().and_then(|p| p.origin(&node, context, 4))
+        {
+            let start = producer.start_pos();
+            let end = producer.end_pos();
+            item.tags.push("review-origin:bound-output-producer".into());
+            item.context.operand_facts.push(OperandFact {
+                role: role.into(),
+                kind: OperandFactKind::LocalOperandOrigin,
+                location: mehscan_core::Location {
+                    path: path.into(),
+                    start: mehscan_core::Position {
+                        line: start.line() + 1,
+                        column: start.column(&producer) + 1,
+                        byte_offset: producer.range().start,
+                    },
+                    end: mehscan_core::Position {
+                        line: end.line() + 1,
+                        column: end.column(&producer) + 1,
+                        byte_offset: producer.range().end,
+                    },
+                },
+                value: kind.into(),
+                remaining_checks: vec![
+                    "reaching_write_and_transform_chain".into(),
+                    "writer_actor_and_controls".into(),
+                ],
+            });
         }
         if role == "path"
             && let Some(target) = value::code_target(path, &node, context)
@@ -199,7 +243,9 @@ enum IncludeRoot {
 }
 
 fn unwrap_operand(mut node: PhpNode<'_>) -> PhpNode<'_> {
-    while node.kind().as_ref() == "parenthesized_expression" {
+    while node.kind().as_ref() == "parenthesized_expression"
+        || node.kind().as_ref() == "argument" && node.field("name").is_none()
+    {
         let Some(child) = node.children().find(|n| n.is_named()) else {
             break;
         };

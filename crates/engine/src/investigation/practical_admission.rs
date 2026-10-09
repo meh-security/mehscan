@@ -47,7 +47,48 @@ pub(super) fn inventory_only(
     sources: &RepositorySources,
     connected: bool,
     evidence: &[Evidence],
+    written_code_targets: &BTreeSet<String>,
 ) -> bool {
+    if matches!(
+        item.rule_id.as_str(),
+        "php-html-output" | "php-file-inclusion"
+    ) {
+        // Let the existing exact numeric proof record its closed-operand audit.
+        if closed_output_operand(item).is_some() {
+            return false;
+        }
+        let consequential = item.tags.iter().any(|tag| {
+            matches!(
+                tag.as_str(),
+                "review-origin:decision-critical"
+                    | "review-origin:runtime-code-selection"
+                    | "review-origin:bound-output-producer"
+            )
+        });
+        let interpretation = item.rule_id == "php-html-output"
+            && item.context.operand_facts.iter().any(|fact| {
+                fact.kind == mehscan_core::OperandFactKind::OutputContext
+                    && (matches!(
+                        fact.value.as_str(),
+                        "embedded_context:script"
+                            | "embedded_context:style"
+                            | "html_unquoted_or_tag"
+                    ) || fact.value.starts_with("active_attribute:"))
+            });
+        let writable_code = item.rule_id == "php-file-inclusion"
+            && item.context.operand_facts.iter().any(|fact| {
+                matches!(
+                    fact.kind,
+                    mehscan_core::OperandFactKind::FixedCodeRelativePath
+                        | mehscan_core::OperandFactKind::RepositoryCodeTarget
+                ) && written_code_targets.contains(&if cfg!(windows) {
+                    fact.value.to_ascii_lowercase()
+                } else {
+                    fact.value.clone()
+                })
+            });
+        return !connected && !consequential && !interpretation && !writable_code;
+    }
     if ordinary_directory(item, sources) || ordinary_decoder(item, evidence, sources) {
         return true;
     }
@@ -380,6 +421,16 @@ pub(super) fn comprehensive_hint(item: &Evidence) -> Option<ValueReviewHint> {
         .any(|tag| tag == "review-origin:decision-critical")
     {
         return None;
+    }
+    if matches!(
+        item.rule_id.as_str(),
+        "php-html-output" | "php-file-inclusion"
+    ) {
+        return Some(ValueReviewHint {
+            reason: "php_relationship_research".into(), target: item.location.path.clone(),
+            assumption: "Research input authority, reaching producer, protection and interpretation for this retained PHP relationship. No weakness or safe verdict is established; promote a demonstrated mechanism or consequential reviewer-origin lead to Value.".into(),
+            depends_on: None,
+        });
     }
     if item.cwe_candidates.iter().all(|cwe| {
         matches!(
