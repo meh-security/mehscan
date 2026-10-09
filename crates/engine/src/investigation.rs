@@ -379,7 +379,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "15";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "16";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -12367,6 +12367,15 @@ fn is_context_only_uploaded_filename_check(item: &Evidence, group: &[Evidence]) 
 }
 
 fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &RepositorySources) -> bool {
+    if item.capability == Capability::OutboundNetworkRequest
+        && item
+            .tags
+            .iter()
+            .any(|t| t == "outbound-request:unresolved-proxy-policy")
+    {
+        // A fixed request URL does not settle the separately selected proxy.
+        return false;
+    }
     if item.capability == Capability::HtmlOutput
         && item.cwe_candidates == ["CWE-79"]
         && item

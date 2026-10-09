@@ -42,7 +42,12 @@ fn models_exact_java_outbound_destination_and_transport_policy() {
     assert_eq!(counts["java-spring-webclient-outbound-request"], 1);
     assert_eq!(counts["java-jdk-http-request-builder"], 1);
     assert_eq!(counts["java-jdk-http-client-dispatch"], 1);
-    assert_eq!(counts["java-outbound-http"], 2);
+    assert_eq!(counts["java-url-connection"], 2);
+    assert!(
+        j7.iter()
+            .filter(|e| e.rule_id == "java-url-connection")
+            .all(|e| e.kind == mehscan_core::EvidenceKind::Resource)
+    );
     assert_eq!(counts["java-apache-http-request"], 2);
     assert_eq!(counts["java-apache-http-dispatch"], 2);
     assert_eq!(counts["java-uri-https-scheme-control"], 1);

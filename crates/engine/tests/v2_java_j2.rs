@@ -30,7 +30,14 @@ fn relates_unique_spring_service_handoffs_to_exact_repository_resources() {
     assert_eq!(counts["java-spring-data-resource-access"], 2);
     assert_eq!(counts["java-spring-data-owner-scoped-resource-control"], 1);
     assert_eq!(counts["java-spring-security-route-policy"], 3);
-    assert_eq!(counts["java-outbound-http"], 1);
+    assert_eq!(counts["java-url-connection"], 1);
+    assert!(
+        result
+            .evidence
+            .iter()
+            .filter(|e| e.rule_id == "java-url-connection")
+            .all(|e| e.kind == mehscan_core::EvidenceKind::Resource)
+    );
 
     let resource_paths = result
         .security_paths

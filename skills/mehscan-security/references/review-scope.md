@@ -98,9 +98,14 @@ opaque OkHttp client, `initial_endpoint` is context and
 do not treat its initial fixed URL as proof of the effective destination.
 Mutable request builders and helper returns retain a producer question.
 
-Legacy C# WebRequest and Java URL connections, lazy reactive clients and native
-cURL setters still need separate accounting. This Kotlin slice does not certify
-or remove those other current leads.
+Java `openConnection` also creates supporting Resource evidence. Owned
+URLConnection connect/content/header/response methods and direct URL reads
+anchor actual effects. Typed unknown connections retain a `connection` producer
+question; fixed syntax does not settle an explicitly selected unknown `proxy`.
+Ordinary setup/getURL/request-property reads do not trigger network reviews.
+
+Legacy C# WebRequest, lazy reactive clients and native cURL setters still need
+separate accounting; those other current leads are not certified or removed.
 
 ## Filesystem effects
 

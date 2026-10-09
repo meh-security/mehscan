@@ -16,6 +16,8 @@ use super::reachability;
 
 const ENGINE: &str = "mehscan java-network-transport-policy 1";
 
+mod url_connections;
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn add_java_network_observations<'tree>(
     path: &str,
@@ -29,18 +31,23 @@ pub(crate) fn add_java_network_observations<'tree>(
     if language != Language::Java {
         return;
     }
-    // Replace name-only Java network and destination-validation seeds. All
+    // Replace name-only destination-validation seeds. All
     // observations below require an exact import plus a typed/static receiver.
-    evidence.retain(|item| {
-        !matches!(
-            item.rule_id.as_str(),
-            "java-outbound-http" | "java-url-destination-validation"
-        )
-    });
+    evidence.retain(|item| !matches!(item.rule_id.as_str(), "java-url-destination-validation"));
 
     let imports = imports(root);
     let declarations = declared_types(root);
     add_outbound_observations(
+        path,
+        root,
+        &imports,
+        &declarations,
+        comments,
+        conditional,
+        literals,
+        evidence,
+    );
+    url_connections::add(
         path,
         root,
         &imports,
@@ -113,8 +120,6 @@ fn add_outbound_observations<'tree>(
         "java.net.http.HttpClient",
         "HttpClient",
     );
-    let uri = imported_exact(imports, declarations, "java.net.URI", "URI");
-    let url = imported_exact(imports, declarations, "java.net.URL", "URL");
     let apache4_request = imported_any_exact(
         imports,
         declarations,
@@ -361,40 +366,6 @@ fn add_outbound_observations<'tree>(
                 literals,
                 evidence,
             );
-        }
-
-        if operation == "openConnection"
-            && let Some(object) = object
-        {
-            let endpoint = if uri {
-                uri_connection_endpoint(&invocation, &object)
-            } else {
-                None
-            }
-            .or_else(|| {
-                if url {
-                    url_connection_endpoint(&invocation, &object)
-                } else {
-                    None
-                }
-            });
-            if let Some(endpoint) = endpoint {
-                push(
-                    path,
-                    &invocation,
-                    &endpoint,
-                    "java-outbound-http",
-                    EvidenceKind::Sink,
-                    Capability::OutboundNetworkRequest,
-                    "endpoint",
-                    &["CWE-918"],
-                    &["http", "ssrf", "jdk", "url-connection"],
-                    comments,
-                    conditional,
-                    literals,
-                    evidence,
-                );
-            }
         }
     }
 
@@ -850,42 +821,6 @@ fn rest_template_methods() -> &'static [&'static str] {
     ]
 }
 
-fn uri_connection_endpoint<'tree>(
-    invocation: &Node<'tree, StrDoc<SupportLang>>,
-    object: &Node<'tree, StrDoc<SupportLang>>,
-) -> Option<Node<'tree, StrDoc<SupportLang>>> {
-    if object.kind().as_ref() != "method_invocation"
-        || object.field("name")?.text().as_ref() != "toURL"
-    {
-        return None;
-    }
-    let endpoint = object.field("object")?;
-    receiver_is_at(invocation, &endpoint, "URI").then_some(endpoint)
-}
-
-fn url_connection_endpoint<'tree>(
-    invocation: &Node<'tree, StrDoc<SupportLang>>,
-    object: &Node<'tree, StrDoc<SupportLang>>,
-) -> Option<Node<'tree, StrDoc<SupportLang>>> {
-    if object.kind().as_ref() == "object_creation_expression"
-        && object
-            .field("type")
-            .is_some_and(|kind| short_type(kind.text().as_ref()) == "URL")
-    {
-        return object
-            .field("arguments")
-            .and_then(|args| args.children().find(|child| child.is_named()));
-    }
-    if receiver_is_at(invocation, object, "URL") {
-        return initializer_before(invocation, object.text().trim()).and_then(|initializer| {
-            initializer
-                .field("arguments")
-                .and_then(|args| args.children().find(|child| child.is_named()))
-        });
-    }
-    None
-}
-
 fn nested_receiver_with_method<'tree>(
     invocation: &Node<'tree, StrDoc<SupportLang>>,
     method: &str,
@@ -977,30 +912,6 @@ fn receiver_is_at(
                         .is_some_and(|value| value.text().trim() == name)
             })
     })
-}
-
-fn initializer_before<'tree>(
-    use_site: &Node<'tree, StrDoc<SupportLang>>,
-    name: &str,
-) -> Option<Node<'tree, StrDoc<SupportLang>>> {
-    let method = use_site.ancestors().find(|node| {
-        matches!(
-            node.kind().as_ref(),
-            "method_declaration" | "constructor_declaration"
-        )
-    })?;
-    method
-        .dfs()
-        .filter(|node| {
-            node.kind().as_ref() == "variable_declarator"
-                && node.range().start < use_site.range().start
-        })
-        .filter(|node| {
-            node.field("name")
-                .is_some_and(|value| value.text().trim() == name)
-        })
-        .filter_map(|node| node.field("value"))
-        .last()
 }
 
 fn invocations<'tree>(

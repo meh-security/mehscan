@@ -772,15 +772,6 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
-    super::java_sinks::add_typed_outbound_sinks(
-        path,
-        &root,
-        language,
-        &comments,
-        &conditional,
-        &literals,
-        &mut evidence,
-    );
     super::java_network::add_java_network_observations(
         path,
         &root,

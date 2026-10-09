@@ -24,35 +24,6 @@
       - https://cwe.mitre.org/data/definitions/918.html
       - https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpclient
 
-- id: java-outbound-http
-  version: 1
-  title: Java outbound HTTP request
-  language: java
-  kind: sink
-  capability: outbound_network_request
-  cwe: [CWE-918]
-  match:
-    any:
-      - pattern: HttpRequest.newBuilder($URI)
-        captures: { endpoint: URI }
-      - pattern: $CLIENT.send($REQUEST, $HANDLER)
-        captures: { request: REQUEST }
-      - pattern: $CLIENT.sendAsync($REQUEST, $HANDLER)
-        captures: { request: REQUEST }
-      - pattern: $REST_TEMPLATE.getForObject($URL, $$$ARGUMENTS)
-        captures: { endpoint: URL }
-      - pattern: $REST_TEMPLATE.postForObject($URL, $$$ARGUMENTS)
-        captures: { endpoint: URL }
-  symbols:
-    - canonical: java.net.http.HttpRequest.newBuilder
-      captures: { endpoint: 0 }
-  tags: [http, network, ssrf]
-  ai: *outbound_guidance
-  provenance:
-    note: Java HTTP client APIs mapped to the CWE-918 investigation surface.
-    references:
-      - https://cwe.mitre.org/data/definitions/918.html
-      - https://docs.oracle.com/en/java/javase/25/docs/api/java.net.http/java/net/http/HttpClient.html
 
 - id: javascript-outbound-http
   version: 1

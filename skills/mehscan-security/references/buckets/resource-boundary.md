@@ -82,6 +82,11 @@ than rereading equivalent distributions.
   Kotlin connection properties
   such as `inputStream` and `responseCode` can perform I/O; their read sites are
   real consumers, while `openConnection` alone remains construction context.
+  Java uses the same separation at connect/content/header/response consumers.
+  With `outbound-request:unresolved-proxy-policy`, inspect the captured `proxy`
+  separately from the request URL. A fixed URL does not close proxy selection.
+  A typed unknown connection retains its origin question; metadata/setup reads
+  such as getURL and getRequestProperty are omitted from network reviews.
 - For resource access, identify whether the selected object belongs to the
   verified subject or another tenant. A sensitive read or existence oracle
   can matter without a mutation. Inspect earlier middleware on every matching

@@ -635,7 +635,7 @@ fn php_tiers_preserve_research_and_reopen_exact_surface_without_safe_verdicts() 
     }
     let inventory: serde_json::Value =
         serde_json::from_slice(&fs::read(artifacts.join("inventory.json")).unwrap()).unwrap();
-    assert_eq!(inventory["schema_version"], "15");
+    assert_eq!(inventory["schema_version"], "16");
     let id = values
         .iter()
         .find(|e| e["symbol"] == "raw_request")
