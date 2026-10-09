@@ -19,12 +19,12 @@ fn scan(label: &str, cases: &[(&str, &str)]) -> mehscan_core::ScanResult {
 
 #[test]
 fn repeated_sql_expression_identity_preserves_each_use_scope_and_file() {
-    let source = "from sqlalchemy import text as raw\ndef allowed(q):\n    raw(q)\ndef shadow(q, raw):\n    raw(q)\ndef inner(q):\n    import sqlalchemy as local\n    local.text(q)\ndef outside(q):\n    local.text(q)\ndef sibling(q):\n    raw(q)\ndef rebound(q):\n    raw = factory()\n    raw(q)\n";
+    let source = "from sqlalchemy import text as raw\ndef allowed(q):\n    return raw(q)\ndef shadow(q, raw):\n    return raw(q)\ndef inner(q):\n    import sqlalchemy as local\n    return local.text(q)\ndef outside(q):\n    return local.text(q)\ndef sibling(q):\n    return raw(q)\ndef rebound(q):\n    raw = factory()\n    return raw(q)\n";
     let result = scan(
         "indexed-identity",
         &[
             ("one.py", source),
-            ("two.py", "def other(q):\n    raw(q)\n"),
+            ("two.py", "def other(q):\n    return raw(q)\n"),
         ],
     );
     let mut hits = result
@@ -172,7 +172,7 @@ fn extended_sql_drivers_capture_query_text_instead_of_context_or_binding_values(
         (
             "app.py",
             "import asyncpg\nfrom sqlalchemy import text as raw\nfrom django.db.models.expressions import RawSQL as Expression\nasync def run(sql, value):\n    db = await asyncpg.connect('uri')\n    await db.fetch(sql, value)\n    await db.fetchrow(sql)\n    db.prepare(sql)\n    raw(sql)\n    Expression(sql, [value])\n",
-            5,
+            3,
         ),
         (
             "Probe.java",
@@ -739,4 +739,134 @@ fn extended_php_entrypoints_do_not_guess_named_or_unpacked_query_positions() {
         "{:?}",
         result.evidence
     );
+}
+
+#[test]
+fn python_sql_construction_drops_unused_and_duplicate_reviews_but_keeps_consumers() {
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-python-sql-consumers-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("app.py"),
+        r#"
+from sqlalchemy import text as raw, create_engine
+from django.db.models.expressions import RawSQL
+engine = create_engine('sqlite://')
+db = engine.connect()
+def helper(sql):
+    return raw(sql)
+def run(sql):
+    raw(sql)
+    unused = raw(sql)
+    RawSQL(sql, [])
+    unused_django = RawSQL(sql, [])
+    db.execute(raw(sql))
+    statement = raw(sql)
+    db.execute(statement)
+    db.execute(helper(sql))
+    db.execute(opaque(sql))
+    changed = raw('SELECT 1')
+    changed.text = sql
+    db.execute(changed)
+    db.execute(transform(raw('SELECT 1'), sql))
+def fixed(value):
+    db.execute(raw('SELECT * FROM users WHERE id = :id'), {'id': value})
+    statement = raw('SELECT * FROM users WHERE id = :id').bindparams(id=value)
+    db.execute(statement)
+def embedded(queryset, sql, params):
+    return queryset.annotate(result=RawSQL(sql, params))
+def exported(sql):
+    return RawSQL(sql, [])
+def closure(sql):
+    def later():
+        return statement
+    statement = raw(sql)
+    return later
+"#,
+    )
+    .unwrap();
+    let inventory = mehscan_engine::investigation::build_review_inventory(&root, false).unwrap();
+    assert_eq!(inventory.scan.coverage.totals.parse_failed, 0);
+    let scan = &inventory.scan;
+    let executed = scan
+        .evidence
+        .iter()
+        .filter(|e| {
+            e.rule_id == "python-database-query" && e.enclosing_symbol.as_deref() == Some("run")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(executed.len(), 6, "{executed:#?}");
+    assert_eq!(executed[0].captures["query"].text, "sql");
+    assert_eq!(executed[1].captures["query"].text, "sql");
+    assert_eq!(executed[2].captures["query"].text, "helper(sql)");
+    assert_eq!(executed[3].captures["query"].text, "opaque(sql)");
+    assert_eq!(executed[4].captures["query"].text, "changed");
+    assert_eq!(
+        executed[5].captures["query"].text,
+        "transform(raw('SELECT 1'), sql)"
+    );
+    for sink in executed {
+        assert!(
+            inventory.entries.iter().any(|e| e.path == "app.py"
+                && e.line == sink.location.start.line
+                && e.rule_id == sink.rule_id),
+            "lost executor: {sink:#?}"
+        );
+    }
+    for symbol in ["run", "helper", "fixed"] {
+        assert!(
+            !inventory
+                .entries
+                .iter()
+                .any(|e| e.rule_id == "python-extended-sql-expression"
+                    && e.symbol.as_deref() == Some(symbol)),
+            "constructor must not own work: {symbol}"
+        );
+    }
+    assert!(
+        !inventory
+            .entries
+            .iter()
+            .any(|e| e.symbol.as_deref() == Some("fixed")),
+        "bound fixed text should not become SQL research"
+    );
+    for symbol in ["embedded", "exported", "closure"] {
+        let builder = scan
+            .evidence
+            .iter()
+            .find(|e| {
+                e.rule_id == "python-extended-sql-expression"
+                    && e.enclosing_symbol.as_deref() == Some(symbol)
+            })
+            .unwrap();
+        assert_eq!(
+            builder.kind,
+            EvidenceKind::Sink,
+            "unresolved consumer lead must remain"
+        );
+        assert!(
+            builder
+                .tags
+                .iter()
+                .any(|t| t == "query-consumer:unresolved")
+        );
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|e| e.rule_id == builder.rule_id && e.line == builder.location.start.line),
+            "lost escaped/ORM lead: {symbol}"
+        );
+    }
+    assert!(
+        !scan
+            .evidence
+            .iter()
+            .any(|e| e.rule_id == "python-extended-sql-expression"
+                && [9, 10, 11, 12].contains(&e.location.start.line)),
+        "unused construction should not persist"
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }

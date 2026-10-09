@@ -10,7 +10,7 @@ type DbNode<'a> = Node<'a, StrDoc<SupportLang>>;
 /// Parser/constructor occurrences are context, not database interpretation.
 /// Attach bounded construction origins to real database operations. Source
 /// lookups can find other producers without persisting unused construction rows.
-pub(super) fn attach_document_construction(
+pub(super) fn attach_query_construction(
     root: &DbNode<'_>,
     evidence: &mut Vec<mehscan_core::Evidence>,
 ) {
@@ -26,10 +26,15 @@ pub(super) fn attach_document_construction(
     }
     let queries = evidence
         .iter()
-        .filter(|e| e.kind == EvidenceKind::Sink && e.cwe_candidates == ["CWE-943"])
-        .filter_map(|e| e.captures.get("nosql_query"))
+        .filter(|e| e.kind == EvidenceKind::Sink && !construction_rule(&e.rule_id)
+            && matches!(e.cwe_candidates.as_slice(), [cwe] if cwe == "CWE-943" || cwe == "CWE-89"))
+        .filter_map(|e| e.captures.get(query_role(e)))
         .collect::<Vec<_>>();
-    if queries.is_empty() {
+    if queries.is_empty()
+        && !builders
+            .iter()
+            .any(|e| e.rule_id == "python-extended-sql-expression")
+    {
         evidence.retain(|e| !construction_rule(&e.rule_id));
         return;
     }
@@ -80,14 +85,19 @@ pub(super) fn attach_document_construction(
     drop(queries);
     let mut used = std::collections::BTreeSet::new();
     let mut dispatched = std::collections::BTreeSet::new();
-    for sink in evidence
-        .iter_mut()
-        .filter(|e| e.kind == EvidenceKind::Sink && e.cwe_candidates == ["CWE-943"])
-    {
-        let Some(query) = sink.captures.get("nosql_query").cloned() else {
+    for sink in evidence.iter_mut().filter(|e| {
+        e.kind == EvidenceKind::Sink
+            && !construction_rule(&e.rule_id)
+            && matches!(e.cwe_candidates.as_slice(), [cwe] if cwe == "CWE-943" || cwe == "CWE-89")
+    }) {
+        let role = query_role(sink);
+        let Some(query) = sink.captures.get(role).cloned() else {
             continue;
         };
         for builder in &builders {
+            if builder.cwe_candidates != sink.cwe_candidates {
+                continue;
+            }
             let inline = query.location.start.byte_offset <= builder.location.start.byte_offset
                 && query.location.end.byte_offset >= builder.location.end.byte_offset;
             let pair = nodes
@@ -132,24 +142,38 @@ pub(super) fn attach_document_construction(
             if !inline && local.is_none() && !helper && !alias {
                 continue;
             }
+            let direct_inline = inline
+                && pair.is_some_and(|(node, target)| {
+                    python_binding_wrapper(node).range() == target.range()
+                });
             used.insert(builder.id.clone());
             dispatched.insert(sink.id.clone());
             sink.related_evidence.push(builder.id.clone());
             sink.context.operand_facts.push(OperandFact {
                 kind: OperandFactKind::QueryStructure,
-                role: "nosql_query".into(),
+                role: role.into(),
                 location: builder.location.clone(),
                 value: format!(
-                    "raw_document_construction:{}",
-                    builder.captures["nosql_query"].text
+                    "{}:{}",
+                    if role == "query" {
+                        "raw_sql_construction"
+                    } else {
+                        "raw_document_construction"
+                    },
+                    builder.captures[role].text
                 ),
                 remaining_checks: vec![
-                    "operator_shape".into(),
+                    if role == "query" {
+                        "parameter_binding"
+                    } else {
+                        "operator_shape"
+                    }
+                    .into(),
                     "input_types".into(),
                     "record_authority".into(),
                     if helper {
                         "helper_input_binding"
-                    } else if local == Some(false) || alias {
+                    } else if local == Some(false) || alias || (inline && !direct_inline) {
                         "construction_stability"
                     } else {
                         "consumer_contract"
@@ -159,13 +183,14 @@ pub(super) fn attach_document_construction(
             });
             // Transfer operands only for unchanged direct construction. A prior
             // use/mutation or helper result remains an unresolved whole operand.
-            if (inline || local == Some(true))
+            if (direct_inline || local == Some(true))
                 && (sink.rule_id.ends_with("-extended-nosql-dispatch")
-                    || sink.rule_id == "php-extended-nosql-execution")
+                    || sink.rule_id == "php-extended-nosql-execution"
+                    || builder.rule_id == "python-extended-sql-expression")
             {
                 sink.captures
                     .insert("query_container".into(), query.clone());
-                for role in ["nosql_query", "nosql_expression"] {
+                for role in ["query", "nosql_query", "nosql_expression"] {
                     if let Some(value) = builder.captures.get(role) {
                         sink.captures.insert(role.into(), value.clone());
                     }
@@ -187,16 +212,109 @@ pub(super) fn attach_document_construction(
             }
         }
     }
+    // Unbound SQL construction is retained only as an actual escaped/embedded
+    // lead. A discarded expression or unread function-local binding is not work.
+    let unused_sql = builders
+        .iter()
+        .filter(|e| e.rule_id == "python-extended-sql-expression")
+        .filter(|e| {
+            nodes
+                .get(&(e.location.start.byte_offset, e.location.end.byte_offset))
+                .is_some_and(python_sql_constructor_is_unused)
+        })
+        .map(|e| e.id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    for item in evidence
+        .iter_mut()
+        .filter(|e| e.rule_id == "python-extended-sql-expression")
+    {
+        if used.contains(&item.id) {
+            item.kind = EvidenceKind::Resource;
+        } else if !unused_sql.contains(&item.id) {
+            item.tags.push("query-consumer:unresolved".into());
+        }
+    }
     evidence.retain(|e| {
-        (!construction_rule(&e.rule_id) || used.contains(&e.id))
+        (!construction_rule(&e.rule_id)
+            || used.contains(&e.id)
+            || (e.rule_id == "python-extended-sql-expression" && !unused_sql.contains(&e.id)))
             && (!e.rule_id.ends_with("-extended-nosql-dispatch") || dispatched.contains(&e.id))
     });
+}
+
+fn query_role(evidence: &mehscan_core::Evidence) -> &'static str {
+    if evidence.cwe_candidates == ["CWE-89"] {
+        "query"
+    } else {
+        "nosql_query"
+    }
+}
+
+fn python_sql_constructor_is_unused(node: &DbNode<'_>) -> bool {
+    let origin = python_binding_wrapper(node);
+    let Some(parent) = origin.parent() else {
+        return false;
+    };
+    if parent.kind().as_ref() == "expression_statement" {
+        return true;
+    }
+    if parent.kind().as_ref() != "assignment" {
+        return false;
+    }
+    let Some(name) = parent
+        .field("left")
+        .filter(|n| n.kind().as_ref() == "identifier")
+    else {
+        return false;
+    };
+    let Some(function) = parent
+        .ancestors()
+        .find(|n| n.kind().as_ref() == "function_definition")
+    else {
+        return false;
+    };
+    // Module/class bindings and returned/passed/embedded expressions can escape.
+    // Only a local result with no represented name use can be discarded here,
+    // including closure reads declared before this assignment.
+    !function.dfs().any(|n| {
+        n.kind().as_ref() == "identifier"
+            && n.text() == name.text()
+            && n.range() != name.range()
+            && !(node.range().start <= n.range().start && n.range().end <= node.range().end)
+    })
+}
+
+// These SQLAlchemy modifiers preserve text; they bind values/describe columns.
+// Never unwrap arbitrary transforms or string compilation.
+fn python_binding_wrapper<'a>(node: &DbNode<'a>) -> DbNode<'a> {
+    let mut origin = node.clone();
+    for _ in 0..2 {
+        let Some(attribute) = origin.parent().filter(|n| {
+            n.kind().as_ref() == "attribute"
+                && n.field("object")
+                    .is_some_and(|o| o.range() == origin.range())
+                && n.field("attribute")
+                    .is_some_and(|n| matches!(n.text().as_ref(), "bindparams" | "columns"))
+        }) else {
+            break;
+        };
+        let Some(call) = attribute.parent().filter(|n| {
+            n.kind().as_ref() == "call"
+                && n.field("function")
+                    .is_some_and(|n| n.range() == attribute.range())
+        }) else {
+            break;
+        };
+        origin = call;
+    }
+    origin
 }
 
 fn construction_rule(rule: &str) -> bool {
     rule.ends_with("-extended-nosql-json")
         || rule.ends_with("-extended-nosql-command")
         || rule == "php-extended-nosql-query"
+        || rule == "python-extended-sql-expression"
 }
 
 fn direct_document_origin(
@@ -205,7 +323,8 @@ fn direct_document_origin(
     query: &mehscan_core::Capture,
     uses: &BTreeMap<String, Vec<std::ops::Range<usize>>>,
 ) -> Option<bool> {
-    let Some(parent) = node.parent() else {
+    let origin = python_binding_wrapper(node);
+    let Some(parent) = origin.parent() else {
         return None;
     };
     let binding = if parent.kind().as_ref() == "equals_value_clause" {
@@ -216,7 +335,7 @@ fn direct_document_origin(
     let Some(binding) = binding.filter(|n| {
         matches!(
             n.kind().as_ref(),
-            "variable_declarator" | "property_declaration" | "assignment_expression"
+            "variable_declarator" | "property_declaration" | "assignment_expression" | "assignment"
         )
     }) else {
         return None;
@@ -337,7 +456,7 @@ fn returned_document_origin(
     {
         return false;
     }
-    if target.kind().as_ref() != "call_expression"
+    if !matches!(target.kind().as_ref(), "call_expression" | "call")
         || target
             .field("function")
             .is_none_or(|n| n.text() != name.text())

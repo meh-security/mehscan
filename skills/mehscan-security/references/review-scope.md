@@ -132,8 +132,19 @@ uses attach their origin to the actual database operation; used construction
 rows remain context without their own review ID. Opaque helper consumers remain
 reviewable: missing construction facts do not establish safe operators or input
 types. This attachment is file-local and does not follow arbitrary helpers or
-cross-file producers. Raw SQL constructors and other query-builder families
-still need separate consumer coverage checks before the same cleanup.
+cross-file producers. Other query-builder families still need separate consumer
+coverage checks before the same cleanup.
+
+Python SQLAlchemy `text` and Django `RawSQL` constructors do not own a second
+review when an observed SQL executor consumes them. Retain useful construction
+context on the executor and remove ignored standalone expressions and unread
+function-local bindings from both queues/evidence. Inline/direct unchanged local
+operands can transfer SQL text; bounded `bindparams`/`columns` modifiers preserve
+that text. Arbitrary transforms, mutation and helper results retain unresolved
+operands. Module/class bindings, returned/embedded expressions and closure uses
+are not proven unused. Unbound ORM or escaped construction keeps its existing
+SQL lead with `query-consumer:unresolved`; this slice does not add broad Django
+model/queryset consumer inference or declare all unbound SQL construction safe.
 
 JS/TS/TSX reviews anchor to `send` on an owned SDK v3 DynamoDB client with an
 observed query-command producer. Recognize inline commands, local bindings and a

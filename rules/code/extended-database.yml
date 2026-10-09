@@ -390,7 +390,7 @@
       - https://cwe.mitre.org/data/definitions/89.html
 
 - id: python-extended-sql-expression
-  version: 1
+  version: 2
   title: Extended raw SQL expression construction
   language: python
   kind: sink
