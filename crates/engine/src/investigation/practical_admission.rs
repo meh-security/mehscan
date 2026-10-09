@@ -126,6 +126,9 @@ pub(super) fn inventory_only(
     if positive_cookie_control(item) {
         return true;
     }
+    if positive_tls_control(item) || ordinary_xml_control(item) {
+        return true;
+    }
     if item.rule_id == "php-curl-tls-validation"
         && item
             .captures
@@ -159,7 +162,8 @@ pub(super) fn inventory_only(
     if item.kind == EvidenceKind::SecurityConfiguration
         && item.capability == Capability::CryptographicHash
     {
-        return !connected && !security_purpose(item, sources);
+        return !connected
+            && (!security_purpose(item, sources) || suitable_digest_selection(item, sources));
     }
     false
 }
@@ -201,15 +205,148 @@ fn positive_cookie_control(item: &Evidence) -> bool {
     if item.capability != Capability::CookieConfiguration {
         return false;
     }
-    ["secure", "http_only", "httponly", "value"]
+    let controls = ["secure", "http_only", "httponly", "value"]
         .iter()
-        .filter_map(|role| item.captures.get(*role))
-        .any(|capture| {
-            matches!(
-                capture.text.trim(),
-                "true" | "True" | "CookieSecurePolicy.Always"
-            )
+        .filter(|role| item.captures.contains_key(**role))
+        .copied()
+        .collect::<Vec<_>>();
+    !controls.is_empty()
+        && controls.iter().all(|role| {
+            boolean_control(item, role) == Some(true)
+                || item.captures[*role].text.trim() == "CookieSecurePolicy.Always"
         })
+}
+
+fn suitable_digest_selection(item: &Evidence, sources: &RepositorySources) -> bool {
+    // This closes digest selection only; password cost, keys, IVs/nonces and
+    // signature policy remain separate boundaries. Fast SHA-2 is not a KDF.
+    if !item.rule_id.ends_with("hash-algorithm-selection")
+        && !matches!(
+            item.rule_id.as_str(),
+            "c-openssl-hash-selection" | "cpp-openssl-hash-selection"
+        )
+    {
+        return false;
+    }
+    let local = format!(
+        "{} {}",
+        item.enclosing_symbol.as_deref().unwrap_or(""),
+        anchor_line(item, sources)
+    )
+    .to_ascii_lowercase();
+    if ["password", "passwd"]
+        .iter()
+        .any(|word| local.contains(word))
+    {
+        return false;
+    }
+    let algorithm = item
+        .context
+        .literals
+        .get("algorithm")
+        .filter(|l| l.state == LiteralState::Known)
+        .and_then(|l| match &l.value {
+            Some(LiteralValue::String(value)) => Some(value.as_str()),
+            _ => None,
+        })
+        .or_else(|| {
+            item.captures.get("algorithm").and_then(|c| {
+                let text = c.text.trim();
+                if text.len() >= 2
+                    && (text.starts_with('"') && text.ends_with('"')
+                        || text.starts_with('\'') && text.ends_with('\''))
+                {
+                    Some(&text[1..text.len() - 1])
+                } else {
+                    None
+                }
+            })
+        });
+    algorithm.is_some_and(|algorithm| {
+        matches!(
+            algorithm.to_ascii_lowercase().replace('-', "").as_str(),
+            "sha256"
+                | "sha384"
+                | "sha512"
+                | "sha3256"
+                | "sha3384"
+                | "sha3512"
+                | "blake2b"
+                | "blake2s"
+        )
+    })
+}
+
+fn boolean_control(item: &Evidence, role: &str) -> Option<bool> {
+    if let Some(literal) = item.context.literals.get(role) {
+        if literal.state == LiteralState::Known {
+            if let Some(LiteralValue::Boolean(value)) = literal.value {
+                return Some(value);
+            }
+        }
+    }
+    match item.captures.get(role)?.text.trim() {
+        "true" | "True" | "TRUE" => Some(true),
+        "false" | "False" | "FALSE" => Some(false),
+        _ => None,
+    }
+}
+
+fn positive_tls_control(item: &Evidence) -> bool {
+    if item.capability != Capability::TlsConfiguration {
+        return false;
+    }
+    match item.rule_id.as_str() {
+        "go-tls-insecure-skip-verify" | "rust-reqwest-tls-verification" => {
+            boolean_control(item, "verification") == Some(false)
+        }
+        "javascript-tls-reject-unauthorized"
+        | "typescript-tls-reject-unauthorized"
+        | "tsx-tls-reject-unauthorized"
+        | "python-tls-verification" => boolean_control(item, "verification") == Some(true),
+        "csharp-tls-certificate-validation" | "java-tls-hostname-verifier" => {
+            boolean_control(item, "decision") == Some(false)
+        }
+        "kotlin-tls-hostname-verifier" => boolean_control(item, "callback") == Some(false),
+        "kotlin-tls-trust-context" => item
+            .captures
+            .get("trust_managers")
+            .is_some_and(|c| c.text.trim() == "null"),
+        _ => false,
+    }
+}
+
+fn ordinary_xml_control(item: &Evidence) -> bool {
+    if item.rule_id != "kotlin-xml-configuration" {
+        return false;
+    }
+    let feature = item
+        .captures
+        .get("feature")
+        .map(|c| c.text.trim().trim_matches(['\'', '"']));
+    match feature {
+        Some(
+            "http://xml.org/sax/features/external-general-entities"
+            | "http://xml.org/sax/features/external-parameter-entities"
+            | "http://apache.org/xml/features/nonvalidating/load-external-dtd",
+        ) => boolean_control(item, "value") == Some(false),
+        Some(
+            "http://apache.org/xml/features/disallow-doctype-decl"
+            | "http://javax.xml.XMLConstants/feature/secure-processing"
+            | "XMLConstants.FEATURE_SECURE_PROCESSING",
+        ) => boolean_control(item, "value") == Some(true),
+        Some(
+            "XMLConstants.ACCESS_EXTERNAL_DTD"
+            | "XMLConstants.ACCESS_EXTERNAL_SCHEMA"
+            | "http://javax.xml.XMLConstants/property/accessExternalDTD"
+            | "http://javax.xml.XMLConstants/property/accessExternalSchema",
+        ) => item
+            .captures
+            .get("value")
+            .is_some_and(|c| c.text.trim() == "\"\""),
+        None => boolean_control(item, "value") == Some(false),
+        _ => false,
+    }
 }
 
 fn known_data_only_yaml(item: &Evidence, sources: &RepositorySources) -> bool {

@@ -379,7 +379,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "18";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "19";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -12605,192 +12605,17 @@ fn has_known_string_literal(item: &Evidence, role: &str) -> bool {
 /// purpose. The original observation remains in deterministic scan evidence.
 fn is_non_actionable_safe_purpose_observation(
     item: &Evidence,
-    sources: &RepositorySources,
+    _sources: &RepositorySources,
 ) -> bool {
-    if is_schema_validated_local_yaml_tool(item, sources)
-        || is_repository_snippet_index_read(item, sources)
-        || is_authenticated_generated_upload_write(item, sources)
-        || is_configuration_backed_promotion_read(item, sources)
-        || is_configuration_backed_response(item, sources)
-        || is_captcha_verification_lookup(item, sources)
-        || is_startup_dependency_health_request(item, sources)
-    {
-        return true;
-    }
-    if item.kind == EvidenceKind::Sink
+    // Concrete normal data decoding of a fixed local file is context. Do not
+    // close executable loaders, arbitrary uploads or sinks by whole-file names.
+    item.kind == EvidenceKind::Sink
         && item.capability == Capability::Deserialization
         && !executable_deserializer(item)
         && item
             .captures
             .get("payload")
             .is_some_and(|capture| is_fixed_local_file_read(&capture.text))
-    {
-        return true;
-    }
-
-    if item.kind != EvidenceKind::SecurityConfiguration
-        || item.capability != Capability::CryptographicHash
-        || !item.rule_id.ends_with("hash-algorithm-selection")
-        || !item.captures.get("algorithm").is_some_and(|capture| {
-            matches!(
-                capture
-                    .text
-                    .trim()
-                    .trim_matches(['\'', '"'])
-                    .to_ascii_lowercase()
-                    .as_str(),
-                "md5"
-            )
-        })
-    {
-        return false;
-    }
-
-    let Ok(file) = sources.file(&item.location.path) else {
-        return false;
-    };
-    let lines = file.source.lines().collect::<Vec<_>>();
-    let line = item.location.start.line.saturating_sub(1);
-    let start = line.saturating_sub(8);
-    let end = line.saturating_add(9).min(lines.len());
-    let window = lines[start..end].join("\n");
-    window.contains("registerTask('checksum'")
-        && window.contains(".md5")
-        && window.contains("digest('hex')")
-}
-
-fn evidence_source<'a>(item: &Evidence, sources: &'a RepositorySources) -> Option<&'a str> {
-    sources
-        .file(&item.location.path)
-        .ok()
-        .map(|file| file.source.as_str())
-}
-
-fn is_schema_validated_local_yaml_tool(item: &Evidence, sources: &RepositorySources) -> bool {
-    item.kind == EvidenceKind::Sink
-        && item.capability == Capability::Deserialization
-        && item.rule_id.ends_with("yaml-deserialization")
-        && item
-            .captures
-            .get("payload")
-            .is_some_and(|capture| capture.text.contains("readFile(file"))
-        && item
-            .location
-            .path
-            .replace('\\', "/")
-            .to_ascii_lowercase()
-            .contains("/scripts/")
-        && evidence_source(item, sources).is_some_and(|source| {
-            source.contains("path.resolve(__dirname")
-                && source.contains("readdir(configDir)")
-                && source.contains("ValidationSchema.safeParse(configuration)")
-        })
-}
-
-fn is_repository_snippet_index_read(item: &Evidence, sources: &RepositorySources) -> bool {
-    item.kind == EvidenceKind::Sink
-        && item.capability == Capability::FilesystemRead
-        && item
-            .captures
-            .get("path")
-            .is_some_and(|capture| capture.text.trim() == "currPath")
-        && evidence_source(item, sources).is_some_and(|source| {
-            source.contains("SNIPPET_PATHS = Object.freeze(")
-                && source.contains("findFilesWithCodeChallenges")
-                && source.contains("lstat(currPath)")
-                && source.contains("readdir(currPath)")
-                && source.contains("readFile(currPath")
-        })
-}
-
-fn is_authenticated_generated_upload_write(item: &Evidence, sources: &RepositorySources) -> bool {
-    if item.kind != EvidenceKind::Sink || item.capability != Capability::FilesystemWrite {
-        return false;
-    }
-    let Some(source) = evidence_source(item, sources) else {
-        return false;
-    };
-    let Some(capture) = item.captures.get("path").map(|capture| capture.text.trim()) else {
-        return false;
-    };
-    let expression = if is_plain_identifier(capture) {
-        source
-            .lines()
-            .find_map(|line| {
-                line.trim()
-                    .strip_prefix(&format!("const {capture} ="))
-                    .map(str::trim)
-            })
-            .unwrap_or(capture)
-    } else {
-        capture
-    };
-    expression.contains("assets/public/images/uploads/")
-        && expression.contains(".data.id}")
-        && source.contains("authenticatedUsers.get(")
-        && (source.contains("fileType.fromBuffer(")
-            && source.contains("startsWith(uploadedFileType.mime, 'image')")
-            || source.contains("['jpg', 'jpeg', 'png', 'svg', 'gif'].includes("))
-}
-
-fn is_configuration_backed_promotion_read(item: &Evidence, sources: &RepositorySources) -> bool {
-    item.kind == EvidenceKind::Sink
-        && item.capability == Capability::FilesystemRead
-        && evidence_source(item, sources).is_some_and(|source| {
-            source.contains("config.get<string>('application.promotion.video')")
-                && source.contains("config.get<string>('application.promotion.subtitles')")
-                && source.contains("frontend/dist/frontend/assets/public/videos/")
-                && source.contains("utils.extractFilename(")
-        })
-}
-
-fn is_configuration_backed_response(item: &Evidence, sources: &RepositorySources) -> bool {
-    item.kind == EvidenceKind::Sink
-        && item.capability == Capability::HtmlOutput
-        && item
-            .captures
-            .get("content")
-            .is_some_and(|capture| is_plain_identifier(capture.text.trim()))
-        && evidence_source(item, sources).is_some_and(|source| {
-            let content = item.captures["content"].text.trim();
-            source.contains(&format!("const {content} = config.get("))
-                && source.contains(&format!("res.send({content})"))
-        })
-}
-
-fn is_captcha_verification_lookup(item: &Evidence, sources: &RepositorySources) -> bool {
-    item.kind == EvidenceKind::Sink
-        && item.capability == Capability::ResourceAccess
-        && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-639")
-        && item
-            .captures
-            .get("model")
-            .is_some_and(|capture| capture.text.trim_end_matches("Model") == "Captcha")
-        && evidence_source(item, sources).is_some_and(|source| {
-            source.contains("captchaId: req.body.captchaId")
-                && source.contains("req.body.captcha === captcha.answer")
-                && source.contains("next()")
-        })
-}
-
-fn is_startup_dependency_health_request(item: &Evidence, sources: &RepositorySources) -> bool {
-    item.kind == EvidenceKind::Sink
-        && item.capability == Capability::OutboundNetworkRequest
-        && item
-            .captures
-            .get("endpoint")
-            .is_some_and(|capture| capture.text.trim() == "domain")
-        && item
-            .location
-            .path
-            .replace('\\', "/")
-            .to_ascii_lowercase()
-            .contains("/startup/")
-        && evidence_source(item, sources).is_some_and(|source| {
-            source.contains("checkIfDomainReachable('https://")
-                && source.contains("llmApiUrl = config.get<string>(")
-                && source.contains("checkIfDomainReachable(llmApiUrl)")
-        })
 }
 
 fn is_fixed_local_file_read(payload: &str) -> bool {
@@ -23774,7 +23599,7 @@ mod tests {
     }
 
     #[test]
-    fn safe_purpose_observation_guards_are_bounded() {
+    fn fixed_local_decode_guard_requires_a_fixed_filename() {
         assert!(is_fixed_local_file_read(
             "fs.readFileSync('./swagger.yml', 'utf8')"
         ));
@@ -23782,184 +23607,6 @@ mod tests {
         assert!(!is_fixed_local_file_read(
             "fs.readFileSync('./schemas/' + name, 'utf8')"
         ));
-
-        let source = "grunt.registerTask('checksum', 'Create .md5 checksum files', function () {\n\
-            const buffer = fs.readFileSync('dist/package.zip')\n\
-            const md5 = crypto.createHash('md5')\n\
-            md5.update(buffer)\n\
-            const value = md5.digest('hex')\n\
-            grunt.file.write('dist/package.zip.md5', value)\n\
-        })\n";
-        let mut captures = BTreeMap::new();
-        captures.insert(
-            "algorithm".to_string(),
-            mehscan_core::Capture {
-                text: "'md5'".to_string(),
-                location: location_from_offsets(
-                    "Gruntfile.js",
-                    source,
-                    source.find("'md5'").unwrap(),
-                    source.find("'md5'").unwrap() + 5,
-                ),
-            },
-        );
-        let evidence = Evidence {
-            id: "checksum-hash".to_string(),
-            kind: EvidenceKind::SecurityConfiguration,
-            capability: Capability::CryptographicHash,
-            location: captures["algorithm"].location.clone(),
-            enclosing_symbol: Some("grunt".to_string()),
-            captures,
-            cwe_candidates: vec!["CWE-327".to_string()],
-            tags: Vec::new(),
-            confidence: mehscan_core::Confidence::High,
-            provenance: mehscan_core::Provenance {
-                resolution: Resolution::Ast,
-                engine: "test".to_string(),
-                rule_version: 1,
-            },
-            context: Default::default(),
-            symbol_resolution: None,
-            rule_id: "javascript-hash-algorithm-selection".to_string(),
-            related_evidence: Vec::new(),
-        };
-        let sources = RepositorySources {
-            root: "fixture".to_string(),
-            files: [(
-                "Gruntfile.js".to_string(),
-                SourceFile {
-                    path: "Gruntfile.js".to_string(),
-                    language: Some(Language::Javascript),
-                    source: source.to_string(),
-                },
-            )]
-            .into_iter()
-            .collect(),
-        };
-        assert!(is_non_actionable_safe_purpose_observation(
-            &evidence, &sources
-        ));
-
-        let non_checksum_source =
-            source.replace("registerTask('checksum'", "registerTask('passwords'");
-        let non_checksum_sources = RepositorySources {
-            root: "fixture".to_string(),
-            files: [(
-                "Gruntfile.js".to_string(),
-                SourceFile {
-                    path: "Gruntfile.js".to_string(),
-                    language: Some(Language::Javascript),
-                    source: non_checksum_source,
-                },
-            )]
-            .into_iter()
-            .collect(),
-        };
-        assert!(!is_non_actionable_safe_purpose_observation(
-            &evidence,
-            &non_checksum_sources
-        ));
-    }
-
-    #[test]
-    fn safe_purpose_guards_require_the_complete_semantic_shape() {
-        let make = |kind, capability, rule: &str, path: &str, role: &str, value: &str| Evidence {
-            id: format!("{rule}-{role}"),
-            kind,
-            capability,
-            location: location_from_offsets(path, "", 0, 0),
-            enclosing_symbol: Some("test".to_string()),
-            captures: BTreeMap::from([(
-                role.to_string(),
-                mehscan_core::Capture {
-                    text: value.to_string(),
-                    location: location_from_offsets(path, "", 0, 0),
-                },
-            )]),
-            cwe_candidates: vec!["CWE-22".to_string(), "CWE-639".to_string()],
-            tags: Vec::new(),
-            confidence: mehscan_core::Confidence::High,
-            provenance: mehscan_core::Provenance {
-                resolution: Resolution::Ast,
-                engine: "test".to_string(),
-                rule_version: 1,
-            },
-            context: Default::default(),
-            symbol_resolution: None,
-            rule_id: rule.to_string(),
-            related_evidence: Vec::new(),
-        };
-        let lint = "const configDir = path.resolve(__dirname, '../../config')\nconst files = await readdir(configDir)\nconfiguration = yaml.load(await readFile(file, 'utf8'))\nValidationSchema.safeParse(configuration)\n";
-        let upload = "const loggedInUser = authenticatedUsers.get(req.cookies.token)\nconst uploadedFileType = await fileType.fromBuffer(buffer)\nif (!startsWith(uploadedFileType.mime, 'image')) return\nconst filePath = `assets/public/images/uploads/${loggedInUser.data.id}.${uploadedFileType.ext}`\n";
-        let captcha = "const captcha = await CaptchaModel.findOne({ where: { captchaId: req.body.captchaId } })\nif (req.body.captcha === captcha.answer) next()\n";
-        let sources = RepositorySources {
-            root: "fixture".to_string(),
-            files: [
-                ("lib/scripts/lint.ts", lint),
-                ("routes/upload.ts", upload),
-                ("routes/captcha.ts", captcha),
-            ]
-            .into_iter()
-            .map(|(path, source)| {
-                (
-                    path.to_string(),
-                    SourceFile {
-                        path: path.to_string(),
-                        language: Some(Language::Typescript),
-                        source: source.to_string(),
-                    },
-                )
-            })
-            .collect(),
-        };
-
-        let yaml = make(
-            EvidenceKind::Sink,
-            Capability::Deserialization,
-            "typescript-yaml-deserialization",
-            "lib/scripts/lint.ts",
-            "payload",
-            "await readFile(file, 'utf8')",
-        );
-        assert!(is_schema_validated_local_yaml_tool(&yaml, &sources));
-        let incomplete_sources = RepositorySources {
-            root: "fixture".to_string(),
-            files: BTreeMap::from([(
-                "lib/scripts/lint.ts".to_string(),
-                SourceFile {
-                    path: "lib/scripts/lint.ts".to_string(),
-                    language: Some(Language::Typescript),
-                    source: lint.replace(
-                        "ValidationSchema.safeParse(configuration)",
-                        "use(configuration)",
-                    ),
-                },
-            )]),
-        };
-        assert!(!is_schema_validated_local_yaml_tool(
-            &yaml,
-            &incomplete_sources
-        ));
-
-        let write = make(
-            EvidenceKind::Sink,
-            Capability::FilesystemWrite,
-            "typescript-filesystem-write",
-            "routes/upload.ts",
-            "path",
-            "filePath",
-        );
-        assert!(is_authenticated_generated_upload_write(&write, &sources));
-
-        let captcha_lookup = make(
-            EvidenceKind::Sink,
-            Capability::ResourceAccess,
-            "typescript-sequelize-resource-access",
-            "routes/captcha.ts",
-            "model",
-            "CaptchaModel",
-        );
-        assert!(is_captcha_verification_lookup(&captcha_lookup, &sources));
     }
 
     #[test]

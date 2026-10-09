@@ -124,6 +124,26 @@ Multi addition alone does not transfer data. Inspect `client`/`multi`, related
 setters and consumer locations. Rewrites, resets, proxies and unknown producers
 retain research; a known URL does not prove policy for a shared handle.
 
+## Routine policy context
+
+Affirmative TLS/cookie flags and shown XML hardening do not need independent
+verdicts. They settle only the named control, never the complete client/parser.
+Disabled checks, unresolved custom validators, weak security-purpose digests and
+fast password hashes remain leads. A suitable digest selector does not settle
+password cost, keys or nonces.
+
+For C# anonymous/antiforgery route markers, a verb alone is surface context.
+A shown consequential operation in the same handler supplies `effect` and related
+evidence. No-op routes, null fallback policy, middleware ordering alone and unknown
+default cookie/password settings do not create separate jobs. This establishes
+neither authorization nor safety of unknown business helpers. Keep these facts
+when reviewing actual effects and follow up on relevant helpers/providers.
+GUID generation alone does not establish weak randomness; inspect a concrete
+violated entropy/credential requirement before proposing that issue.
+
+Whole-file sample names or unrelated familiar declarations never approve an
+upload, file read, HTML response, decoder or authentication boundary.
+
 ## Filesystem effects
 
 Ordinary directory creation and simple names-only listing no longer produce

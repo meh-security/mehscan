@@ -22,7 +22,17 @@ fn trust_configuration_context_preserves_consumption_order_and_validation() {
                 .any(|e| e.rule_id == "kotlin-tls-trust-context")
         })
         .collect();
-    assert_eq!(reviews.len(), 10);
+    assert_eq!(reviews.len(), 7);
+    assert!(reviews.iter().all(|r| {
+        r.evidence
+            .iter()
+            .filter(|e| r.anchor_evidence_ids.contains(&e.id))
+            .all(|e| {
+                e.captures
+                    .get("trust_managers")
+                    .is_none_or(|c| c.text.trim() != "null")
+            })
+    }));
     for review in reviews {
         let anchor = review
             .evidence
