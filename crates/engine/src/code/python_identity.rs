@@ -226,7 +226,7 @@ fn add_jwt_observations<'tree>(
                 push(
                     path,
                     &call,
-                    EvidenceKind::SecurityConfiguration,
+                    EvidenceKind::Resource,
                     Capability::Authentication,
                     "python-jwt-token-without-expiry-review",
                     &["CWE-613"],

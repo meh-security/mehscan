@@ -19,6 +19,83 @@ fn fixture(name: &str, files: &[(&str, &str)]) -> Fixture {
     Fixture(root)
 }
 #[test]
+fn expiry_absence_is_context_across_languages_without_hiding_weak_credentials() {
+    let f = fixture(
+        "expiry-parity",
+        &[
+            (
+                "Issuer.cs",
+                r#"using System.Text;
+using System.IdentityModel.Tokens.Jwt;
+using Microsoft.IdentityModel.Tokens;
+class Issuer {
+object Ordinary(string issuer){return new JwtSecurityToken(issuer:issuer);}
+object Descriptor(string issuer){return new SecurityTokenDescriptor {Issuer=issuer};}
+object Weak(){var credentials=new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes("literal-signing-key-32-bytes-long")),SecurityAlgorithms.HmacSha256);return new JwtSecurityToken(signingCredentials:credentials);}
+}
+"#,
+            ),
+            (
+                "issuer.py",
+                r#"import jwt
+def ordinary(user, key):
+    return jwt.encode({'sub': user}, key, algorithm='HS256')
+def weak(user):
+    return jwt.encode({'sub': user}, 'literal-signing-key-32-bytes-long', algorithm='HS256')
+def disabled(token, key):
+    return jwt.decode(token, key, algorithms=['HS256'], options={'verify_exp': False})
+"#,
+            ),
+            (
+                "Issuer.java",
+                r#"import io.jsonwebtoken.Jwts;
+class Issuer {
+String ordinary(java.security.Key key,String subject){return Jwts.builder().subject(subject).signWith(key).compact();}
+}
+class Otp {String otp;String status;}
+class TokenRecord {String emailToken;}
+"#,
+            ),
+        ],
+    );
+    let inventory = build_review_inventory(&f.0, false).unwrap();
+    assert_eq!(inventory.scan.coverage.totals.parse_failed, 0);
+    for rule in [
+        "csharp-jwt-missing-expiry-review",
+        "python-jwt-token-without-expiry-review",
+        "java-jwt-signed-token-without-expiration",
+        "java-otp-record-without-expiry",
+        "java-stateful-email-token-without-expiry",
+    ] {
+        let items = inventory
+            .scan
+            .evidence
+            .iter()
+            .filter(|e| e.rule_id == rule)
+            .collect::<Vec<_>>();
+        assert!(!items.is_empty(), "missing context for {rule}");
+        assert!(
+            items.iter().all(|e| e.kind == EvidenceKind::Resource),
+            "{rule}: {items:#?}"
+        );
+        assert!(
+            !inventory.entries.iter().any(|e| e.rule_id == rule),
+            "expiry absence created a job: {rule}"
+        );
+    }
+    for rule in [
+        "csharp-jwt-signing-with-hardcoded-key",
+        "python-jwt-hardcoded-signing-key",
+        "python-jwt-expiration-validation-disabled",
+    ] {
+        assert!(
+            inventory.entries.iter().any(|e| e.rule_id == rule),
+            "lost concrete credential/policy question: {rule}"
+        );
+    }
+}
+
+#[test]
 fn unused_signing_is_context_but_credential_handoffs_and_callbacks_remain() {
     let js = r#"const jwt=require('jsonwebtoken');
 function unused(key){const token=jwt.sign({sub:'a'},key);}

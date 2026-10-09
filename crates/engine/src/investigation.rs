@@ -379,7 +379,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "20";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "21";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -8011,9 +8011,6 @@ fn java_observation_policy(
             }
             "java-insecure-security-randomness" => {
                 "The exact Java generator explicitly establishes Math.random as the effective source for the captured security-token or OTP role."
-            }
-            "java-jwt-signed-token-without-expiration" => {
-                "The exact Java token builder explicitly establishes a signed authentication credential without an expiration claim."
             }
             _ => continue,
         };

@@ -239,7 +239,7 @@ closure does not settle an independently identified record-authority question.
 See [database scope](review-scope.md#database-exclusions-and-remaining-cleanup).
 
 PHP queue conditions and their limits are in [review scope](review-scope.md).
-Inventory schema 20 requires a fresh scan; do not reuse an older inventory or its
+Inventory schema 21 requires a fresh scan; do not reuse an older inventory or its
 ledger. Use `--selection all` for `php_relationship_research`. Verify its bounded
 producer navigation against the actual writes, transformations, writer and actor.
 Same-file/rule `issue`, `needs_review` or conflicting verdicts reopen retained

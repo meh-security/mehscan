@@ -65,7 +65,13 @@ fn classifies_csharp_crypto_lifecycle_risks_and_exact_controls() {
                     && item.kind == EvidenceKind::SecurityConfiguration
             })
             .count()
-            >= 9
+            >= 8
+    );
+    assert!(
+        observations
+            .iter()
+            .filter(|item| item.rule_id == "csharp-jwt-missing-expiry-review")
+            .all(|item| item.kind == EvidenceKind::Resource)
     );
     assert!(
         observations
