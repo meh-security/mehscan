@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::Path;
@@ -737,6 +737,7 @@ fn review_source_fingerprint(sources: &RepositorySources) -> String {
 }
 
 struct ReviewContextIndex {
+    angular: OnceCell<angular::AngularContext>,
     definitions: BTreeMap<String, Vec<OutlineSymbol>>,
     registrations: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
     usages: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
@@ -1921,7 +1922,7 @@ fn build_path_review_jobs_internal(
             &review_context,
             &candidate_paths,
             &reference_tokens,
-            &facts,
+            (&facts, &candidate.sink.location),
             precise_consumer_fields.as_ref(),
             MAX_REVIEW_SECOND_HOP_FACTS,
         );
@@ -4759,8 +4760,29 @@ fn project_investigation_facts(
     let mut order = (0..facts.len()).collect::<Vec<_>>();
     order.sort_by_key(|&index| !primary(&facts[index]));
     let mut retained_bytes = 0usize;
+    let angular_packet = facts.iter().any(|fact| {
+        matches!(
+            fact.role.as_str(),
+            "frontend_component_template_context"
+                | "frontend_pipe_metadata_context"
+                | "frontend_directive_metadata_context"
+        )
+    });
+    let mut angular_bytes = 0usize;
     for index in order {
         let fact = &mut facts[index];
+        // Angular packets already bound the registration/handoff/consumer chain
+        // to eight facts and 6 KiB. Preserve that initial evidence even when the
+        // actor/producer still needs research; stripping it recreates each edge
+        // as a separate lookup. Keep the ordinary anchor budget unchanged.
+        if angular_packet
+            && fact.role.starts_with("frontend_")
+            && fact.excerpt.len() <= 2_048
+            && angular_bytes + fact.excerpt.len() <= 6_144
+        {
+            angular_bytes += fact.excerpt.len();
+            continue;
+        }
         if primary(fact)
             && fact.excerpt.len() > 1_536
             && fact.excerpt.len() == fact.location.end.byte_offset - fact.location.start.byte_offset
@@ -8933,7 +8955,7 @@ fn build_observation_reviews(
             &review_context,
             &paths,
             &references,
-            &facts,
+            (&facts, anchor),
             None,
             6,
         );
@@ -16193,6 +16215,7 @@ impl ReviewContextIndex {
         }
         Ok(Self {
             definitions,
+            angular: OnceCell::new(),
             registrations,
             usages,
             frameworks: frameworks
@@ -16612,10 +16635,11 @@ fn second_hop_review_facts(
     context: &ReviewContextIndex,
     candidate_paths: &BTreeSet<&str>,
     references: &BTreeSet<String>,
-    existing: &[ReviewNeighborhoodFact],
+    evidence: (&[ReviewNeighborhoodFact], &Location),
     precise_member_fields: Option<&BTreeSet<String>>,
     limit: usize,
 ) -> (Vec<ReviewNeighborhoodFact>, bool) {
+    let (existing, anchor) = evidence;
     if limit == 0 {
         return (Vec::new(), false);
     }
@@ -16626,6 +16650,28 @@ fn second_hop_review_facts(
         .collect::<BTreeSet<_>>();
     let mut facts = Vec::new();
     let mut truncated = false;
+
+    // Parse Angular metadata only for selected trust reviews and share it across
+    // their packets. Give the bounded producer/consumer chain priority over
+    // generic second-hop name matches; the overall fact cap is unchanged.
+    if existing
+        .iter()
+        .any(|f| f.excerpt.contains("bypassSecurityTrust"))
+    {
+        let angular = context
+            .angular
+            .get_or_init(|| angular::AngularContext::build(sources));
+        let (mut angular_facts, partial) = angular.facts(
+            sources,
+            candidate_paths,
+            existing,
+            precise_member_fields,
+            limit,
+            Some(anchor),
+        );
+        facts.append(&mut angular_facts);
+        truncated |= partial;
+    }
 
     let mut covered = existing.to_vec();
     covered.extend(facts.iter().cloned());
@@ -16666,18 +16712,6 @@ fn second_hop_review_facts(
         facts.append(&mut config_facts);
     }
 
-    let remaining = limit.saturating_sub(facts.len());
-    if remaining > 0 {
-        let (mut template_facts, template_truncated) = template_binding_facts(
-            sources,
-            candidate_paths,
-            existing,
-            precise_member_fields,
-            remaining.min(3),
-        );
-        truncated |= template_truncated;
-        facts.append(&mut template_facts);
-    }
     let remaining = limit.saturating_sub(facts.len());
     if remaining > 0 {
         let mut covered = existing.to_vec();
@@ -16898,6 +16932,7 @@ fn quoted_values(source: &str) -> Vec<&str> {
     values
 }
 
+#[cfg(test)]
 fn template_binding_facts(
     sources: &RepositorySources,
     candidate_paths: &BTreeSet<&str>,
@@ -22480,6 +22515,45 @@ mod tests {
         assert!(facts[3].excerpt.is_empty());
         assert!(facts.iter().all(|fact| fact.location == location));
         assert!(facts[0].provenance.engine.contains("location-only"));
+    }
+
+    #[test]
+    fn investigation_projection_preserves_angular_chain_with_separate_byte_cap() {
+        let location = location_from_offsets("view.ts", "sink(v);", 0, 8);
+        let mut facts = [
+            "sink_context",
+            "frontend_component_template_context",
+            "frontend_component_input_context",
+            "frontend_template_binding_context",
+            "frontend_dialog_handoff_context",
+            "helper_definition_context",
+        ]
+        .into_iter()
+        .map(|role| ReviewNeighborhoodFact {
+            role: role.into(),
+            symbol: "v".into(),
+            location: location.clone(),
+            excerpt: if role == "sink_context" {
+                "sink(v);".into()
+            } else {
+                "x".repeat(2_048)
+            },
+            evidence_id: None,
+            provenance: textual_provenance("test"),
+        })
+        .collect::<Vec<_>>();
+        project_investigation_facts(ReviewReadiness::Investigation, &mut facts, &location);
+        assert_eq!(facts[0].excerpt, "sink(v);");
+        assert_eq!(
+            facts
+                .iter()
+                .filter(|f| f.role.starts_with("frontend_"))
+                .map(|f| f.excerpt.len())
+                .sum::<usize>(),
+            6_144
+        );
+        assert!(facts[4].excerpt.is_empty());
+        assert!(facts[5].excerpt.is_empty());
     }
 
     #[test]

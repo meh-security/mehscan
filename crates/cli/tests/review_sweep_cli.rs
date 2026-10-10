@@ -169,6 +169,73 @@ fn compact_views_keep_explicit_angular_templates_and_original_source() {
 }
 
 #[test]
+fn angular_pipe_input_and_dialog_packets_keep_bounded_source_in_investigation() {
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/angular-complete-review");
+    let output =
+        std::env::temp_dir().join(format!("mehscan-angular-complete-{}", std::process::id()));
+    let manifest = run(&[
+        "investigate",
+        "review-bundles",
+        root.to_str().unwrap(),
+        "--output",
+        output.to_str().unwrap(),
+        "--context-lines",
+        "3",
+    ]);
+    assert_eq!(
+        manifest["review_count"], 5,
+        "ordinary child bindings must not create IDs"
+    );
+    let mut roles = BTreeSet::new();
+    let mut templates = Vec::new();
+    for bundle in manifest["bundles"].as_array().unwrap() {
+        let request = output
+            .join("requests")
+            .join(bundle["filename"].as_str().unwrap());
+        let sweep = run(&[
+            "investigate",
+            "review-sweep",
+            "--bundle",
+            request.to_str().unwrap(),
+        ]);
+        for review in sweep["reviews"].as_array().unwrap() {
+            for fact in review["frontend_context"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|f| f["role"].as_str().unwrap().starts_with("frontend_"))
+            {
+                let excerpt = fact["excerpt"].as_str().unwrap();
+                assert!(
+                    !excerpt.is_empty(),
+                    "Angular evidence silently became a locator: {fact}"
+                );
+                let path = fact["location"]["path"].as_str().unwrap();
+                let text = fs::read_to_string(root.join(path)).unwrap();
+                assert!(text.contains(excerpt), "fabricated source {fact}");
+                roles.insert(fact["role"].as_str().unwrap().to_owned());
+                if fact["role"] == "frontend_template_binding_context" {
+                    templates.push(excerpt.to_owned());
+                }
+            }
+        }
+    }
+    for required in [
+        "frontend_pipe_consumer_context",
+        "frontend_pipe_implementation_context",
+        "frontend_component_input_context",
+        "frontend_component_handoff_context",
+        "frontend_dialog_data_context",
+        "frontend_dialog_handoff_context",
+    ] {
+        assert!(roles.contains(required), "missing {required}: {roles:?}");
+    }
+    assert!(templates.iter().any(|t| t.contains("innerHTML")));
+    assert!(templates.iter().any(|t| t.contains("textContent")));
+}
+
+#[test]
 fn shared_question_queue_and_sweep_preserve_exceptions_and_exact_source() {
     let root = std::env::temp_dir().join(format!("mehscan-sweep-{}", std::process::id()));
     let output = root.with_file_name(format!("mehscan-sweep-output-{}", std::process::id()));

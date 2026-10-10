@@ -50,14 +50,9 @@ sanitized and dynamic callers can differ: reuse facts, not verdicts. The sample
 is bounded; investigate spreads, omitted callers, parser gaps, reassignments
 and unsupported wrappers when they affect that edge. Missing caller facts do
 not mean no callers exist.
-For Angular, `frontend_component_template_context` identifies explicit component
-metadata; `frontend_template_binding_context` locates matching property bindings.
-Verify the rendered context and actual field/method path: a matching name is not
-flow proof. `bypassSecurityTrust*` marks trust, not sanitization. Ordinary template
-bindings can apply framework controls; check the effective context and version
-when decisive. If no consumer is supplied, inspect the declared template, pipe
-registration or component handoff before calling that edge unavailable. These
-bounded facts do not cover dynamic templates or prove pipe registration.
+For Angular component, pipe, input or dialog facts, read
+[Angular output review](angular-output-review.md). It explains the supplied
+registration and handoff evidence and how to research the next missing edge.
 For DOM-to-DOM HTML copying, inspect the source element's markup and relevant
 writers. A DOM selector/type is navigation, not trusted contents. For a shared
 request helper, pair the implementation with observed callers and effective
@@ -67,6 +62,11 @@ Otherwise trace who writes the exact rendered value. Inspect relevant normal
 and alternate writers, their actual callers/registration, and controls on those
 paths. A sanitizer setting on an editor does not protect a different direct
 writer. A shared field name or receiver spelling does not prove the same object.
+For API-backed values, follow the service URL into local server routes and
+persistence setters/validators. A client save call does not prove the server
+accepts raw content. Inspect available repository tests when they clarify a
+writer or control. Do not label those local policies unavailable before checking
+them; distinguish a specific remaining deployment/dependency gap.
 Use source-visible tests or versioned dependency source when semantics are
 decisive. Do not invent behavior from a familiar name or a failed lookup.
 
