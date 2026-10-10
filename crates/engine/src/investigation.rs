@@ -38,6 +38,7 @@ use mehscan_core::{
     SecurityPathStepKind, Severity, SeveritySource, SourceSlice, StructuralMatch, TextReference,
 };
 
+mod frontend;
 mod practical_admission;
 mod review_admission;
 
@@ -8730,7 +8731,11 @@ fn build_observation_reviews(
 ) -> Result<Vec<ObservationReview>, EngineError> {
     let index_started = std::time::Instant::now();
     let groups = groups.into_iter().collect::<Vec<_>>();
+    let frontend_context = frontend::FrontendContext::build(sources, &groups);
     let mut indexed_references = BTreeSet::new();
+    for fact in frontend_context.all_facts() {
+        collect_review_reference_tokens(&fact.excerpt, &mut indexed_references);
+    }
     for group in &groups {
         indexed_references.extend(observation_group_references(group, sources, context_lines)?);
     }
@@ -8836,6 +8841,30 @@ fn build_observation_reviews(
             evidence_id: None,
             provenance: textual_provenance("mehscan bounded observation-review source 1"),
         }];
+        let (mut frontend_facts, frontend_truncated) = frontend_context.facts(&group.evidence);
+        context_truncated |= frontend_truncated;
+        let frontend_paths = frontend_facts
+            .iter()
+            .map(|f| f.location.path.as_str())
+            .collect();
+        let mut frontend_references = BTreeSet::new();
+        for fact in &frontend_facts {
+            collect_review_reference_tokens(&fact.excerpt, &mut frontend_references);
+        }
+        if !frontend_facts.is_empty() {
+            let (mut frontend_helpers, cut) = observation_helper_definition_facts(
+                sources,
+                &review_context,
+                &frontend_paths,
+                &frontend_references,
+                &frontend_facts,
+                2,
+            );
+            context_truncated |= cut;
+            frontend_facts.append(&mut frontend_helpers);
+            frontend_facts.extend(frontend_context.import_facts(&frontend_facts));
+        }
+        facts.append(&mut frontend_facts);
         let (mut captured_definitions, captured_definitions_truncated) =
             captured_definition_facts(sources, group.evidence.iter(), &facts, 3);
         for item in &group.evidence {
@@ -9250,6 +9279,15 @@ fn build_observation_reviews(
         let review_basis = observation_review_basis(basis_evidence, rules_by_id);
         let mut decision_facts =
             observation_decision_facts(&selected_evidence, &facts, &open_questions);
+        if facts
+            .iter()
+            .any(|f| f.role == "frontend_prop_caller_context")
+        {
+            decision_facts.established.push("The packet locates JSX callers of the raw-output component and their explicit prop expressions. This is bounded syntax navigation, not proof of attacker control, reaching values, sanitization or caller completeness.".into());
+            if frontend_truncated {
+                decision_facts.unresolved.push("The JSX caller sample is partial: omitted callers, spread/duplicate props, or parser error regions may remain. Inspect the listed caller's effective prop value and remaining component references before generalizing a caller-specific conclusion.".into());
+            }
+        }
         if let Some(matched) = matched_kotlin_evidence.as_ref() {
             for item in matched {
                 decision_facts.established.push(format!(
