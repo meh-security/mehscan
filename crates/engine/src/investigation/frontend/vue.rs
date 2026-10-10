@@ -2,7 +2,6 @@
 use super::*;
 
 const MAX_PRODUCERS: usize = 4;
-const MAX_DEPTH: usize = 2;
 
 pub(super) struct Contract {
     evidence_id: String,
@@ -134,60 +133,15 @@ pub(super) fn prepare(
                 }
             }
         }
-        let mut inspected = seeds.clone();
-        let mut visited = BTreeSet::new();
-        let mut producers = 0;
-        for _ in 0..MAX_DEPTH {
-            let mut next = Vec::new();
-            for expression in seeds {
-                for name in expression
-                    .dfs()
-                    .filter(|n| n.kind().as_ref() == "identifier")
-                {
-                    let Some(binding) = lexical_binding(root, &name) else {
-                        continue;
-                    };
-                    if !binding
-                        .parent()
-                        .is_some_and(|n| n.text().trim_start().starts_with("const "))
-                    {
-                        continue;
-                    }
-                    if !visited.insert(binding.range().start) {
-                        continue;
-                    }
-                    if facts.iter().any(|f| {
-                        f.location.start.byte_offset == binding.range().start
-                            && f.location.end.byte_offset == binding.range().end
-                    }) {
-                        continue;
-                    }
-                    if props.as_ref().is_some_and(|p| p.range() == binding.range()) {
-                        continue;
-                    }
-                    if producers == MAX_PRODUCERS {
-                        *partial = true;
-                        continue;
-                    }
-                    if add(
-                        file,
-                        &binding,
-                        "frontend_output_dependency_context",
-                        "candidate local input; reaching value and transformations require review",
-                        &item.id,
-                        facts,
-                        partial,
-                    ) {
-                        producers += 1;
-                        if let Some(value) = binding.field("value") {
-                            inspected.push(value.clone());
-                            next.push(value)
-                        }
-                    }
-                }
-            }
-            seeds = next;
-        }
+        let inspected = dependencies(
+            file,
+            root,
+            seeds,
+            facts,
+            partial,
+            &item.id,
+            "frontend_output_dependency_context",
+        );
         let Some(props) = props.as_ref() else {
             continue;
         };
@@ -303,7 +257,9 @@ fn top_level(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
         .is_some_and(|n| n.kind().as_ref() == "program")
 }
 
-fn props_macro<'a>(node: &Node<'a, StrDoc<SupportLang>>) -> Option<Node<'a, StrDoc<SupportLang>>> {
+pub(super) fn props_macro<'a>(
+    node: &Node<'a, StrDoc<SupportLang>>,
+) -> Option<Node<'a, StrDoc<SupportLang>>> {
     let value = node
         .field("value")
         .or_else(|| {
@@ -404,54 +360,6 @@ fn declared_props<'a>(
         }
     }
     names
-}
-
-fn lexical_binding<'a>(
-    root: &Node<'a, StrDoc<SupportLang>>,
-    name: &Node<'a, StrDoc<SupportLang>>,
-) -> Option<Node<'a, StrDoc<SupportLang>>> {
-    for scope in name
-        .ancestors()
-        .filter(|n| matches!(n.kind().as_ref(), "statement_block" | "program") || callable(n))
-    {
-        if callable(&scope)
-            && scope
-                .field("parameters")
-                .or_else(|| scope.field("parameter"))
-                .is_some_and(|p| {
-                    p.dfs().any(|n| {
-                        matches!(
-                            n.kind().as_ref(),
-                            "identifier" | "shorthand_property_identifier_pattern"
-                        ) && n.text() == name.text()
-                    })
-                })
-        {
-            return None;
-        }
-        let bindings: Vec<_> = root
-            .dfs()
-            .filter(|n| {
-                n.kind().as_ref() == "variable_declarator"
-                    && n.field("name").is_some_and(|n| {
-                        n.kind().as_ref() == "identifier" && n.text() == name.text()
-                    })
-                    && n.ancestors()
-                        .find(|a| {
-                            matches!(a.kind().as_ref(), "statement_block" | "program")
-                                || callable(a)
-                        })
-                        .is_some_and(|a| a.range() == scope.range())
-            })
-            .collect();
-        if !bindings.is_empty() {
-            return (bindings.len() == 1
-                && bindings[0].range().start < name.range().start
-                && valid(&bindings[0]))
-            .then(|| bindings[0].clone());
-        }
-    }
-    None
 }
 
 fn add(

@@ -53,6 +53,11 @@ not mean no callers exist.
 For Angular component, pipe, input or dialog facts, read
 [Angular output review](angular-output-review.md). It explains the supplied
 registration and handoff evidence and how to research the next missing edge.
+For React/Solid JSX output, use local producer/type facts and exact imported
+callers first. React `memo`/`forwardRef` wrappers are navigation, not controls;
+ordinary JSX text is escaped, while `dangerouslySetInnerHTML` interprets HTML.
+State/effect writers, class components, arbitrary wrappers and omitted/spread
+callers may need targeted research. A props type or memoization proves no trust.
 For Vue SFC output, use supplied setup producers, local dependencies, props,
 direct-import caller snippets, native-ref bindings and helper imports first.
 Initializers and writer snippets locate code; verify updates, branches and later
@@ -60,6 +65,9 @@ transformations. Caller samples are bounded. Alias/global registrations,
 destructured props and wider reactive flows still require research.
 Retrieve only missing source through `investigate source`. Native-ref identity
 and a props type do not prove input trust.
+Check the exact value representation: `location.search` retains URL encoding;
+`URLSearchParams.get` decodes it. HTML insertion does not itself URL-decode input.
+Use the actual source and transformations as proof, not the source's name.
 Normal interpolation and `v-text` are escaped text. Raw output alone proves no unsafe input.
 For editable controls, same-user typing reconstructed as HTML proves markup
 interpretation. A security issue still needs an attacker-to-victim delivery path

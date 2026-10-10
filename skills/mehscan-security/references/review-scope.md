@@ -419,6 +419,17 @@ data when consumer checks demonstrate it is unnecessary. Preserve required path
 steps, controls, context, admission accounting and optional compiler collection
 inputs; do not silently turn a scope exclusion into a safety proof.
 
+### React/Solid JSX admission
+
+Dynamic `dangerouslySetInnerHTML`/Solid `innerHTML` remain explicit raw output
+questions in both modes; static literals remain supporting controls and ordinary
+JSX text creates no new HTML work. Bounded const inputs, local prop types and
+exact relative-import callers locate code. Verified React `memo`/`forwardRef`
+imports permit wrapper navigation; they are not sanitizers. Covered dependency
+excerpts are not repeated. State/effects, class components, arbitrary wrappers,
+spreads, aliases and reaching values can require follow-up; no safe verdict is
+inferred from a type, wrapper, missing sample or encoded source name.
+
 ### Vue SFC admission
 
 Dynamic HTML-template `v-html` is an explicit raw interpretation boundary in

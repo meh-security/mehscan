@@ -19,7 +19,7 @@ struct PropContract {
     exports: BTreeSet<String>,
     default_export: bool,
     parameter: ReviewNeighborhoodFact,
-    producers: Vec<ReviewNeighborhoodFact>,
+    wrappers: Vec<ReviewNeighborhoodFact>,
 }
 
 impl FrontendContext {
@@ -201,8 +201,35 @@ impl FrontendContext {
             else {
                 continue;
             };
+            context
+                .imports
+                .entry(file.path.clone())
+                .or_insert_with(|| import_bindings(file, &ast.root()));
             for sink in sinks {
-                if let Some(contract) = prop_contract(file, &ast.root(), sink) {
+                let root = ast.root();
+                let Some(operand) = sink.captures.get("content").and_then(|capture| {
+                    root.dfs().find(|n| {
+                        n.range().start == capture.location.start.byte_offset
+                            && n.range().end == capture.location.end.byte_offset
+                            && valid(n)
+                    })
+                }) else {
+                    continue;
+                };
+                let (facts, partial) = context.packets.entry(sink.id.clone()).or_default();
+                let expressions = dependencies(
+                    file,
+                    &root,
+                    vec![operand],
+                    facts,
+                    partial,
+                    &sink.id,
+                    "frontend_output_producer_context",
+                );
+                if let Some(contract) = prop_contract(file, &root, sink, &expressions) {
+                    facts.push(contract.parameter.clone());
+                    facts.extend(contract.wrappers.clone());
+                    append_prop_types(file, &root, &contract.parameter, &sink.id, facts, partial);
                     contracts.push(contract);
                 }
             }
@@ -231,33 +258,10 @@ impl FrontendContext {
             };
             let root = ast.root();
             let partial_parse = root.dfs().any(|n| n.is_error() || n.is_missing());
-            context.imports.insert(
-                file.path.clone(),
-                root.children()
-                    .filter(|n| {
-                        n.kind().as_ref() == "import_statement"
-                            && valid(n)
-                            && n.range().len() <= MAX_FACT_BYTES
-                    })
-                    .map(|n| {
-                        let names = n
-                            .dfs()
-                            .filter(|n| n.kind().as_ref() == "identifier")
-                            .map(|n| n.text().to_string())
-                            .collect();
-                        (
-                            names,
-                            fact(
-                                file,
-                                &n,
-                                "frontend_import_binding_context",
-                                "caller/helper imports",
-                                "",
-                            ),
-                        )
-                    })
-                    .collect(),
-            );
+            context
+                .imports
+                .entry(file.path.clone())
+                .or_insert_with(|| import_bindings(file, &root));
             for contract in &contracts {
                 let aliases = component_aliases(file, &root, contract, sources);
                 if aliases.is_empty() {
@@ -299,10 +303,6 @@ impl FrontendContext {
                         .entry(contract.evidence_id.clone())
                         .or_default();
                     *truncated |= partial_parse;
-                    if facts.is_empty() {
-                        facts.push(contract.parameter.clone());
-                        facts.extend(contract.producers.clone());
-                    }
                     if facts
                         .iter()
                         .filter(|f| f.role == "frontend_prop_caller_context")
@@ -342,9 +342,10 @@ impl FrontendContext {
                             if let Some(expression) = expression {
                                 append_producer(
                                     file,
-                                    &element,
+                                    &root,
                                     expression,
                                     facts,
+                                    truncated,
                                     &contract.evidence_id,
                                 );
                             }
@@ -431,10 +432,37 @@ fn valid(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
     !node.dfs().any(|n| n.is_error() || n.is_missing())
 }
 
+fn import_bindings(
+    file: &SourceFile,
+    root: &Node<'_, StrDoc<SupportLang>>,
+) -> Vec<(Vec<String>, ReviewNeighborhoodFact)> {
+    root.children()
+        .filter(|n| {
+            n.kind().as_ref() == "import_statement" && valid(n) && n.range().len() <= MAX_FACT_BYTES
+        })
+        .map(|n| {
+            (
+                n.dfs()
+                    .filter(|n| n.kind().as_ref() == "identifier")
+                    .map(|n| n.text().to_string())
+                    .collect(),
+                fact(
+                    file,
+                    &n,
+                    "frontend_import_binding_context",
+                    "frontend helper/component imports",
+                    "",
+                ),
+            )
+        })
+        .collect()
+}
+
 fn prop_contract(
     file: &SourceFile,
     root: &Node<'_, StrDoc<SupportLang>>,
     sink: &Evidence,
+    expressions: &[Node<'_, StrDoc<SupportLang>>],
 ) -> Option<PropContract> {
     let capture = sink.captures.get("content")?;
     let node = root.dfs().find(|n| {
@@ -450,12 +478,36 @@ fn prop_contract(
     if !valid(&owner) || owner.ancestors().any(|n| n.is_error() || n.is_missing()) {
         return None;
     }
+    let mut wrappers = Vec::new();
     let (name, binding) = if owner.kind().as_ref() == "function_declaration" {
         (owner.field("name")?, owner.clone())
     } else {
-        let binding = owner.parent()?;
+        let mut value = owner.clone();
+        for _ in 0..2 {
+            let Some(arguments) = value.parent().filter(|n| n.kind().as_ref() == "arguments")
+            else {
+                break;
+            };
+            if arguments.children().find(|n| n.is_named())?.range() != value.range() {
+                return None;
+            }
+            let call = arguments.parent()?;
+            let callee = call.field("function")?;
+            if !react_wrapper(root, &callee) {
+                return None;
+            }
+            wrappers.push(fact(
+                file,
+                &callee,
+                "frontend_component_wrapper_context",
+                "React component wrapper; not an HTML control",
+                &sink.id,
+            ));
+            value = call;
+        }
+        let binding = value.parent()?;
         if binding.kind().as_ref() != "variable_declarator"
-            || binding.field("value")?.range() != owner.range()
+            || binding.field("value")?.range() != value.range()
             || !binding.parent()?.text().trim_start().starts_with("const ")
         {
             return None;
@@ -489,53 +541,12 @@ fn prop_contract(
         .field("pattern")
         .or_else(|| parameter.field("name"))
         .unwrap_or(parameter.clone());
-    let mut producers = Vec::new();
-    let mut expression = node.clone();
-    for _ in 0..2 {
-        if expression.kind().as_ref() != "identifier" {
-            break;
-        }
-        let bindings: Vec<_> = owner
-            .dfs()
-            .filter(|n| {
-                n.kind().as_ref() == "variable_declarator"
-                    && n.range().start < node.range().start
-                    && n.field("name")
-                        .is_some_and(|n| n.text() == expression.text())
-                    && n.parent()
-                        .is_some_and(|n| n.text().trim_start().starts_with("const "))
-                    && n.ancestors()
-                        .find(|n| callable(n))
-                        .is_some_and(|n| n.range() == owner.range())
-                    && n.ancestors()
-                        .find(|n| n.kind().as_ref() == "statement_block")
-                        .is_some_and(|n| {
-                            n.range().start <= node.range().start
-                                && node.range().end <= n.range().end
-                        })
-            })
-            .collect();
-        if bindings.len() != 1 {
-            break;
-        }
-        let binding = &bindings[0];
-        if binding.range().len() > MAX_FACT_BYTES {
-            return None;
-        }
-        producers.push(fact(
-            file,
-            binding,
-            "frontend_output_producer_context",
-            expression.text().trim(),
-            &sink.id,
-        ));
-        expression = binding.field("value")?;
-    }
     let mut reads = BTreeSet::new();
     if pattern.kind().as_ref() == "identifier" {
         let object = pattern.text().to_string();
-        for read in expression
-            .dfs()
+        for read in expressions
+            .iter()
+            .flat_map(|expression| expression.dfs())
             .filter(|n| n.kind().as_ref() == "member_expression")
         {
             if read
@@ -565,13 +576,16 @@ fn prop_contract(
                 None
             };
             if let Some((prop, local)) = pair
-                && expression.dfs().any(|n| {
-                    matches!(
-                        n.kind().as_ref(),
-                        "identifier" | "shorthand_property_identifier"
-                    ) && n.text().trim() == local
-                        && !parameter_shadow(&n, &owner, &local)
-                })
+                && expressions
+                    .iter()
+                    .flat_map(|expression| expression.dfs())
+                    .any(|n| {
+                        matches!(
+                            n.kind().as_ref(),
+                            "identifier" | "shorthand_property_identifier"
+                        ) && n.text().trim() == local
+                            && !parameter_shadow(&n, &owner, &local)
+                    })
             {
                 reads.insert((prop, local));
             }
@@ -649,8 +663,79 @@ fn prop_contract(
         exports,
         default_export,
         parameter: parameter_fact,
-        producers,
+        wrappers,
     })
+}
+
+fn react_wrapper(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    callee: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    let (binding, method) = if callee.kind().as_ref() == "member_expression" {
+        let Some(object) = callee
+            .field("object")
+            .filter(|n| n.kind().as_ref() == "identifier")
+        else {
+            return false;
+        };
+        let Some(property) = callee.field("property") else {
+            return false;
+        };
+        (object.text().to_string(), Some(property.text().to_string()))
+    } else if callee.kind().as_ref() == "identifier" {
+        (callee.text().to_string(), None)
+    } else {
+        return false;
+    };
+    if method
+        .as_ref()
+        .is_some_and(|m| !matches!(m.as_str(), "memo" | "forwardRef"))
+        || shadowed(callee, &binding)
+        || root.dfs().any(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "assignment_expression" | "augmented_assignment_expression"
+            ) && n
+                .field("left")
+                .is_some_and(|n| n.text() == binding || n.text() == callee.text())
+        })
+    {
+        return false;
+    }
+    root.children()
+        .filter(|n| {
+            n.kind().as_ref() == "import_statement"
+                && valid(n)
+                && !n.text().trim_start().starts_with("import type ")
+                && n.field("source")
+                    .is_some_and(|n| n.text().trim_matches(['\'', '"']) == "react")
+        })
+        .any(|import| {
+            if method.is_some() {
+                import
+                    .children()
+                    .filter(|n| n.kind().as_ref() == "import_clause")
+                    .flat_map(|n| n.children().collect::<Vec<_>>())
+                    .any(|n| {
+                        n.kind().as_ref() == "identifier" && n.text() == binding
+                            || n.kind().as_ref() == "namespace_import"
+                                && n.dfs().any(|n| {
+                                    n.kind().as_ref() == "identifier" && n.text() == binding
+                                })
+                    })
+            } else {
+                import
+                    .dfs()
+                    .filter(|n| n.kind().as_ref() == "import_specifier")
+                    .any(|n| {
+                        n.field("name")
+                            .is_some_and(|n| matches!(n.text().as_ref(), "memo" | "forwardRef"))
+                            && n.field("alias")
+                                .or_else(|| n.field("name"))
+                                .is_some_and(|n| n.text() == binding)
+                    })
+            }
+        })
 }
 
 fn callable(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
@@ -668,7 +753,7 @@ fn parameter_shadow(
     node.ancestors()
         .take_while(|n| n.range() != owner.range())
         .any(|n| {
-            callable(&n)
+            (callable(&n)
                 && n.field("parameters")
                     .or_else(|| n.field("parameter"))
                     .is_some_and(|p| {
@@ -678,6 +763,22 @@ fn parameter_shadow(
                                 "identifier" | "shorthand_property_identifier_pattern"
                             ) && n.text().trim() == name
                         })
+                    }))
+                || n.kind().as_ref() == "statement_block"
+                    && n.dfs().any(|binding| {
+                        binding.kind().as_ref() == "variable_declarator"
+                            && binding
+                                .ancestors()
+                                .find(|a| a.kind().as_ref() == "statement_block")
+                                .is_some_and(|a| a.range() == n.range())
+                            && binding.field("name").is_some_and(|p| {
+                                p.dfs().any(|part| {
+                                    matches!(
+                                        part.kind().as_ref(),
+                                        "identifier" | "shorthand_property_identifier_pattern"
+                                    ) && part.text() == name
+                                })
+                            })
                     })
         })
 }
@@ -779,8 +880,12 @@ fn shadowed(element: &Node<'_, StrDoc<SupportLang>>, name: &str) -> bool {
             .field("parameters")
             .or_else(|| owner.field("parameter"))
             .is_some_and(|p| {
-                p.dfs()
-                    .any(|n| n.kind().as_ref() == "identifier" && n.text().trim() == name)
+                p.dfs().any(|n| {
+                    matches!(
+                        n.kind().as_ref(),
+                        "identifier" | "shorthand_property_identifier_pattern"
+                    ) && n.text().trim() == name
+                })
             })
             || owner.dfs().any(|n| {
                 matches!(
@@ -793,67 +898,191 @@ fn shadowed(element: &Node<'_, StrDoc<SupportLang>>, name: &str) -> bool {
 
 fn append_producer<'a>(
     file: &SourceFile,
-    element: &Node<'a, StrDoc<SupportLang>>,
+    root: &Node<'a, StrDoc<SupportLang>>,
     expression: Node<'a, StrDoc<SupportLang>>,
     facts: &mut Vec<ReviewNeighborhoodFact>,
+    partial: &mut bool,
     evidence_id: &str,
 ) {
-    let mut expression = expression;
+    dependencies(
+        file,
+        root,
+        vec![expression],
+        facts,
+        partial,
+        evidence_id,
+        "frontend_prop_producer_context",
+    );
+}
+
+// Candidate lexical inputs, not reaching-value/taint proof. Shared by Vue/JSX.
+fn dependencies<'a>(
+    file: &SourceFile,
+    root: &Node<'a, StrDoc<SupportLang>>,
+    mut seeds: Vec<Node<'a, StrDoc<SupportLang>>>,
+    facts: &mut Vec<ReviewNeighborhoodFact>,
+    partial: &mut bool,
+    id: &str,
+    role: &str,
+) -> Vec<Node<'a, StrDoc<SupportLang>>> {
+    let mut inspected = seeds.clone();
+    let mut visited = BTreeSet::new();
+    let mut count = facts.iter().filter(|f| f.role == role).count();
     for _ in 0..2 {
-        if expression.kind().as_ref() != "identifier" {
-            break;
+        let mut next = Vec::new();
+        for expression in seeds {
+            for name in expression.dfs().filter(|n| {
+                matches!(
+                    n.kind().as_ref(),
+                    "identifier" | "shorthand_property_identifier"
+                )
+            }) {
+                let Some(binding) = lexical_binding(root, &name) else {
+                    continue;
+                };
+                if !binding
+                    .parent()
+                    .is_some_and(|n| n.text().trim_start().starts_with("const "))
+                    || !visited.insert(binding.range().start)
+                {
+                    continue;
+                }
+                if file.path.ends_with(".vue") && vue::props_macro(&binding).is_some() {
+                    continue; // Pack the actual props contract only when read.
+                }
+                let covered = facts.iter().any(|f| {
+                    f.location.path == file.path
+                        && f.location.start.byte_offset <= binding.range().start
+                        && f.location.end.byte_offset >= binding.range().end
+                });
+                if !covered {
+                    if count == 4 || binding.range().len() > MAX_FACT_BYTES {
+                        *partial = true;
+                        continue;
+                    }
+                    facts.push(fact(
+                        file,
+                        &binding,
+                        role,
+                        "candidate local input; reaching value and transformations require review",
+                        id,
+                    ));
+                    count += 1;
+                }
+                // Covered nested declarations still contribute their inputs.
+                if let Some(value) = binding.field("value") {
+                    inspected.push(value.clone());
+                    next.push(value);
+                }
+            }
         }
-        let Some(scope) = element.ancestors().find(|n| {
-            matches!(
-                n.kind().as_ref(),
-                "function_declaration" | "arrow_function" | "function_expression"
-            )
-        }) else {
-            break;
-        };
-        let bindings: Vec<_> = scope
+        seeds = next;
+    }
+    inspected
+}
+
+fn lexical_binding<'a>(
+    root: &Node<'a, StrDoc<SupportLang>>,
+    name: &Node<'a, StrDoc<SupportLang>>,
+) -> Option<Node<'a, StrDoc<SupportLang>>> {
+    for scope in name
+        .ancestors()
+        .filter(|n| matches!(n.kind().as_ref(), "statement_block" | "program") || callable(n))
+    {
+        if callable(&scope)
+            && scope
+                .field("parameters")
+                .or_else(|| scope.field("parameter"))
+                .is_some_and(|p| {
+                    p.dfs().any(|n| {
+                        matches!(
+                            n.kind().as_ref(),
+                            "identifier" | "shorthand_property_identifier_pattern"
+                        ) && n.text() == name.text()
+                    })
+                })
+        {
+            return None;
+        }
+        let bindings: Vec<_> = root
             .dfs()
             .filter(|n| {
                 n.kind().as_ref() == "variable_declarator"
-                    && n.range().start < element.range().start
+                    && n.field("name").is_some_and(|pattern| {
+                        pattern.dfs().any(|n| {
+                            matches!(
+                                n.kind().as_ref(),
+                                "identifier" | "shorthand_property_identifier_pattern"
+                            ) && n.text() == name.text()
+                        })
+                    })
                     && n.ancestors()
                         .find(|a| {
-                            matches!(
-                                a.kind().as_ref(),
-                                "function_declaration" | "arrow_function" | "function_expression"
-                            )
+                            matches!(a.kind().as_ref(), "statement_block" | "program")
+                                || callable(a)
                         })
                         .is_some_and(|a| a.range() == scope.range())
-                    && n.ancestors()
-                        .find(|a| a.kind().as_ref() == "statement_block")
-                        .is_some_and(|a| {
-                            a.range().start <= element.range().start
-                                && element.range().end <= a.range().end
-                        })
-                    && n.field("name")
-                        .is_some_and(|name| name.text() == expression.text())
-                    && n.parent()
-                        .is_some_and(|p| p.text().trim_start().starts_with("const "))
             })
             .collect();
-        if bindings.len() != 1 {
-            break;
+        if !bindings.is_empty() {
+            return (bindings.len() == 1
+                && bindings[0]
+                    .field("name")
+                    .is_some_and(|n| n.kind().as_ref() == "identifier")
+                && bindings[0].range().start < name.range().start
+                && valid(&bindings[0]))
+            .then(|| bindings[0].clone());
         }
-        let binding = &bindings[0];
-        if binding.range().len() > MAX_FACT_BYTES {
-            break;
+    }
+    None
+}
+
+fn append_prop_types(
+    file: &SourceFile,
+    root: &Node<'_, StrDoc<SupportLang>>,
+    parameter: &ReviewNeighborhoodFact,
+    id: &str,
+    facts: &mut Vec<ReviewNeighborhoodFact>,
+    partial: &mut bool,
+) {
+    let Some(parameter) = root.dfs().find(|n| {
+        n.range().start == parameter.location.start.byte_offset
+            && n.range().end == parameter.location.end.byte_offset
+    }) else {
+        return;
+    };
+    let names: BTreeSet<_> = parameter
+        .dfs()
+        .filter(|n| n.kind().as_ref() == "type_identifier")
+        .map(|n| n.text().to_string())
+        .collect();
+    for declaration in root.dfs().filter(|n| {
+        matches!(
+            n.kind().as_ref(),
+            "interface_declaration" | "type_alias_declaration"
+        ) && n
+            .ancestors()
+            .all(|a| matches!(a.kind().as_ref(), "program" | "export_statement"))
+            && n.field("name")
+                .is_some_and(|n| names.contains(n.text().as_ref()))
+    }) {
+        if facts
+            .iter()
+            .filter(|f| f.role == "frontend_component_prop_type_context")
+            .count()
+            == 2
+            || declaration.range().len() > MAX_FACT_BYTES
+        {
+            *partial = true;
+            continue;
         }
         facts.push(fact(
             file,
-            binding,
-            "frontend_prop_producer_context",
-            expression.text().trim(),
-            evidence_id,
+            &declaration,
+            "frontend_component_prop_type_context",
+            "local props type; input trust requires review",
+            id,
         ));
-        let Some(value) = binding.field("value") else {
-            break;
-        };
-        expression = value;
     }
 }
 

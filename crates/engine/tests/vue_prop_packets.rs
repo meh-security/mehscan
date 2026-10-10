@@ -5,6 +5,31 @@ fn fixture() -> PathBuf {
 }
 
 #[test]
+fn nested_vue_dependencies_keep_prop_reads_without_repeating_covered_source() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/vue-dependency-review");
+    let jobs =
+        mehscan_engine::investigation::build_path_review_jobs(&root, Some(3), Some(100)).unwrap();
+    let review = &jobs.observation_reviews[0];
+    assert!(
+        review
+            .facts
+            .iter()
+            .any(|f| f.role == "frontend_output_producer_context"
+                && f.excerpt.contains("const piece"))
+    );
+    assert!(
+        review
+            .facts
+            .iter()
+            .any(|f| f.role == "frontend_component_prop_context")
+    );
+    assert!(!review.facts.iter().any(
+        |f| f.role == "frontend_output_dependency_context" && f.excerpt.starts_with("piece =")
+    ));
+}
+
+#[test]
 fn vue_packets_locate_setup_producers_props_and_exact_imported_callers() {
     let root = fixture();
     let jobs =
