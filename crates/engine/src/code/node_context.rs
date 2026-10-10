@@ -33,9 +33,49 @@ enum PugOutputMode {
     Mixed,
 }
 
-fn trace_node_context_step(path: &str, step: &str) {
-    if std::env::var_os("MEHSCAN_TRACE_PHASES").is_some() {
-        eprintln!("mehscan_node_context {path} {step}");
+#[derive(Default)]
+struct NodeContextTrace {
+    enabled: bool,
+    active: Option<(String, &'static str, std::time::Instant)>,
+    steps: BTreeMap<&'static str, (usize, u128)>,
+    files: BTreeMap<String, u128>,
+}
+
+impl NodeContextTrace {
+    fn new() -> Self {
+        Self {
+            enabled: std::env::var_os("MEHSCAN_TRACE_PHASES").is_some(),
+            ..Self::default()
+        }
+    }
+
+    fn step(&mut self, path: &str, step: &'static str) {
+        if self.enabled {
+            self.finish();
+            self.active = Some((path.to_string(), step, std::time::Instant::now()));
+        }
+    }
+
+    fn finish(&mut self) {
+        if let Some((path, step, started)) = self.active.take() {
+            let elapsed = started.elapsed().as_micros();
+            let total = self.steps.entry(step).or_default();
+            total.0 += 1;
+            total.1 += elapsed;
+            *self.files.entry(path).or_default() += elapsed;
+        }
+    }
+
+    fn report(mut self) {
+        self.finish();
+        for (step, (count, microseconds)) in self.steps {
+            eprintln!("mehscan_node_context step={step} count={count} microseconds={microseconds}");
+        }
+        let mut files = self.files.into_iter().collect::<Vec<_>>();
+        files.sort_by_key(|(_, elapsed)| std::cmp::Reverse(*elapsed));
+        for (path, microseconds) in files.into_iter().take(5) {
+            eprintln!("mehscan_node_context_file microseconds={microseconds} path={path}");
+        }
     }
 }
 
@@ -193,6 +233,10 @@ impl NodeProjectContext {
             .filter(|(_, language, _)| is_node_language(*language))
             .collect::<Vec<_>>();
         let mut context = Self::default();
+        let mut trace = NodeContextTrace::new();
+        // Routes need wrappers from every module. Retain only documents needed
+        // by that second pass, reusing their validated AST and resolved imports.
+        let mut route_sources = Vec::new();
         for (path, language, source) in &sources {
             context.runtime_by_path.insert(
                 (*path).to_string(),
@@ -206,20 +250,27 @@ impl NodeProjectContext {
                 || source.contains("require(\"mongodb\")")
                 || source.contains("from 'mongodb'")
                 || source.contains("from \"mongodb\"");
+            trace.step(path, "parse");
             let Ok(document) = StrDoc::try_new(source, parser_language(*language)) else {
+                trace.finish();
                 continue;
             };
             let ast = AstGrep::doc(document);
             let root = ast.root();
+            trace.step(path, "parse_validation");
             if root.dfs().any(|node| node.is_error() || node.is_missing()) {
+                trace.finish();
                 continue;
             }
+            trace.step(path, "owner_guards");
             collect_owner_field_overwrite_guards(source, &mut context.owner_field_overwrite_guards);
+            trace.step(path, "exported_functions");
             let functions = exported_functions(&root);
+            trace.step(path, "imports");
             let imports = javascript_imports(path, &root);
-            trace_node_context_step(path, "parameter_returns");
+            trace.step(path, "parameter_returns");
             collect_parameter_return_summaries(path, &functions, &mut context.parameter_returns);
-            trace_node_context_step(path, "parameter_sinks");
+            trace.step(path, "parameter_sinks");
             collect_parameter_sink_summaries(
                 path,
                 &root,
@@ -228,53 +279,48 @@ impl NodeProjectContext {
                 &mut context.parameter_sinks,
             );
             if has_ejs_import(source) {
-                trace_node_context_step(path, "local_template_sinks");
+                trace.step(path, "local_template_sinks");
                 collect_local_template_parameter_sinks(path, &root, &mut context.parameter_sinks);
             }
-            trace_node_context_step(path, "callback_forwards");
+            trace.step(path, "callback_forwards");
             collect_callback_forward_summaries(path, &functions, &mut context.callback_forwards);
-            trace_node_context_step(path, "mongo_callback_results");
+            trace.step(path, "mongo_callback_results");
             collect_mongo_callback_result_summaries(
                 path,
                 &root,
                 &functions,
                 &mut context.mongo_callback_results,
             );
-            trace_node_context_step(path, "xxe_parsers");
+            trace.step(path, "xxe_parsers");
             collect_xxe_parser_summaries(path, &root, &mut context.xxe_parsers);
-            trace_node_context_step(path, "express_wrappers");
+            trace.step(path, "express_wrappers");
             collect_express_wrappers(path, &functions, &mut context.express_wrappers);
-            trace_node_context_step(path, "graphql_resolvers");
+            trace.step(path, "graphql_resolvers");
             collect_graphql_resolvers(path, &root, &mut context.graphql_resolvers);
-            trace_node_context_step(path, "request_boundary_flags");
-            let (has_session, has_csrf) = node_request_boundary_flags(path, &root);
+            trace.step(path, "request_boundary_flags");
+            let (has_session, has_csrf) = node_request_boundary_flags(&root, &imports);
             context.has_express_session |= has_session;
             if has_csrf {
                 context.csrf_middleware_paths.insert((*path).to_string());
             }
+            trace.finish();
+            if needs_project_context(source) {
+                route_sources.push((*path, ast, imports));
+            }
         }
-        for (path, language, source) in sources {
-            if !needs_project_context(source) {
-                continue;
-            }
-            let Ok(document) = StrDoc::try_new(source, parser_language(language)) else {
-                continue;
-            };
-            let ast = AstGrep::doc(document);
+        for (path, ast, imports) in route_sources {
             let root = ast.root();
-            if root.dfs().any(|node| node.is_error() || node.is_missing()) {
-                continue;
-            }
-            trace_node_context_step(path, "express_routes");
+            trace.step(path, "express_routes");
             collect_express_routes(
                 path,
                 &root,
+                &imports,
                 &context.express_wrappers,
                 &mut context.routes_by_handler,
             );
-            trace_node_context_step(path, "sensitive_model_fields");
+            trace.step(path, "sensitive_model_fields");
             collect_sensitive_model_fields(&root, &mut context.sensitive_model_fields);
-            trace_node_context_step(path, "done");
+            trace.finish();
         }
         for routes in context.routes_by_handler.values_mut() {
             routes.sort_by(|left, right| {
@@ -285,6 +331,7 @@ impl NodeProjectContext {
             });
             routes.dedup();
         }
+        trace.report();
         context
     }
 
@@ -2261,10 +2308,10 @@ fn last_element_array(text: &str) -> Option<String> {
 fn collect_express_routes(
     path: &str,
     root: &Node<'_, StrDoc<SupportLang>>,
+    imports: &BTreeMap<String, ImportTarget>,
     wrappers: &BTreeSet<String>,
     routes: &mut BTreeMap<String, Vec<ExpressRouteSummary>>,
 ) {
-    let imports = javascript_imports(path, root);
     let current_module = module_path(path).unwrap_or_default();
     let mounted_middleware = root
         .dfs()
@@ -2309,11 +2356,11 @@ fn collect_express_routes(
         };
         let handler_argument = call.arguments.last().expect("route has handler");
         let Some(handler_symbol) =
-            unwrap_handler(handler_argument, &current_module, &imports, wrappers, 0)
+            unwrap_handler(handler_argument, &current_module, imports, wrappers, 0)
         else {
             continue;
         };
-        let Some(handler) = resolve_handler(&handler_symbol, &current_module, &imports) else {
+        let Some(handler) = resolve_handler(&handler_symbol, &current_module, imports) else {
             continue;
         };
         let mut guards = mounted_middleware
@@ -5080,8 +5127,25 @@ fn js2_provenance() -> Provenance {
     }
 }
 
-fn node_request_boundary_flags(path: &str, root: &Node<'_, StrDoc<SupportLang>>) -> (bool, bool) {
-    let imports = javascript_imports(path, root);
+fn node_request_boundary_flags(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    imports: &BTreeMap<String, ImportTarget>,
+) -> (bool, bool) {
+    // Every recognized policy below requires one of these exact imported
+    // modules. Browser libraries and unrelated server modules need no call walk.
+    if !imports.values().any(|target| {
+        matches!(
+            target.module.as_str(),
+            "express-session"
+                | "cookie-session"
+                | "csurf"
+                | "csrf-csrf"
+                | "lusca"
+                | "@fastify/csrf-protection"
+        )
+    }) {
+        return (false, false);
+    }
     let mut has_session = false;
     let mut has_csrf = false;
     for outer in root.dfs().filter_map(call_site) {
@@ -5091,7 +5155,7 @@ fn node_request_boundary_flags(path: &str, root: &Node<'_, StrDoc<SupportLang>>)
         let Some(inner) = outer.arguments.first().cloned().and_then(call_site) else {
             continue;
         };
-        let Some(module) = imported_call_module(&imports, &inner.callee) else {
+        let Some(module) = imported_call_module(imports, &inner.callee) else {
             continue;
         };
         has_session |= module == "express-session" || module == "cookie-session";
@@ -6418,7 +6482,8 @@ mod tests {
         let ast = AstGrep::doc(document);
         let root = ast.root();
         let mut routes = BTreeMap::new();
-        collect_express_routes("server.ts", &root, &BTreeSet::new(), &mut routes);
+        let imports = javascript_imports("server.ts", &root);
+        collect_express_routes("server.ts", &root, &imports, &BTreeSet::new(), &mut routes);
         let route = |path: &str| {
             routes
                 .values()
@@ -6437,6 +6502,79 @@ mod tests {
         );
         assert!(route("/rest/baskets/:id").guards.is_empty());
         assert!(route("/rest/late/:id").guards.is_empty());
+    }
+
+    #[test]
+    fn shared_project_documents_preserve_later_wrappers_and_policy_imports() {
+        for language in [Language::Javascript, Language::Typescript] {
+            let sources = [
+                (
+                    "src/server.ts",
+                    language,
+                    "import { wrap } from './wrappers'; import { handler } from './handlers';
+                     import session from 'express-session'; const boundary = require('csurf');
+                     app.use(session()); app.use(boundary()); app.get('/item', wrap(handler));
+                     Account.init({ password: { type: 'text' } });",
+                ),
+                (
+                    "src/wrappers.ts",
+                    language,
+                    "export const wrap = handler => (req, res) => handler(req, res);",
+                ),
+                (
+                    "src/handlers.ts",
+                    language,
+                    "export const handler = (req, res) => res.send(req.query.html);",
+                ),
+                (
+                    "src/broken.ts",
+                    language,
+                    "app.get('/broken', bad); const broken = ;",
+                ),
+            ];
+            for ordered in [sources.to_vec(), sources.into_iter().rev().collect()] {
+                let context = NodeProjectContext::from_sources(ordered.into_iter());
+                let routes = &context.routes_by_handler["src/handlers.handler"];
+                assert_eq!(routes.len(), 1);
+                assert_eq!(routes[0].path, "/item");
+                assert!(context.has_express_session);
+                assert!(context.csrf_middleware_paths.contains("src/server.ts"));
+                assert_eq!(context.routes_by_handler.len(), 1);
+                assert!(context.sensitive_model_fields["Account"].contains("password"));
+            }
+        }
+    }
+
+    #[test]
+    fn cached_policy_imports_keep_all_recognized_aliases_and_require_actual_use() {
+        for (module, expected) in [
+            ("express-session", (true, false)),
+            ("cookie-session", (true, false)),
+            ("csurf", (false, true)),
+            ("csrf-csrf", (false, true)),
+            ("lusca", (false, true)),
+            ("@fastify/csrf-protection", (false, true)),
+            ("./custom-csrf", (false, false)),
+        ] {
+            for import in [
+                format!("import policy from '{module}';"),
+                format!("const policy = require('{module}');"),
+            ] {
+                for used in [false, true] {
+                    let source =
+                        format!("{import} {}", if used { "app.use(policy());" } else { "" });
+                    let ast =
+                        AstGrep::doc(StrDoc::try_new(&source, SupportLang::JavaScript).unwrap());
+                    let root = ast.root();
+                    let imports = javascript_imports("server.js", &root);
+                    assert_eq!(
+                        node_request_boundary_flags(&root, &imports),
+                        if used { expected } else { (false, false) },
+                        "{source}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
