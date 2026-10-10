@@ -21,6 +21,8 @@ followed by decoding or a change of interpretation can invalidate a control.
 Check text, attribute, URL, JavaScript and DOM contexts separately. Same-named
 helpers can differ. If the complete verified chain is safe in this context,
 close that property; input-origin research adds nothing to that conclusion.
+For server responses, check the effective content type and server-side control.
+One client's safe DOM insertion does not close a directly rendered HTML response.
 
 Otherwise trace who writes the exact rendered value. Inspect relevant normal
 and alternate writers, their actual callers/registration, and controls on those

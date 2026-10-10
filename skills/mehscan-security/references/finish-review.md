@@ -47,8 +47,10 @@ The validator checks response shape, selected anchor, citation links, and exact
 source excerpts. It cannot decide whether a control works or whether your
 verdict follows from the evidence; inspect that reasoning yourself.
 
-For resolved decisions, use `checks: []` and `investigation.blockers: []`;
-do not carry the resolved bundle question forward. For `needs_review`, name
+In brief drafts, use top-level `checks: []` and `blockers: []` for resolved
+decisions, or omit those fields. Do not add an `investigation` object; it belongs
+to the exceptional full response format. Do not carry the resolved bundle
+question forward. For `needs_review`, name
 the exact missing fact in one-line checks within 300 characters. Keep each
 summary on one line within 500 characters. Keep the brief reason concise; the
 finalizer formats up to 4000 characters into bounded inference claims without
