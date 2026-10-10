@@ -18,9 +18,12 @@ This is not destination trust or an operation-safety verdict. Credentials,
 headers/body, mutation methods, unknown options, replaced/custom fetch and
 Node/SSR scope remain active. Browser declarations alone do not establish runtime.
 
-The adapter pins TypeScript 5.9.3. Install its own dependency with
-`pnpm install --ignore-scripts` in this directory; Node must be on PATH. It never
-installs scanned-project dependencies, emits application code, runs plugins,
+## Opt in
+
+This backend remains experimental, including after merge. Mehscan does not install
+or enable it by default. Use an already provisioned adapter, TypeScript 5.9.3 and
+Node on PATH, then explicitly supply the backend script and source context below.
+It never installs scanned-project dependencies, emits application code, runs plugins,
 executes target modules or invokes a target build. Existing dependencies and
 compiler libraries provide metadata. The adapter itself is trusted local tooling.
 
@@ -131,3 +134,10 @@ Reassignments, virtual dispatch, callbacks, reflection and external callers stil
 need research. Empty caller lists never establish unreachability. Facts retain
 exact source locations and existing cache bindings; no review ID is closed or
 conditionally deferred solely because of incoming-argument navigation.
+
+## Developer setup (optional)
+
+To provision the adapter from this source checkout, run
+`pnpm install --ignore-scripts` in this directory. This explicit developer step
+installs the adapter's pinned dependencies; it is not part of Mehscan installation
+or scanning.

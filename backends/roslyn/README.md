@@ -19,7 +19,13 @@ User-supplied formatter strings and unknown roots remain separate inputs.
 Repeated immutable selectors can share conditional Value research. Neither
 establishes resource authorization, filesystem policy or safe runtime effects.
 
-## Build
+## Opt in
+
+This backend remains experimental, including after merge. Mehscan does not install
+or enable it by default. Use an already provisioned helper and compatible .NET
+runtime, then explicitly supply the backend executable and source context below.
+
+## Developer build (optional)
 
 Build this helper with the .NET 10 SDK. The helper uses pinned Roslyn 5.0.0;
 the scanned application's target framework is independent of the helper runtime.
