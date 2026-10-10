@@ -1614,7 +1614,21 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             print_logged_query(
                 engine(mehscan_engine::investigation::get_source(
                     &root, &path, start_line, end_line,
-                )),
+                ))
+                .and_then(|response| {
+                    let mut value = portable_json_value(&response)?;
+                    let lines = response.results.text.lines().count();
+                    if lines > 0 {
+                        let start = response.results.location.start.line;
+                        // Byte spans keep their exclusive endpoint. Citation
+                        // lines instead describe the actual returned text.
+                        value["results"]["line_range"] = serde_json::json!({
+                            "start_line": start, "end_line": start + lines - 1,
+                            "inclusive": true,
+                        });
+                    }
+                    Ok(value)
+                }),
                 journal.as_deref(),
                 &operation,
                 &root,

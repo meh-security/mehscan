@@ -17,6 +17,8 @@ Stop when the chain is established,
    limit 40 lines and 4000 characters). Use two ranges for separated facts
    rather than one long span. Line ranges here are inclusive; a source span
    ending at column 1 of the next line does not include that next line's text.
+   For `investigate source`, use `results.line_range` for inclusive citation
+   lines; `results.location` remains an exclusive byte span.
    The CLI reads
    exact source, fills artifact locations and excerpts, cites the selected
    anchor, and attaches the query journal. Keep `summary` and `reason` concise;
@@ -47,8 +49,9 @@ The validator checks response shape, selected anchor, citation links, and exact
 source excerpts. It cannot decide whether a control works or whether your
 verdict follows from the evidence; inspect that reasoning yourself.
 
-In brief drafts, use top-level `checks: []` and `blockers: []` for resolved
-decisions, or omit those fields. Do not add an `investigation` object; it belongs
+In brief drafts, the outer object contains only `results`. Inside each result,
+use `checks: []` and `blockers: []` for resolved decisions, or omit those fields.
+Do not add an `investigation` object; it belongs
 to the exceptional full response format. Do not carry the resolved bundle
 question forward. For `needs_review`, name
 the exact missing fact in one-line checks within 300 characters. Keep each

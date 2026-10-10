@@ -32,15 +32,19 @@ available read-only tools before calling the implementation unavailable. Treat
 deployment overrides as a blocker when evidence connects them to this chain;
 otherwise state the normal binding assumption. A complete output-control proof
 can settle HTML interpretation without reconstructing every input writer.
-When `frontend_component_prop_context` and `frontend_prop_caller_context` are
-supplied, start with those callers, `frontend_output_producer_context`,
-`frontend_prop_producer_context` and helper imports. Verify the actual helper and effective options before accepting
-a sanitizer. Static, sanitized and dynamic callers can have different answers;
-reuse the component implementation, not its verdict. The caller sample is bounded:
-spreads, omitted callers, parser gaps, reassignments and unsupported component
-wrappers require targeted source follow-up. A missing caller fact does not mean no callers exist.
-The compact `review-card` and `review-sweep` views expose these facts under
-`frontend_context`.
+Compact `review-card` and `review-sweep` views expose supplied frontend facts
+under `frontend_context`. Start with `frontend_output_producer_context` and
+helper imports. Verify the actual helper, options and complete transformation
+chain. If that control settles the exact HTML property for all inputs, stop;
+caller sampling gaps do not reopen it. Do not reread supplied producer windows
+or investigate caller origins merely to confirm them.
+If the control is absent, bypassed or unresolved, use
+`frontend_component_prop_context`, `frontend_prop_caller_context` and
+`frontend_prop_producer_context` to research the next missing edge. Static,
+sanitized and dynamic callers can differ: reuse facts, not verdicts. The sample
+is bounded; investigate spreads, omitted callers, parser gaps, reassignments
+and unsupported wrappers when they affect that edge. Missing caller facts do
+not mean no callers exist.
 For DOM-to-DOM HTML copying, inspect the source element's markup and relevant
 writers. A DOM selector/type is navigation, not trusted contents. For a shared
 request helper, pair the implementation with observed callers and effective

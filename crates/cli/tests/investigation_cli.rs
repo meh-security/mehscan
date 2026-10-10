@@ -35,6 +35,57 @@ fn fixture_root() -> PathBuf {
 }
 
 #[test]
+fn source_queries_expose_inclusive_citation_lines_at_eof() {
+    let root = std::env::temp_dir().join(format!("mehscan-source-lines-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    for (path, text, exclusive_line) in [
+        ("trailing.ts", "first\nlast\n", 3),
+        ("inline.ts", "first\nlast", 2),
+        ("crlf.ts", "first\r\nlast\r\n", 3),
+    ] {
+        fs::write(root.join(path), text).unwrap();
+        let journal = root.join(format!("{path}.jsonl"));
+        let result = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args([
+                "investigate",
+                "source",
+                root.to_str().unwrap(),
+                "--path",
+                path,
+                "--start-line",
+                "2",
+                "--end-line",
+                "99",
+                "--journal",
+                journal.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(
+            value["results"]["line_range"],
+            serde_json::json!({
+                "start_line":2, "end_line":2, "inclusive":true
+            })
+        );
+        assert_eq!(value["results"]["location"]["end"]["line"], exclusive_line);
+        assert_eq!(
+            value["results"]["text"].as_str().unwrap().trim_end(),
+            "last"
+        );
+        let row: serde_json::Value =
+            serde_json::from_str(fs::read_to_string(journal).unwrap().lines().last().unwrap())
+                .unwrap();
+        assert_eq!(row["output"]["results"], value["results"]);
+    }
+}
+
+#[test]
 fn provenance_query_is_bounded_read_only_and_journaled() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let journal = std::env::temp_dir().join(format!(
