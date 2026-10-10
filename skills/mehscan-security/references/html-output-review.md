@@ -53,6 +53,12 @@ not mean no callers exist.
 For Angular component, pipe, input or dialog facts, read
 [Angular output review](angular-output-review.md). It explains the supplied
 registration and handoff evidence and how to research the next missing edge.
+For Vue SFC `v-html`, use supplied script producers and transformations first;
+retrieve missing source through `investigate source`. This slice locates the
+directive but does not link template bindings, reactive assignments or child props. Normal interpolation and
+`v-text` are escaped text. A `v-html` observation alone proves no unsafe input.
+External/preprocessed blocks and dual script scopes have partial coverage;
+inspect their source when relevant rather than infer absent producers or callers.
 For DOM-to-DOM HTML copying, inspect the source element's markup and relevant
 writers. A DOM selector/type is navigation, not trusted contents. For a shared
 request helper, pair the implementation with observed callers and effective

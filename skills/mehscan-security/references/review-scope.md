@@ -419,6 +419,15 @@ data when consumer checks demonstrate it is unnecessary. Preserve required path
 steps, controls, context, admission accounting and optional compiler collection
 inputs; do not silently turn a scope exclusion into a safety proof.
 
+### Vue SFC admission
+
+Dynamic HTML-template `v-html` is an explicit raw interpretation boundary in
+Value and Comprehensive, requiring producer/control review rather than a scanner
+verdict. Direct static literals are supporting facts. Normal interpolation,
+`v-text` and media URL bindings create no standalone HTML question. Inline
+script operations follow the existing JS/TS policy; partial SFC coverage is not
+a safe verdict. Vue DOM refs and template producer/prop links remain coverage gaps.
+
 ## Improve from real applications
 
 For each concentrated or surprising lane, inspect a small mix of Value,

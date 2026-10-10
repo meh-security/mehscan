@@ -225,8 +225,10 @@ they share a package directory. Use each subproject's actual compiler options.
 For bundler-only aliases, inspect the config as source, translate verified static
 targets into `compiler_options.paths`, and bind the config in `context_files`.
 Do not execute configuration/plugins, invent a stub implementation or install
-dependencies. Dynamic/conflicting mappings stay unresolved. Missing `.vue`
-component scripts/templates are a coverage gap, not evidence of absent callers.
+dependencies. Dynamic/conflicting mappings stay unresolved. Rust scanning covers
+inline Vue JS/TS script bodies and HTML-template `v-html` locations. External or
+preprocessed blocks, dual script scopes and template-to-producer navigation remain
+coverage gaps; optional TypeScript context does not fill them automatically.
 
 Exclude standalone requests resolved to DOM
 fetch in an explicitly supplied browser context, using default GET or literal

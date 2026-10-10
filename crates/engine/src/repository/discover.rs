@@ -480,6 +480,7 @@ fn push_file(
     let reason = match class {
         FileClass::Supported(_)
         | FileClass::EmbeddedJavascriptTemplate
+        | FileClass::Vue
         | FileClass::Razor
         | FileClass::WebForms => None,
         FileClass::SecretOnly if super::classify::is_sast_excluded_source(relative_path) => {

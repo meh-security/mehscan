@@ -20500,6 +20500,7 @@ pub fn find_source_paths(
             FileClass::Supported(_) => fs::read_to_string(&file.absolute).is_ok(),
             FileClass::SecretOnly
             | FileClass::EmbeddedJavascriptTemplate
+            | FileClass::Vue
             | FileClass::Razor
             | FileClass::WebForms => crate::code::read_secret_text(&file.absolute).is_ok(),
             FileClass::Ignored if is_investigation_template(&file.relative) => {
@@ -20988,6 +20989,7 @@ impl RepositorySources {
                 }
                 FileClass::SecretOnly
                 | FileClass::EmbeddedJavascriptTemplate
+                | FileClass::Vue
                 | FileClass::Razor
                 | FileClass::WebForms => {
                     let Ok(source) = crate::code::read_secret_text(&file.absolute) else {

@@ -124,6 +124,7 @@ mod scanner;
 #[path = "sql_flow.rs"]
 mod security_paths;
 mod symbols;
+pub(crate) mod vue;
 mod webforms;
 
 pub use scanner::{FileAnalysisProfile, ScanProfile};

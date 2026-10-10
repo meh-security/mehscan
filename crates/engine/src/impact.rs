@@ -589,6 +589,7 @@ fn is_analyzable(class: FileClass) -> bool {
         class,
         FileClass::Supported(_)
             | FileClass::EmbeddedJavascriptTemplate
+            | FileClass::Vue
             | FileClass::Razor
             | FileClass::WebForms
     )
