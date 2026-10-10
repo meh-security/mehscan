@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use ast_grep_core::Node;
@@ -33,6 +33,7 @@ pub(crate) fn add_injection_evidence<'tree>(
     if language != Language::Csharp {
         return;
     }
+    let types = TypeBindings::from_root(root);
 
     for creation in root
         .dfs()
@@ -47,16 +48,17 @@ pub(crate) fn add_injection_evidence<'tree>(
         let kind = kind.text();
         let arguments = node_arguments(&creation).unwrap_or_default();
         if type_is(
-            root,
+            &types,
             kind.as_ref(),
             "System.DirectoryServices.DirectorySearcher",
         ) {
-            let filter = initializer_value(&creation, "Filter")
-                .or_else(|| directory_searcher_filter_argument(root, &creation, &arguments));
+            let filter = initializer_value(&creation, "Filter").or_else(|| {
+                directory_searcher_filter_argument(root, &types, &creation, &arguments)
+            });
             if let Some(filter) = filter {
                 push_ldap_sink(
                     path,
-                    root,
+                    &types,
                     &creation,
                     "csharp-directory-searcher-filter",
                     "filter",
@@ -68,15 +70,21 @@ pub(crate) fn add_injection_evidence<'tree>(
                 );
             }
         } else if type_is(
-            root,
+            &types,
             kind.as_ref(),
             "System.DirectoryServices.Protocols.SearchRequest",
         ) && arguments.len() >= 2
-            && !expression_has_type(root, &creation, &arguments[1], "System.Xml.XmlDocument")
+            && !expression_has_type(
+                root,
+                &types,
+                &creation,
+                &arguments[1],
+                "System.Xml.XmlDocument",
+            )
         {
             push_ldap_sink(
                 path,
-                root,
+                &types,
                 &creation,
                 "csharp-ldap-search-request-filter",
                 "filter",
@@ -88,7 +96,7 @@ pub(crate) fn add_injection_evidence<'tree>(
             );
             push_ldap_sink(
                 path,
-                root,
+                &types,
                 &creation,
                 "csharp-ldap-search-request-dn",
                 "distinguished_name",
@@ -99,7 +107,7 @@ pub(crate) fn add_injection_evidence<'tree>(
                 evidence,
             );
         } else if type_is(
-            root,
+            &types,
             kind.as_ref(),
             "System.DirectoryServices.DirectoryEntry",
         ) && let Some(distinguished_name) =
@@ -107,7 +115,7 @@ pub(crate) fn add_injection_evidence<'tree>(
         {
             push_ldap_sink(
                 path,
-                root,
+                &types,
                 &creation,
                 "csharp-directory-entry-path",
                 "distinguished_name",
@@ -140,7 +148,7 @@ pub(crate) fn add_injection_evidence<'tree>(
         ) {
             continue;
         }
-        let owned = type_is(root, receiver, "System.Xml.XPath.XPathExpression")
+        let owned = type_is(&types, receiver, "System.Xml.XPath.XPathExpression")
             || simple_identifier(receiver).is_some_and(|receiver| {
                 [
                     "System.Xml.XPath.XPathNavigator",
@@ -148,7 +156,7 @@ pub(crate) fn add_injection_evidence<'tree>(
                     "System.Xml.XmlDocument",
                 ]
                 .iter()
-                .any(|canonical| receiver_has_type(root, &invocation, receiver, canonical))
+                .any(|canonical| receiver_has_type(root, &types, &invocation, receiver, canonical))
             });
         if !owned {
             continue;
@@ -189,6 +197,7 @@ pub(crate) fn add_injection_evidence<'tree>(
         if let Some(receiver) = left.strip_suffix(".Filter").and_then(simple_identifier)
             && receiver_has_type(
                 root,
+                &types,
                 &assignment,
                 receiver,
                 "System.DirectoryServices.DirectorySearcher",
@@ -196,7 +205,7 @@ pub(crate) fn add_injection_evidence<'tree>(
         {
             push_ldap_sink(
                 path,
-                root,
+                &types,
                 &assignment,
                 "csharp-directory-searcher-filter-assignment",
                 "filter",
@@ -209,6 +218,7 @@ pub(crate) fn add_injection_evidence<'tree>(
         } else if let Some(receiver) = left.strip_suffix(".Path").and_then(simple_identifier)
             && receiver_has_type(
                 root,
+                &types,
                 &assignment,
                 receiver,
                 "System.DirectoryServices.DirectoryEntry",
@@ -216,7 +226,7 @@ pub(crate) fn add_injection_evidence<'tree>(
         {
             push_ldap_sink(
                 path,
-                root,
+                &types,
                 &assignment,
                 "csharp-directory-entry-path-assignment",
                 "distinguished_name",
@@ -233,7 +243,7 @@ pub(crate) fn add_injection_evidence<'tree>(
 #[allow(clippy::too_many_arguments)]
 fn push_ldap_sink<'tree>(
     path: &str,
-    root: &Node<'tree, StrDoc<SupportLang>>,
+    types: &TypeBindings,
     node: &Node<'tree, StrDoc<SupportLang>>,
     rule_id: &str,
     role: &'static str,
@@ -261,7 +271,7 @@ fn push_ldap_sink<'tree>(
     } else {
         "LdapDistinguishedNameEncode"
     };
-    let Some((encoder, value)) = find_antixss_encoder(root, input, encoder_name) else {
+    let Some((encoder, value)) = find_antixss_encoder(types, input, encoder_name) else {
         return;
     };
     evidence.push(build_evidence(
@@ -345,12 +355,14 @@ fn build_evidence<'tree, const N: usize>(
 
 fn directory_searcher_filter_argument<'tree>(
     root: &Node<'tree, StrDoc<SupportLang>>,
+    types: &TypeBindings,
     creation: &Node<'tree, StrDoc<SupportLang>>,
     arguments: &[Node<'tree, StrDoc<SupportLang>>],
 ) -> Option<Node<'tree, StrDoc<SupportLang>>> {
     let first = arguments.first()?;
     if expression_has_type(
         root,
+        types,
         creation,
         first,
         "System.DirectoryServices.DirectoryEntry",
@@ -376,7 +388,7 @@ fn initializer_value<'tree>(
 }
 
 fn find_antixss_encoder<'tree>(
-    root: &Node<'tree, StrDoc<SupportLang>>,
+    types: &TypeBindings,
     input: &Node<'tree, StrDoc<SupportLang>>,
     method: &str,
 ) -> Option<EncoderMatch<'tree>> {
@@ -387,7 +399,7 @@ fn find_antixss_encoder<'tree>(
         let function = node.field("function")?;
         let callee = compact(function.text().as_ref());
         let owner = callee.strip_suffix(&format!(".{method}"))?;
-        if !type_is(root, owner, "Microsoft.Security.Application.Encoder") {
+        if !type_is(types, owner, "Microsoft.Security.Application.Encoder") {
             return None;
         }
         let value = node_arguments(&node)?.into_iter().next()?;
@@ -397,6 +409,7 @@ fn find_antixss_encoder<'tree>(
 
 fn expression_has_type(
     root: &Node<'_, StrDoc<SupportLang>>,
+    types: &TypeBindings,
     use_site: &Node<'_, StrDoc<SupportLang>>,
     expression: &Node<'_, StrDoc<SupportLang>>,
     canonical: &str,
@@ -404,14 +417,15 @@ fn expression_has_type(
     if expression.kind().as_ref() == "object_creation_expression" {
         return expression
             .field("type")
-            .is_some_and(|kind| type_is(root, kind.text().as_ref(), canonical));
+            .is_some_and(|kind| type_is(types, kind.text().as_ref(), canonical));
     }
     simple_identifier(expression.text().trim())
-        .is_some_and(|name| receiver_has_type(root, use_site, name, canonical))
+        .is_some_and(|name| receiver_has_type(root, types, use_site, name, canonical))
 }
 
 fn receiver_has_type(
     root: &Node<'_, StrDoc<SupportLang>>,
+    types: &TypeBindings,
     use_site: &Node<'_, StrDoc<SupportLang>>,
     receiver: &str,
     canonical: &str,
@@ -427,7 +441,7 @@ fn receiver_has_type(
                     .is_some_and(|name| name.text().trim() == receiver)
                 && node
                     .field("type")
-                    .is_some_and(|kind| type_is(root, kind.text().as_ref(), canonical)))
+                    .is_some_and(|kind| type_is(types, kind.text().as_ref(), canonical)))
                 || (node.kind().as_ref() == "variable_declarator"
                     && node
                         .field("name")
@@ -435,40 +449,62 @@ fn receiver_has_type(
                     && (node
                         .parent()
                         .and_then(|parent| parent.field("type"))
-                        .is_some_and(|kind| type_is(root, kind.text().as_ref(), canonical))
+                        .is_some_and(|kind| type_is(types, kind.text().as_ref(), canonical))
                         || node.dfs().any(|child| {
                             child.kind().as_ref() == "object_creation_expression"
                                 && child.field("type").is_some_and(|kind| {
-                                    type_is(root, kind.text().as_ref(), canonical)
+                                    type_is(types, kind.text().as_ref(), canonical)
                                 })
                         }))))
     })
 }
 
-fn type_is(root: &Node<'_, StrDoc<SupportLang>>, actual: &str, canonical: &str) -> bool {
+// These facts are file-wide in this bounded resolver. Collect them once rather
+// than rescanning the entire AST for each unrelated object creation or call.
+struct TypeBindings {
+    declarations: BTreeSet<String>,
+    usings: Vec<String>,
+}
+
+impl TypeBindings {
+    fn from_root(root: &Node<'_, StrDoc<SupportLang>>) -> Self {
+        let mut declarations = BTreeSet::new();
+        let mut usings = Vec::new();
+        for node in root.dfs() {
+            match node.kind().as_ref() {
+                "class_declaration" | "struct_declaration" | "record_declaration" => {
+                    if let Some(name) = node.field("name") {
+                        declarations.insert(name.text().trim().to_string());
+                    }
+                }
+                "using_directive" => {
+                    let text = compact(node.text().as_ref());
+                    usings.push(
+                        text.strip_prefix("globalusing")
+                            .or_else(|| text.strip_prefix("using"))
+                            .unwrap_or(&text)
+                            .trim_end_matches(';')
+                            .to_string(),
+                    );
+                }
+                _ => {}
+            }
+        }
+        Self {
+            declarations,
+            usings,
+        }
+    }
+}
+
+fn type_is(types: &TypeBindings, actual: &str, canonical: &str) -> bool {
     let actual = compact(actual);
     if actual == canonical {
         return true;
     }
     let (namespace, short) = canonical.rsplit_once('.').unwrap_or(("", canonical));
-    let declarations_shadow = root.dfs().any(|node| {
-        matches!(
-            node.kind().as_ref(),
-            "class_declaration" | "struct_declaration" | "record_declaration"
-        ) && node
-            .field("name")
-            .is_some_and(|name| name.text().trim() == short)
-    });
-    for using in root
-        .dfs()
-        .filter(|node| node.kind().as_ref() == "using_directive")
-        .map(|node| compact(node.text().as_ref()))
-    {
-        let using = using
-            .strip_prefix("globalusing")
-            .or_else(|| using.strip_prefix("using"))
-            .unwrap_or(&using)
-            .trim_end_matches(';');
+    let declarations_shadow = types.declarations.contains(short);
+    for using in &types.usings {
         if let Some((alias, target)) = using.split_once('=') {
             if (target == canonical && actual == alias)
                 || (target == namespace && actual == format!("{alias}.{short}"))

@@ -955,7 +955,9 @@ fn scan_prepared_file(
     dotnet_project_context: &DotnetProjectContext,
     scan_secrets: bool,
 ) -> ParseOutcome {
-    scan_source(
+    let trace = std::env::var_os("MEHSCAN_TRACE_PHASES").is_some();
+    let started = trace.then(Instant::now);
+    let outcome = scan_source(
         &file.relative,
         &file.source,
         parser_language(file.language),
@@ -983,7 +985,29 @@ fn scan_prepared_file(
             dotnet_project_context,
             build_symbols: &file.build_symbols,
         },
-    )
+    );
+    if let Some(started) = started {
+        let timing = match &outcome {
+            ParseOutcome::Parsed { timing, .. }
+            | ParseOutcome::Failed { timing, .. }
+            | ParseOutcome::Recovered { timing, .. } => timing,
+        };
+        eprintln!(
+            "mehscan_file {}",
+            serde_json::json!({
+                "path": file.relative,
+                "language": file.language,
+                "source_bytes": file.source.len(),
+                "total_microseconds": started.elapsed().as_micros(),
+                "parse_context_microseconds": timing.parse_context_microseconds,
+                "declarative_rules_microseconds": timing.declarative_rules_microseconds,
+                "symbol_rules_microseconds": timing.symbol_rules_microseconds,
+                "summaries_microseconds": timing.summaries_microseconds,
+                "security_paths_microseconds": timing.security_paths_microseconds,
+            })
+        );
+    }
+    outcome
 }
 
 fn resolve_worker_count(requested: Option<usize>, files: usize) -> Result<usize, EngineError> {
