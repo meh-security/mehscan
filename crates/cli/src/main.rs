@@ -3099,6 +3099,68 @@ fn operand_lookup_fact<'a>(
         })
 }
 
+fn compact_anchor_context(
+    facts: &[serde_json::Value],
+    anchor: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let anchor_path = anchor["location"]["path"].as_str()?;
+    let anchor_line = anchor["location"]["start"]["line"].as_u64()?;
+    let center_line = anchor["captures"]
+        .as_object()
+        .and_then(|captures| {
+            captures.values().find_map(|capture| {
+                (capture["location"]["path"].as_str() == Some(anchor_path))
+                    .then(|| capture["location"]["start"]["line"].as_u64())
+                    .flatten()
+            })
+        })
+        .unwrap_or(anchor_line);
+    // A path review's source window may be far from its selected sink. Use
+    // already-packed source/sink facts that actually contain the anchor.
+    let fact = facts
+        .iter()
+        .filter(|fact| {
+            matches!(
+                fact["role"].as_str(),
+                Some("source_context" | "sink_context")
+            ) && fact["location"]["path"].as_str() == Some(anchor_path)
+                && fact["excerpt"].as_str().is_some_and(|s| !s.is_empty())
+        })
+        .min_by_key(|fact| {
+            let first = fact["location"]["start"]["line"].as_u64().unwrap_or(1);
+            let count = fact["excerpt"].as_str().unwrap_or_default().lines().count() as u64;
+            let covers = |line| first <= line && line < first.saturating_add(count);
+            (
+                !covers(anchor_line),
+                !covers(center_line),
+                fact["role"] != "source_context",
+            )
+        })?;
+    let lines: Vec<&str> = fact["excerpt"].as_str()?.lines().collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let first_line = fact["location"]["start"]["line"].as_u64().unwrap_or(1);
+    let covers = |line| first_line <= line && line < first_line.saturating_add(lines.len() as u64);
+    let desired = if covers(center_line) {
+        center_line
+    } else {
+        anchor_line
+    };
+    let center = (desired.saturating_sub(first_line) as usize).min(lines.len() - 1);
+    let start = center.saturating_sub(2);
+    let end = (center + 5).min(lines.len());
+    let full_excerpt = lines[start..end].join("\n");
+    let truncated = full_excerpt.chars().count() > 700 || !covers(anchor_line);
+    let excerpt = full_excerpt.chars().take(700).collect::<String>();
+    Some(serde_json::json!({
+        "evidence_id": fact["evidence_id"],
+        "location": {"path": anchor_path, "start_line": first_line + start as u64, "end_line": first_line + start as u64 + excerpt.lines().count().saturating_sub(1) as u64},
+        "excerpt": excerpt,
+        "truncated": truncated,
+    }))
+}
+
 fn review_card_from_value(
     bundle: &mehscan_core::PathReviewBundle,
     review_id: &str,
@@ -3130,43 +3192,9 @@ fn review_card_from_value(
         })
         .ok_or_else(|| format!("selected anchor {selected_anchor_id:?} is missing"))?;
     let anchor_path = anchor["location"]["path"].as_str();
-    let context = review["facts"].as_array().and_then(|facts| {
-        facts.iter().find(|fact| {
-            fact["role"].as_str() == Some("source_context")
-                && fact["location"]["path"].as_str() == anchor_path
-        })
-    });
-    let context = context.map(|fact| {
-        let excerpt = fact["excerpt"].as_str().unwrap_or_default();
-        let lines: Vec<&str> = excerpt.lines().collect();
-        let first_line = fact["location"]["start"]["line"].as_u64().unwrap_or(1);
-        let anchor_line = anchor["location"]["start"]["line"]
-            .as_u64()
-            .unwrap_or(first_line);
-        let center_line = anchor["captures"]
-            .as_object()
-            .and_then(|captures| {
-                captures.values().find_map(|capture| {
-                    capture["location"]["start"]["line"].as_u64()
-                })
-            })
-            .unwrap_or(anchor_line);
-        let center = center_line.saturating_sub(first_line) as usize;
-        let start = center.saturating_sub(2).min(lines.len());
-        let end = (center + 5).min(lines.len());
-        let full_excerpt = lines[start..end].join("\n");
-        let truncated = full_excerpt.chars().count() > 700 || center >= lines.len();
-        let excerpt = full_excerpt
-            .chars()
-            .take(700)
-            .collect::<String>();
-        serde_json::json!({
-            "evidence_id": fact["evidence_id"],
-            "location": {"path": fact["location"]["path"], "start_line": first_line + start as u64, "end_line": first_line + start as u64 + excerpt.lines().count().saturating_sub(1) as u64},
-            "excerpt": excerpt,
-            "truncated": truncated,
-        })
-    });
+    let context = review["facts"]
+        .as_array()
+        .and_then(|facts| compact_anchor_context(facts, anchor));
     let nearby_locations: Vec<_> = review["facts"]
         .as_array()
         .into_iter()
@@ -3776,11 +3804,45 @@ Add --journal FILE to a read-only query to append its exact arguments, output or
 #[cfg(test)]
 mod tests {
     use super::{
-        BriefSourceRef, membership_changed_after_bundles, operand_lookup_fact, parse_capability,
-        portable_json_value, read_brief_source, validate_review_artifact_source_text,
+        BriefSourceRef, compact_anchor_context, membership_changed_after_bundles,
+        operand_lookup_fact, parse_capability, portable_json_value, read_brief_source,
+        validate_review_artifact_source_text,
     };
     use mehscan_core::Capability;
     use std::collections::{BTreeMap, BTreeSet};
+
+    #[test]
+    fn compact_context_uses_the_sink_window_when_source_does_not_cover_it() {
+        let source = serde_json::json!({"role":"source_context", "evidence_id":"source-1",
+            "location":{"path":"component.ts", "start":{"line":134}},
+            "excerpt":"filterTable() {\n  const q = this.route.snapshot.queryParams.q;\n  if (q) {"});
+        let sink = serde_json::json!({"role":"sink_context", "evidence_id":"sink-1",
+            "location":{"path":"component.ts", "start":{"line":143}},
+            "excerpt":"this.dataSource.filter = q;\nthis.searchValue = this.sanitizer.bypassSecurityTrustHtml(q);\n}"});
+        let anchor = serde_json::json!({"location":{"path":"component.ts", "start":{"line":144}}});
+        for facts in [
+            vec![source.clone(), sink.clone()],
+            vec![sink.clone(), source.clone()],
+        ] {
+            let context = compact_anchor_context(&facts, &anchor).unwrap();
+            assert_eq!(context["evidence_id"], "sink-1");
+            assert!(
+                context["excerpt"]
+                    .as_str()
+                    .unwrap()
+                    .contains("bypassSecurityTrustHtml(q)")
+            );
+            assert_eq!(context["location"]["start_line"], 143);
+            assert_eq!(context["location"]["end_line"], 145);
+            assert_eq!(context["truncated"], false);
+        }
+        // A missing anchor window still exposes real available code, without
+        // fabricating a location at the absent sink or returning an empty slice.
+        let fallback = compact_anchor_context(&[source], &anchor).unwrap();
+        assert_eq!(fallback["truncated"], true);
+        assert_eq!(fallback["location"]["end_line"], 136);
+        assert!(!fallback["excerpt"].as_str().unwrap().is_empty());
+    }
 
     #[test]
     fn operand_navigation_prefers_captured_value_over_receiver_regardless_of_fact_order() {

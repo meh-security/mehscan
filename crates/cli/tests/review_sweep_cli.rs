@@ -77,6 +77,98 @@ fn compact_views_keep_frontend_producers_and_caller_excerpts() {
 }
 
 #[test]
+fn compact_views_keep_explicit_angular_templates_and_original_source() {
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/angular-review-packets");
+    let output = std::env::temp_dir().join(format!("mehscan-angular-sweep-{}", std::process::id()));
+    let manifest = run(&[
+        "investigate",
+        "review-bundles",
+        root.to_str().unwrap(),
+        "--output",
+        output.to_str().unwrap(),
+        "--context-lines",
+        "3",
+    ]);
+    assert_eq!(
+        manifest["review_count"], 2,
+        "ordinary bindings must not become review IDs"
+    );
+    let mut consumers = BTreeSet::new();
+    for bundle in manifest["bundles"].as_array().unwrap() {
+        let request = output
+            .join("requests")
+            .join(bundle["filename"].as_str().unwrap());
+        let sweep = run(&[
+            "investigate",
+            "review-sweep",
+            "--bundle",
+            request.to_str().unwrap(),
+        ]);
+        for review in sweep["reviews"].as_array().unwrap() {
+            let context_id = review["source_context_ids"][0].as_str().unwrap();
+            let context = sweep["source_contexts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["id"] == context_id)
+                .unwrap();
+            assert!(
+                context["excerpt"]
+                    .as_str()
+                    .unwrap()
+                    .contains("bypassSecurityTrustHtml"),
+                "compact evidence must cover the selected sink, even when its input window is separate"
+            );
+            let facts = review["frontend_context"].as_array().unwrap();
+            assert!(
+                facts
+                    .iter()
+                    .any(|f| f["role"] == "frontend_component_template_context")
+            );
+            let binding = facts
+                .iter()
+                .find(|f| f["role"] == "frontend_template_binding_context")
+                .expect("missing consumer");
+            let path = binding["location"]["path"].as_str().unwrap();
+            let start = binding["location"]["start_line"].as_u64().unwrap();
+            let end = binding["location"]["end_line"].as_u64().unwrap();
+            consumers.insert(path.to_owned());
+            let source = run(&[
+                "investigate",
+                "source",
+                root.to_str().unwrap(),
+                "--path",
+                path,
+                "--start-line",
+                &start.to_string(),
+                "--end-line",
+                &end.to_string(),
+            ]);
+            assert!(
+                source["results"]["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains(binding["excerpt"].as_str().unwrap())
+            );
+            let card = run(&[
+                "investigate",
+                "review-card",
+                "--bundle",
+                request.to_str().unwrap(),
+                "--review-id",
+                review["review_id"].as_str().unwrap(),
+            ]);
+            assert_eq!(card["frontend_context"], review["frontend_context"]);
+        }
+    }
+    assert_eq!(
+        consumers,
+        BTreeSet::from(["inline.ts".into(), "markup.html".into()])
+    );
+}
+
+#[test]
 fn shared_question_queue_and_sweep_preserve_exceptions_and_exact_source() {
     let root = std::env::temp_dir().join(format!("mehscan-sweep-{}", std::process::id()));
     let output = root.with_file_name(format!("mehscan-sweep-output-{}", std::process::id()));

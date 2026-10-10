@@ -15,8 +15,8 @@ check every operation's branch and effect. Keep a short missing-edge note, not a
 second report. Packet relationships and candidate-writer maps are navigation,
 not proof of binding or complete coverage.
 
-First check the output control. Verify imports/module registration and the exact
-helper implementation. Include every directly chained transformation: encoding
+First check the output control. Verify imports/module registration and the
+helper's effective behavior. Include every directly chained transformation: encoding
 followed by decoding or a change of interpretation can invalidate a control.
 Check text, attribute, URL, JavaScript and DOM contexts separately. Same-named
 helpers can differ. If the complete verified chain is safe in this context,
@@ -30,7 +30,12 @@ version and effective options; its name or return type is not an escaping proof.
 When the repository names an exact external artifact, inspect that version with
 available read-only tools before calling the implementation unavailable. Treat
 deployment overrides as a blocker when evidence connects them to this chain;
-otherwise state the normal binding assumption. A complete output-control proof
+otherwise state the normal binding assumption. For an explicit framework trust
+bypass, a documented public API contract and verified import, input and consumer
+can establish the source weakness under that assumption. A missing lockfile or
+vendored implementation alone does not block it. Research versioned behavior
+when a patch, override or uncertain API semantics would change the decision.
+A complete output-control proof
 can settle HTML interpretation without reconstructing every input writer.
 Compact `review-card` and `review-sweep` views expose supplied frontend facts
 under `frontend_context`. Start with `frontend_output_producer_context` and
@@ -45,6 +50,14 @@ sanitized and dynamic callers can differ: reuse facts, not verdicts. The sample
 is bounded; investigate spreads, omitted callers, parser gaps, reassignments
 and unsupported wrappers when they affect that edge. Missing caller facts do
 not mean no callers exist.
+For Angular, `frontend_component_template_context` identifies explicit component
+metadata; `frontend_template_binding_context` locates matching property bindings.
+Verify the rendered context and actual field/method path: a matching name is not
+flow proof. `bypassSecurityTrust*` marks trust, not sanitization. Ordinary template
+bindings can apply framework controls; check the effective context and version
+when decisive. If no consumer is supplied, inspect the declared template, pipe
+registration or component handoff before calling that edge unavailable. These
+bounded facts do not cover dynamic templates or prove pipe registration.
 For DOM-to-DOM HTML copying, inspect the source element's markup and relevant
 writers. A DOM selector/type is navigation, not trusted contents. For a shared
 request helper, pair the implementation with observed callers and effective

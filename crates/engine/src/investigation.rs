@@ -38,6 +38,7 @@ use mehscan_core::{
     SecurityPathStepKind, Severity, SeveritySource, SourceSlice, StructuralMatch, TextReference,
 };
 
+mod angular;
 mod frontend;
 mod practical_admission;
 mod review_admission;
@@ -16672,7 +16673,7 @@ fn second_hop_review_facts(
             candidate_paths,
             existing,
             precise_member_fields,
-            remaining.min(2),
+            remaining.min(3),
         );
         truncated |= template_truncated;
         facts.append(&mut template_facts);
@@ -16904,74 +16905,13 @@ fn template_binding_facts(
     precise_member_fields: Option<&BTreeSet<String>>,
     limit: usize,
 ) -> (Vec<ReviewNeighborhoodFact>, bool) {
-    if limit == 0 {
-        return (Vec::new(), false);
-    }
-    let mut binding_names = precise_member_fields.cloned().unwrap_or_default();
-    if binding_names.is_empty() {
-        for fact in existing {
-            if !fact.excerpt.contains("bypassSecurityTrust") {
-                continue;
-            }
-            for line in fact.excerpt.lines().filter(|line| line.contains('=')) {
-                let left = line.split('=').next().unwrap_or_default();
-                if let Some(name) = terminal_identifier(left) {
-                    binding_names.insert(name.to_string());
-                }
-            }
-        }
-    }
-    if binding_names.is_empty() {
-        return (Vec::new(), false);
-    }
-    let mut facts = Vec::new();
-    for path in candidate_paths {
-        let normalized = path.replace('\\', "/");
-        let Some(stem) = normalized.strip_suffix(".component.ts") else {
-            continue;
-        };
-        let template_path = format!("{stem}.component.html");
-        let template_source = match sources.file(&template_path) {
-            Ok(file) => file.source.clone(),
-            Err(_) => {
-                let absolute = Path::new(&sources.root).join(&template_path);
-                match fs::read_to_string(absolute) {
-                    Ok(source) if source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES => source,
-                    _ => continue,
-                }
-            }
-        };
-        for (start, end) in line_spans(&template_source) {
-            let line = &template_source[start..end];
-            if !["innerhtml", "dangerouslysetinnerhtml", "v-html"]
-                .iter()
-                .any(|marker| line.to_ascii_lowercase().contains(marker))
-                || !binding_names
-                    .iter()
-                    .any(|name| contains_identifier(line, name))
-            {
-                continue;
-            }
-            if facts.len() == limit {
-                return (facts, true);
-            }
-            facts.push(ReviewNeighborhoodFact {
-                role: "template_binding_context".to_string(),
-                symbol: binding_names
-                    .iter()
-                    .find(|name| contains_identifier(line, name))
-                    .cloned()
-                    .unwrap_or_else(|| "template_binding".to_string()),
-                location: location_from_offsets(&template_path, &template_source, start, end),
-                excerpt: bounded_line_text(line),
-                evidence_id: None,
-                provenance: textual_provenance(
-                    "exact sibling component template binding, bounded non-flow 1",
-                ),
-            });
-        }
-    }
-    (facts, false)
+    angular::template_facts(
+        sources,
+        candidate_paths,
+        existing,
+        precise_member_fields,
+        limit,
+    )
 }
 
 fn express_template_review_facts(
@@ -23155,7 +23095,7 @@ mod tests {
 
     #[test]
     fn second_hop_context_keeps_feature_gates_and_template_bindings_exact() {
-        let component_source = "this.results.orderNo = this.sanitizer.bypassSecurityTrustHtml(value)\nuser.email = this.sanitizer.bypassSecurityTrustHtml(user.email)\n";
+        let component_source = "import { Component } from '@angular/core';\n@Component({ templateUrl: './result.component.html' })\nexport class Result { show(value: string, user: any) {\nthis.results.orderNo = this.sanitizer.bypassSecurityTrustHtml(value);\nuser.email = this.sanitizer.bypassSecurityTrustHtml(user.email);\n} }\n";
         let template_source = "<span [innerHtml]=\"results.orderNo\"></span>\n<span [innerHtml]=\"user.email\"></span>\n";
         let challenge_source =
             "  key: wantedChallenge\n  disabledEnv:\n    - Docker\n\n  key: unrelatedChallenge\n";
@@ -23196,13 +23136,13 @@ mod tests {
             provenance: textual_provenance("test"),
         }];
         let paths = BTreeSet::from(["frontend/result.component.ts"]);
-        let (template_facts, _) = template_binding_facts(&sources, &paths, &existing, None, 2);
-        assert_eq!(template_facts.len(), 2);
+        let (template_facts, _) = template_binding_facts(&sources, &paths, &existing, None, 3);
+        assert_eq!(template_facts.len(), 3);
         let precise_fields = BTreeSet::from(["orderNo".to_string()]);
         let (precise_template_facts, _) =
-            template_binding_facts(&sources, &paths, &existing, Some(&precise_fields), 2);
-        assert_eq!(precise_template_facts.len(), 1);
-        assert_eq!(precise_template_facts[0].symbol, "orderNo");
+            template_binding_facts(&sources, &paths, &existing, Some(&precise_fields), 3);
+        assert_eq!(precise_template_facts.len(), 2);
+        assert_eq!(precise_template_facts[1].symbol, "orderNo");
 
         let references = BTreeSet::from(["wantedChallenge".to_string()]);
         let (gate_facts, _) = feature_gate_facts(&sources, &references, 2);
