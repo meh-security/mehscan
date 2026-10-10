@@ -15,6 +15,10 @@ Read the validated review, its original Mehscan bundle, and the new fact or poli
 
 Return a short note:
 
+Use only decision-changing facts, usually one sentence per field. Preserve the
+applicable branch/setting and fact provenance; do not retell the original review.
+Expand only when needed to explain the change or a specific remaining gap.
+
 ```text
 Review ID / operation:
 Previous decision:

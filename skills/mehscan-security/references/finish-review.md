@@ -1,10 +1,25 @@
 # Finalize and report
 
+## Minimal sufficient explanation
+
+The report displays `summary` without `reason`. Use one short standalone sentence
+for `summary`: this operation's verdict and any material applicability condition
+(usually 8–15 words). For a conditional issue, name the relevant branch or setting.
+In `reason`, add the supporting causal statement rather than restating the summary:
+actor/input → this exact operation → effective control or gap → effect. Usually
+15–30 words; plain prose or arrows are both fine. Expand when needed to preserve
+conditions or distinguish observed source facts from runtime assumptions.
+For `needs_review`, keep established facts in `reason`; put the exact missing fact
+plus how to obtain it in `checks`. Keep decisive inspected citations and separate
+consequential leads. Omit generic CWE teaching, tool history, investigation
+narrative and speculative alternatives. These are writing targets, not validation
+limits. Short output must not shorten research or hide material uncertainty.
+
 Stop when the chain is established,
    contradicted, or blocked by a specific unavailable fact. The query journal
    is the audit trail. Write a brief JSON draft with one result per bundle ID:
    `{ "results": [{ "review_id": "ID", "decision": "issue", "confidence":
-   "high", "summary": "Exact operation and verdict", "reason": "Evidence chain",
+   "high", "summary": "Operation, verdict and material condition", "reason": "Causal evidence",
    "evidence": [{"path": "relative/file", "start_line": 10, "end_line": 14}] }] }`.
    In this brief format, omit `schema_version`, `bundle_fingerprint` and
    `selected_anchor_id`; the finalizer supplies binding and anchor fields.
@@ -21,9 +36,8 @@ Stop when the chain is established,
    lines; `results.location` remains an exclusive byte span.
    The CLI reads
    exact source, fills artifact locations and excerpts, cites the selected
-   anchor, and attaches the query journal. Keep `summary` and `reason` concise;
-   do not reproduce source in them. For `needs_review`, add `checks` with the
-   one decision-changing missing fact and `blockers` if appropriate. The full
+   anchor, and attaches the query journal. Do not reproduce source in prose.
+   For `needs_review`, add `blockers` if appropriate. The full
    schema 1.3 draft remains available when you need explicit artifact citations
    or reviewer-origin leads. Save drafts with shell redirection or another file
    write that prints only the path or a short success message. Do not use a
