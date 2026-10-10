@@ -53,12 +53,17 @@ not mean no callers exist.
 For Angular component, pipe, input or dialog facts, read
 [Angular output review](angular-output-review.md). It explains the supplied
 registration and handoff evidence and how to research the next missing edge.
-For Vue SFC output, use supplied operands, writer snippets, native-ref bindings
-and helper imports first. Writer snippets locate assignments; verify their
-branches and later transformations. Retrieve missing source through
-`investigate source`. Native-ref identity does not prove input trust. `v-html`
-template producers, reactive assignments and child props are not linked yet.
+For Vue SFC output, use supplied setup producers, local dependencies, props,
+direct-import caller snippets, native-ref bindings and helper imports first.
+Initializers and writer snippets locate code; verify updates, branches and later
+transformations. Caller samples are bounded. Alias/global registrations,
+destructured props and wider reactive flows still require research.
+Retrieve only missing source through `investigate source`. Native-ref identity
+and a props type do not prove input trust.
 Normal interpolation and `v-text` are escaped text. Raw output alone proves no unsafe input.
+For editable controls, same-user typing reconstructed as HTML proves markup
+interpretation. A security issue still needs an attacker-to-victim delivery path
+or a demonstrated protection bypass; research prop writers, persistence and consumers.
 External/preprocessed blocks and dual script scopes have partial coverage;
 inspect their source when relevant rather than infer absent producers or callers.
 For DOM-to-DOM HTML copying, inspect the source element's markup and relevant

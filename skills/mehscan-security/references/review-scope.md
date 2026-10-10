@@ -430,7 +430,11 @@ a safe verdict. Unique native template refs connected to imported top-level
 `ref`/`shallowRef`/`useTemplateRef` setup bindings supply actual DOM identity.
 Component, loop/dynamic/duplicate refs, replaced values and shadowed bindings are
 outside that proof. Native DOM identity alone establishes neither input trust nor
-a vulnerability. Template producer/prop links and wider reactive flows remain gaps.
+a vulnerability. Exact setup v-html identifiers and bounded local dependencies
+locate producer code. Actual defineProps reads can supply declarations/types and
+two relative default-import child call sites, with static/bound/model props.
+Spreads, template locals, sample limits and oversized facts remain open. Aliases,
+global registration, destructured props and wider reactive flows remain gaps.
 
 ## Improve from real applications
 

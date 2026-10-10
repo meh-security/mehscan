@@ -15,6 +15,7 @@ pub(crate) struct Sfc {
     pub evidence: Vec<Evidence>,
     pub gaps: Vec<String>,
     pub dom_refs: BTreeMap<String, Capture>,
+    pub setup: bool,
 }
 
 pub(crate) fn parse(path: &str, source: &str) -> Sfc {
@@ -24,6 +25,7 @@ pub(crate) fn parse(path: &str, source: &str) -> Sfc {
         evidence: Vec::new(),
         gaps: Vec::new(),
         dom_refs: BTreeMap::new(),
+        setup: false,
     };
     let mut masked: Vec<u8> = source
         .bytes()
@@ -219,6 +221,7 @@ pub(crate) fn parse(path: &str, source: &str) -> Sfc {
     } else if let Some((range, language, setup)) = scripts.pop() {
         masked[range.clone()].copy_from_slice(&source.as_bytes()[range]);
         output.language = language;
+        output.setup = setup;
         if !setup {
             output.dom_refs.clear();
         }
@@ -450,9 +453,12 @@ pub(crate) fn resolved_dom_refs<'tree>(
 
 pub(crate) fn ref_shadowed(node: &Node<'_, StrDoc<SupportLang>>, name: &str) -> bool {
     let declares = |pattern: Node<'_, StrDoc<SupportLang>>| {
-        pattern
-            .dfs()
-            .any(|n| n.kind().as_ref() == "identifier" && n.text().trim() == name)
+        pattern.dfs().any(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "identifier" | "shorthand_property_identifier_pattern"
+            ) && n.text().trim() == name
+        })
     };
     node.ancestors()
         .filter(|n| {

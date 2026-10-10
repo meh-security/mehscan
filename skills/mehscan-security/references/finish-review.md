@@ -28,6 +28,9 @@ Stop when the chain is established,
    and journals, then stop. The caller must finalize, validate and report it;
    a draft-only result is not a completed validated review.
    Use only decision-relevant source ranges already inspected. Keep each range
+   to the supplied fact/anchor locations when they support the conclusion;
+   expanded source lookup ranges are research windows, not citation windows.
+   Keep each range
    to a few lines around the operation or control (usually at most 20; hard
    limit 40 lines and 4000 characters). Use two ranges for separated facts
    rather than one long span. Line ranges here are inclusive; a source span

@@ -1,5 +1,6 @@
-//! Bounded JSX caller navigation for existing raw-HTML reviews, not taint or safety.
+//! Bounded frontend navigation for existing raw-HTML reviews, not taint or safety.
 use super::*;
+mod vue;
 
 const MAX_CALLERS: usize = 2;
 const MAX_FACT_BYTES: usize = 2048;
@@ -25,6 +26,7 @@ impl FrontendContext {
     pub(super) fn build(sources: &RepositorySources, groups: &[ObservationGroup]) -> Self {
         let mut context = Self::default();
         let mut contracts = Vec::new();
+        let mut vue_contracts = Vec::new();
         let mut documents = BTreeMap::new();
         for group in groups {
             let Ok(file) = sources.file(&group.path) else {
@@ -166,6 +168,20 @@ impl FrontendContext {
                     }
                 }
             }
+            if file.path.ends_with(".vue") {
+                if let Some(ast) = documents
+                    .entry(file.path.clone())
+                    .or_insert_with(|| parse(file))
+                    .as_ref()
+                {
+                    vue_contracts.extend(vue::prepare(
+                        file,
+                        &ast.root(),
+                        &group.evidence,
+                        &mut context,
+                    ));
+                }
+            }
             let sinks: Vec<_> = group
                 .evidence
                 .iter()
@@ -191,6 +207,7 @@ impl FrontendContext {
                 }
             }
         }
+        vue::callers(sources, &vue_contracts, &mut documents, &mut context);
         if contracts.is_empty() {
             return context;
         }
