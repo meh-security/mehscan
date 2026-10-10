@@ -363,6 +363,7 @@ pub(crate) fn scan_profiled(
                         original: source,
                         evidence: sfc.evidence,
                         gaps: sfc.gaps,
+                        dom_refs: sfc.dom_refs,
                     }),
                 });
             }
@@ -1028,6 +1029,7 @@ fn scan_prepared_file(
             scan_secrets: scan_secrets && file.vue.is_none(),
             relations,
             node_context,
+            vue_dom_refs: file.vue.as_ref().map(|vue| &vue.dom_refs),
             object_input_context,
             csharp_model_context,
             csharp_handoff_context,
@@ -1184,6 +1186,7 @@ struct VueFile {
     original: String,
     evidence: Vec<Evidence>,
     gaps: Vec<String>,
+    dom_refs: BTreeMap<String, mehscan_core::Capture>,
 }
 
 pub(crate) fn read_secret_text(path: &Path) -> Result<String, String> {

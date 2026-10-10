@@ -426,7 +426,11 @@ Value and Comprehensive, requiring producer/control review rather than a scanner
 verdict. Direct static literals are supporting facts. Normal interpolation,
 `v-text` and media URL bindings create no standalone HTML question. Inline
 script operations follow the existing JS/TS policy; partial SFC coverage is not
-a safe verdict. Vue DOM refs and template producer/prop links remain coverage gaps.
+a safe verdict. Unique native template refs connected to imported top-level
+`ref`/`shallowRef`/`useTemplateRef` setup bindings supply actual DOM identity.
+Component, loop/dynamic/duplicate refs, replaced values and shadowed bindings are
+outside that proof. Native DOM identity alone establishes neither input trust nor
+a vulnerability. Template producer/prop links and wider reactive flows remain gaps.
 
 ## Improve from real applications
 

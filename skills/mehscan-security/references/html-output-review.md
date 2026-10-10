@@ -53,10 +53,12 @@ not mean no callers exist.
 For Angular component, pipe, input or dialog facts, read
 [Angular output review](angular-output-review.md). It explains the supplied
 registration and handoff evidence and how to research the next missing edge.
-For Vue SFC `v-html`, use supplied script producers and transformations first;
-retrieve missing source through `investigate source`. This slice locates the
-directive but does not link template bindings, reactive assignments or child props. Normal interpolation and
-`v-text` are escaped text. A `v-html` observation alone proves no unsafe input.
+For Vue SFC output, use supplied operands, writer snippets, native-ref bindings
+and helper imports first. Writer snippets locate assignments; verify their
+branches and later transformations. Retrieve missing source through
+`investigate source`. Native-ref identity does not prove input trust. `v-html`
+template producers, reactive assignments and child props are not linked yet.
+Normal interpolation and `v-text` are escaped text. Raw output alone proves no unsafe input.
 External/preprocessed blocks and dual script scopes have partial coverage;
 inspect their source when relevant rather than infer absent producers or callers.
 For DOM-to-DOM HTML copying, inspect the source element's markup and relevant

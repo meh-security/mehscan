@@ -40,6 +40,7 @@ pub(crate) fn add_browser_observations<'tree>(
     path: &str,
     root: &Node<'tree, StrDoc<SupportLang>>,
     language: Language,
+    vue_templates: Option<&BTreeMap<String, Capture>>,
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
@@ -57,6 +58,9 @@ pub(crate) fn add_browser_observations<'tree>(
     let socket_data = socket_data_ranges(root);
     let response_data = fetch_response_data_ranges(root);
     let dom_bindings = dom_bindings(root, &shadowed_globals);
+    let vue_refs = vue_templates
+        .map(|templates| super::vue::resolved_dom_refs(root, templates))
+        .unwrap_or_default();
     let react_refs = react_ref_targets(root);
     let react_factories = react_factories(root);
     let lit_unsafe_html = imported_named_bindings(
@@ -75,6 +79,13 @@ pub(crate) fn add_browser_observations<'tree>(
     for node in root.dfs() {
         let kind = node.kind();
         let kind = kind.as_ref();
+        let vue_ref = vue_operation_ref(&node, &vue_refs);
+        let operation_bindings = vue_ref.map(|(name, _)| {
+            let mut bindings = dom_bindings.clone();
+            bindings.insert(format!("{name}.value"));
+            bindings
+        });
+        let operation_bindings = operation_bindings.as_ref().unwrap_or(&dom_bindings);
         if matches!(kind, "member_expression" | "subscript_expression")
             && !is_assignment_target(&node)
         {
@@ -235,7 +246,7 @@ pub(crate) fn add_browser_observations<'tree>(
             }
 
             if let Some((content, canonical)) =
-                html_call_sink(&node, &dom_bindings, &react_refs, &shadowed_globals)
+                html_call_sink(&node, operation_bindings, &react_refs, &shadowed_globals)
             {
                 push_observation(
                     path,
@@ -458,7 +469,7 @@ pub(crate) fn add_browser_observations<'tree>(
             && let (Some(left), Some(right)) = (node.field("left"), node.field("right"))
         {
             let target = normalized(&left.text());
-            if dom_html_property(&target, &dom_bindings, &react_refs, &shadowed_globals) {
+            if dom_html_property(&target, operation_bindings, &react_refs, &shadowed_globals) {
                 push_observation(
                     path,
                     language,
@@ -619,6 +630,19 @@ pub(crate) fn add_browser_observations<'tree>(
                 evidence,
             );
         }
+        if let Some((_, (declaration, template))) = vue_ref {
+            if let Some(item) = evidence.iter_mut().rev().find(|e| {
+                e.capability == Capability::HtmlOutput
+                    && e.location.start.byte_offset == node.range().start
+                    && e.location.end.byte_offset == node.range().end
+            }) {
+                item.tags.extend(["vue".into(), "vue-dom-ref".into()]);
+                item.captures
+                    .insert("vue_dom_ref_declaration".into(), capture(path, declaration));
+                item.captures
+                    .insert("vue_dom_ref_template".into(), template.clone());
+            }
+        }
     }
     add_decoded_storage_sources(
         path,
@@ -748,6 +772,31 @@ fn add_decoded_storage_sources<'tree>(
             );
         }
     }
+}
+
+fn vue_operation_ref<'tree, 'a>(
+    node: &Node<'tree, StrDoc<SupportLang>>,
+    refs: &'a BTreeMap<String, (Node<'tree, StrDoc<SupportLang>>, Capture)>,
+) -> Option<(&'a str, &'a (Node<'tree, StrDoc<SupportLang>>, Capture))> {
+    if refs.is_empty() {
+        return None;
+    }
+    let target = match node.kind().as_ref() {
+        "assignment_expression" => node.field("left")?,
+        "call_expression" => node.field("function")?,
+        _ => return None,
+    };
+    let target = normalized(&target.text());
+    let (receiver, method) = target.rsplit_once('.')?;
+    if !matches!(
+        method,
+        "innerHTML" | "outerHTML" | "insertAdjacentHTML" | "setHTMLUnsafe"
+    ) {
+        return None;
+    }
+    let name = receiver.trim_end_matches('!').strip_suffix(".value")?;
+    let (name, binding) = refs.get_key_value(name)?;
+    (!super::vue::ref_shadowed(node, name)).then_some((name.as_str(), binding))
 }
 
 fn jwt_decode_factories(root: &Node<'_, StrDoc<SupportLang>>) -> BTreeSet<String> {
@@ -1474,7 +1523,7 @@ fn imports_module(root: &Node<'_, StrDoc<SupportLang>>, expected: &str) -> bool 
         })
 }
 
-fn imported_named_bindings(
+pub(super) fn imported_named_bindings(
     root: &Node<'_, StrDoc<SupportLang>>,
     modules: &[&str],
     exported: &str,

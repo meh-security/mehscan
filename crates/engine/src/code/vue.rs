@@ -14,6 +14,7 @@ pub(crate) struct Sfc {
     pub script: String,
     pub evidence: Vec<Evidence>,
     pub gaps: Vec<String>,
+    pub dom_refs: BTreeMap<String, Capture>,
 }
 
 pub(crate) fn parse(path: &str, source: &str) -> Sfc {
@@ -22,6 +23,7 @@ pub(crate) fn parse(path: &str, source: &str) -> Sfc {
         script: String::new(),
         evidence: Vec::new(),
         gaps: Vec::new(),
+        dom_refs: BTreeMap::new(),
     };
     let mut masked: Vec<u8> = source
         .bytes()
@@ -48,7 +50,7 @@ pub(crate) fn parse(path: &str, source: &str) -> Sfc {
     if root.dfs().any(|n| n.is_error() || n.is_missing()) {
         output
             .gaps
-            .push("Vue SFC contains malformed HTML/block syntax; valid blocks retained".into());
+            .push("Vue SFC HTML parser recovered syntax; valid blocks retained, Vue compiler syntax may be unsupported".into());
     }
     let mut scripts = Vec::new();
     let mut templates = 0;
@@ -97,7 +99,11 @@ pub(crate) fn parse(path: &str, source: &str) -> Sfc {
                     continue;
                 }
             };
-            scripts.push((open.range().end..close.range().start, language));
+            scripts.push((
+                open.range().end..close.range().start,
+                language,
+                attributes.contains_key("setup"),
+            ));
         } else {
             templates += 1;
             if templates > 1 {
@@ -113,6 +119,7 @@ pub(crate) fn parse(path: &str, source: &str) -> Sfc {
                 ));
                 continue;
             }
+            output.dom_refs = native_template_refs(path, source, &block);
             for attribute in block.dfs().filter(|n| n.kind().as_ref() == "attribute") {
                 if attribute.range().start < open.range().end
                     || attribute.range().end > close.range().start
@@ -208,15 +215,282 @@ pub(crate) fn parse(path: &str, source: &str) -> Sfc {
             "Vue dual/multiple script scopes are not linked in this slice; script analysis omitted"
                 .into(),
         );
-    } else if let Some((range, language)) = scripts.pop() {
+        output.dom_refs.clear();
+    } else if let Some((range, language, setup)) = scripts.pop() {
         masked[range.clone()].copy_from_slice(&source.as_bytes()[range]);
         output.language = language;
+        if !setup {
+            output.dom_refs.clear();
+        }
+    } else {
+        output.dom_refs.clear();
+    }
+    if templates != 1 {
+        output.dom_refs.clear();
     }
     output.script = String::from_utf8(masked).unwrap();
     if !recognized {
         output.gaps.push("Vue SFC has no top-level template or script block; bare template/custom-block analysis is unsupported".into());
     }
     output
+}
+
+fn native_template_refs(
+    path: &str,
+    source: &str,
+    template: &Node<'_, StrDoc<SupportLang>>,
+) -> BTreeMap<String, Capture> {
+    let mut candidates = BTreeMap::<String, Vec<Option<Capture>>>::new();
+    for tag in template
+        .dfs()
+        .filter(|n| matches!(n.kind().as_ref(), "start_tag" | "self_closing_tag"))
+    {
+        let attrs = attributes(&tag);
+        let Some(name) = attrs.get("ref") else {
+            continue;
+        };
+        let Some(element) = tag.children().find(|n| n.kind().as_ref() == "tag_name") else {
+            continue;
+        };
+        let native = matches!(
+            element.text().as_ref(),
+            "a" | "article"
+                | "aside"
+                | "audio"
+                | "b"
+                | "blockquote"
+                | "button"
+                | "canvas"
+                | "code"
+                | "dd"
+                | "details"
+                | "dialog"
+                | "div"
+                | "dl"
+                | "dt"
+                | "em"
+                | "fieldset"
+                | "figcaption"
+                | "figure"
+                | "footer"
+                | "form"
+                | "h1"
+                | "h2"
+                | "h3"
+                | "h4"
+                | "h5"
+                | "h6"
+                | "header"
+                | "hr"
+                | "i"
+                | "iframe"
+                | "img"
+                | "input"
+                | "label"
+                | "legend"
+                | "li"
+                | "main"
+                | "nav"
+                | "ol"
+                | "option"
+                | "p"
+                | "pre"
+                | "section"
+                | "select"
+                | "small"
+                | "span"
+                | "strong"
+                | "summary"
+                | "table"
+                | "tbody"
+                | "td"
+                | "textarea"
+                | "th"
+                | "thead"
+                | "time"
+                | "tr"
+                | "ul"
+                | "video"
+                | "svg"
+                | "g"
+                | "path"
+                | "text"
+        );
+        let special = attrs.keys().any(|a| {
+            matches!(
+                a.as_str(),
+                "is" | ":is" | "v-bind:is" | ":ref" | "v-bind:ref" | "ref_for" | "v-bind"
+            )
+        });
+        let looped = tag
+            .ancestors()
+            .take_while(|n| n.range() != template.range())
+            .any(|n| {
+                n.children()
+                    .filter(|c| matches!(c.kind().as_ref(), "start_tag" | "self_closing_tag"))
+                    .any(|t| attributes(&t).contains_key("v-for"))
+            });
+        let ref_count = tag
+            .children()
+            .filter(|n| {
+                n.kind().as_ref() == "attribute"
+                    && n.children().any(|c| {
+                        c.kind().as_ref() == "attribute_name" && c.text().as_ref() == "ref"
+                    })
+            })
+            .count();
+        let valid = native
+            && !special
+            && !looped
+            && ref_count == 1
+            && !tag.dfs().any(|n| n.is_error() || n.is_missing());
+        candidates
+            .entry(name.clone())
+            .or_default()
+            .push(valid.then(|| Capture {
+                text: tag.text().to_string(),
+                location: location(path, source, tag.range()),
+            }));
+    }
+    candidates
+        .into_iter()
+        .filter_map(|(name, mut matches)| {
+            (matches.len() == 1)
+                .then(|| matches.pop().flatten().map(|capture| (name, capture)))
+                .flatten()
+        })
+        .collect()
+}
+
+/// Imported, top-level setup refs connected to a unique native template element.
+pub(crate) fn resolved_dom_refs<'tree>(
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    templates: &BTreeMap<String, Capture>,
+) -> BTreeMap<String, (Node<'tree, StrDoc<SupportLang>>, Capture)> {
+    if templates.is_empty() {
+        return BTreeMap::new();
+    }
+    let mut factories = super::node_browser::imported_named_bindings(root, &["vue"], "ref");
+    factories.extend(super::node_browser::imported_named_bindings(
+        root,
+        &["vue"],
+        "shallowRef",
+    ));
+    let keyed = super::node_browser::imported_named_bindings(root, &["vue"], "useTemplateRef");
+    let mut refs = BTreeMap::new();
+    for declaration in root
+        .dfs()
+        .filter(|n| n.kind().as_ref() == "variable_declarator")
+    {
+        if !declaration
+            .parent()
+            .and_then(|n| n.parent())
+            .is_some_and(|n| n.kind().as_ref() == "program")
+            || declaration.dfs().any(|n| n.is_error() || n.is_missing())
+        {
+            continue;
+        }
+        let (Some(name), Some(call)) = (declaration.field("name"), declaration.field("value"))
+        else {
+            continue;
+        };
+        if name.kind().as_ref() != "identifier" || call.kind().as_ref() != "call_expression" {
+            continue;
+        }
+        let Some(callee) = call.field("function") else {
+            continue;
+        };
+        let factory = callee.text();
+        if !(factories.contains(factory.as_ref()) || keyed.contains(factory.as_ref())) {
+            continue;
+        }
+        let args: Vec<_> = call
+            .field("arguments")
+            .into_iter()
+            .flat_map(|n| n.children().filter(|n| n.is_named()).collect::<Vec<_>>())
+            .collect();
+        let key = if keyed.contains(factory.as_ref()) {
+            if args.len() != 1 || args[0].kind().as_ref() != "string" {
+                continue;
+            }
+            let text = args[0].text();
+            if text.contains('\\') {
+                continue;
+            }
+            text[1..text.len() - 1].to_string()
+        } else {
+            if !(args.is_empty() || args.len() == 1 && args[0].kind().as_ref() == "null") {
+                continue;
+            }
+            name.text().to_string()
+        };
+        let Some(template) = templates.get(&key) else {
+            continue;
+        };
+        let name = name.text().to_string();
+        let mutated = root.dfs().any(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "assignment_expression" | "augmented_assignment_expression" | "update_expression"
+            ) && n
+                .field("left")
+                .or_else(|| n.field("argument"))
+                .is_some_and(|left| {
+                    let text: String = left.text().chars().filter(|c| !c.is_whitespace()).collect();
+                    matches!(text.as_str(),t if t==name || t==format!("{name}.value"))
+                        && !ref_shadowed(&n, &name)
+                })
+        });
+        if !mutated {
+            refs.insert(name, (declaration, template.clone()));
+        }
+    }
+    refs
+}
+
+pub(crate) fn ref_shadowed(node: &Node<'_, StrDoc<SupportLang>>, name: &str) -> bool {
+    let declares = |pattern: Node<'_, StrDoc<SupportLang>>| {
+        pattern
+            .dfs()
+            .any(|n| n.kind().as_ref() == "identifier" && n.text().trim() == name)
+    };
+    node.ancestors()
+        .filter(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "statement_block"
+                    | "function_declaration"
+                    | "arrow_function"
+                    | "function_expression"
+                    | "method_definition"
+                    | "catch_clause"
+            )
+        })
+        .any(|scope| {
+            scope
+                .field("parameters")
+                .or_else(|| scope.field("parameter"))
+                .is_some_and(declares)
+                || scope.dfs().any(|n| {
+                    matches!(
+                        n.kind().as_ref(),
+                        "variable_declarator" | "function_declaration" | "class_declaration"
+                    ) && n.field("name").is_some_and(declares)
+                        && n.ancestors()
+                            .find(|a| {
+                                matches!(
+                                    a.kind().as_ref(),
+                                    "statement_block"
+                                        | "function_declaration"
+                                        | "arrow_function"
+                                        | "function_expression"
+                                        | "method_definition"
+                                        | "catch_clause"
+                                )
+                            })
+                            .is_some_and(|a| a.range() == scope.range())
+                })
+        })
 }
 
 fn attributes(node: &Node<'_, StrDoc<SupportLang>>) -> BTreeMap<String, String> {

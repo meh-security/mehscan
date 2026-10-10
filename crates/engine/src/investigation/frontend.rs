@@ -30,6 +30,142 @@ impl FrontendContext {
             let Ok(file) = sources.file(&group.path) else {
                 continue;
             };
+            if group
+                .evidence
+                .iter()
+                .any(|e| e.tags.iter().any(|t| t == "vue-dom-ref"))
+            {
+                if let Some(ast) = documents
+                    .entry(file.path.clone())
+                    .or_insert_with(|| parse(file))
+                    .as_ref()
+                {
+                    let root = ast.root();
+                    context.imports.insert(
+                        file.path.clone(),
+                        root.children()
+                            .filter(|n| {
+                                n.kind().as_ref() == "import_statement"
+                                    && valid(n)
+                                    && n.range().len() <= MAX_FACT_BYTES
+                            })
+                            .map(|n| {
+                                let names = n
+                                    .dfs()
+                                    .filter(|n| n.kind().as_ref() == "identifier")
+                                    .map(|n| n.text().to_string())
+                                    .collect();
+                                (
+                                    names,
+                                    fact(
+                                        file,
+                                        &n,
+                                        "frontend_import_binding_context",
+                                        "Vue/helper import",
+                                        "",
+                                    ),
+                                )
+                            })
+                            .collect(),
+                    );
+                    for item in group
+                        .evidence
+                        .iter()
+                        .filter(|e| e.tags.iter().any(|t| t == "vue-dom-ref"))
+                    {
+                        let mut facts = Vec::new();
+                        let mut partial = false;
+                        for (key, role) in [
+                            ("vue_dom_ref_template", "frontend_dom_ref_template_context"),
+                            (
+                                "vue_dom_ref_declaration",
+                                "frontend_dom_ref_declaration_context",
+                            ),
+                        ] {
+                            if let Some(capture) = item
+                                .captures
+                                .get(key)
+                                .filter(|c| c.text.len() <= MAX_FACT_BYTES)
+                            {
+                                facts.push(ReviewNeighborhoodFact {role:role.into(),symbol:"Vue native DOM ref".into(),location:capture.location.clone(),excerpt:capture.text.clone(),evidence_id:Some(item.id.clone()),provenance:QueryProvenance {resolution:Resolution::Ast,engine:"bounded Vue native template ref navigation; input trust and controls require review 1".into()}});
+                            }
+                        }
+                        if let Some(capture) = item.captures.get("content") {
+                            if let Some(operand) = root.dfs().find(|n| {
+                                n.range().start == capture.location.start.byte_offset
+                                    && n.range().end == capture.location.end.byte_offset
+                                    && valid(n)
+                            }) {
+                                if operand.range().len() <= MAX_FACT_BYTES {
+                                    facts.push(fact(
+                                        file,
+                                        &operand,
+                                        "frontend_output_producer_context",
+                                        "HTML operand",
+                                        &item.id,
+                                    ));
+                                }
+                                if operand.kind().as_ref() == "identifier" {
+                                    let owner = operand.ancestors().find(|n| {
+                                        matches!(
+                                            n.kind().as_ref(),
+                                            "function_declaration"
+                                                | "arrow_function"
+                                                | "function_expression"
+                                        )
+                                    });
+                                    if let Some(owner) = owner {
+                                        let name = operand.text();
+                                        for writer in owner
+                                            .dfs()
+                                            .filter(|n| {
+                                                valid(n)
+                                                    && n.range().start < operand.range().start
+                                                    && n.range().len() <= MAX_FACT_BYTES
+                                                    && n.ancestors()
+                                                        .find(|a| {
+                                                            matches!(
+                                                                a.kind().as_ref(),
+                                                                "function_declaration"
+                                                                    | "arrow_function"
+                                                                    | "function_expression"
+                                                            )
+                                                        })
+                                                        .is_some_and(|a| a.range() == owner.range())
+                                                    && match n.kind().as_ref() {
+                                                        "variable_declarator" => n
+                                                            .field("name")
+                                                            .is_some_and(|n| n.text() == name),
+                                                        "assignment_expression"
+                                                        | "augmented_assignment_expression" => n
+                                                            .field("left")
+                                                            .is_some_and(|n| n.text() == name),
+                                                        _ => false,
+                                                    }
+                                            })
+                                            .take(4)
+                                        {
+                                            if facts
+                                                .iter()
+                                                .filter(|f| {
+                                                    f.role == "frontend_output_writer_context"
+                                                })
+                                                .count()
+                                                == 3
+                                            {
+                                                partial = true;
+                                                break;
+                                            }
+                                            facts.push(fact(file,&writer,"frontend_output_writer_context","candidate operand writer; branches and later changes require review",&item.id));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        context.packets.insert(item.id.clone(), (facts, partial));
+                    }
+                }
+            }
             let sinks: Vec<_> = group
                 .evidence
                 .iter()
@@ -256,6 +392,12 @@ impl FrontendContext {
 }
 
 fn parse(file: &SourceFile) -> Option<AstGrep<StrDoc<SupportLang>>> {
+    if file.path.ends_with(".vue") && file.source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES {
+        let sfc = crate::code::vue::parse(&file.path, &file.source);
+        return Some(AstGrep::doc(
+            StrDoc::try_new(&sfc.script, parser_language(sfc.language)).ok()?,
+        ));
+    }
     let language = file.language?;
     if !matches!(
         language,
@@ -710,6 +852,6 @@ fn fact(
         location: location_from_offsets(&file.path, &file.source, node.range().start, node.range().end),
         excerpt: redact_helper_definition(symbol, node.text().as_ref()),
         evidence_id: Some(evidence_id.into()),
-        provenance: QueryProvenance { resolution: Resolution::Ast, engine: "bounded JSX component prop/caller navigation; caller trust, reaching values and controls require review 1".into() },
+        provenance: QueryProvenance { resolution: Resolution::Ast, engine: if file.path.ends_with(".vue") {"bounded Vue operand/writer navigation; reaching values and controls require review 1"} else {"bounded JSX component prop/caller navigation; caller trust, reaching values and controls require review 1"}.into() },
     }
 }
