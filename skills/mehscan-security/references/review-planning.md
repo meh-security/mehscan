@@ -203,6 +203,12 @@ application queue and the total omitted IDs. Keep unmapped outputs, application
 wrappers, dangerous build inputs and observed dependency weaknesses in Value;
 reopen a lane when source or user knowledge makes its trust assumption invalid.
 
+For source/distribution pairs, confirm the asset entry/output mapping or source
+map and check for output-only changes before reviewing the authored source once.
+Record the exact deferred output IDs and source representative in the queue.
+Do not classify all `wwwroot`, `Assets` or similarly named folders as duplicates:
+they can contain unique application code or dependency implementations.
+
 With supplied Roslyn inputs, add `--csharp-context CONTEXT
 --csharp-backend BACKEND` to inventory creation. Scan and enrich once, then
 reuse that inventory for selected bundles.
@@ -213,6 +219,14 @@ Prepare only relevant projects and their source dependencies. Declare
 `runtime: "browser"` only with actual browser entry/build evidence; Node/SSR/shared
 code stays unspecified or separate. Types and missing implementations do not
 prove safe values. Reuse the resulting inventory; never start a compiler per ID.
+
+Keep browser entry/import sources separate from build configs and tests, even when
+they share a package directory. Use each subproject's actual compiler options.
+For bundler-only aliases, inspect the config as source, translate verified static
+targets into `compiler_options.paths`, and bind the config in `context_files`.
+Do not execute configuration/plugins, invent a stub implementation or install
+dependencies. Dynamic/conflicting mappings stay unresolved. Missing `.vue`
+component scripts/templates are a coverage gap, not evidence of absent callers.
 
 Exclude standalone requests resolved to DOM
 fetch in an explicitly supplied browser context, using default GET or literal

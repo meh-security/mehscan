@@ -24,6 +24,19 @@ close that property; input-origin research adds nothing to that conclusion.
 For server responses, check the effective content type and server-side control.
 One client's safe DOM insertion does not close a directly rendered HTML response.
 
+For frontend output, use supplied initializer/helper locations to pair the sink
+with its actual producer. A formatter/highlighter needs its implementation,
+version and effective options; its name or return type is not an escaping proof.
+When the repository names an exact external artifact, inspect that version with
+available read-only tools before calling the implementation unavailable. Treat
+deployment overrides as a blocker when evidence connects them to this chain;
+otherwise state the normal binding assumption. A complete output-control proof
+can settle HTML interpretation without reconstructing every input writer.
+For DOM-to-DOM HTML copying, inspect the source element's markup and relevant
+writers. A DOM selector/type is navigation, not trusted contents. For a shared
+request helper, pair the implementation with observed callers and effective
+credentials/options; keep HTML rendering as its own consumer question.
+
 Otherwise trace who writes the exact rendered value. Inspect relevant normal
 and alternate writers, their actual callers/registration, and controls on those
 paths. A sanitizer setting on an editor does not protect a different direct

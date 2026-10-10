@@ -53,3 +53,10 @@ avoid embedding full inventory, repeated source and irrelevant schema metadata.
 Expose locations when the needed producer is unresolved, rather than guessing
 a relationship or packing every possible caller. There is no new CLI flag here;
 ordinary bundles and targeted evidence methods remain the default input flow.
+
+For HTML, prefer one producer/consumer packet per shared implementation: exact
+output operands, bounded initializer/helper source, transformations and the
+markup/writer or caller locations needed to settle trust. Use existing source
+lookups for missing edges instead of repeating a generic sink excerpt. For an
+external formatter, include the verified version/implementation location or name
+that missing fact. Keep different caller effects and each exact review ID visible.

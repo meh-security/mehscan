@@ -57,6 +57,15 @@ can guide research but do not establish a runtime implementation. Type annotatio
 do not validate external input. Only inspectable source function returns receive
 return navigation; no general effect summary or arbitrary call-chain traversal.
 
+Use separate source contexts for browser application entries, Node build tools
+and tests. A shared directory is not a shared runtime. For static bundler aliases,
+provide verified mappings via `compiler_options.paths` with the appropriate
+`baseUrl`, and list the inspected configuration in `context_files`. Paths supplied
+through `compiler_options` resolve relative to the scan root; tsconfig-derived
+paths retain their configuration base. Do not run Vite/Webpack configs or plugins
+to discover aliases. Dynamic mappings and unavailable implementations remain
+explicit research boundaries. The backend does not parse `.vue` components.
+
 `node_types` is optional and explicit. Use a compatible existing `@types/node`
 package, or the adapter's pinned 26.0.1 metadata when appropriate for the target.
 The adapter loads declarations, not the application. It does not silently add
@@ -110,6 +119,12 @@ Complete static paths can also propagate through compiler-bound direct source
 functions with a single expression return and exact positional arguments. Nested
 helpers are bounded; branches, assignments, recursion, async/default/rest
 parameters and replaced bindings do not qualify. This closes only path selection.
+
+HTML operands also receive bounded const-initializer navigation through property
+receivers and formatter calls. This can locate a copied DOM element's selector
+or a formatter bound to a window property. Initializers are limited to 1 KiB and
+three bindings. These facts do not prove trusted markup, immutable object contents
+or a sanitizer contract; inspect the actual producer and writers.
 
 Projects without queried operands skip semantic analysis after the Program has
 followed imports. Their sources/config/resolution inputs remain bound. Snapshot

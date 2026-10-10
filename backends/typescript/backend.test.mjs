@@ -204,6 +204,51 @@ test('mutated object contents and branched helpers do not become fixed-value pro
   } finally { f.cleanup(); }
 });
 
+test('HTML origins locate DOM receivers and dynamic formatter bindings without safety proofs', () => {
+  const f = fixture();
+  try {
+    for (const [source, operand, origins] of [
+      ['const button = document.querySelector("[data-theme]"); const icon = button?.querySelector(".icon"); document.body.innerHTML = icon.innerHTML;', 'icon.innerHTML', ['button?.querySelector(".icon")', 'document.querySelector("[data-theme]")']],
+      ['const P = (window as any).Prism; const language = P.highlight(input, P.languages.javascript); document.body.innerHTML = language;', 'language', ['P.highlight(input, P.languages.javascript)', '(window as any).Prism']],
+      ['const holder = { html: "fixed" }; holder.html = input; document.body.innerHTML = holder.html;', 'holder.html', ['{ html: "fixed" }']],
+      ['let html = "fixed"; html = input; document.body.innerHTML = html;', 'html', []],
+    ]) {
+      fs.writeFileSync(path.join(f.root, 'app.ts'), source);
+      const start = source.lastIndexOf(operand);
+      f.query.role = 'content';
+      f.query.operand.start.byte_offset = start;
+      f.query.operand.end.byte_offset = start + operand.length;
+      const facts = collect(f.request).observations[0].facts;
+      const navigated = facts.filter(v => v.remaining_checks.includes('source_initializer_navigation'));
+      assert.deepEqual(navigated.map(v => v.value), origins);
+      assert.ok(navigated.every(v => v.remaining_checks.includes('receiver_contents_and_writers_not_proven')));
+      assert.ok(!facts.some(v => v.kind === 'fixed_filesystem_path'));
+      for (const fact of navigated) {
+        assert.equal(Buffer.from(source).subarray(fact.location.start.byte_offset, fact.location.end.byte_offset).toString(), fact.value);
+      }
+    }
+  } finally { f.cleanup(); }
+});
+
+test('HTML origin navigation stops at bounded aliases and oversized initializers', () => {
+  const f = fixture();
+  try {
+    for (const [source, count] of [
+      ['const a = input; const b = a; const c = b; const d = c; document.body.innerHTML = d;', 3],
+      [`const html = "${'x'.repeat(1100)}"; document.body.innerHTML = html;`, 0],
+    ]) {
+      fs.writeFileSync(path.join(f.root, 'app.ts'), source);
+      const operand = source.endsWith('= d;') ? 'd' : 'html';
+      const start = source.lastIndexOf(operand);
+      f.query.role = 'content';
+      f.query.operand.start.byte_offset = start;
+      f.query.operand.end.byte_offset = start + operand.length;
+      const facts = collect(f.request).observations[0].facts;
+      assert.equal(facts.filter(v => v.remaining_checks.includes('source_initializer_navigation')).length, count);
+    }
+  } finally { f.cleanup(); }
+});
+
 test('snapshot binds source, compiler, package metadata and missing import resolution probes', () => {
   const f = fixture();
   try {

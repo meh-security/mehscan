@@ -193,6 +193,42 @@ export function collect(request) {
         if (mapped) output.push(mapped);
       }
     }
+    // HTML producer navigation, including a copied DOM receiver or a formatter
+    // held in a local binding. Initializers locate research, never prove values.
+    function contentOrigins(node, output, seen = new Set(), depth = 0) {
+      if (!node || depth > 2) return;
+      if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node)
+        || ts.isTypeAssertionExpression(node) || ts.isNonNullExpression(node)) {
+        contentOrigins(node.expression, output, seen, depth);
+      } else if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+        contentOrigins(node.expression, output, seen, depth);
+      } else if (ts.isCallExpression(node)) {
+        helperReturn(node, 'content', output);
+        contentOrigins(node.expression, output, seen, depth);
+      } else if (ts.isIdentifier(node)) {
+        const value = symbol(node);
+        if (!value || seen.has(value)) return;
+        seen.add(value);
+        const declarations = value.declarations ?? [];
+        if (declarations.length !== 1 || !ts.isVariableDeclaration(declarations[0])) return;
+        const declaration = declarations[0];
+        const initializer = declaration.initializer;
+        if (!initializer || !(declaration.parent.flags & ts.NodeFlags.Const)
+          || Buffer.byteLength(initializer.getText()) > 1024) return;
+        const origin = fact(initializer, 'local_operand_origin', 'content', initializer.getText(),
+          ['source_initializer_navigation', 'const_binding_not_deep_immutability',
+            'receiver_contents_and_writers_not_proven', 'exact_interpretation_and_effect']);
+        if (origin) {
+          const existing = output.find(value => value.kind === origin.kind && value.role === origin.role
+            && value.location.path === origin.location.path
+            && value.location.start.byte_offset === origin.location.start.byte_offset
+            && value.location.end.byte_offset === origin.location.end.byte_offset);
+          if (existing) existing.remaining_checks = [...new Set([...existing.remaining_checks, ...origin.remaining_checks])];
+          else output.push(origin);
+        }
+        contentOrigins(initializer, output, seen, depth + 1);
+      }
+    }
     // Incoming argument navigation is cached once per supplied project. It is
     // an observed signature edge, never a caller-completeness or value proof.
     let incomingCalls;
@@ -415,6 +451,7 @@ export function collect(request) {
           }
         }
       }
+      if (query.role === 'content') contentOrigins(operand, facts);
       observations.push({ evidence_id: query.evidence_id, project_id: project.id,
         facts: [...new Map(facts.map(value => [JSON.stringify(value), value])).values()] });
     }
