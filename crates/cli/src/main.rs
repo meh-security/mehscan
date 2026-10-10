@@ -3170,6 +3170,33 @@ fn review_card_from_value(
             })
         })
         .collect();
+    // These already-bounded facts are the initial producer/caller evidence.
+    // Keep excerpts in compact views; locations alone force redundant reads.
+    let has_frontend_context = review["facts"].as_array().is_some_and(|facts| {
+        facts.iter().any(|fact| {
+            fact["role"]
+                .as_str()
+                .is_some_and(|role| role.starts_with("frontend_"))
+        })
+    });
+    let frontend_context: Vec<_> = review["facts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|fact| {
+            has_frontend_context
+                && fact["role"].as_str().is_some_and(|role| {
+                    role.starts_with("frontend_") || role == "helper_definition_context"
+                })
+        })
+        .map(|fact| {
+            serde_json::json!({
+                "role": fact["role"],
+                "location": brief_location(&fact["location"]),
+                "excerpt": fact["excerpt"],
+            })
+        })
+        .collect();
     let mut lookups: Vec<_> = review["investigation"]["lookup_requests"]
         .as_array()
         .into_iter()
@@ -3249,6 +3276,7 @@ fn review_card_from_value(
             "captures": captures,
         },
         "source_context": context,
+        "frontend_context": frontend_context,
         "nearby_locations": nearby_locations,
         "suggested_lookups": lookups,
         "truncation": review["truncation"],

@@ -15,6 +15,68 @@ fn run(args: &[&str]) -> Value {
 }
 
 #[test]
+fn compact_views_keep_frontend_producers_and_caller_excerpts() {
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/frontend-review-packets");
+    let output = std::env::temp_dir().join(format!("mehscan-jsx-sweep-{}", std::process::id()));
+    let manifest = run(&[
+        "investigate",
+        "review-bundles",
+        root.to_str().unwrap(),
+        "--output",
+        output.to_str().unwrap(),
+        "--context-lines",
+        "3",
+    ]);
+    let mut found = false;
+    for bundle in manifest["bundles"].as_array().unwrap() {
+        let request = output
+            .join("requests")
+            .join(bundle["filename"].as_str().unwrap());
+        let sweep = run(&[
+            "investigate",
+            "review-sweep",
+            "--bundle",
+            request.to_str().unwrap(),
+        ]);
+        for review in sweep["reviews"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|review| review["anchor"]["location"]["path"] == "Memo.tsx")
+        {
+            found = true;
+            let facts = review["frontend_context"].as_array().unwrap();
+            assert!(
+                facts
+                    .iter()
+                    .any(|fact| fact["role"] == "frontend_output_producer_context"
+                        && fact["excerpt"].as_str().unwrap().contains("React.useMemo"))
+            );
+            assert!(facts.iter().any(|fact| {
+                fact["role"] == "frontend_prop_caller_context"
+                    && fact["location"]["path"] == "MemoCallers.tsx"
+                    && fact["excerpt"]
+                        .as_str()
+                        .unwrap()
+                        .contains("<Display data={value}")
+            }));
+            let card = run(&[
+                "investigate",
+                "review-card",
+                "--bundle",
+                request.to_str().unwrap(),
+                "--review-id",
+                review["review_id"].as_str().unwrap(),
+            ]);
+            assert_eq!(card["frontend_context"], review["frontend_context"]);
+            assert_eq!(card["selected_anchor_id"], review["selected_anchor_id"]);
+        }
+    }
+    assert!(found, "missing JSX raw HTML review");
+}
+
+#[test]
 fn shared_question_queue_and_sweep_preserve_exceptions_and_exact_source() {
     let root = std::env::temp_dir().join(format!("mehscan-sweep-{}", std::process::id()));
     let output = root.with_file_name(format!("mehscan-sweep-output-{}", std::process::id()));

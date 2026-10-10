@@ -39,6 +39,8 @@ a sanitizer. Static, sanitized and dynamic callers can have different answers;
 reuse the component implementation, not its verdict. The caller sample is bounded:
 spreads, omitted callers, parser gaps, reassignments and unsupported component
 wrappers require targeted source follow-up. A missing caller fact does not mean no callers exist.
+The compact `review-card` and `review-sweep` views expose these facts under
+`frontend_context`.
 For DOM-to-DOM HTML copying, inspect the source element's markup and relevant
 writers. A DOM selector/type is navigation, not trusted contents. For a shared
 request helper, pair the implementation with observed callers and effective
