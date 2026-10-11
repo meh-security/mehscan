@@ -72,6 +72,19 @@ fn names_do_not_prove_sanitization_and_shadowed_imports_are_not_followed() {
             })
             .unwrap()
     };
+    for line in [5, 8] {
+        assert!(at(line).facts.iter().any(|f| {
+            f.role == "frontend_prop_caller_context"
+                && f.location.path == "Source.tsx"
+                && f.excerpt.contains("html={payload}")
+        }));
+        assert!(at(line).facts.iter().any(|f| {
+            f.role == "frontend_prop_producer_context"
+                && f.location.path == "Source.tsx"
+                && f.excerpt.contains("URLSearchParams")
+                && f.excerpt.contains(".get('html')")
+        }));
+    }
     assert!(
         at(8)
             .facts
