@@ -25,6 +25,11 @@ can have different behavior. Missing callable binding remains a research task.
 Cover directly chained output transformations with their exact locations or
 short method windows; an omitted small helper can trigger a costly global search.
 Include relevant writer caller/permission/registration locations when known.
+For stored values, keep writer identity, query selection and consumer in one
+small source-backed section. Put effective sanitizer branches beside their
+implementation or relevant behavior assertions. Label preparation connections
+as navigation; preserve exact source roots and unresolved edges. Retrieve a
+missing later rewrite normally instead of declaring the prepared chain complete.
 For large templates, provide binding and consumed-value/include locations first,
 with static body text available on demand. A navigation map is not proof that
 unshown template content has no dynamic behavior.

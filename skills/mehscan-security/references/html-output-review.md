@@ -95,9 +95,15 @@ and alternate writers, their actual callers/registration, and controls on those
 paths. A sanitizer setting on an editor does not protect a different direct
 writer. A shared field name or receiver spelling does not prove the same object.
 For API-backed values, follow the service URL into local server routes and
-persistence setters/validators. A client save call does not prove the server
-accepts raw content. Inspect available repository tests when they clarify a
-writer or control. Do not label those local policies unavailable before checking
+persistence setters/validators. Match alternate writers to the exact returned
+records: joins, filters, tenant keys and cache population can separate values
+with the same field name. Keep writer identity, selection and consumer together
+in a short working chain; do not carry a raw-writer property across an unverified
+selection. Check each effective control branch separately, including later
+rewrites. A client save call does not prove the server accepts raw content.
+Inspect available repository tests when they clarify a writer or control;
+distinguish an asserted implementation contract from a test actually executed.
+Do not label those local policies unavailable before checking
 them; distinguish a specific remaining deployment/dependency gap.
 Use source-visible tests or versioned dependency source when semantics are
 decisive. Do not invent behavior from a familiar name or a failed lookup.
