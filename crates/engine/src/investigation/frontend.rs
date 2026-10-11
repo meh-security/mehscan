@@ -4,6 +4,7 @@ mod helpers;
 mod vue;
 
 const MAX_CALLERS: usize = 2;
+const MAX_PROPS: usize = 3;
 const MAX_FACT_BYTES: usize = 2048;
 
 #[derive(Default)]
@@ -16,7 +17,8 @@ struct PropContract {
     evidence_id: String,
     path: String,
     component: String,
-    prop: String,
+    props: BTreeSet<String>,
+    partial: bool,
     exports: BTreeSet<String>,
     default_export: bool,
     parameter: ReviewNeighborhoodFact,
@@ -228,6 +230,7 @@ impl FrontendContext {
                     "frontend_output_producer_context",
                 );
                 if let Some(contract) = prop_contract(file, &root, sink, &expressions) {
+                    *partial |= contract.partial;
                     facts.push(contract.parameter.clone());
                     facts.extend(contract.wrappers.clone());
                     append_prop_types(file, &root, &contract.parameter, &sink.id, facts, partial);
@@ -281,19 +284,28 @@ impl FrontendContext {
                     {
                         continue;
                     }
-                    let attributes: Vec<_> = element
-                        .children()
-                        .filter(|n| {
-                            n.kind().as_ref() == "jsx_attribute"
-                                && n.children()
-                                    .find(|c| c.is_named())
-                                    .is_some_and(|n| n.text().trim() == contract.prop)
+                    let attributes: Vec<_> = contract
+                        .props
+                        .iter()
+                        .map(|prop| {
+                            (
+                                prop,
+                                element
+                                    .children()
+                                    .filter(|n| {
+                                        n.kind().as_ref() == "jsx_attribute"
+                                            && n.children()
+                                                .find(|c| c.is_named())
+                                                .is_some_and(|n| n.text().trim() == prop)
+                                    })
+                                    .collect::<Vec<_>>(),
+                            )
                         })
                         .collect();
                     let spread = element
                         .children()
                         .any(|n| n.kind().as_ref() == "jsx_expression");
-                    if attributes.is_empty() && !spread {
+                    if attributes.iter().all(|(_, values)| values.is_empty()) && !spread {
                         continue;
                     }
                     let (facts, truncated) = context
@@ -314,23 +326,36 @@ impl FrontendContext {
                         *truncated = true;
                         continue;
                     }
-                    if attributes.len() != 1 || spread {
-                        // A spread can replace a prop. Show the actual caller, but
-                        // leave its reaching value explicit rather than guessing.
-                        *truncated |= spread || attributes.len() > 1;
-                        if !spread && attributes.is_empty() {
-                            continue;
-                        }
-                    }
+                    // Omitted/duplicate props and spreads have unresolved reaching
+                    // values. Preserve the caller once, then bind only exact args.
+                    *truncated |= spread || attributes.iter().any(|(_, values)| values.len() != 1);
                     facts.push(fact(
                         file,
                         &element,
                         "frontend_prop_caller_context",
-                        &format!("{}.{}", contract.component, contract.prop),
+                        &contract
+                            .props
+                            .iter()
+                            .map(|prop| format!("{}.{}", contract.component, prop))
+                            .collect::<Vec<_>>()
+                            .join(", "),
                         &contract.evidence_id,
                     ));
-                    if !spread && attributes.len() == 1 {
-                        let value = attributes[0].children().filter(|n| n.is_named()).nth(1);
+                    for (prop, values) in attributes
+                        .iter()
+                        .filter(|(_, values)| !spread && values.len() == 1)
+                    {
+                        let value = values[0].children().filter(|n| n.is_named()).nth(1);
+                        if value.is_none() && contract.props.len() > 1 {
+                            // Bare JSX attributes are explicit boolean arguments.
+                            facts.push(fact(
+                                file,
+                                &values[0],
+                                "frontend_prop_value_context",
+                                &format!("{}.{}", contract.component, prop),
+                                &contract.evidence_id,
+                            ));
+                        }
                         if let Some(value) = value {
                             let expression = if value.kind().as_ref() == "jsx_expression" {
                                 value.children().find(|n| n.is_named())
@@ -338,6 +363,15 @@ impl FrontendContext {
                                 Some(value)
                             };
                             if let Some(expression) = expression {
+                                if contract.props.len() > 1 {
+                                    facts.push(fact(
+                                        file,
+                                        &expression,
+                                        "frontend_prop_value_context",
+                                        &format!("{}.{}", contract.component, prop),
+                                        &contract.evidence_id,
+                                    ));
+                                }
                                 append_producer(
                                     file,
                                     &root,
@@ -346,6 +380,8 @@ impl FrontendContext {
                                     truncated,
                                     &contract.evidence_id,
                                 );
+                            } else {
+                                *truncated = true;
                             }
                         }
                     }
@@ -599,26 +635,33 @@ fn prop_contract(
             }
         }
     }
-    if reads.len() != 1 {
+    if reads.is_empty() {
         return None;
     }
-    let (prop, local) = reads.into_iter().next()?;
     let content = capture.text.trim();
-    if owner.dfs().any(|n| {
-        matches!(
-            n.kind().as_ref(),
-            "assignment_expression" | "augmented_assignment_expression" | "update_expression"
-        ) && n
-            .field("left")
-            .or_else(|| n.field("argument"))
-            .is_some_and(|left| {
-                left.text().trim() == local
-                    || left.text().trim() == content
-                    || left.text().trim() == format!("{local}.{prop}")
-            })
+    if reads.iter().any(|(prop, local)| {
+        owner.dfs().any(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "assignment_expression" | "augmented_assignment_expression" | "update_expression"
+            ) && n
+                .field("left")
+                .or_else(|| n.field("argument"))
+                .is_some_and(|left| {
+                    left.text().trim() == local.as_str()
+                        || left.text().trim() == content
+                        || left.text().trim() == format!("{local}.{prop}")
+                })
+        })
     }) {
         return None;
     }
+    let partial = reads.len() > MAX_PROPS;
+    let props: BTreeSet<_> = reads
+        .into_iter()
+        .take(MAX_PROPS)
+        .map(|(prop, _)| prop)
+        .collect();
     let export = binding
         .ancestors()
         .find(|n| n.kind().as_ref() == "export_statement");
@@ -660,14 +703,19 @@ fn prop_contract(
         file,
         &parameter,
         "frontend_component_prop_context",
-        &format!("{component}.{prop}"),
+        &props
+            .iter()
+            .map(|prop| format!("{component}.{prop}"))
+            .collect::<Vec<_>>()
+            .join(", "),
         &sink.id,
     );
     Some(PropContract {
         evidence_id: sink.id.clone(),
         path: file.path.clone(),
         component,
-        prop,
+        props,
+        partial,
         exports,
         default_export,
         parameter: parameter_fact,

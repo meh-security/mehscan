@@ -50,7 +50,9 @@ caller sampling gaps do not reopen it. Do not reread supplied producer windows
 or investigate caller origins merely to confirm them.
 If the control is absent, bypassed or unresolved, use
 `frontend_component_prop_context`, `frontend_prop_caller_context` and
-`frontend_prop_producer_context` to research the next missing edge. Static,
+`frontend_prop_producer_context` to research the next missing edge. For multiple
+contributing props, `frontend_prop_value_context` identifies each exact caller
+argument separately; check content and control arguments together. Static,
 sanitized and dynamic callers can differ: reuse facts, not verdicts. The sample
 is bounded; investigate spreads, omitted callers, parser gaps, reassignments
 and unsupported wrappers when they affect that edge. Missing caller facts do
