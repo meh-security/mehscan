@@ -82,6 +82,15 @@ in the next table.
 | Uploads, authentication and authorization (CWE-306, CWE-434, CWE-639, CWE-862) | Mehscan models these as route, resource, file-content and guard relationships rather than standalone suspicious calls. | Reference rules that issue a verdict from a missing annotation or one API call do not preserve route inheritance, middleware order or resource identity. |
 | Logging, LDAP, CORS and native memory (CWE-117, CWE-90, CWE-942, CWE-119/120/134) | Existing analyzers use log/value roles, LDAP context-specific encoding, response policy and native region/format operands. | Generic logging calls, string replacement and memory-function names do not establish injection, correct encoding or an invalid region by themselves. |
 
+Frontend HTML review packets can locate directly called, relative-imported
+functions and const arrow helpers behind React/Solid and Vue setup producers.
+They include bounded local options, instance initialization, module-level setup
+effects and imports, without assuming that a sanitizer name proves safety.
+Navigation is limited to two imported helpers, four local dependency facts and
+two setup effects per review, with at most 4 KiB of added helper source. Shadowed
+bindings, barrel exports, namespace calls and deeper dependency chains require
+research. No compiler backend is required; review admission and IDs are unchanged.
+
 ## Candidates requiring new capability work
 
 The remaining reference rules are not sink gaps in an existing Mehscan

@@ -1,5 +1,6 @@
 //! Bounded frontend navigation for existing raw-HTML reviews, not taint or safety.
 use super::*;
+mod helpers;
 mod vue;
 
 const MAX_CALLERS: usize = 2;
@@ -235,9 +236,6 @@ impl FrontendContext {
             }
         }
         vue::callers(sources, &vue_contracts, &mut documents, &mut context);
-        if contracts.is_empty() {
-            return context;
-        }
 
         // Only JSX-containing frontend files can supply these callers. Parse a
         // file once for all selected contracts, never once per review ID.
@@ -354,6 +352,7 @@ impl FrontendContext {
                 }
             }
         }
+        helpers::append(sources, &mut documents, &mut context);
         context
     }
 
@@ -366,7 +365,14 @@ impl FrontendContext {
         facts: &[ReviewNeighborhoodFact],
     ) -> Vec<ReviewNeighborhoodFact> {
         let mut imports = Vec::new();
-        for source in facts {
+        // Output helper ownership is decisive before upstream caller sampling.
+        // Preserve the existing four-import cap instead of enlarging packets.
+        let mut ordered: Vec<_> = facts.iter().collect();
+        ordered.sort_by_key(|f| {
+            !(f.role == "frontend_imported_helper_context"
+                || f.role.starts_with("frontend_helper_"))
+        });
+        for source in ordered {
             let Some(bindings) = self.imports.get(&source.location.path) else {
                 continue;
             };
@@ -928,6 +934,32 @@ fn dependencies<'a>(
     let mut inspected = seeds.clone();
     let mut visited = BTreeSet::new();
     let mut count = facts.iter().filter(|f| f.role == role).count();
+    for seed in seeds
+        .iter()
+        .filter(|_| role == "frontend_output_producer_context")
+    {
+        if seed.kind().as_ref() == "identifier"
+            || facts.iter().any(|f| {
+                f.location.path == file.path
+                    && f.location.start.byte_offset <= seed.range().start
+                    && f.location.end.byte_offset >= seed.range().end
+            })
+        {
+            continue;
+        }
+        if seed.range().len() > MAX_FACT_BYTES || count == 4 {
+            *partial = true;
+            continue;
+        }
+        facts.push(fact(
+            file,
+            seed,
+            role,
+            "HTML input expression; transformations require review",
+            id,
+        ));
+        count += 1;
+    }
     for _ in 0..2 {
         let mut next = Vec::new();
         for expression in seeds {
