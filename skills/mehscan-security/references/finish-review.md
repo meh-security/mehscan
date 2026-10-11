@@ -31,8 +31,10 @@ Stop when the chain is established,
    to the supplied fact/anchor locations when they support the conclusion;
    expanded source lookup ranges are research windows, not citation windows.
    Keep each range
-   to a few lines around the operation or control (usually at most 20; hard
-   limit 40 lines and 4000 characters). Use two ranges for separated facts
+   to a few lines around the operation or control (usually at most 20).
+   The finalizer splits larger valid ranges into exact artifacts of at most
+   40 lines and 4000 characters, preserving all selected source. Each input
+   range is capped at 400 lines and 64 KiB. Use two ranges for separated facts
    rather than one long span. Line ranges here are inclusive; a source span
    ending at column 1 of the next line does not include that next line's text.
    For `investigate source`, use `results.line_range` for inclusive citation
@@ -57,8 +59,8 @@ Stop when the chain is established,
    only for an externally supplied or edited full response:
    `review-bundle-triage --bundle REQUEST --responses RESPONSE --source-root
    ROOT --summary true`; the full response is already saved on disk.
-   If it rejects a source range, select a smaller range that contains the
-   decision-changing operation or control.
+   If it rejects evidence, correct the reported path or bounds using inspected
+   source; never discard unsupported evidence merely to pass validation.
 
 If a query journal is malformed, preserve it before recovery. Do not discard
 invalid rows to make validation pass; recover the affected queries from the

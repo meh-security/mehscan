@@ -3412,24 +3412,25 @@ fn expand_brief_reviews(
         let mut artifact_ids = vec![anchor.clone()];
         let mut artifacts = Vec::with_capacity(review.evidence.len());
         for (index, source_ref) in review.evidence.iter().enumerate() {
-            let artifact_id = format!("review-source-{}", index + 1);
-            let (location, excerpt) =
-                read_brief_source(source_root, source_ref).map_err(|error| {
-                    format!(
-                        "review {} evidence {} ({}:{}-{}): {error}",
-                        review.review_id,
-                        index + 1,
-                        source_ref.path,
-                        source_ref.start_line,
-                        source_ref.end_line
-                    )
-                })?;
-            artifacts.push(mehscan_core::ReviewRetrievedArtifact {
-                artifact_id: artifact_id.clone(),
-                location,
-                excerpt,
-            });
-            artifact_ids.push(artifact_id);
+            let source_artifacts = read_brief_source(source_root, source_ref).map_err(|error| {
+                format!(
+                    "review {} evidence {} ({}:{}-{}): {error}",
+                    review.review_id,
+                    index + 1,
+                    source_ref.path,
+                    source_ref.start_line,
+                    source_ref.end_line
+                )
+            })?;
+            for (location, excerpt) in source_artifacts {
+                let artifact_id = format!("review-source-{}", artifacts.len() + 1);
+                artifacts.push(mehscan_core::ReviewRetrievedArtifact {
+                    artifact_id: artifact_id.clone(),
+                    location,
+                    excerpt,
+                });
+                artifact_ids.push(artifact_id);
+            }
         }
         let citations = artifact_ids
             .iter()
@@ -3476,7 +3477,7 @@ fn expand_brief_reviews(
 fn read_brief_source(
     source_root: &Path,
     source_ref: &BriefSourceRef,
-) -> Result<(mehscan_core::Location, String), String> {
+) -> Result<Vec<(mehscan_core::Location, String)>, String> {
     let relative = Path::new(&source_ref.path);
     if is_absolute_artifact_path(&source_ref.path)
         || relative.components().any(|part| {
@@ -3509,9 +3510,9 @@ fn read_brief_source(
     }
     if source_ref.start_line == 0
         || source_ref.end_line < source_ref.start_line
-        || source_ref.end_line - source_ref.start_line >= 40
+        || source_ref.end_line - source_ref.start_line >= 400
     {
-        return Err("brief evidence must select 1 to 40 source lines".to_string());
+        return Err("brief evidence must select 1 to 400 source lines".to_string());
     }
     let source = fs::read_to_string(&path).map_err(|error| {
         format!(
@@ -3526,39 +3527,67 @@ fn read_brief_source(
             source_ref.path
         ));
     }
-    let start_offset = lines[..source_ref.start_line - 1]
+    let mut start_offset = lines[..source_ref.start_line - 1]
         .iter()
         .map(|line| line.len())
         .sum();
     let excerpt = lines[source_ref.start_line - 1..source_ref.end_line].concat();
-    if excerpt.trim().is_empty() || excerpt.chars().count() > 4000 {
-        return Err("brief evidence excerpt is empty or exceeds 4000 characters".to_string());
+    if excerpt.trim().is_empty() || excerpt.len() > 64 * 1024 {
+        return Err("brief evidence excerpt is empty or exceeds 64 KiB".to_string());
     }
-    let end_offset = start_offset + excerpt.len();
-    let (end_line, end_column) = if excerpt.ends_with('\n') {
-        (source_ref.end_line + 1, 1)
-    } else {
-        (
-            source_ref.end_line,
-            lines[source_ref.end_line - 1].chars().count() + 1,
-        )
-    };
-    Ok((
-        mehscan_core::Location {
-            path: source_ref.path.replace('\\', "/"),
-            start: mehscan_core::Position {
-                line: source_ref.start_line,
-                column: 1,
-                byte_offset: start_offset,
+    // Retain every selected byte in ordered, contiguous artifacts. Do not
+    // truncate source, repair paths or change verdicts to normalize citations.
+    let mut artifacts = Vec::new();
+    let mut start = source_ref.start_line - 1;
+    while start < source_ref.end_line {
+        let mut end = start;
+        let mut characters = 0;
+        while end < source_ref.end_line && end - start < 40 {
+            let count = lines[end].chars().count();
+            if count > 4000 {
+                return Err(format!(
+                    "brief evidence line {} exceeds 4000 characters",
+                    end + 1
+                ));
+            }
+            if characters + count > 4000 {
+                break;
+            }
+            characters += count;
+            end += 1;
+        }
+        let excerpt = lines[start..end].concat();
+        if excerpt.trim().is_empty() {
+            return Err(
+                "brief evidence produces an empty artifact; select decision-relevant ranges".into(),
+            );
+        }
+        let end_offset = start_offset + excerpt.len();
+        let (end_line, end_column) = if excerpt.ends_with('\n') {
+            (end + 1, 1)
+        } else {
+            (end, lines[end - 1].chars().count() + 1)
+        };
+        artifacts.push((
+            mehscan_core::Location {
+                path: source_ref.path.replace('\\', "/"),
+                start: mehscan_core::Position {
+                    line: start + 1,
+                    column: 1,
+                    byte_offset: start_offset,
+                },
+                end: mehscan_core::Position {
+                    line: end_line,
+                    column: end_column,
+                    byte_offset: end_offset,
+                },
             },
-            end: mehscan_core::Position {
-                line: end_line,
-                column: end_column,
-                byte_offset: end_offset,
-            },
-        },
-        excerpt,
-    ))
+            excerpt,
+        ));
+        start_offset = end_offset;
+        start = end;
+    }
+    Ok(artifacts)
 }
 
 fn portable_json_value(value: &impl serde::Serialize) -> Result<serde_json::Value, String> {
@@ -3872,7 +3901,7 @@ mod tests {
     }
 
     #[test]
-    fn brief_source_accepts_context_over_twenty_lines_but_remains_bounded() {
+    fn brief_source_splits_exact_ranges_and_keeps_invalid_evidence_rejected() {
         let directory = std::env::temp_dir().join(format!(
             "mehscan-brief-source-{}-{}",
             std::process::id(),
@@ -3882,7 +3911,8 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir(&directory).unwrap();
-        std::fs::write(directory.join("source.ts"), "const x = 1;\n".repeat(41)).unwrap();
+        let source = "const x = 1;\r\n".repeat(400);
+        std::fs::write(directory.join("source.ts"), &source).unwrap();
         let range = |end_line| BriefSourceRef {
             path: "source.ts".to_string(),
             start_line: 1,
@@ -3890,10 +3920,100 @@ mod tests {
         };
         assert!(read_brief_source(&directory, &range(27)).is_ok());
         assert!(read_brief_source(&directory, &range(40)).is_ok());
+        let artifacts = read_brief_source(&directory, &range(74)).unwrap();
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(artifacts[0].0.start.line, 1);
+        assert_eq!(artifacts[0].0.end.line, 41);
+        assert_eq!(artifacts[1].0.start, artifacts[0].0.end);
+        assert_eq!(artifacts[1].0.end.line, 75);
+        assert_eq!(
+            artifacts.iter().map(|a| a.1.as_str()).collect::<String>(),
+            source
+                .lines()
+                .take(74)
+                .map(|line| format!("{line}\r\n"))
+                .collect::<String>()
+        );
+        assert_eq!(
+            read_brief_source(&directory, &range(400)).unwrap().len(),
+            10
+        );
         assert!(
-            read_brief_source(&directory, &range(41))
+            read_brief_source(&directory, &range(401))
                 .unwrap_err()
-                .contains("1 to 40 source lines")
+                .contains("1 to 400")
+        );
+        assert!(read_brief_source(&directory, &range(0)).is_err());
+        let mut invalid = range(1);
+        invalid.start_line = 2;
+        assert!(read_brief_source(&directory, &invalid).is_err());
+        invalid.path = "../source.ts".into();
+        assert!(
+            read_brief_source(&directory, &invalid)
+                .unwrap_err()
+                .contains("must be relative")
+        );
+        invalid.path = directory.join("source.ts").to_string_lossy().into_owned();
+        assert!(
+            read_brief_source(&directory, &invalid)
+                .unwrap_err()
+                .contains("must be relative")
+        );
+        invalid.path = "missing.ts".into();
+        assert!(
+            read_brief_source(&directory, &invalid)
+                .unwrap_err()
+                .contains("could not resolve")
+        );
+
+        // Character limits differ from byte offsets for Unicode. Keep CRLF,
+        // a non-first starting line, and the final line without a newline exact.
+        let long_line = format!("{}\r\n", "é".repeat(2100));
+        let unicode = format!("prefix\r\n{long_line}{long_line}tail");
+        std::fs::write(directory.join("source.ts"), &unicode).unwrap();
+        let mut selected = range(4);
+        selected.start_line = 2;
+        let artifacts = read_brief_source(&directory, &selected).unwrap();
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(
+            artifacts.iter().map(|a| a.1.as_str()).collect::<String>(),
+            unicode[8..]
+        );
+        for (location, excerpt) in &artifacts {
+            assert!(excerpt.chars().count() <= 4000);
+            assert_eq!(
+                &unicode[location.start.byte_offset..location.end.byte_offset],
+                excerpt
+            );
+        }
+        assert_eq!(artifacts[1].0.end.line, 4);
+        assert_eq!(artifacts[1].0.end.column, 5);
+        assert!(
+            read_brief_source(&directory, &range(5))
+                .unwrap_err()
+                .contains("past end")
+        );
+        std::fs::write(directory.join("source.ts"), "x".repeat(4001)).unwrap();
+        assert!(
+            read_brief_source(&directory, &range(1))
+                .unwrap_err()
+                .contains("line 1 exceeds")
+        );
+        std::fs::write(
+            directory.join("source.ts"),
+            ("x".repeat(3000) + "\n").repeat(23),
+        )
+        .unwrap();
+        assert!(
+            read_brief_source(&directory, &range(23))
+                .unwrap_err()
+                .contains("64 KiB")
+        );
+        std::fs::write(directory.join("source.ts"), " \r\n").unwrap();
+        assert!(
+            read_brief_source(&directory, &range(1))
+                .unwrap_err()
+                .contains("empty")
         );
         std::fs::remove_dir_all(directory).unwrap();
     }

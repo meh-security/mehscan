@@ -95,7 +95,8 @@ The default brief draft needs only `results` with `review_id`, `decision`,
 ranges (`path`, `start_line`, `end_line`). Finalization reads those exact lines,
 fills the full response and journal summary, and validates it. Use
 `review-response-schema` only for exceptional full schema 1.3 drafts.
-Keep each `summary` and `reason` on one line within 500 characters.
+Keep verdict prose concise; [finalization](finish-review.md) describes source
+range handling and prose limits.
 `paths` is
 navigation, not code evidence: read a returned path before citing its contents.
 `--source-root` checks that every decisive artifact excerpt occurs in a file
