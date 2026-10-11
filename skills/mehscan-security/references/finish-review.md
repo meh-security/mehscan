@@ -37,6 +37,8 @@ Stop when the chain is established,
    ending at column 1 of the next line does not include that next line's text.
    For `investigate source`, use `results.line_range` for inclusive citation
    lines; `results.location` remains an exclusive byte span.
+   Dependency locations outside the source root are research references, not
+   brief code citations. Do not invent a relative path for them.
    The CLI reads
    exact source, fills artifact locations and excerpts, cites the selected
    anchor, and attaches the query journal. Do not reproduce source in prose.

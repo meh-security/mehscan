@@ -35,6 +35,11 @@ bypass, a documented public API contract and verified import, input and consumer
 can establish the source weakness under that assumption. A missing lockfile or
 vendored implementation alone does not block it. Research versioned behavior
 when a patch, override or uncertain API semantics would change the decision.
+If dependency behavior is missing, inspect a matching supplied local record before
+external research. Reuse its exact-version contract under verified import/runtime
+binding; check each helper's options, hooks and later transformations separately.
+Shared dependency facts are not shared verdicts. Research uncovered behavior only.
+An unsupported-library runtime fallback alone is not a reachable application weakness.
 A complete output-control proof
 can settle HTML interpretation without reconstructing every input writer.
 Compact `review-card` and `review-sweep` views expose supplied frontend facts

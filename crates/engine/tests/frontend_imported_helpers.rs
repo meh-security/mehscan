@@ -1,6 +1,49 @@
 use std::path::PathBuf;
 
 #[test]
+fn dependency_reuse_controls_preserve_distinct_transformations_and_decoded_callers() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/frontend-dependency-reuse");
+    let jobs =
+        mehscan_engine::investigation::build_path_review_jobs(&root, Some(3), Some(100)).unwrap();
+    assert_eq!(jobs.observation_reviews.len(), 5);
+    for (line, transformation) in [
+        (3, "cleaner.sanitize(html)"),
+        (5, "cleaner.sanitize(html, STRICT)"),
+        (7, "cleaner.sanitize(html) + html"),
+        (9, "decodeURIComponent(cleaner.sanitize(html))"),
+        (11, "=> html"),
+    ] {
+        let review = jobs
+            .observation_reviews
+            .iter()
+            .find(|r| {
+                r.evidence
+                    .iter()
+                    .any(|e| e.location.path == "Views.tsx" && e.location.start.line == line)
+            })
+            .unwrap();
+        assert!(review.facts.iter().any(|f| {
+            f.role == "frontend_imported_helper_context" && f.excerpt.contains(transformation)
+        }));
+        assert!(review.facts.iter().any(|f| {
+            f.role == "frontend_prop_producer_context"
+                && f.location.path == "Source.tsx"
+                && f.excerpt.contains("URLSearchParams")
+                && f.excerpt.contains(".get('html')")
+        }));
+        if line == 5 {
+            assert!(
+                review
+                    .facts
+                    .iter()
+                    .any(|f| f.excerpt.contains("ALLOWED_TAGS"))
+            );
+        }
+    }
+}
+
+#[test]
 fn imported_frontend_callables_include_options_instance_hooks_and_actual_imports() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/frontend-imported-helpers");
