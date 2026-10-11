@@ -63,8 +63,12 @@ registration and handoff evidence and how to research the next missing edge.
 For React/Solid JSX output, use local producer/type facts and exact imported
 callers first. React `memo`/`forwardRef` wrappers are navigation, not controls;
 ordinary JSX text is escaped, while `dangerouslySetInnerHTML` interprets HTML.
-State/effect writers, class components, arbitrary wrappers and omitted/spread
-callers may need targeted research. A props type or memoization proves no trust.
+`frontend_state_declaration_context` and `frontend_state_writer_context` locate
+owned useState initialization and setter candidates; verify invocation, updates
+and controls. `frontend_collection_producer_context` locates a map receiver,
+without binding spread fields or proving callback semantics. Initial state is
+not final state. Wider effects, class components, arbitrary wrappers and missing
+writers may need targeted research. A props type or memoization proves no trust.
 For Vue SFC output, use supplied setup producers, local dependencies, props,
 direct-import caller snippets, native-ref bindings and helper imports first.
 Initializers and writer snippets locate code; verify updates, branches and later

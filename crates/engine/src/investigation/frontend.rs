@@ -1,6 +1,7 @@
 //! Bounded frontend navigation for existing raw-HTML reviews, not taint or safety.
 use super::*;
 mod helpers;
+mod react;
 mod vue;
 
 const MAX_CALLERS: usize = 2;
@@ -341,6 +342,16 @@ impl FrontendContext {
                             .join(", "),
                         &contract.evidence_id,
                     ));
+                    if spread {
+                        react::collection(
+                            file,
+                            &root,
+                            &element,
+                            facts,
+                            truncated,
+                            &contract.evidence_id,
+                        );
+                    }
                     for (prop, values) in attributes
                         .iter()
                         .filter(|(_, values)| !spread && values.len() == 1)
@@ -727,6 +738,14 @@ fn react_wrapper(
     root: &Node<'_, StrDoc<SupportLang>>,
     callee: &Node<'_, StrDoc<SupportLang>>,
 ) -> bool {
+    react_api(root, callee, &["memo", "forwardRef"])
+}
+
+fn react_api(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    callee: &Node<'_, StrDoc<SupportLang>>,
+    methods: &[&str],
+) -> bool {
     let (binding, method) = if callee.kind().as_ref() == "member_expression" {
         let Some(object) = callee
             .field("object")
@@ -745,7 +764,7 @@ fn react_wrapper(
     };
     if method
         .as_ref()
-        .is_some_and(|m| !matches!(m.as_str(), "memo" | "forwardRef"))
+        .is_some_and(|m| !methods.contains(&m.as_str()))
         || shadowed(callee, &binding)
         || root.dfs().any(|n| {
             matches!(
@@ -785,7 +804,7 @@ fn react_wrapper(
                     .filter(|n| n.kind().as_ref() == "import_specifier")
                     .any(|n| {
                         n.field("name")
-                            .is_some_and(|n| matches!(n.text().as_ref(), "memo" | "forwardRef"))
+                            .is_some_and(|n| methods.contains(&n.text().as_ref()))
                             && n.field("alias")
                                 .or_else(|| n.field("name"))
                                 .is_some_and(|n| n.text() == binding)
@@ -1020,6 +1039,12 @@ fn dependencies<'a>(
                 )
             }) {
                 let Some(binding) = lexical_binding(root, &name) else {
+                    if !file.path.ends_with(".vue") {
+                        if let Some(inputs) = react::state(file, root, &name, facts, partial, id) {
+                            inspected.extend(inputs.iter().cloned());
+                            next.extend(inputs);
+                        }
+                    }
                     continue;
                 };
                 if !binding
@@ -1067,6 +1092,17 @@ fn lexical_binding<'a>(
     root: &Node<'a, StrDoc<SupportLang>>,
     name: &Node<'a, StrDoc<SupportLang>>,
 ) -> Option<Node<'a, StrDoc<SupportLang>>> {
+    lexical_declaration(root, name).filter(|binding| {
+        binding
+            .field("name")
+            .is_some_and(|n| n.kind().as_ref() == "identifier")
+    })
+}
+
+fn lexical_declaration<'a>(
+    root: &Node<'a, StrDoc<SupportLang>>,
+    name: &Node<'a, StrDoc<SupportLang>>,
+) -> Option<Node<'a, StrDoc<SupportLang>>> {
     for scope in name
         .ancestors()
         .filter(|n| matches!(n.kind().as_ref(), "statement_block" | "program") || callable(n))
@@ -1108,9 +1144,6 @@ fn lexical_binding<'a>(
             .collect();
         if !bindings.is_empty() {
             return (bindings.len() == 1
-                && bindings[0]
-                    .field("name")
-                    .is_some_and(|n| n.kind().as_ref() == "identifier")
                 && bindings[0].range().start < name.range().start
                 && valid(&bindings[0]))
             .then(|| bindings[0].clone());

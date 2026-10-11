@@ -17,6 +17,7 @@ pub(super) fn append(
                     | "frontend_output_dependency_context"
                     | "frontend_prop_producer_context"
                     | "frontend_prop_value_context"
+                    | "frontend_state_writer_context"
             )
         }) {
             let Ok(file) = sources.file(&seed.location.path) else {
