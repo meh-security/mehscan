@@ -86,6 +86,7 @@ try {
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-workflow.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/evidence-packaging.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/html-output-review.md'),
+        (Join-Path $repositoryRoot 'skills/mehscan-security/references/angular-output-review.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/finish-review.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/triage-buckets.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets/authorization.md'),
@@ -136,6 +137,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-workflow.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/evidence-packaging.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/html-output-review.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/angular-output-review.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/finish-review.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/triage-buckets.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references') -Recurse
@@ -166,6 +168,7 @@ try {
         'skills/mehscan-security/references/review-workflow.md',
         'skills/mehscan-security/references/evidence-packaging.md',
         'skills/mehscan-security/references/html-output-review.md',
+        'skills/mehscan-security/references/angular-output-review.md',
         'skills/mehscan-security/references/finish-review.md',
         'skills/mehscan-security/references/triage-buckets.md',
         'skills/mehscan-security/references/buckets/authorization.md',
