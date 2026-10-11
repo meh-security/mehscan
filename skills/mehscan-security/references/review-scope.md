@@ -61,6 +61,11 @@ access, CORS and CSRF start there; consequential chains can justify promotion.
 Shared producer/dependency hints defer repeated research without sharing a safe
 verdict. Comprehensive includes Value; exclusion removes ordinary work from both.
 
+Frontend build/cache/dependency artifacts are outside both ordinary source-review
+queues. Keep authored implementations and consequential leads; report exclusions
+as coverage boundaries. See [frontend source scope](frontend-source-scope.md)
+for stack conventions, mixed directories and explicit artifact review.
+
 A decision-critical producer question does not itself promote an ordinary
 medium-impact redirect into Value. Keep its exact Comprehensive ID and origin
 question; promote when evidence shows a consequential credential/effect chain.

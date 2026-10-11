@@ -183,8 +183,8 @@ production use or a concrete dependency lead; hypothetical inputs do not reopen
 every build operation. Shipped generated runtime code still needs its original
 implementation or a separate runtime review.
 Check `excluded_subtrees` and skipped/truncated inputs for coverage boundaries.
-Mandatory generated-tree exclusions include exported Next.js `_next/static`
-assets. Review their authored originals; if only compiled output is available,
+For frontend build/cache/dependency boundaries, consult [frontend source scope](frontend-source-scope.md)
+when needed. Review authored originals; if only compiled output is available,
 record the source coverage gap or scan that asset directory as an explicit root.
 When truncated, query relevant component prefixes rather than dumping everything.
 Review the authored source instead of its mapped output. Keep exact excluded IDs,
@@ -199,8 +199,9 @@ manifest named by the hint when deployment scope is uncertain; reopen IDs for
 deployed tooling or concrete untrusted build inputs. This is conditional scope,
 not a safe verdict. Additional vendor/generated scope still needs assessment.
 
-Comprehensive reopens these lanes and accounts for each admitted ID within the
-requested scope. An explicit application-only scope remains application-only.
+Comprehensive reopens scope-deferred inventory lanes and accounts for each
+admitted ID within the requested scope. Mandatory excluded trees require a
+separate explicit-root scan when relevant. An application-only scope stays so.
 Dependency/build exclusions never become `not_issue` verdicts. Report both the
 application queue and the total omitted IDs. Keep unmapped outputs, application
 wrappers, dangerous build inputs and observed dependency weaknesses in Value;
