@@ -17,6 +17,12 @@ instead. Research unrelated roots and producers separately.
 
 ## HTML: binding, renderer and writers
 
+Start with the existing `frontend_context` from the card/sweep. Reuse supplied
+helper, option, hook and caller facts; add source only for a missing edge.
+An already supplied local output-control chain does not need a separately
+authored producer map. For a missing dependency binding, supply its actual
+package/lockfile locations when known rather than guessed project paths.
+
 Supply output-context and producer locations, relevant renderer/writer windows,
 and the exact encoder/sanitizer/transformation identity. For templates include
 relevant imports or helper registrations; for browser output include module
