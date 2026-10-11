@@ -183,6 +183,9 @@ production use or a concrete dependency lead; hypothetical inputs do not reopen
 every build operation. Shipped generated runtime code still needs its original
 implementation or a separate runtime review.
 Check `excluded_subtrees` and skipped/truncated inputs for coverage boundaries.
+Mandatory generated-tree exclusions include exported Next.js `_next/static`
+assets. Review their authored originals; if only compiled output is available,
+record the source coverage gap or scan that asset directory as an explicit root.
 When truncated, query relevant component prefixes rather than dumping everything.
 Review the authored source instead of its mapped output. Keep exact excluded IDs,
 reasons and representative source locations in `RUN/review-plan.md`. Apply these

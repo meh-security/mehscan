@@ -522,6 +522,17 @@ fn ignored_directory(path: &Path, root: &Path) -> bool {
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
+    // Next.js exports compiled assets here, outside the already excluded .next tree.
+    // Keep other _next siblings and ordinary static source directories available.
+    if name == "static"
+        && path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|value| value.to_str())
+            .is_some_and(|parent| parent.eq_ignore_ascii_case("_next"))
+    {
+        return true;
+    }
     if matches!(
         name.as_str(),
         ".git"
@@ -781,6 +792,69 @@ mod tests {
         );
         assert!(!source.build_symbols.contains_key("STATIC_ONLY"));
         fs::remove_dir_all(root).expect("remove precedence fixture");
+    }
+
+    #[test]
+    fn excludes_exported_next_assets_without_excluding_static_source_or_next_siblings() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "mehscan-next-export-discovery-{}-{nonce}",
+            std::process::id()
+        ));
+        let excluded = [
+            "published/_next/static/chunks/app.js",
+            "other/_NeXt/StAtIc/app.js",
+        ];
+        let retained = [
+            "web/app.js",
+            "static/source.js",
+            "published/_next/data/source.js",
+            "published/_next/custom/source.js",
+            "published/_next/source.js",
+        ];
+        for relative in excluded.iter().chain(retained.iter()) {
+            let path = root.join(relative);
+            fs::create_dir_all(path.parent().expect("parent")).expect("fixture directory");
+            fs::write(path, "eval(input);\n").expect("fixture source");
+        }
+        for include_nonproduction in [false, true] {
+            let discovery = discover_with_options(&root, include_nonproduction)
+                .expect("discover exported assets fixture");
+            let paths = discovery
+                .files
+                .iter()
+                .map(|file| file.relative.as_str())
+                .collect::<Vec<_>>();
+            for path in excluded {
+                assert!(!paths.contains(&path), "must skip {path}");
+            }
+            for path in retained {
+                assert!(paths.contains(&path), "must retain {path}");
+            }
+            assert!(
+                discovery
+                    .ignored_subtrees
+                    .contains(&"published/_next/static/".to_string())
+            );
+            assert!(
+                discovery
+                    .ignored_subtrees
+                    .contains(&"other/_NeXt/StAtIc/".to_string())
+            );
+        }
+        // As with other generated trees, an explicit root can opt into inspecting it.
+        let explicit = discover_with_options(&root.join("published/_next/static"), false)
+            .expect("discover explicit generated root");
+        assert!(
+            explicit
+                .files
+                .iter()
+                .any(|file| file.relative == "chunks/app.js")
+        );
+        fs::remove_dir_all(root).expect("remove exported assets fixture");
     }
 
     #[test]
