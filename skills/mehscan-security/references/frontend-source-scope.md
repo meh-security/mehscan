@@ -53,6 +53,27 @@ Do not claim original/output equivalence from a source map alone. Read served
 assets, service workers and authored server code when relevant; none are dismissed
 merely because they are frontend files.
 
+## Frontend review buckets
+
+| Value | Comprehensive-only | Outside application scope |
+| --- | --- | --- |
+| Raw markup and meaningful writer-to-consumer relationships; unsafe URL construction or connected browser input; credentials sent to an unresolved destination; consequential uploads/executable content. | Unresolved stored link writers/scheme controls; raw stylesheet ownership/SSR breakout; auth redirects and meaningful CSRF/credential-in-URL questions. Name the missing edge. | Source-confirmed local asset/document generators, vendor/generated copies, ordinary fixed-destination client reads and complete positive URL controls without another consequential effect. |
+
+Standalone intrinsic link writers and literal JSX `<style>` insertion start
+Comprehensive-only. Constructed URLs, connected input, other active elements and
+raw HTML remain prioritized. A style tag is not a sanitizer; inspect SSR breakout.
+Apply the same impact test to React, Vue, Angular and DOM code, using their actual
+consumers rather than framework names. The automated hints currently cover React
+JSX; other shapes still require preassessment.
+
+Use short source reads to record exact IDs, ownership/control evidence and reasons
+in the review plan before packaging. Source-confirmed ordinary tooling/copies can
+leave both application queues; explicit build/dependency scope or a consequential
+lead reopens them. Do not remove authored wrappers, dismiss every worker, assume
+client runtime from a folder, or treat a POST as SSRF. Server actions and credential
+destinations retain their own questions. Scanner hints alone do not establish
+these scope exclusions or safe verdicts.
+
 ## Sources behind the conventions
 
 - [Next.js compiled assets](https://nextjs.org/docs/14/pages/api-reference/next-config-js/assetPrefix), [Nuxt generated output](https://nuxt.com/docs/guide/concepts/server-engine/), [Nuxt defaults](https://nuxt.com/docs/4.x/directory-structure/gitignore) and [Nuxt asset directory](https://nuxt.com/docs/api/configuration/nuxt-config?from=20423&from_column=20423).

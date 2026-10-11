@@ -64,7 +64,10 @@ verdict. Comprehensive includes Value; exclusion removes ordinary work from both
 Frontend build/cache/dependency artifacts are outside both ordinary source-review
 queues. Keep authored implementations and consequential leads; report exclusions
 as coverage boundaries. See [frontend source scope](frontend-source-scope.md)
-for stack conventions, mixed directories and explicit artifact review.
+for frontend Value/Comprehensive/out-of-scope buckets, stack conventions, mixed
+directories and explicit artifact review. Standalone React link-writer and literal
+JSX stylesheet questions start Comprehensive-only; connected inputs, constructed
+URLs, active resource consumers and raw HTML keep their stronger admission.
 
 A decision-critical producer question does not itself promote an ordinary
 medium-impact redirect into Value. Keep its exact Comprehensive ID and origin

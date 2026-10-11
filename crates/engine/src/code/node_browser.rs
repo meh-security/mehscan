@@ -522,6 +522,8 @@ pub(crate) fn add_browser_observations<'tree>(
             };
             let origin_context = if unchanged_link_parameter(&content) {
                 "link-origin:unchanged-parameter"
+            } else if constructed_link_operand(&content) {
+                "link-origin:constructed"
             } else {
                 "link-origin:producer-unresolved"
             };
@@ -611,6 +613,15 @@ pub(crate) fn add_browser_observations<'tree>(
                     && normalized(&ancestor.text()).starts_with("dangerouslySetInnerHTML=")
             })
         {
+            let style_container = node
+                .ancestors()
+                .find(|ancestor| ancestor.kind().as_ref() == "jsx_attribute")
+                .and_then(|attribute| jsx_attribute_element_name(&attribute))
+                .is_some_and(|element| element == "style");
+            let mut tags = vec!["browser", "react", "dangerously-set-inner-html", "xss"];
+            if style_container {
+                tags.push("raw-output-container:style");
+            }
             push_observation(
                 path,
                 language,
@@ -621,7 +632,7 @@ pub(crate) fn add_browser_observations<'tree>(
                 &format!("{}-react-dangerous-html-output", language_prefix(language)),
                 "content",
                 "dangerouslySetInnerHTML",
-                &["browser", "react", "dangerously-set-inner-html", "xss"],
+                &tags,
                 Confidence::High,
                 "React dangerouslySetInnerHTML",
                 comments,
@@ -1752,6 +1763,38 @@ fn jsx_url_attribute_content<'tree>(
     attribute: &Node<'tree, StrDoc<SupportLang>>,
 ) -> Option<Node<'tree, StrDoc<SupportLang>>> {
     jsx_attribute_content(attribute, "href")
+}
+
+fn constructed_link_operand(value: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    fn construction(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
+        matches!(
+            node.kind().as_ref(),
+            "template_string" | "binary_expression" | "call_expression"
+        )
+    }
+    if construction(value) {
+        return true;
+    }
+    if value.kind().as_ref() != "identifier" {
+        return false;
+    }
+    let Some(function) = value.ancestors().find(is_function) else {
+        return false;
+    };
+    function.dfs().any(|node| {
+        let (name, producer) = match node.kind().as_ref() {
+            "variable_declarator" => (node.field("name"), node.field("value")),
+            "assignment_expression" | "assignment_pattern" => {
+                (node.field("left"), node.field("right"))
+            }
+            "required_parameter" | "optional_parameter" => {
+                (node.field("pattern"), node.field("value"))
+            }
+            _ => return false,
+        };
+        name.is_some_and(|name| name.text() == value.text())
+            && producer.is_some_and(|producer| construction(&producer))
+    })
 }
 
 fn unchanged_link_parameter(value: &Node<'_, StrDoc<SupportLang>>) -> bool {

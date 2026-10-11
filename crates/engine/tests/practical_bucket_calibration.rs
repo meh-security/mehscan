@@ -168,6 +168,54 @@ function Input() { return <a href={window.location.hash}>link</a>; }
 }
 
 #[test]
+fn frontend_writer_research_defers_links_and_css_without_demoting_raw_html_or_input() {
+    let fixture = Fixture::new(
+        "frontend-writers",
+        r#"import React from 'react';
+function StoredLink(record) { return <a href={record.url}>link</a>; }
+function StoredArea(record) { return <area href={record.url}/>; }
+function Sheet(config) { return <style dangerouslySetInnerHTML={{__html:config.css}}/>; }
+function NamedStyle(config) { return <Style dangerouslySetInnerHTML={{__html:config.css}}/>; }
+function Markup(record) { return <div dangerouslySetInnerHTML={{__html:record.body}}/>; }
+function Active(record) { return <base href={record.url}/>; }
+function FromInput() { return <a href={window.location.hash}>link</a>; }
+function InputSheet() { return <style dangerouslySetInnerHTML={{__html:window.location.hash}}/>; }
+"#,
+        "tsx",
+    );
+    let inventory = build_review_inventory(&fixture.0, false).unwrap();
+    for (symbol, reason) in [
+        ("StoredLink", "frontend_link_writer_research"),
+        ("StoredArea", "frontend_link_writer_research"),
+        ("Sheet", "frontend_stylesheet_writer_research"),
+    ] {
+        let entry = inventory
+            .entries
+            .iter()
+            .find(|e| e.symbol.as_deref() == Some(symbol))
+            .unwrap_or_else(|| panic!("lost Comprehensive research {symbol}"));
+        assert_eq!(
+            entry.value_hint.as_ref().map(|h| h.reason.as_str()),
+            Some(reason)
+        );
+    }
+    for symbol in ["NamedStyle", "Markup", "Active", "FromInput", "InputSheet"] {
+        let entries = inventory
+            .entries
+            .iter()
+            .filter(|e| {
+                e.symbol.as_deref() == Some(symbol) && e.capability == Capability::HtmlOutput
+            })
+            .collect::<Vec<_>>();
+        assert!(!entries.is_empty(), "lost consequential boundary {symbol}");
+        assert!(
+            entries.iter().all(|e| e.value_hint.is_none()),
+            "demoted {symbol}"
+        );
+    }
+}
+
+#[test]
 fn django_selector_used_only_to_narrow_a_queryset_is_not_an_authorization_sink() {
     let fixture = Fixture::new(
         "narrowing",

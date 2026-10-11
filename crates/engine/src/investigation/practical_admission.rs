@@ -529,6 +529,58 @@ pub(super) fn filesystem_research_hint(item: &Evidence) -> Option<ValueReviewHin
     })
 }
 
+/// Standalone frontend occurrences need a useful producer/context question,
+/// rather than inheriting Value merely from the XSS capability. Connected paths
+/// and source/sink groups call the stronger admission policy instead.
+pub(super) fn frontend_research_hint(item: &Evidence) -> Option<ValueReviewHint> {
+    if item.capability != Capability::HtmlOutput || item.cwe_candidates != ["CWE-79"] {
+        return None;
+    }
+    if item.context.operand_facts.iter().any(|fact| {
+        matches!(
+            fact.kind,
+            mehscan_core::OperandFactKind::LocalCallArgument
+                | mehscan_core::OperandFactKind::LocalOperandOrigin
+        )
+    }) {
+        return None;
+    }
+    let link = item.rule_id.ends_with("react-url-attribute-output")
+        && item
+            .tags
+            .iter()
+            .any(|tag| tag == "url-consumer:link-navigation")
+        && !item.tags.iter().any(|tag| tag == "link-origin:constructed")
+        && item
+            .context
+            .literals
+            .get("content")
+            .is_some_and(|literal| literal.state == LiteralState::Unknown);
+    let style = item
+        .tags
+        .iter()
+        .any(|tag| tag == "raw-output-container:style");
+    let (reason, assumption) = if link {
+        (
+            "frontend_link_writer_research",
+            "Ordinary link navigation with an unresolved URL writer/scheme control. Research that edge in Comprehensive; promote a demonstrated unsafe scheme, consequential credential/effect chain or connected input relationship to Value. No safe verdict.",
+        )
+    } else if style {
+        (
+            "frontend_stylesheet_writer_research",
+            "Raw stylesheet insertion: inspect CSS ownership and SSR style-tag breakout before treating it as executable HTML. Comprehensive retains the exact ID; promote an untrusted writer, unsafe construction or consequential effect to Value. No safety or trusted-admin assumption.",
+        )
+    } else {
+        return None;
+    };
+    Some(ValueReviewHint {
+        reason: reason.into(),
+        target: item.location.path.clone(),
+        assumption: assumption.into(),
+        depends_on: None,
+    })
+}
+
 pub(super) fn comprehensive_hint(item: &Evidence) -> Option<ValueReviewHint> {
     // An origin can decide the redirect verdict without making ordinary
     // navigation high-value. Keep the question and exact Comprehensive ID.

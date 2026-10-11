@@ -1563,11 +1563,15 @@ fn build_path_review_jobs_internal(
                 }
                 .to_string(),
                 operand_facts: operand_summaries(anchor),
-                value_hint: practical_admission::comprehensive_hint(anchor).or_else(|| {
-                    (group.priority == 2)
-                        .then(|| practical_admission::filesystem_research_hint(anchor))
-                        .flatten()
-                }),
+                value_hint: (group.priority == 2)
+                    .then(|| practical_admission::frontend_research_hint(anchor))
+                    .flatten()
+                    .or_else(|| practical_admission::comprehensive_hint(anchor))
+                    .or_else(|| {
+                        (group.priority == 2)
+                            .then(|| practical_admission::filesystem_research_hint(anchor))
+                            .flatten()
+                    }),
             })
         }));
         share_csharp_filesystem_questions(entries);

@@ -34,8 +34,10 @@ visible and call the review partial until every relevant lane is assessed.
 Comprehensive review gives every admitted ID a verdict within the user's scope.
 Value excludes source-proven build tooling, vendor distributions and generated
 copies from its application queue by default; keep their exact IDs and ownership
-evidence in the plan. Comprehensive includes these as separate lanes. Keep
-application wrappers and consequential build/dependency leads. See
+evidence in the plan. Comprehensive retains plausible security questions;
+source-confirmed ordinary tooling/copies can leave both application queues.
+Explicit build/dependency scope or consequential leads reopen those lanes. Keep
+application wrappers. See
 [scope lanes](#scope-lanes) before excluding them.
 For inventory selection in Value mode, use `--selection value` and record
 `deferred_count`. See planning for the trusted-source assumption and overrides;
