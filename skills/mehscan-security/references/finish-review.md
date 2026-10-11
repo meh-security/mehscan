@@ -41,6 +41,9 @@ Stop when the chain is established,
    lines; `results.location` remains an exclusive byte span.
    Dependency locations outside the source root are research references, not
    brief code citations. Do not invent a relative path for them.
+   Query journals attached to a bundle must use that bundle's source root.
+   Keep backend or other-root research in separate journals; preserve it as
+   integration evidence rather than mixing roots in the bundle attachment.
    The CLI reads
    exact source, fills artifact locations and excerpts, cites the selected
    anchor, and attaches the query journal. Do not reproduce source in prose.
@@ -52,7 +55,8 @@ Stop when the chain is established,
    or reviewer-origin leads. Save drafts with shell redirection or another file
    write that prints only the path or a short success message. Do not use a
    patch tool for drafts: its diff echoes the full JSON into context. Avoid
-   shell one-liners that construct large JSON objects. Run
+   shell one-liners that construct large JSON objects. Prefer a JSON serializer
+   for multi-result drafts and parse the saved draft once before finalization. Run
    `review-bundle-finalize --bundle REQUEST --draft DRAFT --journal-dir RUN/journals
    --output RESPONSE --source-root ROOT`. It attaches query counts from the
    journal and validates the final response. Save RESPONSE as
