@@ -34,6 +34,29 @@ pub(crate) fn annotate(
         }
         if item.capability == Capability::HtmlOutput {
             annotate_html_semantics(source, item);
+            if matches!(
+                language,
+                Language::Javascript | Language::Typescript | Language::Tsx
+            ) && item
+                .tags
+                .iter()
+                .any(|tag| tag == "html-boundary:dom-insertion")
+                && item
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "browser-interpretation:html-markup")
+                && !item
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "raw-output-container:style")
+                && item
+                    .captures
+                    .get("content")
+                    .and_then(|capture| capture_node(root, capture))
+                    .is_some_and(|node| super::node_browser::restricted_html_control(root, &node))
+            {
+                push_tag(&mut item.tags, "html-control:restricted-dompurify");
+            }
             if language == Language::Python
                 && item.rule_id == "python-trusted-markup-bypass"
                 && item.symbol_resolution.as_ref().is_some_and(|symbol| {

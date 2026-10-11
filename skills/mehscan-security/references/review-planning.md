@@ -12,6 +12,11 @@ Pre-assess the source and requested scope: identify the stack and deployed
 surfaces, map inventory concentrations, and use prior same-revision verdicts
 to rank review lanes. A bounded small review can use full
 bundles; a large or uncertain one uses an inventory and small selected chunks.
+Check source completeness before launching reviewers. A library/theme checkout
+without its host integration cannot establish deployment publishing authority.
+For sparse Git checkouts, known missing implementation files may be readable at
+the pinned revision through read-only Git object queries. Keep such source as
+research evidence; do not invent on-disk citation paths or claim deployment policy.
 If parallel review is authorized, assign disjoint IDs with one shared whole-run
 plan. Start with a small pool (three reviewers is a useful initial setting),
 refilling a slot when its independent package completes. Keep a shared producer
@@ -56,6 +61,12 @@ run roots with `review-ledger`; pass it to inventory listing and selected bundle
 creation so finalized IDs are not selected again. For a large queue, use short source reads to rank a few inventory IDs
 before materializing their requests. Materialize a selected chunk with
 `mehscan investigate review-bundles ROOT --inventory RUN/inventory --review-ids ID,ID --output RUN/chunk-1`.
+Keep scoped ID selections per source root and inventory fingerprint; do not mix
+IDs from different roots. Saved preassessment selections can narrow the automatic
+Value list. Preserve each omitted ID's reason/reopening condition; these are scope
+decisions, not `not_issue` verdicts. Comprehensive includes the scoped Value IDs
+and its additional admitted questions. An unresolved shared authority contract is
+one named blocker with affected IDs, not repeated independent research jobs.
 Keep `RUN/review-plan.md` current with included, conditional, and deferred
 scope, progress, and a short ranked queue of review lanes. Read it first when
 resuming; choose a ready in-scope lane, then select exact IDs with small

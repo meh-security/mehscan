@@ -1376,11 +1376,27 @@ fn build_path_review_jobs_internal(
             }
         })
         .collect::<BTreeSet<_>>();
+    let restricted_html_controls = scan
+        .evidence
+        .iter()
+        .filter(|item| {
+            item.tags
+                .iter()
+                .any(|tag| tag == "html-control:restricted-dompurify")
+        })
+        .map(|item| item.id.clone())
+        .collect::<BTreeSet<_>>();
+    let custom_sanitizer_policy = !restricted_html_controls.is_empty()
+        && sources
+            .files
+            .values()
+            .any(|file| file.source.contains(".addHook") || file.source.contains(".setConfig"));
     let practical_exclusions = scan
         .evidence
         .iter()
         .filter(|item| {
             ordinary_browser_ids.contains(&item.id)
+                || (!custom_sanitizer_policy && restricted_html_controls.contains(&item.id))
                 || practical_admission::inventory_only(
                     item,
                     &sources,

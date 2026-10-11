@@ -327,6 +327,93 @@ function AngularInput(sanitizer: DomSanitizer) { return sanitizer.bypassSecurity
 }
 
 #[test]
+fn restricted_final_dompurify_control_leaves_both_queues_without_closing_mutated_output() {
+    let fixture = Fixture::new(
+        "sanitizer",
+        r#"import React from 'react';
+import purify from 'dompurify';
+import { h } from 'vue';
+import { createSignal } from 'solid-js';
+import { unsafeHTML } from 'lit/directives/unsafe-html.js';
+import $ from 'jquery';
+function Controlled(value) { document.querySelector('#preview').innerHTML = purify.sanitize(value, {ALLOWED_TAGS:['span','button'],ALLOWED_ATTR:['type','contenteditable','data-field','disabled','class']}); }
+function ControlledJsx(value) { return <div dangerouslySetInnerHTML={{__html:purify.sanitize(value, {ALLOWED_TAGS:['b'],ALLOWED_ATTR:[]})}}/>; }
+function ControlledVue(value) { return h('div', {innerHTML:purify.sanitize(value, {ALLOWED_TAGS:['span'],ALLOWED_ATTR:[]})}); }
+function ControlledSolid(value) { return <div innerHTML={purify.sanitize(value, {ALLOWED_TAGS:['span'],ALLOWED_ATTR:[]})}/>; }
+function ControlledLit(value) { return unsafeHTML(purify.sanitize(value, {ALLOWED_TAGS:['span'],ALLOWED_ATTR:[]})); }
+function ControlledJquery(value) { return $(document.querySelector('#preview')).html(purify.sanitize(value, {ALLOWED_TAGS:['span'],ALLOWED_ATTR:[]})); }
+function LaterMarkup(value, extra) { document.querySelector('#preview').innerHTML = purify.sanitize(value, {ALLOWED_TAGS:['span'],ALLOWED_ATTR:[]}) + extra; }
+function DynamicPolicy(value, policy) { document.querySelector('#preview').innerHTML = purify.sanitize(value, policy); }
+function ActiveTags(value) { document.querySelector('#preview').innerHTML = purify.sanitize(value, {ALLOWED_TAGS:['script'],ALLOWED_ATTR:[]}); }
+function ActiveAttributes(value) { document.querySelector('#preview').innerHTML = purify.sanitize(value, {ALLOWED_TAGS:['span'],ALLOWED_ATTR:['onclick']}); }
+function ExtraOptions(value) { document.querySelector('#preview').innerHTML = purify.sanitize(value, {ALLOWED_TAGS:['span'],ALLOWED_ATTR:[],ADD_TAGS:['script']}); }
+function Shadowed(purify, value) { document.querySelector('#preview').innerHTML = purify.sanitize(value, {ALLOWED_TAGS:['span'],ALLOWED_ATTR:[]}); }
+function Css(value) { return <style dangerouslySetInnerHTML={{__html:purify.sanitize(value, {ALLOWED_TAGS:['span'],ALLOWED_ATTR:[]})}}/>; }
+"#,
+        "tsx",
+    );
+    let inventory = build_review_inventory(&fixture.0, false).unwrap();
+    for symbol in [
+        "Controlled",
+        "ControlledJsx",
+        "ControlledVue",
+        "ControlledSolid",
+        "ControlledLit",
+        "ControlledJquery",
+    ] {
+        assert!(
+            inventory.scan.evidence.iter().any(|item| {
+                item.enclosing_symbol.as_deref() == Some(symbol)
+                    && item
+                        .tags
+                        .iter()
+                        .any(|tag| tag == "html-control:restricted-dompurify")
+            }),
+            "lost owned final control {symbol}"
+        );
+        assert!(
+            !inventory
+                .entries
+                .iter()
+                .any(|entry| entry.symbol.as_deref() == Some(symbol)),
+            "still scheduling complete output control {symbol}"
+        );
+    }
+    for symbol in [
+        "LaterMarkup",
+        "DynamicPolicy",
+        "ActiveTags",
+        "ActiveAttributes",
+        "ExtraOptions",
+        "Shadowed",
+        "Css",
+    ] {
+        assert!(
+            inventory.entries.iter().any(|entry| {
+                entry.symbol.as_deref() == Some(symbol)
+                    && entry.capability == Capability::HtmlOutput
+            }),
+            "incorrect sanitizer exclusion {symbol}"
+        );
+    }
+    fs::write(
+        fixture.0.join("policy.ts"),
+        "import purifier from 'dompurify'; purifier.addHook('afterSanitizeAttributes', mutate);",
+    )
+    .unwrap();
+    let customized = build_review_inventory(&fixture.0, false).unwrap();
+    for symbol in ["Controlled", "ControlledJsx"] {
+        assert!(
+            customized
+                .entries
+                .iter()
+                .any(|entry| entry.symbol.as_deref() == Some(symbol)),
+            "custom policy was ignored for {symbol}"
+        );
+    }
+}
+
+#[test]
 fn django_selector_used_only_to_narrow_a_queryset_is_not_an_authorization_sink() {
     let fixture = Fixture::new(
         "narrowing",

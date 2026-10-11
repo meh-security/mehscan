@@ -44,6 +44,9 @@ Stop when the chain is established,
    The CLI reads
    exact source, fills artifact locations and excerpts, cites the selected
    anchor, and attaches the query journal. Do not reproduce source in prose.
+   Zero follow-up queries is valid when the packet supplies the decisive facts;
+   absent or empty per-ID journals are accepted. Never fetch an already supplied
+   anchor just to populate its journal. Journal actual missing-edge research only.
    For `needs_review`, add `blockers` if appropriate. The full
    schema 1.3 draft remains available when you need explicit artifact citations
    or reviewer-origin leads. Save drafts with shell redirection or another file

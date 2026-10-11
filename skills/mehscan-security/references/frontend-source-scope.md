@@ -81,6 +81,16 @@ consumers can share one publishing-authority question in Comprehensive after
 preassessment; a runtime editor, external feed or less-trusted writer reopens Value.
 Positive sanitizer controls must cover the exact final operand and configuration;
 post-sanitization interpolation reopens the question.
+For a framework/theme library without its host integration, group expected raw
+rendering APIs and authored-site content under a Comprehensive integration/writer
+contract. Keep actual lower-trust flows, unsafe construction and protection
+bypasses in Value; missing deployment policy alone is not another priority job.
+
+The scanner excludes direct imported DOMPurify sanitization with explicit literal
+text-markup tag/attribute allowlists at the final HTML insertion. Dynamic or wider
+options, shadowed/replaced receivers, later construction and source-visible hook/
+global configuration retain review work. This bounded slice does not infer safe
+wrappers, stylesheets or other interpretation contexts.
 
 Coverage remains bounded: Vue dynamic-tag `h`, template URL bindings and Angular
 style bypass are not fully inventoried. Svelte/Astro component templates are not

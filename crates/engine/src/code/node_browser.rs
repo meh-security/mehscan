@@ -35,6 +35,118 @@ pub(crate) fn accepts_angular_trust_bypass(
     })
 }
 
+/// A final, owned sanitizer with explicit text-markup-only policy. Wider policies,
+/// wrappers and transformations remain reviewer work.
+pub(crate) fn restricted_html_control(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    value: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    if value.kind().as_ref() != "call_expression" {
+        return false;
+    }
+    let Some(callee) = value.field("function") else {
+        return false;
+    };
+    let callee = normalized(&callee.text());
+    let Some(receiver) = callee.strip_suffix(".sanitize") else {
+        return false;
+    };
+    let bindings = imported_default_or_required_bindings(root, &["dompurify"]);
+    if !bindings.contains(receiver) {
+        return false;
+    }
+    // Reject source-visible shadowing/replacement rather than trusting a spelling.
+    if value
+        .ancestors()
+        .filter(|node| is_function(node))
+        .any(|function| {
+            function
+                .field("parameters")
+                .or_else(|| function.field("parameter"))
+                .is_some_and(|parameters| {
+                    parameters
+                        .dfs()
+                        .any(|node| node.kind().as_ref() == "identifier" && node.text() == receiver)
+                })
+        })
+        || root.dfs().any(|node| match node.kind().as_ref() {
+            "variable_declarator" => {
+                node.field("name")
+                    .is_some_and(|name| name.text() == receiver)
+                    && !node.field("value").is_some_and(|value| {
+                        matches!(
+                            normalized(&value.text()).as_str(),
+                            "require('dompurify')" | "require(\"dompurify\")"
+                        )
+                    })
+            }
+            "assignment_expression" => node.field("left").is_some_and(|left| {
+                let target = normalized(&left.text());
+                target == receiver
+                    || target.starts_with(&format!("{receiver}."))
+                    || target.starts_with(&format!("{receiver}["))
+            }),
+            _ => false,
+        })
+    {
+        return false;
+    }
+    let Some(arguments) = value.field("arguments") else {
+        return false;
+    };
+    let arguments = arguments
+        .children()
+        .filter(|node| node.is_named())
+        .collect::<Vec<_>>();
+    if arguments.len() != 2 || arguments[1].kind().as_ref() != "object" {
+        return false;
+    }
+    let mut tags = false;
+    let mut attributes = false;
+    for entry in arguments[1].children().filter(|node| node.is_named()) {
+        if entry.kind().as_ref() != "pair" {
+            return false;
+        }
+        let (Some(key), Some(values)) = (entry.field("key"), entry.field("value")) else {
+            return false;
+        };
+        let key = normalized(&key.text());
+        let key = key.trim_matches(['\'', '"']);
+        let allowed: &[&str] = match key {
+            "ALLOWED_TAGS" if !tags => {
+                tags = true;
+                &[
+                    "span", "button", "p", "b", "i", "em", "strong", "br", "ul", "ol", "li", "div",
+                    "small", "code", "pre", "mark", "bdi",
+                ]
+            }
+            "ALLOWED_ATTR" if !attributes => {
+                attributes = true;
+                &[
+                    "class",
+                    "title",
+                    "type",
+                    "disabled",
+                    "contenteditable",
+                    "data-field",
+                ]
+            }
+            _ => return false,
+        };
+        if values.kind().as_ref() != "array"
+            || !values
+                .children()
+                .filter(|node| node.is_named())
+                .all(|node| {
+                    exact_quoted(&node.text()).is_some_and(|value| allowed.contains(&value))
+                })
+        {
+            return false;
+        }
+    }
+    tags && attributes
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn add_browser_observations<'tree>(
     path: &str,
