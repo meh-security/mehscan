@@ -323,6 +323,20 @@ pub(crate) fn add_browser_observations<'tree>(
             }
 
             if let Some(content) = vue_render_inner_html_content(&node, &vue_factories) {
+                let mut tags = vec![
+                    "browser",
+                    "vue",
+                    "trusted-markup",
+                    "explicit-raw-html",
+                    "xss",
+                ];
+                if node
+                    .field("arguments")
+                    .and_then(|args| args.children().find(|n| n.is_named()))
+                    .is_some_and(|tag| exact_quoted(&tag.text()) == Some("style"))
+                {
+                    tags.push("raw-output-container:style");
+                }
                 push_observation(
                     path,
                     language,
@@ -333,13 +347,7 @@ pub(crate) fn add_browser_observations<'tree>(
                     &format!("{}-vue-inner-html-output", language_prefix(language)),
                     "content",
                     "Vue h innerHTML",
-                    &[
-                        "browser",
-                        "vue",
-                        "trusted-markup",
-                        "explicit-raw-html",
-                        "xss",
-                    ],
+                    &tags,
                     Confidence::High,
                     "Vue render-function innerHTML property",
                     comments,
@@ -423,6 +431,14 @@ pub(crate) fn add_browser_observations<'tree>(
             }
 
             if let Some(content) = react_create_element_content(&node, &react_factories) {
+                let mut tags = vec!["browser", "react", "dangerously-set-inner-html", "xss"];
+                if node
+                    .field("arguments")
+                    .and_then(|args| args.children().find(|n| n.is_named()))
+                    .is_some_and(|tag| exact_quoted(&tag.text()) == Some("style"))
+                {
+                    tags.push("raw-output-container:style");
+                }
                 push_observation(
                     path,
                     language,
@@ -433,7 +449,7 @@ pub(crate) fn add_browser_observations<'tree>(
                     &format!("{}-react-dangerous-html-output", language_prefix(language)),
                     "content",
                     "React.createElement dangerouslySetInnerHTML",
-                    &["browser", "react", "dangerously-set-inner-html", "xss"],
+                    &tags,
                     Confidence::High,
                     "React.createElement",
                     comments,
@@ -580,6 +596,16 @@ pub(crate) fn add_browser_observations<'tree>(
             && jsx_attribute_is_on_intrinsic_element(&node)
             && let Some(content) = jsx_attribute_content(&node, "innerHTML")
         {
+            let mut tags = vec![
+                "browser",
+                "solidjs",
+                "trusted-markup",
+                "explicit-raw-html",
+                "xss",
+            ];
+            if jsx_attribute_element_name(&node).as_deref() == Some("style") {
+                tags.push("raw-output-container:style");
+            }
             push_observation(
                 path,
                 language,
@@ -590,13 +616,7 @@ pub(crate) fn add_browser_observations<'tree>(
                 &format!("{}-solid-inner-html-output", language_prefix(language)),
                 "content",
                 "Solid innerHTML",
-                &[
-                    "browser",
-                    "solidjs",
-                    "trusted-markup",
-                    "explicit-raw-html",
-                    "xss",
-                ],
+                &tags,
                 Confidence::High,
                 "Solid innerHTML JSX property",
                 comments,
@@ -859,11 +879,7 @@ fn compact_orphan_browser_reads(evidence: &mut Vec<Evidence>) {
             matches!(
                 item.capability,
                 Capability::HtmlOutput | Capability::BrowserNavigation
-            ) && (item.rule_id.contains("browser-dom-html-output")
-                || item.rule_id.contains("react-dangerous-html-output")
-                || item.rule_id.contains("url-attribute-output")
-                || item.rule_id.contains("angular-html-trust-bypass")
-                || item.capability == Capability::BrowserNavigation)
+            )
         })
         .map(|item| item.enclosing_symbol.clone())
         .collect::<BTreeSet<_>>();
@@ -1765,7 +1781,7 @@ fn jsx_url_attribute_content<'tree>(
     jsx_attribute_content(attribute, "href")
 }
 
-fn constructed_link_operand(value: &Node<'_, StrDoc<SupportLang>>) -> bool {
+pub(crate) fn constructed_link_operand(value: &Node<'_, StrDoc<SupportLang>>) -> bool {
     fn construction(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
         matches!(
             node.kind().as_ref(),

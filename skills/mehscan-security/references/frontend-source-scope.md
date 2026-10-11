@@ -59,12 +59,33 @@ merely because they are frontend files.
 | --- | --- | --- |
 | Raw markup and meaningful writer-to-consumer relationships; unsafe URL construction or connected browser input; credentials sent to an unresolved destination; consequential uploads/executable content. | Unresolved stored link writers/scheme controls; raw stylesheet ownership/SSR breakout; auth redirects and meaningful CSRF/credential-in-URL questions. Name the missing edge. | Source-confirmed local asset/document generators, vendor/generated copies, ordinary fixed-destination client reads and complete positive URL controls without another consequential effect. |
 
-Standalone intrinsic link writers and literal JSX `<style>` insertion start
-Comprehensive-only. Constructed URLs, connected input, other active elements and
-raw HTML remain prioritized. A style tag is not a sanitizer; inspect SSR breakout.
-Apply the same impact test to React, Vue, Angular and DOM code, using their actual
-consumers rather than framework names. The automated hints currently cover React
-JSX; other shapes still require preassessment.
+Standalone intrinsic JSX link writers, owned Angular ordinary URL bypasses and
+literal stylesheet insertions (React JSX/createElement, Vue `h`, Solid JSX) start
+Comprehensive-only. Constructed URLs, connected input, represented native caller
+facts, active resources and raw HTML keep stronger admission. A style tag is not
+a sanitizer; inspect SSR breakout. These hints retain exact IDs, not safe verdicts.
+
+| Supported consumer | Value question | Comprehensive / scope check |
+| --- | --- | --- |
+| React JSX / createElement | `dangerouslySetInnerHTML` producer, escaping and consumer; unsafe link construction | Known intrinsic stylesheet or standalone stored link writer; custom props are not native URL sinks. |
+| Vue SFC / render `h` | `v-html` / intrinsic `innerHTML` writer and final control | Known `h('style', ...)`; group source-confirmed theme/frontmatter writers before packaging repeated views. Plain interpolation / `v-text` is not raw HTML. |
+| Angular | Owned HTML, script or resource-URL bypass; connected input or constructed ordinary URL | Standalone `bypassSecurityTrustUrl` writer/scheme/consumer question. Ordinary framework HTML binding is not itself a bypass. |
+| Solid JSX | Intrinsic `innerHTML`, writer and output control | Known intrinsic `style`; do not infer native sinks from custom component props. |
+| Lit | Imported `unsafeHTML` producer and final markup | Raw strings remain Value; a tagged template or CSS-looking string does not establish its output container. |
+| jQuery | Owned HTML insertion receiver, operand and prior controls | Resolve actual `.html` / `.append` consumer; do not infer stylesheet context from a selector or variable name. |
+| Plain DOM / executable EJS client code | Raw insertion, unsafe URL/resource consumers, credentials and meaningful browser effects | Unknown element kinds stay prioritized. Source-confirmed ordinary navigation, controls and tooling use the shared scope criteria. |
+
+Do not classify a prop as trusted from its TypeScript type or a `theme`, `admin`,
+`icon` or `config` name. Read its writer chain. Repeated authored-site config
+consumers can share one publishing-authority question in Comprehensive after
+preassessment; a runtime editor, external feed or less-trusted writer reopens Value.
+Positive sanitizer controls must cover the exact final operand and configuration;
+post-sanitization interpolation reopens the question.
+
+Coverage remains bounded: Vue dynamic-tag `h`, template URL bindings and Angular
+style bypass are not fully inventoried. Svelte/Astro component templates are not
+supported parsers. Next/Nuxt/SolidStart server handlers remain separate runtime
+surfaces; frontend source scoping must not discard their server-side effects.
 
 Use short source reads to record exact IDs, ownership/control evidence and reasons
 in the review plan before packaging. Source-confirmed ordinary tooling/copies can

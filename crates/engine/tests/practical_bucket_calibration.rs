@@ -216,6 +216,117 @@ function InputSheet() { return <style dangerouslySetInnerHTML={{__html:window.lo
 }
 
 #[test]
+fn framework_consumer_context_keeps_raw_html_and_active_urls_in_value() {
+    let fixture = Fixture::new(
+        "framework-consumers",
+        r#"import React from 'react';
+import { h } from 'vue';
+import { createSignal } from 'solid-js';
+import { unsafeHTML } from 'lit/directives/unsafe-html.js';
+import $ from 'jquery';
+import { DomSanitizer } from '@angular/platform-browser';
+function ReactCss(config) { return React.createElement('style', {dangerouslySetInnerHTML:{__html:config.css}}); }
+function ReactHtml(config) { return React.createElement('div', {dangerouslySetInnerHTML:{__html:config.html}}); }
+function ReactUnknown(tag, config) { return React.createElement(tag, {dangerouslySetInnerHTML:{__html:config.html}}); }
+function VueCss(config) { return h('style', {innerHTML:config.css}); }
+function VueHtml(config) { return h('section', {innerHTML:config.html}); }
+function VueInputCss() { return h('style', {innerHTML:window.location.hash}); }
+function VueUnknown(tag, config) { return h(tag, {innerHTML:config.html}); }
+function SolidCss(config) { return <style innerHTML={config.css}/>; }
+function SolidHtml(config) { return <section innerHTML={config.html}/>; }
+function SolidInputCss() { return <style innerHTML={window.location.hash}/>; }
+function LitHtml(config) { return unsafeHTML(config.html); }
+function LitInput() { return unsafeHTML(window.location.hash); }
+function JqueryHtml(config) { return $(document.querySelector('#preview')).html(config.html); }
+function JqueryInput() { return $(document.querySelector('#preview')).html(window.location.hash); }
+function DomHtml(config) { document.querySelector('#preview').innerHTML = config.html; }
+function AngularUrl(sanitizer: DomSanitizer, config) { return sanitizer.bypassSecurityTrustUrl(config.url); }
+function AngularHtml(sanitizer: DomSanitizer, config) { return sanitizer.bypassSecurityTrustHtml(config.html); }
+function AngularScript(sanitizer: DomSanitizer, config) { return sanitizer.bypassSecurityTrustScript(config.script); }
+function AngularResource(sanitizer: DomSanitizer, config) { return sanitizer.bypassSecurityTrustResourceUrl(config.url); }
+function AngularConstructed(sanitizer: DomSanitizer, value) { const url = `javascript:${value}`; return sanitizer.bypassSecurityTrustUrl(url); }
+function AngularDirect(sanitizer: DomSanitizer, value) { return sanitizer.bypassSecurityTrustUrl (`javascript:${value}`); }
+function AngularMutated(sanitizer: DomSanitizer, url, value) { url = `javascript:${value}`; return sanitizer.bypassSecurityTrustUrl(url); }
+function AngularInput(sanitizer: DomSanitizer) { return sanitizer.bypassSecurityTrustUrl(window.location.hash); }
+"#,
+        "tsx",
+    );
+    let inventory = build_review_inventory(&fixture.0, false).unwrap();
+    assert_eq!(inventory.scan.coverage.totals.parse_failed, 0);
+    for (symbol, reason) in [
+        ("ReactCss", "frontend_stylesheet_writer_research"),
+        ("VueCss", "frontend_stylesheet_writer_research"),
+        ("SolidCss", "frontend_stylesheet_writer_research"),
+        ("AngularUrl", "frontend_link_writer_research"),
+    ] {
+        let entries = inventory
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.symbol.as_deref() == Some(symbol)
+                    && entry.capability == Capability::HtmlOutput
+            })
+            .collect::<Vec<_>>();
+        assert!(!entries.is_empty(), "lost context research {symbol}");
+        assert!(
+            entries.iter().all(|entry| {
+                entry
+                    .value_hint
+                    .as_ref()
+                    .is_some_and(|hint| hint.reason == reason)
+            }),
+            "incorrect context bucket for {symbol}: {entries:#?}"
+        );
+    }
+    for symbol in [
+        "ReactHtml",
+        "ReactUnknown",
+        "VueHtml",
+        "VueInputCss",
+        "SolidHtml",
+        "SolidInputCss",
+        "LitHtml",
+        "LitInput",
+        "JqueryHtml",
+        "JqueryInput",
+        "DomHtml",
+        "AngularHtml",
+        "AngularScript",
+        "AngularResource",
+        "AngularConstructed",
+        "AngularDirect",
+        "AngularMutated",
+        "AngularInput",
+    ] {
+        let entries = inventory
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.symbol.as_deref() == Some(symbol)
+                    && entry.capability == Capability::HtmlOutput
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !entries.is_empty(),
+            "lost meaningful HTML consumer {symbol}"
+        );
+        assert!(
+            entries.iter().all(|entry| entry.value_hint.is_none()),
+            "demoted meaningful HTML consumer {symbol}: {entries:#?}"
+        );
+    }
+    for symbol in ["VueInputCss", "SolidInputCss", "LitInput", "JqueryInput"] {
+        assert!(
+            inventory.scan.evidence.iter().any(|item| {
+                item.enclosing_symbol.as_deref() == Some(symbol)
+                    && item.capability == Capability::BrowserInput
+            }),
+            "discarded connected browser input for {symbol}"
+        );
+    }
+}
+
+#[test]
 fn django_selector_used_only_to_narrow_a_queryset_is_not_an_authorization_sink() {
     let fixture = Fixture::new(
         "narrowing",

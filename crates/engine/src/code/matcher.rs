@@ -592,6 +592,20 @@ pub(crate) fn scan_source(
                         },
                     );
                 }
+                let mut tags = compiled_rule.rule.tags.clone();
+                if compiled_rule.rule.id.ends_with("angular-html-trust-bypass")
+                    && matched.get_node().field("function").is_some_and(|callee| {
+                        callee
+                            .text()
+                            .trim_end()
+                            .ends_with(".bypassSecurityTrustUrl")
+                    })
+                    && matched.get_env().get_match("HTML").is_some_and(|content| {
+                        super::node_browser::constructed_link_operand(content)
+                    })
+                {
+                    tags.push("link-origin:constructed".into());
+                }
                 evidence.push(Evidence {
                     id: evidence_id(path, &compiled_rule.rule.id, range.start, range.end),
                     kind: compiled_rule.rule.kind,
@@ -600,7 +614,7 @@ pub(crate) fn scan_source(
                     enclosing_symbol: enclosing_symbol(matched.get_node()),
                     captures,
                     cwe_candidates: compiled_rule.rule.cwe.clone(),
-                    tags: compiled_rule.rule.tags.clone(),
+                    tags,
                     confidence: compiled_rule.rule.confidence,
                     provenance: Provenance {
                         resolution: Resolution::Ast,

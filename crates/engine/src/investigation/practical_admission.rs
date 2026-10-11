@@ -545,7 +545,7 @@ pub(super) fn frontend_research_hint(item: &Evidence) -> Option<ValueReviewHint>
     }) {
         return None;
     }
-    let link = item.rule_id.ends_with("react-url-attribute-output")
+    let link = (item.rule_id.ends_with("url-attribute-output")
         && item
             .tags
             .iter()
@@ -555,7 +555,18 @@ pub(super) fn frontend_research_hint(item: &Evidence) -> Option<ValueReviewHint>
             .context
             .literals
             .get("content")
-            .is_some_and(|literal| literal.state == LiteralState::Unknown);
+            .is_some_and(|literal| literal.state == LiteralState::Unknown))
+        || (item.rule_id.ends_with("angular-html-trust-bypass")
+            && item
+                .tags
+                .iter()
+                .any(|tag| tag == "browser-interpretation:url")
+            && !item.tags.iter().any(|tag| tag == "link-origin:constructed")
+            && item
+                .context
+                .literals
+                .get("content")
+                .is_some_and(|literal| literal.state == LiteralState::Unknown));
     let style = item
         .tags
         .iter()
@@ -568,7 +579,7 @@ pub(super) fn frontend_research_hint(item: &Evidence) -> Option<ValueReviewHint>
     } else if style {
         (
             "frontend_stylesheet_writer_research",
-            "Raw stylesheet insertion: inspect CSS ownership and SSR style-tag breakout before treating it as executable HTML. Comprehensive retains the exact ID; promote an untrusted writer, unsafe construction or consequential effect to Value. No safety or trusted-admin assumption.",
+            "Raw stylesheet insertion: inspect the actual CSS writer/control and SSR tag breakout where applicable. Comprehensive retains the exact ID; promote an untrusted writer, unsafe construction or consequential effect to Value. No safety or trusted-admin assumption.",
         )
     } else {
         return None;

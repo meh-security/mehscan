@@ -65,8 +65,8 @@ Frontend build/cache/dependency artifacts are outside both ordinary source-revie
 queues. Keep authored implementations and consequential leads; report exclusions
 as coverage boundaries. See [frontend source scope](frontend-source-scope.md)
 for frontend Value/Comprehensive/out-of-scope buckets, stack conventions, mixed
-directories and explicit artifact review. Standalone React link-writer and literal
-JSX stylesheet questions start Comprehensive-only; connected inputs, constructed
+directories and explicit artifact review. Standalone intrinsic link/Angular URL
+writer and known stylesheet questions start Comprehensive-only; connected inputs, constructed
 URLs, active resource consumers and raw HTML keep their stronger admission.
 
 A decision-critical producer question does not itself promote an ordinary
