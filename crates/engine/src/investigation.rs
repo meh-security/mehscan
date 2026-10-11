@@ -1387,10 +1387,11 @@ fn build_path_review_jobs_internal(
         .map(|item| item.id.clone())
         .collect::<BTreeSet<_>>();
     let custom_sanitizer_policy = !restricted_html_controls.is_empty()
-        && sources
-            .files
-            .values()
-            .any(|file| file.source.contains(".addHook") || file.source.contains(".setConfig"));
+        && sources.files.values().any(|file| {
+            file.source.contains(".addHook")
+                || file.source.contains(".setConfig")
+                || frontend::unverified_sanitizer_binding(file)
+        });
     let practical_exclusions = scan
         .evidence
         .iter()

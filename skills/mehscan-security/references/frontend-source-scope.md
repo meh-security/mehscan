@@ -88,9 +88,9 @@ bypasses in Value; missing deployment policy alone is not another priority job.
 
 The scanner excludes direct imported DOMPurify sanitization with explicit literal
 text-markup tag/attribute allowlists at the final HTML insertion. Dynamic or wider
-options, shadowed/replaced receivers, later construction and source-visible hook/
-global configuration retain review work. This bounded slice does not infer safe
-wrappers, stylesheets or other interpretation contexts.
+options, shadowed, escaped/exported or replaced receivers, later construction and
+source-visible hook/global configuration retain review work. This bounded slice
+does not infer safe wrappers, stylesheets or other interpretation contexts.
 
 Coverage remains bounded: Vue dynamic-tag `h`, template URL bindings and Angular
 style bypass are not fully inventoried. Svelte/Astro component templates are not

@@ -17,6 +17,137 @@ use super::reachability;
 
 const BROWSER_ENGINE: &str = "ast-grep 0.45.1 + bounded-browser-boundary";
 
+/// Imports are ownership evidence only while the object stays at direct
+/// sanitize calls. Aliases, destructuring, exports and unknown callees can
+/// replace the implementation or change its policy.
+pub(crate) fn unverified_dompurify_binding(root: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    // Other runtime import shapes cannot share the direct-default ownership
+    // proof. In particular, a namespace can mutate its default instance.
+    if root.dfs().any(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "import_statement" | "export_statement"
+        ) && node
+            .field("source")
+            .is_some_and(|source| exact_quoted(&source.text()) == Some("dompurify"))
+            && !node.text().trim_start().starts_with("import type ")
+            && (node.kind().as_ref() == "export_statement"
+                || node
+                    .dfs()
+                    .any(|child| child.kind().as_ref() == "namespace_import")
+                || !node
+                    .children()
+                    .filter(|child| child.kind().as_ref() == "import_clause")
+                    .any(|clause| {
+                        clause
+                            .children()
+                            .any(|child| child.kind().as_ref() == "identifier")
+                    }))
+    }) {
+        return true;
+    }
+    let bindings = imported_default_or_required_bindings(root, &["dompurify"]);
+    if bindings.is_empty() {
+        return false;
+    }
+    root.dfs().any(|node| {
+        if !matches!(
+            node.kind().as_ref(),
+            "identifier"
+                | "shorthand_property_identifier"
+                | "shorthand_property_identifier_pattern"
+        ) || !bindings.contains(node.text().as_ref())
+        {
+            return false;
+        }
+        if sanitizer_parameter_shadows(&node, node.text().as_ref()) {
+            return false; // This reference cannot mutate the imported instance.
+        }
+        let Some(parent) = node.parent() else {
+            return true;
+        };
+        if parent.kind().as_ref() == "import_clause" {
+            return false;
+        }
+        if parent.kind().as_ref() == "variable_declarator"
+            && parent
+                .field("name")
+                .is_some_and(|name| name.range() == node.range())
+            && parent.field("value").is_some_and(|value| {
+                matches!(
+                    normalized(&value.text()).as_str(),
+                    "require('dompurify')" | "require(\"dompurify\")"
+                )
+            })
+            && !parent.ancestors().any(|ancestor| is_function(&ancestor))
+            && !root.dfs().any(|declaration| {
+                declaration
+                    .field("name")
+                    .or_else(|| declaration.field("left"))
+                    .is_some_and(|name| {
+                        matches!(
+                            declaration.kind().as_ref(),
+                            "variable_declarator"
+                                | "function_declaration"
+                                | "assignment_expression"
+                        ) && sanitizer_binding_pattern(&name, "require")
+                    })
+                    || (is_function(&declaration)
+                        && declaration
+                            .field("parameters")
+                            .or_else(|| declaration.field("parameter"))
+                            .is_some_and(|parameters| {
+                                sanitizer_binding_pattern(&parameters, "require")
+                            }))
+            })
+        {
+            return false;
+        }
+        !(parent.kind().as_ref() == "member_expression"
+            && parent
+                .field("object")
+                .is_some_and(|object| object.range() == node.range())
+            && parent
+                .field("property")
+                .is_some_and(|property| property.text() == "sanitize")
+            && parent.parent().is_some_and(|call| {
+                call.kind().as_ref() == "call_expression"
+                    && call
+                        .field("function")
+                        .is_some_and(|callee| callee.range() == parent.range())
+            }))
+    })
+}
+
+fn sanitizer_parameter_shadows(node: &Node<'_, StrDoc<SupportLang>>, binding: &str) -> bool {
+    node.ancestors().filter(is_function).any(|function| {
+        function
+            .field("parameters")
+            .or_else(|| function.field("parameter"))
+            .is_some_and(|parameters| sanitizer_binding_pattern(&parameters, binding))
+    })
+}
+
+fn sanitizer_binding_pattern(node: &Node<'_, StrDoc<SupportLang>>, binding: &str) -> bool {
+    match node.kind().as_ref() {
+        "identifier" | "shorthand_property_identifier_pattern" => node.text() == binding,
+        "assignment_pattern" | "object_assignment_pattern" => node
+            .field("left")
+            .is_some_and(|left| sanitizer_binding_pattern(&left, binding)),
+        "required_parameter" | "optional_parameter" => node
+            .field("pattern")
+            .is_some_and(|pattern| sanitizer_binding_pattern(&pattern, binding)),
+        "pair_pattern" => node
+            .field("value")
+            .is_some_and(|value| sanitizer_binding_pattern(&value, binding)),
+        "formal_parameters" | "object_pattern" | "array_pattern" | "rest_pattern" => node
+            .children()
+            .filter(|node| node.is_named())
+            .any(|node| sanitizer_binding_pattern(&node, binding)),
+        _ => false,
+    }
+}
+
 pub(crate) fn accepts_angular_trust_bypass(
     root: &Node<'_, StrDoc<SupportLang>>,
     receiver: &Node<'_, StrDoc<SupportLang>>,
@@ -52,42 +183,9 @@ pub(crate) fn restricted_html_control(
         return false;
     };
     let bindings = imported_default_or_required_bindings(root, &["dompurify"]);
-    if !bindings.contains(receiver) {
-        return false;
-    }
-    // Reject source-visible shadowing/replacement rather than trusting a spelling.
-    if value
-        .ancestors()
-        .filter(|node| is_function(node))
-        .any(|function| {
-            function
-                .field("parameters")
-                .or_else(|| function.field("parameter"))
-                .is_some_and(|parameters| {
-                    parameters
-                        .dfs()
-                        .any(|node| node.kind().as_ref() == "identifier" && node.text() == receiver)
-                })
-        })
-        || root.dfs().any(|node| match node.kind().as_ref() {
-            "variable_declarator" => {
-                node.field("name")
-                    .is_some_and(|name| name.text() == receiver)
-                    && !node.field("value").is_some_and(|value| {
-                        matches!(
-                            normalized(&value.text()).as_str(),
-                            "require('dompurify')" | "require(\"dompurify\")"
-                        )
-                    })
-            }
-            "assignment_expression" => node.field("left").is_some_and(|left| {
-                let target = normalized(&left.text());
-                target == receiver
-                    || target.starts_with(&format!("{receiver}."))
-                    || target.starts_with(&format!("{receiver}["))
-            }),
-            _ => false,
-        })
+    if !bindings.contains(receiver)
+        || sanitizer_parameter_shadows(value, receiver)
+        || unverified_dompurify_binding(root)
     {
         return false;
     }

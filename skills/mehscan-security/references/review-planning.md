@@ -330,16 +330,17 @@ agent layout on every repository:
 
 | Workload | Working approach |
 | --- | --- |
-| Small, bounded queue | Build the ordinary complete bundles. Review them directly, or give disjoint bundles to available agents. |
+| Small, bounded queue | Build ordinary bounded bundles. Review them directly, or give disjoint bundles to available agents. |
 | Large repository, narrow request | Filter the inventory, then materialize small exact-ID bundles for the relevant cases. |
 | Large, broad request with one reviewer | Keep the inventory as the map. Select a small chunk, inspect it, and request further source only when its question needs it. Replan after each chunk. |
 | Large, broad request with multiple agents | Share one inventory and whole-run plan. Assign disjoint IDs by useful component or question, materialize a bounded bundle for each worker, and merge their validated outcomes into the plan. |
 
 Consider the admitted count, category concentrations, component boundaries,
 estimated request size from a small pilot, and available agents. Use AI judgment
-to choose the shape; path count alone is insufficient. Selected bundles are
-currently self-contained requests. A smaller seed card with optional evidence
-loading is a proposed experiment, not a command available in the CLI.
+to choose the shape; path count alone is insufficient. Selected bundles bind exact
+questions, initial facts and source locations. Start with compact card/sweep views
+and request missing edges through the CLI; follow [evidence packaging](evidence-packaging.md)
+when grouping shared implementations or adding missing source.
 
 ## Map the surface and define scope
 

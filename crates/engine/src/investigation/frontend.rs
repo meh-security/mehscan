@@ -481,6 +481,20 @@ fn parse(file: &SourceFile) -> Option<AstGrep<StrDoc<SupportLang>>> {
     Some(ast)
 }
 
+pub(super) fn unverified_sanitizer_binding(file: &SourceFile) -> bool {
+    // Most repositories contain few DOMPurify importers. Avoid reparsing the
+    // rest of the source tree for this admission guard.
+    (file.path.ends_with(".vue")
+        || matches!(
+            file.language,
+            Some(Language::Javascript | Language::Typescript | Language::Tsx)
+        ))
+        && file.source.contains("dompurify")
+        && parse(file).is_none_or(|ast| {
+            !valid(&ast.root()) || crate::code::unverified_dompurify_binding(&ast.root())
+        })
+}
+
 fn valid(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
     !node.dfs().any(|n| n.is_error() || n.is_missing())
 }

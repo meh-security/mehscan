@@ -414,6 +414,149 @@ function Css(value) { return <style dangerouslySetInnerHTML={{__html:purify.sani
 }
 
 #[test]
+fn restricted_control_keeps_shadowed_escaped_or_replaced_sanitizer_objects_reviewable() {
+    let output = "document.querySelector('#preview').innerHTML = purify.sanitize(value, {ALLOWED_TAGS:['span'],ALLOWED_ATTR:[]});";
+    for (label, source) in [
+        (
+            "destructured",
+            format!(
+                "function Consumer(value, replacement) {{ const {{purify}} = replacement; {output} }}"
+            ),
+        ),
+        (
+            "destructured-alias",
+            format!(
+                "function Consumer(value, replacement) {{ const {{clean:purify}} = replacement; {output} }}"
+            ),
+        ),
+        (
+            "array-shadow",
+            format!(
+                "function Consumer(value, replacement) {{ const [purify] = replacement; {output} }}"
+            ),
+        ),
+        (
+            "escaped-call",
+            format!("configure(purify); function Consumer(value) {{ {output} }}"),
+        ),
+        (
+            "escaped-default",
+            format!(
+                "function configure(target = purify) {{ target.sanitize = value => value; }} configure(); function Consumer(value) {{ {output} }}"
+            ),
+        ),
+        (
+            "escaped-alias",
+            format!(
+                "const alias = purify; alias.sanitize = value => value; function Consumer(value) {{ {output} }}"
+            ),
+        ),
+        (
+            "escaped-shorthand",
+            format!("configure({{purify}}); function Consumer(value) {{ {output} }}"),
+        ),
+        (
+            "exported",
+            format!("export {{purify}}; function Consumer(value) {{ {output} }}"),
+        ),
+        (
+            "replacement",
+            format!("purify.sanitize = value => value; function Consumer(value) {{ {output} }}"),
+        ),
+        (
+            "computed-replacement",
+            format!("purify['sanitize'] = value => value; function Consumer(value) {{ {output} }}"),
+        ),
+    ] {
+        let fixture = Fixture::new(
+            &format!("ownership-{label}"),
+            &format!("import purify from 'dompurify';\n{source}"),
+            "tsx",
+        );
+        let inventory = build_review_inventory(&fixture.0, false).unwrap();
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|entry| entry.symbol.as_deref() == Some("Consumer")
+                    && entry.capability == Capability::HtmlOutput),
+            "lost unresolved ownership {label}"
+        );
+        assert!(
+            !inventory.scan.evidence.iter().any(|item| item
+                .tags
+                .iter()
+                .any(|tag| tag == "html-control:restricted-dompurify")),
+            "invented complete control {label}"
+        );
+    }
+    for (label, loader) in [
+        ("module-require", "const purify = require('dompurify');"),
+        (
+            "shadow-require",
+            "const require = () => ({sanitize: value => value}); const purify = require('dompurify');",
+        ),
+        (
+            "replaced-require",
+            "require = () => ({sanitize: value => value}); const purify = require('dompurify');",
+        ),
+    ] {
+        let fixture = Fixture::new(
+            &format!("ownership-{label}"),
+            &format!("{loader}\nfunction Consumer(value) {{ {output} }}"),
+            "js",
+        );
+        let inventory = build_review_inventory(&fixture.0, false).unwrap();
+        assert_eq!(
+            inventory
+                .entries
+                .iter()
+                .any(|entry| entry.symbol.as_deref() == Some("Consumer")
+                    && entry.capability == Capability::HtmlOutput),
+            label != "module-require",
+            "incorrect CommonJS ownership: {label}"
+        );
+    }
+}
+
+#[test]
+fn shared_import_mutation_cancels_control_exclusion_across_files() {
+    let fixture = Fixture::new(
+        "shared-control",
+        "import purify from 'dompurify';\nfunction Consumer(value) { document.querySelector('#preview').innerHTML = purify.sanitize(value, {ALLOWED_TAGS:['span'],ALLOWED_ATTR:[]}); }",
+        "tsx",
+    );
+    let baseline = build_review_inventory(&fixture.0, false).unwrap();
+    assert!(
+        !baseline
+            .entries
+            .iter()
+            .any(|entry| entry.symbol.as_deref() == Some("Consumer"))
+    );
+    for mutation in [
+        "import cleaner from 'dompurify'; cleaner.sanitize = value => value;",
+        "import cleaner from 'dompurify'; const alias = cleaner; configure(alias);",
+        "import cleaner from 'dompurify'; export {cleaner};",
+        "import cleaner from 'dompurify'; cleaner\n.addHook('afterSanitizeAttributes', mutate);",
+        "import cleaner from 'dompurify'; cleaner\n.setConfig(policy);",
+        "import * as cleaner from 'dompurify'; cleaner.default.sanitize = value => value;",
+        "import {default as cleaner} from 'dompurify'; cleaner.sanitize = value => value;",
+        "export {default} from 'dompurify';",
+    ] {
+        fs::write(fixture.0.join("policy.ts"), mutation).unwrap();
+        let inventory = build_review_inventory(&fixture.0, false).unwrap();
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|entry| entry.symbol.as_deref() == Some("Consumer")
+                    && entry.capability == Capability::HtmlOutput),
+            "ignored shared instance effect: {mutation}"
+        );
+    }
+}
+
+#[test]
 fn django_selector_used_only_to_narrow_a_queryset_is_not_an_authorization_sink() {
     let fixture = Fixture::new(
         "narrowing",

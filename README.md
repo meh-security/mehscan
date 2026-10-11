@@ -24,7 +24,7 @@ these hints never assign safe verdicts or change scanner admission.
 
 - Scans source code locally without executing build tools or application code.
 - Collects evidence and bounded relationships for security review.
-- Prepares self-contained review bundles for an AI coding agent.
+- Prepares compact review bundles with source locations and CLI follow-ups.
 - Exports JSON, SARIF, and Markdown reports.
 
 Scan candidates require review before they become confirmed findings. The CLI works independently of any model provider, agent, or plugin.
