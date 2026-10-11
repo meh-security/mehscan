@@ -29,8 +29,77 @@ pub(crate) fn add_output_policy_observations<'tree>(
     if language != Language::Csharp {
         return;
     }
+    classify_non_browser_writes(root, evidence);
     add_header_observations(path, root, comments, conditional, literals, evidence);
     add_logging_observations(path, root, comments, conditional, literals, evidence);
+}
+
+fn classify_non_browser_writes(root: &Node<'_, StrDoc<SupportLang>>, evidence: &mut [Evidence]) {
+    if !evidence.iter().any(|e| e.rule_id == "csharp-html-output") {
+        return;
+    }
+    let calls = invocations(root);
+    let imported = |namespace: &str| {
+        root.dfs().any(|n|
+        n.kind().as_ref() == "using_directive"
+            && matches!(compact(&n.text()).as_str(), s if s == format!("using{namespace};") || s == format!("globalusing{namespace};")))
+    };
+    let shadowed = |name: &str| {
+        root.dfs().any(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "class_declaration" | "struct_declaration" | "type_parameter"
+            ) && n.field("name").is_some_and(|n| n.text() == name)
+        })
+    };
+    for item in evidence
+        .iter_mut()
+        .filter(|e| e.rule_id == "csharp-html-output")
+    {
+        let Some(call) = calls.iter().find(|n| {
+            n.range() == (item.location.start.byte_offset..item.location.end.byte_offset)
+        }) else {
+            continue;
+        };
+        let Some(function) = call.field("function") else {
+            continue;
+        };
+        if function
+            .field("name")
+            .is_none_or(|n| n.text() != "WriteAsync")
+        {
+            continue;
+        }
+        let Some(receiver) = function.field("expression") else {
+            continue;
+        };
+        let text = compact(&receiver.text());
+        let console = matches!(
+            text.as_str(),
+            "System.Console.Out"
+                | "System.Console.Error"
+                | "global::System.Console.Out"
+                | "global::System.Console.Error"
+        ) || matches!(text.as_str(), "Console.Out" | "Console.Error")
+            && imported("System")
+            && !shadowed("Console")
+            && receiver
+                .field("expression")
+                .is_some_and(|n| super::csharp_sinks::declared_receiver_type(root, &n).is_none());
+        let ty = super::csharp_sinks::declared_receiver_type(root, &receiver);
+        let buffer = ty.as_deref().is_some_and(|ty| {
+            matches!(ty.trim_start_matches("global::"), "System.IO.StringWriter")
+                || ty == "StringWriter" && imported("System.IO") && !shadowed("StringWriter")
+        });
+        if console || buffer {
+            // This settles the immediate destination only. A later HTTP/trusted
+            // markup consumer owns any HTML question; a stream's type alone does
+            // not settle where it writes (StreamWriter can wrap response.Body).
+            item.kind = EvidenceKind::Resource;
+            item.tags
+                .push("html-output:buffer-or-console-context".into());
+        }
+    }
 }
 
 fn add_header_observations<'tree>(

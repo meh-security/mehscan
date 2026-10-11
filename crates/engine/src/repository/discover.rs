@@ -480,6 +480,7 @@ fn push_file(
     let reason = match class {
         FileClass::Supported(_)
         | FileClass::EmbeddedJavascriptTemplate
+        | FileClass::Vue
         | FileClass::Razor
         | FileClass::WebForms => None,
         FileClass::SecretOnly if super::classify::is_sast_excluded_source(relative_path) => {
@@ -521,6 +522,24 @@ fn ignored_directory(path: &Path, root: &Path) -> bool {
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
+    let parent = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    // Mixed framework/tool directories contain authored config, themes and plugins.
+    // Exclude only their known generated children, never generic cache/temp names.
+    if matches!(
+        (parent.as_str(), name.as_str()),
+        ("_next", "static")
+            | (".vitepress", "cache")
+            | (".vuepress", ".temp")
+            | (".yarn", "cache" | "unplugged" | "sdks" | "releases")
+            | (".nx", "cache" | "workspace-data")
+    ) {
+        return true;
+    }
     if matches!(
         name.as_str(),
         ".git"
@@ -544,6 +563,17 @@ fn ignored_directory(path: &Path, root: &Path) -> bool {
             | ".cache"
             | ".next"
             | ".nuxt"
+            | "_nuxt"
+            | ".output"
+            | ".nitro"
+            | ".vinxi"
+            | ".vite"
+            | ".vite-temp"
+            | ".quasar"
+            | ".docusaurus"
+            | ".react-router"
+            | ".astro"
+            | "_astro"
             | ".svelte-kit"
             | ".angular"
             | ".parcel-cache"
@@ -557,6 +587,9 @@ fn ignored_directory(path: &Path, root: &Path) -> bool {
             | ".gradle"
             | ".nuget"
             | "coverage"
+            | "storybook-static"
+            | "playwright-report"
+            | "blob-report"
             | "dist"
             | "build"
             | "out"
@@ -780,6 +813,186 @@ mod tests {
         );
         assert!(!source.build_symbols.contains_key("STATIC_ONLY"));
         fs::remove_dir_all(root).expect("remove precedence fixture");
+    }
+
+    #[test]
+    fn frontend_generated_trees_preserve_authored_framework_and_tool_neighbors() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "mehscan-frontend-exclusions-{}-{nonce}",
+            std::process::id()
+        ));
+        let excluded = [
+            "apps/vue/.nuxt",
+            "apps/vue/_nuxt",
+            "apps/vue/.output",
+            "apps/vue/.nitro",
+            "apps/vue/.quasar",
+            "apps/react/.next",
+            "apps/react/.vite",
+            "apps/react/.vite-temp",
+            "apps/react/.react-router",
+            "apps/react/.vinxi",
+            "apps/react/.docusaurus",
+            "apps/angular/.angular",
+            "apps/other/.svelte-kit",
+            "apps/other/.astro",
+            "published/_astro",
+            "docs/.vuepress/.temp",
+            "docs/.vitepress/cache",
+            ".yarn/cache",
+            ".yarn/unplugged",
+            ".yarn/sdks",
+            ".yarn/releases",
+            ".nx/cache",
+            ".nx/workspace-data",
+            "storybook-static",
+            "playwright-report",
+            "blob-report",
+            "packages/library/node_modules",
+            "packages/library/dist",
+            "apps/react/build",
+        ];
+        let retained = [
+            "src",
+            "public",
+            "static",
+            "assets",
+            "lib",
+            "www",
+            "generated",
+            "cache",
+            ".temp",
+            "apps/vue/server",
+            "apps/vue/components",
+            "apps/react/routes",
+            "apps/angular/projects",
+            "docs/.vuepress/theme",
+            "docs/.vuepress/components",
+            "docs/.vitepress/theme",
+            "docs/.vitepress/plugins",
+            ".yarn/plugins",
+            ".yarn/patches",
+            ".nx/plugins",
+            ".storybook",
+            ".vercel/output",
+            ".netlify/functions",
+            "src-pwa",
+            "src-ssr",
+            "src-electron",
+            "apps/react/.vite-custom",
+            "apps/vue/_nuxt-custom",
+            "published/_astro-custom",
+        ];
+        for directory in excluded.iter().chain(retained.iter()) {
+            fs::create_dir_all(root.join(directory)).unwrap();
+            fs::write(root.join(directory).join("app.js"), "eval(input);\n").unwrap();
+        }
+        for include_nonproduction in [false, true] {
+            let discovery = discover_with_options(&root, include_nonproduction).unwrap();
+            let paths = discovery
+                .files
+                .iter()
+                .map(|file| file.relative.as_str())
+                .collect::<Vec<_>>();
+            for directory in excluded {
+                assert!(
+                    !paths.contains(&format!("{directory}/app.js").as_str()),
+                    "lost exclusion {directory}"
+                );
+                assert!(
+                    discovery
+                        .ignored_subtrees
+                        .contains(&format!("{directory}/")),
+                    "missing coverage {directory}"
+                );
+            }
+            for directory in retained {
+                assert!(
+                    paths.contains(&format!("{directory}/app.js").as_str()),
+                    "lost authored neighbor {directory}"
+                );
+            }
+        }
+        let text = discover_text(&root, None).unwrap();
+        assert!(
+            text.ignored_subtrees
+                .contains(&"docs/.vitepress/cache/".to_string())
+        );
+        assert!(
+            text.files
+                .iter()
+                .any(|file| file.relative == "docs/.vitepress/theme/app.js")
+        );
+        let explicit = discover_with_options(&root.join("apps/vue/.output"), false).unwrap();
+        assert!(explicit.files.iter().any(|file| file.relative == "app.js"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn excludes_exported_next_assets_without_excluding_static_source_or_next_siblings() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "mehscan-next-export-discovery-{}-{nonce}",
+            std::process::id()
+        ));
+        let excluded = [
+            "published/_next/static/chunks/app.js",
+            "other/_NeXt/StAtIc/app.js",
+        ];
+        let retained = [
+            "web/app.js",
+            "static/source.js",
+            "published/_next/data/source.js",
+            "published/_next/custom/source.js",
+            "published/_next/source.js",
+        ];
+        for relative in excluded.iter().chain(retained.iter()) {
+            let path = root.join(relative);
+            fs::create_dir_all(path.parent().expect("parent")).expect("fixture directory");
+            fs::write(path, "eval(input);\n").expect("fixture source");
+        }
+        for include_nonproduction in [false, true] {
+            let discovery = discover_with_options(&root, include_nonproduction)
+                .expect("discover exported assets fixture");
+            let paths = discovery
+                .files
+                .iter()
+                .map(|file| file.relative.as_str())
+                .collect::<Vec<_>>();
+            for path in excluded {
+                assert!(!paths.contains(&path), "must skip {path}");
+            }
+            for path in retained {
+                assert!(paths.contains(&path), "must retain {path}");
+            }
+            assert!(
+                discovery
+                    .ignored_subtrees
+                    .contains(&"published/_next/static/".to_string())
+            );
+            assert!(
+                discovery
+                    .ignored_subtrees
+                    .contains(&"other/_NeXt/StAtIc/".to_string())
+            );
+        }
+        // As with other generated trees, an explicit root can opt into inspecting it.
+        let explicit = discover_with_options(&root.join("published/_next/static"), false)
+            .expect("discover explicit generated root");
+        assert!(
+            explicit
+                .files
+                .iter()
+                .any(|file| file.relative == "chunks/app.js")
+        );
+        fs::remove_dir_all(root).expect("remove exported assets fixture");
     }
 
     #[test]

@@ -1,0 +1,548 @@
+# Value and Comprehensive admission policy
+
+Use when choosing repository scope or reconsidering a noisy review family.
+The scanner assigns initial queues; source research can change priority.
+This policy is maintained from real application snippets and regression controls.
+It describes intended membership and known implementation gaps below; a current
+queue entry is not proof that it deserves its assigned priority.
+
+## Two review queues
+
+| Queue | Include when | Rationale |
+| --- | --- | --- |
+| **Value** | A shown unsafe construction, meaningful protection bypass, consequential input/effect relationship, dangerous security configuration, or specific high-value lead makes investigation worthwhile. A clearly justified fix can qualify before exposure is proved. | Spend the first review budget on likely useful findings and conclusions. Useful medium issues can qualify; default severity alone does not decide. |
+| **Comprehensive** | A plausible medium-or-higher consequence has a concrete unresolved edge: a producer, writer, interpreter/control, selected resource, actor or sensitive effect. State the next fact that could settle it. | Research credible relationships whose evidence is weaker or whose expected impact is lower. Includes Value. |
+| **Neither** | Ordinary API use, setup, syntax, positive controls, duplicates or weak occurrences lack a practical consequence. Requiring several hypothetical conditions to invent a boundary is insufficient. | Avoid mandatory investigations of normal application behavior. An exclusion is not an AI safe verdict. |
+
+Unknown attacker control does not automatically discard a dangerous construction.
+An unknown caller does not automatically make every filesystem or output API
+worth investigating either. Judge the concrete operation and likely boundary.
+Keep conditional activation/exposure in the verdict and confidence.
+
+## Conditions by security family
+
+Unused synchronous JWT results and known console/StringWriter buffers are
+supporting context. Credential returns/handoffs, callback delivery and actual
+HTTP/trusted-markup consumers remain reviewable. Missing `exp` alone does not
+prove a lifetime violation: check credential use and the effective lifetime or
+revocation contract. `StreamWriter`/`TextWriter` types alone cannot exclude HTML;
+they may wrap a response. Unknown signer/writer ownership is not a safety proof.
+Omitting an explicit jsonwebtoken algorithm list is normal policy context; the
+SDK uses key-dependent defaults. Keep explicit weakened verification options
+and key/credential relationships, without inventing HTTP input from a token
+argument alone.
+
+| Family | Value | Comprehensive-only research | Exclude ordinary work |
+| --- | --- | --- | --- |
+| SQL, commands and code interpreters | Variable-built interpreter grammar, a dangerous execution target, or an actual input/execution relationship. Inspect wrappers/callers; a raw API alone is not a confirmed injection. | A consequential interpreter/loader relationship whose input, authority or protection remains unresolved. | Fixed grammar with data binding; unused builders; parsing/compilation without execution, unless another sensitive effect is shown. |
+| HTML and templates | Shown raw lower-trust output, an encoding/autoescape bypass, unsafe interpreted construction, or a promising writer-to-renderer relationship. Check the actual context. | Bound stored/helper producers, active script/style/event/unquoted contexts and consequential raw rendering with a specific writer/control gap. | Ordinary escaped output; numeric-only output with a supported complete proof; unbound generic output without an actual producer/context lead. A transport writer is not automatically browser HTML. |
+| Files, uploads and archives | Attacker-selected content reads, overwrite/deletion, upload/archive entry paths, writable-code paths or a useful containment gap. | Real content/destructive effects with unresolved resource authority; shared roots/producers whose independent effects still need checks. | Directory setup, simple names-only listing, existence/stat checks and closed path selectors. A fixed selector closes traversal only, not authorization or writable content. |
+| Network destinations | Server/privileged fetch with a consequential destination producer, executable download or credential/data disclosure. | A credible destination/authority gap with an actual sensitive effect. | URI construction without dispatch; ordinary browser GETs without a separate privileged or sensitive consequence. Unknown URLs do not turn client requests into server SSRF. |
+| Authorization, credentials and state | An actual sensitive action with an ownership, policy, credential-lifecycle, authoritative-value or integrity question. | A concrete medium-impact state boundary or unresolved protection attachment. | Bare route names, handler attributes and policy words without a sensitive action; absence of a local guard alone is not a bypass. |
+| Configuration and cryptography | A dangerous effective option or a security-purpose weakness: disabled certificate validation, unsafe polymorphism, weak password/integrity handling. | Concrete medium-impact cookie/CORS/CSRF/redirect/logging relationships; promote a consequential chain. | Positive secure settings, nonsecurity hashes, expiry metadata, public-route names, generic listener/deployment speculation and ordinary log formatting. |
+| Native memory and unsafe APIs | A represented size/lifetime/ownership/format relationship or concrete dangerous use. | A plausible memory/resource effect with a named unresolved operand or ownership edge. | The presence of `unsafe`, interop or a buffer API alone; unrelated API inventories. |
+| Deserialization | Executable/object-instantiating behavior with an unsafe type/policy/input relationship. | A concrete type/policy/resource question capable of medium impact. | Ordinary JSON/Serde/data decoding. Input co-location alone does not establish gadget execution or significant denial of service. |
+
+Co-occurrence is navigation, not propagation. It may retain research when the
+effect is worthwhile; it does not override an ordinary/low-effect exclusion.
+Do not require theoretical format, environment or plugin attacks to keep a case.
+Reopen when source or repository knowledge supplies the missing practical edge.
+
+Record **Value**, **Comprehensive-only**, or **excluded**, and the reason, when
+calibrating each rule or relationship. Supporting sources/guards/Resource facts
+own no independent review. A relationship follows its concrete sink and evidence;
+its CWE name alone does not settle the bucket. Preserve the inventory's exact ID
+and initial selection hint when planning reviews.
+
+Retained PHP output/include research starts Comprehensive-only unless a shown
+decision-critical mechanism promotes it. Connected Go gob/Python marshal also
+starts Comprehensive-only. Ordinary logging, redirects, cookie transport/script
+access, CORS and CSRF start there; consequential chains can justify promotion.
+Shared producer/dependency hints defer repeated research without sharing a safe
+verdict. Comprehensive includes Value; exclusion removes ordinary work from both.
+
+Frontend build/cache/dependency artifacts are outside both ordinary source-review
+queues. Keep authored implementations and consequential leads; report exclusions
+as coverage boundaries. See [frontend source scope](frontend-source-scope.md)
+for frontend Value/Comprehensive/out-of-scope buckets, stack conventions, mixed
+directories and explicit artifact review. Standalone intrinsic link/Angular URL
+writer and known stylesheet questions start Comprehensive-only; connected inputs, constructed
+URLs, active resource consumers and raw HTML keep their stronger admission.
+
+A decision-critical producer question does not itself promote an ordinary
+medium-impact redirect into Value. Keep its exact Comprehensive ID and origin
+question; promote when evidence shows a consequential credential/effect chain.
+
+## Process execution
+
+- **Value:** shown shell/interpreter text or executable selection with a dynamic
+  operand, or a consequential input-to-launch relationship. Reachability and
+  actor control can remain open questions; they are not fabricated facts.
+- **Comprehensive:** an actual launch with a concrete unresolved argument,
+  option, environment or executable-authority question that could have medium
+  impact. A fixed executable alone does not close dynamic target arguments.
+- **Neither:** discarded/unread local builders, unrelated `.arg`/`.args`
+  methods, and complete fixed invocations. Construction consumed by an observed
+  launch is supporting context, without a second review ID.
+
+Java `ProcessBuilder`, Go `exec.Command`/`CommandContext` and Rust `Command`
+construction attach to observed `start`, `Run`/`Start`/`Output`/`CombinedOutput`,
+or `spawn`/`status`/`output`. Bounded local bindings and receiver chains are
+supported. Returns, helper handoffs, conditional changes and unresolved builder
+state retain a factory/operand question. They do not prove execution or exposure.
+Kotlin process-builder rules already anchor to `start`; C#, Node, Python,
+PHP and native C/C++ process rules retain their actual invocation boundaries.
+
+Argument separation is a fact to use in context. It does not protect a
+deliberately invoked shell, a controlled executable, or target-program options
+that interpret code, load plugins, select output paths or dispatch subprocesses.
+Shell options are read before paths are classified. PHP `pcntl_exec` and inline
+`proc_open` arrays are direct launches; string shell commands remain distinct,
+and opaque `proc_open` operands keep shell mode unresolved.
+
+Do not invent a PATH hijack or environment attack for ordinary tool discovery.
+Reopen that question when the repository shows a less-trusted executable,
+search directory, environment writer or real privilege boundary. There is no
+tool-name allowlist, cross-file builder evaluation or compiler requirement here.
+
+## Outbound construction and dispatch
+
+Go `NewRequest`, Java JDK/Apache request constructors and Rust Reqwest client
+methods create supporting destination context. They receive no standalone job
+in either queue. Actual `Do`, `send`/`sendAsync`, `execute` and Reqwest `.send`
+own the review. A returned builder alone is not a consequential network effect.
+Direct Reqwest free functions already send and keep their review boundary.
+
+At a dispatch, use its `endpoint` and related constructor evidence. Bounded
+unchanged local bindings or inline chains can carry the endpoint. The tag
+`outbound-request:unresolved-producer` asks for the request producer/mutations;
+do not borrow a constructor's fixed URL across a helper or rewrite. Aliases
+retain an observed consumer but do not establish unchanged shared state.
+URL parsing is syntax context, not SSRF protection or local redirect approval.
+Actual local-redirect guards retain their bounded control attachment.
+
+C# already accounts for HttpRequestMessage setters/dispatch and PHP cURL for
+same-handle execution. Kotlin `openConnection` and OkHttp `newCall` are supporting
+resources; connect/I/O methods and Kotlin I/O properties, or `execute`/`enqueue`,
+own the review. Unchanged local producers can supply the destination. With an
+opaque OkHttp client, `initial_endpoint` is context and
+`outbound-request:unresolved-client-policy` asks for the captured `client` policy;
+do not treat its initial fixed URL as proof of the effective destination.
+Mutable request builders and helper returns retain a producer question.
+
+Java `openConnection` also creates supporting Resource evidence. Owned
+URLConnection connect/content/header/response methods and direct URL reads
+anchor actual effects. Typed unknown connections retain a `connection` producer
+question; fixed syntax does not settle an explicitly selected unknown `proxy`.
+Ordinary setup/getURL/request-property reads do not trigger network reviews.
+
+Legacy C# WebRequest.Create/CreateHttp/CreateDefault are supporting resources.
+Owned GetResponse/GetRequestStream and their Async/Begin forms anchor network
+I/O; End forms only complete an existing operation. An unknown typed request or
+helper return keeps its producer question. Proxy changes, helper handoffs and
+replacement prevent borrowing a constructor's fixed URL. Ordinary Method,
+Timeout and content settings do not replace its immutable URI.
+
+Reactive Java/Kotlin WebClient URI evidence keeps returned publishers and
+request/publisher handoffs as consequential subscription questions. Inline
+block/subscribe/await consumers are captured with their locations. Demonstrably
+unused local publishers and discarded newly constructed chains are context in
+both modes. A mutable spec setter alone is not proven unused; inspect its uses.
+This is bounded setup cleanup, not full reactive dataflow or runtime dispatch.
+
+Native cURL URL setters are resources. Easy perform and multi perform/socket
+pumps own request reviews; bounded same-handle setup supplies endpoints.
+Multi addition alone does not transfer data. Inspect `client`/`multi`, related
+setters and consumer locations. Rewrites, resets, proxies and unknown producers
+retain research; a known URL does not prove policy for a shared handle.
+
+## Routine policy context
+
+Framework setup and missing local controls are context until a consequential
+consumer supplies a security question. Normal route policies, HTML-input
+acceptance, shared privileged-client construction, plaintext server setup,
+default cookie options and missing local timeouts/GraphQL limits do not create
+standalone work in either queue. A decoded cookie is data until its fields are
+actually trusted as identity. Keep explicit weak credentials, disabled checks,
+bound identity issuance, raw/interpreted templates, request-driven persistence
+and actual unbounded body reads independently.
+
+Cross-site cookie support (`SameSite=None`) alone does not establish CSRF.
+Review shown cookie-authenticated effects and their effective request integrity
+controls instead. Password confirmation telemetry is not a medium-impact
+security boundary; hashing without a local strength check does not establish
+the effective password policy. Concrete weak passwords/KDFs remain leads.
+
+Native validators in another callable or an optional branch are leads, not
+proof that an allocation, dereference or copy is guarded. Follow the named
+missing caller/control edge. Do not turn preserved unknown relationships or
+exclusions into safe verdicts.
+
+Affirmative TLS/cookie flags and shown XML hardening do not need independent
+verdicts. They settle only the named control, never the complete client/parser.
+Disabled checks, unresolved custom validators, weak security-purpose digests and
+fast password hashes remain leads. A suitable digest selector does not settle
+password cost, keys or nonces.
+
+For C# anonymous/antiforgery route markers, a verb alone is surface context.
+A shown consequential operation in the same handler supplies `effect` and related
+evidence. No-op routes, null fallback policy, middleware ordering alone and unknown
+default cookie/password settings do not create separate jobs. This establishes
+neither authorization nor safety of unknown business helpers. Keep these facts
+when reviewing actual effects and follow up on relevant helpers/providers.
+GUID generation alone does not establish weak randomness; inspect a concrete
+violated entropy/credential requirement before proposing that issue.
+
+Whole-file sample names or unrelated familiar declarations never approve an
+upload, file read, HTML response, decoder or authentication boundary.
+
+## Filesystem effects
+
+Ordinary directory creation and simple names-only listing no longer produce
+filesystem sinks. This applies to owned C#/JVM/Node/Go/Rust/PHP APIs; it does not
+declare their paths contained. Content reads, truncation/overwrite, deletion,
+copy/move targets, upload/archive paths and concrete permission effects remain.
+An unconnected Java `Files.walk` or C# option-selected enumeration retains an
+exact Comprehensive root/export question; a connected input relationship stays
+in Value. Follow the content/export/disclosure consumer before assigning impact.
+
+Read effective modes before describing an operation. Supported Go `OpenFile`
+flags, Python `codecs.open` modes and Java `RandomAccessFile` modes classify one
+effect; unknown modes remain explicit. C# `FileStream(path, FileMode.Open)` opens
+with ReadWrite access by default; read-only requires `FileAccess.Read`.
+`OpenOrCreate` is a creation boundary. Broader overloads/helpers are not a full
+filesystem model.
+
+`filesystem_source` identifies the independently affected source of a move or
+rename. A fixed destination does not close that source. Copy read/destination
+roles stay separate; one operand's fixed selection or containment cannot settle
+the other. The current multi-operand move relation does not transfer a destination
+guard into a Protected verdict for the whole operation.
+
+Normalization (`Clean`, `resolve`, `realpath`, `GetFullPath`, `normalize`,
+`canonicalize`) preserves selection influence and is supporting context.
+It never establishes allowed-root containment by itself. Inspect whether an
+actual root check gates the same value and effect; a nearby or ignored boolean
+check is not a protection. Symlink policy and resource authorization remain
+separate when the source supplies a practical concern.
+
+## Ordinary patterns excluded from both queues
+
+These belong in **Neither**, rather than becoming permanent Comprehensive work.
+An ordinary occurrence is not an AI safe verdict for every possible caller.
+
+| Pattern | Why exclude it | Keep review work when |
+| --- | --- | --- |
+| Intrinsic `a`/`area` href merely forwards an unchanged parameter, without a represented input or producer relationship | Normal link presentation does not supply an unsafe construction or a concrete lower-trust writer to investigate. Unknown callers alone are insufficient. | URL construction/default/reassignment, input relationships, bound incoming arguments/origins, resource contexts or a consequential writer supply a real lead. |
+| DOM-bound GET/HEAD in an explicit browser context, without other options or an input relationship | The operation is an ordinary client request and supplies no server-side SSRF question. | Credentials/headers/body, mutations, unknown options, input relationships, privileged effects or Node/SSR/unknown runtime make the destination consequential. |
+| Django-style non-authority lookup used exclusively as a predicate to refine a supplied queryset | Ordinary query construction should not get a separate verdict just for using a record key, when there is no represented protected-resource selection or sensitive consumer. | Request-selected owner/tenant/account boundaries, selected fields/records escaping, metadata in errors, wrappers/aliases, non-ID projections or terminal read/destructive consumers supply a practical edge. |
+| Owned trusted-markup call containing only fixed whitespace/nonbreaking-space padding | Variable repetition changes padding quantity, without a dynamic HTML producer or interpreted construction. | Dynamic text, formatting, interpolation, escaped bytes or other markup remain in the operand. |
+
+Directory setup, names-only listing, positive security controls and effect-free
+builders follow the same principle in the family table above. Keep supporting
+extraction only when an admitted relationship or compiler fact actually consumes
+it; text search does not require ordinary review IDs. Broader timestamp,
+routing-metadata or parent-inheritance exclusions need consumer facts, not method
+or field-name allowlists copied from one application's verdicts.
+
+Queryset refinement alone does not prove authorization. For example, a request
+choosing a tenant and returning `qs.filter(tenant=tenant)` can select protected
+resources if `qs` was not scoped to the actor. Keep that concrete authority
+question; do not classify it as ordinary just because evaluation happens later.
+The current Python exclusion checks local uses and terminal consumers, but does
+not establish caller permissions or fully propagate request/authority facts.
+Treat guarding those connected selections as an implementation gap, not as a
+safe verdict or a reason to retain every ordinary query-builder occurrence.
+
+## Language and backend differences
+
+The impact test is shared. Differences below concern facts the scanner can
+establish, not different standards for what constitutes a useful issue.
+
+| Language | Practical facts and current treatment | Remaining limits |
+| --- | --- | --- |
+| **C / C++** | Keep represented buffer extent, allocation size, arithmetic, format, lifetime and ownership relationships. Unlinked native API inventories are excluded. A dangerous sink need not have an HTTP source. | No whole-program ownership or full CFG. Source-visible aliases, exceptional paths and platform behavior can need research. |
+| **C#** | Optional Roslyn supplies actual SDK identity, scalar/Guid/date normalization, closed selectors, helper/property/argument origins and actual HTTP dispatch. Shared filesystem/destination questions defer repetitions, preserving exact Comprehensive IDs. URI setters and directory setup are context. | Facts require a bound compiler context; missing facts do not prove custom calls safe. A record key is not the path string stored in its selected record. Check response destinations before assigning HTML; optional backend facts are not required for the base workflow. |
+| **Java** | Inspect query text separately from prepared-statement bindings. Actual `send` is an effect; an HTTP builder alone is context. Ordinary Jackson reading is excluded unless project-visible unsafe polymorphic/default-typing policy warrants research. | A policy elsewhere is a lead until tied to the mapper. Framework guards, wrappers and annotations still need exact binding. |
+| **Kotlin** | Apply the same JVM interpreter, mapper and filesystem distinctions. Kotlin unsafe Jackson policy syntax can retain research even without a dedicated policy emitter. Owned ordinary directory setup is excluded. | Java/Kotlin API interoperability does not establish identical framework coverage. Do not infer absent policy from a missing Java-only detector. |
+| **JavaScript / TypeScript / TSX** | Preserve raw DOM/trusted HTML and real process/filesystem effects. Proven build/vendor/generated ownership can remove ordinary application Value work. Proven fixed `pg` query objects with separate values leave both queues for injection. Owned `js-yaml` v4 default data schemas are ordinary decoding; custom/unknown policies retain their question. Standalone DOM GET/HEAD in an explicit browser context leaves both queues when options show no sensitive effect. Unconnected intrinsic `a`/`area` hrefs merely forwarding an unchanged parameter with no observed producer leave both queues. Custom component href props are not direct browser sinks. Optional TypeScript facts improve identity, producers and literal selectors. | Ordinary-link exclusion is a scope decision, not scheme/authority proof. Constructed, defaulted or reassigned operands, observed input relationships or producer facts, resource hrefs and raw HTML remain active. Credentials, request mutations, unknown options and Node/SSR/unknown runtime prevent the browser-request cut. Template/custom renderer controls and alternate writers need source checks. |
+| **Python** | Executable pickle/unsafe loader behavior differs from normal data parsing. Supported autoescaped Django responses close the exact output property. Owned trusted-markup calls containing only fixed whitespace/`&nbsp;` repetition do not create an XSS review. A Django-style lookup assigned locally and used exclusively as a keyword filter predicate on a supplied queryset does not create an authorization sink. Marshal inventory is excluded without a connection and is otherwise research, not automatic code execution. `compile` alone is context. | Queryset narrowing does not establish caller authorization. Returning records, reading fields, errors, mutations, aliases, wrappers or other consumers prevent that cut. Fixed padding does not close arbitrary `mark_safe`, formatting or dynamic text. HTML attribute escaping does not establish safe attribute names/event handlers/URL semantics. Shell behavior depends on actual options/interpreter/platform. Custom serializers, autoescape settings and dynamic template inputs need exact evidence. |
+| **PHP** | Value keeps shown raw request-to-output/code-selection constructs. Comprehensive retains represented flows/co-occurrences, bound local stored/helper reads, runtime-selected loaders, matched write/load targets and active interpreted output contexts. Ordinary unbound output/constant-shaped includes leave both queues. Complete native numeric output closes its own output property. | Producer navigation is bounded and mostly same-file/native-reader based. Framework and cross-file property/writer chains can be missed. Known important renderers/loaders may warrant a category sweep; queue exhaustion is not complete XSS/include coverage. |
+| **Go** | Use owned API identities and concrete effects. Ordinary mkdir and effect-free resource filters are excluded. Unconnected gob inventory is excluded; connected gob is research unless a real impact qualifies it. | No optional Go compiler backend is assumed. Imports/helpers and data decoding do not by themselves prove destination authority or significant impact. |
+| **Rust** | Keep concrete command/filesystem/trusted-output and represented unsafe effects. Ordinary directory setup/listing and Serde data decoding are excluded. Syntax-only unsafe/interop rules were retired. | Direct process launch is not shell injection. CLI command authority and custom data consumers may need research. No Rust compiler backend or full borrow/CFG analysis is assumed. |
+
+Ordinary C#/Java/Node/Go directory cuts require owned API identity, not a suffix
+match. PHP rejects native-function lookalikes. Missing ownership can preserve an
+uncertain candidate; investigate repeated ambiguity before widening exclusions.
+
+Several families still default too broadly to Value when no deferral applies,
+especially unknown filesystem selectors, generic response output and browser
+operations. Treat those assignments as implementation gaps to test, not reasons
+to weaken this policy. Changes should follow actual snippets and protective
+controls rather than a language-wide blanket cut.
+
+## Database exclusions and remaining cleanup
+
+Judge **query grammar** and **resource authority** separately. Closing injection
+does not prove access rights; a possible access question does not reopen fixed
+SQL as injection. Do not create an authorization review for every ordinary query.
+
+| Pattern | Intended queue / reason | Evidence that retains work |
+| --- | --- | --- |
+| Fixed SQL, including a complete immutable query object with separate values | Neither for injection: runtime values remain data. Request values in the binding array are ordinary, not a reason for another SQL verdict. | Replaced query methods, object mutation/escape/overrides, unknown driver identity, dynamic SQL text or identifiers. Independently selected protected records keep their own authority question. |
+| Query text or document assembled without a consuming operation | Supporting context, not a standalone injection verdict. Attach useful construction/binding facts to the consumer. | An observed executable consumer, escaped query handle with a concrete execution lead, or unsafe construction used by a real application operation. Missing local execution facts alone do not prove unused code. |
+| SDK equality predicates, fixed operators and separately bound expression values | Neither for grammar when the owned API keeps these values in data positions. | Raw operator-capable documents, computed/spread keys, executable predicates, raw expression text or unknown construction. A fixed key with `req.body.id` is not proof of a scalar value. |
+| Exact authenticated owner predicate that survives through the selected operation | Neither for that ownership property once the control is established. Keep its supporting control fact. | Alternate callers/routes, missing authentication, predicate overrides, later selector writes or a different sensitive property/effect. A column named `owner` or an `owner_scoped` hint alone is insufficient. |
+| Reload of an already selected resource during an authorized operation | Review the operation's authority once; an identity-preserving reload is not a new actor/resource boundary. | A changed key, independent selected instance, exposed fields, broader query scope or an effect outside the inspected permission contract. |
+| Fixed/configuration-owned identifiers quoted by an owned dialect | Neither for injection after checking the complete identifier construction and quoting contract. | Untrusted names reaching raw identifiers, grammar-bearing fragments, unverified helper behavior or a runtime SQL template whose values are rendered into syntax. Parameter binding does not cover identifiers. |
+
+Implemented closures: complete local `pg` fixed-text objects with separate
+binding arrays leave both queues, including request-bound data. Unchanged local
+C/C++ char pointers or `auto` aliases initialized solely by literal strings also
+leave both queues. Prior uses, writes, escapes, globals, conditional declarations
+and uncertain initializers veto the native cut. This is not general C/C++
+constant folding; source/origin facts remain available.
+
+Node owner hints now reject duplicate, spread, computed and escaped keys.
+They remain hints: middleware text alone does not establish every control path
+or intervening write, so no blanket owner-flag cut is added. Python's exclusive
+queryset narrowing retains directly observed request selectors and bounded local
+aliases; unknown cross-file callers still require separate authority research.
+Java/Kotlin MongoDB document construction and C# BSON/JSON filter construction
+are supporting facts, not injection sinks. JS/TS/TSX DynamoDB Query/Scan/PartiQL
+command construction and PHP MongoDB driver `Query` construction follow the same
+rule. Unused parser/constructor rows leave
+both queues and the scan evidence. Inline construction and bounded local
+uses attach their origin to the actual database operation; used construction
+rows remain context without their own review ID. Opaque helper consumers remain
+reviewable: missing construction facts do not establish safe operators or input
+types. This attachment is file-local and does not follow arbitrary helpers or
+cross-file producers. Additional SQL builder coverage and scalar equality closure
+are described below; other families still need explicit consumer contracts.
+
+Python SQLAlchemy `text` and Django `RawSQL` constructors do not own a second
+review when an observed SQL executor consumes them. Retain useful construction
+context on the executor and remove ignored standalone expressions and unread
+function-local bindings from both queues/evidence. Inline/direct unchanged local
+operands can transfer SQL text; bounded `bindparams`/`columns` modifiers preserve
+that text. Arbitrary transforms, mutation and helper results retain unresolved
+operands. Module/class bindings, returned/embedded expressions and closure uses
+are not proven unused. Unbound ORM or escaped construction keeps its existing
+SQL lead with `query-consumer:unresolved`; this slice does not add broad Django
+model/queryset consumer inference or declare all unbound SQL construction safe.
+
+JS/TS/TSX reviews anchor to `send` on an owned SDK v3 DynamoDB client with an
+observed query-command producer. Recognize inline commands, local bindings and a
+single directly returned constructor from an unshadowed local helper. One direct
+local alias preserves a lead without transferring fixed facts. Helper
+input binding remains a question. Reused, mutated or escaped local commands keep
+the unresolved command operand; do not copy fixed expression facts through an
+uncertain use. Computed/spread/duplicate/escaped object keys keep the whole input.
+Unrelated AWS commands do not become NoSQL injection reviews. External helper
+producers, longer alias chains, properties and CommonJS v3 construction are beyond
+this bounded producer resolution; absence of a review does not certify them.
+Source/category research can still inspect them. Existing SDK v2 query/scan
+operations remain separate, with expression syntax distinct from bound values.
+
+PHP reviews anchor to `executeQuery` on an owned MongoDB `Manager`/`Server`.
+Inline/local query objects attach their filter; opaque query/helper operands
+remain reviewable. Preserve identity gates for imports, typed receivers,
+reassignments and includes, and do not guess named/unpacked argument positions.
+Python, Go, Rust and C/C++ NoSQL rules already represent collection/table calls;
+there is no standalone document-constructor review to retire in those profiles.
+Keep their actual filter/pipeline consumers. Construction attachment alone does
+not close operator injection or independently settle resource authority.
+
+Modern EF Core `SqlQuery<T>(FormattableString)` parameterizes interpolation;
+owned EF Core `SqlQuery` and `FromSql` with direct compiler interpolation or an
+unchanged local compiler-built `FormattableString` leave both injection queues.
+The native emitter checks context inheritance, visible framework imports and
+conflicting declarations/overrides; this does not require Roslyn. No separate
+sink/control row is extracted for that ordinary bound operation. Raw APIs,
+legacy EF string APIs, ordinary string variables and unknown SDK/overloads keep
+their construction question. Helper/factory-produced formats, reassignments,
+ref/out escapes and local operands used inside nested functions are unresolved;
+the type `FormattableString` alone is not a fixed-format proof. Independently
+shown resource-authority effects remain separate. Refresh inventories with
+schema 11 when resuming repository review.
+
+### Bounded construction, equality and reload cleanup
+
+Owned Laravel `DB::raw`, Knex `raw`, and represented Java/Kotlin JPA/Hibernate,
+JDBC or Vertx query constructors drop only ignored expressions and unread
+function-local bindings. Awaited Knex work, terminal execution, returns,
+embedded expressions, closure uses and unknown consumers stay. When an observed
+SQL executor consumes a builder, the executor owns one review and the builder is
+linked context. A terminal on a query handle is navigation to execution, not
+parameterization proof. Do not transfer another SDK's grammar/binding contract
+through an unknown wrapper; construction context can remain unresolved.
+
+For owned MongoDB filter consumers, fixed nonoperator fields with scalar values
+can leave both injection queues: JS/TS/TSX/Python literal or native scalar
+conversion, PHP casts, and Java/Kotlin/C# enforced scalar types. Supported SDK
+`eq`/`Eq` and Java/C# document construction follow the same bound. TypeScript and
+Python annotations alone are not runtime scalar proof. Basic .NET primitive,
+GUID and date values are ordinary data; do not invent exotic formatting attacks.
+Bounded unchanged local origins work; mutable/escaped documents, shadowed casts,
+computed/spread/duplicate keys, raw input objects and unknown helpers retain work.
+`$eq` is supported; other operators, executable predicates, raw JSON, pipelines
+and DynamoDB expression syntax are not covered by this equality cut. It closes
+the represented filter grammar question only, never authorization or write policy.
+Go/Rust/C/C++ BSON constructors remain outside this proof; keep their consumers.
+
+An adjacent repeated EF `Find`/`FindAsync`, Django `get(pk/id=...)` or Sequelize
+`findOne(where: {id: ...})` with the same proven scalar selector and exact
+context/model can share the original authority question. The initial lookup
+must bind locally. The reload stays linked evidence without a second review ID;
+the original remains unresolved, with resource-authority and operation-effect
+checks. Changed keys/models/contexts, intervening statements, extra query options,
+deletes and arbitrary aliases do not qualify. Owner hints do not close authority,
+and `selected.Id` is not inferred to be the model's primary key.
+
+These cuts are ordinary-engine facts with focused scanner/inventory controls.
+They do not require optional compilers or establish whole-application coverage.
+
+Apply the same distinctions to ADO.NET/Dapper/EF, JDBC/JPA/Hibernate/Exposed,
+Node drivers/query builders, DB-API/Django/SQLAlchemy, PDO/mysqli/Laravel,
+database/sql/GORM/pgx/sqlx, Rust drivers and native database APIs. Preserve exact
+SDK identities, argument roles and language-specific construction facts; do not
+transfer one driver's binding, quoting or equality contract to another by name.
+
+## Supporting evidence is not a third review queue
+
+`source`, `symbol` and `references` read repository text. They do not require
+ordinary findings to be persisted for search. Do not create extra preparation or
+review work merely to make exclusions searchable.
+
+Extract/retain a supporting fact when it serves a concrete consumer: building an
+input/producer/effect relationship, resolving an admitted operation's ownership
+or control, establishing an exact closure, or validating an existing bound review.
+Routine setup may be relevant when it actually establishes an admitted file
+operation's root. It does not need its own verdict.
+
+The current inventory cache still contains the full scan and rebuilds selected
+jobs/history from it. That is an implementation dependency, not a promise to keep
+every ordinary fact forever. Remove unused extraction/context and compact cache
+data when consumer checks demonstrate it is unnecessary. Preserve required path
+steps, controls, context, admission accounting and optional compiler collection
+inputs; do not silently turn a scope exclusion into a safety proof.
+
+### React/Solid JSX admission
+
+Dynamic `dangerouslySetInnerHTML`/Solid `innerHTML` remain explicit raw output
+questions in both modes; static literals remain supporting controls and ordinary
+JSX text creates no new HTML work. Bounded const inputs, local prop types and
+exact relative-import callers locate code. Verified React `memo`/`forwardRef`
+imports permit wrapper navigation; they are not sanitizers. Covered dependency
+excerpts are not repeated. State/effects, class components, arbitrary wrappers,
+spreads, aliases and reaching values can require follow-up; no safe verdict is
+inferred from a type, wrapper, missing sample or encoded source name.
+
+### Vue SFC admission
+
+Dynamic HTML-template `v-html` is an explicit raw interpretation boundary in
+Value and Comprehensive, requiring producer/control review rather than a scanner
+verdict. Direct static literals are supporting facts. Normal interpolation,
+`v-text` and media URL bindings create no standalone HTML question. Inline
+script operations follow the existing JS/TS policy; partial SFC coverage is not
+a safe verdict. Unique native template refs connected to imported top-level
+`ref`/`shallowRef`/`useTemplateRef` setup bindings supply actual DOM identity.
+Component, loop/dynamic/duplicate refs, replaced values and shadowed bindings are
+outside that proof. Native DOM identity alone establishes neither input trust nor
+a vulnerability. Exact setup v-html identifiers and bounded local dependencies
+locate producer code. Actual defineProps reads can supply declarations/types and
+two relative default-import child call sites, with static/bound/model props.
+Spreads, template locals, sample limits and oversized facts remain open. Aliases,
+global registration, destructured props and wider reactive flows remain gaps.
+
+## Improve from real applications
+
+For each concentrated or surprising lane, inspect a small mix of Value,
+Comprehensive-only and excluded snippets with the normal bundle skill. Include a
+useful counterexample, not just examples expected to be ordinary. Record:
+
+- application/revision, exact operation and original queue;
+- practical consequence and the one missing fact, if any;
+- keep/promote/demote/exclude, with concise rationale;
+- whether the repeated fact can be established cheaply by the scanner;
+- measured preparation/lookups/reviewer effort when available.
+
+Update this policy and scanner admission together when a repeated pattern is
+supported. Preserve a meaningful dangerous control and avoid app-name allowlists.
+If the change is still a hypothesis, label it and state which apps/languages have
+been checked. Do not extrapolate a small sample to vulnerability recall.
+Use existing plans/reports for this evidence; no additional AI routing pass,
+per-occurrence classification run or coverage quota is needed.
+
+## Current calibration from real snippets
+
+The first bounded sample used WordPress, Juice Shop and LANCommander. These are
+policy decisions for the inspected mechanisms, not application allowlists or a
+full recall assessment. The scanner does not yet establish every fact below.
+
+| Observed pattern | Target bucket | Decision-changing fact |
+| --- | --- | --- |
+| Fixed local startup copy or fixed application-root file read | Neither for traversal/SSRF | Actual owned file API and closed source/destination selectors; retain a separately shown writable-code or disclosure relationship. |
+| Private file reader fed by a fixed path table | Neither for traversal | All relevant producers select complete literal paths; a table key is not arbitrary path text. |
+| Template helper returns a canonical target checked beneath a canonical root | Neither for traversal | Separator-aware containment covers the returned path and later helpers preserve it. This does not settle template-content trust. |
+| Generic file-reader wrapper with no represented caller boundary | Comprehensive shared research at most | Check the actual caller/selector once. Mere existence of `get_contents(file)` is insufficient for Value or a separate review of every caller. Remove the lane if no practical medium-impact boundary emerges. |
+| Stream writer of ZIP scripts or serialized manifests | Neither for HTML output | Destination is an archive entry or private memory buffer, not an HTML renderer. Preserve independently shown script-execution effects. Receiver type alone is insufficient: a StreamWriter can wrap a response. |
+| Request-selected file content returned without canonical containment | Value | Request path controls the resource; combining/trimming paths does not establish containment. |
+| Request text interpolated into executed SQL | Value | The inserted value can change grammar; a length bound does not bind it. |
+| Auth-cookie HttpOnly omission / bound arbitrary-origin credentialed CORS | Comprehensive, unless a consequential chain promotes it | Cookie omission can be directly resolved; CORS needs applicable browser credentials and a sensitive response. |
+| Runtime plugin/code loader with validation whose selection contract is unresolved | Comprehensive | Verify target validation and selection authority as one implementation question; variable inclusion alone is not a finding. |
+
+Next admission refinements should establish the first five patterns generically,
+starting with actual output receivers and closed path producers. Do not add an
+extra model pass to classify ordinary operations. Prefer dropping a wrong sink
+classification over deferring it to Comprehensive.
+
+### Wagtail calibration (2026-10-09)
+
+A source-only scan of Wagtail at `e5117ba8` produced 154 Value/154 Comprehensive
+IDs. The generic changes above produce **103 Value/153 Comprehensive**: 34
+redirect questions and 16 unchanged link parameters defer; one fixed-padding
+candidate leaves both queues. No compiler backend or application/path allowlist
+was used. This first calibration used inventory schema 5; the follow-up below
+supersedes its ordinary-link deferral.
+
+Skill review covered 23 selected IDs, not the whole application: two guarded
+redirects, fixed padding, a narrowing locale lookup and sixteen links sharing the
+same default story URL were resolved as not issues in that scope. Three questions
+remain: image attribute-writer authority, RawHTMLBlock publishing authority and
+metadata exposure on denied parent selection. Those meaningful questions remain
+in Value. The story result does not certify arbitrary overridden URL arguments.
+
+The 62 ORM resource-access IDs remain the largest lane. A scalar selector used
+only to narrow an existing queryset can be ordinary; a request-selected record
+whose metadata or effect crosses authority is worthwhile. The scanner does not
+yet prove the former downstream-use restriction, so this calibration does not
+add a blanket `.get()`/record-key exclusion. Next test that effect distinction
+against real caller uses, retaining invalid-form and error-response disclosures.
+
+#### Follow-up: ordinary work can leave Comprehensive too
+
+Do not keep an ordinary occurrence solely to assign it a future verdict. Bare
+unchanged anchor parameters without a bound producer/input lead and ordinary
+DOM GET/HEAD without consequential options leave both queues. Their raw facts
+remain evidence for actual consumers; their exclusion does not certify all
+possible URL writers or callers. Strengthen source facts or explicitly scope a
+category sweep when a project exposes a consequential URL writer.
+
+Exclusive queryset narrowing now avoids extracting an unused ORM authorization
+sink. The selected value must have no field read, return, error output, mutation,
+alias or wrapped consumer; all uses are filter predicates on supplied querysets.
+The filter returns a queryset or reassigns that same parameter. Chained terminal
+reads/deletes and other observed terminal uses of that parameter veto the cut.
+Projected values must be a single flat `pk`/`id`; other columns remain data
+relationships, even if their value is later used as a predicate.
+Broader bookkeeping/metadata patterns remain source-review decisions until a
+cheap generic fact supports exclusion. Unknown dynamic redirects remain credible
+medium-impact research. Do not discard those merely because two inspected
+destinations were guarded. Regenerate inventory and ledgers with schema 6.
+
+The follow-up release inventory is **101 Value/135 Comprehensive**, down from
+103/153: sixteen ordinary link occurrences and two narrowing-only lookups leave
+both queues. All remaining IDs and priorities are unchanged. Eight focused ORM
+source reviews resolved seven cases and retained the denied-parent title question;
+that is a scoped calibration, not a whole-application vulnerability assessment.

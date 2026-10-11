@@ -38,9 +38,11 @@ function mutable(value) { let config = {text: 'SELECT $1', values: [value]}; ret
 function nested(value) { const config = {text: 'SELECT $1', values: [value]}; return () => client.query(config); }
 function extra_arguments(value) { const config = {text: 'SELECT $1', values: [value]}; return client.query(config, value); }
 function input_cooccurrence(req) { const config = {text: 'SELECT $1', values: [req.query.id]}; return client.query(config); }
+function inline_bound(req) { return client.query({text: 'SELECT $1', values: [req.query.id]}); }
 function inline_spread(value) { return client.query({text: 'SELECT $1', values: [value], ...value}); }
 function inline_computed(value, key) { return client.query({text: 'SELECT $1', values: [value], [key]: value}); }
 function inline_escaped_key(value) { return client.query({text: 'SELECT $1', values: [value], '\u0074ext': value}); }
+function co_declaration(value) { const config = {text: 'SELECT $1', values: [value]}, alias = modify(config); return client.query(config); }
 "#;
     let fixture = Fixture::new("queries", source);
     let inventory =
@@ -71,15 +73,25 @@ function inline_escaped_key(value) { return client.query({text: 'SELECT $1', val
                 capture.text
             );
         }
-        let entry = inventory
-            .entries
-            .iter()
-            .find(|e| e.path == path && e.symbol.as_deref() == Some("fixed"))
-            .expect("Comprehensive ID retained");
-        assert_eq!(
-            entry.value_hint.as_ref().unwrap().reason,
-            "local_bound_query_inventory"
-        );
+        for symbol in ["fixed", "input_cooccurrence", "inline_bound"] {
+            assert!(
+                !inventory
+                    .entries
+                    .iter()
+                    .any(|e| e.path == path && e.symbol.as_deref() == Some(symbol)),
+                "Closed bound data must leave both queues: {path}:{symbol}"
+            );
+            assert!(
+                !inventory.scan.security_paths.iter().any(|p| {
+                    inventory.scan.evidence.iter().any(|e| {
+                        e.id == p.sink_evidence_id
+                            && e.location.path == path
+                            && e.enclosing_symbol.as_deref() == Some(symbol)
+                    })
+                }),
+                "Bound data must not become an injection relationship"
+            );
+        }
         for symbol in [
             "composed",
             "mutated",
@@ -93,10 +105,10 @@ function inline_escaped_key(value) { return client.query({text: 'SELECT $1', val
             "mutable",
             "nested",
             "extra_arguments",
-            "input_cooccurrence",
             "inline_spread",
             "inline_computed",
             "inline_escaped_key",
+            "co_declaration",
         ] {
             let entries = inventory
                 .entries
@@ -238,7 +250,7 @@ function prototype(value) { const opts = {__proto__: value}; return cp.execFile(
 }
 
 #[test]
-fn visible_query_method_replacement_vetoes_identity_based_deferral() {
+fn visible_query_method_replacement_vetoes_identity_based_closure() {
     let source = "const {Client} = require('pg'); const client = new Client();\nclient.query = executeText;\nfunction fixed(value) { const config = {text: 'SELECT $1', values: [value]}; return client.query(config); }";
     let fixture = Fixture::new("receiver-write", source);
     let inventory =

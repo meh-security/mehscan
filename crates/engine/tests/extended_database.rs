@@ -1,4 +1,4 @@
-use mehscan_core::Capability;
+use mehscan_core::{Capability, EvidenceKind};
 
 fn scan(label: &str, cases: &[(&str, &str)]) -> mehscan_core::ScanResult {
     let root =
@@ -19,12 +19,12 @@ fn scan(label: &str, cases: &[(&str, &str)]) -> mehscan_core::ScanResult {
 
 #[test]
 fn repeated_sql_expression_identity_preserves_each_use_scope_and_file() {
-    let source = "from sqlalchemy import text as raw\ndef allowed(q):\n    raw(q)\ndef shadow(q, raw):\n    raw(q)\ndef inner(q):\n    import sqlalchemy as local\n    local.text(q)\ndef outside(q):\n    local.text(q)\ndef sibling(q):\n    raw(q)\ndef rebound(q):\n    raw = factory()\n    raw(q)\n";
+    let source = "from sqlalchemy import text as raw\ndef allowed(q):\n    return raw(q)\ndef shadow(q, raw):\n    return raw(q)\ndef inner(q):\n    import sqlalchemy as local\n    return local.text(q)\ndef outside(q):\n    return local.text(q)\ndef sibling(q):\n    return raw(q)\ndef rebound(q):\n    raw = factory()\n    return raw(q)\n";
     let result = scan(
         "indexed-identity",
         &[
             ("one.py", source),
-            ("two.py", "def other(q):\n    raw(q)\n"),
+            ("two.py", "def other(q):\n    return raw(q)\n"),
         ],
     );
     let mut hits = result
@@ -76,21 +76,21 @@ fn extended_nosql_filters_preserve_operand_for_every_supported_language() {
         (
             "Probe.java",
             "import com.mongodb.client.MongoCollection; import org.bson.Document; class Probe { void run(MongoCollection<Document> store, String filter, Document selector) { store.find(selector); store.deleteMany(selector); Document.parse(filter); } }",
-            3,
+            2,
         ),
         (
             "app.kt",
             "import com.mongodb.client.MongoCollection\nimport org.bson.Document\nfun run(store: MongoCollection<Document>, filter: String, selector: Document) { store.find(selector); store.deleteMany(selector); Document.parse(filter) }",
-            3,
+            2,
         ),
         (
             "Probe.cs",
             "using MongoDB.Driver; using MongoDB.Bson; class Probe { void Run(IMongoCollection<BsonDocument> store, string filter, BsonDocument selector) { store.Find(selector); store.DeleteMany(selector); BsonDocument.Parse(filter); } }",
-            3,
+            2,
         ),
         (
             "app.php",
-            "<?php use MongoDB\\Driver\\Query as Filter; function run($filter) { new Filter($filter); new \\MongoDB\\Driver\\Query($filter, []); }",
+            "<?php use MongoDB\\Driver\\Query as Filter; use MongoDB\\Driver\\Manager; function run(Manager $manager, $filter) { $manager->executeQuery('app.users', new Filter($filter)); $manager->executeQuery('app.users', new \\MongoDB\\Driver\\Query($filter, [])); }",
             2,
         ),
         (
@@ -125,6 +125,10 @@ fn extended_nosql_filters_preserve_operand_for_every_supported_language() {
             .iter()
             .filter(|e| {
                 e.location.path == path
+                    && matches!(
+                        e.kind,
+                        EvidenceKind::Sink | EvidenceKind::SensitiveOperation
+                    )
                     && e.capability == Capability::DatabaseQuery
                     && e.cwe_candidates.iter().any(|c| c == "CWE-943")
             })
@@ -158,7 +162,7 @@ fn extended_sql_drivers_capture_query_text_instead_of_context_or_binding_values(
         (
             "app.js",
             "const knex = require('knex'); const db = knex({client:'pg'}); const sqlite = require('better-sqlite3'); const store = new sqlite('db'); function run(sql, value) { db('users').whereRaw(sql, [value]); db.raw(sql); store.prepare(sql); }",
-            3,
+            2, // ignored Knex raw construction is not execution
         ),
         (
             "app.ts",
@@ -168,12 +172,12 @@ fn extended_sql_drivers_capture_query_text_instead_of_context_or_binding_values(
         (
             "app.py",
             "import asyncpg\nfrom sqlalchemy import text as raw\nfrom django.db.models.expressions import RawSQL as Expression\nasync def run(sql, value):\n    db = await asyncpg.connect('uri')\n    await db.fetch(sql, value)\n    await db.fetchrow(sql)\n    db.prepare(sql)\n    raw(sql)\n    Expression(sql, [value])\n",
-            5,
+            3,
         ),
         (
             "Probe.java",
             "import org.hibernate.Session; import javax.jdo.Query; import io.vertx.sqlclient.SqlConnection; class Probe { void run(Session session, Query query, SqlConnection db, String sql) { session.createNativeQuery(sql); query.setFilter(sql); db.preparedQuery(sql); } }",
-            3,
+            1, // ignored Hibernate/Vertx query handles do not execute
         ),
         (
             "app.kt",
@@ -275,7 +279,7 @@ fn extended_dynamodb_rules_separate_expression_syntax_from_bound_attribute_value
         &[
             (
                 "app.ts",
-                "import { QueryCommand as Query, ScanCommand } from '@aws-sdk/lib-dynamodb'; function run(expression: string, value: unknown, input: any) { new Query({ TableName: 't', KeyConditionExpression: expression, ExpressionAttributeValues: { ':id': value } }); new ScanCommand(input); new Query({TableName: 't', KeyConditionExpression: 'id = :id', ExpressionAttributeValues: { ':id': value }}); }",
+                "import { QueryCommand as Query, ScanCommand } from '@aws-sdk/lib-dynamodb'; import { DynamoDBClient } from '@aws-sdk/client-dynamodb'; const client = new DynamoDBClient({}); function run(expression: string, value: unknown, input: any) { client.send(new Query({ TableName: 't', KeyConditionExpression: expression, ExpressionAttributeValues: { ':id': value } })); client.send(new ScanCommand(input)); client.send(new Query({TableName: 't', KeyConditionExpression: 'id = :id', ExpressionAttributeValues: { ':id': value }})); }",
             ),
             (
                 "app.js",
@@ -291,7 +295,11 @@ fn extended_dynamodb_rules_separate_expression_syntax_from_bound_attribute_value
         let hits: Vec<_> = result
             .evidence
             .iter()
-            .filter(|e| e.location.path == path && e.rule_id.contains("-extended-nosql-"))
+            .filter(|e| {
+                e.location.path == path
+                    && e.kind == EvidenceKind::Sink
+                    && e.rule_id.contains("-extended-nosql-")
+            })
             .collect();
         assert_eq!(hits.len(), expected, "{path}: {hits:#?}");
         assert!(
@@ -340,6 +348,177 @@ fn imported_sdk_names_do_not_override_local_parameter_or_producer_shadows() {
         "{:?}",
         result.evidence
     );
+}
+
+#[test]
+fn command_construction_reviews_the_dispatch_and_preserves_uncertain_uses() {
+    let root =
+        std::env::temp_dir().join(format!("mehscan-command-consumers-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let source = r#"
+import { QueryCommand as Query, ScanCommand, DynamoDBDocumentClient as DocClient } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBClient, DeleteItemCommand } from '@aws-sdk/client-dynamodb';
+const raw = new DynamoDBClient({});
+const client = DocClient.from(raw);
+function build(input) { return new Query(input); }
+function run(input, expression) {
+    new Query(input);
+    client.send(new Query({FilterExpression: expression, ExpressionAttributeValues: {':id': input}}));
+    const selected = new ScanCommand(input);
+    client.send(selected);
+    client.send(selected);
+    const changed = new Query({FilterExpression: 'fixed = :id'});
+    changed.input.FilterExpression = expression;
+    client.send(changed);
+    client.send(build(input));
+    const alias = selected;
+    client.send(alias);
+    client.send(new Query({FilterExpression: 'fixed = :id', [input]: expression}));
+    client.send(new Query({FilterExpression: 'fixed = :id', FilterExpression: expression}));
+    client.send(new Query({FilterExpression: 'fixed = :id', ...input}));
+    client.send(new DeleteItemCommand({TableName: 't', Key: input}));
+    fake.send(new Query(input));
+}
+function shadow(Query, DynamoDBClient, input) {
+    const client = new DynamoDBClient({});
+    client.send(new Query(input));
+}
+function unused(req) { new Query(req.body); }
+"#;
+    for extension in ["js", "ts", "tsx"] {
+        std::fs::write(root.join(format!("app.{extension}")), source).unwrap();
+    }
+    let inventory = mehscan_engine::investigation::build_review_inventory(&root, false).unwrap();
+    assert_eq!(inventory.scan.coverage.totals.parse_failed, 0);
+    for extension in ["js", "ts", "tsx"] {
+        let path = format!("app.{extension}");
+        let dispatches = inventory
+            .scan
+            .evidence
+            .iter()
+            .filter(|e| e.location.path == path && e.rule_id.ends_with("-extended-nosql-dispatch"))
+            .collect::<Vec<_>>();
+        assert_eq!(dispatches.len(), 9, "{path}: {dispatches:#?}");
+        assert_eq!(dispatches[0].captures["nosql_query"].text, "expression");
+        assert_eq!(dispatches[1].captures["nosql_query"].text, "input");
+        assert_eq!(dispatches[2].captures["nosql_query"].text, "selected");
+        assert_eq!(dispatches[3].captures["nosql_query"].text, "changed");
+        assert_eq!(dispatches[4].captures["nosql_query"].text, "build(input)");
+        assert_eq!(dispatches[5].captures["nosql_query"].text, "alias");
+        for dispatch in &dispatches[6..] {
+            assert!(
+                dispatch.captures["nosql_query"].text.starts_with('{'),
+                "overrides must retain the whole construction: {dispatch:#?}"
+            );
+        }
+        for dispatch in &dispatches {
+            assert!(
+                dispatch
+                    .tags
+                    .iter()
+                    .any(|t| t == "review-origin:decision-critical"),
+                "{dispatch:#?}"
+            );
+            assert!(
+                inventory
+                    .entries
+                    .iter()
+                    .any(|e| e.path == path && e.line == dispatch.location.start.line),
+                "lost consumer review: {dispatch:#?}"
+            );
+        }
+        assert!(
+            !inventory
+                .entries
+                .iter()
+                .any(|e| e.path == path && e.rule_id.ends_with("-extended-nosql-command"))
+        );
+        assert!(
+            !inventory
+                .scan
+                .evidence
+                .iter()
+                .any(|e| e.location.path == path
+                    && e.rule_id.ends_with("-extended-nosql-command")
+                    && [8, 23, 27].contains(&e.location.start.line)),
+            "unused/fake/shadowed builders must not persist"
+        );
+        assert!(
+            !inventory
+                .scan
+                .evidence
+                .iter()
+                .any(|e| e.location.path == path
+                    && e.enclosing_symbol.as_deref() == Some("unused")
+                    && e.rule_id.ends_with("-extended-nosql-request-object-source")),
+            "excluded construction must not synthesize orphan input rows"
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn php_query_objects_attach_to_owned_execution_without_separate_reviews() {
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-php-query-consumers-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("app.php"), r#"<?php
+use MongoDB\Driver\Query as Filter;
+use MongoDB\Driver\Manager as Client;
+use MongoDB\Driver\Server;
+function run($filter, $unknown) {
+    $manager = new Client('mongodb://localhost');
+    new Filter($filter);
+    $manager->executeQuery('db.users', new Filter($filter));
+    $query = new Filter($filter);
+    $manager->executeQuery('db.users', $query);
+    $manager->executeQuery('db.users', $unknown);
+    $manager->executeQuery('db.users', factory($filter));
+}
+function onServer(Server $server, $query) { $server->executeQuery('db.users', $query, []); }
+function fake(Fake $manager, $filter) { $manager->executeQuery('db.users', new Filter($filter)); }
+function replaced(Client $manager, $query) { $manager = new Fake; $manager->executeQuery('db.users', $query); }
+function named(Client $manager, $query) { $manager->executeQuery(query: $query, namespace: 'db.users'); }
+function unpacked(Client $manager, $args) { $manager->executeQuery(...$args); }
+"#).unwrap();
+    let inventory = mehscan_engine::investigation::build_review_inventory(&root, false).unwrap();
+    assert_eq!(inventory.scan.coverage.totals.parse_failed, 0);
+    let consumers = inventory
+        .scan
+        .evidence
+        .iter()
+        .filter(|e| e.rule_id == "php-extended-nosql-execution")
+        .collect::<Vec<_>>();
+    assert_eq!(consumers.len(), 5, "{consumers:#?}");
+    assert_eq!(consumers[0].captures["nosql_query"].text, "$filter");
+    assert_eq!(consumers[1].captures["nosql_query"].text, "$filter");
+    for consumer in consumers {
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|e| e.rule_id == consumer.rule_id && e.line == consumer.location.start.line),
+            "actual/opaque consumer lost: {consumer:#?}"
+        );
+    }
+    assert!(
+        !inventory
+            .entries
+            .iter()
+            .any(|e| e.rule_id == "php-extended-nosql-query")
+    );
+    assert_eq!(
+        inventory
+            .scan
+            .evidence
+            .iter()
+            .filter(|e| e.rule_id == "php-extended-nosql-query")
+            .count(),
+        2
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -393,7 +572,7 @@ fn extended_python_orm_and_rust_client_text_entrypoints_preserve_binding_roles()
 }
 
 #[test]
-fn extended_raw_document_query_constructors_keep_the_executable_or_json_operand() {
+fn isolated_document_construction_does_not_extract_an_unused_database_boundary() {
     let result = scan(
         "documents",
         &[
@@ -411,19 +590,83 @@ fn extended_raw_document_query_constructors_keep_the_executable_or_json_operand(
             ),
         ],
     );
-    for (path, expected) in [("Probe.java", 2), ("app.kt", 2), ("Probe.cs", 1)] {
-        let hits: Vec<_> = result
+    assert!(
+        !result
             .evidence
             .iter()
-            .filter(|e| e.location.path == path && e.rule_id.ends_with("extended-nosql-json"))
-            .collect();
-        assert_eq!(hits.len(), expected, "{path}: {hits:#?}");
-        assert!(hits.iter().all(|hit| {
-            hit.captures
-                .get("nosql_query")
-                .is_some_and(|q| q.text == "filter")
-        }));
+            .any(|e| e.rule_id.ends_with("extended-nosql-json"))
+    );
+    assert!(
+        result.security_paths.is_empty(),
+        "parsing must not create an execution relationship"
+    );
+}
+
+#[test]
+fn document_construction_attaches_to_consumers_without_its_own_review() {
+    let directory =
+        std::env::temp_dir().join(format!("mehscan-document-consumers-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    for (path, source) in [
+        (
+            "Probe.java",
+            "import com.mongodb.client.MongoCollection; import org.bson.Document; class Probe { void run(MongoCollection<Document> store, String json) { store.find(Document.parse(json)); Document selected = Document.parse(json); store.find(selected); } Document helper(String json) { return Document.parse(json); } void indirect(MongoCollection<Document> store, String json) { store.find(helper(json)); } }",
+        ),
+        (
+            "Probe.cs",
+            "using MongoDB.Driver; using MongoDB.Bson; class Probe { void Run(IMongoCollection<BsonDocument> store, string json) { store.Find(BsonDocument.Parse(json)); var selected = BsonDocument.Parse(json); store.Find(selected); } BsonDocument Helper(string json) { return BsonDocument.Parse(json); } void Indirect(IMongoCollection<BsonDocument> store, string json) { store.Find(Helper(json)); } }",
+        ),
+        (
+            "app.kt",
+            "import com.mongodb.client.MongoCollection\nimport org.bson.Document\nfun run(store: MongoCollection<Document>, json: String) { store.find(Document.parse(json)); val selected = Document.parse(json); store.find(selected) }\nfun helper(json: String): Document { return Document.parse(json) }\nfun indirect(store: MongoCollection<Document>, json: String) { store.find(helper(json)) }",
+        ),
+    ] {
+        std::fs::write(directory.join(path), source).unwrap();
     }
+    let inventory =
+        mehscan_engine::investigation::build_review_inventory(&directory, false).unwrap();
+    assert_eq!(inventory.scan.coverage.totals.parse_failed, 0);
+    for path in ["Probe.java", "Probe.cs", "app.kt"] {
+        let consumers = inventory
+            .scan
+            .evidence
+            .iter()
+            .filter(|e| e.location.path == path && e.rule_id.ends_with("extended-nosql-query"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            consumers.len(),
+            3,
+            "must preserve inline, local and helper consumers: {path}"
+        );
+        for consumer in &consumers {
+            assert!(
+                inventory
+                    .entries
+                    .iter()
+                    .any(|e| e.path == path && e.rule_id == consumer.rule_id),
+                "lost {path} consumer"
+            );
+        }
+        for consumer in &consumers[..2] {
+            assert!(
+                consumer
+                    .context
+                    .operand_facts
+                    .iter()
+                    .any(|f| f.value.starts_with("raw_document_construction:")),
+                "missing bounded construction origin: {path}: {:?}",
+                consumer.captures
+            );
+        }
+        assert!(
+            !inventory
+                .entries
+                .iter()
+                .any(|e| e.path == path && e.rule_id.ends_with("extended-nosql-json")),
+            "parser must not own a review"
+        );
+    }
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
@@ -462,13 +705,13 @@ fn extended_dynamodb_secondary_expressions_reach_only_nosql_security_paths() {
         "dynamodb-paths",
         &[(
             "app.ts",
-            "import { QueryCommand } from '@aws-sdk/lib-dynamodb'; function handler(req: any, res: any) { new QueryCommand({TableName: 't', KeyConditionExpression: req.body.key, FilterExpression: req.body.filter, ExpressionAttributeValues: {':value': req.body.value}}); }",
+            "import { QueryCommand } from '@aws-sdk/lib-dynamodb'; import { DynamoDBClient } from '@aws-sdk/client-dynamodb'; const client = new DynamoDBClient({}); function handler(req: any, res: any) { client.send(new QueryCommand({TableName: 't', KeyConditionExpression: req.body.key, FilterExpression: req.body.filter, ExpressionAttributeValues: {':value': req.body.value}})); }",
         )],
     );
     let sink = result
         .evidence
         .iter()
-        .find(|e| e.rule_id == "typescript-extended-nosql-command")
+        .find(|e| e.rule_id == "typescript-extended-nosql-dispatch")
         .unwrap();
     let paths: Vec<_> = result
         .security_paths
@@ -496,4 +739,134 @@ fn extended_php_entrypoints_do_not_guess_named_or_unpacked_query_positions() {
         "{:?}",
         result.evidence
     );
+}
+
+#[test]
+fn python_sql_construction_drops_unused_and_duplicate_reviews_but_keeps_consumers() {
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-python-sql-consumers-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("app.py"),
+        r#"
+from sqlalchemy import text as raw, create_engine
+from django.db.models.expressions import RawSQL
+engine = create_engine('sqlite://')
+db = engine.connect()
+def helper(sql):
+    return raw(sql)
+def run(sql):
+    raw(sql)
+    unused = raw(sql)
+    RawSQL(sql, [])
+    unused_django = RawSQL(sql, [])
+    db.execute(raw(sql))
+    statement = raw(sql)
+    db.execute(statement)
+    db.execute(helper(sql))
+    db.execute(opaque(sql))
+    changed = raw('SELECT 1')
+    changed.text = sql
+    db.execute(changed)
+    db.execute(transform(raw('SELECT 1'), sql))
+def fixed(value):
+    db.execute(raw('SELECT * FROM users WHERE id = :id'), {'id': value})
+    statement = raw('SELECT * FROM users WHERE id = :id').bindparams(id=value)
+    db.execute(statement)
+def embedded(queryset, sql, params):
+    return queryset.annotate(result=RawSQL(sql, params))
+def exported(sql):
+    return RawSQL(sql, [])
+def closure(sql):
+    def later():
+        return statement
+    statement = raw(sql)
+    return later
+"#,
+    )
+    .unwrap();
+    let inventory = mehscan_engine::investigation::build_review_inventory(&root, false).unwrap();
+    assert_eq!(inventory.scan.coverage.totals.parse_failed, 0);
+    let scan = &inventory.scan;
+    let executed = scan
+        .evidence
+        .iter()
+        .filter(|e| {
+            e.rule_id == "python-database-query" && e.enclosing_symbol.as_deref() == Some("run")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(executed.len(), 6, "{executed:#?}");
+    assert_eq!(executed[0].captures["query"].text, "sql");
+    assert_eq!(executed[1].captures["query"].text, "sql");
+    assert_eq!(executed[2].captures["query"].text, "helper(sql)");
+    assert_eq!(executed[3].captures["query"].text, "opaque(sql)");
+    assert_eq!(executed[4].captures["query"].text, "changed");
+    assert_eq!(
+        executed[5].captures["query"].text,
+        "transform(raw('SELECT 1'), sql)"
+    );
+    for sink in executed {
+        assert!(
+            inventory.entries.iter().any(|e| e.path == "app.py"
+                && e.line == sink.location.start.line
+                && e.rule_id == sink.rule_id),
+            "lost executor: {sink:#?}"
+        );
+    }
+    for symbol in ["run", "helper", "fixed"] {
+        assert!(
+            !inventory
+                .entries
+                .iter()
+                .any(|e| e.rule_id == "python-extended-sql-expression"
+                    && e.symbol.as_deref() == Some(symbol)),
+            "constructor must not own work: {symbol}"
+        );
+    }
+    assert!(
+        !inventory
+            .entries
+            .iter()
+            .any(|e| e.symbol.as_deref() == Some("fixed")),
+        "bound fixed text should not become SQL research"
+    );
+    for symbol in ["embedded", "exported", "closure"] {
+        let builder = scan
+            .evidence
+            .iter()
+            .find(|e| {
+                e.rule_id == "python-extended-sql-expression"
+                    && e.enclosing_symbol.as_deref() == Some(symbol)
+            })
+            .unwrap();
+        assert_eq!(
+            builder.kind,
+            EvidenceKind::Sink,
+            "unresolved consumer lead must remain"
+        );
+        assert!(
+            builder
+                .tags
+                .iter()
+                .any(|t| t == "query-consumer:unresolved")
+        );
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|e| e.rule_id == builder.rule_id && e.line == builder.location.start.line),
+            "lost escaped/ORM lead: {symbol}"
+        );
+    }
+    assert!(
+        !scan
+            .evidence
+            .iter()
+            .any(|e| e.rule_id == "python-extended-sql-expression"
+                && [9, 10, 11, 12].contains(&e.location.start.line)),
+        "unused construction should not persist"
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }

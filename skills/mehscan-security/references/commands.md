@@ -2,6 +2,8 @@
 
 Use the executable and root supplied for the task. `ROOT` is the source
 repository, not the directory containing a saved bundle.
+Regenerate older inventories with this executable: current admission uses
+inventory schema 22. Reuse verdicts only through a source-bound ledger.
 Append `--journal JOURNAL.jsonl` to source, outline, references, paths, and
 other code-evidence lookups while reviewing a bundle. Bundle listing, cards,
 finalization, and validation do not accept `--journal`. Name the journal for
@@ -25,11 +27,16 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Candidate scan | `mehscan scan ROOT --format candidates` |
 | Review requests | `mehscan investigate review-bundles ROOT --output DIR` |
 | Large-repo inventory | `mehscan investigate review-inventory ROOT --output RUN/inventory` |
+| Inventory with supplied Roslyn context | `mehscan investigate review-inventory ROOT --output RUN/inventory --csharp-context CONTEXT --csharp-backend BACKEND` |
+| Inventory with supplied TS/JS context | `mehscan investigate review-inventory ROOT --output RUN/inventory --typescript-context CONTEXT --typescript-backend SCRIPT` |
+| Directed compiler evidence | `mehscan investigate csharp-semantic ROOT --inventory RUN/inventory --evidence-ids ID,ID --context CONTEXT --backend EXE --output FILE` (or `typescript-semantic` / SCRIPT); use card `anchor.id`, not review IDs. |
 | Reuse finalized IDs | `mehscan investigate review-ledger --inventory RUN/inventory --history OLD_RUN_ROOT,RUN --output RUN/review-ledger.json` |
 | Filter remaining inventory | `mehscan investigate review-inventory-list --inventory RUN/inventory --ledger RUN/review-ledger.json --cwe CWE --limit 50` |
 | Value selection / deferred work | Add `--selection value` / `--selection deferred`; Comprehensive uses `--selection all`. Inspect `dependency_review_ids`; rebuild the ledger to reopen unsafe/unresolved dependents (`reopened_count`). Deferrals retain IDs and reasons, not safe verdicts. |
-| Filter operand facts | `mehscan investigate review-inventory-list --inventory RUN/inventory --operand-kind fixed_code_relative_path --limit 50` (also `configured_root_path`, `encoding_call`, `local_operand_origin`, `operand_boundary`, `query_structure`, `process_shell_mode`, `native_operand_declaration`, `local_call_argument`, `prepared_statement_use`, `unclassified`) |
-| Shared contract queue | `mehscan investigate review-inventory-list --inventory RUN/inventory --ledger RUN/review-ledger.json --group-by contract --limit 12` |
+| Filter operand facts | `mehscan investigate review-inventory-list --inventory RUN/inventory --operand-kind fixed_code_relative_path --limit 50` (also `fixed_filesystem_path`, `temporary_filesystem_path`, `immutable_filesystem_operand`, `configured_root_path`, `encoding_call`, `local_operand_origin`, `operand_boundary`, `query_structure`, `process_shell_mode`, `native_operand_declaration`, `local_call_argument`, `prepared_statement_use`, `unclassified`) |
+| Shared contract queue | `mehscan investigate review-inventory-list --inventory RUN/inventory --ledger RUN/review-ledger.json --group-by contract --limit 12` (native C# producers: `--operand-kind shared_filesystem_producer` or `shared_outbound_destination`) |
+| Reuse inspected facts | `mehscan investigate review-facts ROOT --inventory DIR --facts FILE --contract KEY` (record with `--notes INPUT --output FILE`) |
+| Implementation reading queue | `mehscan investigate review-inventory-list --inventory RUN/inventory --selection value --group-by implementation --limit 12` (file/reported symbol/category groups with exact IDs; independent site decisions) |
 | Contract members | `mehscan investigate review-inventory-list --inventory RUN/inventory --contract KEY --limit 50` (combine with ledger/component filters) |
 | Selected requests | `mehscan investigate review-bundles ROOT --inventory RUN/inventory --ledger RUN/review-ledger.json --review-ids ID,ID --output RUN/chunk-N` |
 | Bundle IDs | `mehscan investigate review-bundle-list --bundle REQUEST` |
@@ -62,7 +69,7 @@ version. Query results are JSON; inspect all `results`, `truncated`, and
 Save finalized responses as `CHUNK/responses/REQUEST_FILENAME`; `report` reads
 that directory and matches each response to its manifest request filename.
 Keep `input-binding.json` with copied manifests and requests for historical
-verdict reuse. A stale source or review-contract binding requires
+verdict reuse. A stale source, native input or review-contract binding requires
 fresh review; rebuilding a root overview cannot make an old chunk current.
 Regenerate older inventories and ledgers: both now require schema 2.
 For C/C++ structural calls use a complete statement such as `memcpy($DEST,
@@ -88,7 +95,8 @@ The default brief draft needs only `results` with `review_id`, `decision`,
 ranges (`path`, `start_line`, `end_line`). Finalization reads those exact lines,
 fills the full response and journal summary, and validates it. Use
 `review-response-schema` only for exceptional full schema 1.3 drafts.
-Keep each `summary` and `reason` on one line within 500 characters.
+Keep verdict prose concise; [finalization](finish-review.md) describes source
+range handling and prose limits.
 `paths` is
 navigation, not code evidence: read a returned path before citing its contents.
 `--source-root` checks that every decisive artifact excerpt occurs in a file

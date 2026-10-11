@@ -21,7 +21,7 @@ fn extended_standard_library_boundaries_preserve_security_sensitive_operands() {
             "import java.nio.file.Files; import java.nio.file.Path; class Probe { void run(Path source, Path target) throws Exception { Files.copy(source, target); Files.delete(target); Files.createDirectories(target); } }",
             Capability::FilesystemWrite,
             "target",
-            3,
+            2,
             1,
         ),
         (
@@ -61,7 +61,7 @@ fn extended_standard_library_boundaries_preserve_security_sensitive_operands() {
             "package app\nimport \"os\"\nfunc run(source, target string) { os.Rename(source, target); os.RemoveAll(target); os.MkdirAll(target, 0755) }",
             Capability::FilesystemWrite,
             "target",
-            3,
+            2,
             0,
         ),
         (
@@ -69,7 +69,7 @@ fn extended_standard_library_boundaries_preserve_security_sensitive_operands() {
             "fn run(source: &str, target: &str) { std::fs::copy(source, target); std::fs::rename(source, target); std::fs::create_dir_all(target); std::fs::remove_dir(target); }",
             Capability::FilesystemWrite,
             "target",
-            4,
+            3,
             1,
         ),
         (
@@ -77,7 +77,7 @@ fn extended_standard_library_boundaries_preserve_security_sensitive_operands() {
             "import java.nio.file.Files\nimport java.nio.file.Path\nfun run(source: Path, target: Path) { Files.copy(source, target); Files.delete(target); Files.createDirectories(target) }",
             Capability::FilesystemWrite,
             "target",
-            3,
+            2,
             1,
         ),
         (

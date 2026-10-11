@@ -13,11 +13,11 @@
   strategy: bounded_local_value
 
 - id: cwe-78-remote-request-to-process-execution
-  version: 3
+  version: 4
   source: { capabilities: [http_request_data, rpc_request_data, external_input] }
   sink:
     capability: process_execution
-    input_roles: [command, arguments]
+    input_roles: [command, arguments, executable]
   protection:
     capability: process_argument_separation
     application: related_capture
@@ -27,11 +27,11 @@
   strategy: bounded_local_value
 
 - id: cwe-78-stored-user-content-to-process-execution
-  version: 1
+  version: 2
   source: { capability: stored_user_content }
   sink:
     capability: process_execution
-    input_roles: [command, arguments]
+    input_roles: [command, arguments, executable]
   protection:
     capability: process_argument_separation
     application: related_capture
@@ -239,30 +239,30 @@
   strategy: bounded_local_value
 
 - id: cwe-22-remote-request-to-filesystem-read
-  version: 3
+  version: 4
   source: { capabilities: [http_request_data, rpc_request_data, external_input] }
   sink:
     capability: filesystem_read
     input_roles: [path]
   protection:
-    capability: path_canonicalization
-    application: value_transform
+    capability: path_containment_check
+    application: related_capture
     relation_role: path
-    value_roles: [value]
+    value_roles: [base]
   cwe_candidates: [CWE-22]
   strategy: bounded_local_value
 
 - id: cwe-22-remote-request-to-filesystem-write
-  version: 3
+  version: 4
   source: { capabilities: [http_request_data, rpc_request_data, external_input] }
   sink:
     capability: filesystem_write
-    input_roles: [path]
+    input_roles: [path, filesystem_source]
   protection:
-    capability: path_canonicalization
-    application: value_transform
+    capability: path_containment_check
+    application: related_capture
     relation_role: path
-    value_roles: [value]
+    value_roles: [base]
   cwe_candidates: [CWE-22]
   strategy: bounded_local_value
 
@@ -276,30 +276,25 @@
   strategy: bounded_local_value
 
 - id: cwe-918-remote-request-to-outbound-network
-  version: 3
+  version: 4
   source: { capabilities: [http_request_data, rpc_request_data, external_input] }
   sink:
     capability: outbound_network_request
     input_roles: [endpoint]
-  protection:
-    capability: url_parsing
-    application: value_transform
-    relation_role: endpoint
-    value_roles: [value]
   cwe_candidates: [CWE-918]
   strategy: bounded_local_value
 
 - id: cwe-601-remote-request-to-redirect
-  version: 2
+  version: 3
   source: { capabilities: [http_request_data, rpc_request_data] }
   sink:
     capability: redirect
     input_roles: [location]
   protection:
-    capability: url_parsing
-    application: value_transform
+    capability: redirect_destination_validation
+    application: related_capture
     relation_role: location
-    value_roles: [value]
+    value_roles: [location]
   cwe_candidates: [CWE-601]
   strategy: bounded_local_value
 
@@ -367,16 +362,16 @@
   strategy: bounded_local_value
 
 - id: cwe-434-uploaded-path-to-filesystem-write
-  version: 1
+  version: 2
   source: { capability: uploaded_file_path }
   sink:
     capability: filesystem_write
     input_roles: [path]
   protection:
-    capability: path_canonicalization
-    application: value_transform
+    capability: path_containment_check
+    application: related_capture
     relation_role: path
-    value_roles: [value]
+    value_roles: [base]
   cwe_candidates: [CWE-434, CWE-22]
   strategy: bounded_local_value
 
@@ -464,15 +459,6 @@
   sink:
     capability: authentication
     input_roles: [session_token]
-  cwe_candidates: [CWE-613]
-  strategy: bounded_local_value
-
-- id: cwe-613-credential-to-token-without-expiry
-  version: 1
-  source: { capability: credential_material }
-  sink:
-    capability: token_generation
-    input_roles: [expiry_key]
   cwe_candidates: [CWE-613]
   strategy: bounded_local_value
 

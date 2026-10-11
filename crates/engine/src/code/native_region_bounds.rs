@@ -244,6 +244,7 @@ fn exact_preceding_clamp<'tree>(
         .filter(|node| {
             node.range().start > declaration.range().end && node.range().end < sink.range().start
         })
+        .filter(|node| super::context::precedes_in_block(node, sink))
         .filter_map(|statement| {
             let condition = statement.field("condition")?;
             condition_proves_region(

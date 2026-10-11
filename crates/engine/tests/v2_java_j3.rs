@@ -75,7 +75,6 @@ fn recognizes_exact_java_jwt_and_otp_lifecycle_facts() {
         "java-jwt-header-selects-verifier-family",
         "java-nimbus-plain-jwt-accepted",
         "java-api-key-debug-logging",
-        "java-jwt-signed-token-without-expiration",
     ] {
         let review = reviews
             .iter()
@@ -98,5 +97,23 @@ fn recognizes_exact_java_jwt_and_otp_lifecycle_facts() {
                 .any(|fact| fact.contains("explicitly establishes")),
             "{rule}"
         );
+    }
+    for rule in [
+        "java-jwt-signed-token-without-expiration",
+        "java-otp-record-without-expiry",
+        "java-stateful-email-token-without-expiry",
+    ] {
+        assert!(
+            identity
+                .iter()
+                .filter(|e| e.rule_id == rule)
+                .all(|e| e.kind == mehscan_core::EvidenceKind::Resource)
+        );
+        assert!(!reviews.iter().any(|review| {
+            review
+                .evidence
+                .iter()
+                .any(|e| e.rule_id == rule && review.anchor_evidence_ids.contains(&e.id))
+        }));
     }
 }

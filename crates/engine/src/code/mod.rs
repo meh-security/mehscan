@@ -19,6 +19,7 @@ mod csharp_rpc;
 mod csharp_sinks;
 mod csharp_standalone;
 mod csharp_streaming_upload;
+mod database_cleanup;
 mod database_receiver;
 mod decision_origins;
 pub(crate) use decision_origins::executable_deserializer;
@@ -27,6 +28,7 @@ mod embedded_javascript;
 mod extended_boundaries;
 mod extended_database;
 mod file_roles;
+mod filesystem_operands;
 mod go_context;
 mod go_filesystem;
 mod go_grpc;
@@ -36,6 +38,7 @@ mod go_policy;
 mod go_vulnerability;
 mod go_web;
 mod identity_boundary;
+mod issuance_cleanup;
 mod java_context;
 mod java_crypto;
 mod java_filesystem;
@@ -61,7 +64,6 @@ pub(crate) use kotlin::function_range as kotlin_function_range;
 pub(crate) use kotlin::html_encoder_facts as kotlin_html_encoder_facts;
 pub(crate) use kotlin::jwt_facts as kotlin_jwt_facts;
 pub(crate) use kotlin::member_receiver_facts as kotlin_member_receiver_facts;
-pub(crate) use kotlin::okhttp_facts as kotlin_okhttp_facts;
 pub(crate) use kotlin::query_fact as kotlin_numeric_query_fact;
 pub(crate) use kotlin::scope_facts as kotlin_scope_facts;
 pub(crate) use kotlin::tls_facts as kotlin_tls_facts;
@@ -74,6 +76,7 @@ mod native_allocation;
 mod native_arithmetic;
 mod native_buffer;
 mod native_cpp_ownership;
+mod native_curl;
 mod native_domain_bounds;
 mod native_drogon;
 mod native_heap_lifetime;
@@ -85,6 +88,7 @@ mod native_loaded_extent;
 mod native_multiplication;
 mod native_operands;
 mod native_ownership;
+mod native_query;
 mod native_region_bounds;
 mod native_remaining_input;
 mod native_serialized_blob;
@@ -92,6 +96,7 @@ mod native_signedness;
 mod native_state;
 mod native_toctou;
 mod node_browser;
+pub(crate) use node_browser::unverified_dompurify_binding;
 mod node_context;
 mod node_express;
 mod node_fastify;
@@ -102,21 +107,37 @@ mod node_policy;
 mod node_randomness;
 mod node_serverless;
 mod object_input;
+mod outbound_cleanup;
 mod password_lifecycle;
 mod php;
+mod process_cleanup;
 mod python_context;
 mod python_flask;
 mod python_identity;
 mod python_operands;
 mod razor;
 mod reachability;
+mod reactive_cleanup;
+mod route_context_cleanup;
 mod rust_context;
 mod rust_project;
 mod scanner;
 #[path = "sql_flow.rs"]
 mod security_paths;
 mod symbols;
+pub(crate) mod vue;
 mod webforms;
 
 pub use scanner::{FileAnalysisProfile, ScanProfile};
 pub(crate) use scanner::{read_secret_text, scan_profiled};
+
+pub(crate) fn closed_query(item: &mehscan_core::Evidence) -> bool {
+    item.capability == mehscan_core::Capability::DatabaseQuery
+        && item.cwe_candidates == ["CWE-89"]
+        && item.tags.iter().any(|tag| {
+            matches!(
+                tag.as_str(),
+                "query-closure:pg-fixed-bound-object" | "query-closure:native-local-literal"
+            )
+        })
+}

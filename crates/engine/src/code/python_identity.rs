@@ -226,7 +226,7 @@ fn add_jwt_observations<'tree>(
                 push(
                     path,
                     &call,
-                    EvidenceKind::SecurityConfiguration,
+                    EvidenceKind::Resource,
                     Capability::Authentication,
                     "python-jwt-token-without-expiry-review",
                     &["CWE-613"],
@@ -487,7 +487,7 @@ fn add_django_settings<'tree>(
                     if csrf {
                         EvidenceKind::Validation
                     } else {
-                        EvidenceKind::SecurityConfiguration
+                        EvidenceKind::Resource
                     },
                     Capability::Authorization,
                     if csrf {
@@ -522,7 +522,7 @@ fn add_django_settings<'tree>(
                     if protected {
                         EvidenceKind::Validation
                     } else {
-                        EvidenceKind::SecurityConfiguration
+                        EvidenceKind::Resource
                     },
                     Capability::Authorization,
                     if protected {
@@ -622,7 +622,7 @@ fn add_django_settings<'tree>(
                 if value == "True" {
                     EvidenceKind::Validation
                 } else {
-                    EvidenceKind::SecurityConfiguration
+                    EvidenceKind::Resource
                 },
                 Capability::TlsConfiguration,
                 if value == "True" {

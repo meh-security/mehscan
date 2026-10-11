@@ -101,22 +101,6 @@ impl Constants {
     }
 }
 
-pub(super) fn unresolved_root<'a>(node: &PhpNode<'a>, context: &PhpContext<'a>) -> bool {
-    node.dfs().any(|n| {
-        n.kind().as_ref() == "name"
-            && context
-                .constants
-                .0
-                .get(n.text().as_ref())
-                .is_some_and(|definitions| {
-                    definitions.iter().any(|expr| {
-                        expr.as_ref()
-                            .is_none_or(|expr| context.constants.evaluate(expr, 0).is_none())
-                    })
-                })
-    })
-}
-
 fn constant_name(name: &str) -> bool {
     !name.is_empty()
         && name

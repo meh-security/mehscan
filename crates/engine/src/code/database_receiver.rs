@@ -26,7 +26,11 @@ pub(super) fn accepts(root: &DbNode<'_>, receiver: &DbNode<'_>, language: Langua
 }
 
 pub(super) fn proven(root: &DbNode<'_>, receiver: &DbNode<'_>, language: Language) -> bool {
-    proven_family(root, receiver, language, false)
+    proven_family(root, receiver, language, false, None)
+}
+
+pub(super) fn knex_receiver(root: &DbNode<'_>, receiver: &DbNode<'_>, language: Language) -> bool {
+    proven_family(root, receiver, language, false, Some("knex"))
 }
 
 pub(super) fn document_receiver(
@@ -34,7 +38,7 @@ pub(super) fn document_receiver(
     receiver: &DbNode<'_>,
     language: Language,
 ) -> bool {
-    proven_family(root, receiver, language, true)
+    proven_family(root, receiver, language, true, None)
 }
 
 fn proven_family(
@@ -42,6 +46,7 @@ fn proven_family(
     receiver: &DbNode<'_>,
     language: Language,
     document: bool,
+    only_module: Option<&str>,
 ) -> bool {
     let mut modules = BTreeSet::new();
     let mut factories = BTreeSet::new();
@@ -83,6 +88,9 @@ fn proven_family(
                 &sql_modules
             };
             for &module in candidates {
+                if only_module.is_some_and(|only| only != module) {
+                    continue;
+                }
                 let prefix = format!("import {module}");
                 if source == prefix || source.starts_with(&format!("{prefix} as ")) {
                     modules.insert(
@@ -130,10 +138,13 @@ fn proven_family(
             } else {
                 &sql_modules
             };
-            let database_module = candidates.iter().any(|module| {
-                compact_source.contains(&format!("'{module}'"))
-                    || compact_source.contains(&format!("\"{module}\""))
-            });
+            let database_module = candidates
+                .iter()
+                .filter(|module| only_module.is_none_or(|only| only == **module))
+                .any(|module| {
+                    compact_source.contains(&format!("'{module}'"))
+                        || compact_source.contains(&format!("\"{module}\""))
+                });
             if !database_module {
                 continue;
             }

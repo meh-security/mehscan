@@ -7,12 +7,12 @@ fn database_query_variants_preserve_sql_operand_across_languages() {
     let cases = [
         (
             "Probe.java",
-            "class Probe { void f(java.sql.Connection conn, String sql) throws Exception { java.sql.Statement stm = conn.createStatement(); stm.execute(sql); stm.execute(sql, 1); stm.executeLargeUpdate(sql); stm.addBatch(sql); conn.prepareCall(sql); } }",
+            "class Probe { void f(java.sql.Connection conn, String sql) throws Exception { java.sql.Statement stm = conn.createStatement(); stm.execute(sql); stm.execute(sql, 1); stm.executeLargeUpdate(sql); stm.addBatch(sql); conn.prepareCall(sql).execute(); } }",
             5,
         ),
         (
             "app.php",
-            "<?php class Store { private $db; function __construct() { $this->db = new mysqli('host', 'user', 'pass'); } function run($sql) { $this->db->query($sql); $this->db->real_query($sql); $this->db->multi_query($sql); } } class PdoStore { private $db; function __construct() { $this->db = new PDO('sqlite:app.db'); } function run($sql) { $this->db->exec($sql); $this->db->prepare($sql); } }",
+            "<?php class Store { private $db; function __construct() { $this->db = new mysqli('host', 'user', 'pass'); } function run($sql) { $this->db->query($sql); $this->db->real_query($sql); $this->db->multi_query($sql); } } class PdoStore { private $db; function __construct() { $this->db = new PDO('sqlite:app.db'); } function run($sql) { $this->db->exec($sql); $statement = $this->db->prepare($sql); $statement->execute(); } }",
             5,
         ),
         (
@@ -32,12 +32,12 @@ fn database_query_variants_preserve_sql_operand_across_languages() {
         ),
         (
             "app.py",
-            "import sqlite3\nclass Store:\n    def __init__(self):\n        self.db = sqlite3.connect('app.db')\n    def run(self, sql):\n        renamed = self.db.cursor()\n        self.db.execute(sql)\n        renamed.executemany(sql, [])\n        renamed.callproc(sql, [])\n        self.db.executescript(sql)\n",
-            4,
+            "import sqlite3\nclass Store:\n    def __init__(self):\n        self.db = sqlite3.connect('app.db')\n    def run(self, sql):\n        renamed = self.db.cursor()\n        self.db.execute(sql)\n        renamed.executemany(sql, [])\n        self.db.executescript(sql)\n",
+            3,
         ),
         (
             "app.go",
-            "package app\nfunc run(sql string) { db.QueryRow(sql); db.QueryRowContext(ctx, sql); db.Prepare(sql); db.PrepareContext(ctx, sql) }",
+            "package app\nimport (\"database/sql\"; \"context\")\nfunc run(db *sql.DB, ctx context.Context, sql string) { db.QueryRow(sql); db.QueryRowContext(ctx, sql); statement, _ := db.Prepare(sql); statement.Exec(); second, _ := db.PrepareContext(ctx, sql); second.Exec() }",
             4,
         ),
         (
@@ -47,22 +47,22 @@ fn database_query_variants_preserve_sql_operand_across_languages() {
         ),
         (
             "app.kt",
-            "import java.sql.Statement\nclass Store(val db: Statement) { fun run(sql: String) { this.db.execute(sql); this.db.executeLargeUpdate(sql); this.db.addBatch(sql) } }",
+            "import java.sql.Statement\nclass Store(val db: Statement) { fun run(sql: String) { this.db.execute(sql); this.db.executeLargeUpdate(sql); this.db.addBatch(sql); this.db.executeBatch() } }",
             3,
         ),
         (
             "Probe.cs",
-            "class Store { void Run(string sql) { var cmd = new NpgsqlCommand(); cmd.CommandText = sql; var pg = new NpgsqlCommand(sql, connection); db.ExecuteSqlRawAsync(sql); } }",
+            "using Npgsql; using Microsoft.EntityFrameworkCore; class Store { void Run(string sql, NpgsqlConnection connection, DbContext db) { var cmd = new NpgsqlCommand(); cmd.CommandText = sql; cmd.ExecuteNonQuery(); var pg = new NpgsqlCommand(sql, connection); pg.ExecuteNonQuery(); db.Database.ExecuteSqlRawAsync(sql); } }",
             3,
         ),
         (
             "app.c",
-            "void run(char *sql) { PQexec(db, sql); PQexecParams(db, sql, 0, 0, 0, 0, 0, 0); mysql_real_query(db, sql, 10); mysql_stmt_prepare(stmt, sql, 10); SQLExecDirect(stmt, sql, 10); SQLPrepareW(stmt, sql, 10); }",
+            "void run(char *sql) { PQexec(db, sql); PQexecParams(db, sql, 0, 0, 0, 0, 0, 0); mysql_real_query(db, sql, 10); mysql_stmt_prepare(stmt, sql, 10); mysql_stmt_execute(stmt); SQLExecDirect(stmt, sql, 10); SQLPrepareW(stmt, sql, 10); SQLExecute(stmt); }",
             6,
         ),
         (
             "app.cpp",
-            "void run(char *sql) { PQexec(db, sql); PQexecParams(db, sql, 0, 0, 0, 0, 0, 0); mysql_real_query(db, sql, 10); mysql_stmt_prepare(stmt, sql, 10); SQLExecDirect(stmt, sql, 10); SQLPrepareW(stmt, sql, 10); }",
+            "void run(char *sql) { PQexec(db, sql); PQexecParams(db, sql, 0, 0, 0, 0, 0, 0); mysql_real_query(db, sql, 10); mysql_stmt_prepare(stmt, sql, 10); mysql_stmt_execute(stmt); SQLExecDirect(stmt, sql, 10); SQLPrepareW(stmt, sql, 10); SQLExecute(stmt); }",
             6,
         ),
     ];

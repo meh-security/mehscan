@@ -58,11 +58,9 @@ const BUILTIN_RULE_CATALOGS: &[(&str, &str)] = builtin_catalogs!(
     "rules/code/cwe-20/native-external-input.yml",
     "rules/code/cwe-639/resource-access.yml",
     "rules/code/cwe-611/xml-parsing.yml",
-    "rules/code/cwe-117/logging.yml",
     "rules/code/cwe-942/cors-configuration.yml",
     "rules/code/cwe-120/native-buffer-write.yml",
     "rules/code/cwe-134/format-string.yml",
-    "rules/code/cwe-119/rust-safety-boundaries.yml",
 );
 
 pub fn load_builtin_rules() -> Result<Vec<Rule>, EngineError> {

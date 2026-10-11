@@ -28,10 +28,12 @@ verdicts.
    straight to its target; check that target instead of repeating input/caller
    research. An encoding call still needs the actual output context and its
    callable/options contract. Facts with remaining checks are not verdicts.
-   A `local_operand_origin` locates a source producer. Inspect alternatives and
-   accumulated parts without treating them as a safe value. A helper return
-   still needs its call-site arguments. `local_call_argument` locates a possible
-   caller argument; verify its actual value mapping. A bounded caller list does
+   A `local_operand_origin` locates a source producer. A compiler CFG set may
+   include alternative writes or accumulated parts: inspect each, without treating
+   the set as a safe value. A helper return still needs its call-site arguments.
+   `local_call_argument` marked `observed_signature_argument` locates an incoming
+   argument for this parameter. Inspect that caller and producer directly before
+   repeating a text caller search. Its supplied-project scope and truncation do
    not establish all callers, parameter immutability or runtime dispatch.
    SQL `query_value` types locate observed construction terms; inspect formatting,
    producers and the rest of the reaching query before deciding grammar safety.

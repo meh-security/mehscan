@@ -262,6 +262,7 @@ fn build_family_paths(
         .filter(|item| {
             item.kind == EvidenceKind::Sink
                 && item.capability == family.sink.capability
+                && !super::closed_query(item)
                 && !super::csharp_mainstream::is_duplicate_copy_source(item, evidence)
                 && (!is_identity_boundary_relation(family)
                     || item
@@ -289,6 +290,9 @@ fn build_family_paths(
                         // These PHP APIs retain useful control evidence but do
                         // not establish output-context safety or containment.
                         && !matches!(item.rule_id.as_str(), "php-html-encoding" | "php-path-canonicalization")
+                        // URL parsers preserve a destination; they do not
+                        // approve its authority or confine a redirect.
+                        && item.capability != Capability::UrlParsing
                         && (item.capability == protection.capability
                             || (family.sink.capability == Capability::Redirect
                                 && item.capability == Capability::RedirectDestinationValidation)
@@ -1009,23 +1013,7 @@ fn build_family_paths(
             }
 
             let applicable_protections = if family.sink.capability == Capability::Redirect {
-                let mut applicable = protections
-                    .iter()
-                    .copied()
-                    .filter(|protection| {
-                        protection.capability == Capability::UrlParsing
-                            && (contains_range(
-                                location_range(&protection.location),
-                                source_range.clone(),
-                            ) || protection_contains_bound_parameter(
-                                root, source, protection, family,
-                            ))
-                    })
-                    .collect::<Vec<_>>();
-                applicable.extend(attached_protections.iter().copied());
-                applicable.sort_by(|left, right| left.id.cmp(&right.id));
-                applicable.dedup_by(|left, right| left.id == right.id);
-                applicable
+                attached_protections.clone()
             } else if family.protection.as_ref().is_some_and(|protection| {
                 protection.application == ProtectionApplication::ValueTransform
             }) {
@@ -1342,7 +1330,6 @@ fn is_identity_boundary_relation(relation: &RelationContract) -> bool {
         relation.id.as_str(),
         "cwe-321-credential-to-hardcoded-jwt-signing"
             | "cwe-613-credential-to-session-lifecycle"
-            | "cwe-613-credential-to-token-without-expiry"
             | "cwe-345-request-token-to-unverified-identity"
             | "cwe-347-request-token-to-jwt-verification"
             | "cwe-614-credential-to-cookie-transport"
@@ -3444,13 +3431,51 @@ fn protection_belongs_to_sink(
     sink: &Evidence,
     family: &RelationContract,
 ) -> bool {
+    if protection.capability == Capability::PathCanonicalization
+        && matches!(
+            sink.capability,
+            Capability::FilesystemRead | Capability::FilesystemWrite
+        )
+    {
+        // Normalization preserves target influence. It does not confine a path
+        // to an authorized root. Keep the fact, without a Protected verdict.
+        return false;
+    }
+    if protection.capability == Capability::PathContainmentCheck
+        && sink.captures.contains_key("filesystem_source")
+    {
+        // The current relation has one protection state for the operation.
+        // A destination guard cannot settle its independently affected source.
+        return false;
+    }
     if protection.capability == Capability::ProcessArgumentSeparation
-        && sink.context.operand_facts.iter().any(|fact| {
-            fact.role == "process_options"
-                && (fact.kind == mehscan_core::OperandFactKind::OperandBoundary
-                    || (fact.kind == mehscan_core::OperandFactKind::ProcessShellMode
-                        && fact.value != "false"))
-        })
+        && protection.rule_id != "php-shell-argument-quoting"
+        && (!(sink
+            .context
+            .literals
+            .get(if sink.captures.contains_key("executable") {
+                "executable"
+            } else {
+                "command"
+            })
+            .is_some_and(|f| {
+                f.state == mehscan_core::LiteralState::Known
+                    && matches!(f.value, Some(mehscan_core::LiteralValue::String(_)))
+            }))
+            || sink.tags.iter().any(|tag| {
+                matches!(
+                    tag.as_str(),
+                    "process-invocation:shell-command"
+                        | "process-invocation:unresolved-shell"
+                        | "process-invocation:unresolved-builder-state"
+                )
+            })
+            || sink.context.operand_facts.iter().any(|fact| {
+                fact.role == "process_options"
+                    && (fact.kind == mehscan_core::OperandFactKind::OperandBoundary
+                        || (fact.kind == mehscan_core::OperandFactKind::ProcessShellMode
+                            && fact.value != "false"))
+            }))
     {
         return false;
     }

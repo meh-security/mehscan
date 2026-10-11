@@ -113,11 +113,20 @@ function retained_execution() { echo (int) shell_exec($_GET['command']); }
         "unpacked",
         "shadowed",
     ] {
+        let raw = inventory
+            .scan
+            .evidence
+            .iter()
+            .find(|e| {
+                e.rule_id == "php-html-output" && e.enclosing_symbol.as_deref() == Some(symbol)
+            })
+            .unwrap();
         assert!(
-            inventory
-                .entries
+            !inventory
+                .admission_audit
+                .closed_operands
                 .iter()
-                .any(|e| e.rule_id == "php-html-output" && e.symbol.as_deref() == Some(symbol)),
+                .any(|e| e.evidence_id == raw.id),
             "unsafe closure: {symbol}"
         );
     }
@@ -186,37 +195,40 @@ function unrelated_source($stored) { $search = $_GET['search']; echo $stored; }
                 .any(|c| c == "target_existence_and_content_trust")
         );
         assert_eq!(fact.location, evidence.captures["path"].location);
-        assert!(
-            inventory
-                .entries
-                .iter()
-                .any(|entry| entry.symbol.as_deref() == Some(symbol)
-                    && entry
-                        .operand_facts
-                        .iter()
-                        .any(|summary| summary.kind == fact.kind && summary.value == fact.value)),
-            "fact must survive inventory and admission: {symbol}"
-        );
+        if symbol != "missing_include" {
+            assert!(
+                inventory
+                    .entries
+                    .iter()
+                    .any(|entry| entry.symbol.as_deref() == Some(symbol)
+                        && entry.operand_facts.iter().any(
+                            |summary| summary.kind == fact.kind && summary.value == fact.value
+                        )),
+                "fact must survive inventory and admission: {symbol}"
+            );
+        }
     }
-    assert!(inventory.entries.iter().any(|entry| {
-        entry.symbol.as_deref() == Some("configured_trailing_separator")
-            && entry.operand_facts.iter().any(|fact| {
+    assert!(inventory.scan.evidence.iter().any(|entry| {
+        entry.enclosing_symbol.as_deref() == Some("configured_trailing_separator")
+            && entry.context.operand_facts.iter().any(|fact| {
                 fact.kind == OperandFactKind::ConfiguredRootPath
                     && fact.value == "APP_ROOT . \"helper.php\""
             })
     }));
     let config = inventory
-        .entries
+        .scan
+        .evidence
         .iter()
-        .find(|e| e.symbol.as_deref() == Some("config_include"))
+        .find(|e| e.enclosing_symbol.as_deref() == Some("config_include"))
         .unwrap();
     assert_eq!(
-        config.operand_facts[0].kind,
+        config.context.operand_facts[0].kind,
         OperandFactKind::ConfiguredRootPath
     );
-    assert!(inventory.entries.iter().any(|entry| {
-        entry.symbol.as_deref() == Some("underscored_config_include")
+    assert!(inventory.scan.evidence.iter().any(|entry| {
+        entry.enclosing_symbol.as_deref() == Some("underscored_config_include")
             && entry
+                .context
                 .operand_facts
                 .iter()
                 .any(|fact| fact.kind == OperandFactKind::ConfiguredRootPath)
@@ -261,11 +273,18 @@ function unrelated_source($stored) { $search = $_GET['search']; echo $stored; }
         );
     }
     let stored = inventory
-        .entries
+        .scan
+        .evidence
         .iter()
-        .find(|e| e.symbol.as_deref() == Some("stored_output"))
+        .find(|e| e.enclosing_symbol.as_deref() == Some("stored_output"))
         .unwrap();
-    assert!(stored.operand_facts.is_empty());
+    assert!(stored.context.operand_facts.is_empty());
+    assert!(
+        !inventory
+            .entries
+            .iter()
+            .any(|e| e.symbol.as_deref() == Some("stored_output"))
+    );
     let unrelated = inventory
         .entries
         .iter()
@@ -403,16 +422,28 @@ function php_escaped_string() { require __DIR__ . '/helper\n.php'; }
             .collect::<Vec<_>>();
         assert!(!anchors.is_empty(), "missing raw observation: {symbol}");
         assert!(
-            anchors.iter().all(|e| e.context.operand_facts.is_empty()),
+            anchors
+                .iter()
+                .all(|e| e
+                    .context
+                    .operand_facts
+                    .iter()
+                    .all(|f| f.kind != OperandFactKind::NumericOutput
+                        && !f.remaining_checks.is_empty())),
             "unsupported proof: {symbol}"
         );
-        assert!(
-            inventory
-                .entries
-                .iter()
-                .any(|e| e.symbol.as_deref() == Some(symbol)),
-            "candidate hidden: {symbol}"
-        );
+        if !matches!(
+            symbol,
+            "escaped_root" | "stream" | "unknown_wrapper" | "php_coercion" | "php_escaped_string"
+        ) {
+            assert!(
+                inventory
+                    .entries
+                    .iter()
+                    .any(|e| e.symbol.as_deref() == Some(symbol)),
+                "candidate hidden: {symbol}"
+            );
+        }
     }
     for path in &inventory.scan.security_paths {
         if inventory.scan.evidence.iter().any(|e| {

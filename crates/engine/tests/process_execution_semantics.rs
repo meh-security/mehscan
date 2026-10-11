@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use mehscan_core::Capability;
+use mehscan_core::{Capability, EvidenceKind};
 
 #[test]
 fn preserves_shell_payloads_and_instance_launches_without_builder_false_positives() {
@@ -28,9 +28,9 @@ function run(user, args) {
             r#"package app
 import "os/exec"
 func run(user string, args []string) {
-  exec.Command("sh", "-c", user)
-  exec.Command("tool", args...)
-  exec.Command(user, "--version")
+  exec.Command("sh", "-c", user).Run()
+  exec.Command("tool", args...).Run()
+  exec.Command(user, "--version").Run()
 }"#,
         ),
         (
@@ -91,7 +91,9 @@ class App { void Run(string command, string argument) {
     let process = result
         .evidence
         .iter()
-        .filter(|item| item.capability == Capability::ProcessExecution)
+        .filter(|item| {
+            item.capability == Capability::ProcessExecution && item.kind == EvidenceKind::Sink
+        })
         .collect::<Vec<_>>();
     assert_eq!(
         process

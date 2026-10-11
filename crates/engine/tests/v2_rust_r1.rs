@@ -18,7 +18,7 @@ fn scans_rust_sources_and_builds_only_synthetic_request_to_sink_paths() {
     assert_eq!(result.coverage.totals.parse_failed, 0);
     assert_eq!(result.evidence, repeated.evidence);
     assert_eq!(result.security_paths, repeated.security_paths);
-    assert_eq!(result.evidence.len(), 28, "{:#?}", result.evidence);
+    assert_eq!(result.evidence.len(), 32, "{:#?}", result.evidence);
     assert_eq!(
         result.security_paths.len(),
         9,

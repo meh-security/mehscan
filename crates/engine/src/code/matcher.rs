@@ -63,9 +63,9 @@ pub(crate) struct ScanDependencies<'a> {
     pub project_symbols: &'a ProjectSymbolEnvironment,
     pub secret_allowlist: &'a SecretAllowlist,
     pub scan_secrets: bool,
-    pub include_nonproduction: bool,
     pub relations: &'a [RelationContract],
     pub node_context: &'a NodeProjectContext,
+    pub vue_dom_refs: Option<&'a BTreeMap<String, Capture>>,
     pub object_input_context: &'a ObjectInputProjectContext,
     pub csharp_model_context: &'a CsharpModelProjectContext,
     pub csharp_handoff_context: &'a CsharpHandoffProjectContext,
@@ -107,9 +107,9 @@ pub(crate) fn scan_source(
         project_symbols,
         secret_allowlist,
         scan_secrets,
-        include_nonproduction,
         relations,
         node_context,
+        vue_dom_refs,
         object_input_context,
         csharp_model_context,
         csharp_handoff_context,
@@ -317,12 +317,6 @@ pub(crate) fn scan_source(
                     continue;
                 }
                 if language == Language::Rust
-                    && compiled_rule.rule.id == "rust-file-log-write"
-                    && !super::rust_context::is_exact_file_log_write(&root, matched.get_node())
-                {
-                    continue;
-                }
-                if language == Language::Rust
                     && compiled_rule.rule.id == "rust-process-execution"
                     && !super::rust_context::is_exact_process_execution(&root, matched.get_node())
                 {
@@ -339,18 +333,6 @@ pub(crate) fn scan_source(
                         &root,
                         matched.get_node(),
                         &compiled_rule.rule.id,
-                    )
-                {
-                    continue;
-                }
-                if language == Language::Rust
-                    && matches!(
-                        compiled_rule.rule.id.as_str(),
-                        "rust-unsafe-boundary" | "rust-native-interop-boundary"
-                    )
-                    && !super::rust_context::is_reviewable_safety_boundary(
-                        matched.get_node(),
-                        include_nonproduction,
                     )
                 {
                     continue;
@@ -443,6 +425,20 @@ pub(crate) fn scan_source(
                     continue;
                 }
                 let deduplication_key = (compiled_rule.rule.id.clone(), range.start, range.end);
+                // Literal spellings and alias matches need the same ownership
+                // check. A local object named fs/crypto/etc is not that SDK.
+                if !compiled_rule.rule.symbols.is_empty()
+                    && matches!(
+                        language,
+                        Language::Javascript | Language::Typescript | Language::Tsx
+                    )
+                    && call_site(matched.get_node().clone()).is_some_and(|call| {
+                        symbol_environment.has_declared_receiver(&call.observed)
+                            && !symbol_environment.has_import_alias_receiver(&call.observed)
+                    })
+                {
+                    continue;
+                }
                 if !super::extended_boundaries::is_rule(&compiled_rule.rule.id)
                     && kotlin_imports.as_ref().is_some_and(|imports| {
                         !super::kotlin::accept(
@@ -462,6 +458,47 @@ pub(crate) fn scan_source(
                 let mut captures = BTreeMap::new();
                 let mut literal_values = BTreeMap::new();
                 for (semantic_name, variable_name) in &compiled_pattern.specification.captures {
+                    if compiled_rule.rule.capability == Capability::ProcessExecution {
+                        let multiple = matched.get_env().get_multiple_matches(variable_name);
+                        if multiple.len() > 1 {
+                            let first = &multiple[0];
+                            let last = multiple.last().expect("nonempty capture");
+                            let mut capture_location = location(path, first);
+                            capture_location.end = location(path, last).end;
+                            captures.insert(
+                                semantic_name.clone(),
+                                Capture {
+                                    text: source[first.range().start..last.range().end].into(),
+                                    location: capture_location,
+                                },
+                            );
+                            let values = multiple
+                                .iter()
+                                .map(|n| literals.evaluate(n))
+                                .collect::<Vec<_>>();
+                            let known = values.iter().all(|f| {
+                                f.state == mehscan_core::LiteralState::Known && f.value.is_some()
+                            });
+                            literal_values.insert(
+                                semantic_name.clone(),
+                                mehscan_core::LiteralEvaluation {
+                                    state: if known {
+                                        mehscan_core::LiteralState::Known
+                                    } else {
+                                        mehscan_core::LiteralState::Unknown
+                                    },
+                                    value: known.then(|| {
+                                        mehscan_core::LiteralValue::Array(
+                                            values.into_iter().filter_map(|f| f.value).collect(),
+                                        )
+                                    }),
+                                    constant_fragments: Vec::new(),
+                                    references: Vec::new(),
+                                },
+                            );
+                            continue;
+                        }
+                    }
                     let captured =
                         matched
                             .get_env()
@@ -478,7 +515,11 @@ pub(crate) fn scan_source(
                         if php_context.is_some()
                             && matches!(
                                 compiled_rule.rule.id.as_str(),
-                                "php-file-inclusion" | "php-html-output"
+                                "php-file-inclusion"
+                                    | "php-command-execution"
+                                    | "php-html-output"
+                                    | "php-filesystem-write"
+                                    | "php-filesystem-copy-write"
                             )
                         {
                             php_operand_nodes
@@ -551,6 +592,20 @@ pub(crate) fn scan_source(
                         },
                     );
                 }
+                let mut tags = compiled_rule.rule.tags.clone();
+                if compiled_rule.rule.id.ends_with("angular-html-trust-bypass")
+                    && matched.get_node().field("function").is_some_and(|callee| {
+                        callee
+                            .text()
+                            .trim_end()
+                            .ends_with(".bypassSecurityTrustUrl")
+                    })
+                    && matched.get_env().get_match("HTML").is_some_and(|content| {
+                        super::node_browser::constructed_link_operand(content)
+                    })
+                {
+                    tags.push("link-origin:constructed".into());
+                }
                 evidence.push(Evidence {
                     id: evidence_id(path, &compiled_rule.rule.id, range.start, range.end),
                     kind: compiled_rule.rule.kind,
@@ -559,7 +614,7 @@ pub(crate) fn scan_source(
                     enclosing_symbol: enclosing_symbol(matched.get_node()),
                     captures,
                     cwe_candidates: compiled_rule.rule.cwe.clone(),
-                    tags: compiled_rule.rule.tags.clone(),
+                    tags,
                     confidence: compiled_rule.rule.confidence,
                     provenance: Provenance {
                         resolution: Resolution::Ast,
@@ -612,6 +667,19 @@ pub(crate) fn scan_source(
                     continue;
                 }
                 if symbol_resolution.confidence == SymbolConfidence::Ambiguous {
+                    continue;
+                }
+                // Names-only collectors are not filesystem-content boundaries.
+                // Keep option-selected/recursive roots, which can feed export.
+                if compiled_rule.rule.id == "csharp-filesystem-read"
+                    && matches!(
+                        symbol.canonical.as_str(),
+                        "System.IO.Directory.GetFiles"
+                            | "System.IO.Directory.GetDirectories"
+                            | "System.IO.Directory.EnumerateFiles"
+                    )
+                    && call.arguments.len() < 3
+                {
                     continue;
                 }
                 let range = call.node.range();
@@ -712,15 +780,6 @@ pub(crate) fn scan_source(
         &mut evidence,
     );
     super::java_sinks::add_typed_process_sinks(
-        path,
-        &root,
-        language,
-        &comments,
-        &conditional,
-        &literals,
-        &mut evidence,
-    );
-    super::java_sinks::add_typed_outbound_sinks(
         path,
         &root,
         language,
@@ -1150,6 +1209,7 @@ pub(crate) fn scan_source(
         &comments,
         &conditional,
         &literals,
+        &symbol_environment,
         &mut evidence,
     );
     super::file_roles::add_file_role_observations(
@@ -1191,69 +1251,6 @@ pub(crate) fn scan_source(
     );
     // Prefer an existing specialized selector/predicate over its whole-filter
     // extension, and an exact extended SDK query over the old syntax fallback.
-    if matches!(
-        language,
-        Language::Javascript | Language::Typescript | Language::Tsx
-    ) {
-        let request_objects: Vec<_> = evidence
-            .iter()
-            .filter(|e| {
-                super::extended_database::is_rule(&e.rule_id)
-                    && e.cwe_candidates.iter().any(|c| c == "CWE-943")
-            })
-            .filter_map(|e| {
-                root.dfs().find(|n| {
-                    n.range().start == e.location.start.byte_offset
-                        && n.range().end == e.location.end.byte_offset
-                })
-            })
-            .flat_map(|sink| super::extended_database::request_objects(&root, &sink))
-            .collect();
-        for request in request_objects {
-            let prefix = match language {
-                Language::Javascript => "javascript",
-                Language::Typescript => "typescript",
-                _ => "tsx",
-            };
-            let rule_id = format!("{prefix}-extended-nosql-request-object-source");
-            let id = evidence_id(path, &rule_id, request.range().start, request.range().end);
-            if evidence.iter().any(|e| e.id == id) {
-                continue;
-            }
-            evidence.push(Evidence {
-                id,
-                kind: EvidenceKind::Source,
-                capability: Capability::HttpRequestData,
-                location: location(path, &request),
-                enclosing_symbol: enclosing_symbol(&request),
-                captures: BTreeMap::from([(
-                    "field".into(),
-                    Capture {
-                        text: request.text().into_owned(),
-                        location: location(path, &request),
-                    },
-                )]),
-                cwe_candidates: vec!["CWE-20".into()],
-                tags: vec!["request-object".into(), "nosql".into()],
-                confidence: Confidence::Medium,
-                provenance: Provenance {
-                    resolution: Resolution::Ast,
-                    engine: "ast-grep 0.45.1 + bounded-nosql-request-object".into(),
-                    rule_version: 1,
-                },
-                context: evidence_context(
-                    &request,
-                    &comments,
-                    &conditional,
-                    &literals,
-                    BTreeMap::new(),
-                ),
-                symbol_resolution: None,
-                rule_id,
-                related_evidence: vec![],
-            });
-        }
-    }
     let specialized: BTreeSet<_> = evidence
         .iter()
         .filter(|e| {
@@ -1381,6 +1378,7 @@ pub(crate) fn scan_source(
         path,
         &root,
         language,
+        vue_dom_refs,
         &comments,
         &conditional,
         &literals,
@@ -1427,16 +1425,6 @@ pub(crate) fn scan_source(
         path,
         &root,
         language,
-        &comments,
-        &conditional,
-        &literals,
-        &mut evidence,
-    );
-    super::rust_context::add_rust_safety_function_observations(
-        path,
-        &root,
-        language,
-        include_nonproduction,
         &comments,
         &conditional,
         &literals,
@@ -1687,6 +1675,85 @@ pub(crate) fn scan_source(
         super::php::add_operand_facts(path, &php_operand_nodes, context, &literals, &mut evidence);
     }
     super::node_operands::annotate(language, source, &root, &mut evidence);
+    super::filesystem_operands::annotate(language, &root, &literals, &mut evidence);
+    super::python_operands::annotate(language, &root, &mut evidence);
+    super::process_cleanup::annotate(language, source, &root, &literals, &mut evidence);
+    super::outbound_cleanup::annotate(language, &root, &literals, &mut evidence);
+    super::native_curl::annotate(language, &root, &mut evidence);
+    super::reactive_cleanup::annotate(language, &root, &mut evidence);
+    super::issuance_cleanup::annotate(language, &root, &symbol_environment, &mut evidence);
+    if language == Language::Kotlin {
+        super::kotlin::annotate_outbound(&root, &literals, &mut evidence);
+    }
+    super::native_query::annotate(language, &root, &literals, &mut evidence);
+    super::database_cleanup::annotate(language, &root, &mut evidence);
+    super::extended_database::attach_query_construction(&root, &mut evidence);
+    super::database_cleanup::close_equalities(language, &root, &mut evidence);
+    super::route_context_cleanup::annotate(language, &root, &mut evidence);
+    if matches!(
+        language,
+        Language::Javascript | Language::Typescript | Language::Tsx
+    ) {
+        let request_objects: Vec<_> = evidence
+            .iter()
+            .filter(|e| {
+                e.kind == EvidenceKind::Sink
+                    && super::extended_database::is_rule(&e.rule_id)
+                    && e.cwe_candidates.iter().any(|c| c == "CWE-943")
+            })
+            .filter_map(|e| {
+                root.dfs().find(|n| {
+                    n.range().start == e.location.start.byte_offset
+                        && n.range().end == e.location.end.byte_offset
+                })
+            })
+            .flat_map(|sink| super::extended_database::request_objects(&root, &sink))
+            .collect();
+        for request in request_objects {
+            let prefix = match language {
+                Language::Javascript => "javascript",
+                Language::Typescript => "typescript",
+                _ => "tsx",
+            };
+            let rule_id = format!("{prefix}-extended-nosql-request-object-source");
+            let id = evidence_id(path, &rule_id, request.range().start, request.range().end);
+            if evidence.iter().any(|e| e.id == id) {
+                continue;
+            }
+            evidence.push(Evidence {
+                id,
+                kind: EvidenceKind::Source,
+                capability: Capability::HttpRequestData,
+                location: location(path, &request),
+                enclosing_symbol: enclosing_symbol(&request),
+                captures: BTreeMap::from([(
+                    "field".into(),
+                    Capture {
+                        text: request.text().into_owned(),
+                        location: location(path, &request),
+                    },
+                )]),
+                cwe_candidates: vec!["CWE-20".into()],
+                tags: vec!["request-object".into(), "nosql".into()],
+                confidence: Confidence::Medium,
+                provenance: Provenance {
+                    resolution: Resolution::Ast,
+                    engine: "ast-grep 0.45.1 + bounded-nosql-request-object".into(),
+                    rule_version: 1,
+                },
+                context: evidence_context(
+                    &request,
+                    &comments,
+                    &conditional,
+                    &literals,
+                    BTreeMap::new(),
+                ),
+                symbol_resolution: None,
+                rule_id,
+                related_evidence: vec![],
+            });
+        }
+    }
     let summaries_microseconds = summaries_started.elapsed().as_micros();
     let paths_started = Instant::now();
     let mut security_paths = super::security_paths::build_security_paths(
@@ -1841,7 +1908,6 @@ pub(crate) fn scan_source(
     security_paths.append(&mut native_remaining_input_paths);
     security_paths.sort_by(|left, right| left.id.cmp(&right.id));
     let security_paths_microseconds = paths_started.elapsed().as_micros();
-    super::python_operands::annotate(language, &root, &mut evidence);
     super::go_operands::annotate(language, &root, &mut evidence);
     super::decision_origins::annotate(language, source, &root, &mut evidence);
     super::csharp_operands::annotate(language, &root, &mut evidence);

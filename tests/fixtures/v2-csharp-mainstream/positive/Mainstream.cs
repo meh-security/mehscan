@@ -45,13 +45,19 @@ public class MainstreamController : ControllerBase
     [HttpGet]
     public object Read([FromQuery] string path)
     {
-        return new FileStream(path, FileMode.Open);
+        return new FileStream(path, FileMode.Open, FileAccess.Read);
     }
 
     [HttpPost]
     public object Write([FromQuery] string path)
     {
         return new FileStream(path, FileMode.Create);
+    }
+
+    [HttpPost]
+    public object OpenOrCreate([FromQuery] string path)
+    {
+        return new FileStream(path, FileMode.OpenOrCreate);
     }
 
     [HttpPost]

@@ -314,6 +314,59 @@ pub(crate) fn scan_profiled(
                     });
                 }
             },
+            FileClass::Vue if !analyze_file => {
+                coverage.totals.ignored += 1;
+                coverage.files.push(FileCoverage {
+                    path: file.relative,
+                    language: None,
+                    status: FileStatus::Ignored,
+                    reason: Some("outside impact scan scope".into()),
+                });
+            }
+            FileClass::Vue => {
+                let source = match read_secret_text(&file.absolute) {
+                    Ok(source) => source,
+                    Err(reason) => {
+                        record_parse_failure(
+                            &mut coverage,
+                            &mut diagnostics,
+                            file.relative,
+                            Language::Javascript,
+                            reason,
+                        );
+                        continue;
+                    }
+                };
+                let sfc = super::vue::parse(&file.relative, &source);
+                if options.scan_secrets {
+                    let mut secret_scan = crate::secrets::scan_source(
+                        &file.relative,
+                        &source,
+                        &CommentRanges::default(),
+                        &secret_allowlist,
+                    );
+                    coverage.totals.secret_scanned += 1;
+                    coverage.totals.secret_suppressed += secret_scan.suppressed;
+                    evidence.append(&mut secret_scan.evidence);
+                }
+                coverage
+                    .languages
+                    .entry(sfc.language)
+                    .or_default()
+                    .discovered += 1;
+                prepared.push(PreparedFile {
+                    relative: file.relative,
+                    language: sfc.language,
+                    source: sfc.script,
+                    build_symbols: BTreeMap::new(),
+                    vue: Some(VueFile {
+                        original: source,
+                        evidence: sfc.evidence,
+                        gaps: sfc.gaps,
+                        dom_refs: sfc.dom_refs,
+                    }),
+                });
+            }
             FileClass::EmbeddedJavascriptTemplate => {
                 let source = match fs::read_to_string(&file.absolute) {
                     Ok(source) => source,
@@ -352,6 +405,7 @@ pub(crate) fn scan_profiled(
                     language: Language::Javascript,
                     source,
                     build_symbols: BTreeMap::new(),
+                    vue: None,
                 });
             }
             FileClass::Razor if !analyze_file => {
@@ -520,6 +574,7 @@ pub(crate) fn scan_profiled(
                     language,
                     source,
                     build_symbols: file.build_symbols,
+                    vue: None,
                 });
             }
         }
@@ -687,7 +742,6 @@ pub(crate) fn scan_profiled(
         &php_project_context,
         &dotnet_project_context,
         options.scan_secrets,
-        options.include_tests,
         worker_count,
     )?;
     for (file, outcome) in analysis_prepared.into_iter().zip(outcomes) {
@@ -754,7 +808,10 @@ pub(crate) fn scan_profiled(
                     path: file.relative,
                     language: Some(file.language),
                     status: FileStatus::Scanned,
-                    reason: None,
+                    reason: file.vue.as_ref().map(|_| {
+                        "Vue SFC script and raw-HTML directive scan; no full Vue compiler"
+                            .to_string()
+                    }),
                 });
                 evidence.append(&mut file_evidence);
                 security_paths.append(&mut file_security_paths);
@@ -847,7 +904,6 @@ fn analyze_prepared_files(
     php_project_context: &super::php::PhpProjectContext,
     dotnet_project_context: &DotnetProjectContext,
     scan_secrets: bool,
-    include_nonproduction: bool,
     worker_count: usize,
 ) -> Result<Vec<ParseOutcome>, EngineError> {
     if prepared.is_empty() {
@@ -877,7 +933,6 @@ fn analyze_prepared_files(
                     php_project_context,
                     dotnet_project_context,
                     scan_secrets,
-                    include_nonproduction,
                 )
             })
             .collect());
@@ -918,7 +973,6 @@ fn analyze_prepared_files(
                                 php_project_context,
                                 dotnet_project_context,
                                 scan_secrets,
-                                include_nonproduction,
                             ),
                         ));
                     }
@@ -958,9 +1012,10 @@ fn scan_prepared_file(
     php_project_context: &super::php::PhpProjectContext,
     dotnet_project_context: &DotnetProjectContext,
     scan_secrets: bool,
-    include_nonproduction: bool,
 ) -> ParseOutcome {
-    scan_source(
+    let trace = std::env::var_os("MEHSCAN_TRACE_PHASES").is_some();
+    let started = trace.then(Instant::now);
+    let mut outcome = scan_source(
         &file.relative,
         &file.source,
         parser_language(file.language),
@@ -971,10 +1026,10 @@ fn scan_prepared_file(
         ScanDependencies {
             project_symbols,
             secret_allowlist,
-            scan_secrets,
-            include_nonproduction,
+            scan_secrets: scan_secrets && file.vue.is_none(),
             relations,
             node_context,
+            vue_dom_refs: file.vue.as_ref().map(|vue| &vue.dom_refs),
             object_input_context,
             csharp_model_context,
             csharp_handoff_context,
@@ -989,7 +1044,105 @@ fn scan_prepared_file(
             dotnet_project_context,
             build_symbols: &file.build_symbols,
         },
-    )
+    );
+    if let Some(vue) = &file.vue {
+        let (evidence, paths) = match &mut outcome {
+            ParseOutcome::Parsed {
+                evidence,
+                security_paths,
+                ..
+            }
+            | ParseOutcome::Recovered {
+                evidence,
+                security_paths,
+                ..
+            } => (evidence, Some(security_paths)),
+            ParseOutcome::Failed { evidence, .. } => (evidence, None),
+        };
+        for item in evidence.iter_mut() {
+            if item.location.path == file.relative {
+                super::vue::restore_location(&mut item.location, &vue.original);
+            }
+            for capture in item.captures.values_mut() {
+                if capture.location.path == file.relative {
+                    super::vue::restore_location(&mut capture.location, &vue.original);
+                }
+            }
+        }
+        if let Some(paths) = paths {
+            for path in paths.iter_mut() {
+                for step in &mut path.steps {
+                    if step.location.path == file.relative {
+                        super::vue::restore_location(&mut step.location, &vue.original);
+                    }
+                }
+            }
+        }
+        evidence.extend(vue.evidence.iter().cloned());
+        if !vue.gaps.is_empty() {
+            let gap = vue.gaps.join("; ");
+            outcome = match outcome {
+                ParseOutcome::Parsed {
+                    evidence,
+                    security_paths,
+                    secret_suppressed,
+                    timing,
+                } => ParseOutcome::Recovered {
+                    reason: gap,
+                    evidence,
+                    security_paths,
+                    secret_suppressed,
+                    timing,
+                },
+                ParseOutcome::Recovered {
+                    reason,
+                    evidence,
+                    security_paths,
+                    secret_suppressed,
+                    timing,
+                } => ParseOutcome::Recovered {
+                    reason: format!("{reason}; {gap}"),
+                    evidence,
+                    security_paths,
+                    secret_suppressed,
+                    timing,
+                },
+                ParseOutcome::Failed {
+                    reason,
+                    evidence,
+                    secret_suppressed,
+                    timing,
+                } => ParseOutcome::Failed {
+                    reason: format!("{reason}; {gap}"),
+                    evidence,
+                    secret_suppressed,
+                    timing,
+                },
+            };
+        }
+    }
+    if let Some(started) = started {
+        let timing = match &outcome {
+            ParseOutcome::Parsed { timing, .. }
+            | ParseOutcome::Failed { timing, .. }
+            | ParseOutcome::Recovered { timing, .. } => timing,
+        };
+        eprintln!(
+            "mehscan_file {}",
+            serde_json::json!({
+                "path": file.relative,
+                "language": file.language,
+                "source_bytes": file.source.len(),
+                "total_microseconds": started.elapsed().as_micros(),
+                "parse_context_microseconds": timing.parse_context_microseconds,
+                "declarative_rules_microseconds": timing.declarative_rules_microseconds,
+                "symbol_rules_microseconds": timing.symbol_rules_microseconds,
+                "summaries_microseconds": timing.summaries_microseconds,
+                "security_paths_microseconds": timing.security_paths_microseconds,
+            })
+        );
+    }
+    outcome
 }
 
 fn resolve_worker_count(requested: Option<usize>, files: usize) -> Result<usize, EngineError> {
@@ -1026,6 +1179,14 @@ struct PreparedFile {
     language: Language,
     source: String,
     build_symbols: BTreeMap<String, bool>,
+    vue: Option<VueFile>,
+}
+
+struct VueFile {
+    original: String,
+    evidence: Vec<Evidence>,
+    gaps: Vec<String>,
+    dom_refs: BTreeMap<String, mehscan_core::Capture>,
 }
 
 pub(crate) fn read_secret_text(path: &Path) -> Result<String, String> {
@@ -1183,8 +1344,6 @@ fn capability_name(capability: Capability) -> &'static str {
         Capability::OwnershipFlagRegistration => "ownership_flag_registration",
         Capability::OwnershipGatedRelease => "ownership_gated_release",
         Capability::FormatStringOutput => "format_string_output",
-        Capability::MemorySafetyBoundary => "memory_safety_boundary",
-        Capability::NativeInteropBoundary => "native_interop_boundary",
         Capability::TlsConfiguration => "tls_configuration",
         Capability::FileUpload => "file_upload",
         Capability::UploadedFileContent => "uploaded_file_content",

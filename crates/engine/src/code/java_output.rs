@@ -627,7 +627,11 @@ fn add_template_boundaries<'tree>(
         push(
             path,
             &invocation,
-            EvidenceKind::SensitiveOperation,
+            if operation == "evaluate" {
+                EvidenceKind::SensitiveOperation
+            } else {
+                EvidenceKind::Resource
+            },
             Capability::HtmlOutput,
             rule,
             &["CWE-79"],

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::Path;
@@ -38,6 +38,9 @@ use mehscan_core::{
     SecurityPathStepKind, Severity, SeveritySource, SourceSlice, StructuralMatch, TextReference,
 };
 
+mod angular;
+mod frontend;
+mod practical_admission;
 mod review_admission;
 
 use crate::repository::{
@@ -106,6 +109,10 @@ struct ObservationGroup {
 pub struct ReviewOperandSummary {
     pub kind: mehscan_core::OperandFactKind,
     pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<Location>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
 }
 
 fn operand_summaries(evidence: &Evidence) -> Vec<ReviewOperandSummary> {
@@ -113,9 +120,24 @@ fn operand_summaries(evidence: &Evidence) -> Vec<ReviewOperandSummary> {
         .context
         .operand_facts
         .iter()
+        .filter(|fact| {
+            !matches!(
+                fact.kind,
+                mehscan_core::OperandFactKind::ImmutableFilesystemOperand
+                    | mehscan_core::OperandFactKind::SharedOutboundDestination
+                    | mehscan_core::OperandFactKind::SharedFilesystemProducer
+            ) || !fact
+                .remaining_checks
+                .iter()
+                .any(|c| c == "partial_semantic_context")
+        })
         .map(|fact| ReviewOperandSummary {
             kind: fact.kind.clone(),
             value: fact.value.clone(),
+            location: (fact.kind == mehscan_core::OperandFactKind::SemanticDefinition)
+                .then(|| fact.location.clone()),
+            role: (fact.kind == mehscan_core::OperandFactKind::SemanticDefinition)
+                .then(|| fact.role.clone()),
         })
         .collect()
 }
@@ -163,195 +185,180 @@ pub struct ReviewInventoryEntry {
     pub value_hint: Option<ValueReviewHint>,
 }
 
-fn fixed_include_value_hint(
-    anchor: &Evidence,
-    sources: &RepositorySources,
-    write_paths: &BTreeSet<String>,
-) -> Option<ValueReviewHint> {
-    if anchor.rule_id != "php-file-inclusion" {
-        return None;
+fn complete_native_path_fact(anchor: &Evidence, kind: mehscan_core::OperandFactKind) -> bool {
+    if anchor.captures.contains_key("filesystem_source") {
+        // A compiler's destination fact remains useful context, but cannot
+        // close the independent source affected by a move.
+        return false;
     }
-    let target = &anchor
-        .context
-        .operand_facts
-        .iter()
-        .find(|fact| {
-            matches!(
-                fact.kind,
-                mehscan_core::OperandFactKind::FixedCodeRelativePath
-                    | mehscan_core::OperandFactKind::RepositoryCodeTarget
-            )
-        })?
-        .value;
-    if sources.files.get(target)?.language != Some(Language::Php) {
-        return None;
-    }
-    // Directory roles are only conservative vetoes, never proofs of safety.
-    if target.split('/').any(|part| {
-        matches!(
-            part.to_ascii_lowercase().as_str(),
-            "upload"
-                | "uploads"
-                | "cache"
-                | "caches"
-                | "tmp"
-                | "temp"
-                | "generated"
-                | "storage"
-                | "data"
-                | "runtime"
-        )
-    }) {
-        return None;
-    }
-    let basename = target.rsplit('/').next()?.to_ascii_lowercase();
-    if write_paths.iter().any(|path| path.contains(&basename)) {
-        return None;
-    }
-    Some(ValueReviewHint {
-        reason: if anchor.context.operand_facts.iter().any(|fact| fact.kind == mehscan_core::OperandFactKind::RepositoryCodeTarget) { "source_default_repository_include" } else { "fixed_repository_include" }.into(),
-        target: target.clone(),
-        assumption:
-            "repository_code_is_trusted; source_defaults_match_runtime_constants; unknown writers and deployment changes are not ruled out"
-                .into(),
-        depends_on: None,
+    let Some(path) = anchor.captures.get("path") else {
+        return false;
+    };
+    matches!(
+        anchor.location.path.rsplit('.').next(),
+        Some("cs" | "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts")
+    ) && matches!(
+        anchor.capability,
+        Capability::FilesystemRead | Capability::FilesystemWrite
+    ) && anchor.cwe_candidates == ["CWE-22"]
+        && anchor.context.operand_facts.iter().any(|fact| {
+            fact.kind == kind
+                && fact.role == "path"
+                && fact.location == path.location
+                && fact.value == path.text
+                && !fact
+                    .remaining_checks
+                    .iter()
+                    .any(|check| check == "partial_semantic_context")
+        })
+}
+
+fn closed_native_path_fact(anchor: &Evidence) -> Option<&mehscan_core::OperandFact> {
+    [
+        mehscan_core::OperandFactKind::FixedFilesystemPath,
+        mehscan_core::OperandFactKind::TemporaryFilesystemPath,
+    ]
+    .into_iter()
+    .find(|kind| complete_native_path_fact(anchor, kind.clone()))
+    .and_then(|kind| {
+        let path = &anchor.captures["path"];
+        anchor.context.operand_facts.iter().find(|fact| {
+            fact.kind == kind
+                && fact.role == "path"
+                && fact.location == path.location
+                && fact.value == path.text
+                && !fact
+                    .remaining_checks
+                    .iter()
+                    .any(|c| c == "partial_semantic_context")
+        })
     })
 }
 
-fn share_php_output_questions(entries: &mut [ReviewInventoryEntry]) {
-    use mehscan_core::OperandFactKind;
-    let mut representatives: BTreeMap<String, String> = BTreeMap::new();
-    // Source-bearing and unsupported cases remain individual work. A shared
-    // question is conditional on its representative, never transferred safety.
-    for entry in entries
-        .iter_mut()
-        .filter(|entry| entry.rule_id == "php-html-output" && entry.evidence_strength == "sink")
-    {
-        let Some(encoder) = entry
+fn share_csharp_filesystem_questions(entries: &mut [ReviewInventoryEntry]) {
+    let mut representatives = BTreeMap::<String, String>::new();
+    for entry in entries.iter_mut().filter(|entry| {
+        entry.path.ends_with(".cs")
+            && entry.evidence_strength == "sink"
+            && entry.cwe_candidates == ["CWE-22"]
+            && matches!(
+                entry.capability,
+                Capability::FilesystemRead | Capability::FilesystemWrite
+            )
+    }) {
+        let Some(identity) = entry
             .operand_facts
             .iter()
-            .find(|f| f.kind == OperandFactKind::EncodingCall)
+            .find(|fact| fact.kind == mehscan_core::OperandFactKind::SharedFilesystemProducer)
+            .or_else(|| {
+                entry.operand_facts.iter().find(|fact| {
+                    fact.kind == mehscan_core::OperandFactKind::ImmutableFilesystemOperand
+                })
+            })
         else {
             continue;
         };
-        let Some(context) = entry
-            .operand_facts
-            .iter()
-            .find(|f| f.kind == OperandFactKind::OutputContext)
-        else {
-            continue;
-        };
-        // URL interpretation needs more than HTML encoding. Keep these sites
-        // individually selected until a URL control contract is established.
-        if context.value != "html_text" && !context.value.starts_with("html_attribute:") {
-            continue;
-        }
-        if let Some(attribute) = context.value.strip_prefix("html_attribute:") {
-            let name = attribute.split(':').next().unwrap_or_default();
-            if !matches!(
-                name,
-                "title" | "alt" | "class" | "id" | "value" | "name" | "placeholder"
-            ) && !name.starts_with("aria-")
-                && !name.starts_with("data-")
-            {
-                continue;
-            }
-        }
-        let key = format!("{}:{}", encoder.value, context.value);
+        // Never share different capabilities or callables. A dependency saves repeated
+        // root research; it cannot transfer the representative's safety verdict.
+        let key = format!("{}:{:?}:{}", entry.path, entry.capability, identity.value);
         if let Some(representative) = representatives.get(&key) {
             entry.value_hint = Some(ValueReviewHint {
-                reason: "shared_php_encoding_question".into(),
+                reason: if identity.kind == mehscan_core::OperandFactKind::SharedFilesystemProducer { "shared_csharp_filesystem_producer" } else { "shared_csharp_filesystem_selection" }.into(),
                 target: key,
-                assumption: "conditional_on_shared_callable_review_and_per_site_applicability; escaping_and_runtime_markup_are_not_proven".into(),
+                assumption: if identity.kind == mehscan_core::OperandFactKind::SharedFilesystemProducer {
+                    "Same compiler-bound private path producer and fixed options, unchanged selectors, and filesystem capability. Review helper containment once; check each caller input, guards and effects. No safe verdict is transferred."
+                } else { "Same compiler-bound immutable string slot and filesystem capability in one callable. Review shared root authority once; check each operation's guards and effects separately. This is not a safe verdict." }.into(),
                 depends_on: Some(representative.clone()),
             });
         } else {
-            entry.value_hint = None;
             representatives.insert(key, entry.review_id.clone());
         }
     }
 }
 
-fn ordinary_php_sink_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
-    if !matches!(
-        anchor.rule_id.as_str(),
-        "php-html-output" | "php-file-inclusion"
-    ) || anchor.tags.iter().any(|tag| {
-        matches!(
-            tag.as_str(),
-            "review-origin:decision-critical" | "value-scope:unresolved-code-root"
-        )
+fn share_csharp_destination_questions(entries: &mut [ReviewInventoryEntry]) {
+    let mut representatives = BTreeMap::<String, String>::new();
+    for entry in entries.iter_mut().filter(|entry| {
+        entry.path.ends_with(".cs")
+            && entry.evidence_strength == "sink"
+            && entry.rule_id == "csharp-http-request-dispatch"
+            && entry.cwe_candidates == ["CWE-918"]
+            && entry.capability == Capability::OutboundNetworkRequest
     }) {
-        return None;
-    }
-    let role = if anchor.rule_id == "php-file-inclusion" {
-        "path"
-    } else {
-        "content"
-    };
-    let operand = &anchor.captures.get(role)?.text;
-    if role == "path" {
-        // Variable-selected loaders remain consequential. Missing/writable
-        // resolved targets were vetoed by the stronger include check above.
-        if !anchor
-            .tags
+        let Some(identity) = entry
+            .operand_facts
             .iter()
-            .any(|tag| tag == "value-scope:constant-include-expression")
-            || operand.contains('$')
-            || operand.contains("..")
-            || operand.contains(':')
-            || operand.contains('\\')
-            || anchor.context.operand_facts.iter().any(|fact| {
-                matches!(
-                    fact.kind,
-                    mehscan_core::OperandFactKind::FixedCodeRelativePath
-                        | mehscan_core::OperandFactKind::RepositoryCodeTarget
-                )
-            })
-        {
-            return None;
-        }
-    } else {
-        // Keep explicit markup construction and observed dangerous contexts.
-        // Bare echo/print occurrences with unknown producers are conditional
-        // inventory; this is a scope choice, never proof of trusted input.
-        if operand.contains('<')
-            || anchor.context.operand_facts.iter().any(|fact| {
-                fact.kind == mehscan_core::OperandFactKind::OutputContext
-                    && fact.value != "html_text"
-                    && !fact.value.starts_with("html_attribute:")
-            })
-        {
-            return None;
+            .find(|f| f.kind == mehscan_core::OperandFactKind::SharedOutboundDestination)
+        else {
+            continue;
+        };
+        let key = format!("{}:{}", entry.path, identity.value);
+        if let Some(representative) = representatives.get(&key) {
+            entry.value_hint = Some(ValueReviewHint {
+                reason: "shared_csharp_outbound_destination".into(), target: key,
+                assumption: "Same compiler-bound destination field, URI construction shape and private hook set. Review caller authority and hooks once; check endpoint-specific exceptions and request effects. No safe verdict is transferred.".into(),
+                depends_on: Some(representative.clone()),
+            });
+        } else {
+            representatives.insert(key, entry.review_id.clone());
         }
     }
-    Some(ValueReviewHint {
-        reason: "ordinary_php_sink_inventory".into(),
-        target: anchor.location.path.clone(),
-        assumption: "conditional_surface_inventory; unknown_input_is_not_trusted; inspect_surface_and_producers_then_reopen_consequential_sites".into(),
-        depends_on: None,
+}
+
+fn ordinary_browser_request(anchor: &Evidence) -> bool {
+    if anchor.capability != Capability::OutboundNetworkRequest
+        || anchor.cwe_candidates != ["CWE-918"]
+    {
+        return false;
+    }
+    let Some(operand) = anchor.captures.get("endpoint") else {
+        return false;
+    };
+    anchor.context.operand_facts.iter().any(|f| {
+        f.kind == mehscan_core::OperandFactKind::BrowserRequestContext
+            && f.location == operand.location
+            && f.value == operand.text
+            && [
+                "explicit_browser_runtime",
+                "dom_fetch_binding",
+                "ordinary_get_head",
+            ]
+            .iter()
+            .all(|marker| f.remaining_checks.iter().any(|c| c == marker))
     })
 }
 
-fn local_bound_query_hint(anchor: &Evidence) -> Option<ValueReviewHint> {
-    if !anchor
-        .tags
-        .iter()
-        .any(|tag| tag == "value-scope:local-pg-bound-query")
-        || anchor.cwe_candidates.iter().any(|cwe| cwe != "CWE-89")
+fn ordinary_browser_link(anchor: &Evidence) -> bool {
+    if anchor.capability != Capability::HtmlOutput
+        || anchor.cwe_candidates != ["CWE-79"]
+        || !anchor.rule_id.ends_with("react-url-attribute-output")
+        || !anchor
+            .tags
+            .iter()
+            .any(|tag| tag == "url-consumer:link-navigation")
+        || !anchor
+            .tags
+            .iter()
+            .any(|tag| tag == "link-origin:unchanged-parameter")
+        || anchor
+            .context
+            .literals
+            .get("content")
+            .is_none_or(|literal| literal.state != LiteralState::Unknown)
+        || anchor.context.operand_facts.iter().any(|fact| {
+            matches!(
+                fact.kind,
+                mehscan_core::OperandFactKind::LocalCallArgument
+                    | mehscan_core::OperandFactKind::LocalOperandOrigin
+            )
+        })
     {
-        return None;
+        return false;
     }
-    Some(ValueReviewHint {
-        reason: "local_bound_query_inventory".into(),
-        target: format!("{}:{}", anchor.location.path, anchor.location.start.line),
-        assumption: "exact_local_const_object_and_pg_identity; values_are_separate_data; matched_driver_method_is_not_replaced; data_access_policy_is_not_proven".into(),
-        depends_on: None,
-    })
+    true
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ReviewInventory {
     pub schema_version: String,
     pub source_fingerprint: String,
@@ -360,28 +367,44 @@ pub struct ReviewInventory {
     #[serde(default)]
     pub admission_audit: ReviewAdmissionAudit,
     pub scan: mehscan_core::ScanResult,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_inputs: Option<crate::csharp_semantic::InputBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typescript_inputs: Option<crate::typescript_semantic::InputBinding>,
 }
 
 impl ReviewInventory {
-    /// Bind review reuse to source facts and admission policy, not ID count.
+    /// Bind review reuse to facts, admission policy and native inputs, not ID count.
     pub fn input_fingerprint(&self) -> Result<String, EngineError> {
         let bytes = serde_json::to_vec(self).map_err(|e| EngineError(e.to_string()))?;
-        Ok(review_content_fingerprint(&bytes))
+        Ok(crate::csharp_semantic::digest(&bytes))
     }
 }
+
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "22";
 
 pub fn validate_review_inventory(
     root: &Path,
     inventory: &ReviewInventory,
 ) -> Result<(), EngineError> {
-    validate_review_inventory_sources(inventory, &RepositorySources::load(root)?)
+    validate_review_inventory_sources(root, inventory, &RepositorySources::load(root)?)
 }
 
-fn validate_review_inventory_sources(
+/// Validate the raw source snapshot for fresh compiler collection only.
+/// Collectors consume source captures, not cached compiler facts or verdicts.
+/// Bundle/history reuse still requires full source/native validation above.
+pub fn validate_review_inventory_for_collection(
+    root: &Path,
+    inventory: &ReviewInventory,
+) -> Result<(), EngineError> {
+    validate_inventory_source_binding(inventory, &RepositorySources::load(root)?)
+}
+
+fn validate_inventory_source_binding(
     inventory: &ReviewInventory,
     sources: &RepositorySources,
 ) -> Result<(), EngineError> {
-    if inventory.schema_version != "2" {
+    if inventory.schema_version != REVIEW_INVENTORY_SCHEMA_VERSION {
         return Err(EngineError(
             "unsupported review inventory version; regenerate it".into(),
         ));
@@ -394,8 +417,27 @@ fn validate_review_inventory_sources(
     Ok(())
 }
 
+fn validate_review_inventory_sources(
+    root: &Path,
+    inventory: &ReviewInventory,
+    sources: &RepositorySources,
+) -> Result<(), EngineError> {
+    if inventory.schema_version != REVIEW_INVENTORY_SCHEMA_VERSION {
+        return Err(EngineError(
+            "unsupported review inventory version; regenerate it".into(),
+        ));
+    }
+    if let Some(binding) = &inventory.semantic_inputs {
+        binding.validate(root)?;
+    }
+    if let Some(binding) = &inventory.typescript_inputs {
+        binding.validate(root)?;
+    }
+    validate_inventory_source_binding(inventory, sources)
+}
+
 /// Reconstruct admission evidence once for an entire history, using the same
-/// source binding as the inventory. Admission markers are derived
+/// source and semantic binding as the inventory. Admission markers are derived
 /// facts and are intentionally absent from the raw scan evidence.
 pub struct ReviewHistoryValidator<'a> {
     inventory: &'a ReviewInventory,
@@ -405,7 +447,7 @@ pub struct ReviewHistoryValidator<'a> {
 impl<'a> ReviewHistoryValidator<'a> {
     pub fn new(root: &Path, inventory: &'a ReviewInventory) -> Result<Self, EngineError> {
         let sources = RepositorySources::load(root)?;
-        validate_review_inventory_sources(inventory, &sources)?;
+        validate_review_inventory_sources(root, inventory, &sources)?;
         let admission_evidence =
             review_admission::marker_groups(&sources, &inventory.scan.evidence)
                 .into_iter()
@@ -445,7 +487,7 @@ fn validate_history_bundle(
                 .any(|r| !candidates.candidates.contains(&r.candidate))
             {
                 return Err(EngineError(
-                    "history chunk has stale source candidate; re-review it".into(),
+                    "history chunk has stale source/semantic candidate; re-review it".into(),
                 ));
             }
             Vec::new()
@@ -463,7 +505,7 @@ fn validate_history_bundle(
             && admission_evidence.get(&fact.id) != Some(fact)
         {
             return Err(EngineError(format!(
-                "history chunk has stale source evidence {:?}; re-review it",
+                "history chunk has stale source/semantic evidence {:?}; re-review it",
                 fact.id
             )));
         }
@@ -472,8 +514,7 @@ fn validate_history_bundle(
 }
 
 pub fn review_content_fingerprint(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(bytes))
+    crate::csharp_semantic::digest(bytes)
 }
 
 pub fn review_repository_fingerprint(root: &Path) -> Result<String, EngineError> {
@@ -484,23 +525,91 @@ pub fn build_review_inventory(
     root: &Path,
     include_review_material: bool,
 ) -> Result<ReviewInventory, EngineError> {
-    build_review_inventory_profiled(root, include_review_material, None)
+    build_review_inventory_with_semantics(root, include_review_material, None)
+}
+
+pub fn build_review_inventory_with_semantics(
+    root: &Path,
+    include_review_material: bool,
+    semantics: Option<(&Path, &Path)>,
+) -> Result<ReviewInventory, EngineError> {
+    build_review_inventory_with_backend(root, include_review_material, semantics, None, None)
 }
 
 #[derive(Default, Serialize)]
 pub struct ReviewInventoryProfile {
     pub scan: crate::ScanProfile,
+    pub native_milliseconds: u128,
     pub inventory_milliseconds: u128,
 }
 
-pub fn build_review_inventory_profiled(
+/// Scan once, optionally collect native facts for that exact scan, then admit IDs.
+pub fn build_review_inventory_with_backend(
     root: &Path,
     include_review_material: bool,
+    semantics: Option<(&Path, &Path)>,
+    native_backend: Option<(&Path, &Path)>,
+    profile: Option<&mut ReviewInventoryProfile>,
+) -> Result<ReviewInventory, EngineError> {
+    build_review_inventory_with_native_backends(
+        root,
+        include_review_material,
+        semantics,
+        native_backend,
+        None,
+        profile,
+    )
+}
+
+pub fn build_review_inventory_with_native_backends(
+    root: &Path,
+    include_review_material: bool,
+    semantics: Option<(&Path, &Path)>,
+    native_backend: Option<(&Path, &Path)>,
+    typescript: Option<crate::typescript_semantic::Input<'_>>,
     mut profile: Option<&mut ReviewInventoryProfile>,
 ) -> Result<ReviewInventory, EngineError> {
-    let (scan, scan_profile) = crate::scan_path_profiled_with_options(root, Default::default())?;
+    if semantics.is_some() && native_backend.is_some() {
+        return Err(EngineError(
+            "supply a Roslyn snapshot or backend, not both".into(),
+        ));
+    }
+    let (mut scan, scan_profile) =
+        crate::scan_path_profiled_with_options(root, Default::default())?;
     if let Some(profile) = profile.as_deref_mut() {
         profile.scan = scan_profile;
+    }
+    let native_started = std::time::Instant::now();
+    let mut semantic_inputs = None;
+    if let Some((facts, context)) = semantics {
+        let snapshot = crate::csharp_semantic::load(facts)?;
+        crate::csharp_semantic::enrich(root, context, &snapshot, &mut scan)?;
+        semantic_inputs = Some(crate::csharp_semantic::InputBinding::capture(
+            context, &snapshot,
+        )?);
+    }
+    if let Some((context, backend)) = native_backend {
+        let snapshot = crate::csharp_semantic::collect(root, context, backend, &scan)?;
+        crate::csharp_semantic::enrich(root, context, &snapshot, &mut scan)?;
+        semantic_inputs = Some(crate::csharp_semantic::InputBinding::capture(
+            context, &snapshot,
+        )?);
+    }
+    let typescript_inputs = if let Some(input) = typescript {
+        use crate::typescript_semantic as ts;
+        let (context, snapshot) = match input {
+            ts::Input::Snapshot(facts, context) => (context, ts::load(facts)?),
+            ts::Input::Backend(context, backend) => {
+                (context, ts::collect(root, context, backend, &scan)?)
+            }
+        };
+        ts::enrich(root, context, &snapshot, &mut scan)?;
+        Some(ts::InputBinding::capture(context, &snapshot)?)
+    } else {
+        None
+    };
+    if let Some(profile) = profile.as_deref_mut() {
+        profile.native_milliseconds = native_started.elapsed().as_millis();
     }
     let inventory_started = std::time::Instant::now();
     let sources = RepositorySources::load(root)?;
@@ -522,12 +631,14 @@ pub fn build_review_inventory_profiled(
         profile.inventory_milliseconds = inventory_started.elapsed().as_millis();
     }
     Ok(ReviewInventory {
-        schema_version: "2".to_string(),
+        schema_version: REVIEW_INVENTORY_SCHEMA_VERSION.to_string(),
         source_fingerprint,
         include_review_material,
         entries,
         admission_audit: job.review_coverage.admission_audit,
         scan,
+        semantic_inputs,
+        typescript_inputs,
     })
 }
 
@@ -569,7 +680,7 @@ fn build_selected_review_jobs_internal(
     }
     let validation_started = std::time::Instant::now();
     let sources = RepositorySources::load(root)?;
-    validate_review_inventory_sources(inventory, &sources)?;
+    validate_review_inventory_sources(root, inventory, &sources)?;
     if let Some(profile) = profile.as_deref_mut() {
         profile.inventory_validation_milliseconds = validation_started.elapsed().as_millis();
     }
@@ -585,7 +696,7 @@ fn build_selected_review_jobs_internal(
             )));
         }
     }
-    let job = build_path_review_jobs_internal(
+    let mut job = build_path_review_jobs_internal(
         root,
         context_lines,
         None,
@@ -597,6 +708,22 @@ fn build_selected_review_jobs_internal(
         None,
         Some(sources),
     )?;
+    if let Some(binding) = &inventory.semantic_inputs {
+        let identity = serde_json::to_vec(&(&job.fingerprint, binding))
+            .map_err(|e| EngineError(e.to_string()))?;
+        job.fingerprint = format!(
+            "path-reviewpack-{}",
+            crate::csharp_semantic::digest(&identity)
+        );
+    }
+    if let Some(binding) = &inventory.typescript_inputs {
+        let identity = serde_json::to_vec(&(&job.fingerprint, binding))
+            .map_err(|e| EngineError(e.to_string()))?;
+        job.fingerprint = format!(
+            "path-reviewpack-{}",
+            crate::csharp_semantic::digest(&identity)
+        );
+    }
     Ok(job)
 }
 
@@ -610,6 +737,7 @@ fn review_source_fingerprint(sources: &RepositorySources) -> String {
 }
 
 struct ReviewContextIndex {
+    angular: OnceCell<angular::AngularContext>,
     definitions: BTreeMap<String, Vec<OutlineSymbol>>,
     registrations: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
     usages: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
@@ -1153,10 +1281,11 @@ fn build_path_review_jobs_internal(
     let started = std::time::Instant::now();
     let context_lines =
         bounded_context_lines(context_lines.or(Some(DEFAULT_REVIEW_CONTEXT_LINES)))?;
-    let scan = match supplied_scan {
+    let mut scan = match supplied_scan {
         Some(scan) => scan,
         None => scan_path(root)?,
     };
+    practical_admission::carry_dispatch_contracts(&mut scan.evidence);
     if let Some(profile) = profile.as_deref_mut() {
         profile.scan_milliseconds = started.elapsed().as_millis();
         eprintln!(
@@ -1198,13 +1327,98 @@ fn build_path_review_jobs_internal(
         .collect::<BTreeMap<_, _>>();
     let triage_contract = path_review_triage_contract();
     let all_candidates = report.candidates;
+    let used_ids = candidate_evidence_ids(&all_candidates, &scan.evidence, &sources);
+    let (mut observation_groups, mut observation_exclusions) =
+        observation_groups(&scan.evidence, &used_ids, &all_candidates, &sources);
+    let connected_sink_ids = all_candidates
+        .iter()
+        .map(|candidate| candidate.sink.id.as_str())
+        .chain(
+            observation_groups
+                .iter()
+                .filter(|group| group.priority == 0)
+                .flat_map(|group| group.anchor_evidence_ids.iter().map(String::as_str)),
+        )
+        .collect::<BTreeSet<_>>();
+    // An ordinary browser occurrence is not a mandatory investigation merely
+    // because its caller/URL is unknown. Preserve actual paths, input
+    // co-occurrences and consequential options; exclude only standalone rows.
+    let ordinary_browser_ids = observation_groups
+        .iter()
+        .filter(|group| group.priority == 2 && group.anchor_evidence_ids.len() == 1)
+        .filter_map(|group| {
+            let id = &group.anchor_evidence_ids[0];
+            let anchor = evidence_by_id.get(id.as_str())?;
+            (ordinary_browser_link(anchor) || ordinary_browser_request(anchor)).then(|| id.clone())
+        })
+        .collect::<BTreeSet<_>>();
+    let written_code_targets = scan
+        .evidence
+        .iter()
+        .filter(|item| {
+            item.location.path.ends_with(".php")
+                && item.capability == Capability::FilesystemWrite
+                && (item.captures.contains_key("content") || item.captures.contains_key("source"))
+        })
+        .flat_map(|item| &item.context.operand_facts)
+        .filter(|fact| {
+            matches!(
+                fact.kind,
+                mehscan_core::OperandFactKind::FixedCodeRelativePath
+                    | mehscan_core::OperandFactKind::RepositoryCodeTarget
+            )
+        })
+        .map(|fact| {
+            if cfg!(windows) {
+                fact.value.to_ascii_lowercase()
+            } else {
+                fact.value.clone()
+            }
+        })
+        .collect::<BTreeSet<_>>();
+    let restricted_html_controls = scan
+        .evidence
+        .iter()
+        .filter(|item| {
+            item.tags
+                .iter()
+                .any(|tag| tag == "html-control:restricted-dompurify")
+        })
+        .map(|item| item.id.clone())
+        .collect::<BTreeSet<_>>();
+    let custom_sanitizer_policy = !restricted_html_controls.is_empty()
+        && sources.files.values().any(|file| {
+            file.source.contains(".addHook")
+                || file.source.contains(".setConfig")
+                || frontend::unverified_sanitizer_binding(file)
+        });
+    let practical_exclusions = scan
+        .evidence
+        .iter()
+        .filter(|item| {
+            ordinary_browser_ids.contains(&item.id)
+                || (!custom_sanitizer_policy && restricted_html_controls.contains(&item.id))
+                || practical_admission::inventory_only(
+                    item,
+                    &sources,
+                    connected_sink_ids.contains(item.id.as_str()),
+                    &scan.evidence,
+                    &written_code_targets,
+                )
+        })
+        .map(|item| (item.id.clone(), ReviewAdmissionDisposition::InventoryOnly))
+        .collect::<BTreeMap<_, _>>();
     let mut candidates = all_candidates
         .iter()
         .filter(|candidate| {
-            !is_closed_native_ownership_proof(candidate.capability, candidate.state)
+            !practical_exclusions.contains_key(&candidate.sink.id)
+                && !is_closed_native_ownership_proof(candidate.capability, candidate.state)
                 && !evidence_by_id
                     .get(candidate.sink.id.as_str())
                     .is_some_and(|sink| closed_output_operand(sink).is_some())
+                && !evidence_by_id
+                    .get(candidate.sink.id.as_str())
+                    .is_some_and(|sink| closed_native_path_fact(sink).is_some())
                 && (include_review_material
                     || !is_review_material_path(&candidate.primary_location.path))
         })
@@ -1215,9 +1429,13 @@ fn build_path_review_jobs_internal(
             .cmp(&is_review_material_path(&right.primary_location.path))
     });
     let excluded_candidates = all_candidates.len().saturating_sub(candidates.len());
-    let used_ids = candidate_evidence_ids(&all_candidates, &scan.evidence, &sources);
-    let (mut observation_groups, observation_exclusions) =
-        observation_groups(&scan.evidence, &used_ids, &all_candidates, &sources);
+    observation_groups.retain(|group| {
+        !group
+            .anchor_evidence_ids
+            .iter()
+            .any(|id| practical_exclusions.contains_key(id))
+    });
+    observation_exclusions.extend(practical_exclusions);
     observation_groups.extend(review_admission::marker_groups(&sources, &scan.evidence));
     observation_groups.sort_by(|left, right| {
         left.review_material
@@ -1316,13 +1534,6 @@ fn build_path_review_jobs_internal(
         &observation_exclusions,
     );
     if let Some(entries) = inventory_entries.as_mut() {
-        let write_paths = scan
-            .evidence
-            .iter()
-            .filter(|e| e.capability == Capability::FilesystemWrite)
-            .filter_map(|e| e.captures.get("path"))
-            .map(|capture| capture.text.to_ascii_lowercase())
-            .collect::<BTreeSet<_>>();
         entries.extend(candidates.iter().map(|candidate| {
             ReviewInventoryEntry {
                 review_id: candidate.id.replacen("path-", "review-", 1),
@@ -1337,7 +1548,9 @@ fn build_path_review_jobs_internal(
                 operand_facts: evidence_by_id
                     .get(candidate.sink.id.as_str())
                     .map_or_else(Vec::new, |sink| operand_summaries(sink)),
-                value_hint: None,
+                value_hint: evidence_by_id
+                    .get(candidate.sink.id.as_str())
+                    .and_then(|sink| practical_admission::comprehensive_hint(sink)),
             }
         }));
         entries.extend(observation_groups.iter().filter_map(|group| {
@@ -1367,16 +1580,19 @@ fn build_path_review_jobs_internal(
                 }
                 .to_string(),
                 operand_facts: operand_summaries(anchor),
-                value_hint: (group.priority == 2 && group.anchor_evidence_ids.len() == 1)
-                    .then(|| {
-                        fixed_include_value_hint(anchor, &sources, &write_paths)
-                            .or_else(|| ordinary_php_sink_hint(anchor))
-                            .or_else(|| local_bound_query_hint(anchor))
-                    })
-                    .flatten(),
+                value_hint: (group.priority == 2)
+                    .then(|| practical_admission::frontend_research_hint(anchor))
+                    .flatten()
+                    .or_else(|| practical_admission::comprehensive_hint(anchor))
+                    .or_else(|| {
+                        (group.priority == 2)
+                            .then(|| practical_admission::filesystem_research_hint(anchor))
+                            .flatten()
+                    }),
             })
         }));
-        share_php_output_questions(entries);
+        share_csharp_filesystem_questions(entries);
+        share_csharp_destination_questions(entries);
         // Scope hints affect Value selection only. Strong relationships and
         // decision-critical operations remain active even in build components.
         if entries.iter().any(|e| {
@@ -1727,7 +1943,7 @@ fn build_path_review_jobs_internal(
             &review_context,
             &candidate_paths,
             &reference_tokens,
-            &facts,
+            (&facts, &candidate.sink.location),
             precise_consumer_fields.as_ref(),
             MAX_REVIEW_SECOND_HOP_FACTS,
         );
@@ -2953,6 +3169,7 @@ fn reported_finding(
             let title = presentation
                 .as_ref()
                 .map_or(title, |value| value.title.to_string());
+            let title = unresolved_database_title(status, &presentation_cwes, title);
             let remediation =
                 report_remediation(presentation, candidate.capability, &presentation_cwes);
             let mut evidence_ids = vec![candidate.source.id.clone(), candidate.sink.id.clone()];
@@ -3072,6 +3289,7 @@ fn reported_finding(
             let title = presentation
                 .as_ref()
                 .map_or(title, |value| value.title.to_string());
+            let title = unresolved_database_title(status, &anchor.cwe_candidates, title);
             let remediation =
                 report_remediation(presentation, anchor.capability, &anchor.cwe_candidates);
             let anchor_ids = review.anchor_evidence_ids.iter().collect::<BTreeSet<_>>();
@@ -3157,17 +3375,12 @@ fn kotlin_caller_locations(
             matches!(
                 fact.role.as_str(),
                 "exact_caller_context"
-                    | "okhttp_call_execution_context"
                     | "webclient_request_mutation_context"
                     | "webclient_direct_exchange_argument_context"
             )
         })
         .map(|fact| FindingRelatedLocation {
-            role: if fact.role == "okhttp_call_execution_context" {
-                EvidenceKind::Sink
-            } else {
-                EvidenceKind::Source
-            },
+            role: EvidenceKind::Source,
             location: fact.location.clone(),
             evidence_id: (fact.role == "exact_caller_context")
                 .then(|| fact.evidence_id.clone())
@@ -3311,10 +3524,10 @@ fn kotlin_finding_description(
         "kotlin-url-read" => {
             "Impact: Reading a URL with request-influenced destination syntax can expose resources accessible through the server's network reach and process privileges, subject to URL protocol handling. Control may concern the complete URL or only an interpolated component; inspect the exact shown construction rather than assuming every component is caller-selected. Verification: For the affected read, confirm approved destinations work and disallowed schemes, hosts, ports and resolved addresses are rejected; exercise redirect handling with disposable local targets. Deployment reach and external exploit reproduction are not established."
         }
-        "kotlin-url-connection" | "kotlin-url-connection-consumer" => {
+        "kotlin-url-connection-consumer" => {
             "Impact: The reviewed connection consumer can access caller-selected resources using the server's network reach and process privileges, subject to URL protocol handling. Verification: Test the affected connect/read consumer with approved and rejected schemes, hosts, ports and resolved addresses; exercise redirect handling with disposable local targets. Deployment reach and external exploit reproduction are not established."
         }
-        "kotlin-ktor-client-request" | "kotlin-http-client-request" | "kotlin-okhttp-request" => {
+        "kotlin-ktor-client-request" | "kotlin-http-client-request" | "kotlin-okhttp-dispatch" => {
             "Impact: Caller-selected destinations can expose resources accessible through the server's network reach; access to any particular internal service is not established. Verification: Exercise the named client operation with approved destinations and rejected schemes, hosts, ports and resolved addresses, including redirect revalidation against disposable local targets."
         }
         "kotlin-ktor-redirect" => {
@@ -3402,10 +3615,7 @@ fn kotlin_finding_description(
             description.push_str(&format!(" Matched operation: {operation}."));
         }
     }
-    if matches!(
-        rule,
-        "kotlin-url-read" | "kotlin-url-connection" | "kotlin-url-connection-consumer"
-    ) {
+    if matches!(rule, "kotlin-url-read" | "kotlin-url-connection-consumer") {
         for fact in facts
             .iter()
             .filter(|fact| fact.role == "source_context")
@@ -3424,13 +3634,6 @@ fn kotlin_finding_description(
             .take(4)
         {
             description.push_str(&format!(" Candidate request mutation: {}:{}: {}. Inspect the forwarded request and filter order; an unused replacement is not an effective destination change.", fact.location.path, fact.location.start.line, fact.excerpt.lines().last().unwrap_or(&fact.excerpt)));
-        }
-        for fact in facts
-            .iter()
-            .filter(|f| f.role == "okhttp_call_execution_context")
-            .take(8)
-        {
-            description.push_str(&format!(" Supplied call consumer: {}:{}: {}. This is bounded same-callable source context, not verified runtime dispatch.", fact.location.path, fact.location.start.line, fact.excerpt));
         }
         for fact in facts
             .iter()
@@ -3499,6 +3702,18 @@ fn review_scope(job: &PathReviewJob) -> Vec<String> {
         }
     }
     scope
+}
+
+fn unresolved_database_title(status: FindingStatus, cwes: &[String], title: String) -> String {
+    if status == FindingStatus::NeedsReview {
+        if cwes.iter().any(|cwe| cwe == "CWE-89") {
+            return "Review SQL construction and parameter binding".into();
+        }
+        if cwes.iter().any(|cwe| cwe == "CWE-943") {
+            return "Review database selector construction and input types".into();
+        }
+    }
+    title
 }
 
 fn report_presentation(
@@ -3643,7 +3858,7 @@ fn human_boundary_finding_title(
     let has = |cwe: &str| cwes.iter().any(|item| item == cwe);
     match capability {
         Capability::ProcessExecution if has("CWE-78") => {
-            "Runtime values can alter shell command syntax"
+            "Process executable or arguments require review"
         }
         Capability::DatabaseQuery if has("CWE-89") => {
             "Runtime values can alter executable SQL syntax"
@@ -4566,8 +4781,29 @@ fn project_investigation_facts(
     let mut order = (0..facts.len()).collect::<Vec<_>>();
     order.sort_by_key(|&index| !primary(&facts[index]));
     let mut retained_bytes = 0usize;
+    let angular_packet = facts.iter().any(|fact| {
+        matches!(
+            fact.role.as_str(),
+            "frontend_component_template_context"
+                | "frontend_pipe_metadata_context"
+                | "frontend_directive_metadata_context"
+        )
+    });
+    let mut angular_bytes = 0usize;
     for index in order {
         let fact = &mut facts[index];
+        // Angular packets already bound the registration/handoff/consumer chain
+        // to eight facts and 6 KiB. Preserve that initial evidence even when the
+        // actor/producer still needs research; stripping it recreates each edge
+        // as a separate lookup. Keep the ordinary anchor budget unchanged.
+        if angular_packet
+            && fact.role.starts_with("frontend_")
+            && fact.excerpt.len() <= 2_048
+            && angular_bytes + fact.excerpt.len() <= 6_144
+        {
+            angular_bytes += fact.excerpt.len();
+            continue;
+        }
         if primary(fact)
             && fact.excerpt.len() > 1_536
             && fact.excerpt.len() == fact.location.end.byte_offset - fact.location.start.byte_offset
@@ -6026,9 +6262,6 @@ fn observation_decision_facts(
         .find_map(|item| explicit_cookie_omission(&item.rule_id));
     let non_enforcing_rejection = evidence.iter().find_map(|item| {
         match item.rule_id.as_str() {
-            "typescript-password-confirmation-not-enforced-review" => Some(
-                "The supplied middleware excerpt explicitly establishes that a password-confirmation mismatch is used only for challenge telemetry before execution continues through `next()`; the required rejection is not enforced."
-            ),
             "typescript-registration-rejection-fallthrough-review" => Some(
                 "The supplied registration excerpt explicitly establishes that an invalid-input response is sent without returning before execution continues through `next()` to later registration middleware."
             ),
@@ -7821,9 +8054,6 @@ fn java_observation_policy(
             "java-insecure-security-randomness" => {
                 "The exact Java generator explicitly establishes Math.random as the effective source for the captured security-token or OTP role."
             }
-            "java-jwt-signed-token-without-expiration" => {
-                "The exact Java token builder explicitly establishes a signed authentication credential without an expiration claim."
-            }
             _ => continue,
         };
         return Some(JavaObservationPolicy {
@@ -8545,7 +8775,11 @@ fn build_observation_reviews(
 ) -> Result<Vec<ObservationReview>, EngineError> {
     let index_started = std::time::Instant::now();
     let groups = groups.into_iter().collect::<Vec<_>>();
+    let frontend_context = frontend::FrontendContext::build(sources, &groups);
     let mut indexed_references = BTreeSet::new();
+    for fact in frontend_context.all_facts() {
+        collect_review_reference_tokens(&fact.excerpt, &mut indexed_references);
+    }
     for group in &groups {
         indexed_references.extend(observation_group_references(group, sources, context_lines)?);
     }
@@ -8651,6 +8885,30 @@ fn build_observation_reviews(
             evidence_id: None,
             provenance: textual_provenance("mehscan bounded observation-review source 1"),
         }];
+        let (mut frontend_facts, frontend_truncated) = frontend_context.facts(&group.evidence);
+        context_truncated |= frontend_truncated;
+        let frontend_paths = frontend_facts
+            .iter()
+            .map(|f| f.location.path.as_str())
+            .collect();
+        let mut frontend_references = BTreeSet::new();
+        for fact in &frontend_facts {
+            collect_review_reference_tokens(&fact.excerpt, &mut frontend_references);
+        }
+        if !frontend_facts.is_empty() {
+            let (mut frontend_helpers, cut) = observation_helper_definition_facts(
+                sources,
+                &review_context,
+                &frontend_paths,
+                &frontend_references,
+                &frontend_facts,
+                2,
+            );
+            context_truncated |= cut;
+            frontend_facts.append(&mut frontend_helpers);
+            frontend_facts.extend(frontend_context.import_facts(&frontend_facts));
+        }
+        facts.append(&mut frontend_facts);
         let (mut captured_definitions, captured_definitions_truncated) =
             captured_definition_facts(sources, group.evidence.iter(), &facts, 3);
         for item in &group.evidence {
@@ -8718,7 +8976,7 @@ fn build_observation_reviews(
             &review_context,
             &paths,
             &references,
-            &facts,
+            (&facts, anchor),
             None,
             6,
         );
@@ -8813,11 +9071,6 @@ fn build_observation_reviews(
                         item,
                     ));
                     facts.extend(crate::code::kotlin_scope_facts(
-                        &group.path,
-                        &file.source,
-                        item,
-                    ));
-                    facts.extend(crate::code::kotlin_okhttp_facts(
                         &group.path,
                         &file.source,
                         item,
@@ -9070,6 +9323,15 @@ fn build_observation_reviews(
         let review_basis = observation_review_basis(basis_evidence, rules_by_id);
         let mut decision_facts =
             observation_decision_facts(&selected_evidence, &facts, &open_questions);
+        if facts
+            .iter()
+            .any(|f| f.role == "frontend_prop_caller_context")
+        {
+            decision_facts.established.push("The packet locates JSX callers of the raw-output component and their explicit prop expressions. This is bounded syntax navigation, not proof of attacker control, reaching values, sanitization or caller completeness.".into());
+            if frontend_truncated {
+                decision_facts.unresolved.push("The JSX caller sample is partial: omitted callers, spread/duplicate props, or parser error regions may remain. Inspect the listed caller's effective prop value and remaining component references before generalizing a caller-specific conclusion.".into());
+            }
+        }
         if let Some(matched) = matched_kotlin_evidence.as_ref() {
             for item in matched {
                 decision_facts.established.push(format!(
@@ -11662,6 +11924,10 @@ fn review_admission_audit(
                     && is_review_material_path(&item.location.path))
             {
                 ReviewAdmissionDisposition::ExcludedReviewMaterial
+            } else if observation_exclusions.get(&item.id)
+                == Some(&ReviewAdmissionDisposition::InventoryOnly)
+            {
+                ReviewAdmissionDisposition::InventoryOnly
             } else if all_candidate_evidence_ids.contains(item.id.as_str()) {
                 // Candidate construction can establish a safe closed native
                 // ownership proof or the exact C# query-only redirect helper.
@@ -11679,7 +11945,9 @@ fn review_admission_audit(
                 capability: item.capability,
                 disposition,
                 location: item.location.clone(),
-                operand_fact: closed_output_operand(item).cloned(),
+                operand_fact: closed_output_operand(item)
+                    .or_else(|| closed_native_path_fact(item))
+                    .cloned(),
             }
         })
         .collect::<Vec<_>>();
@@ -12175,10 +12443,59 @@ fn is_context_only_uploaded_filename_check(item: &Evidence, group: &[Evidence]) 
 }
 
 fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &RepositorySources) -> bool {
+    if item.capability == Capability::OutboundNetworkRequest
+        && item
+            .tags
+            .iter()
+            .any(|t| t == "outbound-request:unresolved-proxy-policy")
+    {
+        // A fixed request URL does not settle the separately selected proxy.
+        return false;
+    }
+    if item.capability == Capability::HtmlOutput
+        && item.cwe_candidates == ["CWE-79"]
+        && item
+            .tags
+            .iter()
+            .any(|tag| tag == "html-origin:fixed-padding")
+    {
+        return true;
+    }
     if item.kind != EvidenceKind::Sink {
         return false;
     }
+    if item.capability == Capability::ProcessExecution {
+        // Fixed program selection alone says nothing about dynamic shell text,
+        // child-program options or overridden builder state.
+        return !item.tags.iter().any(|t| {
+            matches!(
+                t.as_str(),
+                "process-invocation:unresolved-builder-state"
+                    | "process-invocation:unresolved-shell"
+                    | "process-invocation:unresolved-execution"
+            )
+        }) && item.captures.contains_key("command")
+            && !item.context.operand_facts.iter().any(|f| {
+                f.role == "process_options"
+                    && (f.kind == mehscan_core::OperandFactKind::OperandBoundary
+                        || f.value == "unresolved")
+            })
+            && item
+                .captures
+                .iter()
+                .filter(|(role, _)| !matches!(role.as_str(), "context" | "shell_mode"))
+                .all(|(role, c)| {
+                    item.context
+                        .literals
+                        .get(role)
+                        .is_some_and(|f| f.state == LiteralState::Known)
+                        || is_process_constant_operand(&c.text)
+                });
+    }
     if closed_output_operand(item).is_some() {
+        return true;
+    }
+    if closed_native_path_fact(item).is_some() {
         return true;
     }
     if item.capability == Capability::DatabaseQuery && item.rule_id == "csharp-extended-nosql-json"
@@ -12223,10 +12540,8 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
     }
     let literal_role = match item.capability {
         Capability::DatabaseQuery => "query",
-        // A fixed executable or fixed format string remains valuable inventory
-        // but cannot establish command or format-string injection without a
-        // controllable value in that semantic role.
-        Capability::ProcessExecution => "command",
+        // A fixed format string remains inventory but cannot establish format
+        // injection without control over that semantic role.
         Capability::FormatStringOutput => "format",
         // Fixed program text does not become code injection merely because the
         // sandbox data consumed by that program is dynamic. Other operations
@@ -12258,6 +12573,16 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
         Capability::FilesystemRead | Capability::FilesystemWrite
             if item.cwe_candidates.iter().any(|cwe| cwe == "CWE-22") =>
         {
+            if item.captures.contains_key("filesystem_source") {
+                // A fixed destination does not close an independently selected
+                // file/directory moved out of its original location.
+                return ["path", "filesystem_source"].iter().all(|role| {
+                    item.context.literals.get(*role).is_some_and(|f| {
+                        f.state == LiteralState::Known
+                            && matches!(f.value, Some(LiteralValue::String(_)))
+                    })
+                });
+            }
             if item.capability == Capability::FilesystemRead
                 && is_directory_enumerated_child_path(item, sources)
             {
@@ -12278,10 +12603,57 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
         || is_fixed_python_local_path(item, sources)
 }
 
+// Accept only a complete plain string token. Concatenations, interpolation,
+// collections and unresolved options remain reviewable unless the AST literal
+// evaluator has proved their complete value.
+fn is_process_constant_operand(text: &str) -> bool {
+    let text = text.trim();
+    let Some(quote @ (b'\'' | b'"')) = text.as_bytes().first().copied() else {
+        return false;
+    };
+    let mut escaped = false;
+    for (i, b) in text.bytes().enumerate().skip(1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if b == b'\\' {
+            escaped = true;
+            continue;
+        }
+        if b == b'$' {
+            return false;
+        }
+        if b == quote {
+            return i == text.len() - 1;
+        }
+    }
+    false
+}
+
 /// A complete numeric operand cannot introduce HTML/script delimiters. This
 /// closes only CWE-79 on this exact output; nested operations and other rules
 /// retain their own evidence and admission decisions.
 fn closed_output_operand(item: &Evidence) -> Option<&mehscan_core::OperandFact> {
+    if item.kind == EvidenceKind::Sink
+        && item.capability == Capability::HtmlOutput
+        && matches!(
+            item.rule_id.as_str(),
+            "csharp-aspnet-explicit-html-output" | "csharp-html-output"
+        )
+        && item.cwe_candidates == ["CWE-79"]
+    {
+        let capture = item.captures.get("content")?;
+        return item.context.operand_facts.iter().find(|fact| {
+            (fact.kind == mehscan_core::OperandFactKind::EncodedHtmlOperand
+                && fact.remaining_checks == ["html_text_context_only"]
+                || fact.kind == mehscan_core::OperandFactKind::NonHtmlResponse
+                    && fact.remaining_checks == ["explicit_non_html_response"])
+                && fact.role == "content"
+                && fact.location == capture.location
+                && fact.value == capture.text
+        });
+    }
     if item.kind != EvidenceKind::Sink
         || item.capability != Capability::HtmlOutput
         || item.rule_id != "php-html-output"
@@ -12309,192 +12681,17 @@ fn has_known_string_literal(item: &Evidence, role: &str) -> bool {
 /// purpose. The original observation remains in deterministic scan evidence.
 fn is_non_actionable_safe_purpose_observation(
     item: &Evidence,
-    sources: &RepositorySources,
+    _sources: &RepositorySources,
 ) -> bool {
-    if is_schema_validated_local_yaml_tool(item, sources)
-        || is_repository_snippet_index_read(item, sources)
-        || is_authenticated_generated_upload_write(item, sources)
-        || is_configuration_backed_promotion_read(item, sources)
-        || is_configuration_backed_response(item, sources)
-        || is_captcha_verification_lookup(item, sources)
-        || is_startup_dependency_health_request(item, sources)
-    {
-        return true;
-    }
-    if item.kind == EvidenceKind::Sink
+    // Concrete normal data decoding of a fixed local file is context. Do not
+    // close executable loaders, arbitrary uploads or sinks by whole-file names.
+    item.kind == EvidenceKind::Sink
         && item.capability == Capability::Deserialization
         && !executable_deserializer(item)
         && item
             .captures
             .get("payload")
             .is_some_and(|capture| is_fixed_local_file_read(&capture.text))
-    {
-        return true;
-    }
-
-    if item.kind != EvidenceKind::SecurityConfiguration
-        || item.capability != Capability::CryptographicHash
-        || !item.rule_id.ends_with("hash-algorithm-selection")
-        || !item.captures.get("algorithm").is_some_and(|capture| {
-            matches!(
-                capture
-                    .text
-                    .trim()
-                    .trim_matches(['\'', '"'])
-                    .to_ascii_lowercase()
-                    .as_str(),
-                "md5"
-            )
-        })
-    {
-        return false;
-    }
-
-    let Ok(file) = sources.file(&item.location.path) else {
-        return false;
-    };
-    let lines = file.source.lines().collect::<Vec<_>>();
-    let line = item.location.start.line.saturating_sub(1);
-    let start = line.saturating_sub(8);
-    let end = line.saturating_add(9).min(lines.len());
-    let window = lines[start..end].join("\n");
-    window.contains("registerTask('checksum'")
-        && window.contains(".md5")
-        && window.contains("digest('hex')")
-}
-
-fn evidence_source<'a>(item: &Evidence, sources: &'a RepositorySources) -> Option<&'a str> {
-    sources
-        .file(&item.location.path)
-        .ok()
-        .map(|file| file.source.as_str())
-}
-
-fn is_schema_validated_local_yaml_tool(item: &Evidence, sources: &RepositorySources) -> bool {
-    item.kind == EvidenceKind::Sink
-        && item.capability == Capability::Deserialization
-        && item.rule_id.ends_with("yaml-deserialization")
-        && item
-            .captures
-            .get("payload")
-            .is_some_and(|capture| capture.text.contains("readFile(file"))
-        && item
-            .location
-            .path
-            .replace('\\', "/")
-            .to_ascii_lowercase()
-            .contains("/scripts/")
-        && evidence_source(item, sources).is_some_and(|source| {
-            source.contains("path.resolve(__dirname")
-                && source.contains("readdir(configDir)")
-                && source.contains("ValidationSchema.safeParse(configuration)")
-        })
-}
-
-fn is_repository_snippet_index_read(item: &Evidence, sources: &RepositorySources) -> bool {
-    item.kind == EvidenceKind::Sink
-        && item.capability == Capability::FilesystemRead
-        && item
-            .captures
-            .get("path")
-            .is_some_and(|capture| capture.text.trim() == "currPath")
-        && evidence_source(item, sources).is_some_and(|source| {
-            source.contains("SNIPPET_PATHS = Object.freeze(")
-                && source.contains("findFilesWithCodeChallenges")
-                && source.contains("lstat(currPath)")
-                && source.contains("readdir(currPath)")
-                && source.contains("readFile(currPath")
-        })
-}
-
-fn is_authenticated_generated_upload_write(item: &Evidence, sources: &RepositorySources) -> bool {
-    if item.kind != EvidenceKind::Sink || item.capability != Capability::FilesystemWrite {
-        return false;
-    }
-    let Some(source) = evidence_source(item, sources) else {
-        return false;
-    };
-    let Some(capture) = item.captures.get("path").map(|capture| capture.text.trim()) else {
-        return false;
-    };
-    let expression = if is_plain_identifier(capture) {
-        source
-            .lines()
-            .find_map(|line| {
-                line.trim()
-                    .strip_prefix(&format!("const {capture} ="))
-                    .map(str::trim)
-            })
-            .unwrap_or(capture)
-    } else {
-        capture
-    };
-    expression.contains("assets/public/images/uploads/")
-        && expression.contains(".data.id}")
-        && source.contains("authenticatedUsers.get(")
-        && (source.contains("fileType.fromBuffer(")
-            && source.contains("startsWith(uploadedFileType.mime, 'image')")
-            || source.contains("['jpg', 'jpeg', 'png', 'svg', 'gif'].includes("))
-}
-
-fn is_configuration_backed_promotion_read(item: &Evidence, sources: &RepositorySources) -> bool {
-    item.kind == EvidenceKind::Sink
-        && item.capability == Capability::FilesystemRead
-        && evidence_source(item, sources).is_some_and(|source| {
-            source.contains("config.get<string>('application.promotion.video')")
-                && source.contains("config.get<string>('application.promotion.subtitles')")
-                && source.contains("frontend/dist/frontend/assets/public/videos/")
-                && source.contains("utils.extractFilename(")
-        })
-}
-
-fn is_configuration_backed_response(item: &Evidence, sources: &RepositorySources) -> bool {
-    item.kind == EvidenceKind::Sink
-        && item.capability == Capability::HtmlOutput
-        && item
-            .captures
-            .get("content")
-            .is_some_and(|capture| is_plain_identifier(capture.text.trim()))
-        && evidence_source(item, sources).is_some_and(|source| {
-            let content = item.captures["content"].text.trim();
-            source.contains(&format!("const {content} = config.get("))
-                && source.contains(&format!("res.send({content})"))
-        })
-}
-
-fn is_captcha_verification_lookup(item: &Evidence, sources: &RepositorySources) -> bool {
-    item.kind == EvidenceKind::Sink
-        && item.capability == Capability::ResourceAccess
-        && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-639")
-        && item
-            .captures
-            .get("model")
-            .is_some_and(|capture| capture.text.trim_end_matches("Model") == "Captcha")
-        && evidence_source(item, sources).is_some_and(|source| {
-            source.contains("captchaId: req.body.captchaId")
-                && source.contains("req.body.captcha === captcha.answer")
-                && source.contains("next()")
-        })
-}
-
-fn is_startup_dependency_health_request(item: &Evidence, sources: &RepositorySources) -> bool {
-    item.kind == EvidenceKind::Sink
-        && item.capability == Capability::OutboundNetworkRequest
-        && item
-            .captures
-            .get("endpoint")
-            .is_some_and(|capture| capture.text.trim() == "domain")
-        && item
-            .location
-            .path
-            .replace('\\', "/")
-            .to_ascii_lowercase()
-            .contains("/startup/")
-        && evidence_source(item, sources).is_some_and(|source| {
-            source.contains("checkIfDomainReachable('https://")
-                && source.contains("llmApiUrl = config.get<string>(")
-                && source.contains("checkIfDomainReachable(llmApiUrl)")
-        })
 }
 
 fn is_fixed_local_file_read(payload: &str) -> bool {
@@ -14329,24 +14526,20 @@ fn observation_review_questions(
     let has_node_weak_password = evidence
         .iter()
         .any(|item| item.rule_id.ends_with("weak-password-policy"));
-    let has_node_password_storage_policy = evidence
-        .iter()
-        .any(|item| item.rule_id.ends_with("password-storage-policy-review"));
+
     let has_node_registration_fallthrough = evidence.iter().any(|item| {
         item.rule_id
             .ends_with("registration-rejection-fallthrough-review")
     });
-    let has_node_password_confirmation = evidence.iter().any(|item| {
-        item.rule_id
-            .ends_with("password-confirmation-not-enforced-review")
-    });
+
     let has_node_knowledge_recovery = evidence.iter().any(|item| {
         item.rule_id
             .ends_with("knowledge-based-password-recovery-review")
     });
-    let has_node_session_cookie = evidence
-        .iter()
-        .any(|item| item.rule_id.contains("session-cookie-policy-"));
+    let has_node_session_cookie = evidence.iter().any(|item| {
+        item.kind == EvidenceKind::SecurityConfiguration
+            && item.rule_id.contains("session-cookie-policy-")
+    });
     let has_node_csrf_review = evidence
         .iter()
         .any(|item| item.rule_id.ends_with("cookie-session-csrf-review"));
@@ -14385,9 +14578,7 @@ fn observation_review_questions(
         && facts.iter().any(|fact| fact.role == "exact_caller_context");
     let has_precise_node_boundary = has_node_session_fixation
         || has_node_weak_password
-        || has_node_password_storage_policy
         || has_node_registration_fallthrough
-        || has_node_password_confirmation
         || has_node_knowledge_recovery
         || has_node_session_cookie
         || has_node_csrf_review
@@ -14461,24 +14652,14 @@ fn observation_review_questions(
                 .to_string(),
         );
     }
-    if has_node_password_storage_policy {
-        questions.push(
-            "Before this password storage boundary, does every account-creation path enforce an effective password-strength policy, or can an attacker submit an arbitrarily weak non-empty password? Hashing is storage protection, not strength validation."
-                .to_string(),
-        );
-    }
+
     if has_node_registration_fallthrough {
         questions.push(
             "After sending the invalid-registration response, does execution return or otherwise stop before the persistence middleware runs? Calling `next()` after the rejection can preserve the invalid account despite the response status."
                 .to_string(),
         );
     }
-    if has_node_password_confirmation {
-        questions.push(
-            "Does a password/repeated-password mismatch reach an executable rejection before account creation, or is the comparison used only for telemetry, challenge tracking, or logging before `next()` continues?"
-                .to_string(),
-        );
-    }
+
     if has_node_knowledge_recovery {
         questions.push(
             "Can publicly discoverable or guessable personal knowledge satisfy this security-answer check and reset an account password, and does effective per-account throttling materially prevent guessing? Verify the recovery design, not only whether the submitted answer matches its stored HMAC."
@@ -15034,7 +15215,7 @@ fn missing_protection_question(capability: Capability) -> &'static str {
             "Does the shown code parse the destination and enforce an allowlist that excludes internal, loopback, link-local, and metadata targets before the request?"
         }
         Capability::ProcessExecution => {
-            "Does the shown code avoid a command shell and pass source-derived values only as separately structured process arguments?"
+            "Who controls the executable, shell mode and child-program options? Separate arguments prevent shell parsing only when no shell/interpreter is invoked; check the target program's argument semantics."
         }
         Capability::DynamicCodeExecution => {
             "Does the shown code prevent source-derived text from being interpreted as executable code?"
@@ -16055,6 +16236,7 @@ impl ReviewContextIndex {
         }
         Ok(Self {
             definitions,
+            angular: OnceCell::new(),
             registrations,
             usages,
             frameworks: frameworks
@@ -16474,10 +16656,11 @@ fn second_hop_review_facts(
     context: &ReviewContextIndex,
     candidate_paths: &BTreeSet<&str>,
     references: &BTreeSet<String>,
-    existing: &[ReviewNeighborhoodFact],
+    evidence: (&[ReviewNeighborhoodFact], &Location),
     precise_member_fields: Option<&BTreeSet<String>>,
     limit: usize,
 ) -> (Vec<ReviewNeighborhoodFact>, bool) {
+    let (existing, anchor) = evidence;
     if limit == 0 {
         return (Vec::new(), false);
     }
@@ -16488,6 +16671,28 @@ fn second_hop_review_facts(
         .collect::<BTreeSet<_>>();
     let mut facts = Vec::new();
     let mut truncated = false;
+
+    // Parse Angular metadata only for selected trust reviews and share it across
+    // their packets. Give the bounded producer/consumer chain priority over
+    // generic second-hop name matches; the overall fact cap is unchanged.
+    if existing
+        .iter()
+        .any(|f| f.excerpt.contains("bypassSecurityTrust"))
+    {
+        let angular = context
+            .angular
+            .get_or_init(|| angular::AngularContext::build(sources));
+        let (mut angular_facts, partial) = angular.facts(
+            sources,
+            candidate_paths,
+            existing,
+            precise_member_fields,
+            limit,
+            Some(anchor),
+        );
+        facts.append(&mut angular_facts);
+        truncated |= partial;
+    }
 
     let mut covered = existing.to_vec();
     covered.extend(facts.iter().cloned());
@@ -16528,18 +16733,6 @@ fn second_hop_review_facts(
         facts.append(&mut config_facts);
     }
 
-    let remaining = limit.saturating_sub(facts.len());
-    if remaining > 0 {
-        let (mut template_facts, template_truncated) = template_binding_facts(
-            sources,
-            candidate_paths,
-            existing,
-            precise_member_fields,
-            remaining.min(2),
-        );
-        truncated |= template_truncated;
-        facts.append(&mut template_facts);
-    }
     let remaining = limit.saturating_sub(facts.len());
     if remaining > 0 {
         let mut covered = existing.to_vec();
@@ -16760,6 +16953,7 @@ fn quoted_values(source: &str) -> Vec<&str> {
     values
 }
 
+#[cfg(test)]
 fn template_binding_facts(
     sources: &RepositorySources,
     candidate_paths: &BTreeSet<&str>,
@@ -16767,74 +16961,13 @@ fn template_binding_facts(
     precise_member_fields: Option<&BTreeSet<String>>,
     limit: usize,
 ) -> (Vec<ReviewNeighborhoodFact>, bool) {
-    if limit == 0 {
-        return (Vec::new(), false);
-    }
-    let mut binding_names = precise_member_fields.cloned().unwrap_or_default();
-    if binding_names.is_empty() {
-        for fact in existing {
-            if !fact.excerpt.contains("bypassSecurityTrust") {
-                continue;
-            }
-            for line in fact.excerpt.lines().filter(|line| line.contains('=')) {
-                let left = line.split('=').next().unwrap_or_default();
-                if let Some(name) = terminal_identifier(left) {
-                    binding_names.insert(name.to_string());
-                }
-            }
-        }
-    }
-    if binding_names.is_empty() {
-        return (Vec::new(), false);
-    }
-    let mut facts = Vec::new();
-    for path in candidate_paths {
-        let normalized = path.replace('\\', "/");
-        let Some(stem) = normalized.strip_suffix(".component.ts") else {
-            continue;
-        };
-        let template_path = format!("{stem}.component.html");
-        let template_source = match sources.file(&template_path) {
-            Ok(file) => file.source.clone(),
-            Err(_) => {
-                let absolute = Path::new(&sources.root).join(&template_path);
-                match fs::read_to_string(absolute) {
-                    Ok(source) if source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES => source,
-                    _ => continue,
-                }
-            }
-        };
-        for (start, end) in line_spans(&template_source) {
-            let line = &template_source[start..end];
-            if !["innerhtml", "dangerouslysetinnerhtml", "v-html"]
-                .iter()
-                .any(|marker| line.to_ascii_lowercase().contains(marker))
-                || !binding_names
-                    .iter()
-                    .any(|name| contains_identifier(line, name))
-            {
-                continue;
-            }
-            if facts.len() == limit {
-                return (facts, true);
-            }
-            facts.push(ReviewNeighborhoodFact {
-                role: "template_binding_context".to_string(),
-                symbol: binding_names
-                    .iter()
-                    .find(|name| contains_identifier(line, name))
-                    .cloned()
-                    .unwrap_or_else(|| "template_binding".to_string()),
-                location: location_from_offsets(&template_path, &template_source, start, end),
-                excerpt: bounded_line_text(line),
-                evidence_id: None,
-                provenance: textual_provenance(
-                    "exact sibling component template binding, bounded non-flow 1",
-                ),
-            });
-        }
-    }
-    (facts, false)
+    angular::template_facts(
+        sources,
+        candidate_paths,
+        existing,
+        precise_member_fields,
+        limit,
+    )
 }
 
 fn express_template_review_facts(
@@ -20388,6 +20521,7 @@ pub fn find_source_paths(
             FileClass::Supported(_) => fs::read_to_string(&file.absolute).is_ok(),
             FileClass::SecretOnly
             | FileClass::EmbeddedJavascriptTemplate
+            | FileClass::Vue
             | FileClass::Razor
             | FileClass::WebForms => crate::code::read_secret_text(&file.absolute).is_ok(),
             FileClass::Ignored if is_investigation_template(&file.relative) => {
@@ -20876,6 +21010,7 @@ impl RepositorySources {
                 }
                 FileClass::SecretOnly
                 | FileClass::EmbeddedJavascriptTemplate
+                | FileClass::Vue
                 | FileClass::Razor
                 | FileClass::WebForms => {
                     let Ok(source) = crate::code::read_secret_text(&file.absolute) else {
@@ -22406,6 +22541,45 @@ mod tests {
     }
 
     #[test]
+    fn investigation_projection_preserves_angular_chain_with_separate_byte_cap() {
+        let location = location_from_offsets("view.ts", "sink(v);", 0, 8);
+        let mut facts = [
+            "sink_context",
+            "frontend_component_template_context",
+            "frontend_component_input_context",
+            "frontend_template_binding_context",
+            "frontend_dialog_handoff_context",
+            "helper_definition_context",
+        ]
+        .into_iter()
+        .map(|role| ReviewNeighborhoodFact {
+            role: role.into(),
+            symbol: "v".into(),
+            location: location.clone(),
+            excerpt: if role == "sink_context" {
+                "sink(v);".into()
+            } else {
+                "x".repeat(2_048)
+            },
+            evidence_id: None,
+            provenance: textual_provenance("test"),
+        })
+        .collect::<Vec<_>>();
+        project_investigation_facts(ReviewReadiness::Investigation, &mut facts, &location);
+        assert_eq!(facts[0].excerpt, "sink(v);");
+        assert_eq!(
+            facts
+                .iter()
+                .filter(|f| f.role.starts_with("frontend_"))
+                .map(|f| f.excerpt.len())
+                .sum::<usize>(),
+            6_144
+        );
+        assert!(facts[4].excerpt.is_empty());
+        assert!(facts[5].excerpt.is_empty());
+    }
+
+    #[test]
     fn investigation_projection_retains_exact_anchor_after_artifact_ids_are_assigned() {
         let source = format!(
             "{}sink(user_input);\n{}",
@@ -23018,7 +23192,7 @@ mod tests {
 
     #[test]
     fn second_hop_context_keeps_feature_gates_and_template_bindings_exact() {
-        let component_source = "this.results.orderNo = this.sanitizer.bypassSecurityTrustHtml(value)\nuser.email = this.sanitizer.bypassSecurityTrustHtml(user.email)\n";
+        let component_source = "import { Component } from '@angular/core';\n@Component({ templateUrl: './result.component.html' })\nexport class Result { show(value: string, user: any) {\nthis.results.orderNo = this.sanitizer.bypassSecurityTrustHtml(value);\nuser.email = this.sanitizer.bypassSecurityTrustHtml(user.email);\n} }\n";
         let template_source = "<span [innerHtml]=\"results.orderNo\"></span>\n<span [innerHtml]=\"user.email\"></span>\n";
         let challenge_source =
             "  key: wantedChallenge\n  disabledEnv:\n    - Docker\n\n  key: unrelatedChallenge\n";
@@ -23059,13 +23233,13 @@ mod tests {
             provenance: textual_provenance("test"),
         }];
         let paths = BTreeSet::from(["frontend/result.component.ts"]);
-        let (template_facts, _) = template_binding_facts(&sources, &paths, &existing, None, 2);
-        assert_eq!(template_facts.len(), 2);
+        let (template_facts, _) = template_binding_facts(&sources, &paths, &existing, None, 3);
+        assert_eq!(template_facts.len(), 3);
         let precise_fields = BTreeSet::from(["orderNo".to_string()]);
         let (precise_template_facts, _) =
-            template_binding_facts(&sources, &paths, &existing, Some(&precise_fields), 2);
-        assert_eq!(precise_template_facts.len(), 1);
-        assert_eq!(precise_template_facts[0].symbol, "orderNo");
+            template_binding_facts(&sources, &paths, &existing, Some(&precise_fields), 3);
+        assert_eq!(precise_template_facts.len(), 2);
+        assert_eq!(precise_template_facts[1].symbol, "orderNo");
 
         let references = BTreeSet::from(["wantedChallenge".to_string()]);
         let (gate_facts, _) = feature_gate_facts(&sources, &references, 2);
@@ -23445,7 +23619,40 @@ mod tests {
     }
 
     #[test]
-    fn safe_purpose_observation_guards_are_bounded() {
+    fn native_destination_fact_does_not_close_an_independent_move_source() {
+        let root =
+            std::env::temp_dir().join(format!("mehscan-native-move-fact-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("App.cs"), "using System.IO; class App { void Move(string input){Directory.Move(input,\"fixed\");} }").unwrap();
+        let scan = crate::scan_path(&root);
+        std::fs::remove_dir_all(&root).unwrap();
+        let mut item = scan
+            .unwrap()
+            .evidence
+            .into_iter()
+            .find(|e| e.rule_id == "csharp-filesystem-write")
+            .unwrap();
+        let path = item.captures["path"].clone();
+        item.context.operand_facts.push(mehscan_core::OperandFact {
+            kind: mehscan_core::OperandFactKind::FixedFilesystemPath,
+            role: "path".into(),
+            value: path.text,
+            location: path.location,
+            remaining_checks: Vec::new(),
+        });
+        let sources = RepositorySources {
+            root: "fixture".into(),
+            files: BTreeMap::new(),
+        };
+        assert!(closed_native_path_fact(&item).is_none());
+        assert!(!is_non_actionable_fixed_sink_observation(&item, &sources));
+        item.captures.remove("filesystem_source");
+        assert!(closed_native_path_fact(&item).is_some());
+        assert!(is_non_actionable_fixed_sink_observation(&item, &sources));
+    }
+
+    #[test]
+    fn fixed_local_decode_guard_requires_a_fixed_filename() {
         assert!(is_fixed_local_file_read(
             "fs.readFileSync('./swagger.yml', 'utf8')"
         ));
@@ -23453,184 +23660,6 @@ mod tests {
         assert!(!is_fixed_local_file_read(
             "fs.readFileSync('./schemas/' + name, 'utf8')"
         ));
-
-        let source = "grunt.registerTask('checksum', 'Create .md5 checksum files', function () {\n\
-            const buffer = fs.readFileSync('dist/package.zip')\n\
-            const md5 = crypto.createHash('md5')\n\
-            md5.update(buffer)\n\
-            const value = md5.digest('hex')\n\
-            grunt.file.write('dist/package.zip.md5', value)\n\
-        })\n";
-        let mut captures = BTreeMap::new();
-        captures.insert(
-            "algorithm".to_string(),
-            mehscan_core::Capture {
-                text: "'md5'".to_string(),
-                location: location_from_offsets(
-                    "Gruntfile.js",
-                    source,
-                    source.find("'md5'").unwrap(),
-                    source.find("'md5'").unwrap() + 5,
-                ),
-            },
-        );
-        let evidence = Evidence {
-            id: "checksum-hash".to_string(),
-            kind: EvidenceKind::SecurityConfiguration,
-            capability: Capability::CryptographicHash,
-            location: captures["algorithm"].location.clone(),
-            enclosing_symbol: Some("grunt".to_string()),
-            captures,
-            cwe_candidates: vec!["CWE-327".to_string()],
-            tags: Vec::new(),
-            confidence: mehscan_core::Confidence::High,
-            provenance: mehscan_core::Provenance {
-                resolution: Resolution::Ast,
-                engine: "test".to_string(),
-                rule_version: 1,
-            },
-            context: Default::default(),
-            symbol_resolution: None,
-            rule_id: "javascript-hash-algorithm-selection".to_string(),
-            related_evidence: Vec::new(),
-        };
-        let sources = RepositorySources {
-            root: "fixture".to_string(),
-            files: [(
-                "Gruntfile.js".to_string(),
-                SourceFile {
-                    path: "Gruntfile.js".to_string(),
-                    language: Some(Language::Javascript),
-                    source: source.to_string(),
-                },
-            )]
-            .into_iter()
-            .collect(),
-        };
-        assert!(is_non_actionable_safe_purpose_observation(
-            &evidence, &sources
-        ));
-
-        let non_checksum_source =
-            source.replace("registerTask('checksum'", "registerTask('passwords'");
-        let non_checksum_sources = RepositorySources {
-            root: "fixture".to_string(),
-            files: [(
-                "Gruntfile.js".to_string(),
-                SourceFile {
-                    path: "Gruntfile.js".to_string(),
-                    language: Some(Language::Javascript),
-                    source: non_checksum_source,
-                },
-            )]
-            .into_iter()
-            .collect(),
-        };
-        assert!(!is_non_actionable_safe_purpose_observation(
-            &evidence,
-            &non_checksum_sources
-        ));
-    }
-
-    #[test]
-    fn safe_purpose_guards_require_the_complete_semantic_shape() {
-        let make = |kind, capability, rule: &str, path: &str, role: &str, value: &str| Evidence {
-            id: format!("{rule}-{role}"),
-            kind,
-            capability,
-            location: location_from_offsets(path, "", 0, 0),
-            enclosing_symbol: Some("test".to_string()),
-            captures: BTreeMap::from([(
-                role.to_string(),
-                mehscan_core::Capture {
-                    text: value.to_string(),
-                    location: location_from_offsets(path, "", 0, 0),
-                },
-            )]),
-            cwe_candidates: vec!["CWE-22".to_string(), "CWE-639".to_string()],
-            tags: Vec::new(),
-            confidence: mehscan_core::Confidence::High,
-            provenance: mehscan_core::Provenance {
-                resolution: Resolution::Ast,
-                engine: "test".to_string(),
-                rule_version: 1,
-            },
-            context: Default::default(),
-            symbol_resolution: None,
-            rule_id: rule.to_string(),
-            related_evidence: Vec::new(),
-        };
-        let lint = "const configDir = path.resolve(__dirname, '../../config')\nconst files = await readdir(configDir)\nconfiguration = yaml.load(await readFile(file, 'utf8'))\nValidationSchema.safeParse(configuration)\n";
-        let upload = "const loggedInUser = authenticatedUsers.get(req.cookies.token)\nconst uploadedFileType = await fileType.fromBuffer(buffer)\nif (!startsWith(uploadedFileType.mime, 'image')) return\nconst filePath = `assets/public/images/uploads/${loggedInUser.data.id}.${uploadedFileType.ext}`\n";
-        let captcha = "const captcha = await CaptchaModel.findOne({ where: { captchaId: req.body.captchaId } })\nif (req.body.captcha === captcha.answer) next()\n";
-        let sources = RepositorySources {
-            root: "fixture".to_string(),
-            files: [
-                ("lib/scripts/lint.ts", lint),
-                ("routes/upload.ts", upload),
-                ("routes/captcha.ts", captcha),
-            ]
-            .into_iter()
-            .map(|(path, source)| {
-                (
-                    path.to_string(),
-                    SourceFile {
-                        path: path.to_string(),
-                        language: Some(Language::Typescript),
-                        source: source.to_string(),
-                    },
-                )
-            })
-            .collect(),
-        };
-
-        let yaml = make(
-            EvidenceKind::Sink,
-            Capability::Deserialization,
-            "typescript-yaml-deserialization",
-            "lib/scripts/lint.ts",
-            "payload",
-            "await readFile(file, 'utf8')",
-        );
-        assert!(is_schema_validated_local_yaml_tool(&yaml, &sources));
-        let incomplete_sources = RepositorySources {
-            root: "fixture".to_string(),
-            files: BTreeMap::from([(
-                "lib/scripts/lint.ts".to_string(),
-                SourceFile {
-                    path: "lib/scripts/lint.ts".to_string(),
-                    language: Some(Language::Typescript),
-                    source: lint.replace(
-                        "ValidationSchema.safeParse(configuration)",
-                        "use(configuration)",
-                    ),
-                },
-            )]),
-        };
-        assert!(!is_schema_validated_local_yaml_tool(
-            &yaml,
-            &incomplete_sources
-        ));
-
-        let write = make(
-            EvidenceKind::Sink,
-            Capability::FilesystemWrite,
-            "typescript-filesystem-write",
-            "routes/upload.ts",
-            "path",
-            "filePath",
-        );
-        assert!(is_authenticated_generated_upload_write(&write, &sources));
-
-        let captcha_lookup = make(
-            EvidenceKind::Sink,
-            Capability::ResourceAccess,
-            "typescript-sequelize-resource-access",
-            "routes/captcha.ts",
-            "model",
-            "CaptchaModel",
-        );
-        assert!(is_captcha_verification_lookup(&captcha_lookup, &sources));
     }
 
     #[test]
@@ -24154,7 +24183,7 @@ mod tests {
                 role: "query".into(),
                 kind: mehscan_core::OperandFactKind::OperandBoundary,
                 location,
-                value: "Changed source input boundary".into(),
+                value: "Changed compiler input boundary".into(),
                 remaining_checks: vec!["exact_interpretation_and_effect".into()],
             });
         assert_ne!(

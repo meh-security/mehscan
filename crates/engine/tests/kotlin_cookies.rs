@@ -18,7 +18,15 @@ fn servlet_cookie_setters_and_properties_keep_exact_policy_context() {
     );
     let jobs =
         mehscan_engine::investigation::build_all_path_review_jobs(&root, None, true).unwrap();
-    assert_eq!(jobs.observation_reviews.len(), 16);
+    // Six affirmative controls remain in raw evidence/function context, but
+    // do not receive independent vulnerability-verdict jobs.
+    assert_eq!(jobs.observation_reviews.len(), 10);
+    assert!(!jobs.observation_reviews.iter().any(|review| {
+        review.evidence.iter().any(|e| {
+            review.anchor_evidence_ids.contains(&e.id)
+                && e.captures.get("value").is_some_and(|v| v.text == "true")
+        })
+    }));
     for review in jobs.observation_reviews {
         let fact = review
             .facts

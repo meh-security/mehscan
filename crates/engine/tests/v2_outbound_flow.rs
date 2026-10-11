@@ -23,7 +23,7 @@ fn inventories_url_context_and_builds_bounded_outbound_paths() {
         .iter()
         .filter(|item| item.capability == Capability::UrlParsing)
         .collect::<Vec<_>>();
-    assert_eq!(parsers.len(), 7);
+    assert_eq!(parsers.len(), 9);
     assert!(parsers.iter().all(|item| {
         item.kind == EvidenceKind::Sanitizer && item.location.path.starts_with("positive/")
     }));
@@ -51,8 +51,8 @@ fn inventories_url_context_and_builds_bounded_outbound_paths() {
             counts
         });
     assert_eq!(states[&SecurityPathState::Direct], 7);
-    assert_eq!(states[&SecurityPathState::Propagated], 7);
-    assert_eq!(states[&SecurityPathState::Protected], 7);
+    assert_eq!(states[&SecurityPathState::Propagated], 14);
+    assert!(!states.contains_key(&SecurityPathState::Protected));
     assert_eq!(states[&SecurityPathState::Unknown], 1);
 
     assert!(outbound_paths.iter().all(|path| {
@@ -70,18 +70,13 @@ fn inventories_url_context_and_builds_bounded_outbound_paths() {
                 .iter()
                 .all(|step| !step.location.path.starts_with("negative/"))
     }));
-    assert!(
-        outbound_paths
-            .iter()
-            .filter(|path| path.state == SecurityPathState::Protected)
-            .all(|path| {
-                path.protection_evidence_ids.len() == 1
-                    && path
-                        .steps
-                        .iter()
-                        .any(|step| step.kind == SecurityPathStepKind::Protection)
-            })
-    );
+    assert!(outbound_paths.iter().all(|path| {
+        path.protection_evidence_ids.is_empty()
+            && !path
+                .steps
+                .iter()
+                .any(|step| step.kind == SecurityPathStepKind::Protection)
+    }));
 
     let conditional = outbound_paths
         .iter()

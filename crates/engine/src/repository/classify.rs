@@ -6,6 +6,7 @@ use mehscan_core::Language;
 pub(crate) enum FileClass {
     Supported(Language),
     EmbeddedJavascriptTemplate,
+    Vue,
     Razor,
     WebForms,
     SecretOnly,
@@ -53,6 +54,7 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
         "ts" | "mts" | "cts" => FileClass::Supported(Language::Typescript),
         "tsx" => FileClass::Supported(Language::Tsx),
         "ejs" => FileClass::EmbeddedJavascriptTemplate,
+        "vue" => FileClass::Vue,
         "py" | "pyi" | "py3" | "pyw" => FileClass::Supported(Language::Python),
         "go" => FileClass::Supported(Language::Go),
         "rs" => FileClass::Supported(Language::Rust),
@@ -72,6 +74,7 @@ pub(crate) fn classify_path_with_options(path: &Path, include_nonproduction: boo
             class,
             FileClass::Supported(_)
                 | FileClass::EmbeddedJavascriptTemplate
+                | FileClass::Vue
                 | FileClass::Razor
                 | FileClass::WebForms
         )

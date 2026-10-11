@@ -75,7 +75,11 @@ pub(crate) fn add_spring_security_observations<'tree>(
                 invocation.range().end,
                 rule_id
             ),
-            kind: EvidenceKind::SecurityConfiguration,
+            kind: if broad_public {
+                EvidenceKind::SecurityConfiguration
+            } else {
+                EvidenceKind::Resource
+            },
             capability: Capability::Authorization,
             location: policy_location,
             enclosing_symbol: enclosing_symbol(&invocation),

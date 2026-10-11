@@ -49,13 +49,19 @@ fn models_node_session_cookie_csrf_rotation_and_password_policy_without_comment_
             && item.tags.iter().any(|tag| tag == "http-only:default")
             && item.tags.iter().any(|tag| tag == "secure:default")
             && item.tags.iter().any(|tag| tag == "same-site:default")
+            && item.kind == EvidenceKind::Resource
     }));
     assert!(risk.evidence.iter().all(|item| {
         !item
             .provenance
             .engine
             .ends_with("bounded-node-request-boundary")
-            || item.kind == EvidenceKind::SecurityConfiguration
+            || item.kind
+                == if item.rule_id == "javascript-session-cookie-policy-review" {
+                    EvidenceKind::Resource
+                } else {
+                    EvidenceKind::SecurityConfiguration
+                }
     }));
 
     let controls = safe
@@ -126,7 +132,7 @@ fn models_node_session_cookie_csrf_rotation_and_password_policy_without_comment_
             })
         })
         .collect::<Vec<_>>();
-    assert_eq!(boundary_reviews.len(), 4, "{boundary_reviews:#?}");
+    assert_eq!(boundary_reviews.len(), 3, "{boundary_reviews:#?}");
     assert!(boundary_reviews.iter().any(|review| {
         review
             .open_questions
@@ -156,6 +162,7 @@ fn models_node_session_cookie_csrf_rotation_and_password_policy_without_comment_
                 item.provenance
                     .engine
                     .ends_with("bounded-node-request-boundary")
+                    && csrf_review.anchor_evidence_ids.contains(&item.id)
             })
             .count(),
         1
@@ -167,14 +174,13 @@ fn models_node_session_cookie_csrf_rotation_and_password_policy_without_comment_
             .as_ref()
             .is_some_and(|basis| { basis.relationship == "bounded_request_integrity_review" })
     );
-    let cookie_review = boundary_reviews
-        .iter()
-        .find(|review| {
-            review
-                .evidence
-                .iter()
-                .any(|item| item.rule_id.ends_with("session-cookie-policy-review"))
-        })
-        .expect("independent cookie-policy review");
-    assert_eq!(cookie_review.open_questions.len(), 1);
+    assert!(
+        !boundary_reviews.iter().any(|review| {
+            review.evidence.iter().any(|item| {
+                item.rule_id.ends_with("session-cookie-policy-review")
+                    && review.anchor_evidence_ids.contains(&item.id)
+            })
+        }),
+        "default cookie setup is context, not an independent review"
+    );
 }

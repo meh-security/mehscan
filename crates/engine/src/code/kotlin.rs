@@ -17,11 +17,12 @@ mod identity;
 mod jdbc;
 pub(super) mod jvm;
 pub(super) use jvm::file_content;
-pub(crate) use jvm::okhttp_facts;
 pub(super) use jvm::process_command;
 mod ktor;
 mod network;
+mod outbound;
 pub(super) use jdbc::annotate_prepared;
+pub(super) use outbound::annotate as annotate_outbound;
 mod path;
 mod project;
 mod scope;
@@ -35,6 +36,15 @@ pub(crate) use numeric::query_fact;
 
 pub(super) use identity::Imports;
 use identity::{KNode, binding_type, receiver_unchanged};
+
+pub(super) fn exact_symbol(
+    root: &KNode<'_>,
+    site: &KNode<'_>,
+    observed: &str,
+    canonical: &str,
+) -> bool {
+    Imports::build(root).exact(root, site, observed, canonical)
+}
 
 pub(crate) fn html_encoder_facts(
     path: &str,
@@ -254,6 +264,9 @@ pub(super) fn accept<'a>(
     }
     if ktor::accepts(root, rule, node) {
         return true;
+    }
+    if rule == "kotlin-url-connection-consumer" && node.kind().as_ref() == "navigation_expression" {
+        return jvm::connection_property(root, node);
     }
     let Some(call) = identity::call(node) else {
         return false;

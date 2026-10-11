@@ -1,4 +1,4 @@
-//! One local const-object edge. No heap/CFG/receiver inference or verdict transfer.
+//! Bounded query objects and process options. No heap/CFG or verdict transfer.
 use ast_grep_core::{Node, tree_sitter::StrDoc};
 use ast_grep_language::SupportLang;
 use mehscan_core::{
@@ -68,7 +68,7 @@ pub(crate) fn annotate(
                 )) else {
                     continue;
                 };
-                if node.kind().as_ref() != "identifier" {
+                if !matches!(node.kind().as_ref(), "identifier" | "object") {
                     continue;
                 }
                 let Some(object) = resolve_object(&index, source, item, node, "query") else {
@@ -120,8 +120,8 @@ pub(crate) fn annotate(
                         "data_access_policy",
                     ],
                 );
-                // Exact pg identity plus a complete, private object and array-valued
-                // slots permits an effort deferral, never an admission/safety closure.
+                // The owned driver receives fixed grammar and separate data slots.
+                // This closes injection, not record authorization.
                 if fixed
                     && values.is_some_and(|value| value.kind().as_ref() == "array")
                     && item
@@ -136,7 +136,12 @@ pub(crate) fn annotate(
                     if let Some(write) = index.query_writes.first() {
                         boundary(source, item, "query", write, "observed_query_method_write");
                     } else {
-                        tag(item, "value-scope:local-pg-bound-query");
+                        tag(item, "query-closure:pg-fixed-bound-object");
+                        for fact in &mut item.context.operand_facts {
+                            if fact.kind == OperandFactKind::QueryStructure {
+                                fact.remaining_checks = vec!["data_access_policy".into()];
+                            }
+                        }
                     }
                 }
             }
@@ -254,7 +259,7 @@ impl<'a> LocalObjects<'a> {
             query_writes: Vec::new(),
         };
         for node in root.dfs().filter(|node| node.is_named()) {
-            // A visible method write invalidates identity-based effort deferral.
+            // A visible method write invalidates identity-based query closure.
             // Deliberately file-wide: no receiver/alias/dispatch proof is claimed.
             if matches!(
                 node.kind().as_ref(),
@@ -368,7 +373,7 @@ fn resolve_object<'a>(
         .into_iter()
         .flatten()
         .find(|usage| {
-            usage.range().start >= declaration.range().end
+            usage.range().start >= binding.range().end
                 && usage.range().start < node.range().start
                 && usage.range().start >= owner.range().start
                 && usage.range().end <= owner.range().end
@@ -455,7 +460,7 @@ fn fixed_string(node: &JsNode<'_>) -> bool {
             .any(|part| part.kind().as_ref() == "template_substitution")
 }
 
-fn capture_at(_source: &str, item: &Evidence, node: &JsNode<'_>) -> Capture {
+pub(super) fn capture_at(_source: &str, item: &Evidence, node: &JsNode<'_>) -> Capture {
     let start = node.start_pos();
     let end = node.end_pos();
     Capture {

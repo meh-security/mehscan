@@ -33,9 +33,49 @@ enum PugOutputMode {
     Mixed,
 }
 
-fn trace_node_context_step(path: &str, step: &str) {
-    if std::env::var_os("MEHSCAN_TRACE_PHASES").is_some() {
-        eprintln!("mehscan_node_context {path} {step}");
+#[derive(Default)]
+struct NodeContextTrace {
+    enabled: bool,
+    active: Option<(String, &'static str, std::time::Instant)>,
+    steps: BTreeMap<&'static str, (usize, u128)>,
+    files: BTreeMap<String, u128>,
+}
+
+impl NodeContextTrace {
+    fn new() -> Self {
+        Self {
+            enabled: std::env::var_os("MEHSCAN_TRACE_PHASES").is_some(),
+            ..Self::default()
+        }
+    }
+
+    fn step(&mut self, path: &str, step: &'static str) {
+        if self.enabled {
+            self.finish();
+            self.active = Some((path.to_string(), step, std::time::Instant::now()));
+        }
+    }
+
+    fn finish(&mut self) {
+        if let Some((path, step, started)) = self.active.take() {
+            let elapsed = started.elapsed().as_micros();
+            let total = self.steps.entry(step).or_default();
+            total.0 += 1;
+            total.1 += elapsed;
+            *self.files.entry(path).or_default() += elapsed;
+        }
+    }
+
+    fn report(mut self) {
+        self.finish();
+        for (step, (count, microseconds)) in self.steps {
+            eprintln!("mehscan_node_context step={step} count={count} microseconds={microseconds}");
+        }
+        let mut files = self.files.into_iter().collect::<Vec<_>>();
+        files.sort_by_key(|(_, elapsed)| std::cmp::Reverse(*elapsed));
+        for (path, microseconds) in files.into_iter().take(5) {
+            eprintln!("mehscan_node_context_file microseconds={microseconds} path={path}");
+        }
     }
 }
 
@@ -193,6 +233,10 @@ impl NodeProjectContext {
             .filter(|(_, language, _)| is_node_language(*language))
             .collect::<Vec<_>>();
         let mut context = Self::default();
+        let mut trace = NodeContextTrace::new();
+        // Routes need wrappers from every module. Retain only documents needed
+        // by that second pass, reusing their validated AST and resolved imports.
+        let mut route_sources = Vec::new();
         for (path, language, source) in &sources {
             context.runtime_by_path.insert(
                 (*path).to_string(),
@@ -206,20 +250,27 @@ impl NodeProjectContext {
                 || source.contains("require(\"mongodb\")")
                 || source.contains("from 'mongodb'")
                 || source.contains("from \"mongodb\"");
+            trace.step(path, "parse");
             let Ok(document) = StrDoc::try_new(source, parser_language(*language)) else {
+                trace.finish();
                 continue;
             };
             let ast = AstGrep::doc(document);
             let root = ast.root();
+            trace.step(path, "parse_validation");
             if root.dfs().any(|node| node.is_error() || node.is_missing()) {
+                trace.finish();
                 continue;
             }
+            trace.step(path, "owner_guards");
             collect_owner_field_overwrite_guards(source, &mut context.owner_field_overwrite_guards);
+            trace.step(path, "exported_functions");
             let functions = exported_functions(&root);
+            trace.step(path, "imports");
             let imports = javascript_imports(path, &root);
-            trace_node_context_step(path, "parameter_returns");
+            trace.step(path, "parameter_returns");
             collect_parameter_return_summaries(path, &functions, &mut context.parameter_returns);
-            trace_node_context_step(path, "parameter_sinks");
+            trace.step(path, "parameter_sinks");
             collect_parameter_sink_summaries(
                 path,
                 &root,
@@ -228,53 +279,48 @@ impl NodeProjectContext {
                 &mut context.parameter_sinks,
             );
             if has_ejs_import(source) {
-                trace_node_context_step(path, "local_template_sinks");
+                trace.step(path, "local_template_sinks");
                 collect_local_template_parameter_sinks(path, &root, &mut context.parameter_sinks);
             }
-            trace_node_context_step(path, "callback_forwards");
+            trace.step(path, "callback_forwards");
             collect_callback_forward_summaries(path, &functions, &mut context.callback_forwards);
-            trace_node_context_step(path, "mongo_callback_results");
+            trace.step(path, "mongo_callback_results");
             collect_mongo_callback_result_summaries(
                 path,
                 &root,
                 &functions,
                 &mut context.mongo_callback_results,
             );
-            trace_node_context_step(path, "xxe_parsers");
+            trace.step(path, "xxe_parsers");
             collect_xxe_parser_summaries(path, &root, &mut context.xxe_parsers);
-            trace_node_context_step(path, "express_wrappers");
+            trace.step(path, "express_wrappers");
             collect_express_wrappers(path, &functions, &mut context.express_wrappers);
-            trace_node_context_step(path, "graphql_resolvers");
+            trace.step(path, "graphql_resolvers");
             collect_graphql_resolvers(path, &root, &mut context.graphql_resolvers);
-            trace_node_context_step(path, "request_boundary_flags");
-            let (has_session, has_csrf) = node_request_boundary_flags(path, &root);
+            trace.step(path, "request_boundary_flags");
+            let (has_session, has_csrf) = node_request_boundary_flags(&root, &imports);
             context.has_express_session |= has_session;
             if has_csrf {
                 context.csrf_middleware_paths.insert((*path).to_string());
             }
+            trace.finish();
+            if needs_project_context(source) {
+                route_sources.push((*path, ast, imports));
+            }
         }
-        for (path, language, source) in sources {
-            if !needs_project_context(source) {
-                continue;
-            }
-            let Ok(document) = StrDoc::try_new(source, parser_language(language)) else {
-                continue;
-            };
-            let ast = AstGrep::doc(document);
+        for (path, ast, imports) in route_sources {
             let root = ast.root();
-            if root.dfs().any(|node| node.is_error() || node.is_missing()) {
-                continue;
-            }
-            trace_node_context_step(path, "express_routes");
+            trace.step(path, "express_routes");
             collect_express_routes(
                 path,
                 &root,
+                &imports,
                 &context.express_wrappers,
                 &mut context.routes_by_handler,
             );
-            trace_node_context_step(path, "sensitive_model_fields");
+            trace.step(path, "sensitive_model_fields");
             collect_sensitive_model_fields(&root, &mut context.sensitive_model_fields);
-            trace_node_context_step(path, "done");
+            trace.finish();
         }
         for routes in context.routes_by_handler.values_mut() {
             routes.sort_by(|left, right| {
@@ -285,6 +331,7 @@ impl NodeProjectContext {
             });
             routes.dedup();
         }
+        trace.report();
         context
     }
 
@@ -2261,10 +2308,10 @@ fn last_element_array(text: &str) -> Option<String> {
 fn collect_express_routes(
     path: &str,
     root: &Node<'_, StrDoc<SupportLang>>,
+    imports: &BTreeMap<String, ImportTarget>,
     wrappers: &BTreeSet<String>,
     routes: &mut BTreeMap<String, Vec<ExpressRouteSummary>>,
 ) {
-    let imports = javascript_imports(path, root);
     let current_module = module_path(path).unwrap_or_default();
     let mounted_middleware = root
         .dfs()
@@ -2309,11 +2356,11 @@ fn collect_express_routes(
         };
         let handler_argument = call.arguments.last().expect("route has handler");
         let Some(handler_symbol) =
-            unwrap_handler(handler_argument, &current_module, &imports, wrappers, 0)
+            unwrap_handler(handler_argument, &current_module, imports, wrappers, 0)
         else {
             continue;
         };
-        let Some(handler) = resolve_handler(&handler_symbol, &current_module, &imports) else {
+        let Some(handler) = resolve_handler(&handler_symbol, &current_module, imports) else {
             continue;
         };
         let mut guards = mounted_middleware
@@ -3952,6 +3999,32 @@ fn collect_owner_field_overwrite_guards(source: &str, guards: &mut BTreeSet<Stri
     }
 }
 
+fn closed_resource_filter_properties<'a>(
+    filter: &Node<'a, StrDoc<SupportLang>>,
+) -> Option<Vec<Node<'a, StrDoc<SupportLang>>>> {
+    let mut keys = BTreeSet::new();
+    let mut properties = Vec::new();
+    for property in filter
+        .children()
+        .filter(|n| n.is_named() && n.kind().as_ref() != "comment")
+    {
+        if property.kind().as_ref() != "pair" {
+            return None;
+        }
+        let key = property.field("key")?;
+        if !matches!(
+            key.kind().as_ref(),
+            "property_identifier" | "string" | "number"
+        ) || key.dfs().any(|n| n.kind().as_ref() == "escape_sequence")
+            || !keys.insert(normalize_property_name(key.text().as_ref()))
+        {
+            return None;
+        }
+        properties.push(property);
+    }
+    Some(properties)
+}
+
 fn resource_filter_has_owner_scope(root: &Node<'_, StrDoc<SupportLang>>, sink: &Evidence) -> bool {
     let Some(filter) = sink.captures.get("filter") else {
         return false;
@@ -3963,42 +4036,29 @@ fn resource_filter_has_owner_scope(root: &Node<'_, StrDoc<SupportLang>>, sink: &
         return false;
     }
     let scope = function_scope(&filter_node, root);
-    filter_node
-        .children()
-        .filter(|child| child.is_named())
-        .any(|property| {
-            let shorthand = matches!(
-                property.kind().as_ref(),
-                "shorthand_property_identifier" | "shorthand_property_identifier_pattern"
-            );
-            let key = property
-                .field("key")
-                .or_else(|| shorthand.then(|| property.clone()));
-            let Some(key) = key else { return false };
-            if !matches!(
-                normalize_property_name(key.text().as_ref()).as_str(),
-                "userid"
-                    | "ownerid"
-                    | "accountid"
-                    | "tenantid"
-                    | "organizationid"
-                    | "organisationid"
-            ) {
-                return false;
-            }
-            let value = property
-                .field("value")
-                .or_else(|| shorthand.then_some(property));
-            value.is_some_and(|value| {
-                resource_owner_value_is_authenticated(
-                    root,
-                    value,
-                    sink.location.start.byte_offset,
-                    &scope,
-                    2,
-                )
-            })
+    let Some(properties) = closed_resource_filter_properties(&filter_node) else {
+        return false;
+    };
+    properties.into_iter().any(|property| {
+        let key = property.field("key");
+        let Some(key) = key else { return false };
+        if !matches!(
+            normalize_property_name(key.text().as_ref()).as_str(),
+            "userid" | "ownerid" | "accountid" | "tenantid" | "organizationid" | "organisationid"
+        ) {
+            return false;
+        }
+        let value = property.field("value");
+        value.is_some_and(|value| {
+            resource_owner_value_is_authenticated(
+                root,
+                value,
+                sink.location.start.byte_offset,
+                &scope,
+                2,
+            )
         })
+    })
 }
 
 fn resource_filter_has_route_bound_owner_scope(
@@ -4026,27 +4086,47 @@ fn resource_filter_has_route_bound_owner_scope(
     if !matches!(filter_node.kind().as_ref(), "object" | "object_expression") {
         return false;
     }
+    let scope = function_scope(&filter_node, root);
+    if root.dfs().any(|node| {
+        node.range().start >= scope.start
+            && node.range().end < sink.location.start.byte_offset
+            && matches!(
+                node.kind().as_ref(),
+                "assignment_expression" | "augmented_assignment_expression" | "update_expression"
+            )
+            && node
+                .field("left")
+                .or_else(|| node.field("argument"))
+                .is_some_and(|left| {
+                    matches!(
+                        compact(left.text().as_ref()).as_str(),
+                        "req" | "req.body" | "req.body.UserId" | "req.body.userId"
+                    )
+                })
+    }) {
+        return false;
+    }
     let model_is_user = sink.captures.get("model").is_some_and(|capture| {
         matches!(
             terminal_symbol(capture.text.trim()),
             "User" | "UserModel" | "Account" | "AccountModel"
         )
     });
-    filter_node
-        .children()
-        .filter(|child| child.is_named())
-        .any(|property| {
-            let Some(key) = property.field("key") else {
-                return false;
-            };
-            let key = normalize_property_name(key.text().as_ref());
-            if key != "userid" && !(key == "id" && model_is_user) {
-                return false;
-            }
-            property.field("value").is_some_and(|value| {
-                compact(value.text().as_ref()).replace("?.", ".") == "req.body.UserId"
-            })
+    let Some(properties) = closed_resource_filter_properties(&filter_node) else {
+        return false;
+    };
+    properties.into_iter().any(|property| {
+        let Some(key) = property.field("key") else {
+            return false;
+        };
+        let key = normalize_property_name(key.text().as_ref());
+        if key != "userid" && !(key == "id" && model_is_user) {
+            return false;
+        }
+        property.field("value").is_some_and(|value| {
+            compact(value.text().as_ref()).replace("?.", ".") == "req.body.UserId"
         })
+    })
 }
 
 fn resource_owner_value_is_authenticated(
@@ -4056,6 +4136,12 @@ fn resource_owner_value_is_authenticated(
     scope: &std::ops::Range<usize>,
     remaining_hops: usize,
 ) -> bool {
+    if !matches!(
+        value.kind().as_ref(),
+        "identifier" | "member_expression" | "call_expression"
+    ) {
+        return false;
+    }
     let text = compact(value.text().as_ref()).replace("?.", ".");
     let lower = text.to_ascii_lowercase();
     if text.starts_with("req.user.")
@@ -4071,9 +4157,18 @@ fn resource_owner_value_is_authenticated(
     {
         return true;
     }
-    if value.dfs().filter_map(call_site).any(|call| {
+    let mut origin = value.clone();
+    while origin.kind().as_ref() == "member_expression" {
+        let Some(object) = origin.field("object") else {
+            return false;
+        };
+        origin = object;
+    }
+    if call_site(origin).is_some_and(|call| {
         call.callee.contains("authenticatedUsers.")
             && matches!(terminal_symbol(&call.callee), "from" | "get")
+            && call.arguments.len() == 1
+            && matches!(call.arguments[0].text().trim(), "req" | "request")
     }) {
         return true;
     }
@@ -5032,8 +5127,25 @@ fn js2_provenance() -> Provenance {
     }
 }
 
-fn node_request_boundary_flags(path: &str, root: &Node<'_, StrDoc<SupportLang>>) -> (bool, bool) {
-    let imports = javascript_imports(path, root);
+fn node_request_boundary_flags(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    imports: &BTreeMap<String, ImportTarget>,
+) -> (bool, bool) {
+    // Every recognized policy below requires one of these exact imported
+    // modules. Browser libraries and unrelated server modules need no call walk.
+    if !imports.values().any(|target| {
+        matches!(
+            target.module.as_str(),
+            "express-session"
+                | "cookie-session"
+                | "csurf"
+                | "csrf-csrf"
+                | "lusca"
+                | "@fastify/csrf-protection"
+        )
+    }) {
+        return (false, false);
+    }
     let mut has_session = false;
     let mut has_csrf = false;
     for outer in root.dfs().filter_map(call_site) {
@@ -5043,7 +5155,7 @@ fn node_request_boundary_flags(path: &str, root: &Node<'_, StrDoc<SupportLang>>)
         let Some(inner) = outer.arguments.first().cloned().and_then(call_site) else {
             continue;
         };
-        let Some(module) = imported_call_module(&imports, &inner.callee) else {
+        let Some(module) = imported_call_module(imports, &inner.callee) else {
             continue;
         };
         has_session |= module == "express-session" || module == "cookie-session";
@@ -5296,52 +5408,6 @@ fn add_registration_and_recovery_policy<'tree>(
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
     evidence: &mut Vec<Evidence>,
 ) {
-    for property in root.dfs() {
-        let (Some(key), Some(value)) = (property.field("key"), property.field("value")) else {
-            continue;
-        };
-        if normalize_property_name(key.text().as_ref()) != "password"
-            || !matches!(value.kind().as_ref(), "object" | "object_expression")
-            || comments.is_in_comment(value.range())
-        {
-            continue;
-        }
-        let normalized = compact(value.text().as_ref()).to_ascii_lowercase();
-        let stores_hashed_password = normalized.contains("setdatavalue('password'")
-            || normalized.contains("setdatavalue(\"password\"");
-        let has_hash = normalized.contains("hash(") || normalized.contains("digest(");
-        let has_local_policy = normalized.contains("validate:")
-            || normalized.contains("isstrongpassword")
-            || normalized.contains(".length<")
-            || normalized.contains(".length<=")
-            || normalized.contains(".test(")
-            || normalized.contains(".min(");
-        if !stores_hashed_password || !has_hash || has_local_policy {
-            continue;
-        }
-        push_request_policy_evidence(
-            path,
-            language,
-            "password-storage-policy-review",
-            &value,
-            EvidenceKind::SecurityConfiguration,
-            Capability::Authentication,
-            vec!["CWE-521".to_string()],
-            vec![
-                "password-policy".to_string(),
-                "password-storage-boundary".to_string(),
-                "local-strength-validation-not-observed".to_string(),
-                "recommendation:review-effective-policy".to_string(),
-            ],
-            Confidence::Medium,
-            BTreeMap::from([("password_field".to_string(), capture(path, &value))]),
-            comments,
-            conditional,
-            literals,
-            evidence,
-        );
-    }
-
     for call in root.dfs().filter_map(call_site) {
         if terminal_symbol(&call.callee) != "post" || comments.is_in_comment(call.node.range()) {
             continue;
@@ -5405,71 +5471,6 @@ fn add_registration_and_recovery_policy<'tree>(
                 literals,
                 evidence,
             );
-        }
-    }
-
-    for comparison in root
-        .dfs()
-        .filter(|node| node.kind().as_ref() == "binary_expression")
-    {
-        if comments.is_in_comment(comparison.range()) {
-            continue;
-        }
-        let is_inequality = comparison
-            .children()
-            .filter(|child| !child.is_named())
-            .any(|operator| matches!(operator.text().trim(), "!=" | "!=="));
-        let normalized = compact(comparison.text().as_ref()).to_ascii_lowercase();
-        if !normalized.contains("passwordrepeat")
-            || !normalized.contains("password")
-            || !is_inequality
-        {
-            continue;
-        }
-        let Some((function, function_text)) = comparison
-            .ancestors()
-            .filter(is_function_node)
-            .map(|function| {
-                let text = compact(function.text().as_ref()).to_ascii_lowercase();
-                (function, text)
-            })
-            .find(|(_, text)| text.contains("next()"))
-        else {
-            continue;
-        };
-        let mismatch_is_only_observed = function_text.contains("next()")
-            && !function_text.contains("res.status(")
-            && !function_text.contains("throw")
-            && !function_text.contains("next(newerror");
-        if !mismatch_is_only_observed {
-            continue;
-        }
-        push_request_policy_evidence(
-            path,
-            language,
-            "password-confirmation-not-enforced-review",
-            &comparison,
-            EvidenceKind::SecurityConfiguration,
-            Capability::Authentication,
-            vec!["CWE-20".to_string()],
-            vec![
-                "registration".to_string(),
-                "password-confirmation".to_string(),
-                "mismatch-not-rejected".to_string(),
-                "recommendation:fix-application".to_string(),
-            ],
-            Confidence::High,
-            BTreeMap::from([("comparison".to_string(), capture(path, &comparison))]),
-            comments,
-            conditional,
-            literals,
-            evidence,
-        );
-        let rule_id = language_rule(language, "password-confirmation-not-enforced-review");
-        if let Some(item) = evidence.iter_mut().find(|item| {
-            item.rule_id == rule_id && item.location.start.byte_offset == comparison.range().start
-        }) {
-            item.enclosing_symbol = enclosing_symbol(&function);
         }
     }
 
@@ -5619,9 +5620,8 @@ fn add_express_session_policy<'tree>(
             .as_ref()
             .and_then(|cookie| object_property(cookie, "sameSite"))
             .map(|value| compact(value.text().as_ref()).to_ascii_lowercase());
-        let explicitly_weak = http_only.as_deref() == Some("false")
-            || secure.as_deref() == Some("false")
-            || matches!(same_site.as_deref(), Some("false" | "'none'" | "\"none\""));
+        let explicitly_weak =
+            http_only.as_deref() == Some("false") || secure.as_deref() == Some("false");
         let explicitly_hardened = http_only.as_deref() == Some("true")
             && secure.as_deref() == Some("true")
             && same_site.as_deref().is_some_and(|value| {
@@ -5654,7 +5654,7 @@ fn add_express_session_policy<'tree>(
             )
         } else {
             (
-                EvidenceKind::SecurityConfiguration,
+                EvidenceKind::Resource,
                 "session-cookie-policy-review",
                 vec![
                     "session-cookie".to_string(),
@@ -5926,13 +5926,6 @@ fn language_rule(language: Language, suffix: &str) -> &'static str {
         (Language::Javascript, "weak-password-policy") => "javascript-weak-password-policy",
         (Language::Typescript, "weak-password-policy") => "typescript-weak-password-policy",
         (Language::Tsx, "weak-password-policy") => "tsx-weak-password-policy",
-        (Language::Javascript, "password-storage-policy-review") => {
-            "javascript-password-storage-policy-review"
-        }
-        (Language::Typescript, "password-storage-policy-review") => {
-            "typescript-password-storage-policy-review"
-        }
-        (Language::Tsx, "password-storage-policy-review") => "tsx-password-storage-policy-review",
         (Language::Javascript, "registration-rejection-fallthrough-review") => {
             "javascript-registration-rejection-fallthrough-review"
         }
@@ -5941,15 +5934,6 @@ fn language_rule(language: Language, suffix: &str) -> &'static str {
         }
         (Language::Tsx, "registration-rejection-fallthrough-review") => {
             "tsx-registration-rejection-fallthrough-review"
-        }
-        (Language::Javascript, "password-confirmation-not-enforced-review") => {
-            "javascript-password-confirmation-not-enforced-review"
-        }
-        (Language::Typescript, "password-confirmation-not-enforced-review") => {
-            "typescript-password-confirmation-not-enforced-review"
-        }
-        (Language::Tsx, "password-confirmation-not-enforced-review") => {
-            "tsx-password-confirmation-not-enforced-review"
         }
         (Language::Javascript, "knowledge-based-password-recovery-review") => {
             "javascript-knowledge-based-password-recovery-review"
@@ -6420,6 +6404,34 @@ mod tests {
             ),
             (true, false)
         );
+        for predicate in [
+            "{ UserId: req.user.id, ...req.body }",
+            "{ UserId: req.user.id, UserId: req.body.id }",
+            "{ UserId: req.user.id, [req.body.key]: req.body.value }",
+            "{ UserId: req.body.UserId, ...req.body }",
+            r"{ UserId: req.user.id, '\u0055serId': req.body.id }",
+            "{ UserId: req.user.id || req.body.id }",
+            "{ UserId: choose(authenticatedUsers.get(req), req.body.id) }",
+        ] {
+            assert_eq!(
+                owner_scope_classifications(
+                    &format!(
+                        "function handler(req) {{ return Wallet.findOne({{ where: {predicate} }}) }}"
+                    ),
+                    "export const appendUserId = () => (req, res, next) => { req.body.UserId = authenticatedUsers.get(req).data.id; next() }"
+                ),
+                (false, false),
+                "owner overrides must retain authority work: {predicate}"
+            );
+        }
+        assert_eq!(
+            owner_scope_classifications(
+                "function handler(req) { req.body.UserId = req.body.target; return Wallet.findOne({ where: { UserId: req.body.UserId } }) }",
+                "export const appendUserId = () => (req, res, next) => { req.body.UserId = authenticatedUsers.get(req).data.id; next() }"
+            ),
+            (false, false),
+            "a handler write invalidates the earlier middleware overwrite"
+        );
 
         let source = "function update(req) { const { userId } = req.session; profile.updateUser(parseInt(userId)); }";
         let document = StrDoc::try_new(source, SupportLang::TypeScript).expect("valid source");
@@ -6470,7 +6482,8 @@ mod tests {
         let ast = AstGrep::doc(document);
         let root = ast.root();
         let mut routes = BTreeMap::new();
-        collect_express_routes("server.ts", &root, &BTreeSet::new(), &mut routes);
+        let imports = javascript_imports("server.ts", &root);
+        collect_express_routes("server.ts", &root, &imports, &BTreeSet::new(), &mut routes);
         let route = |path: &str| {
             routes
                 .values()
@@ -6489,6 +6502,79 @@ mod tests {
         );
         assert!(route("/rest/baskets/:id").guards.is_empty());
         assert!(route("/rest/late/:id").guards.is_empty());
+    }
+
+    #[test]
+    fn shared_project_documents_preserve_later_wrappers_and_policy_imports() {
+        for language in [Language::Javascript, Language::Typescript] {
+            let sources = [
+                (
+                    "src/server.ts",
+                    language,
+                    "import { wrap } from './wrappers'; import { handler } from './handlers';
+                     import session from 'express-session'; const boundary = require('csurf');
+                     app.use(session()); app.use(boundary()); app.get('/item', wrap(handler));
+                     Account.init({ password: { type: 'text' } });",
+                ),
+                (
+                    "src/wrappers.ts",
+                    language,
+                    "export const wrap = handler => (req, res) => handler(req, res);",
+                ),
+                (
+                    "src/handlers.ts",
+                    language,
+                    "export const handler = (req, res) => res.send(req.query.html);",
+                ),
+                (
+                    "src/broken.ts",
+                    language,
+                    "app.get('/broken', bad); const broken = ;",
+                ),
+            ];
+            for ordered in [sources.to_vec(), sources.into_iter().rev().collect()] {
+                let context = NodeProjectContext::from_sources(ordered.into_iter());
+                let routes = &context.routes_by_handler["src/handlers.handler"];
+                assert_eq!(routes.len(), 1);
+                assert_eq!(routes[0].path, "/item");
+                assert!(context.has_express_session);
+                assert!(context.csrf_middleware_paths.contains("src/server.ts"));
+                assert_eq!(context.routes_by_handler.len(), 1);
+                assert!(context.sensitive_model_fields["Account"].contains("password"));
+            }
+        }
+    }
+
+    #[test]
+    fn cached_policy_imports_keep_all_recognized_aliases_and_require_actual_use() {
+        for (module, expected) in [
+            ("express-session", (true, false)),
+            ("cookie-session", (true, false)),
+            ("csurf", (false, true)),
+            ("csrf-csrf", (false, true)),
+            ("lusca", (false, true)),
+            ("@fastify/csrf-protection", (false, true)),
+            ("./custom-csrf", (false, false)),
+        ] {
+            for import in [
+                format!("import policy from '{module}';"),
+                format!("const policy = require('{module}');"),
+            ] {
+                for used in [false, true] {
+                    let source =
+                        format!("{import} {}", if used { "app.use(policy());" } else { "" });
+                    let ast =
+                        AstGrep::doc(StrDoc::try_new(&source, SupportLang::JavaScript).unwrap());
+                    let root = ast.root();
+                    let imports = javascript_imports("server.js", &root);
+                    assert_eq!(
+                        node_request_boundary_flags(&root, &imports),
+                        if used { expected } else { (false, false) },
+                        "{source}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

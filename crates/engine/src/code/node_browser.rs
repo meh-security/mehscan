@@ -17,6 +17,137 @@ use super::reachability;
 
 const BROWSER_ENGINE: &str = "ast-grep 0.45.1 + bounded-browser-boundary";
 
+/// Imports are ownership evidence only while the object stays at direct
+/// sanitize calls. Aliases, destructuring, exports and unknown callees can
+/// replace the implementation or change its policy.
+pub(crate) fn unverified_dompurify_binding(root: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    // Other runtime import shapes cannot share the direct-default ownership
+    // proof. In particular, a namespace can mutate its default instance.
+    if root.dfs().any(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "import_statement" | "export_statement"
+        ) && node
+            .field("source")
+            .is_some_and(|source| exact_quoted(&source.text()) == Some("dompurify"))
+            && !node.text().trim_start().starts_with("import type ")
+            && (node.kind().as_ref() == "export_statement"
+                || node
+                    .dfs()
+                    .any(|child| child.kind().as_ref() == "namespace_import")
+                || !node
+                    .children()
+                    .filter(|child| child.kind().as_ref() == "import_clause")
+                    .any(|clause| {
+                        clause
+                            .children()
+                            .any(|child| child.kind().as_ref() == "identifier")
+                    }))
+    }) {
+        return true;
+    }
+    let bindings = imported_default_or_required_bindings(root, &["dompurify"]);
+    if bindings.is_empty() {
+        return false;
+    }
+    root.dfs().any(|node| {
+        if !matches!(
+            node.kind().as_ref(),
+            "identifier"
+                | "shorthand_property_identifier"
+                | "shorthand_property_identifier_pattern"
+        ) || !bindings.contains(node.text().as_ref())
+        {
+            return false;
+        }
+        if sanitizer_parameter_shadows(&node, node.text().as_ref()) {
+            return false; // This reference cannot mutate the imported instance.
+        }
+        let Some(parent) = node.parent() else {
+            return true;
+        };
+        if parent.kind().as_ref() == "import_clause" {
+            return false;
+        }
+        if parent.kind().as_ref() == "variable_declarator"
+            && parent
+                .field("name")
+                .is_some_and(|name| name.range() == node.range())
+            && parent.field("value").is_some_and(|value| {
+                matches!(
+                    normalized(&value.text()).as_str(),
+                    "require('dompurify')" | "require(\"dompurify\")"
+                )
+            })
+            && !parent.ancestors().any(|ancestor| is_function(&ancestor))
+            && !root.dfs().any(|declaration| {
+                declaration
+                    .field("name")
+                    .or_else(|| declaration.field("left"))
+                    .is_some_and(|name| {
+                        matches!(
+                            declaration.kind().as_ref(),
+                            "variable_declarator"
+                                | "function_declaration"
+                                | "assignment_expression"
+                        ) && sanitizer_binding_pattern(&name, "require")
+                    })
+                    || (is_function(&declaration)
+                        && declaration
+                            .field("parameters")
+                            .or_else(|| declaration.field("parameter"))
+                            .is_some_and(|parameters| {
+                                sanitizer_binding_pattern(&parameters, "require")
+                            }))
+            })
+        {
+            return false;
+        }
+        !(parent.kind().as_ref() == "member_expression"
+            && parent
+                .field("object")
+                .is_some_and(|object| object.range() == node.range())
+            && parent
+                .field("property")
+                .is_some_and(|property| property.text() == "sanitize")
+            && parent.parent().is_some_and(|call| {
+                call.kind().as_ref() == "call_expression"
+                    && call
+                        .field("function")
+                        .is_some_and(|callee| callee.range() == parent.range())
+            }))
+    })
+}
+
+fn sanitizer_parameter_shadows(node: &Node<'_, StrDoc<SupportLang>>, binding: &str) -> bool {
+    node.ancestors().filter(is_function).any(|function| {
+        function
+            .field("parameters")
+            .or_else(|| function.field("parameter"))
+            .is_some_and(|parameters| sanitizer_binding_pattern(&parameters, binding))
+    })
+}
+
+fn sanitizer_binding_pattern(node: &Node<'_, StrDoc<SupportLang>>, binding: &str) -> bool {
+    match node.kind().as_ref() {
+        "identifier" | "shorthand_property_identifier_pattern" => node.text() == binding,
+        "assignment_pattern" | "object_assignment_pattern" => node
+            .field("left")
+            .is_some_and(|left| sanitizer_binding_pattern(&left, binding)),
+        "required_parameter" | "optional_parameter" => node
+            .field("pattern")
+            .is_some_and(|pattern| sanitizer_binding_pattern(&pattern, binding)),
+        "pair_pattern" => node
+            .field("value")
+            .is_some_and(|value| sanitizer_binding_pattern(&value, binding)),
+        "formal_parameters" | "object_pattern" | "array_pattern" | "rest_pattern" => node
+            .children()
+            .filter(|node| node.is_named())
+            .any(|node| sanitizer_binding_pattern(&node, binding)),
+        _ => false,
+    }
+}
+
 pub(crate) fn accepts_angular_trust_bypass(
     root: &Node<'_, StrDoc<SupportLang>>,
     receiver: &Node<'_, StrDoc<SupportLang>>,
@@ -35,11 +166,91 @@ pub(crate) fn accepts_angular_trust_bypass(
     })
 }
 
+/// A final, owned sanitizer with explicit text-markup-only policy. Wider policies,
+/// wrappers and transformations remain reviewer work.
+pub(crate) fn restricted_html_control(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    value: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    if value.kind().as_ref() != "call_expression" {
+        return false;
+    }
+    let Some(callee) = value.field("function") else {
+        return false;
+    };
+    let callee = normalized(&callee.text());
+    let Some(receiver) = callee.strip_suffix(".sanitize") else {
+        return false;
+    };
+    let bindings = imported_default_or_required_bindings(root, &["dompurify"]);
+    if !bindings.contains(receiver)
+        || sanitizer_parameter_shadows(value, receiver)
+        || unverified_dompurify_binding(root)
+    {
+        return false;
+    }
+    let Some(arguments) = value.field("arguments") else {
+        return false;
+    };
+    let arguments = arguments
+        .children()
+        .filter(|node| node.is_named())
+        .collect::<Vec<_>>();
+    if arguments.len() != 2 || arguments[1].kind().as_ref() != "object" {
+        return false;
+    }
+    let mut tags = false;
+    let mut attributes = false;
+    for entry in arguments[1].children().filter(|node| node.is_named()) {
+        if entry.kind().as_ref() != "pair" {
+            return false;
+        }
+        let (Some(key), Some(values)) = (entry.field("key"), entry.field("value")) else {
+            return false;
+        };
+        let key = normalized(&key.text());
+        let key = key.trim_matches(['\'', '"']);
+        let allowed: &[&str] = match key {
+            "ALLOWED_TAGS" if !tags => {
+                tags = true;
+                &[
+                    "span", "button", "p", "b", "i", "em", "strong", "br", "ul", "ol", "li", "div",
+                    "small", "code", "pre", "mark", "bdi",
+                ]
+            }
+            "ALLOWED_ATTR" if !attributes => {
+                attributes = true;
+                &[
+                    "class",
+                    "title",
+                    "type",
+                    "disabled",
+                    "contenteditable",
+                    "data-field",
+                ]
+            }
+            _ => return false,
+        };
+        if values.kind().as_ref() != "array"
+            || !values
+                .children()
+                .filter(|node| node.is_named())
+                .all(|node| {
+                    exact_quoted(&node.text()).is_some_and(|value| allowed.contains(&value))
+                })
+        {
+            return false;
+        }
+    }
+    tags && attributes
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn add_browser_observations<'tree>(
     path: &str,
     root: &Node<'tree, StrDoc<SupportLang>>,
     language: Language,
+    vue_templates: Option<&BTreeMap<String, Capture>>,
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
@@ -57,6 +268,9 @@ pub(crate) fn add_browser_observations<'tree>(
     let socket_data = socket_data_ranges(root);
     let response_data = fetch_response_data_ranges(root);
     let dom_bindings = dom_bindings(root, &shadowed_globals);
+    let vue_refs = vue_templates
+        .map(|templates| super::vue::resolved_dom_refs(root, templates))
+        .unwrap_or_default();
     let react_refs = react_ref_targets(root);
     let react_factories = react_factories(root);
     let lit_unsafe_html = imported_named_bindings(
@@ -75,6 +289,13 @@ pub(crate) fn add_browser_observations<'tree>(
     for node in root.dfs() {
         let kind = node.kind();
         let kind = kind.as_ref();
+        let vue_ref = vue_operation_ref(&node, &vue_refs);
+        let operation_bindings = vue_ref.map(|(name, _)| {
+            let mut bindings = dom_bindings.clone();
+            bindings.insert(format!("{name}.value"));
+            bindings
+        });
+        let operation_bindings = operation_bindings.as_ref().unwrap_or(&dom_bindings);
         if matches!(kind, "member_expression" | "subscript_expression")
             && !is_assignment_target(&node)
         {
@@ -235,7 +456,7 @@ pub(crate) fn add_browser_observations<'tree>(
             }
 
             if let Some((content, canonical)) =
-                html_call_sink(&node, &dom_bindings, &react_refs, &shadowed_globals)
+                html_call_sink(&node, operation_bindings, &react_refs, &shadowed_globals)
             {
                 push_observation(
                     path,
@@ -312,6 +533,20 @@ pub(crate) fn add_browser_observations<'tree>(
             }
 
             if let Some(content) = vue_render_inner_html_content(&node, &vue_factories) {
+                let mut tags = vec![
+                    "browser",
+                    "vue",
+                    "trusted-markup",
+                    "explicit-raw-html",
+                    "xss",
+                ];
+                if node
+                    .field("arguments")
+                    .and_then(|args| args.children().find(|n| n.is_named()))
+                    .is_some_and(|tag| exact_quoted(&tag.text()) == Some("style"))
+                {
+                    tags.push("raw-output-container:style");
+                }
                 push_observation(
                     path,
                     language,
@@ -322,13 +557,7 @@ pub(crate) fn add_browser_observations<'tree>(
                     &format!("{}-vue-inner-html-output", language_prefix(language)),
                     "content",
                     "Vue h innerHTML",
-                    &[
-                        "browser",
-                        "vue",
-                        "trusted-markup",
-                        "explicit-raw-html",
-                        "xss",
-                    ],
+                    &tags,
                     Confidence::High,
                     "Vue render-function innerHTML property",
                     comments,
@@ -412,6 +641,14 @@ pub(crate) fn add_browser_observations<'tree>(
             }
 
             if let Some(content) = react_create_element_content(&node, &react_factories) {
+                let mut tags = vec!["browser", "react", "dangerously-set-inner-html", "xss"];
+                if node
+                    .field("arguments")
+                    .and_then(|args| args.children().find(|n| n.is_named()))
+                    .is_some_and(|tag| exact_quoted(&tag.text()) == Some("style"))
+                {
+                    tags.push("raw-output-container:style");
+                }
                 push_observation(
                     path,
                     language,
@@ -422,7 +659,7 @@ pub(crate) fn add_browser_observations<'tree>(
                     &format!("{}-react-dangerous-html-output", language_prefix(language)),
                     "content",
                     "React.createElement dangerouslySetInnerHTML",
-                    &["browser", "react", "dangerously-set-inner-html", "xss"],
+                    &tags,
                     Confidence::High,
                     "React.createElement",
                     comments,
@@ -458,7 +695,7 @@ pub(crate) fn add_browser_observations<'tree>(
             && let (Some(left), Some(right)) = (node.field("left"), node.field("right"))
         {
             let target = normalized(&left.text());
-            if dom_html_property(&target, &dom_bindings, &react_refs, &shadowed_globals) {
+            if dom_html_property(&target, operation_bindings, &react_refs, &shadowed_globals) {
                 push_observation(
                     path,
                     language,
@@ -500,8 +737,22 @@ pub(crate) fn add_browser_observations<'tree>(
         }
 
         if kind == "jsx_attribute"
+            && jsx_attribute_is_on_intrinsic_element(&node)
             && let Some(content) = jsx_url_attribute_content(&node)
         {
+            let element = jsx_attribute_element_name(&node).unwrap_or_default();
+            let url_context = if matches!(element.as_str(), "a" | "area") {
+                "url-consumer:link-navigation"
+            } else {
+                "url-consumer:element-href"
+            };
+            let origin_context = if unchanged_link_parameter(&content) {
+                "link-origin:unchanged-parameter"
+            } else if constructed_link_operand(&content) {
+                "link-origin:constructed"
+            } else {
+                "link-origin:producer-unresolved"
+            };
             let content_text = normalized(&content.text());
             if react_state.contains(&content_text) {
                 push_observation(
@@ -533,7 +784,14 @@ pub(crate) fn add_browser_observations<'tree>(
                 &format!("{}-react-url-attribute-output", language_prefix(language)),
                 "content",
                 "React href attribute",
-                &["browser", "react", "url-attribute", "xss"],
+                &[
+                    "browser",
+                    "react",
+                    "url-attribute",
+                    "xss",
+                    url_context,
+                    origin_context,
+                ],
                 Confidence::High,
                 "React href attribute",
                 comments,
@@ -548,6 +806,16 @@ pub(crate) fn add_browser_observations<'tree>(
             && jsx_attribute_is_on_intrinsic_element(&node)
             && let Some(content) = jsx_attribute_content(&node, "innerHTML")
         {
+            let mut tags = vec![
+                "browser",
+                "solidjs",
+                "trusted-markup",
+                "explicit-raw-html",
+                "xss",
+            ];
+            if jsx_attribute_element_name(&node).as_deref() == Some("style") {
+                tags.push("raw-output-container:style");
+            }
             push_observation(
                 path,
                 language,
@@ -558,13 +826,7 @@ pub(crate) fn add_browser_observations<'tree>(
                 &format!("{}-solid-inner-html-output", language_prefix(language)),
                 "content",
                 "Solid innerHTML",
-                &[
-                    "browser",
-                    "solidjs",
-                    "trusted-markup",
-                    "explicit-raw-html",
-                    "xss",
-                ],
+                &tags,
                 Confidence::High,
                 "Solid innerHTML JSX property",
                 comments,
@@ -581,6 +843,15 @@ pub(crate) fn add_browser_observations<'tree>(
                     && normalized(&ancestor.text()).starts_with("dangerouslySetInnerHTML=")
             })
         {
+            let style_container = node
+                .ancestors()
+                .find(|ancestor| ancestor.kind().as_ref() == "jsx_attribute")
+                .and_then(|attribute| jsx_attribute_element_name(&attribute))
+                .is_some_and(|element| element == "style");
+            let mut tags = vec!["browser", "react", "dangerously-set-inner-html", "xss"];
+            if style_container {
+                tags.push("raw-output-container:style");
+            }
             push_observation(
                 path,
                 language,
@@ -591,7 +862,7 @@ pub(crate) fn add_browser_observations<'tree>(
                 &format!("{}-react-dangerous-html-output", language_prefix(language)),
                 "content",
                 "dangerouslySetInnerHTML",
-                &["browser", "react", "dangerously-set-inner-html", "xss"],
+                &tags,
                 Confidence::High,
                 "React dangerouslySetInnerHTML",
                 comments,
@@ -599,6 +870,19 @@ pub(crate) fn add_browser_observations<'tree>(
                 literals,
                 evidence,
             );
+        }
+        if let Some((_, (declaration, template))) = vue_ref {
+            if let Some(item) = evidence.iter_mut().rev().find(|e| {
+                e.capability == Capability::HtmlOutput
+                    && e.location.start.byte_offset == node.range().start
+                    && e.location.end.byte_offset == node.range().end
+            }) {
+                item.tags.extend(["vue".into(), "vue-dom-ref".into()]);
+                item.captures
+                    .insert("vue_dom_ref_declaration".into(), capture(path, declaration));
+                item.captures
+                    .insert("vue_dom_ref_template".into(), template.clone());
+            }
         }
     }
     add_decoded_storage_sources(
@@ -731,6 +1015,31 @@ fn add_decoded_storage_sources<'tree>(
     }
 }
 
+fn vue_operation_ref<'tree, 'a>(
+    node: &Node<'tree, StrDoc<SupportLang>>,
+    refs: &'a BTreeMap<String, (Node<'tree, StrDoc<SupportLang>>, Capture)>,
+) -> Option<(&'a str, &'a (Node<'tree, StrDoc<SupportLang>>, Capture))> {
+    if refs.is_empty() {
+        return None;
+    }
+    let target = match node.kind().as_ref() {
+        "assignment_expression" => node.field("left")?,
+        "call_expression" => node.field("function")?,
+        _ => return None,
+    };
+    let target = normalized(&target.text());
+    let (receiver, method) = target.rsplit_once('.')?;
+    if !matches!(
+        method,
+        "innerHTML" | "outerHTML" | "insertAdjacentHTML" | "setHTMLUnsafe"
+    ) {
+        return None;
+    }
+    let name = receiver.trim_end_matches('!').strip_suffix(".value")?;
+    let (name, binding) = refs.get_key_value(name)?;
+    (!super::vue::ref_shadowed(node, name)).then_some((name.as_str(), binding))
+}
+
 fn jwt_decode_factories(root: &Node<'_, StrDoc<SupportLang>>) -> BTreeSet<String> {
     let mut decoders = BTreeSet::new();
     for import in root
@@ -780,11 +1089,7 @@ fn compact_orphan_browser_reads(evidence: &mut Vec<Evidence>) {
             matches!(
                 item.capability,
                 Capability::HtmlOutput | Capability::BrowserNavigation
-            ) && (item.rule_id.contains("browser-dom-html-output")
-                || item.rule_id.contains("react-dangerous-html-output")
-                || item.rule_id.contains("url-attribute-output")
-                || item.rule_id.contains("angular-html-trust-bypass")
-                || item.capability == Capability::BrowserNavigation)
+            )
         })
         .map(|item| item.enclosing_symbol.clone())
         .collect::<BTreeSet<_>>();
@@ -1455,7 +1760,7 @@ fn imports_module(root: &Node<'_, StrDoc<SupportLang>>, expected: &str) -> bool 
         })
 }
 
-fn imported_named_bindings(
+pub(super) fn imported_named_bindings(
     root: &Node<'_, StrDoc<SupportLang>>,
     modules: &[&str],
     exported: &str,
@@ -1582,6 +1887,16 @@ fn vue_render_inner_html_content<'tree>(
 }
 
 fn jsx_attribute_is_on_intrinsic_element(attribute: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    jsx_attribute_element_name(attribute).is_some_and(|name| {
+        !name.contains('.')
+            && name
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_ascii_lowercase())
+    })
+}
+
+fn jsx_attribute_element_name(attribute: &Node<'_, StrDoc<SupportLang>>) -> Option<String> {
     attribute
         .ancestors()
         .find(|ancestor| {
@@ -1590,16 +1905,8 @@ fn jsx_attribute_is_on_intrinsic_element(attribute: &Node<'_, StrDoc<SupportLang
                 "jsx_opening_element" | "jsx_self_closing_element"
             )
         })
-        .and_then(|element| {
-            normalized(&element.text())
-                .trim_start_matches('<')
-                .split(|character: char| {
-                    character.is_whitespace() || matches!(character, '>' | '/')
-                })
-                .next()
-                .and_then(|name| name.chars().next())
-        })
-        .is_some_and(|character| character.is_ascii_lowercase())
+        .and_then(|element| element.field("name"))
+        .map(|name| name.text().trim().to_string())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1682,6 +1989,79 @@ fn jsx_url_attribute_content<'tree>(
     attribute: &Node<'tree, StrDoc<SupportLang>>,
 ) -> Option<Node<'tree, StrDoc<SupportLang>>> {
     jsx_attribute_content(attribute, "href")
+}
+
+pub(crate) fn constructed_link_operand(value: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    fn construction(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
+        matches!(
+            node.kind().as_ref(),
+            "template_string" | "binary_expression" | "call_expression"
+        )
+    }
+    if construction(value) {
+        return true;
+    }
+    if value.kind().as_ref() != "identifier" {
+        return false;
+    }
+    let Some(function) = value.ancestors().find(is_function) else {
+        return false;
+    };
+    function.dfs().any(|node| {
+        let (name, producer) = match node.kind().as_ref() {
+            "variable_declarator" => (node.field("name"), node.field("value")),
+            "assignment_expression" | "assignment_pattern" => {
+                (node.field("left"), node.field("right"))
+            }
+            "required_parameter" | "optional_parameter" => {
+                (node.field("pattern"), node.field("value"))
+            }
+            _ => return false,
+        };
+        name.is_some_and(|name| name.text() == value.text())
+            && producer.is_some_and(|producer| construction(&producer))
+    })
+}
+
+fn unchanged_link_parameter(value: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    if value.kind().as_ref() != "identifier" {
+        return false;
+    }
+    let name = value.text();
+    let Some(function) = value.ancestors().find(is_function) else {
+        return false;
+    };
+    let Some(parameters) = function
+        .field("parameters")
+        .or_else(|| function.field("parameter"))
+    else {
+        return false;
+    };
+    if parameters.dfs().any(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "assignment_pattern" | "object_assignment_pattern"
+        ) || (matches!(
+            node.kind().as_ref(),
+            "required_parameter" | "optional_parameter"
+        ) && node.field("value").is_some())
+    }) || !parameters.dfs().any(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "identifier" | "shorthand_property_identifier_pattern"
+        ) && node.text() == name
+    }) {
+        return false;
+    }
+    !function.dfs().any(|node| {
+        let target = match node.kind().as_ref() {
+            "assignment_expression" | "augmented_assignment_expression" => node.field("left"),
+            "variable_declarator" => node.field("name"),
+            "update_expression" => node.field("argument"),
+            _ => None,
+        };
+        target.is_some_and(|target| target.dfs().any(|part| part.text() == name))
+    })
 }
 
 fn jsx_attribute_content<'tree>(
@@ -1855,13 +2235,16 @@ fn push_observation<'tree>(
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
     evidence: &mut Vec<Evidence>,
 ) {
+    let operand_literal = (kind == EvidenceKind::Sink
+        && matches!(
+            capability,
+            Capability::HtmlOutput | Capability::BrowserNavigation
+        ))
+    .then(|| literals.evaluate(value));
     if comments.is_in_comment(anchor.range())
-        || (kind == EvidenceKind::Sink
-            && matches!(
-                capability,
-                Capability::HtmlOutput | Capability::BrowserNavigation
-            )
-            && matches!(literals.evaluate(value).state, LiteralState::Known))
+        || operand_literal
+            .as_ref()
+            .is_some_and(|literal| literal.state == LiteralState::Known)
         || evidence.iter().any(|item| {
             item.capability == capability
                 && item.location.start.byte_offset == anchor.range().start
@@ -1903,6 +2286,9 @@ fn push_observation<'tree>(
             comment: false,
             reachability: Some(reachability::classify(anchor, literals)),
             availability: Some(conditional.availability_for(anchor.range())),
+            literals: operand_literal.map_or_else(BTreeMap::new, |literal| {
+                BTreeMap::from([(role.to_string(), literal)])
+            }),
             ..EvidenceContext::default()
         },
         symbol_resolution: Some(SymbolResolution {

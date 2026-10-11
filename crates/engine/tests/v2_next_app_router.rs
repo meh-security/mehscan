@@ -63,7 +63,9 @@ fn models_next_app_router_boundaries_postgres_js_and_production_test_routes() {
                 .iter()
                 .any(|step| step.location.path == "src/app/api/webhooks/test/route.ts")
     }));
-    assert!(!result.security_paths.iter().any(|path| {
+    // URL construction is not destination approval. The same-origin throw/catch
+    // guard here requires source review; this frontend does not prove that CFG.
+    assert!(result.security_paths.iter().any(|path| {
         path.capability == Capability::Redirect
             && path
                 .steps
@@ -95,14 +97,11 @@ fn models_next_app_router_boundaries_postgres_js_and_production_test_routes() {
         "typescript-nextjs-client-controlled-privilege-assignment",
         "typescript-nextjs-whole-body-persistence",
         "typescript-nextjs-web-file-uploaded-path",
-        "typescript-nextjs-graphql-introspection-review",
-        "typescript-nextjs-graphql-complexity-review",
         "typescript-nextjs-client-controlled-financial-amount-review",
         "typescript-nextjs-read-check-write-race-review",
         "typescript-manual-jwt-weak-fallback-secret",
         "typescript-manual-jwt-without-expiry",
         "typescript-manual-jwt-alg-none-acceptance",
-        "typescript-nextjs-auth-rate-limit-review",
         "typescript-nextjs-distinct-login-response-review",
         "typescript-nextjs-literal-default-credential",
         "typescript-nextjs-reset-token-response",
@@ -111,6 +110,13 @@ fn models_next_app_router_boundaries_postgres_js_and_production_test_routes() {
             result.evidence.iter().any(|item| item.rule_id == rule),
             "missing {rule}"
         );
+    }
+    for removed in [
+        "typescript-nextjs-graphql-introspection-review",
+        "typescript-nextjs-graphql-complexity-review",
+        "typescript-nextjs-auth-rate-limit-review",
+    ] {
+        assert!(!result.evidence.iter().any(|item| item.rule_id == removed));
     }
     let financial = result
         .evidence

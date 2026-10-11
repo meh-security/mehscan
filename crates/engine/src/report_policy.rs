@@ -197,11 +197,6 @@ pub(crate) fn presentation(rule: &str, cwes: &[String], operation: &str) -> Opti
             "Password change does not require reauthentication",
             "Require the current password or a fresh independently verified authentication factor before changing credentials, and invalidate affected sessions.",
         )
-    } else if rule.contains("password-confirmation-not-enforced") {
-        (
-            "Password confirmation mismatch does not stop registration",
-            "Reject mismatched password confirmation and return before any account-creation or downstream middleware executes.",
-        )
     } else if rule.contains("registration-rejection-fallthrough") {
         (
             "Rejected registration continues into account creation",

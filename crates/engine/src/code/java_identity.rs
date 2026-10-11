@@ -307,14 +307,19 @@ fn add_jjwt_generation<'tree>(
             if expiring {
                 EvidenceKind::Validation
             } else {
-                EvidenceKind::SensitiveOperation
+                EvidenceKind::Resource
             },
             Capability::TokenGeneration,
             &["CWE-613"],
             if expiring {
                 &["jwt", "signed", "expiration-present"]
             } else {
-                &["jwt", "signed", "expiration-absent", "long-lived-token"]
+                &[
+                    "jwt",
+                    "signed",
+                    "expiration-absent",
+                    "lifetime-contract-unresolved",
+                ]
             },
             comments,
             conditional,
@@ -358,7 +363,7 @@ fn add_otp_lifecycle<'tree>(
                 path,
                 &class,
                 "java-otp-record-without-expiry",
-                EvidenceKind::SecurityConfiguration,
+                EvidenceKind::Resource,
                 Capability::Authentication,
                 &["CWE-613"],
                 &["otp", "persistence", "expiry-field-not-observed"],
@@ -510,7 +515,7 @@ fn add_reset_lifecycle<'tree>(
                 path,
                 &class,
                 "java-stateful-email-token-without-expiry",
-                EvidenceKind::SecurityConfiguration,
+                EvidenceKind::Resource,
                 Capability::Authentication,
                 &["CWE-613"],
                 &["email-token", "persistence", "expiry-field-not-observed"],

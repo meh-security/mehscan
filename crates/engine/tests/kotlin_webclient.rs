@@ -23,7 +23,13 @@ fn webclient_reviews_keep_overload_subscription_replacement_and_exchange_context
     );
     let jobs =
         mehscan_engine::investigation::build_all_path_review_jobs(&root, None, true).unwrap();
-    assert_eq!(jobs.observation_reviews.len(), 10);
+    assert_eq!(jobs.observation_reviews.len(), 9);
+    assert!(!jobs.observation_reviews.iter().any(|review| {
+        review.evidence.iter().any(|e| {
+            review.anchor_evidence_ids.contains(&e.id)
+                && e.enclosing_symbol.as_deref() == Some("lazyRequest")
+        })
+    }));
     assert!(jobs.reviews.is_empty());
     for review in jobs.observation_reviews {
         let anchor = review

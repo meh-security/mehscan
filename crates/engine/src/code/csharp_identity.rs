@@ -296,9 +296,7 @@ fn add_cookie_policy<'tree>(
         }
         let text = compact(invocation.text().as_ref());
         let weak = text.contains(".Cookie.SecurePolicy=CookieSecurePolicy.None")
-            || text.contains(".Cookie.HttpOnly=false")
-            || (text.contains(".Cookie.SameSite=SameSiteMode.None")
-                && !text.contains(".Cookie.SecurePolicy=CookieSecurePolicy.Always"));
+            || text.contains(".Cookie.HttpOnly=false");
         if weak {
             push(
                 path,

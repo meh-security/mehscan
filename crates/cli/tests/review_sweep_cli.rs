@@ -15,6 +15,227 @@ fn run(args: &[&str]) -> Value {
 }
 
 #[test]
+fn compact_views_keep_frontend_producers_and_caller_excerpts() {
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/frontend-review-packets");
+    let output = std::env::temp_dir().join(format!("mehscan-jsx-sweep-{}", std::process::id()));
+    let manifest = run(&[
+        "investigate",
+        "review-bundles",
+        root.to_str().unwrap(),
+        "--output",
+        output.to_str().unwrap(),
+        "--context-lines",
+        "3",
+    ]);
+    let mut found = false;
+    for bundle in manifest["bundles"].as_array().unwrap() {
+        let request = output
+            .join("requests")
+            .join(bundle["filename"].as_str().unwrap());
+        let sweep = run(&[
+            "investigate",
+            "review-sweep",
+            "--bundle",
+            request.to_str().unwrap(),
+        ]);
+        for review in sweep["reviews"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|review| review["anchor"]["location"]["path"] == "Memo.tsx")
+        {
+            found = true;
+            let facts = review["frontend_context"].as_array().unwrap();
+            assert!(
+                facts
+                    .iter()
+                    .any(|fact| fact["role"] == "frontend_output_producer_context"
+                        && fact["excerpt"].as_str().unwrap().contains("React.useMemo"))
+            );
+            assert!(facts.iter().any(|fact| {
+                fact["role"] == "frontend_prop_caller_context"
+                    && fact["location"]["path"] == "MemoCallers.tsx"
+                    && fact["excerpt"]
+                        .as_str()
+                        .unwrap()
+                        .contains("<Display data={value}")
+            }));
+            let card = run(&[
+                "investigate",
+                "review-card",
+                "--bundle",
+                request.to_str().unwrap(),
+                "--review-id",
+                review["review_id"].as_str().unwrap(),
+            ]);
+            assert_eq!(card["frontend_context"], review["frontend_context"]);
+            assert_eq!(card["selected_anchor_id"], review["selected_anchor_id"]);
+        }
+    }
+    assert!(found, "missing JSX raw HTML review");
+}
+
+#[test]
+fn compact_views_keep_explicit_angular_templates_and_original_source() {
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/angular-review-packets");
+    let output = std::env::temp_dir().join(format!("mehscan-angular-sweep-{}", std::process::id()));
+    let manifest = run(&[
+        "investigate",
+        "review-bundles",
+        root.to_str().unwrap(),
+        "--output",
+        output.to_str().unwrap(),
+        "--context-lines",
+        "3",
+    ]);
+    assert_eq!(
+        manifest["review_count"], 2,
+        "ordinary bindings must not become review IDs"
+    );
+    let mut consumers = BTreeSet::new();
+    for bundle in manifest["bundles"].as_array().unwrap() {
+        let request = output
+            .join("requests")
+            .join(bundle["filename"].as_str().unwrap());
+        let sweep = run(&[
+            "investigate",
+            "review-sweep",
+            "--bundle",
+            request.to_str().unwrap(),
+        ]);
+        for review in sweep["reviews"].as_array().unwrap() {
+            let context_id = review["source_context_ids"][0].as_str().unwrap();
+            let context = sweep["source_contexts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["id"] == context_id)
+                .unwrap();
+            assert!(
+                context["excerpt"]
+                    .as_str()
+                    .unwrap()
+                    .contains("bypassSecurityTrustHtml"),
+                "compact evidence must cover the selected sink, even when its input window is separate"
+            );
+            let facts = review["frontend_context"].as_array().unwrap();
+            assert!(
+                facts
+                    .iter()
+                    .any(|f| f["role"] == "frontend_component_template_context")
+            );
+            let binding = facts
+                .iter()
+                .find(|f| f["role"] == "frontend_template_binding_context")
+                .expect("missing consumer");
+            let path = binding["location"]["path"].as_str().unwrap();
+            let start = binding["location"]["start_line"].as_u64().unwrap();
+            let end = binding["location"]["end_line"].as_u64().unwrap();
+            consumers.insert(path.to_owned());
+            let source = run(&[
+                "investigate",
+                "source",
+                root.to_str().unwrap(),
+                "--path",
+                path,
+                "--start-line",
+                &start.to_string(),
+                "--end-line",
+                &end.to_string(),
+            ]);
+            assert!(
+                source["results"]["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains(binding["excerpt"].as_str().unwrap())
+            );
+            let card = run(&[
+                "investigate",
+                "review-card",
+                "--bundle",
+                request.to_str().unwrap(),
+                "--review-id",
+                review["review_id"].as_str().unwrap(),
+            ]);
+            assert_eq!(card["frontend_context"], review["frontend_context"]);
+        }
+    }
+    assert_eq!(
+        consumers,
+        BTreeSet::from(["inline.ts".into(), "markup.html".into()])
+    );
+}
+
+#[test]
+fn angular_pipe_input_and_dialog_packets_keep_bounded_source_in_investigation() {
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/angular-complete-review");
+    let output =
+        std::env::temp_dir().join(format!("mehscan-angular-complete-{}", std::process::id()));
+    let manifest = run(&[
+        "investigate",
+        "review-bundles",
+        root.to_str().unwrap(),
+        "--output",
+        output.to_str().unwrap(),
+        "--context-lines",
+        "3",
+    ]);
+    assert_eq!(
+        manifest["review_count"], 5,
+        "ordinary child bindings must not create IDs"
+    );
+    let mut roles = BTreeSet::new();
+    let mut templates = Vec::new();
+    for bundle in manifest["bundles"].as_array().unwrap() {
+        let request = output
+            .join("requests")
+            .join(bundle["filename"].as_str().unwrap());
+        let sweep = run(&[
+            "investigate",
+            "review-sweep",
+            "--bundle",
+            request.to_str().unwrap(),
+        ]);
+        for review in sweep["reviews"].as_array().unwrap() {
+            for fact in review["frontend_context"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|f| f["role"].as_str().unwrap().starts_with("frontend_"))
+            {
+                let excerpt = fact["excerpt"].as_str().unwrap();
+                assert!(
+                    !excerpt.is_empty(),
+                    "Angular evidence silently became a locator: {fact}"
+                );
+                let path = fact["location"]["path"].as_str().unwrap();
+                let text = fs::read_to_string(root.join(path)).unwrap();
+                assert!(text.contains(excerpt), "fabricated source {fact}");
+                roles.insert(fact["role"].as_str().unwrap().to_owned());
+                if fact["role"] == "frontend_template_binding_context" {
+                    templates.push(excerpt.to_owned());
+                }
+            }
+        }
+    }
+    for required in [
+        "frontend_pipe_consumer_context",
+        "frontend_pipe_implementation_context",
+        "frontend_component_input_context",
+        "frontend_component_handoff_context",
+        "frontend_dialog_data_context",
+        "frontend_dialog_handoff_context",
+    ] {
+        assert!(roles.contains(required), "missing {required}: {roles:?}");
+    }
+    assert!(templates.iter().any(|t| t.contains("innerHTML")));
+    assert!(templates.iter().any(|t| t.contains("textContent")));
+}
+
+#[test]
 fn shared_question_queue_and_sweep_preserve_exceptions_and_exact_source() {
     let root = std::env::temp_dir().join(format!("mehscan-sweep-{}", std::process::id()));
     let output = root.with_file_name(format!("mehscan-sweep-output-{}", std::process::id()));
@@ -22,6 +243,7 @@ fn shared_question_queue_and_sweep_preserve_exceptions_and_exact_source() {
     let source = r#"<?php
 function esc_html($value) { return $value; }
 function renderer($stored, $raw) {
+    $raw = $_GET['raw'];
     // esc_html($stored) occurs before the real output.
     $unused = 'context';
     ?><p><?php echo esc_html($stored); ?></p>
@@ -30,8 +252,8 @@ function renderer($stored, $raw) {
     <div data-value=<?php echo esc_attr($raw); ?>></div>
     <p><?php echo esc_html($stored) . $raw; ?></p><?php
 }
-function first_include() { require APP_ROOT . '/helper.php'; }
-function second_include() { require APP_ROOT . '/other.php'; }
+function first_include() { require APP_ROOT . '/' . $_GET['module']; }
+function second_include() { require APP_ROOT . '/' . $_GET['plugin']; }
 add_filter('esc_html', 'unsafe_callback');
 "#;
     fs::write(root.join("src/view.php"), source).unwrap();
@@ -127,7 +349,82 @@ add_filter('esc_html', 'unsafe_callback');
         "contract",
     ]);
     assert_eq!(queue["matching_review_count"], saved["review_count"]);
-    assert_eq!(queue["ungrouped_review_count"], 1); // Mixed raw concatenation remains independent.
+    // Mixed raw output and the two request-selected code loaders have no
+    // shared verified contract; they remain independent.
+    assert_eq!(queue["ungrouped_review_count"], 3);
+    let neighborhoods = run(&[
+        "investigate",
+        "review-inventory-list",
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--group-by",
+        "implementation",
+        "--limit",
+        "100",
+    ]);
+    assert_eq!(
+        neighborhoods["matching_review_count"],
+        saved["review_count"]
+    );
+    let first_page = run(&[
+        "investigate",
+        "review-inventory-list",
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--group-by",
+        "implementation",
+        "--limit",
+        "1",
+    ]);
+    assert_eq!(first_page["returned_count"], 1);
+    assert_eq!(first_page["next_offset"], 1, "{first_page:#?}");
+    assert_eq!(first_page["by_capability"], neighborhoods["by_capability"]);
+    let counted: u64 = first_page["by_capability"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|v| v["review_count"].as_u64().unwrap())
+        .sum();
+    assert_eq!(counted, saved["review_count"].as_u64().unwrap());
+    assert_eq!(neighborhoods["next_offset"], Value::Null);
+    let neighborhood_ids: Vec<_> = neighborhoods["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|group| group["review_ids"].as_array().unwrap())
+        .map(|id| id.as_str().unwrap())
+        .collect();
+    let saved_ids: BTreeSet<_> = saved["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["review_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(neighborhood_ids.len(), saved_ids.len());
+    assert_eq!(
+        neighborhood_ids.iter().copied().collect::<BTreeSet<_>>(),
+        saved_ids
+    );
+    assert!(
+        neighborhoods["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|g| g["verified"] == false)
+    );
+    // Distinct code-loader functions remain separate, even with a common prefix.
+    assert_eq!(
+        neighborhoods["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|g| matches!(
+                g["symbol"].as_str(),
+                Some("first_include" | "second_include")
+            ))
+            .count(),
+        2
+    );
     assert!(
         queue["groups"]
             .as_array()
@@ -143,10 +440,9 @@ add_filter('esc_html', 'unsafe_callback');
         "--contract",
         "configured_root_path:APP_ROOT",
     ]);
-    assert_eq!(includes["matching_count"], 2);
-    assert_ne!(
-        includes["entries"][0]["operand_facts"][0]["value"],
-        includes["entries"][1]["operand_facts"][0]["value"]
+    assert_eq!(
+        includes["matching_count"], 0,
+        "a fixed prefix does not prove a shared selection contract"
     );
     let encoded = run(&[
         "investigate",
@@ -174,6 +470,27 @@ add_filter('esc_html', 'unsafe_callback');
     ]);
     assert_eq!(remaining["matching_review_count"], 2);
     assert_eq!(remaining["groups"][0]["review_count"], 2);
+    let remaining_implementation = run(&[
+        "investigate",
+        "review-inventory-list",
+        "--inventory",
+        inventory.to_str().unwrap(),
+        "--ledger",
+        ledger.to_str().unwrap(),
+        "--group-by",
+        "implementation",
+        "--contract",
+        "encoding_call:esc_html",
+    ]);
+    assert_eq!(remaining_implementation["matching_review_count"], 2);
+    assert_eq!(remaining_implementation["groups"][0]["review_count"], 2);
+    assert!(
+        !remaining_implementation["groups"][0]["review_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|id| id == reviewed_id)
+    );
 
     let chunk = output.join("chunk");
     let selected_ids = saved["entries"]

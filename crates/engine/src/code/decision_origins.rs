@@ -34,6 +34,46 @@ pub(crate) fn annotate(
         }
         if item.capability == Capability::HtmlOutput {
             annotate_html_semantics(source, item);
+            if matches!(
+                language,
+                Language::Javascript | Language::Typescript | Language::Tsx
+            ) && item
+                .tags
+                .iter()
+                .any(|tag| tag == "html-boundary:dom-insertion")
+                && item
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "browser-interpretation:html-markup")
+                && !item
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "raw-output-container:style")
+                && item
+                    .captures
+                    .get("content")
+                    .and_then(|capture| capture_node(root, capture))
+                    .is_some_and(|node| super::node_browser::restricted_html_control(root, &node))
+            {
+                push_tag(&mut item.tags, "html-control:restricted-dompurify");
+            }
+            if language == Language::Python
+                && item.rule_id == "python-trusted-markup-bypass"
+                && item.symbol_resolution.as_ref().is_some_and(|symbol| {
+                    matches!(
+                        symbol.canonical.as_str(),
+                        "django.utils.safestring.mark_safe" | "markupsafe.Markup" | "flask.Markup"
+                    )
+                })
+                && item
+                    .captures
+                    .get("content")
+                    .and_then(|capture| capture_node(root, capture))
+                    .is_some_and(|node| python_fixed_html_padding(&node, 0))
+            {
+                push_tag(&mut item.tags, "html-origin:fixed-padding");
+                continue;
+            }
         }
 
         if has_marker(item) {
@@ -70,6 +110,53 @@ pub(crate) fn annotate(
                 &format!("review-language:{}", language_tag(language)),
             );
         }
+    }
+}
+
+/// String repetition changes the amount of fixed whitespace, not HTML grammar.
+/// Keep formatting, interpolation and variable text outside this narrow closure.
+fn python_fixed_html_padding(node: &Node<'_, StrDoc<SupportLang>>, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match node.kind().as_ref() {
+        "string" => {
+            let text = node.text();
+            if text
+                .trim_start()
+                .chars()
+                .take_while(|character| character.is_ascii_alphabetic())
+                .any(|character| matches!(character, 'b' | 'B'))
+                || node.dfs().any(|child| {
+                    matches!(child.kind().as_ref(), "interpolation" | "escape_sequence")
+                })
+            {
+                return false;
+            }
+            let contents = node
+                .children()
+                .filter(|child| child.kind().as_ref() == "string_content")
+                .map(|child| child.text().into_owned())
+                .collect::<String>();
+            !contents.is_empty()
+                && contents
+                    .replace("&nbsp;", " ")
+                    .chars()
+                    .all(char::is_whitespace)
+        }
+        "parenthesized_expression" => node
+            .children()
+            .find(|child| child.is_named())
+            .is_some_and(|child| python_fixed_html_padding(&child, depth + 1)),
+        "binary_operator"
+            if node
+                .field("operator")
+                .is_some_and(|operator| operator.text() == "*") =>
+        {
+            node.field("left")
+                .is_some_and(|left| python_fixed_html_padding(&left, depth + 1))
+        }
+        _ => false,
     }
 }
 
@@ -115,7 +202,8 @@ fn annotate_dynamic_sql(
     root: &Node<'_, StrDoc<SupportLang>>,
     item: &mut Evidence,
 ) {
-    if item.tags.iter().any(|tag| tag == "nosql")
+    if super::closed_query(item)
+        || item.tags.iter().any(|tag| tag == "nosql")
         || item
             .tags
             .iter()
@@ -931,13 +1019,23 @@ fn process_operand_is_dynamic(item: &Evidence) -> bool {
     if item.tags.iter().any(|tag| tag == "shell-command-text") {
         return capture_is_dynamic(item, &["shell_command", "arguments", "command"]);
     }
-    // Rust builder-chain matches also contain the nested Command::new call.
-    // The constructor owns executable selection; later .arg/.args matches do
-    // not create another dynamic-executable question for the same launch.
-    if item.rule_id == "rust-process-execution" && item.captures.contains_key("arguments") {
-        return false;
+    // An escaping Rust chain carries a recovered executable. A standalone
+    // arg call on a typed/opaque builder does not establish program selection.
+    if item.rule_id == "rust-process-execution"
+        && item.captures.contains_key("arguments")
+        && !item
+            .tags
+            .iter()
+            .any(|t| t == "process-invocation:actual-launch")
+    {
+        return capture_is_dynamic(item, &["executable"]);
     }
-    if capture_is_dynamic(item, &["executable", "command"]) {
+    let executable_role = if item.captures.contains_key("executable") {
+        "executable"
+    } else {
+        "command"
+    };
+    if capture_is_dynamic(item, &[executable_role]) {
         return true;
     }
     fixed_literal_string(item, "command").is_some_and(is_shell_name)
@@ -946,8 +1044,9 @@ fn process_operand_is_dynamic(item: &Evidence) -> bool {
 
 /// Recovers exact local launch semantics that variadic AST captures cannot
 /// represent on their own. This stays inside the matched invocation or Rust
-/// builder chain and does not infer values across statements or call sites.
-fn annotate_process_semantics(language: Language, source: &str, item: &mut Evidence) {
+/// builder chain. The local construction pass may supply earlier operands;
+/// this function does not itself traverse statements or call sites.
+pub(super) fn annotate_process_semantics(language: Language, source: &str, item: &mut Evidence) {
     let start = item.location.start.byte_offset.min(source.len());
     let end = item.location.end.byte_offset.min(source.len());
     let operation = source.get(start..end).unwrap_or_default();
@@ -975,14 +1074,14 @@ fn annotate_process_semantics(language: Language, source: &str, item: &mut Evide
         insert_process_capture(item, operation, "executable", value, offset);
     }
 
-    let shell_api = item.tags.iter().any(|tag| tag == "shell-command-text")
-        || process_is_shell_api(language, source, item);
     let shell_executable = item
         .captures
         .get("executable")
         .or_else(|| item.captures.get("command"))
         .and_then(|capture| quoted_string(capture.text.trim()))
         .is_some_and(is_shell_name);
+    let shell_api = process_is_shell_api(language, source, item)
+        || (!shell_executable && item.tags.iter().any(|tag| tag == "shell-command-text"));
     if !shell_api && !shell_executable {
         push_tag(&mut item.tags, "process-invocation:executable-selection");
         return;
@@ -991,8 +1090,7 @@ fn annotate_process_semantics(language: Language, source: &str, item: &mut Evide
     push_tag(&mut item.tags, "process-invocation:shell-command");
 
     // The parsed options adapter already selected the actual argv operand.
-    if (item.captures.contains_key("shell_command")
-        && (item.captures.contains_key("shell_mode") || language == Language::Python))
+    if item.captures.contains_key("shell_command")
         || (language == Language::Python && item.captures.contains_key("posix_shell_command"))
     {
         return;
@@ -1168,7 +1266,12 @@ fn process_is_shell_api(language: Language, source: &str, item: &Evidence) -> bo
         item.rule_id.as_str(),
         "php-command-execution" | "php-shell-command-operator"
     ) {
-        return true;
+        return !item.tags.iter().any(|t| {
+            matches!(
+                t.as_str(),
+                "process-invocation:direct-api" | "process-invocation:unresolved-shell"
+            )
+        });
     }
     if item
         .symbol_resolution

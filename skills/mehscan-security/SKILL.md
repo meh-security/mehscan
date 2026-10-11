@@ -57,11 +57,25 @@ review, not a complete application assessment.
 | Repository AI review | [Review planning](references/review-planning.md) |
 
 Candidates are leads, not confirmed vulnerabilities. Default to Value mode;
-honor Comprehensive or a requested category. Planning maps the stack and attack
-surface, ranks work, accounts for deferred IDs and chooses small chunks or
+honor Comprehensive or a requested category. Value prioritizes stronger signals,
+clearly justified fixes and promising high-impact leads, including useful medium
+issues. Comprehensive covers admitted plausible medium-or-higher issues; it is
+not a queue for every raw sink occurrence. Excluded observations remain supporting
+facts, not safe verdicts or mandatory deferred reviews. Planning maps the stack and attack
+surface and workload before triage; use a small first chunk to measure review
+pace and plan the next pass within the user's time budget.
+Planning ranks work, accounts for deferred IDs and chooses small chunks or
 disjoint agent assignments when requested. Read it for repository scope or
 queue decisions, then use the supplied-bundle flow for each selected chunk.
 Keep the whole-run plan current and continue authorized work in auto mode.
+
+Use [review scope policy](references/review-scope.md) when choosing modes or
+reconsidering a noisy family. It defines practical admission and language
+differences; load it once for those decisions, not for each supplied bundle.
+
+Reuse an inventory enriched with supplied Roslyn or TypeScript context;
+do not rerun a compiler per ID. Planning describes context flags and scope
+lanes. Never turn deferred work into a safe verdict.
 
 For later repository knowledge, policy or severity recalibration, use
 [Mehscan revalidation](../mehscan-revalidation/SKILL.md) against validated

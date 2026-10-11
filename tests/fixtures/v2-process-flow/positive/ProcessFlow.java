@@ -9,7 +9,7 @@ class ProcessFlow {
         Runtime.getRuntime().exec(alias);
     }
 
-    void separated(HttpServletRequest request) {
-        new ProcessBuilder("tool", request.getParameter("argument"));
+    void separated(HttpServletRequest request) throws Exception {
+        new ProcessBuilder("tool", request.getParameter("argument")).start();
     }
 }

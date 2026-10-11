@@ -316,7 +316,14 @@ pub(in crate::code) fn paths(
             }) else {
                 continue;
             };
-            let Some(capture) = sink.captures.get(role) else {
+            let initial_request = sink.rule_id == "kotlin-okhttp-dispatch"
+                && !sink.captures.contains_key(role)
+                && sink.captures.contains_key("initial_endpoint");
+            let Some(capture) = sink.captures.get(role).or_else(|| {
+                initial_request
+                    .then(|| sink.captures.get("initial_endpoint"))
+                    .flatten()
+            }) else {
                 continue;
             };
             let Some(operand) = root.dfs().find(|n| {
@@ -377,7 +384,11 @@ pub(in crate::code) fn paths(
                     },
                 ],
                 protection_evidence_ids: vec![],
-                uncertainty_reasons: vec![],
+                uncertainty_reasons: if initial_request {
+                    vec!["Input reaches the initial request URL; configured client rewrites and final destination remain unresolved.".into()]
+                } else {
+                    vec![]
+                },
                 provenance: SecurityPathProvenance {
                     engine: "mehscan bounded Kotlin MVC scalar flow 1".into(),
                     maximum_propagation_depth: 8,

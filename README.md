@@ -6,6 +6,15 @@ Mehscan is under active development. It supports C, C++, C#, Java, JavaScript, T
 
 See [extended SQL and NoSQL coverage](docs/extended-database-coverage.md) for database query mechanics and remaining language-specific gaps.
 
+An experimental [optional Roslyn backend](backends/roslyn/README.md) adds compiler-backed C# navigation facts from explicitly supplied source and references.
+
+An experimental [optional TypeScript backend](backends/typescript/README.md) resolves selected TS/TSX and JavaScript operands, import aliases and small source helpers. Cached facts guide follow-ups; source-proven fixed Node paths can remove traversal-only questions. Types alone do not establish safety.
+
+Both backends remain experimental, including after merge. Standard installation
+does not install them or their dependencies, and default scanning does not require
+Node or .NET. To opt in, supply an already provisioned backend and explicit source
+context through the CLI options in the linked backend guides.
+
 For review scoping, `mehscan investigate provenance ROOT --inventory RUN/inventory`
 collects build-entry, distribution-header and generated/source-map candidates
 without a compiler. The security skill confirms scope and preserves deferred IDs;
@@ -15,7 +24,7 @@ these hints never assign safe verdicts or change scanner admission.
 
 - Scans source code locally without executing build tools or application code.
 - Collects evidence and bounded relationships for security review.
-- Prepares self-contained review bundles for an AI coding agent.
+- Prepares compact review bundles with source locations and CLI follow-ups.
 - Exports JSON, SARIF, and Markdown reports.
 
 Scan candidates require review before they become confirmed findings. The CLI works independently of any model provider, agent, or plugin.

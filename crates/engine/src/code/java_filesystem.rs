@@ -185,7 +185,17 @@ fn add_filesystem_access<'tree>(
                 "java-filesystem-write",
                 &["CWE-22"],
                 &["filesystem", "path", "java-nio", operation.as_str()],
-                &[("path", &args[1]), ("content", &args[0])],
+                &[
+                    ("path", &args[1]),
+                    (
+                        if operation == "move" {
+                            "filesystem_source"
+                        } else {
+                            "content"
+                        },
+                        &args[0],
+                    ),
+                ],
                 comments,
                 conditional,
                 literals,
@@ -285,42 +295,54 @@ fn add_filesystem_access<'tree>(
         else {
             continue;
         };
+        let mode = (short == "RandomAccessFile")
+            .then(|| {
+                creation
+                    .field("arguments")
+                    .and_then(|args| args.children().filter(|child| child.is_named()).nth(1))
+            })
+            .flatten();
+        let write_mode = mode.as_ref().is_some_and(|mode| {
+            matches!(literals.evaluate(mode).value,
+                Some(mehscan_core::LiteralValue::String(ref value)) if matches!(value.as_str(), "rw" | "rws" | "rwd"))
+        });
+        let mut operands = vec![("path", &file_path)];
+        if let Some(mode) = mode.as_ref() {
+            operands.push(("mode", mode));
+        }
         push(
             path,
             &creation,
             EvidenceKind::Sink,
-            capability,
-            rule_id,
+            if write_mode {
+                Capability::FilesystemWrite
+            } else {
+                capability
+            },
+            if write_mode {
+                "java-random-access-file-write"
+            } else {
+                rule_id
+            },
             &["CWE-22"],
             &["filesystem", "path", short],
-            &[("path", &file_path)],
+            &operands,
             comments,
             conditional,
             literals,
             evidence,
         );
         if short == "RandomAccessFile"
-            && creation.field("arguments").is_some_and(|args| {
-                args.children()
-                    .filter(|child| child.is_named())
-                    .nth(1)
-                    .is_some_and(|mode| mode.text().contains('w'))
+            && !write_mode
+            && mode.as_ref().is_none_or(|m| {
+                literals.evaluate(m).value != Some(mehscan_core::LiteralValue::String("r".into()))
             })
         {
-            push(
-                path,
-                &creation,
-                EvidenceKind::Sink,
-                Capability::FilesystemWrite,
-                "java-random-access-file-write",
-                &["CWE-22"],
-                &["filesystem", "path", "RandomAccessFile", "write-mode"],
-                &[("path", &file_path)],
-                comments,
-                conditional,
-                literals,
-                evidence,
-            );
+            evidence
+                .last_mut()
+                .unwrap()
+                .tags
+                .push("filesystem-mode:unresolved".into());
         }
     }
 }
@@ -584,7 +606,6 @@ fn files_read_methods() -> &'static [&'static str] {
         "newBufferedReader",
         "newInputStream",
         "lines",
-        "list",
         "walk",
     ]
 }
@@ -597,8 +618,6 @@ fn files_write_methods() -> &'static [&'static str] {
         "newOutputStream",
         "delete",
         "deleteIfExists",
-        "createDirectory",
-        "createDirectories",
     ]
 }
 

@@ -1072,7 +1072,9 @@ fn add_jwt_signing<'tree>(
             if has_expiry {
                 EvidenceKind::Validation
             } else {
-                EvidenceKind::SecurityConfiguration
+                // Construction alone does not establish the emitted lifetime:
+                // handlers or a credential's consumer can supply that policy.
+                EvidenceKind::Resource
             },
             Capability::TokenGeneration,
             if has_expiry {
@@ -1088,7 +1090,7 @@ fn add_jwt_signing<'tree>(
                 if has_expiry {
                     "expiry-configured"
                 } else {
-                    "missing-expiry"
+                    "expiry-contract-unresolved"
                 },
             ],
             comments,

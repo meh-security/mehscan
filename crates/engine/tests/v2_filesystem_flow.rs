@@ -57,8 +57,15 @@ fn inventories_path_protections_and_builds_bounded_filesystem_paths() {
             counts
         });
     assert_eq!(states[&SecurityPathState::Direct], 7);
-    assert_eq!(states[&SecurityPathState::Propagated], 7);
-    assert_eq!(states[&SecurityPathState::Protected], 7);
+    // Normalization does not enforce the intended root.
+    assert_eq!(states[&SecurityPathState::Propagated], 14);
+    assert_eq!(
+        states
+            .get(&SecurityPathState::Protected)
+            .copied()
+            .unwrap_or(0),
+        0
+    );
     assert_eq!(states[&SecurityPathState::Unknown], 1);
 
     assert!(filesystem_paths.iter().all(|path| {

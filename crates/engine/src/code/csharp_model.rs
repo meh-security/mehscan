@@ -21,6 +21,19 @@ const ENGINE: &str = "mehscan csharp-ef-model-policy 1";
 struct ModelCatalog {
     context_sets: BTreeMap<String, BTreeMap<String, String>>,
     sensitive_fields: BTreeMap<String, BTreeSet<String>>,
+    context_sql: BTreeMap<String, Option<CoreContext>>,
+    core_sets: BTreeSet<(String, String)>,
+    declared_types: BTreeSet<String>,
+    database_overrides: BTreeSet<String>,
+    sql_extensions: BTreeSet<String>,
+    global_usings: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CoreContext {
+    qualified_name: String,
+    short_base: bool,
+    requires_global_import: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -147,17 +160,40 @@ fn add_legacy_raw_sql_queries<'tree>(
             continue;
         }
         let arguments = arguments(&invocation);
-        // EF Core's obsolete FromSql overload parameterizes a direct
-        // FormattableString or explicit format arguments. The unsafe legacy
-        // shape is a single String value that was composed beforehand.
-        if arguments.len() != 1 || arguments[0].kind().as_ref() == "interpolated_string_expression"
-        {
+        if arguments.len() != 1 {
             continue;
         }
         let receiver = function_text.strip_suffix(".FromSql").unwrap_or_default();
         let Some(entity) = entity_for_set(root, &invocation, receiver, catalog) else {
             continue;
         };
+        let context_type = receiver
+            .split_once('.')
+            .and_then(|(context, _)| variable_type(root, &invocation, context));
+        let core_set = context_type.as_deref().is_some_and(|context_type| {
+            owned_core_context(root, &invocation, context_type, "FromSql", catalog)
+                && receiver.split_once('.').is_some_and(|(_, property)| {
+                    catalog
+                        .core_sets
+                        .contains(&(short_type(context_type).to_string(), property.to_string()))
+                })
+        }) || variable_type(root, &invocation, receiver).is_some_and(|kind| {
+            let kind = compact(&kind);
+            (kind.starts_with("DbSet<")
+                || kind
+                    .trim_start_matches("global::")
+                    .starts_with("Microsoft.EntityFrameworkCore.DbSet<"))
+                && visible_using(root, &invocation, "Microsoft.EntityFrameworkCore", catalog)
+                && !visible_using(root, &invocation, "System.Data.Entity", catalog)
+                && !catalog.sql_extensions.contains("FromSql")
+        });
+        if core_set
+            && !catalog.declared_types.contains("DbSet")
+            && !using_alias(root, &invocation, "DbSet", catalog)
+            && compiler_bound_sql(root, &invocation, &arguments[0], catalog)
+        {
+            continue;
+        }
         let query = preceding_local_initializer(root, &invocation, &arguments[0])
             .unwrap_or_else(|| arguments[0].clone());
         push(
@@ -230,9 +266,17 @@ fn add_legacy_execute_sql_queries<'tree>(
         if !catalog.context_sets.contains_key(short_type(&context_type)) {
             continue;
         }
-        let Some(query) = arguments(&invocation).into_iter().next() else {
+        let query_arguments = arguments(&invocation);
+        let Some(query) = query_arguments.first() else {
             continue;
         };
+        if method_name == "SqlQuery"
+            && query_arguments.len() == 1
+            && owned_core_context(root, &invocation, &context_type, method_name, catalog)
+            && compiler_bound_sql(root, &invocation, query, catalog)
+        {
+            continue;
+        }
         push(
             path,
             &invocation,
@@ -297,7 +341,218 @@ fn preceding_local_initializer<'tree>(
         .last()
 }
 
+// This is a bounded SDK/operand proof, not a method-name safe list. Unknown EF
+// versions, custom facades/extensions and arbitrary FormattableString producers
+// keep their construction question without requiring the optional compiler.
+fn owned_core_context(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    use_site: &Node<'_, StrDoc<SupportLang>>,
+    observed_type: &str,
+    method: &str,
+    catalog: &ModelCatalog,
+) -> bool {
+    let observed = compact(observed_type);
+    let observed = observed
+        .trim_start_matches("global::")
+        .trim_end_matches('?');
+    let name = short_type(observed);
+    let Some(Some(identity)) = catalog.context_sql.get(name) else {
+        return false;
+    };
+    (observed == name || observed == identity.qualified_name)
+        && (!identity.requires_global_import
+            || catalog
+                .global_usings
+                .contains("Microsoft.EntityFrameworkCore"))
+        && !(identity.short_base
+            && (catalog.declared_types.contains("DbContext")
+                || using_alias(root, use_site, "DbContext", catalog)))
+        && !using_alias(root, use_site, name, catalog)
+        && !catalog.database_overrides.contains(name)
+        && !catalog.sql_extensions.contains(method)
+        && visible_using(root, use_site, "Microsoft.EntityFrameworkCore", catalog)
+        && !visible_using(root, use_site, "System.Data.Entity", catalog)
+}
+
+fn compiler_bound_sql(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    use_site: &Node<'_, StrDoc<SupportLang>>,
+    query: &Node<'_, StrDoc<SupportLang>>,
+    catalog: &ModelCatalog,
+) -> bool {
+    if query.kind().as_ref() == "interpolated_string_expression" {
+        return true;
+    }
+    let query_text = query.text();
+    let Some(name) = simple_identifier(query_text.trim()) else {
+        return false;
+    };
+    let Some(method) = use_site
+        .ancestors()
+        .find(|n| n.kind().as_ref() == "method_declaration")
+    else {
+        return false;
+    };
+    if use_site
+        .ancestors()
+        .take_while(|n| n.range() != method.range())
+        .any(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "lambda_expression" | "anonymous_method_expression" | "local_function_statement"
+            )
+        })
+    {
+        return false;
+    }
+    let declarations = method
+        .dfs()
+        .filter(|n| {
+            n.kind().as_ref() == "variable_declarator"
+                && n.field("name").is_some_and(|n| n.text().trim() == name)
+        })
+        .collect::<Vec<_>>();
+    let [declaration] = declarations.as_slice() else {
+        return false;
+    };
+    if declaration.range().start >= use_site.range().start
+        || !declaration
+            .ancestors()
+            .find(|n| n.kind().as_ref() == "block")
+            .is_some_and(|block| {
+                block.range().start <= use_site.range().start
+                    && use_site.range().end <= block.range().end
+            })
+    {
+        return false;
+    }
+    let Some(kind) = declaration.parent().and_then(|n| n.field("type")) else {
+        return false;
+    };
+    let kind = compact(kind.text().as_ref());
+    let kind = kind.trim_start_matches("global::");
+    if kind != "System.FormattableString"
+        && !(kind == "FormattableString"
+            && visible_using(root, declaration, "System", catalog)
+            && !catalog.declared_types.contains("FormattableString")
+            && !using_alias(root, declaration, "FormattableString", catalog))
+    {
+        return false;
+    }
+    let value = declaration
+        .field("value")
+        .or_else(|| declaration.children().filter(|n| n.is_named()).last());
+    value.is_some_and(|n| n.kind().as_ref() == "interpolated_string_expression")
+        && !method.dfs().any(|n| {
+            (n.kind().as_ref() == "assignment_expression"
+                && n.field("left")
+                    .is_some_and(|left| left.text().trim() == name))
+                || (matches!(n.kind().as_ref(), "argument" | "ref_expression") && {
+                    let text = compact(n.text().as_ref());
+                    let text = text.rsplit(':').next().unwrap_or(&text);
+                    text == format!("ref{name}") || text == format!("out{name}")
+                })
+        })
+}
+
+fn visible_using(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    use_site: &Node<'_, StrDoc<SupportLang>>,
+    namespace: &str,
+    catalog: &ModelCatalog,
+) -> bool {
+    catalog.global_usings.contains(namespace)
+        || root.dfs().any(|n| {
+            n.kind().as_ref() == "using_directive"
+                && compact(n.text().as_ref()) == format!("using{namespace};")
+                && import_visible(&n, use_site)
+        })
+}
+
+fn using_alias(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    use_site: &Node<'_, StrDoc<SupportLang>>,
+    name: &str,
+    catalog: &ModelCatalog,
+) -> bool {
+    catalog
+        .global_usings
+        .iter()
+        .any(|u| u.starts_with(&format!("{name}=")))
+        || root.dfs().any(|n| {
+            if n.kind().as_ref() != "using_directive" || !import_visible(&n, use_site) {
+                return false;
+            }
+            let text = compact(n.text().as_ref());
+            text.trim_start_matches("global")
+                .starts_with(&format!("using{name}="))
+        })
+}
+
+fn import_visible(
+    import: &Node<'_, StrDoc<SupportLang>>,
+    use_site: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    import
+        .ancestors()
+        .find(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "namespace_declaration" | "file_scoped_namespace_declaration"
+            )
+        })
+        .is_none_or(|scope| {
+            scope.range().start <= use_site.range().start
+                && use_site.range().end <= scope.range().end
+        })
+}
+
+fn qualified_class_name(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    class: &Node<'_, StrDoc<SupportLang>>,
+    name: &str,
+) -> String {
+    let mut owners = class
+        .ancestors()
+        .filter(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "namespace_declaration" | "file_scoped_namespace_declaration" | "class_declaration"
+            )
+        })
+        .filter_map(|n| n.field("name").map(|name| compact(name.text().as_ref())))
+        .collect::<Vec<_>>();
+    owners.reverse();
+    if owners.is_empty() {
+        if let Some(namespace) = root
+            .children()
+            .find(|n| n.kind().as_ref() == "file_scoped_namespace_declaration")
+            .and_then(|n| n.field("name"))
+        {
+            owners.push(compact(namespace.text().as_ref()));
+        }
+    }
+    owners.push(name.to_string());
+    owners.join(".")
+}
+
 fn merge_catalog(target: &mut ModelCatalog, source: ModelCatalog) {
+    for (name, identity) in source.context_sql {
+        target
+            .context_sql
+            .entry(name)
+            .and_modify(|existing| {
+                if *existing != identity {
+                    *existing = None;
+                }
+            })
+            .or_insert(identity);
+    }
+    target.declared_types.extend(source.declared_types);
+    target.core_sets.extend(source.core_sets);
+    target.database_overrides.extend(source.database_overrides);
+    target.sql_extensions.extend(source.sql_extensions);
+    target.global_usings.extend(source.global_usings);
     for (context, sets) in source.context_sets {
         target.context_sets.entry(context).or_default().extend(sets);
     }
@@ -312,6 +567,40 @@ fn merge_catalog(target: &mut ModelCatalog, source: ModelCatalog) {
 
 fn build_catalog(root: &Node<'_, StrDoc<SupportLang>>) -> ModelCatalog {
     let mut catalog = ModelCatalog::default();
+    for node in root.dfs() {
+        if matches!(
+            node.kind().as_ref(),
+            "class_declaration"
+                | "struct_declaration"
+                | "record_declaration"
+                | "interface_declaration"
+        ) {
+            if let Some(name) = node.field("name") {
+                catalog.declared_types.insert(name.text().into_owned());
+            }
+        }
+        if node.kind().as_ref() == "using_directive" {
+            let text = compact(node.text().as_ref());
+            if let Some(namespace) = text
+                .strip_prefix("globalusing")
+                .and_then(|s| s.strip_suffix(';'))
+            {
+                catalog.global_usings.insert(namespace.to_string());
+            }
+        }
+        if node.kind().as_ref() == "method_declaration"
+            && node.field("parameters").is_some_and(|parameters| {
+                parameters
+                    .children()
+                    .find(|n| n.kind().as_ref() == "parameter")
+                    .is_some_and(|first| first.children().any(|n| n.text().trim() == "this"))
+            })
+        {
+            if let Some(name) = node.field("name") {
+                catalog.sql_extensions.insert(name.text().into_owned());
+            }
+        }
+    }
     for class in root
         .dfs()
         .filter(|node| node.kind().as_ref() == "class_declaration")
@@ -320,10 +609,62 @@ fn build_catalog(root: &Node<'_, StrDoc<SupportLang>>) -> ModelCatalog {
             continue;
         };
         let name = name_node.text().into_owned();
-        let compact_class = compact(class.text().as_ref());
-        let header = compact_class.split('{').next().unwrap_or_default();
-        let is_context = header.contains(":DbContext")
-            || header.contains(":Microsoft.EntityFrameworkCore.DbContext");
+        let base = class
+            .children()
+            .find(|n| n.kind().as_ref() == "base_list")
+            .and_then(|bases| bases.children().find(|n| n.is_named()))
+            .map(|n| {
+                compact(n.text().as_ref())
+                    .trim_start_matches("global::")
+                    .to_string()
+            });
+        let is_context = matches!(
+            base.as_deref(),
+            Some(
+                "DbContext"
+                    | "Microsoft.EntityFrameworkCore.DbContext"
+                    | "System.Data.Entity.DbContext"
+            )
+        );
+        let core = base.as_deref() == Some("Microsoft.EntityFrameworkCore.DbContext")
+            || (base.as_deref() == Some("DbContext")
+                && visible_using(root, &class, "Microsoft.EntityFrameworkCore", &catalog)
+                && !visible_using(root, &class, "System.Data.Entity", &catalog)
+                && !using_alias(root, &class, "DbContext", &catalog));
+        // Global imports can live in a later file; retain a candidate rather
+        // than reparsing the project or guessing from the caller's local using.
+        let global_candidate = base.as_deref() == Some("DbContext")
+            && !visible_using(root, &class, "System.Data.Entity", &catalog)
+            && !using_alias(root, &class, "DbContext", &catalog);
+        let identity = (core || global_candidate).then(|| CoreContext {
+            qualified_name: qualified_class_name(root, &class, &name),
+            short_base: base.as_deref() == Some("DbContext"),
+            requires_global_import: !core,
+        });
+        // A same-named non-EF class is a conflict too, not just another DbContext.
+        catalog
+            .context_sql
+            .entry(name.clone())
+            .and_modify(|existing| {
+                if *existing != identity {
+                    *existing = None;
+                }
+            })
+            .or_insert(identity);
+        if class.dfs().any(|member| {
+            matches!(
+                member.kind().as_ref(),
+                "property_declaration" | "variable_declarator"
+            ) && member
+                .field("name")
+                .is_some_and(|n| n.text().trim() == "Database")
+                && member
+                    .ancestors()
+                    .find(|n| n.kind().as_ref() == "class_declaration")
+                    .is_some_and(|owner| owner.range() == class.range())
+        }) {
+            catalog.database_overrides.insert(name.clone());
+        }
         let mut sets = BTreeMap::new();
         let mut sensitive = BTreeSet::new();
         for property in class
@@ -345,13 +686,24 @@ fn build_catalog(root: &Node<'_, StrDoc<SupportLang>>) -> ModelCatalog {
                 .unwrap_or_default();
             if is_context {
                 if let Some(entity) = generic_argument(&property_type, "DbSet") {
+                    if (core || global_candidate)
+                        && !using_alias(root, &property, "DbSet", &catalog)
+                        && (property_type.starts_with("DbSet<")
+                            || property_type
+                                .trim_start_matches("global::")
+                                .starts_with("Microsoft.EntityFrameworkCore.DbSet<"))
+                    {
+                        catalog
+                            .core_sets
+                            .insert((name.clone(), property_name.clone()));
+                    }
                     sets.insert(property_name, entity.to_string());
                 }
             } else if is_sensitive_field(&property_name) {
                 sensitive.insert(property_name);
             }
         }
-        if is_context && !sets.is_empty() {
+        if is_context {
             catalog.context_sets.insert(name.clone(), sets);
         }
         if !sensitive.is_empty() {
@@ -962,7 +1314,7 @@ fn arguments<'tree>(
                 .filter(|child| child.is_named())
                 .filter_map(|argument| {
                     if argument.kind().as_ref() == "argument" {
-                        argument.children().find(|child| child.is_named())
+                        argument.children().filter(|child| child.is_named()).last()
                     } else {
                         Some(argument)
                     }
@@ -1046,7 +1398,14 @@ fn push<'tree>(
         provenance: Provenance {
             resolution: Resolution::Ast,
             engine: ENGINE.to_string(),
-            rule_version: 1,
+            rule_version: if matches!(
+                rule_id,
+                "csharp-ef-legacy-from-sql-query" | "csharp-ef-database-sql-query"
+            ) {
+                2
+            } else {
+                1
+            },
         },
         context: EvidenceContext {
             comment: false,

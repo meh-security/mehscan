@@ -15,6 +15,7 @@ struct ConstantBinding<'tree, D: Doc> {
 
 pub(crate) struct LiteralEnvironment<'tree, D: Doc> {
     constants: BTreeMap<String, Vec<ConstantBinding<'tree, D>>>,
+    unknown_bindings: BTreeMap<String, Vec<Range<usize>>>,
     ambiguous_names: BTreeSet<String>,
     enum_members: BTreeSet<String>,
 }
@@ -22,9 +23,27 @@ pub(crate) struct LiteralEnvironment<'tree, D: Doc> {
 impl<'tree, D: Doc> LiteralEnvironment<'tree, D> {
     pub(crate) fn build(root: &Node<'tree, D>, language: Language) -> Self {
         let mut constants: BTreeMap<String, Vec<ConstantBinding<'tree, D>>> = BTreeMap::new();
+        let mut unknown_bindings: BTreeMap<String, Vec<Range<usize>>> = BTreeMap::new();
         let mut ambiguous_names = BTreeSet::new();
         let mut enum_members = BTreeSet::new();
         for node in root.dfs() {
+            if matches!(
+                language,
+                Language::Javascript | Language::Typescript | Language::Tsx
+            ) && node.kind().as_ref() == "variable_declarator"
+                && let Some(pattern) = node
+                    .field("name")
+                    .filter(|n| matches!(n.kind().as_ref(), "object_pattern" | "array_pattern"))
+            {
+                let mut names = BTreeSet::new();
+                destructured_names(&pattern, &mut names);
+                for name in names {
+                    unknown_bindings
+                        .entry(name)
+                        .or_default()
+                        .push(declaration_scope(&node, root));
+                }
+            }
             collect_enum_members(&node, &mut enum_members);
             if is_mutable_declaration(&node, language)
                 && let Some(name) = declaration_name(&node)
@@ -89,6 +108,7 @@ impl<'tree, D: Doc> LiteralEnvironment<'tree, D> {
         }
         Self {
             constants,
+            unknown_bindings,
             ambiguous_names,
             enum_members,
         }
@@ -245,7 +265,8 @@ impl<'tree, D: Doc> LiteralEnvironment<'tree, D> {
         use_node: &Node<'tree, D>,
     ) -> Option<&ConstantBinding<'tree, D>> {
         let use_range = use_node.range();
-        self.constants
+        let binding = self
+            .constants
             .get(name)?
             .iter()
             .filter(|binding| {
@@ -258,7 +279,17 @@ impl<'tree, D: Doc> LiteralEnvironment<'tree, D> {
                     binding.scope.end - binding.scope.start,
                     usize::MAX - binding.declaration_start,
                 )
+            })?;
+        if self.unknown_bindings.get(name).is_some_and(|scopes| {
+            scopes.iter().any(|scope| {
+                scope.start <= use_range.start
+                    && scope.end >= use_range.end
+                    && scope.end - scope.start <= binding.scope.end - binding.scope.start
             })
+        }) {
+            return None;
+        }
+        Some(binding)
     }
 
     fn evaluate_concatenation(
@@ -565,6 +596,30 @@ fn ancestor_matches<D: Doc>(
         .any(|ancestor| predicate(&ancestor))
 }
 
+fn destructured_names<D: Doc>(pattern: &Node<'_, D>, names: &mut BTreeSet<String>) {
+    match pattern.kind().as_ref() {
+        "identifier" | "shorthand_property_identifier_pattern" => {
+            names.insert(pattern.text().to_string());
+        }
+        "pair_pattern" => {
+            if let Some(value) = pattern.field("value") {
+                destructured_names(&value, names);
+            }
+        }
+        "assignment_pattern" | "object_assignment_pattern" => {
+            if let Some(left) = pattern.field("left") {
+                destructured_names(&left, names);
+            }
+        }
+        "object_pattern" | "array_pattern" | "rest_pattern" => {
+            for child in pattern.children().filter(|n| n.is_named()) {
+                destructured_names(&child, names);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn declaration_scope<D: Doc>(node: &Node<'_, D>, root: &Node<'_, D>) -> Range<usize> {
     node.ancestors()
         .find(|ancestor| {
@@ -858,6 +913,34 @@ function review(COMMAND) { run(COMMAND); }"#,
         let evaluation = environment.evaluate(&call_argument(&root, "run"));
         assert_eq!(evaluation.state, LiteralState::Unknown);
         assert_eq!(evaluation.references, ["COMMAND"]);
+    }
+
+    #[test]
+    fn destructured_locals_do_not_inherit_outer_literals_or_poison_other_scopes() {
+        for pattern in [
+            "{ html: COMMAND }",
+            "{ COMMAND }",
+            "{ COMMAND = fallback }",
+            "[COMMAND]",
+            "{ nested: { COMMAND } }",
+        ] {
+            let source = format!(
+                "const COMMAND = 'safe'; function render(data) {{ const {pattern} = data; run(COMMAND); }} outside(COMMAND);"
+            );
+            let ast = JavaScript.ast_grep(&source);
+            let root = ast.root();
+            let environment = LiteralEnvironment::build(&root, Language::Javascript);
+            assert_eq!(
+                environment.evaluate(&call_argument(&root, "run")).state,
+                LiteralState::Unknown,
+                "{pattern}"
+            );
+            assert_eq!(
+                environment.evaluate(&call_argument(&root, "outside")).value,
+                Some(LiteralValue::String("safe".into())),
+                "{pattern}"
+            );
+        }
     }
 
     #[test]

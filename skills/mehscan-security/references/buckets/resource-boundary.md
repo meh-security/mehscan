@@ -8,8 +8,9 @@ Establish where the request executes before calling an outbound request
 SSRF. A browser or desktop client fetch is not a server-side request merely
 because it uses an HTTP client; identify any separate privileged network
 boundary before applying CWE-918.
-For browser requests, inspect `endpoint` producer facts and request options.
-Browser execution alone is not a safe destination verdict. Headers, bearer tokens, cookies/credentials,
+For native browser requests, inspect `endpoint` producer facts and request options.
+`browser_request_context` supports conditional Value selection of ordinary GET/HEAD,
+not a safe destination verdict. Headers, bearer tokens, cookies/credentials,
 mutations and unknown options retain their own relationship. Follow the URL/config
 producer when those effects make the destination consequential; do not investigate
 every browser GET as though the server executed it.
@@ -27,25 +28,70 @@ than rereading equivalent distributions.
   engine or closing that path. A writer
   elsewhere in the repository is a lead until its destination can reach the
   read target.
-- When source establishes a framework GUID or primitive-derived path segment,
-  inspect the formatting and path construction once. Do not repeat caller
-  research solely because that value reaches a file API. Fixed selection does
-  not establish authorization or safe contents/effects.
+  Read the actual open flags/mode before calling it a read or write. An
+  `filesystem-mode:unresolved` tag asks for the effective mode, not an invented
+  effect. Normalization alone is not root containment. For moves/renames, inspect
+  both `path` and `filesystem_source`; a fixed destination or its guard does not
+  close an independently selected source. For a Comprehensive recursive-root
+  question, follow the content/export/disclosure consumer instead of researching
+  every listed filename. Ordinary setup/listing sinks are omitted at extraction.
+  Check a filename guard against the actual path library and supported platforms.
+  Rejecting separators and `..` alone leaves Windows drive-relative names such
+  as `C:name`; .NET `Path.Combine` can discard the intended root. Rooted-path
+  rejection, basename extraction or complete proven selectors can settle that
+  property. Unknown platform semantics require a targeted check, not a safe verdict.
+- C# native `fixed_filesystem_path` establishes fixed selection for that exact
+  operand, not authorization or safe contents/effects. Complete
+  `temporary_filesystem_path` closes routine generated-path traversal selection.
+  A compiler-bound Guid.ToString segment cannot introduce traversal, even if the
+  GUID came from a request. Do not research its caller to establish that property.
+  Supported scalar formatting, known runtime roots and closed-root enumeration
+  can also settle traversal syntax; they do not settle object ownership. Do not
+  reopen these proven selectors merely because a variable reaches a file API.
   Check any unknown root or additional filename separately.
   A record ID constrains selection, not the stored path text in the selected
   row. For a remaining string component, inspect its writers across relevant
   authored components, including import paths; a GUID-only upload path alone
   does not establish all stored values. Keep proven GUID components closed.
+  Native `property_writer` facts locate assignments to the exact source property,
+  not necessarily the selected resource instance. Follow a consequential writer
+  through persistence and caller authority; an empty or bounded candidate list
+  does not establish all writers. Reuse verified generated-key construction
+  while checking alternate assignments independently.
   Archive contents, unauthorized object selection and executable writes are distinct relationships;
   retain them when supported by source, rather than reopening mundane setup.
   Use `local_operand_origin` for exact producers and `operand_boundary` to locate
   the missing edge. Path.Combine and arbitrary ToString calls alone do not prove
-  safe selection. Reuse inspected root/path-policy facts while checking each
-  selected operation's guards and effects; do not transfer a safe verdict.
+  safe selection. A fact carrying `partial_semantic_context` remains navigation
+  evidence; a locally complete path fact can survive unrelated compiler errors.
+  `immutable_filesystem_operand` only identifies an unchanged string slot. For
+  `shared_csharp_filesystem_selection`, inspect shared root authority once and
+  check the selected operation's guards/effect; do not transfer a safe verdict.
 - For outbound requests and redirects, identify the final scheme, authority
   and destination after any parsing or rewrite. Fixed release URLs selected
   by OS or architecture do not become attacker-selected merely because a
   variable holds them.
+  URL parsing alone is not destination approval. Review the dispatch, using
+  `endpoint` and its related construction facts. When
+  `outbound-request:unresolved-producer` is present, inspect the supplied
+  `request` origin and helper/mutation before choosing a verdict. A fixed URL
+  in supporting constructor evidence does not close an unresolved final request.
+  Request builders are context without an extra verdict. Establish the
+  server/privileged actor and consequence independently of dispatch accounting.
+  For Kotlin OkHttp, `initial_endpoint` with
+  `outbound-request:unresolved-client-policy` locates the initial request URL,
+  not the final destination. Follow the captured `client` and its configured
+  interceptors/rewrites before closing the request. A shown input relationship
+  into that initial URL remains a lead, with final-destination uncertainty;
+  unknown client policy does not erase the supplied input flow.
+  Kotlin connection properties
+  such as `inputStream` and `responseCode` can perform I/O; their read sites are
+  real consumers, while `openConnection` alone remains construction context.
+  Java uses the same separation at connect/content/header/response consumers.
+  With `outbound-request:unresolved-proxy-policy`, inspect the captured `proxy`
+  separately from the request URL. A fixed URL does not close proxy selection.
+  A typed unknown connection retains its origin question; metadata/setup reads
+  such as getURL and getRequestProperty are omitted from network reviews.
 - For resource access, identify whether the selected object belongs to the
   verified subject or another tenant. A sensitive read or existence oracle
   can matter without a mutation. Inspect earlier middleware on every matching

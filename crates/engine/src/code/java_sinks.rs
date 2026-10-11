@@ -15,7 +15,6 @@ use super::literals::LiteralEnvironment;
 use super::reachability;
 
 const PROCESS_RULE_ID: &str = "java-process-execution";
-const OUTBOUND_RULE_ID: &str = "java-outbound-http";
 const ENGINE: &str = "mehscan java-exact-framework-sinks 1";
 
 pub(crate) fn add_typed_process_sinks<'tree>(
@@ -217,125 +216,6 @@ fn add_process_builder_mutations<'tree>(
             },
             symbol_resolution: None,
             rule_id: PROCESS_RULE_ID.to_string(),
-            related_evidence: Vec::new(),
-        });
-    }
-}
-
-pub(crate) fn add_typed_outbound_sinks<'tree>(
-    path: &str,
-    root: &Node<'tree, StrDoc<SupportLang>>,
-    language: Language,
-    comments: &CommentRanges,
-    conditional: &ConditionalRegions,
-    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
-    evidence: &mut Vec<Evidence>,
-) {
-    if language != Language::Java
-        || declares_type(root, "URI")
-        || !root.dfs().any(|node| {
-            node.kind().as_ref() == "import_declaration"
-                && node.text().trim() == "import java.net.URI;"
-        })
-    {
-        return;
-    }
-    let uri_variables = root
-        .dfs()
-        .filter(|node| node.kind().as_ref() == "local_variable_declaration")
-        .filter(|declaration| {
-            declaration
-                .field("type")
-                .is_some_and(|kind| matches!(kind.text().as_ref(), "URI" | "java.net.URI"))
-        })
-        .flat_map(|declaration| {
-            declaration
-                .children()
-                .filter(|node| node.kind().as_ref() == "variable_declarator")
-                .filter_map(|variable| variable.field("name"))
-                .map(|name| name.text().into_owned())
-                .collect::<Vec<_>>()
-        })
-        .collect::<BTreeSet<_>>();
-
-    for invocation in root
-        .dfs()
-        .filter(|node| node.kind().as_ref() == "method_invocation")
-    {
-        if comments.is_in_comment(invocation.range())
-            || invocation
-                .field("name")
-                .is_none_or(|name| name.text().as_ref() != "openConnection")
-        {
-            continue;
-        }
-        let Some(to_url) = invocation
-            .field("object")
-            .filter(|object| object.kind().as_ref() == "method_invocation")
-            .filter(|object| {
-                object
-                    .field("name")
-                    .is_some_and(|name| name.text().as_ref() == "toURL")
-            })
-        else {
-            continue;
-        };
-        let Some(endpoint) = to_url
-            .field("object")
-            .filter(|object| uri_variables.contains(object.text().trim()))
-        else {
-            continue;
-        };
-        let sink_location = location(path, &invocation);
-        if evidence.iter().any(|item| {
-            item.rule_id == OUTBOUND_RULE_ID
-                && item.location.start.byte_offset == sink_location.start.byte_offset
-                && item.location.path == sink_location.path
-        }) {
-            continue;
-        }
-        evidence.push(Evidence {
-            id: format!(
-                "{}:{}:{}:{}",
-                path,
-                invocation.range().start,
-                invocation.range().end,
-                OUTBOUND_RULE_ID
-            ),
-            kind: EvidenceKind::Sink,
-            capability: Capability::OutboundNetworkRequest,
-            location: sink_location,
-            enclosing_symbol: enclosing_symbol(&invocation),
-            captures: BTreeMap::from([(
-                "endpoint".to_string(),
-                Capture {
-                    text: endpoint.text().into_owned(),
-                    location: location(path, &endpoint),
-                },
-            )]),
-            cwe_candidates: vec!["CWE-918".to_string()],
-            tags: vec![
-                "http".to_string(),
-                "network".to_string(),
-                "ssrf".to_string(),
-                "java-uri-url-connection".to_string(),
-                "exact-uri-receiver".to_string(),
-            ],
-            confidence: Confidence::High,
-            provenance: Provenance {
-                resolution: Resolution::Ast,
-                engine: ENGINE.to_string(),
-                rule_version: 1,
-            },
-            context: EvidenceContext {
-                comment: false,
-                reachability: Some(reachability::classify(&invocation, literals)),
-                availability: Some(conditional.availability_for(invocation.range())),
-                literals: BTreeMap::from([("endpoint".to_string(), literals.evaluate(&endpoint))]),
-                ..EvidenceContext::default()
-            },
-            symbol_resolution: None,
-            rule_id: OUTBOUND_RULE_ID.to_string(),
             related_evidence: Vec::new(),
         });
     }

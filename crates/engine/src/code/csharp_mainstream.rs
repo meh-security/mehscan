@@ -291,9 +291,20 @@ pub(crate) fn add_mainstream_sinks<'tree>(
             continue;
         };
         let mode = compact(mode_argument.text().as_ref());
+        let access = formal_argument(&creation, "access", 2);
         let capability = if mode.ends_with("FileMode.Open") {
-            Some(Capability::FilesystemRead)
-        } else if ["Create", "CreateNew", "Append", "Truncate"]
+            // The two-argument constructor grants ReadWrite, not read-only.
+            Some(
+                if access
+                    .as_ref()
+                    .is_some_and(|a| compact(a.text().as_ref()).ends_with("FileAccess.Read"))
+                {
+                    Capability::FilesystemRead
+                } else {
+                    Capability::FilesystemWrite
+                },
+            )
+        } else if ["Create", "CreateNew", "OpenOrCreate", "Append", "Truncate"]
             .iter()
             .any(|candidate| mode.ends_with(&format!("FileMode.{candidate}")))
         {
@@ -699,7 +710,11 @@ pub(crate) fn normalize_filesystem_arguments<'tree>(
             callee.as_str(),
             "Directory.Move" | "System.IO.Directory.Move"
         ) {
-            vec![("source", "sourceDirName", 0), ("path", "destDirName", 1)]
+            vec![
+                ("source", "sourceDirName", 0),
+                ("filesystem_source", "sourceDirName", 0),
+                ("path", "destDirName", 1),
+            ]
         } else {
             vec![("path", "path", 0)]
         };

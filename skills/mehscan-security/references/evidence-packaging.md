@@ -17,6 +17,12 @@ instead. Research unrelated roots and producers separately.
 
 ## HTML: binding, renderer and writers
 
+Start with the existing `frontend_context` from the card/sweep. Reuse supplied
+helper, option, hook and caller facts; add source only for a missing edge.
+An already supplied local output-control chain does not need a separately
+authored producer map. For a missing dependency binding, supply its actual
+package/lockfile locations when known rather than guessed project paths.
+
 Supply output-context and producer locations, relevant renderer/writer windows,
 and the exact encoder/sanitizer/transformation identity. For templates include
 relevant imports or helper registrations; for browser output include module
@@ -25,6 +31,11 @@ can have different behavior. Missing callable binding remains a research task.
 Cover directly chained output transformations with their exact locations or
 short method windows; an omitted small helper can trigger a costly global search.
 Include relevant writer caller/permission/registration locations when known.
+For stored values, keep writer identity, query selection and consumer in one
+small source-backed section. Put effective sanitizer branches beside their
+implementation or relevant behavior assertions. Label preparation connections
+as navigation; preserve exact source roots and unresolved edges. Retrieve a
+missing later rewrite normally instead of declaring the prepared chain complete.
 For large templates, provide binding and consumed-value/include locations first,
 with static body text available on demand. A navigation map is not proof that
 unshown template content has no dynamic behavior.
@@ -48,8 +59,15 @@ load missing facts through existing Mehscan methods. Do not reread supplied
 source merely to populate a journal. Journal real follow-up queries and cite
 inspected source normally. Finalize against the unchanged raw requests.
 
-Keep packets factual and compact. Preserve useful source binding/control facts;
+Keep packets factual and compact. Preserve useful native binding/control facts;
 avoid embedding full inventory, repeated source and irrelevant schema metadata.
 Expose locations when the needed producer is unresolved, rather than guessing
 a relationship or packing every possible caller. There is no new CLI flag here;
 ordinary bundles and targeted evidence methods remain the default input flow.
+
+For HTML, prefer one producer/consumer packet per shared implementation: exact
+output operands, bounded initializer/helper source, transformations and the
+markup/writer or caller locations needed to settle trust. Use existing source
+lookups for missing edges instead of repeating a generic sink excerpt. For an
+external formatter, include the verified version/implementation location or name
+that missing fact. Keep different caller effects and each exact review ID visible.

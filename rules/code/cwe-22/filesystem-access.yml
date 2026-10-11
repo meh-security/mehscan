@@ -1,5 +1,5 @@
 - id: csharp-filesystem-read
-  version: 2
+  version: 3
   title: .NET filesystem read
   language: csharp
   kind: sink
@@ -19,17 +19,11 @@
         captures: { path: PATH }
       - pattern: File.OpenText($PATH)
         captures: { path: PATH }
-      - pattern: Directory.GetFiles($PATH)
+      - pattern: Directory.GetFiles($PATH, $PATTERN, $OPTIONS)
         captures: { path: PATH }
-      - pattern: Directory.GetFiles($PATH, $$$ARGUMENTS)
+      - pattern: Directory.EnumerateFiles($PATH, $PATTERN, $OPTIONS)
         captures: { path: PATH }
-      - pattern: Directory.EnumerateFiles($PATH)
-        captures: { path: PATH }
-      - pattern: Directory.EnumerateFiles($PATH, $$$ARGUMENTS)
-        captures: { path: PATH }
-      - pattern: Directory.GetDirectories($PATH)
-        captures: { path: PATH }
-      - pattern: Directory.GetDirectories($PATH, $$$ARGUMENTS)
+      - pattern: Directory.GetDirectories($PATH, $PATTERN, $OPTIONS)
         captures: { path: PATH }
       - pattern: File.Copy($PATH, $DESTINATION)
         captures: { path: PATH, destination: DESTINATION }
@@ -69,7 +63,7 @@
       - https://learn.microsoft.com/en-us/dotnet/api/system.io.file
 
 - id: csharp-filesystem-write
-  version: 2
+  version: 3
   title: .NET filesystem write
   language: csharp
   kind: sink
@@ -91,14 +85,12 @@
         captures: { path: PATH }
       - pattern: File.Delete($PATH)
         captures: { path: PATH }
-      - pattern: Directory.CreateDirectory($PATH)
-        captures: { path: PATH }
       - pattern: Directory.Delete($PATH)
         captures: { path: PATH }
       - pattern: Directory.Delete($PATH, $RECURSIVE)
         captures: { path: PATH }
       - pattern: Directory.Move($SOURCE, $PATH)
-        captures: { source: SOURCE, path: PATH }
+        captures: { source: SOURCE, filesystem_source: SOURCE, path: PATH }
   symbols:
     - canonical: System.IO.File.WriteAllText
       captures: { path: 0 }
@@ -114,12 +106,10 @@
       captures: { path: 0 }
     - canonical: System.IO.File.Delete
       captures: { path: 0 }
-    - canonical: System.IO.Directory.CreateDirectory
-      captures: { path: 0 }
     - canonical: System.IO.Directory.Delete
       captures: { path: 0 }
     - canonical: System.IO.Directory.Move
-      captures: { source: 0, path: 1 }
+      captures: { source: 0, filesystem_source: 0, path: 1 }
   tags: [filesystem, path]
   ai: *filesystem_guidance
   provenance: *csharp_filesystem_provenance
@@ -165,7 +155,7 @@
       - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/nio/file/Files.html
 
 - id: java-filesystem-write
-  version: 1
+  version: 2
   title: Java filesystem write
   language: java
   kind: sink
@@ -188,16 +178,12 @@
       - pattern: Files.copy($SOURCE, $PATH)
         captures: { source: SOURCE, path: PATH }
       - pattern: Files.move($SOURCE, $PATH, $$$ARGUMENTS)
-        captures: { source: SOURCE, path: PATH }
+        captures: { source: SOURCE, filesystem_source: SOURCE, path: PATH }
       - pattern: Files.move($SOURCE, $PATH)
-        captures: { source: SOURCE, path: PATH }
+        captures: { source: SOURCE, filesystem_source: SOURCE, path: PATH }
       - pattern: Files.delete($PATH)
         captures: { path: PATH }
       - pattern: Files.deleteIfExists($PATH)
-        captures: { path: PATH }
-      - pattern: Files.createDirectory($PATH, $$$ARGUMENTS)
-        captures: { path: PATH }
-      - pattern: Files.createDirectories($PATH, $$$ARGUMENTS)
         captures: { path: PATH }
   symbols:
     - canonical: java.nio.file.Files.write
@@ -209,14 +195,10 @@
     - canonical: java.nio.file.Files.copy
       captures: { source: 0, path: 1 }
     - canonical: java.nio.file.Files.move
-      captures: { source: 0, path: 1 }
+      captures: { source: 0, filesystem_source: 0, path: 1 }
     - canonical: java.nio.file.Files.delete
       captures: { path: 0 }
     - canonical: java.nio.file.Files.deleteIfExists
-      captures: { path: 0 }
-    - canonical: java.nio.file.Files.createDirectory
-      captures: { path: 0 }
-    - canonical: java.nio.file.Files.createDirectories
       captures: { path: 0 }
   tags: [filesystem, path]
   ai: *filesystem_guidance
@@ -279,7 +261,7 @@
       - https://nodejs.org/api/fs.html
 
 - id: javascript-filesystem-write
-  version: 1
+  version: 2
   title: Node.js filesystem write
   language: javascript
   kind: sink
@@ -300,9 +282,9 @@
       - pattern: fs.promises.writeFile($PATH, $CONTENT, $$$ARGUMENTS)
         captures: { path: PATH }
       - pattern: fs.rename($SOURCE, $PATH, $$$ARGUMENTS)
-        captures: { source: SOURCE, path: PATH }
+        captures: { source: SOURCE, filesystem_source: SOURCE, path: PATH }
       - pattern: fs.renameSync($SOURCE, $PATH)
-        captures: { source: SOURCE, path: PATH }
+        captures: { source: SOURCE, filesystem_source: SOURCE, path: PATH }
       - pattern: fs.copyFile($SOURCE, $PATH, $$$ARGUMENTS)
         captures: { source: SOURCE, path: PATH }
       - pattern: fs.copyFileSync($SOURCE, $PATH, $$$ARGUMENTS)
@@ -319,14 +301,8 @@
         captures: { path: PATH }
       - pattern: fs.rmSync($PATH)
         captures: { path: PATH }
-      - pattern: fs.mkdir($PATH, $$$ARGUMENTS)
-        captures: { path: PATH }
-      - pattern: fs.mkdirSync($PATH, $$$ARGUMENTS)
-        captures: { path: PATH }
-      - pattern: fs.mkdirSync($PATH)
-        captures: { path: PATH }
       - pattern: fs.promises.rename($SOURCE, $PATH)
-        captures: { source: SOURCE, path: PATH }
+        captures: { source: SOURCE, filesystem_source: SOURCE, path: PATH }
       - pattern: fs.promises.copyFile($SOURCE, $PATH)
         captures: { source: SOURCE, path: PATH }
       - pattern: fs.promises.copyFile($SOURCE, $PATH, $$$ARGUMENTS)
@@ -336,10 +312,6 @@
       - pattern: fs.promises.rm($PATH)
         captures: { path: PATH }
       - pattern: fs.promises.rm($PATH, $$$ARGUMENTS)
-        captures: { path: PATH }
-      - pattern: fs.promises.mkdir($PATH)
-        captures: { path: PATH }
-      - pattern: fs.promises.mkdir($PATH, $$$ARGUMENTS)
         captures: { path: PATH }
   symbols: &node_filesystem_write_symbols
     - canonical: fs.writeFile
@@ -353,9 +325,9 @@
     - canonical: fs/promises.writeFile
       captures: { path: 0 }
     - canonical: fs.rename
-      captures: { source: 0, path: 1 }
+      captures: { source: 0, filesystem_source: 0, path: 1 }
     - canonical: fs.renameSync
-      captures: { source: 0, path: 1 }
+      captures: { source: 0, filesystem_source: 0, path: 1 }
     - canonical: fs.copyFile
       captures: { source: 0, path: 1 }
     - canonical: fs.copyFileSync
@@ -368,19 +340,13 @@
       captures: { path: 0 }
     - canonical: fs.rmSync
       captures: { path: 0 }
-    - canonical: fs.mkdir
-      captures: { path: 0 }
-    - canonical: fs.mkdirSync
-      captures: { path: 0 }
     - canonical: fs.promises.rename
-      captures: { source: 0, path: 1 }
+      captures: { source: 0, filesystem_source: 0, path: 1 }
     - canonical: fs.promises.copyFile
       captures: { source: 0, path: 1 }
     - canonical: fs.promises.unlink
       captures: { path: 0 }
     - canonical: fs.promises.rm
-      captures: { path: 0 }
-    - canonical: fs.promises.mkdir
       captures: { path: 0 }
   tags: [filesystem, path, nodejs]
   ai: *filesystem_guidance
@@ -400,7 +366,7 @@
   provenance: *node_filesystem_provenance
 
 - id: typescript-filesystem-write
-  version: 1
+  version: 2
   title: Node.js filesystem write
   language: typescript
   kind: sink
@@ -426,7 +392,7 @@
   provenance: *node_filesystem_provenance
 
 - id: tsx-filesystem-write
-  version: 1
+  version: 2
   title: Node.js filesystem write
   language: tsx
   kind: sink
@@ -439,7 +405,7 @@
   provenance: *node_filesystem_provenance
 
 - id: python-filesystem-read
-  version: 1
+  version: 2
   title: Python filesystem read
   language: python
   kind: sink
@@ -478,7 +444,7 @@
       - https://docs.python.org/3/library/functions.html#open
 
 - id: python-filesystem-write
-  version: 1
+  version: 2
   title: Python filesystem write
   language: python
   kind: sink
@@ -507,7 +473,7 @@
       - pattern: shutil.copy2($SOURCE, $PATH)
         captures: { source: SOURCE, path: PATH }
       - pattern: shutil.move($SOURCE, $PATH)
-        captures: { source: SOURCE, path: PATH }
+        captures: { source: SOURCE, filesystem_source: SOURCE, path: PATH }
       - pattern: pathlib.Path($PATH).write_text($CONTENT)
         captures: { path: PATH }
       - pattern: pathlib.Path($PATH).write_bytes($CONTENT)
@@ -530,7 +496,7 @@
   provenance: *python_filesystem_provenance
 
 - id: go-filesystem-read
-  version: 1
+  version: 2
   title: Go filesystem read
   language: go
   kind: sink
@@ -551,14 +517,14 @@
         selector: call_expression
         captures: { path: PATH }
       - pattern: os.OpenFile($PATH, $FLAGS, $PERMISSIONS)
-        captures: { path: PATH }
+        captures: { path: PATH, flags: FLAGS }
   symbols:
     - canonical: os.Open
       captures: { path: 0 }
     - canonical: os.ReadFile
       captures: { path: 0 }
     - canonical: os.OpenFile
-      captures: { path: 0 }
+      captures: { path: 0, flags: 1 }
   tags: [filesystem, path]
   ai: *filesystem_guidance
   provenance: &go_filesystem_provenance
@@ -568,7 +534,7 @@
       - https://pkg.go.dev/os
 
 - id: go-filesystem-write
-  version: 1
+  version: 2
   title: Go filesystem write
   language: go
   kind: sink
@@ -591,12 +557,8 @@
         selector: call_expression
         captures: { path: PATH }
       - pattern: os.Rename($SOURCE, $PATH)
-        captures: { source: SOURCE, path: PATH }
+        captures: { source: SOURCE, filesystem_source: SOURCE, path: PATH }
       - pattern: os.RemoveAll($PATH)
-        captures: { path: PATH }
-      - pattern: os.Mkdir($PATH, $PERMISSIONS)
-        captures: { path: PATH }
-      - pattern: os.MkdirAll($PATH, $PERMISSIONS)
         captures: { path: PATH }
   symbols:
     - canonical: os.Create
@@ -606,19 +568,15 @@
     - canonical: os.Remove
       captures: { path: 0 }
     - canonical: os.Rename
-      captures: { source: 0, path: 1 }
+      captures: { source: 0, filesystem_source: 0, path: 1 }
     - canonical: os.RemoveAll
-      captures: { path: 0 }
-    - canonical: os.Mkdir
-      captures: { path: 0 }
-    - canonical: os.MkdirAll
       captures: { path: 0 }
   tags: [filesystem, path]
   ai: *filesystem_guidance
   provenance: *go_filesystem_provenance
 
 - id: rust-filesystem-read
-  version: 1
+  version: 2
   title: Rust filesystem read
   language: rust
   kind: sink
@@ -629,8 +587,6 @@
       - pattern: std::fs::read($PATH)
         captures: { path: PATH }
       - pattern: std::fs::read_to_string($PATH)
-        captures: { path: PATH }
-      - pattern: std::fs::read_dir($PATH)
         captures: { path: PATH }
       - pattern: File::open($PATH)
         captures: { path: PATH }
@@ -647,7 +603,7 @@
       - https://doc.rust-lang.org/std/fs/
 
 - id: rust-filesystem-write
-  version: 1
+  version: 2
   title: Rust filesystem write or removal
   language: rust
   kind: sink
@@ -668,11 +624,7 @@
       - pattern: std::fs::copy($SOURCE, $PATH)
         captures: { source: SOURCE, path: PATH }
       - pattern: std::fs::rename($SOURCE, $PATH)
-        captures: { source: SOURCE, path: PATH }
-      - pattern: std::fs::create_dir($PATH)
-        captures: { path: PATH }
-      - pattern: std::fs::create_dir_all($PATH)
-        captures: { path: PATH }
+        captures: { source: SOURCE, filesystem_source: SOURCE, path: PATH }
       - pattern: std::fs::remove_dir($PATH)
         captures: { path: PATH }
   tags: [filesystem, path, rust]
@@ -720,7 +672,7 @@
       - https://pubs.opengroup.org/onlinepubs/9799919799/functions/open.html
 
 - id: c-filesystem-write
-  version: 1
+  version: 2
   title: C filesystem write or removal
   language: c
   kind: sink
@@ -767,7 +719,7 @@
         context: |
           void pattern_context() { rename($SOURCE, $PATH); }
         selector: call_expression
-        captures: { source: SOURCE, path: PATH }
+        captures: { source: SOURCE, filesystem_source: SOURCE, path: PATH }
   tags: [filesystem, path, native]
   ai: *native_filesystem_guidance
   provenance: *native_filesystem_provenance
@@ -785,7 +737,7 @@
   provenance: *native_filesystem_provenance
 
 - id: cpp-filesystem-write
-  version: 1
+  version: 2
   title: C++ filesystem write or removal
   language: cpp
   kind: sink

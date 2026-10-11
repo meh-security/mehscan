@@ -59,6 +59,17 @@ void nonterminating_guard(struct model *value, void *input, size_t rows, size_t 
     memcpy(value->matrix, blob, matrix_size);
 }
 
+void optional_guard(struct model *value, void *input, size_t rows, size_t columns, int check) {
+    size_t matrix_size = sizeof(float) * rows * columns;
+    size_t blob_length = 0;
+    char *blob = read_model_buffer(input, &blob_length);
+    if (check) {
+        if (blob_length != matrix_size) return;
+    }
+    value->matrix = allocate_bytes(matrix_size);
+    memcpy(value->matrix, blob, matrix_size);
+}
+
 void late_guard(struct model *value, void *input, size_t rows, size_t columns) {
     size_t matrix_size = sizeof(float) * rows * columns;
     size_t blob_length = 0;
@@ -132,7 +143,7 @@ void non_buffer_parser(struct model *value, void *input, size_t rows, size_t col
         .collect::<Vec<_>>();
     assert_eq!(
         paths.len(),
-        5,
+        6,
         "lookalikes and mutated values stay excluded"
     );
     assert_eq!(
@@ -147,7 +158,7 @@ void non_buffer_parser(struct model *value, void *input, size_t rows, size_t col
             .iter()
             .filter(|path| path.state == SecurityPathState::Unknown)
             .count(),
-        4
+        5
     );
     assert!(paths.iter().all(|path| {
         path.cwe_candidates == ["CWE-20", "CWE-125"]

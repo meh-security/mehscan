@@ -32,7 +32,7 @@ fn resolves_import_aliases_and_rejects_shadowing_ambiguity() {
         let resolution = evidence.symbol_resolution.as_ref().expect("checked above");
         *methods.entry(resolution.method).or_insert(0) += 1;
     }
-    assert_eq!(methods.get(&SymbolResolutionMethod::Alias), Some(&11));
+    assert_eq!(methods.get(&SymbolResolutionMethod::Alias), Some(&10));
     assert_eq!(methods.get(&SymbolResolutionMethod::StaticImport), Some(&2));
     assert_eq!(
         methods.get(&SymbolResolutionMethod::ImportedNamespace),
@@ -72,16 +72,21 @@ fn resolves_import_aliases_and_rejects_shadowing_ambiguity() {
             "a parameter that shadows an import alias must not resolve as framework evidence"
         );
     }
-    assert_eq!(result.evidence.len(), 16);
+    assert_eq!(result.evidence.len(), 15);
 
     let rust =
         mehscan_engine::scan_path(rust_fixture_root()).expect("Rust alias fixture should scan");
     assert_eq!(rust.coverage.totals.scanned, 1);
     assert_eq!(rust.coverage.totals.parse_failed, 0);
-    assert_eq!(rust.evidence.len(), 1);
+    let rust_sinks = rust
+        .evidence
+        .iter()
+        .filter(|item| item.kind == mehscan_core::EvidenceKind::Sink)
+        .collect::<Vec<_>>();
+    assert_eq!(rust_sinks.len(), 1);
     assert_eq!(
-        rust.evidence[0].enclosing_symbol.as_deref(),
+        rust_sinks[0].enclosing_symbol.as_deref(),
         Some("rust_alias_case")
     );
-    assert!(rust.evidence[0].symbol_resolution.is_none());
+    assert!(rust_sinks[0].symbol_resolution.is_none());
 }

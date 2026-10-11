@@ -161,6 +161,16 @@ impl FileSymbolEnvironment {
                 language,
                 Language::Javascript | Language::Typescript | Language::Tsx
             ) && kind == "variable_declarator"
+            {
+                // A require declaration is an AST statement, not an entire
+                // physical line. Keep ownership when another statement follows
+                // it on the same line (including bundled authored modules).
+                parse_javascript_requires(&format!("const {text}"), &mut environment.aliases);
+            }
+            if matches!(
+                language,
+                Language::Javascript | Language::Typescript | Language::Tsx
+            ) && kind == "variable_declarator"
                 && let Some(name) = node.field("name")
                 && name.kind().as_ref() == "identifier"
             {

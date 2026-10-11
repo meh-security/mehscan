@@ -61,8 +61,8 @@ fn inventories_redirect_validation_and_builds_bounded_redirect_paths() {
             counts
         });
     assert_eq!(states[&SecurityPathState::Direct], 7);
-    assert_eq!(states[&SecurityPathState::Propagated], 7);
-    assert_eq!(states[&SecurityPathState::Protected], 7);
+    assert_eq!(states[&SecurityPathState::Propagated], 14);
+    assert!(!states.contains_key(&SecurityPathState::Protected));
     assert_eq!(states[&SecurityPathState::Unknown], 1);
 
     assert!(redirect_paths.iter().all(|path| {
@@ -80,18 +80,13 @@ fn inventories_redirect_validation_and_builds_bounded_redirect_paths() {
                 .iter()
                 .all(|step| !step.location.path.starts_with("negative/"))
     }));
-    assert!(
-        redirect_paths
-            .iter()
-            .filter(|path| path.state == SecurityPathState::Protected)
-            .all(|path| {
-                path.protection_evidence_ids.len() == 1
-                    && path
-                        .steps
-                        .iter()
-                        .any(|step| step.kind == SecurityPathStepKind::Protection)
-            })
-    );
+    assert!(redirect_paths.iter().all(|path| {
+        path.protection_evidence_ids.is_empty()
+            && !path
+                .steps
+                .iter()
+                .any(|step| step.kind == SecurityPathStepKind::Protection)
+    }));
 
     let guarded = redirect_paths
         .iter()

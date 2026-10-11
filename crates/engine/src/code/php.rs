@@ -8,6 +8,8 @@ use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_language::SupportLang;
 use mehscan_core::{Capture, Language};
 
+#[path = "php_review.rs"]
+mod review;
 #[path = "php_value.rs"]
 mod value;
 
@@ -24,10 +26,30 @@ pub(super) fn add_operand_facts<'a>(
     if nodes.is_empty() {
         return;
     }
+    // Build producer navigation only for files with an actual output anchor.
+    let producers = evidence
+        .iter()
+        .any(|item| item.rule_id == "php-html-output")
+        .then(|| review::Producers::collect(&context.root));
     for item in evidence {
+        if item.rule_id == "php-command-execution" {
+            if let Some(node) = item.captures.get("command").and_then(|c| {
+                nodes.get(&(c.location.start.byte_offset, c.location.end.byte_offset))
+            }) {
+                let node = unwrap_operand(node.clone());
+                if let Some(call) = node
+                    .ancestors()
+                    .find(|n| n.kind().as_ref() == "function_call_expression")
+                {
+                    process_operands(item, &call, context, literals);
+                }
+            }
+            continue;
+        }
         let role = match item.rule_id.as_str() {
             "php-file-inclusion" => "path",
             "php-html-output" => "content",
+            "php-filesystem-write" | "php-filesystem-copy-write" => "path",
             _ => continue,
         };
         let Some(capture) = item.captures.get(role) else {
@@ -40,12 +62,48 @@ pub(super) fn add_operand_facts<'a>(
             continue;
         };
         let node = unwrap_operand(node.clone());
-        if role == "path" && value::constant_include_expression(path, &node, context) {
+        if item.rule_id == "php-file-inclusion"
+            && !value::constant_include_expression(path, &node, context)
+        {
             item.tags
-                .push("value-scope:constant-include-expression".into());
+                .push("review-origin:runtime-code-selection".into());
         }
-        if role == "path" && value::unresolved_root(&node, context) {
-            item.tags.push("value-scope:unresolved-code-root".into());
+        if (role == "content" && numeric_output(&node, context).is_none()
+            || item.rule_id == "php-file-inclusion")
+            && review::direct_request(&node)
+        {
+            item.tags.push("review-origin:decision-critical".into());
+        }
+        if role == "content"
+            && numeric_output(&node, context).is_none()
+            && let Some((kind, producer)) =
+                producers.as_ref().and_then(|p| p.origin(&node, context, 4))
+        {
+            let start = producer.start_pos();
+            let end = producer.end_pos();
+            item.tags.push("review-origin:bound-output-producer".into());
+            item.context.operand_facts.push(OperandFact {
+                role: role.into(),
+                kind: OperandFactKind::LocalOperandOrigin,
+                location: mehscan_core::Location {
+                    path: path.into(),
+                    start: mehscan_core::Position {
+                        line: start.line() + 1,
+                        column: start.column(&producer) + 1,
+                        byte_offset: producer.range().start,
+                    },
+                    end: mehscan_core::Position {
+                        line: end.line() + 1,
+                        column: end.column(&producer) + 1,
+                        byte_offset: producer.range().end,
+                    },
+                },
+                value: kind.into(),
+                remaining_checks: vec![
+                    "reaching_write_and_transform_chain".into(),
+                    "writer_actor_and_controls".into(),
+                ],
+            });
         }
         if role == "path"
             && let Some(target) = value::code_target(path, &node, context)
@@ -181,6 +239,108 @@ pub(super) fn add_operand_facts<'a>(
     }
 }
 
+fn process_operands<'a>(
+    item: &mut mehscan_core::Evidence,
+    call: &PhpNode<'a>,
+    context: &PhpContext<'a>,
+    literals: &super::literals::LiteralEnvironment<'a, StrDoc<SupportLang>>,
+) {
+    let Some(api) = call
+        .field("function")
+        .and_then(|n| context.resolve(&n, true))
+    else {
+        return;
+    };
+    let Some(args) = call_arguments(call) else {
+        item.tags.push("process-invocation:unresolved-shell".into());
+        return;
+    };
+    let roles: &[(usize, &str)] = match api.as_str() {
+        "pcntl_exec" => &[(1, "arguments"), (2, "environment")],
+        "proc_open" => &[
+            (3, "working_directory"),
+            (4, "environment"),
+            (5, "process_options_operand"),
+        ],
+        _ => return,
+    };
+    for (index, role) in roles {
+        if let Some(n) = args.get(*index) {
+            item.captures.insert(
+                (*role).into(),
+                Capture {
+                    text: n.text().into_owned(),
+                    location: super::matcher::location(&item.location.path, n),
+                },
+            );
+            item.context
+                .literals
+                .insert((*role).into(), literals.evaluate(n));
+        }
+    }
+    if api == "pcntl_exec" {
+        item.tags.push("process-invocation:direct-api".into());
+    } else if let Some(argv) = args
+        .first()
+        .filter(|n| n.kind().as_ref() == "array_creation_expression")
+    {
+        let values = argv
+            .children()
+            .filter(|n| n.kind().as_ref() == "array_element_initializer")
+            .collect::<Vec<_>>();
+        if !values.is_empty()
+            && values.iter().all(|n| {
+                n.children().filter(|n| n.is_named()).count() == 1 && !n.text().contains("...")
+            })
+        {
+            let first = values[0].children().find(|n| n.is_named()).unwrap();
+            item.captures.insert(
+                "command".into(),
+                Capture {
+                    text: first.text().into_owned(),
+                    location: super::matcher::location(&item.location.path, &first),
+                },
+            );
+            item.context
+                .literals
+                .insert("command".into(), literals.evaluate(&first));
+            item.captures.insert(
+                "arguments".into(),
+                Capture {
+                    text: argv.text().into_owned(),
+                    location: super::matcher::location(&item.location.path, argv),
+                },
+            );
+            item.context
+                .literals
+                .insert("arguments".into(), literals.evaluate(argv));
+            item.tags.push("process-invocation:direct-api".into());
+        } else {
+            item.tags.push("process-invocation:unresolved-shell".into());
+        }
+    } else if args
+        .first()
+        .is_none_or(|n| !matches!(n.kind().as_ref(), "string" | "encapsed_string"))
+        || args.get(5).is_some()
+    {
+        item.tags.push("process-invocation:unresolved-shell".into());
+    }
+}
+
+fn call_arguments<'a>(call: &PhpNode<'a>) -> Option<Vec<PhpNode<'a>>> {
+    let args = call
+        .field("arguments")?
+        .children()
+        .filter(|n| n.is_named())
+        .collect::<Vec<_>>();
+    if args.iter().any(|n| {
+        n.field("name").is_some() || n.dfs().any(|c| c.kind().as_ref() == "variadic_unpacking")
+    }) {
+        return None;
+    }
+    Some(args.into_iter().map(unwrap_operand).collect())
+}
+
 fn numeric_output<'a>(node: &PhpNode<'a>, context: &PhpContext<'a>) -> Option<String> {
     if node.kind().as_ref() == "cast_expression" {
         let cast = node.field("type")?.text().to_ascii_lowercase();
@@ -199,7 +359,9 @@ enum IncludeRoot {
 }
 
 fn unwrap_operand(mut node: PhpNode<'_>) -> PhpNode<'_> {
-    while node.kind().as_ref() == "parenthesized_expression" {
+    while node.kind().as_ref() == "parenthesized_expression"
+        || node.kind().as_ref() == "argument" && node.field("name").is_none()
+    {
         let Some(child) = node.children().find(|n| n.is_named()) else {
             break;
         };
@@ -808,6 +970,16 @@ impl<'a> PhpContext<'a> {
                     .find(|n| n.is_named() && n.kind().as_ref() != "arguments")
                     .is_some_and(|name| self.sdk_class_exact(&name, "mongodb\\driver\\query"));
         }
+        if rule == "php-extended-nosql-execution" {
+            return node.field("object").is_some_and(|receiver| {
+                self.sdk_receiver(
+                    &receiver,
+                    node,
+                    &["mongodb\\driver\\manager", "mongodb\\driver\\server"],
+                    8,
+                )
+            });
+        }
         if rule == "php-extended-sql-facade" {
             return node.field("scope").is_some_and(|name| {
                 self.sdk_class_exact(&name, "illuminate\\support\\facades\\db")
@@ -1005,7 +1177,7 @@ impl<'a> PhpContext<'a> {
             "php-weak-hash-selection" => matches!(canonical.as_str(), "md5" | "sha1"),
             "php-filesystem-write" => matches!(
                 canonical.as_str(),
-                "file_put_contents" | "rename" | "unlink" | "rmdir" | "mkdir" | "touch"
+                "file_put_contents" | "rename" | "unlink" | "rmdir" | "touch"
             ),
             "php-filesystem-copy-read" | "php-filesystem-copy-write" => canonical == "copy",
             "php-extended-ldap-query" => {
@@ -1068,6 +1240,12 @@ impl<'a> PhpContext<'a> {
     ) -> bool {
         if depth == 0 {
             return false;
+        }
+        if receiver.kind().as_ref() == "object_creation_expression" {
+            return receiver
+                .children()
+                .find(|n| n.is_named() && n.kind().as_ref() != "arguments")
+                .is_some_and(|name| types.iter().any(|ty| self.sdk_class_exact(&name, ty)));
         }
         if receiver.kind().as_ref() == "scoped_call_expression" {
             return receiver.field("scope").is_some_and(|scope| {

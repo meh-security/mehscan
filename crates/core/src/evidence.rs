@@ -204,8 +204,6 @@ pub enum Capability {
     /// A printf-family operation where the format string controls how later
     /// arguments are interpreted.
     FormatStringOutput,
-    MemorySafetyBoundary,
-    NativeInteropBoundary,
     TlsConfiguration,
     FileUpload,
     UploadedFileContent,
@@ -465,6 +463,8 @@ pub enum OperandFactKind {
     EncodingCall,
     /// Static template context; runtime markup and callable behavior remain open.
     OutputContext,
+    /// Compiler-bound response write immediately preceded by a non-HTML MIME assignment.
+    NonHtmlResponse,
     /// The complete emitted operand has a native integer/boolean result.
     NumericOutput,
     /// A source-located initializer for a single local operand alias.
@@ -481,6 +481,29 @@ pub enum OperandFactKind {
     LocalCallArgument,
     /// Source-located use of one local JDBC preparation, not a binding or execution proof.
     PreparedStatementUse,
+    /// Compiler-resolved symbol metadata; runtime behavior and security contracts stay open.
+    SemanticIdentity,
+    /// Compiler-resolved source declaration location, not a return or trust summary.
+    SemanticDefinition,
+    /// Exact source use of a compiler-resolved receiver local; no lifecycle proof.
+    ReceiverReference,
+    /// Complete filesystem selector resolves to constants or closed-alphabet segments; other effects stay open.
+    FixedFilesystemPath,
+    /// Framework temporary root with bounded safe basename; closes traversal selection, not root policy or other effects.
+    TemporaryFilesystemPath,
+    /// Compiler-bound unchanged string slot shared by filesystem operations.
+    /// This identifies repeated selection work, not a safe resource or caller.
+    ImmutableFilesystemOperand,
+    /// Complete HTML-text operand is encoded or constructed from bounded encoded content.
+    EncodedHtmlOperand,
+    /// Compiler-bound destination producer shared by several request constructions.
+    /// Caller authority and request-specific behavior remain open.
+    SharedOutboundDestination,
+    /// Exact private same-file path producer shared by unchanged selectors.
+    /// Its containment policy and each operation's effects remain open.
+    SharedFilesystemProducer,
+    /// Explicit browser context and resolved DOM fetch request shape; not URL trust or a safety verdict.
+    BrowserRequestContext,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

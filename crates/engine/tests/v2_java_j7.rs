@@ -20,7 +20,12 @@ fn models_exact_java_outbound_destination_and_transport_policy() {
     let j7 = result
         .evidence
         .iter()
-        .filter(|evidence| evidence.provenance.engine == "mehscan java-network-transport-policy 1")
+        .filter(|evidence| {
+            evidence
+                .provenance
+                .engine
+                .starts_with("mehscan java-network-transport-policy 1")
+        })
         .collect::<Vec<_>>();
     let counts = j7.iter().fold(BTreeMap::new(), |mut counts, evidence| {
         *counts.entry(evidence.rule_id.as_str()).or_insert(0usize) += 1;
@@ -37,7 +42,12 @@ fn models_exact_java_outbound_destination_and_transport_policy() {
     assert_eq!(counts["java-spring-webclient-outbound-request"], 1);
     assert_eq!(counts["java-jdk-http-request-builder"], 1);
     assert_eq!(counts["java-jdk-http-client-dispatch"], 1);
-    assert_eq!(counts["java-outbound-http"], 2);
+    assert_eq!(counts["java-url-connection"], 2);
+    assert!(
+        j7.iter()
+            .filter(|e| e.rule_id == "java-url-connection")
+            .all(|e| e.kind == mehscan_core::EvidenceKind::Resource)
+    );
     assert_eq!(counts["java-apache-http-request"], 2);
     assert_eq!(counts["java-apache-http-dispatch"], 2);
     assert_eq!(counts["java-uri-https-scheme-control"], 1);

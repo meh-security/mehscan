@@ -4,6 +4,6 @@ import org.hibernate.Session
 
 fun queryBoundaries(store: MongoCollection<Document>, session: Session, filter: String, selector: Document, sql: String) {
     store.find(selector)
-    Document.parse(filter)
+    store.find(Document.parse(filter))
     session.createNativeQuery(sql)
 }

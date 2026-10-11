@@ -13,7 +13,7 @@ fn enumerates_process_execution_and_reports_coverage() {
     let result = mehscan_engine::scan_path(fixture_root()).expect("fixture should scan");
 
     assert_eq!(result.schema_version, "2.1");
-    assert_eq!(result.evidence.len(), 10);
+    assert_eq!(result.evidence.len(), 12);
     assert!(result.evidence.iter().all(|item| matches!(
         item.capability,
         Capability::ProcessExecution | Capability::ProcessArgumentSeparation
@@ -44,7 +44,7 @@ fn enumerates_process_execution_and_reports_coverage() {
     assert_eq!(result.coverage.totals.secret_scanned, 0);
     assert_eq!(
         result.coverage.security_surfaces.get("process_execution"),
-        Some(&9)
+        Some(&11)
     );
     assert_eq!(
         result

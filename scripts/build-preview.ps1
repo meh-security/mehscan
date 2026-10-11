@@ -80,6 +80,8 @@ try {
         (Join-Path $repositoryRoot 'skills/mehscan-security/agents/openai.yaml'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/commands.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-planning.md'),
+        (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-scope.md'),
+        (Join-Path $repositoryRoot 'skills/mehscan-security/references/frontend-source-scope.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/pattern-sweep.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-workflow.md'),
         (Join-Path $repositoryRoot 'skills/mehscan-security/references/evidence-packaging.md'),
@@ -128,6 +130,8 @@ try {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/agents/openai.yaml') -Destination (Join-Path $stageRoot 'skills/mehscan-security/agents')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/commands.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-planning.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-scope.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/frontend-source-scope.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/pattern-sweep.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-workflow.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/evidence-packaging.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
@@ -156,6 +160,8 @@ try {
         'skills/mehscan-security/agents/openai.yaml',
         'skills/mehscan-security/references/commands.md',
         'skills/mehscan-security/references/review-planning.md',
+        'skills/mehscan-security/references/review-scope.md',
+        'skills/mehscan-security/references/frontend-source-scope.md',
         'skills/mehscan-security/references/pattern-sweep.md',
         'skills/mehscan-security/references/review-workflow.md',
         'skills/mehscan-security/references/evidence-packaging.md',

@@ -117,7 +117,7 @@ fn add_request_validation_policy<'tree>(
             path,
             &attribute,
             &attribute,
-            EvidenceKind::SecurityConfiguration,
+            EvidenceKind::Resource,
             Capability::HttpRequestHandling,
             rule_id,
             "setting",
@@ -380,10 +380,6 @@ fn add_unverified_sso_cookie_identity<'tree>(
         .dfs()
         .filter(|node| node.kind().as_ref() == "method_declaration")
     {
-        let method_text = compact(method.text().as_ref());
-        if has_cookie_integrity_protection(&method_text) {
-            continue;
-        }
         let declarations = method
             .dfs()
             .filter(|node| node.kind().as_ref() == "variable_declarator")
@@ -429,18 +425,41 @@ fn add_unverified_sso_cookie_identity<'tree>(
             continue;
         };
         let Some(token_issuer) = invocations(&method).into_iter().find(|invocation| {
+            if !invocation.field("function").is_some_and(|function| {
+                compact(function.text().as_ref()).ends_with(".createAccessToken")
+                    || compact(function.text().as_ref()).ends_with(".CreateAccessToken")
+                    || compact(function.text().as_ref()).ends_with(".GenerateToken")
+            }) {
+                return false;
+            }
             invocation.range().start > identity.range().end
-                && invocation.field("function").is_some_and(|function| {
-                    compact(function.text().as_ref()).ends_with(".createAccessToken")
-                        || compact(function.text().as_ref()).ends_with(".CreateAccessToken")
-                        || compact(function.text().as_ref()).ends_with(".GenerateToken")
+                && invocation.field("arguments").is_some_and(|arguments| {
+                    arguments.dfs().any(|argument| {
+                        argument.kind().as_ref() == "identifier"
+                            && argument.text().as_ref() == identity_name
+                    })
                 })
+                || invocation.range().start > identity.range().end
+                    && invocation.field("function").is_some_and(|function| {
+                        let Some(receiver) = function.field("expression") else {
+                            return false;
+                        };
+                        declarations.iter().any(|declaration| {
+                            declaration.range().end < invocation.range().start
+                                && declaration
+                                    .field("name")
+                                    .is_some_and(|name| name.text() == receiver.text())
+                                && initializer(declaration).is_some_and(|value| {
+                                    value.dfs().any(|node| {
+                                        node.kind().as_ref() == "identifier"
+                                            && node.text().as_ref() == identity_name
+                                    })
+                                })
+                        })
+                    })
         }) else {
             continue;
         };
-        if !method_text.contains(&identity_name) {
-            continue;
-        }
         push(
             path,
             &identity,
@@ -495,20 +514,6 @@ fn add_unverified_sso_cookie_identity<'tree>(
                 "mehscan csharp cookie identity bounded-node-identity-boundary".to_string();
         }
     }
-}
-
-fn has_cookie_integrity_protection(method: &str) -> bool {
-    [
-        ".Unprotect(",
-        ".UnprotectAsync(",
-        "MachineKey.Unprotect(",
-        "ValidateToken(",
-        "JwtSecurityTokenHandler",
-        "HMACSHA",
-        "VerifyData(",
-    ]
-    .iter()
-    .any(|marker| method.contains(marker))
 }
 
 fn typed_receiver(

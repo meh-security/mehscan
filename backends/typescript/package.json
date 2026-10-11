@@ -1,0 +1,12 @@
+{
+  "name": "mehscan-typescript-evidence",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test backend.test.mjs"
+  },
+  "dependencies": {
+    "@types/node": "26.0.1",
+    "typescript": "5.9.3"
+  }
+}

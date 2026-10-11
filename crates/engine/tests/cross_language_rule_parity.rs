@@ -16,7 +16,7 @@ const ESTABLISHED_WEB_LANGUAGES: [Language; 7] = [
 // corpus provides exact API and safe-control truth. Keep its closed MVP
 // surface explicit so parity does not become a lowest-common-denominator or
 // force method-name-only observations.
-const RUST_MVP_SURFACE: [Capability; 22] = [
+const RUST_MVP_SURFACE: [Capability; 19] = [
     Capability::HttpRequestData,
     Capability::ExternalInput,
     Capability::DatabaseQuery,
@@ -34,11 +34,8 @@ const RUST_MVP_SURFACE: [Capability; 22] = [
     Capability::HtmlOutput,
     Capability::HtmlEncoding,
     Capability::Deserialization,
-    Capability::Logging,
     Capability::CorsConfiguration,
     Capability::TlsConfiguration,
-    Capability::MemorySafetyBoundary,
-    Capability::NativeInteropBoundary,
 ];
 
 // C and C++ share portable application-security relationships where native
@@ -184,6 +181,12 @@ fn established_web_languages_keep_the_common_declarative_surface() {
             .expect("priority language should have declarative rules");
         let missing = COMMON_DECLARATIVE_SURFACE
             .iter()
+            // Java network consumers now have typed runtime emitters rather
+            // than a generic constructor/URL rule. Their concrete I/O and
+            // alias/shadow controls are exercised by Java network tests.
+            .filter(|capability| {
+                !(language == Language::Java && **capability == Capability::OutboundNetworkRequest)
+            })
             .filter(|capability| !present.contains(capability))
             .collect::<Vec<_>>();
         assert!(

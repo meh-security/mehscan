@@ -15,17 +15,96 @@ check every operation's branch and effect. Keep a short missing-edge note, not a
 second report. Packet relationships and candidate-writer maps are navigation,
 not proof of binding or complete coverage.
 
-First check the output control. Verify imports/module registration and the exact
-helper implementation. Include every directly chained transformation: encoding
+First check the output control. Verify imports/module registration and the
+helper's effective behavior. Include every directly chained transformation: encoding
 followed by decoding or a change of interpretation can invalidate a control.
 Check text, attribute, URL, JavaScript and DOM contexts separately. Same-named
 helpers can differ. If the complete verified chain is safe in this context,
 close that property; input-origin research adds nothing to that conclusion.
+For server responses, check the effective content type and server-side control.
+One client's safe DOM insertion does not close a directly rendered HTML response.
+
+For frontend output, use supplied initializer/helper locations to pair the sink
+with its actual producer. A formatter/highlighter needs its implementation,
+version and effective options; its name or return type is not an escaping proof.
+When the repository names an exact external artifact, inspect that version with
+available read-only tools before calling the implementation unavailable. Treat
+deployment overrides as a blocker when evidence connects them to this chain;
+otherwise state the normal binding assumption. For an explicit framework trust
+bypass, a documented public API contract and verified import, input and consumer
+can establish the source weakness under that assumption. A missing lockfile or
+vendored implementation alone does not block it. Research versioned behavior
+when a patch, override or uncertain API semantics would change the decision.
+If dependency behavior is missing, inspect a matching supplied local record before
+external research. Reuse its exact-version contract under verified import/runtime
+binding; check each helper's options, hooks and later transformations separately.
+Shared dependency facts are not shared verdicts. Research uncovered behavior only.
+An unsupported-library runtime fallback alone is not a reachable application weakness.
+A complete output-control proof
+can settle HTML interpretation without reconstructing every input writer.
+Compact `review-card` and `review-sweep` views expose supplied frontend facts
+under `frontend_context`. Start with `frontend_output_producer_context` and
+helper imports. Verify the actual helper, options and complete transformation
+chain. If that control settles the exact HTML property for all inputs, stop;
+caller sampling gaps do not reopen it. Do not reread supplied producer windows
+or investigate caller origins merely to confirm them.
+If the control is absent, bypassed or unresolved, use
+`frontend_component_prop_context`, `frontend_prop_caller_context` and
+`frontend_prop_producer_context` to research the next missing edge. For multiple
+contributing props, `frontend_prop_value_context` identifies each exact caller
+argument separately; check content and control arguments together. Static,
+sanitized and dynamic callers can differ: reuse facts, not verdicts. The sample
+is bounded; investigate spreads, omitted callers, parser gaps, reassignments
+and unsupported wrappers when they affect that edge. Missing caller facts do
+not mean no callers exist.
+For Angular component, pipe, input or dialog facts, read
+[Angular output review](angular-output-review.md). It explains the supplied
+registration and handoff evidence and how to research the next missing edge.
+For React/Solid JSX output, use local producer/type facts and exact imported
+callers first. React `memo`/`forwardRef` wrappers are navigation, not controls;
+ordinary JSX text is escaped, while `dangerouslySetInnerHTML` interprets HTML.
+`frontend_state_declaration_context` and `frontend_state_writer_context` locate
+owned useState initialization and setter candidates; verify invocation, updates
+and controls. `frontend_collection_producer_context` locates a map receiver,
+without binding spread fields or proving callback semantics. Initial state is
+not final state. Wider effects, class components, arbitrary wrappers and missing
+writers may need targeted research. A props type or memoization proves no trust.
+For Vue SFC output, use supplied setup producers, local dependencies, props,
+direct-import caller snippets, native-ref bindings and helper imports first.
+Initializers and writer snippets locate code; verify updates, branches and later
+transformations. Caller samples are bounded. Alias/global registrations,
+destructured props and wider reactive flows still require research.
+Retrieve only missing source through `investigate source`. Native-ref identity
+and a props type do not prove input trust.
+Check the exact value representation: `location.search` retains URL encoding;
+`URLSearchParams.get` decodes it. HTML insertion does not itself URL-decode input.
+Use the actual source and transformations as proof, not the source's name.
+Normal interpolation and `v-text` are escaped text. Raw output alone proves no unsafe input.
+For editable controls, same-user typing reconstructed as HTML proves markup
+interpretation. A security issue still needs an attacker-to-victim delivery path
+or a demonstrated protection bypass; research prop writers, persistence and consumers.
+External/preprocessed blocks and dual script scopes have partial coverage;
+inspect their source when relevant rather than infer absent producers or callers.
+For DOM-to-DOM HTML copying, inspect the source element's markup and relevant
+writers. A DOM selector/type is navigation, not trusted contents. For a shared
+request helper, pair the implementation with observed callers and effective
+credentials/options; keep HTML rendering as its own consumer question.
 
 Otherwise trace who writes the exact rendered value. Inspect relevant normal
 and alternate writers, their actual callers/registration, and controls on those
 paths. A sanitizer setting on an editor does not protect a different direct
 writer. A shared field name or receiver spelling does not prove the same object.
+For API-backed values, follow the service URL into local server routes and
+persistence setters/validators. Match alternate writers to the exact returned
+records: joins, filters, tenant keys and cache population can separate values
+with the same field name. Keep writer identity, selection and consumer together
+in a short working chain; do not carry a raw-writer property across an unverified
+selection. Check each effective control branch separately, including later
+rewrites. A client save call does not prove the server accepts raw content.
+Inspect available repository tests when they clarify a writer or control;
+distinguish an asserted implementation contract from a test actually executed.
+Do not label those local policies unavailable before checking
+them; distinguish a specific remaining deployment/dependency gap.
 Use source-visible tests or versioned dependency source when semantics are
 decisive. Do not invent behavior from a familiar name or a failed lookup.
 
