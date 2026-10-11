@@ -475,12 +475,14 @@ fn prop_contract(
         n.range().start == capture.location.start.byte_offset
             && n.range().end == capture.location.end.byte_offset
     })?;
-    let owner = node.ancestors().find(|n| {
-        matches!(
-            n.kind().as_ref(),
-            "function_declaration" | "arrow_function" | "function_expression"
-        )
-    })?;
+    // A nested render callback can capture its component's props. Bind the
+    // enclosing component, not the callback; parameter_shadow still rejects
+    // intervening parameter/block bindings. Do not cross a class boundary.
+    let owner = node
+        .ancestors()
+        .take_while(|n| !matches!(n.kind().as_ref(), "class_declaration" | "class"))
+        .filter(callable)
+        .last()?;
     if !valid(&owner) || owner.ancestors().any(|n| n.is_error() || n.is_missing()) {
         return None;
     }

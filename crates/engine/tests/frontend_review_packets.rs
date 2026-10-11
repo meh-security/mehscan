@@ -5,6 +5,71 @@ fn fixture() -> PathBuf {
 }
 
 #[test]
+fn nested_renderers_capture_outer_props_without_crossing_shadow_or_class_boundaries() {
+    let root = fixture();
+    let job =
+        mehscan_engine::investigation::build_path_review_jobs(&root, Some(3), Some(100)).unwrap();
+    let reviews: Vec<_> = job
+        .observation_reviews
+        .iter()
+        .filter(|r| {
+            r.evidence.iter().any(|e| {
+                e.location.path == "Nested.tsx"
+                    && e.rule_id.ends_with("react-dangerous-html-output")
+            })
+        })
+        .collect();
+    assert_eq!(
+        reviews.len(),
+        6,
+        "all six raw HTML operations remain reviewable"
+    );
+    for review in reviews {
+        let line = review
+            .evidence
+            .iter()
+            .find(|e| {
+                e.location.path == "Nested.tsx"
+                    && e.rule_id.ends_with("react-dangerous-html-output")
+            })
+            .unwrap()
+            .location
+            .start
+            .line;
+        let expected = matches!(line, 4 | 11);
+        assert_eq!(
+            review
+                .facts
+                .iter()
+                .any(|f| f.role == "frontend_component_prop_context"),
+            expected,
+            "prop binding at line {line}: {:#?}",
+            review.facts
+        );
+        assert_eq!(
+            review
+                .facts
+                .iter()
+                .any(|f| f.role == "frontend_prop_caller_context"
+                    && f.location.path == "NestedCallers.tsx"),
+            expected,
+            "caller at line {line}"
+        );
+        for fact in review
+            .facts
+            .iter()
+            .filter(|f| f.role.starts_with("frontend_"))
+        {
+            let source = std::fs::read_to_string(root.join(&fact.location.path)).unwrap();
+            assert_eq!(
+                &source[fact.location.start.byte_offset..fact.location.end.byte_offset],
+                fact.excerpt
+            );
+        }
+    }
+}
+
+#[test]
 fn jsx_packets_locate_owned_callers_producers_and_actual_controls() {
     let root = fixture();
     let scan = mehscan_engine::scan_path(&root).unwrap();
@@ -113,11 +178,12 @@ fn jsx_packets_keep_spreads_and_more_callers_open_and_do_not_map_mutated_props()
         })
         .unwrap();
     assert!(
-        !mutated
-            .facts
-            .iter()
-            .any(|f| f.role.starts_with("frontend_")),
-        "do not map reassigned operands to initial props"
+        !mutated.facts.iter().any(|f| matches!(
+            f.role.as_str(),
+            "frontend_component_prop_context" | "frontend_prop_caller_context"
+        )),
+        "do not map reassigned operands to initial props: {:#?}",
+        mutated.facts
     );
 }
 
