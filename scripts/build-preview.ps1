@@ -2,6 +2,7 @@
 param(
     [string]$Version,
     [string]$OutputDirectory,
+    [string]$BinaryPath,
     [switch]$SkipBuild,
     [switch]$SkipSmoke
 )
@@ -69,124 +70,39 @@ try {
         }
     }
 
-    $binaryPath = Join-Path $targetRoot "release/$binaryName"
-    $requiredSources = @(
-        $binaryPath,
-        (Join-Path $repositoryRoot 'README.md'),
-        (Join-Path $repositoryRoot 'docs/installation.md'),
-        (Join-Path $repositoryRoot 'LICENSE'),
-        (Join-Path $repositoryRoot 'THIRD_PARTY_NOTICES.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/SKILL.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/agents/openai.yaml'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/commands.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-planning.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-scope.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/frontend-source-scope.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/pattern-sweep.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-workflow.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/evidence-packaging.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/html-output-review.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/angular-output-review.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/finish-review.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/triage-buckets.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets/authorization.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets/credential-state.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets/crypto-configuration.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets/interpreted-input.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets/native-memory.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets/operation-policy.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets/resource-boundary.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets/state-integrity.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/release-pins.json'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.sh'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.py'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.ps1'),
-        (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/public-download.ps1'),
-        (Join-Path $repositoryRoot 'skills/mehscan-report-quality/SKILL.md'),
-        (Join-Path $repositoryRoot 'skills/mehscan-report-quality/agents/openai.yaml'),
-        (Join-Path $repositoryRoot 'skills/mehscan-revalidation/SKILL.md')
-    )
-    foreach ($source in $requiredSources) {
+    if ([string]::IsNullOrWhiteSpace($BinaryPath)) {
+        $binaryPath = Join-Path $targetRoot "release/$binaryName"
+    } else {
+        if (-not $SkipBuild) { throw 'An explicit binary requires -SkipBuild' }
+        $binaryPath = [IO.Path]::GetFullPath($BinaryPath)
+    }
+    $payloadFiles = @(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'release-files.json') -Raw | ConvertFrom-Json)
+    if ($payloadFiles.Count -eq 0 -or @($payloadFiles | Sort-Object -Unique).Count -ne $payloadFiles.Count) {
+        throw 'Release payload must contain unique explicit files'
+    }
+    foreach ($relative in $payloadFiles) {
+        if ($relative -notmatch '^[A-Za-z0-9_-][A-Za-z0-9_./-]*$' -or $relative.Split('/') -contains '..') {
+            throw "Invalid release payload path: $relative"
+        }
+        $source = Join-Path $repositoryRoot $relative
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
             throw "Required release input is missing: $source"
         }
     }
+    if (-not (Test-Path -LiteralPath $binaryPath -PathType Leaf)) { throw "Missing scanner: $binaryPath" }
     $builtVersion = (& $binaryPath --version) -join "`n"
     if ($LASTEXITCODE -ne 0 -or $builtVersion.Trim() -cne "mehscan $Version") {
         throw "Release version mismatch: requested $Version but executable reported '$($builtVersion.Trim())'"
     }
 
-    New-Item -ItemType Directory -Path (Join-Path $stageRoot 'skills/mehscan-security/agents') -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $stageRoot 'skills/mehscan-security/references') -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $stageRoot 'skills/mehscan-security/scripts') -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $stageRoot 'skills/mehscan-report-quality/agents') -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $stageRoot 'skills/mehscan-revalidation') -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $stageRoot 'docs') -Force | Out-Null
+    New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
     Copy-Item -LiteralPath $binaryPath -Destination (Join-Path $stageRoot $binaryName)
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'README.md') -Destination $stageRoot
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs/installation.md') -Destination (Join-Path $stageRoot 'docs')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'LICENSE') -Destination $stageRoot
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'THIRD_PARTY_NOTICES.md') -Destination $stageRoot
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/SKILL.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/agents/openai.yaml') -Destination (Join-Path $stageRoot 'skills/mehscan-security/agents')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/commands.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-planning.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-scope.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/frontend-source-scope.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/pattern-sweep.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/review-workflow.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/evidence-packaging.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/html-output-review.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/angular-output-review.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/finish-review.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/triage-buckets.md') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/references/buckets') -Destination (Join-Path $stageRoot 'skills/mehscan-security/references') -Recurse
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/release-pins.json') -Destination (Join-Path $stageRoot 'skills/mehscan-security/scripts')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.sh') -Destination (Join-Path $stageRoot 'skills/mehscan-security/scripts')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.py') -Destination (Join-Path $stageRoot 'skills/mehscan-security/scripts')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/install-mehscan.ps1') -Destination (Join-Path $stageRoot 'skills/mehscan-security/scripts')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-security/scripts/public-download.ps1') -Destination (Join-Path $stageRoot 'skills/mehscan-security/scripts')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-report-quality/SKILL.md') -Destination (Join-Path $stageRoot 'skills/mehscan-report-quality')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-report-quality/agents/openai.yaml') -Destination (Join-Path $stageRoot 'skills/mehscan-report-quality/agents')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'skills/mehscan-revalidation/SKILL.md') -Destination (Join-Path $stageRoot 'skills/mehscan-revalidation')
-
-    $expectedFiles = @(
-        'LICENSE',
-        $binaryName,
-        'README.md',
-        'docs/installation.md',
-        'release-manifest.json',
-        'skills/mehscan-report-quality/agents/openai.yaml',
-        'skills/mehscan-report-quality/SKILL.md',
-        'skills/mehscan-revalidation/SKILL.md',
-        'skills/mehscan-security/agents/openai.yaml',
-        'skills/mehscan-security/references/commands.md',
-        'skills/mehscan-security/references/review-planning.md',
-        'skills/mehscan-security/references/review-scope.md',
-        'skills/mehscan-security/references/frontend-source-scope.md',
-        'skills/mehscan-security/references/pattern-sweep.md',
-        'skills/mehscan-security/references/review-workflow.md',
-        'skills/mehscan-security/references/evidence-packaging.md',
-        'skills/mehscan-security/references/html-output-review.md',
-        'skills/mehscan-security/references/angular-output-review.md',
-        'skills/mehscan-security/references/finish-review.md',
-        'skills/mehscan-security/references/triage-buckets.md',
-        'skills/mehscan-security/references/buckets/authorization.md',
-        'skills/mehscan-security/references/buckets/credential-state.md',
-        'skills/mehscan-security/references/buckets/crypto-configuration.md',
-        'skills/mehscan-security/references/buckets/interpreted-input.md',
-        'skills/mehscan-security/references/buckets/native-memory.md',
-        'skills/mehscan-security/references/buckets/operation-policy.md',
-        'skills/mehscan-security/references/buckets/resource-boundary.md',
-        'skills/mehscan-security/references/buckets/state-integrity.md',
-        'skills/mehscan-security/scripts/release-pins.json',
-        'skills/mehscan-security/scripts/install-mehscan.sh',
-        'skills/mehscan-security/scripts/install-mehscan.py',
-        'skills/mehscan-security/scripts/install-mehscan.ps1',
-        'skills/mehscan-security/scripts/public-download.ps1',
-        'skills/mehscan-security/SKILL.md',
-        'THIRD_PARTY_NOTICES.md'
-    ) | Sort-Object
+    foreach ($relative in $payloadFiles) {
+        $destination = Join-Path $stageRoot $relative
+        New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $repositoryRoot $relative) -Destination $destination
+    }
+    $expectedFiles = @(@($binaryName, 'release-manifest.json') + $payloadFiles | Sort-Object)
     $releaseManifest = [ordered]@{
         schema_version = '1.0'
         product = 'mehscan'
@@ -290,6 +206,9 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Extracted executable review report failed' }
         $reviewReport = ($reviewReportText -join "`n") | ConvertFrom-Json
         if ($reviewReport.summary.reviewed -ne 1) { throw 'Extracted executable review report has incorrect coverage' }
+        $installedReviewText = & python -B (Join-Path $PSScriptRoot 'test-installed-review.py') --package $smokeRoot
+        if ($LASTEXITCODE -ne 0) { throw 'Extracted package Changed worker smoke failed' }
+        $installedReview = ($installedReviewText -join "`n") | ConvertFrom-Json
         $smokeSummary = [ordered]@{
             help = 'passed'
             version = $extractedVersion
@@ -297,6 +216,7 @@ try {
             sarif_results = $sarif.runs[0].results.Count
             review_flow = 'passed'
             exact_archive_membership = 'passed'
+            installed_changed_review = $installedReview.status
         }
     }
 

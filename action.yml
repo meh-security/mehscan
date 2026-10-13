@@ -1,0 +1,140 @@
+name: Mehscan advisory Changed review
+description: Prepare native inventory or execute opt-in BYOK PR/release review as source-bound advisory artifacts.
+inputs:
+  scanner-path:
+    description: Absolute path to a trusted executable with V11 Changed support, outside target source.
+    required: true
+  source-path:
+    description: Dedicated target checkout directory relative to the workspace.
+    default: mehscan-source
+  scan-root:
+    description: Authorized directory relative to target checkout.
+    default: '.'
+  pull-request:
+    description: PR number for an explicit workflow_dispatch run.
+    default: ''
+  base:
+    description: Old release tag or SHA for an explicit workflow_dispatch comparison.
+    default: ''
+  target:
+    description: New release tag or SHA; mutually exclusive with pull-request.
+    default: ''
+  review-mode:
+    description: native (default), value or comprehensive; AI modes prepare a handoff, or execute BYOK review when provider-config is supplied.
+    default: native
+  skill-root:
+    description: Optional trusted security skill directory outside source; defaults to this pinned Action package.
+    default: ''
+  provider-contract:
+    description: Optional native provider descriptor file outside source, for a bound trusted consumer.
+    default: ''
+  provider-config:
+    description: Optional absolute private Codex BYOK configuration; value/comprehensive then executes the bundled reviewer.
+    default: ''
+  allow-fork-review:
+    description: Explicitly authorize fork model review on workflow_dispatch only. Automatic fork events stay native-only.
+    default: 'false'
+  token:
+    description: Read-only token for authoritative metadata and private source fetches.
+    default: ${{ github.token }}
+  state-store:
+    description: Optional absolute operator-provisioned persistent local directory outside workspace and runner temp; all coordinating workers must use one host/store.
+    default: ''
+  state-retry:
+    description: Explicitly start a fresh generation, including an abandoned running attempt; requires state-store.
+    default: 'false'
+outputs:
+  artifact-directory:
+    description: Native inventory and immutable run contract directory.
+    value: ${{ steps.prepare.outputs.directory }}
+  review-handoff:
+    description: Private one-run handoff path for a trusted consumer; never upload the control directory. Empty in native mode or on failure.
+    value: ${{ steps.review.outcome == 'skipped' && steps.finish.outputs.review-handoff || '' }}
+  artifact-name:
+    description: Unique execution/attempt artifact name.
+    value: ${{ steps.prepare.outputs.artifact-name }}
+  status:
+    description: native_only, review_ready, reviewed, stale, incomplete, cancelled or skipped; never a merge verdict.
+    value: ${{ steps.review.outputs.status || (steps.review.outcome == 'failure' && 'incomplete') || steps.finish.outputs.status }}
+  snapshot-id:
+    description: Source/policy/tool contract hash, separate from execution identity.
+    value: ${{ steps.review.outputs.snapshot-id || steps.finish.outputs.snapshot-id }}
+  coordination-status:
+    description: disabled, owned_running/finished, coalesced_running/finished, superseded, or incomplete coordination; never review completion.
+    value: ${{ steps.review.outputs.coordination-status || steps.finish.outputs.coordination-status }}
+  generation:
+    description: Native generation if ownership or coordination was claimed.
+    value: ${{ steps.review.outputs.generation || steps.finish.outputs.generation }}
+  review-work-complete:
+    description: Native completion of scoped work, independent of execution status; empty when no reviewed completion exists.
+    value: ${{ steps.review.outputs.review-work-complete }}
+  issue-count:
+    description: Native represented issue review IDs; source-only effects remain separate.
+    value: ${{ steps.review.outputs.issue-count }}
+  pending-review-count:
+    description: Native review IDs needing further adjudication.
+    value: ${{ steps.review.outputs.pending-review-count }}
+  pending-effect-count:
+    description: Changed effects with unresolved questions.
+    value: ${{ steps.review.outputs.pending-effect-count }}
+  deferred-count:
+    description: Review IDs explicitly deferred by the admitted profile.
+    value: ${{ steps.review.outputs.deferred-count }}
+  missing-review-count:
+    description: Missing or conflicting native review IDs.
+    value: ${{ steps.review.outputs.missing-review-count }}
+runs:
+  using: composite
+  steps:
+    - name: Resolve current source contract
+      id: prepare
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        MEHSCAN_ACTION_PATH: ${{ github.action_path }}
+        MEHSCAN_SCANNER_PATH: ${{ inputs.scanner-path }}
+        MEHSCAN_SOURCE_PATH: ${{ inputs.source-path }}
+        MEHSCAN_SCAN_ROOT: ${{ inputs.scan-root }}
+        MEHSCAN_REVIEW_MODE: ${{ inputs.review-mode }}
+        MEHSCAN_SKILL_ROOT: ${{ inputs.skill-root }}
+        MEHSCAN_PROVIDER_CONTRACT: ${{ inputs.provider-contract }}
+        MEHSCAN_PROVIDER_CONFIG: ${{ inputs.provider-config }}
+        MEHSCAN_ALLOW_FORK_REVIEW: ${{ inputs.allow-fork-review }}
+        MEHSCAN_PR: ${{ inputs.pull-request }}
+        MEHSCAN_BASE: ${{ inputs.base }}
+        MEHSCAN_TARGET: ${{ inputs.target }}
+        MEHSCAN_STATE_STORE: ${{ inputs.state-store }}
+        MEHSCAN_STATE_RETRY: ${{ inputs.state-retry }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: python -I "$MEHSCAN_ACTION_PATH/scripts/github_action.py" prepare
+    - name: Check out exact source endpoint
+      if: steps.prepare.outputs.should-scan == 'true'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: ${{ steps.prepare.outputs.source-repository }}
+        ref: ${{ steps.prepare.outputs.target-commit }}
+        path: ${{ steps.prepare.outputs.source-path }}
+        fetch-depth: 0
+        persist-credentials: false
+        submodules: false
+        token: ${{ inputs.token }}
+    - name: Prepare advisory artifacts and recheck freshness
+      id: finish
+      if: always() && !cancelled() && steps.prepare.outputs.plan != ''
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        MEHSCAN_ACTION_PATH: ${{ github.action_path }}
+        MEHSCAN_PLAN: ${{ steps.prepare.outputs.plan }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: python -I "$MEHSCAN_ACTION_PATH/scripts/github_action.py" finish "$MEHSCAN_PLAN"
+    - name: Execute opt-in BYOK advisory review
+      id: review
+      if: always() && !cancelled() && steps.finish.outputs.status == 'review_ready' && inputs.provider-config != ''
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        MEHSCAN_ACTION_PATH: ${{ github.action_path }}
+        MEHSCAN_PLAN: ${{ steps.prepare.outputs.plan }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: python -I "$MEHSCAN_ACTION_PATH/scripts/github_action.py" run-model "$MEHSCAN_PLAN"

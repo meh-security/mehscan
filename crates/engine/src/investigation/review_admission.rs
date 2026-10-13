@@ -51,11 +51,25 @@ enum OperationReviewFamily {
 fn server_mutation_review_marker_groups(
     sources: &RepositorySources,
     existing_evidence: &[Evidence],
+    scope: Option<&mehscan_core::ImpactScanScope>,
 ) -> Vec<ObservationGroup> {
     let mut groups = Vec::new();
     let mut seen = BTreeSet::new();
     let mut family_counts = BTreeMap::new();
     for file in sources.files.values() {
+        if scope.is_some_and(|scope| match scope.result_policy.as_str() {
+            "changed_files" | "impact_scope" => !scope
+                .included_files
+                .iter()
+                .any(|item| item.path == file.path),
+            "changed_locations" => !scope
+                .changed_files
+                .iter()
+                .any(|item| item.path == file.path),
+            _ => false,
+        }) {
+            continue;
+        }
         if file.source.len() > MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES {
             continue;
         }
@@ -228,6 +242,7 @@ fn fair_marker_limit(groups: Vec<ObservationGroup>, limit: usize) -> Vec<Observa
     selected
 }
 
+#[cfg(test)]
 pub(super) fn marker_groups(
     sources: &RepositorySources,
     existing_evidence: &[Evidence],
@@ -235,7 +250,23 @@ pub(super) fn marker_groups(
     // Marker families share the admission contract but keep separate, narrow
     // deterministic predicates. Add a new family here only when the engine can
     // establish its boundary and dangerous effect without AI inference.
-    server_mutation_review_marker_groups(sources, existing_evidence)
+    scoped_marker_groups(sources, existing_evidence, None)
+}
+
+pub(super) fn scoped_marker_groups(
+    sources: &RepositorySources,
+    existing_evidence: &[Evidence],
+    scope: Option<&mehscan_core::ImpactScanScope>,
+) -> Vec<ObservationGroup> {
+    let mut groups = server_mutation_review_marker_groups(sources, existing_evidence, scope);
+    if let Some(scope) = scope.filter(|scope| scope.result_policy == "changed_locations") {
+        groups.retain(|group| {
+            group.evidence.iter().any(|evidence| {
+                crate::impact::location_is_changed(&evidence.location, &scope.changed_files)
+            })
+        });
+    }
+    groups
 }
 
 fn marker_covered_by_existing_evidence(

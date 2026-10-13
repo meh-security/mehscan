@@ -5,7 +5,10 @@ Linux/macOS use `scripts/install-mehscan.sh`, a Bash entry point with a Python
 PowerShell, pip packages, `jq`, or separate unzip tool is needed. Windows uses
 `scripts/install-mehscan.ps1` with PowerShell 7 (`pwsh`). Both verified release
 installers require GitHub CLI (`gh`) with `attestation verify`. Mehscan itself
-needs none of these tools after installation.
+needs none of these tools after installation. The optional Changed review worker
+requires Python 3.11+ and Git; it uses the standard library without pip dependencies.
+BYOK additionally requires a compatible trusted Codex client and explicit auth.
+The CI-only PyYAML dependency is not needed to run the installed worker.
 Installing or upgrading prerequisites changes the host; use an existing
 installation where possible and follow the user's host-management preferences.
 
@@ -38,6 +41,14 @@ executing the downloaded archive. Building a separate trusted checkout is still
 possible within scope, but does not make that rejected archive trustworthy.
 
 ## Release targets
+
+The archive keeps the paired engine, skills and review controller in one layout:
+`mehscan` (`mehscan.exe` on Windows), `skills/`, `scripts/review_worker.py`, its
+context/export helpers, and the review guides in `docs/`. Use these installed files
+together; provider config/auth/session paths stay outside the scan and artifact
+directories. The [worker guide](review-worker.md) and [BYOK guide](codex-reviewer.md)
+describe the optional review setup. The Action can also be consumed from its
+reviewed repository commit; provider installation/authentication remains caller setup.
 
 The release workflow currently builds these assets. The installer checks the
 actual release for an exact match and never substitutes another architecture.

@@ -3,7 +3,7 @@
 Use the executable and root supplied for the task. `ROOT` is the source
 repository, not the directory containing a saved bundle.
 Regenerate older inventories with this executable: current admission uses
-inventory schema 22. Reuse verdicts only through a source-bound ledger.
+inventory schema 25. Reuse verdicts only through a source-bound ledger.
 Append `--journal JOURNAL.jsonl` to source, outline, references, paths, and
 other code-evidence lookups while reviewing a bundle. Bundle listing, cards,
 finalization, and validation do not accept `--journal`. Name the journal for
@@ -25,6 +25,9 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Need | Command |
 | --- | --- |
 | Candidate scan | `mehscan scan ROOT --format candidates` |
+| Changed-file scan | `mehscan scan ROOT --changed-from BASE --diff-mode files --format candidates` |
+| Changed inventory | `mehscan investigate review-inventory ROOT --changed-from BASE --diff-mode files --output RUN/inventory`; see [Changed review](changed-review.md) for PR/release comparisons, the change pass and freshness. |
+| Native repository identity | Add `--repository-key STABLE_ID` at inventory creation (or direct jobs/bundles); for a fork PR use the base product ID and optional `--source-repository-key FORK_ID`. Selected bundles inherit it. Unknown IDs remain unscoped; never invent a platform ID. |
 | Review requests | `mehscan investigate review-bundles ROOT --output DIR` |
 | Large-repo inventory | `mehscan investigate review-inventory ROOT --output RUN/inventory` |
 | Inventory with supplied Roslyn context | `mehscan investigate review-inventory ROOT --output RUN/inventory --csharp-context CONTEXT --csharp-backend BACKEND` |
@@ -58,8 +61,16 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Validate existing response | `mehscan investigate review-bundle-triage --bundle REQUEST --responses RESPONSE --source-root ROOT --summary true` |
 | Summarize run | `mehscan investigate review-bundle-summary --run DIR --responses RESPONSES_DIR --source-root ROOT` |
 | Final report | `mehscan report --run DIR --responses RESPONSES_DIR --source-root ROOT --format json --output findings.json` |
+| Inspect coordinator state | `mehscan state status --store STATE --stream KEY --repository-key ID`; `history` retains immutable all-verdict proof. See [local state](../../../docs/review-state.md) for claims, source-bound admission and explicit supersession. |
 
 Use `--format sarif` or `--format markdown` for those report projections.
+For configured SARIF partitions use `--sarif-category mehscan/triaged/pr-delta`
+or another stable analysis category; optional `--sarif-run-id attempt-2` identifies
+an attempt. Keep reviewer/model, PR number, revision and changing file sets out of
+category names. These are artifact exports: complete manifest work does not prove
+alert remediation, and Changed/partial reports must not replace an authoritative
+baseline. See [the output contract](../../../docs/output-contract.md) for defaults,
+category migration and the pending GitHub ingestion acceptance.
 Write response drafts as files instead of embedding prose JSON in shell command
 strings. If a report needs correction, change the reviewed response and rerun
 finalization and `mehscan report`; do not edit the generated report directly.
@@ -102,3 +113,38 @@ navigation, not code evidence: read a returned path before citing its contents.
 `--source-root` checks that every decisive artifact excerpt occurs in a file
 inside that root. It catches paraphrases presented as source text; it cannot
 prove that every executed query was recorded.
+Changed-scope finalization also requires the saved input binding, matching Git
+comparison and current repository source fingerprint. Keep `RUN` outside the
+source worktree and regenerate stale runs rather than editing their bindings.
+
+V11 source builds expose `state plan-template|plan|pending|fact|work` for the
+[stateful worker](../../../docs/review-worker.md). A work package contains exact
+current IDs, parents, pending questions and source-backed updates without an
+ownership token. Review all questions for each resumed ID; facts request fresh
+adjudication and never change verdicts automatically. Pass the package back to
+plan/record admission. If it is stale, refresh it; do not edit its generation,
+parents or fingerprints. Use normal queries and finalization for the new answer.
+
+For a provider-neutral worker, create the plan with the trusted skill package:
+`mehscan state plan-template --inventory DIR --source-root ROOT --policy value --skill-root TRUSTED/mehscan-security`.
+The native runtime binds profile defaults (Value: 2 rounds/8 queries/128 KiB/300s;
+Comprehensive: 3 rounds/12 queries/256 KiB/600s per conversation). Set
+`--research-rounds`, `--research-queries`, `--research-bytes` or `--timeout` on
+that template to configure them explicitly. The worker consumes the admitted
+limits; changing policy, limits, engine or skill requires a new native plan/work
+package. Manual plans without a runtime remain usable in the CLI, but cannot
+be submitted to the AI worker. `state runtime-template --skill-root DIR --policy
+value` emits the same effective contract without an inventory.
+
+Runtime-bound `state plan`, `work` and `record` require `--skill-root DIR`.
+The native CLI checks the actual trusted package outside source against the
+contract digest; the AI worker supplies this argument automatically. Changed
+engine or skill bytes require a new contract and plan. Historical state remains
+readable without the old package.
+
+For the bundled BYOK Codex adapter, export its trusted `--contract` descriptor
+and supply `--provider-contract FILE` to the native runtime/plan and bound
+plan/work/record commands. The worker receives the same file and requires the
+bundled adapter configuration to match. Model/effort/client-version changes invalidate
+old work. Use provider descriptors; schema-1 execution needs a fresh plan.
+See the [BYOK adapter contract](../../../docs/codex-reviewer.md).

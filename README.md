@@ -68,13 +68,18 @@ mehscan scan path/to/repository --format json
 mehscan scan path/to/repository --format sarif-candidates > mehscan-candidates.sarif
 ```
 
-To scan changes relative to a Git revision:
+To scan whole changed files relative to a Git revision (available in this source
+checkout; not in the released 0.8.0 executable):
 
 ```text
-mehscan scan path/to/repository --changed-from HEAD --format candidates
+mehscan scan path/to/repository --changed-from HEAD --diff-mode files --format candidates
 ```
 
 Use `mehscan --help` or `mehscan scan --help` for additional options.
+Files mode stays within changed files, including when files are renamed or
+deleted. For a PR, add `--merge-base --target PR_HEAD_SHA` against the verified
+base in a clean checkout of that head. For release deltas, compare explicit old
+and new endpoints without `--merge-base`.
 
 ## AI-assisted review
 
@@ -96,9 +101,57 @@ mehscan investigate review-response-schema --bundle REQUEST.json --output respon
 
 A complete review requires a validated response for every request in the manifest. Selected or sampled reviews cover only the reviewed scope. The [report quality skill](skills/mehscan-report-quality/SKILL.md) checks the final handoff for clarity and actionability.
 
+For a changed-file AI review, create a scoped inventory, then select exact IDs
+through the same bundle workflow:
+
+```text
+mehscan investigate review-inventory ROOT --changed-from HEAD --diff-mode files --output RUN/inventory
+mehscan investigate review-inventory-list --inventory RUN/inventory --selection value --limit 50
+mehscan investigate review-bundles ROOT --inventory RUN/inventory --review-ids ID,ID --output RUN/chunk-1
+```
+
+Keep `RUN` outside the source worktree. Changed runs require `--source-root ROOT`
+when finalizing or reporting, and reject stale source or Git comparisons.
+Follow the [Changed review guide](skills/mehscan-security/references/changed-review.md)
+for the required change pass, targeted context and scope limitations. No
+candidates does not establish that the diff is safe.
+
+Supply `--repository-key STABLE_ID` at inventory creation for native operation and
+triage identity across revisions. Fork PRs use the base product's ID, with an
+optional `--source-repository-key FORK_ID` for provenance. Unknown namespaces stay
+explicitly unscoped. Matching identity does not authorize reuse of an old verdict;
+canonical JSON retains evidence-backed records for all three triage outcomes.
+
+Confirmed SARIF includes a GitHub-compatible primary-location line hash when
+bound source is available, alongside native identity. Multiple native paths to
+one operation remain separate flows. Git subdirectory scans export repository
+paths; GitHub alert ingestion has not yet been tested.
+
+Use `report --sarif-category mehscan/triaged/pr-delta --sarif-run-id attempt-2`
+to configure a stable analysis partition and attempt. Reviewer changes do not
+change the default category. Changed reports default to a separate category and
+remain advisory artifacts; complete bundle work does not establish alert closure.
+
+The [advisory GitHub Action](docs/github-action.md) prepares native inventories
+for current PR scope or explicit release deltas with a pinned trusted scanner.
+It records endpoint freshness and retains run artifacts; AI review and merge
+gating are separate work. The caller workflow requires a reviewed V11 source pin.
+
+The [local state commands](docs/review-state.md) retain generation ownership and
+all-verdict decision history, with explicit validated supersession. Changed
+source starts unassessed; matching identity alone never carries a dismissal.
+The Action can optionally coordinate on one operator-provisioned persistent host.
+Distributed hosted persistence and current-result publication remain separate work.
+The [local AI worker](docs/review-worker.md) adds explicit completion plans,
+source-only changed-effect questions and source-backed pending-evidence resumption.
+It accepts a configured reviewer adapter and admits results through native validation.
+
 ## Documentation
 
 - [Review and reporting formats](docs/output-contract.md)
+- [Local review state and decision history](docs/review-state.md)
+- [Local AI worker and pending-evidence resumption](docs/review-worker.md)
+- [Changed review release readiness](docs/release-readiness.md)
 - [AI reviewer contract](docs/ai-reviewer-contract.md)
 - [AI triage contract](docs/ai-triage-contract.md)
 - [Extended rule gap analysis](docs/extended-rule-gap-analysis.md)
