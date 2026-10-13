@@ -8,12 +8,29 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 spec = importlib.util.spec_from_file_location("mehscan_review_worker", ROOT / "scripts/review_worker.py")
 worker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(worker)
+
+
+class ArtifactCopy(unittest.TestCase):
+    def test_artifact_copy_preserves_bytes_without_requiring_metadata(self):
+        with tempfile.TemporaryDirectory(prefix="mehscan-artifact-") as name:
+            root = Path(name)
+            source = root / "requests"
+            source.mkdir()
+            data = b'{"source_bound":"actual bytes"}\n'
+            (source / "request.json").write_bytes(data)
+            with patch("shutil.copystat", side_effect=PermissionError("metadata unsupported")):
+                worker.copy_review_files(source, root / "copied")
+            self.assertEqual((root / "copied/request.json").read_bytes(), data)
+            (source / "unexpected-directory").mkdir()
+            with self.assertRaises(ValueError):
+                worker.copy_review_files(source, root / "rejected")
 
 
 class Worker(unittest.TestCase):
@@ -89,6 +106,38 @@ else:
             "--claim", str(self.claim), "--work-package", str(self.package), "--reviewer-command", str(self.command),
             "--reviewer-label", "deterministic/medium", "--run", str(self.run), "--output", str(self.base / name), *extra],
             capture_output=True, text=True, encoding="utf-8", timeout=60)
+
+    def test_full_repository_work_preserves_null_scope_and_native_admission(self):
+        self.inventory = self.base / "full-inventory"
+        self.store = self.base / "full-state"
+        self.run = self.base / "full-run"
+        self.native("investigate", "review-inventory", str(self.root), "--repository-key", "evaluation:worker",
+                    "--output", str(self.inventory))
+        claim = self.native("state", "claim", "--store", str(self.store), "--stream", "local-review",
+            "--inventory", str(self.inventory), "--source-root", str(self.root), "--attempt-id", "full",
+            "--expected-generation", "0", "--operation-key", "claim")
+        self.claim.write_text(json.dumps(claim))
+        self.owner = claim["result"]["owner"]
+        self.common = ["--store", str(self.store), "--stream", "local-review", "--inventory", str(self.inventory),
+                      "--source-root", str(self.root), "--generation", "1", "--owner", self.owner]
+        plan = self.native("state", "plan-template", "--skill-root", str(ROOT / "skills/mehscan-security"),
+                          "--inventory", str(self.inventory), "--source-root", str(self.root), "--policy", "comprehensive")
+        self.assertEqual(plan["change_pass"], [])
+        self.ids = plan["selected_review_ids"]
+        (self.base / "plan.json").write_text(json.dumps(plan))
+        self.native("state", "plan", *self.common, "--input", str(self.base / "plan.json"), "--operation-key", "plan")
+        self.native("investigate", "review-bundles", str(self.root), "--inventory", str(self.inventory),
+                    "--review-ids", ",".join(self.ids), "--output", str(self.run))
+        package = self.native("state", "work", *self.common)
+        self.assertIsNone(package["payload"]["impact_scope"])
+        self.package.write_text(json.dumps(package))
+        result = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        record = json.loads((self.base / "worker/worker.json").read_text())
+        self.assertEqual(record["status"], "admitted", record)
+        self.assertTrue(record["completion"]["review_work_complete"])
+        self.assertEqual(record["completion"]["security_resolution"], "not_established")
+        self.assertEqual(json.loads((self.base / "worker/prepared-changes.json").read_text())["windows"], [])
 
     def test_change_pass_native_finalization_and_state_admission_share_one_bound_workflow(self):
         result = self.invoke()

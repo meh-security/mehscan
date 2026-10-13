@@ -9,6 +9,11 @@ for this particular change. Check whether old-secret confirmation, verified
 recovery token, step-up proof or equivalent policy attaches to the same
 transition and terminates on failure. For recovery, identify who can mint and
 redeem the token and whether use is scoped to the intended account.
+Trace the token's account binding, storage and validating consumer before
+treating it as recovery authority. A random token returned by a demonstration
+endpoint, or a success message without a credential write, does not establish
+an account takeover. Preserve separately shown URL or disclosure weaknesses
+as their own leads rather than substituting them for this transition.
 
 For answer-based recovery, inspect answer creation, seeded answers, applicable
 rate limiting, and repository behavior tests before leaving answer quality or

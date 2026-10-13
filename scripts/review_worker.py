@@ -27,6 +27,16 @@ def read(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def copy_review_files(source, destination):
+    """Copy flat native artifacts by bytes; filesystem metadata is not evidence."""
+    import shutil
+    destination.mkdir()
+    for path in source.iterdir():
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("review artifact directories require regular files")
+        shutil.copyfile(path, destination / path.name)
+
+
 def digest_file(path):
     with Path(path).open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
@@ -202,6 +212,7 @@ def run(args):
     package_path = output / "work.json"
     requested = read(supplied_work_path)["payload"]["review_ids"]
     query_cache, shared_facts = {}, []  # Attempt-local, never old-verdict reuse.
+    application_cache = {}
 
     def source_lookup(query, timeout):
         deadline = time.monotonic() + timeout
@@ -212,7 +223,7 @@ def run(args):
             return left
         side = "base" if query["tool"] == "base_source" else "current"
         values = query["arguments"]
-        for item in prepared_changes["windows"]:
+        for item in [*prepared_changes["windows"], *application_cache.values()]:
             if (item["side"] == side and item["path"] == values["path"] and item["start_line"] <= values["start_line"] <= item["end_line"]
                     and (values["end_line"] <= item["end_line"] or item["complete_file"])):
                 end = min(values["end_line"], item["end_line"])
@@ -221,7 +232,7 @@ def run(args):
                         "results":{"side":side,"path":item["path"],"start_line":values["start_line"],"end_line":end,"text":text},
                         "prepared_artifact_id":item["artifact_id"]}
         if side == "base":
-            comparison = package["payload"]["impact_scope"].get("comparison")
+            comparison = (package["payload"]["impact_scope"] or {}).get("comparison")
             if not comparison:
                 raise ValueError("base source requires a pinned Git comparison")
             base = comparison.get("merge_base_commit") or comparison["base_commit"]
@@ -261,12 +272,17 @@ def run(args):
         entries = [entry for entry in inventory_data["entries"] if entry["review_id"] in (ids or payload["planned_review_ids"])]
         packet = {"schema_version": "1", "package_id": expected["package_id"],
                   "source_binding": {"snapshot_id": payload["snapshot_id"], "inventory_input_fingerprint": payload["inventory_input_fingerprint"]},
-                  "contract": context.compile_contract(skill_root, task["kind"], entries, [item["path"] for item in payload["impact_scope"]["changed_files"]], task.get("review_playbooks")),
+                  "contract": context.compile_contract(skill_root, task["kind"], entries, [item["path"] for item in (payload["impact_scope"] or {}).get("changed_files", [])], task.get("review_playbooks")),
                   "work": context.compact_work(payload, ids or requested), "native_questions": entries,
                   "primary": prepared_changes}
         if task["kind"] == "native_bundle":
             packet["sweep"] = native(["investigate", "review-sweep", "--bundle", task["bundle"]])
             packet["sweep_artifact_id"] = "mehscanPreparedSweep/v1:" + context.digest(packet["sweep"])
+            application = context.prepare_application(root, packet["sweep"], application_cache, payload["snapshot_id"])
+            packet["primary"] = {**prepared_changes,
+                "windows": [*prepared_changes["windows"], *application["windows"]],
+                "limits": [*prepared_changes["limits"], *application["limits"]]}
+            write(output / "prepared-application.json", {"snapshot_id": payload["snapshot_id"], "windows": list(application_cache.values())})
         packet_path = output / ("context-" + conversation_id + ".json")
         write(packet_path, packet)
         if packet_path.stat().st_size > 2 * 1024 * 1024:
@@ -277,7 +293,7 @@ def run(args):
 
         def artifact_handles():
             aliases = {}
-            for index, item in enumerate(prepared_changes["windows"], 1):
+            for index, item in enumerate(packet["primary"]["windows"], 1):
                 aliases["source" + str(index)] = item["artifact_id"]
             for index, item in enumerate(shared_facts, 1):
                 aliases["fact" + str(index)] = item["result_id"]
@@ -544,10 +560,10 @@ def run(args):
             admitted_run = output / "run"
             admitted_run.mkdir()
             shutil.copyfile(run_dir / "manifest.json", admitted_run / "manifest.json")
-            shutil.copytree(run_dir / "requests", admitted_run / "requests")
+            copy_review_files(run_dir / "requests", admitted_run / "requests")
             if (run_dir / "input-binding.json").exists():
                 shutil.copyfile(run_dir / "input-binding.json", admitted_run / "input-binding.json")
-            shutil.copytree(response_dir, admitted_run / "responses")
+            copy_review_files(response_dir, admitted_run / "responses")
             command_args = ["state", "record", *common, "--run", str(admitted_run), "--work-package", str(package_path),
                             "--reviewer", args.reviewer_label, "--operation-key", "worker-record:" + attempt_key]
             if links:

@@ -101,6 +101,47 @@ class Context(unittest.TestCase):
         self.assertEqual(context.source_lines("a\n\n"), ["a", ""])
         self.assertEqual(context.source_lines(""), [""])
 
+    def test_application_policy_is_deduplicated_source_with_stable_binding(self):
+        text = 'builder.Services.AddAuthorization(o => o.FallbackPolicy = policy);\napp.UseAuthorization();\n'
+        file = self.root / 'Program.cs'
+        file.write_text(text, encoding='utf-8')
+        lead = {'role':'application_policy_context','location':{'path':'Program.cs','start_line':1,'end_line':2}}
+        sweep = {'reviews':[{'application_context':[lead]},{'application_context':[lead]}]}
+        cache = {}
+        first = context.prepare_application(self.root, sweep, cache, 'snapshot-a')
+        self.assertEqual(len(first['windows']), 1)
+        self.assertEqual(first['windows'][0]['text'], text.rstrip('\n'))
+        self.assertTrue(first['windows'][0]['complete_file'])
+        from unittest.mock import patch
+        with patch.object(Path, 'read_bytes', side_effect=AssertionError('redundant source read')):
+            second = context.prepare_application(self.root, sweep, cache, 'snapshot-a')
+        self.assertEqual(first, second)
+        other = context.prepare_application(self.root, sweep, cache, 'snapshot-b')
+        self.assertNotEqual(first['windows'][0]['artifact_id'], other['windows'][0]['artifact_id'])
+
+    def test_application_policy_clipping_is_explicit_and_paths_stay_in_source(self):
+        (self.root / 'Program.cs').write_text('// padding\n' * 450 + 'app.UseAuthorization();\n', encoding='utf-8')
+        lead = {'location':{'path':'Program.cs','start_line':1,'end_line':451}}
+        result = context.prepare_application(self.root, {'reviews':[{'application_context':[lead]}]}, {}, 'snapshot')
+        self.assertTrue(result['windows'][0]['clipped'])
+        self.assertFalse(result['windows'][0]['complete_file'])
+        self.assertTrue(result['limits'])
+        lead['location']['path'] = '../outside.cs'
+        with self.assertRaises(ValueError):
+            context.prepare_application(self.root, {'reviews':[{'application_context':[lead]}]}, {}, 'snapshot')
+
+    def test_shared_startup_is_prepared_before_many_inherited_controllers(self):
+        (self.root/'Program.cs').write_text('app.UseAuthorization();\n', encoding='utf-8')
+        leads = [{'role':'application_policy_context','location':{'path':'Program.cs','start_line':1,'end_line':1}}]
+        for n in range(6):
+            path = 'Base' + str(n) + '.cs'
+            (self.root/path).write_text('[Authorize] class Base {}\n', encoding='utf-8')
+            leads.append({'role':'inherited_policy_context','location':{'path':path,'start_line':1,'end_line':1}})
+        result = context.prepare_application(self.root, {'reviews':[{'application_context':leads}]}, {}, 'snapshot')
+        self.assertEqual(result['windows'][0]['path'], 'Program.cs')
+        self.assertEqual(len(result['windows']), 4)
+        self.assertEqual(len(result['limits']), 3)
+
     def test_native_contract_retains_the_actual_non_html_bucket_policy(self):
         value = context.compile_contract(PRODUCT / "skills/mehscan-security", "native_bundle",
             [{"capability":"sql"}], [], {"review-1":{"bucket":"interpreted_input"}})

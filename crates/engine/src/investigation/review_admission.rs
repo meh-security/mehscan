@@ -359,12 +359,12 @@ pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewCo
     match operation_review_family(evidence)? {
         OperationReviewFamily::Authorization => Some(OperationReviewContract {
             relationship: "bounded_action_resource_authorization_review",
-            security_question: "Does the supplied operation, subject, selected resource, and applicable policy establish effective authorization for this exact action?",
+            security_question: "Does this action actually select, mutate, disclose, or issue authority over a protected resource? Trace its real effect and effective application/inherited policy; a logged action name or success-shaped response alone does not establish a protected mutation. Does authorization reject the exact unauthorized action before that effect?",
             title: "Review action and resource authorization",
         }),
         OperationReviewFamily::CredentialLifecycle => Some(OperationReviewContract {
             relationship: "bounded_credential_lifecycle_review",
-            security_question: "Does the supplied credential or authenticator transition enforce the required subject proof, recovery authority, current credential, or step-up authentication?",
+            security_question: "Is there an actual credential transition or an authority-bearing token with account binding and a validating consumer? A random token or success message alone proves neither. For the shown effect, is required subject proof, recovery authority, current credential, or step-up authentication enforced before mutation or authority issuance?",
             title: "Review credential lifecycle state transition",
         }),
         OperationReviewFamily::ObjectBinding => Some(OperationReviewContract {
@@ -1340,4 +1340,33 @@ fn review_admission_marker_id(path: &str, rule_id: &str, start: usize, end: usiz
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("ev-{hash:016x}")
+}
+
+#[cfg(test)]
+mod effect_cases {
+    use super::*;
+
+    #[test]
+    fn simulated_and_actual_transitions_keep_separate_source_bound_questions() {
+        let source = include_str!("../../../../tests/fixtures/v11-review-effects/Actions.cs");
+        let sources = RepositorySources { root: ".".into(), files: BTreeMap::from([("Actions.cs".into(), SourceFile {
+            path: "Actions.cs".into(), language: Some(Language::Csharp), source: source.into(),
+        })]) };
+        let groups = server_mutation_review_marker_groups(&sources, &[], None);
+        assert_eq!(groups.len(), 3);
+        let mut identities = BTreeSet::new();
+        for symbol in ["ResetPasswordDemo", "ResetPassword", "DeleteUser"] {
+            let group = groups.iter().find(|group| group.symbol == symbol).unwrap();
+            let marker = &group.evidence[0];
+            assert_eq!(marker.kind, EvidenceKind::SensitiveOperation);
+            assert!(identities.insert(marker.id.clone()));
+            let location = &marker.location;
+            let text = &source[location.start.byte_offset..location.end.byte_offset];
+            assert!(text.contains("return Ok"));
+            assert_eq!(text.contains("password = next"), symbol == "ResetPassword");
+            // Admission retains questions for both. It must not classify a
+            // response-shaped action as a proven state transition or safe code.
+            assert!(review_contract(&group.evidence).is_some());
+        }
+    }
 }

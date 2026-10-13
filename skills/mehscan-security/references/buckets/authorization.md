@@ -10,6 +10,11 @@ An object ID in a public CRUD route does not itself establish an owner policy.
 Use the application's accounts, documented access model, and actual resource
 effect to establish one; if the app intentionally exposes that operation to
 everyone, close the ownership claim rather than inventing an owner subject.
+First verify that the action actually changes or discloses a resource. A log
+and a success-shaped response can simulate deletion or transfer without doing
+either. Read prepared same-project startup and inherited policy source before
+spending per-endpoint queries; those files are navigation, not proof that a
+policy applies. A clipped startup window cannot prove absence of a fallback.
 
 Trace **route/action → accepted credential branch → verified subject →
 selected object → applicable guard and rejection → sensitive effect**.

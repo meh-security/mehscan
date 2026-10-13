@@ -79,6 +79,23 @@ class Adapter(unittest.TestCase):
         self.assertEqual(json.loads(metrics.splitlines()[1])["reported_conversation_usage"]["input_tokens"], 200)
         self.assertFalse(Path(self.config["private_directory"]).is_relative_to(self.public))
 
+    def test_progress_handles_are_exhaustive_in_schema_and_each_prompt(self):
+        self.task["research"]["artifact_handles"] = {"sweep":"bound-sweep"}
+        self.invoke()
+        prompt, _, schema = self.calls[-1]
+        self.assertIn('Available artifact handles (exhaustive for this turn):\n["sweep"]', prompt)
+        artifacts = schema["properties"]["progress"]["items"]["properties"]["artifacts"]
+        self.assertEqual(artifacts["items"]["enum"], ["sweep"])
+        self.assertNotIn("source1", artifacts["items"]["enum"])
+        self.task["research"]["round"] = 1
+        self.task["research"]["artifact_handles"]["fact1"] = "bound-fact"
+        self.invoke()
+        self.assertIn('["sweep", "fact1"]', self.calls[-1][0])
+        self.assertEqual(self.calls[-1][2]["properties"]["progress"]["items"]["properties"]["artifacts"]["items"]["enum"], ["sweep", "fact1"])
+        self.task["research"]["artifact_handles"] = {}
+        empty = protocol.build_schema(self.task)["properties"]["progress"]["items"]["properties"]["artifacts"]
+        self.assertEqual(empty["maxItems"], 0)
+
     def test_changed_packet_model_and_repeated_round_cannot_resume(self):
         self.invoke()
         with self.assertRaises(ValueError): self.invoke()

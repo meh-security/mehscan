@@ -39,6 +39,7 @@ use mehscan_core::{
 };
 
 mod angular;
+mod csharp_application_context;
 mod frontend;
 mod practical_admission;
 mod review_admission;
@@ -386,7 +387,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "25";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "26";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -9563,6 +9564,16 @@ fn build_observation_reviews(
             review_context.authorization_facts(&paths, &authorization_anchors, 8);
         context_truncated |= authorization_truncated;
         facts.append(&mut authorization_facts);
+        if group.evidence.iter().any(|item| {
+            matches!(
+                item.capability,
+                Capability::Authorization | Capability::Authentication
+            )
+        }) {
+            let (mut application, limited) = csharp_application_context::facts(sources, file, anchor);
+            context_truncated |= limited;
+            facts.append(&mut application);
+        }
         let (excerpt_truncated, excerpt_critical) =
             cap_review_fact_excerpts(sources, &mut facts, anchor);
         context_truncated |= excerpt_truncated;

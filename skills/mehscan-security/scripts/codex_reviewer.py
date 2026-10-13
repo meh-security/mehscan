@@ -120,7 +120,10 @@ def run(config, task, launcher_factory=Launcher):
     round_index = task["research"]["round"]
     if type(round_index) is not int or not 0 <= round_index <= 10:
         raise ValueError("invalid native research round")
-    binding = {"packet_sha256": packet_hash, "provider": expected, "schema": schema}
+    # Source/query handles grow as the native broker returns inspected facts.
+    # Pin the protocol and exact question IDs; constrain each turn's output to
+    # its current handles without treating new evidence as a new conversation.
+    binding = {"packet_sha256": packet_hash, "provider": expected, "schema": build_schema(task, bound_handles=False)}
     if state:
         if state["binding"] != binding or round_index != state["round"] + 1:
             raise ValueError("provider continuation is stale or incompatible")

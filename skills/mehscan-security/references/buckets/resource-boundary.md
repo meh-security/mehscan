@@ -1,5 +1,11 @@
 # Resource boundary
 
+Keep the verdict on its selected operation. An unsafe archive extraction does
+not turn temporary-file cleanup into an unsafe deletion. Use the engine's
+extraction sink and destination for ZIP traversal; retain an uncovered adjacent
+effect as a separate lead. Containment computed only for reporting after the
+write does not prevent extraction.
+
 Trace **selector origin → resolved resource or destination → applicable
 constraint → read, write or request**. Compare the final target, not just a
 raw path or URL string.

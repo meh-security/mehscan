@@ -3532,6 +3532,20 @@ fn review_card_from_value(
             })
             .collect::<serde_json::Map<String, serde_json::Value>>()
     });
+    let application_context: Vec<_> = review["facts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|fact| {
+            matches!(
+                fact["role"].as_str(),
+                Some("application_policy_context" | "inherited_policy_context")
+            )
+        })
+        .map(|fact| {
+            serde_json::json!({"role":fact["role"],"symbol":fact["symbol"],"location":brief_location(&fact["location"])})
+        })
+        .collect();
     Ok(serde_json::json!({
         "bundle_fingerprint": bundle.bundle_fingerprint,
         "review_id": review_id,
@@ -3552,6 +3566,7 @@ fn review_card_from_value(
         },
         "source_context": context,
         "frontend_context": frontend_context,
+        "application_context": application_context,
         "nearby_locations": nearby_locations,
         "suggested_lookups": lookups,
         "truncation": review["truncation"],

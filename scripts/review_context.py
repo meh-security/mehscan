@@ -124,6 +124,8 @@ def change_ranges(old, current, context=15):
 
 
 def prepare_changes(root, scope, native, env, timeout):
+    if scope is None:
+        return {"windows": [], "hunks": [], "limits": []}
     windows, limits, hunks = [], [], []
     comparison = scope.get("comparison")
     base = (comparison.get("merge_base_commit") or comparison["base_commit"]) if comparison else None
@@ -231,3 +233,56 @@ def compact_work(payload, ids):
         "runtime": payload.get("runtime"), "review_ids": ids, "pending_questions": payload.get("pending_questions", []),
         "evidence_updates": payload.get("evidence_updates", []),
         "parent_decisions": payload.get("parent_decisions", {})}
+
+
+def prepare_application(root, sweep, cache, snapshot_id):
+    """Read native same-project policy leads once per source-bound attempt."""
+    leads = {}
+    for card in sweep.get("reviews", []):
+        for lead in card.get("application_context", []):
+            location = lead["location"]
+            key = (location["path"], location["start_line"], location["end_line"])
+            priority = 0 if lead.get("role") == "application_policy_context" else 1
+            leads[key] = min(priority, leads.get(key, priority))
+    windows, limits, total = [], [], 0
+    for path, first, last in sorted(leads, key=lambda key: (leads[key], key)):
+        if any(item["path"] == path and item["start_line"] <= first <= last <= item["end_line"] for item in windows):
+            continue
+        if len(windows) == 4:
+            limits.append({"path": path, "reason": "application policy windows exceed preparation budget; inspect remaining native leads"})
+            continue
+        if type(first) is not int or type(last) is not int or first < 1 or last < first:
+            raise ValueError("invalid native application context coordinates")
+        key = (snapshot_id, path, first, last)
+        if key not in cache:
+            file = relative_file(root, path)
+            if file.stat().st_size > MAX_FILE_BYTES:
+                limits.append({"path": path, "reason": "application context file exceeds preparation size bound"})
+                continue
+            try:
+                lines = source_lines(file.read_bytes().decode("utf-8"))
+            except UnicodeDecodeError:
+                limits.append({"path": path, "reason": "application context is not UTF-8"})
+                continue
+            if last > len(lines):
+                raise ValueError("native application context exceeds actual source")
+            end = min(last, first + 399)
+            text = "\n".join(lines[first - 1:end])
+            while len(text.encode("utf-8")) > 16 * 1024 and end > first:
+                end -= 1
+                text = "\n".join(lines[first - 1:end])
+            item = {"side": "current", "path": path, "start_line": first, "end_line": end,
+                    "text": text, "clipped": end < last, "file_line_count": len(lines),
+                    "complete_file": first == 1 and end == len(lines) and end == last}
+            item["artifact_id"] = "mehscanPreparedSource/v1:" + digest([snapshot_id, item])
+            cache[key] = item
+        item = cache[key]
+        size = len(item["text"].encode("utf-8"))
+        if size > 16 * 1024 or total + size > 64 * 1024:
+            limits.append({"path": path, "reason": "application policy source exceeds preparation byte budget"})
+            continue
+        total += size
+        windows.append(item)
+        if item["clipped"]:
+            limits.append({"path": path, "reason": "application policy window clipped; unread remainder cannot prove policy absence"})
+    return {"windows": windows, "limits": limits}

@@ -227,6 +227,31 @@ remapped. Native pending questions retain their origin until supersession.
 External/deployment attestations, authenticated fact producers,
 semantic question matching and cross-revision reuse are not implemented.
 
+## Prepared ASP.NET policy source
+
+Native authorization/credential cards include same-project `Program.cs` and
+`Startup.cs` navigation, plus one unique lexical base class where available.
+Project scope follows the nearest `.csproj`. Ambiguous, generic and qualified
+base classes still require targeted research; these leads do not prove effective
+policy, inheritance semantics or runtime activation.
+
+The worker prepares actual current source before the model starts. Startup
+windows take priority over inherited-controller windows. Preparation is bounded
+to four windows per bundle, 400 lines and 16 KiB per window, and 64 KiB total.
+Clipping and omitted windows remain explicit limits. Source windows are cached
+within the current snapshot only and can satisfy later source requests without
+a duplicate native query. Fresh source/runtime/ownership validation is retained.
+
+Credential and authorization review distinguishes actual state changes or
+authority issuance from logs, generated demo tokens and success responses.
+ZIP extraction keeps its own sink/location/identity; a nearby cleanup operation
+must not inherit an extraction verdict. Simulated-effect and inferred-archive
+fixtures accompany the paired engine and skill changes.
+
+This increment does not add full Razor/C# parsing, cross-revision verdict reuse,
+or a token-saving guarantee. Corpus and live model acceptance are separate from
+deterministic evidence/preparation tests.
+
 ## Bound provider adapter
 
 The [BYOK Codex adapter](codex-reviewer.md) supplies a provider descriptor via
