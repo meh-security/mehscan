@@ -8,6 +8,8 @@ bucket only for a separate security question.
 
 ## Shared chain, individual decisions
 
+<!-- runtime:chain -->
+
 For each exact ID identify the output context, rendered operand, producer,
 transformations in order, and the writer's actor and controls. Group actual shared
 renderers/writers, not just files or CWE labels. Reuse inspected source facts but
@@ -23,7 +25,9 @@ helpers can differ. If the complete verified chain is safe in this context,
 close that property; input-origin research adds nothing to that conclusion.
 For server responses, check the effective content type and server-side control.
 One client's safe DOM insertion does not close a directly rendered HTML response.
+<!-- /runtime:chain -->
 
+<!-- runtime:frontend -->
 For frontend output, use supplied initializer/helper locations to pair the sink
 with its actual producer. A formatter/highlighter needs its implementation,
 version and effective options; its name or return type is not an escaping proof.
@@ -76,13 +80,38 @@ transformations. Caller samples are bounded. Alias/global registrations,
 destructured props and wider reactive flows still require research.
 Retrieve only missing source through `investigate source`. Native-ref identity
 and a props type do not prove input trust.
+<!-- /runtime:frontend -->
+<!-- runtime:dom -->
 Check the exact value representation: `location.search` retains URL encoding;
 `URLSearchParams.get` decodes it. HTML insertion does not itself URL-decode input.
 Use the actual source and transformations as proof, not the source's name.
+When a verified page entry or module binding reads a decoded URL parameter and
+passes it to an unprotected HTML sink, the URL's author can supply the bytes
+interpreted in the browsing user's page. That establishes a source-visible trust
+boundary under normal browser binding. It differs from the same user entering
+text in their own isolated editor. Verify activation, transformations and controls;
+do not infer activation from a detached snippet or an unused helper.
+An issue may state the condition that a user opens an attacker-authored URL.
+Do not require an actual victim, a deployed URL or a browser exploit demonstration
+to classify the demonstrated source weakness. Keep those operational facts
+separate and avoid claiming exploitation. Evidence of effective CSP, sanitization,
+or an intentional trusted-author boundary can change the decision; research
+such evidence when it connects to this chain. A hypothetical external protection
+alone does not erase a shown source weakness. HTML insertion is not proof that
+inserted script elements execute; describe the HTML interpretation accurately.
 Normal interpolation and `v-text` are escaped text. Raw output alone proves no unsafe input.
 For editable controls, same-user typing reconstructed as HTML proves markup
 interpretation. A security issue still needs an attacker-to-victim delivery path
 or a demonstrated protection bypass; research prop writers, persistence and consumers.
+If the inspected active page and its complete local handler establish isolated
+same-user editing, with no cross-user delivery, persistence or alternate writer
+in that binding, the shown relationship can be `not_issue` for cross-user XSS.
+State that narrow source binding. Do not reopen it solely for a hypothetical
+external writer or a user being tricked into typing markup. When actual imports,
+other setters or consumers leave that binding incomplete, research them first;
+an uninspected writer is not an affirmative isolation proof.
+<!-- /runtime:dom -->
+<!-- runtime:writers -->
 External/preprocessed blocks and dual script scopes have partial coverage;
 inspect their source when relevant rather than infer absent producers or callers.
 For DOM-to-DOM HTML copying, inspect the source element's markup and relevant
@@ -107,6 +136,7 @@ Do not label those local policies unavailable before checking
 them; distinguish a specific remaining deployment/dependency gap.
 Use source-visible tests or versioned dependency source when semantics are
 decisive. Do not invent behavior from a familiar name or a failed lookup.
+<!-- /runtime:writers -->
 
 ## Get only the next missing fact
 
@@ -123,6 +153,8 @@ Batch independent lookups, then inspect results before choosing dependent ones.
 Do not reread source to populate a journal or copy a query for each sibling ID.
 
 ## Decide and stop
+
+<!-- runtime:decisions -->
 
 - `issue`: a shown unsafe interpretation crosses a demonstrated trust boundary,
   or an explicit source-level protection is bypassed on the same relationship.
@@ -145,6 +177,7 @@ An explicit protection bypass and unknown deployment applicability are different
 questions; preserve both accurately. Do not audit hypothetical external overrides
 without evidence that they affect the selected chain. Keep distinct adjacent
 operations as separate leads or existing inventory IDs.
+<!-- /runtime:decisions -->
 
 Once each selected chain is settled or precisely blocked, load
 [finalize and report](finish-review.md). Write its brief draft with concise reason

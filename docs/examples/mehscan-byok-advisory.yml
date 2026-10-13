@@ -1,0 +1,105 @@
+# Copy into the caller repository's .github/workflows/ only after configuring
+# MEHSCAN_V11_COMMIT to a reviewed commit containing the V11 CLI and action.
+# Configure the explicit MEHSCAN_CODEX_AUTH_JSON secret only in the synthetic test repository.
+# This example is not enabled by the Mehscan repository and does not publish findings.
+# Persistent-host state-store is deliberately omitted on ephemeral hosted runners.
+name: Mehscan BYOK advisory
+on:
+  pull_request:
+    types: [opened, synchronize, edited, ready_for_review, converted_to_draft]
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: PR number (leave empty for a release delta)
+        default: ''
+      base:
+        description: Old release tag or SHA (release delta only)
+        default: ''
+      target:
+        description: New release tag or SHA (release delta only)
+        default: ''
+
+      review_mode:
+        description: Configurable research policy
+        type: choice
+        options: [value, comprehensive]
+        default: value
+      allow_fork_review:
+        description: Explicitly authorize a manual fork model review
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: mehscan-byok-${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pull_request || format('{0}-{1}', inputs.base, inputs.target) }}
+  cancel-in-progress: true
+
+jobs:
+  byok-artifact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.13'
+      - name: Validate trusted tool pin
+        shell: bash
+        env:
+          MEHSCAN_V11_COMMIT: ${{ vars.MEHSCAN_V11_COMMIT }}
+        run: |
+          python -I -c 'import os,re; assert re.fullmatch(r"[0-9a-f]{40}", os.environ["MEHSCAN_V11_COMMIT"]), "Configure MEHSCAN_V11_COMMIT to a reviewed V11 commit"'
+      - name: Check out trusted tool source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: meh-security/mehscan
+          ref: ${{ vars.MEHSCAN_V11_COMMIT }}
+          path: .mehscan-tool
+          persist-credentials: false
+      - name: Install the supported Rust toolchain
+        run: rustup toolchain install 1.88.0 --profile minimal --no-self-update
+      - name: Build only the pinned trusted scanner
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/mehscan-build
+        run: cargo +1.88.0 build --release --locked --package mehscan-cli --manifest-path .mehscan-tool/Cargo.toml
+      - name: Check whether model credential setup is authorized
+        id: lane
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MEHSCAN_REVIEW_MODE: ${{ inputs.review_mode || 'value' }}
+          MEHSCAN_PROVIDER_CONFIG: ${{ runner.temp }}/company-mehscan-provider/config.json
+          MEHSCAN_ALLOW_FORK_REVIEW: ${{ inputs.allow_fork_review && 'true' || 'false' }}
+          MEHSCAN_PR: ${{ inputs.pull_request }}
+          MEHSCAN_BASE: ${{ inputs.base }}
+          MEHSCAN_TARGET: ${{ inputs.target }}
+        run: python -I .mehscan-tool/scripts/github_action.py model-lane
+      - name: Prepare trusted client and private company credentials
+        if: steps.lane.outputs.model-allowed == 'true'
+        env:
+          MEHSCAN_CODEX_AUTH_JSON: ${{ secrets.MEHSCAN_CODEX_AUTH_JSON }}
+          MEHSCAN_CODEX_VERSION: ${{ vars.MEHSCAN_CODEX_VERSION || '0.162.0-alpha.17.2' }}
+          MEHSCAN_REVIEW_MODEL: ${{ vars.MEHSCAN_REVIEW_MODEL || 'gpt-6-luna' }}
+        run: |
+          python -I .mehscan-tool/scripts/setup-action-provider.py --private-root "$RUNNER_TEMP/company-mehscan-provider" --version "$MEHSCAN_CODEX_VERSION" --model "$MEHSCAN_REVIEW_MODEL"
+      - name: Run the authorized advisory lane
+        id: mehscan
+        uses: ./.mehscan-tool
+        with:
+          scanner-path: ${{ runner.temp }}/mehscan-build/release/mehscan
+          review-mode: ${{ steps.lane.outputs.model-allowed == 'true' && (inputs.review_mode || 'value') || 'native' }}
+          provider-config: ${{ steps.lane.outputs.model-allowed == 'true' && format('{0}/company-mehscan-provider/config.json', runner.temp) || '' }}
+          allow-fork-review: ${{ inputs.allow_fork_review && 'true' || 'false' }}
+          pull-request: ${{ inputs.pull_request }}
+          base: ${{ inputs.base }}
+          target: ${{ inputs.target }}
+      - name: Retain advisory artifacts
+        if: always() && !cancelled() && steps.mehscan.outputs.artifact-directory != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.mehscan.outputs.artifact-name }}
+          path: ${{ steps.mehscan.outputs.artifact-directory }}
+          retention-days: 7
+          if-no-files-found: error

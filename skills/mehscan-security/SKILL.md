@@ -1,9 +1,14 @@
 ---
 name: mehscan-security
-description: Run Mehscan on an authorized codebase, plan a repository review, or triage Mehscan bundles. Use for Mehscan scans, candidate review, and security reports.
+description: Run Mehscan on an authorized codebase, review local changes, a pull request or release delta, plan a repository review, or triage Mehscan bundles. Use for Mehscan scans, candidate review, and security reports.
 ---
 
 # Mehscan security
+
+For a source-bound worker task, use the compiled
+[runtime review contract](references/runtime-review.md). It applies the same
+scope, decision and evidence policy with controller-owned finalization; applicable
+category guidance remains available. Use the guides below for manual CLI work.
 
 Use the supplied executable, `mehscan` on `PATH`, or the executable in the
 current Mehscan checkout. Scan only the authorized source root. If the executable
@@ -53,7 +58,8 @@ review, not a complete application assessment.
 | Job | Command or guide |
 | --- | --- |
 | Candidate scan | `mehscan scan ROOT --format candidates` (or `json`) |
-| Changed lines | `mehscan scan ROOT --changed-from BASE --format candidates` |
+| Changed-file scan | `mehscan scan ROOT --changed-from BASE --diff-mode files --format candidates` |
+| Local changes, PR or release review | [Changed review](references/changed-review.md) |
 | Repository AI review | [Review planning](references/review-planning.md) |
 
 Candidates are leads, not confirmed vulnerabilities. Default to Value mode;
@@ -68,6 +74,11 @@ Planning ranks work, accounts for deferred IDs and chooses small chunks or
 disjoint agent assignments when requested. Read it for repository scope or
 queue decisions, then use the supplied-bundle flow for each selected chunk.
 Keep the whole-run plan current and continue authorized work in auto mode.
+
+Changed is a scope, combined with Value or Comprehensive. Use its guide before
+building an inventory; it requires a short change pass even when no IDs appear.
+Read unchanged context to settle specific questions within the authorized root.
+Do not turn a Changed review into a repository-wide assessment.
 
 Use [review scope policy](references/review-scope.md) when choosing modes or
 reconsidering a noisy family. It defines practical admission and language

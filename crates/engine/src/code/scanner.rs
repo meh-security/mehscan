@@ -98,6 +98,10 @@ pub(crate) fn scan_profiled(
     let impact_plan =
         crate::impact::plan_impact_scope(&discovery.files, options.impact_scope.as_ref());
     let impact_scope = impact_plan.scope.clone();
+    let files_only = options
+        .impact_scope
+        .as_ref()
+        .is_some_and(|scope| scope.diff_mode == crate::ImpactDiffMode::Files);
     let discovery_microseconds = discovery_started.elapsed().as_micros();
     trace_scan_phase("discovery", discovery_microseconds);
     let dotnet_project_sources = discovery
@@ -117,6 +121,7 @@ pub(crate) fn scan_profiled(
     let python_template_sources = discovery
         .files
         .iter()
+        .filter(|file| !files_only || impact_plan.includes(&file.relative))
         .filter(|file| {
             let normalized = file.relative.replace('\\', "/").to_ascii_lowercase();
             (normalized.starts_with("templates/") || normalized.contains("/templates/"))
@@ -131,6 +136,7 @@ pub(crate) fn scan_profiled(
     let node_pug_template_sources = discovery
         .files
         .iter()
+        .filter(|file| !files_only || impact_plan.includes(&file.relative))
         .filter(|file| {
             file.absolute
                 .extension()
@@ -146,6 +152,7 @@ pub(crate) fn scan_profiled(
     let python_openapi_sources = discovery
         .files
         .iter()
+        .filter(|file| !files_only || impact_plan.includes(&file.relative))
         .filter(|file| {
             file.absolute
                 .extension()
@@ -511,6 +518,16 @@ pub(crate) fn scan_profiled(
                 }
             },
             FileClass::Supported(language) => {
+                if files_only && !analyze_file {
+                    coverage.totals.ignored += 1;
+                    coverage.files.push(FileCoverage {
+                        path: file.relative,
+                        language: Some(language),
+                        status: FileStatus::Ignored,
+                        reason: Some("outside changed-file scope; source analysis skipped".into()),
+                    });
+                    continue;
+                }
                 let source = match fs::read_to_string(&file.absolute) {
                     Ok(source) => source,
                     Err(error) => {

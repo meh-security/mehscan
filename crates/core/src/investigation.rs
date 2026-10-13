@@ -546,8 +546,12 @@ pub struct ObservationReviewBasis {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PathReviewJob {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_catalog: Option<crate::ReviewIdentityCatalog>,
     pub schema_version: String,
     pub root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact_scope: Option<crate::ImpactScanScope>,
     pub operation: String,
     /// Deterministic identity of reviews, facts, questions, and contract. It
     /// deliberately excludes coverage and diagnostics.
@@ -800,9 +804,13 @@ pub enum PathReviewBundlePayload {
 /// there is deliberately no per-item response state in this format.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PathReviewBundle {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_catalog: Option<crate::ReviewIdentityCatalog>,
     pub schema_version: String,
     pub bundle_fingerprint: String,
     pub job_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact_scope: Option<crate::ImpactScanScope>,
     pub goal: String,
     pub category: PathReviewBundleCategory,
     pub part: usize,
@@ -853,6 +861,8 @@ pub struct PathReviewBundleManifestEntry {
 pub struct PathReviewBundleManifest {
     pub schema_version: String,
     pub root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact_scope: Option<crate::ImpactScanScope>,
     pub coverage: crate::CoverageTotals,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope: Vec<String>,

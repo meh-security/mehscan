@@ -9,7 +9,9 @@ use std::time::Instant;
 use mehscan_core::{Capability, EvidenceFilter, EvidenceKind, Language};
 use serde::{Deserialize, Serialize};
 
+mod review_completion;
 mod review_facts;
+mod review_state;
 mod review_sweep;
 
 fn main() -> ExitCode {
@@ -39,11 +41,12 @@ fn run(arguments: impl IntoIterator<Item = String>) -> Result<(), String> {
         }
         "scan" => run_scan(arguments),
         "report" => run_report(arguments),
+        "state" => review_state::run(arguments),
         "benchmark" => run_benchmark(arguments),
         "evaluate" => run_evaluation(arguments),
         "investigate" => run_investigation(arguments),
         _ => Err(format!(
-            "unknown command {command:?}; expected 'scan', 'report', 'benchmark', 'evaluate', or 'investigate'"
+            "unknown command {command:?}; expected 'scan', 'report', 'benchmark', 'evaluate', 'investigate', or 'state'"
         )),
     }
 }
@@ -65,6 +68,21 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
         value => return Err(format!("unsupported report format {value:?}")),
     };
     let reviewer = parsed.optional("--reviewer");
+    let sarif_category = parsed.optional("--sarif-category");
+    let sarif_run_id = parsed.optional("--sarif-run-id");
+    // Validate configured identities before reading a run or writing output.
+    let sarif_automation = sarif_category
+        .as_deref()
+        .map(|category| {
+            mehscan_core::SarifAutomationConfiguration::new(category, sarif_run_id.as_deref())
+        })
+        .transpose()?;
+    if sarif_automation.is_none() && sarif_run_id.is_some() {
+        mehscan_core::SarifAutomationConfiguration::new(
+            "mehscan/triaged",
+            sarif_run_id.as_deref(),
+        )?;
+    }
     let output = parsed.optional("--output").map(PathBuf::from);
     let include_dismissed = parsed
         .optional_bool("--include-dismissed")?
@@ -88,6 +106,12 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
             work,
         ),
     )?;
+    report.scan.sarif_automation = Some(sarif_automation.unwrap_or(
+        mehscan_core::SarifAutomationConfiguration::new(
+            report.default_sarif_category(),
+            sarif_run_id.as_deref(),
+        )?,
+    ));
     for label in scope {
         // Explicit handoff labels replace inherited labels of the same kind;
         // selection and coverage limitations remain intact.
@@ -243,6 +267,61 @@ fn run_evaluation(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     }
 }
 
+fn parse_diff_mode(value: &str) -> Result<mehscan_engine::ImpactDiffMode, String> {
+    match value {
+        "full" => Ok(mehscan_engine::ImpactDiffMode::Full),
+        "impact" => Ok(mehscan_engine::ImpactDiffMode::Impact),
+        "files" => Ok(mehscan_engine::ImpactDiffMode::Files),
+        _ => Err(format!(
+            "unsupported diff mode {value:?}; expected full, impact, or files"
+        )),
+    }
+}
+
+fn resolve_change_scope(
+    root: &Path,
+    changed_from: Option<&str>,
+    files_from: Option<&Path>,
+    diff_mode: Option<mehscan_engine::ImpactDiffMode>,
+    target: Option<&str>,
+    merge_base: bool,
+    default_mode: mehscan_engine::ImpactDiffMode,
+) -> Result<Option<mehscan_engine::ImpactScopeRequest>, String> {
+    if changed_from.is_some() && files_from.is_some() {
+        return Err("--changed-from and --files-from cannot be used together".into());
+    }
+    if diff_mode.is_some() && changed_from.is_none() && files_from.is_none() {
+        return Err("--diff-mode requires --changed-from or --files-from".into());
+    }
+    if (target.is_some() || merge_base) && changed_from.is_none() {
+        return Err("--target and --merge-base require --changed-from".into());
+    }
+    let mut request = if let Some(base) = changed_from {
+        Some(engine(
+            mehscan_engine::impact::changed_files_from_git_comparison(
+                root, base, target, merge_base,
+            ),
+        )?)
+    } else if let Some(path) = files_from {
+        let source = fs::read_to_string(path).map_err(|error| {
+            format!(
+                "could not read changed-file list {}: {error}",
+                path.display()
+            )
+        })?;
+        Some(engine(mehscan_engine::impact::changed_files_from_list(
+            root,
+            source.lines().map(str::to_string),
+        ))?)
+    } else {
+        None
+    };
+    if let Some(request) = request.as_mut() {
+        request.diff_mode = diff_mode.unwrap_or(default_mode);
+    }
+    Ok(request)
+}
+
 fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let mut root = None;
     let mut format = ScanOutputFormat::Text;
@@ -253,6 +332,8 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let mut files_from = None;
     let mut diff_mode = mehscan_engine::ImpactDiffMode::Full;
     let mut diff_mode_explicit = false;
+    let mut target = None;
+    let mut merge_base = false;
     let mut csharp_semantic = None;
     let mut csharp_context = None;
     let mut typescript_semantic = None;
@@ -289,6 +370,10 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
                 ))
             }
             "--timings" => timings = true,
+            "--merge-base" => merge_base = true,
+            "--target" => {
+                target = Some(arguments.next().ok_or("--target requires a Git revision")?)
+            }
             "--include-tests" => include_tests = true,
             "--changed-from" => {
                 changed_from = Some(
@@ -306,14 +391,10 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
             }
             "--diff-mode" => {
                 diff_mode_explicit = true;
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| "--diff-mode requires 'full' or 'impact'".to_string())?;
-                diff_mode = match value.as_str() {
-                    "full" => mehscan_engine::ImpactDiffMode::Full,
-                    "impact" => mehscan_engine::ImpactDiffMode::Impact,
-                    _ => return Err(format!("unsupported diff mode {value:?}")),
-                };
+                let value = arguments.next().ok_or_else(|| {
+                    "--diff-mode requires 'full', 'impact', or 'files'".to_string()
+                })?;
+                diff_mode = parse_diff_mode(&value)?;
             }
             "--jobs" => {
                 let value = arguments
@@ -355,7 +436,7 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
             "--typescript-semantic and --typescript-context must be supplied together".into(),
         );
     }
-    if typescript_semantic.is_some() && diff_mode == mehscan_engine::ImpactDiffMode::Impact {
+    if typescript_semantic.is_some() && diff_mode != mehscan_engine::ImpactDiffMode::Full {
         return Err(
             "TypeScript snapshot import requires full scan context; use --diff-mode full".into(),
         );
@@ -363,39 +444,21 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     if csharp_semantic.is_some() != csharp_context.is_some() {
         return Err("--csharp-semantic and --csharp-context must be supplied together".into());
     }
-    if csharp_semantic.is_some() && diff_mode == mehscan_engine::ImpactDiffMode::Impact {
+    if csharp_semantic.is_some() && diff_mode != mehscan_engine::ImpactDiffMode::Full {
         return Err(
             "Roslyn snapshot import currently requires full scan context; use --diff-mode full"
                 .into(),
         );
     }
-    if changed_from.is_some() && files_from.is_some() {
-        return Err("--changed-from and --files-from cannot be used together".to_string());
-    }
-    if diff_mode_explicit && changed_from.is_none() && files_from.is_none() {
-        return Err("--diff-mode requires --changed-from or --files-from".to_string());
-    }
-    let mut impact_scope = if let Some(base) = changed_from {
-        Some(engine(mehscan_engine::impact::changed_files_from_git(
-            &root, &base,
-        ))?)
-    } else if let Some(path) = files_from {
-        let source = fs::read_to_string(&path).map_err(|error| {
-            format!(
-                "could not read changed-file list {}: {error}",
-                path.display()
-            )
-        })?;
-        Some(engine(mehscan_engine::impact::changed_files_from_list(
-            &root,
-            source.lines().map(str::to_string),
-        ))?)
-    } else {
-        None
-    };
-    if let Some(scope) = impact_scope.as_mut() {
-        scope.diff_mode = diff_mode;
-    }
+    let impact_scope = resolve_change_scope(
+        &root,
+        changed_from.as_deref(),
+        files_from.as_deref(),
+        diff_mode_explicit.then_some(diff_mode),
+        target.as_deref(),
+        merge_base,
+        mehscan_engine::ImpactDiffMode::Full,
+    )?;
     let options = mehscan_engine::ScanOptions {
         include_tests,
         jobs,
@@ -430,6 +493,9 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
             &snapshot,
             &mut result,
         ))?;
+    }
+    if let Some(scope) = &result.impact_scope {
+        engine(mehscan_engine::impact::validate_scope(&root, scope))?;
     }
     mehscan_engine::impact::apply_result_policy(&mut result);
     // Serialized CLI artifacts must be portable and must not disclose a
@@ -685,6 +751,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             )
         }
         "review-inventory" => {
+            let repository_key = parsed.optional("--repository-key");
+            let source_repository_key = parsed.optional("--source-repository-key");
             let output = PathBuf::from(parsed.required("--output")?);
             let include_review_material = parsed
                 .optional_bool("--include-review-material")?
@@ -696,6 +764,14 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let ts_context = parsed.optional("--typescript-context").map(PathBuf::from);
             let ts_backend = parsed.optional("--typescript-backend").map(PathBuf::from);
             let timings = parsed.optional_bool("--timings")?.unwrap_or(false);
+            let changed_from = parsed.optional("--changed-from");
+            let files_from = parsed.optional("--files-from").map(PathBuf::from);
+            let diff_mode = parsed
+                .optional("--diff-mode")
+                .map(|value| parse_diff_mode(&value))
+                .transpose()?;
+            let target = parsed.optional("--target");
+            let merge_base = parsed.optional_bool("--merge-base")?.unwrap_or(false);
             if semantic.is_some() && backend.is_some() {
                 return Err("supply --csharp-semantic or --csharp-backend, not both".into());
             }
@@ -727,17 +803,35 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     })
             };
             parsed.finish()?;
+            let impact_scope = resolve_change_scope(
+                &root,
+                changed_from.as_deref(),
+                files_from.as_deref(),
+                diff_mode,
+                target.as_deref(),
+                merge_base,
+                mehscan_engine::ImpactDiffMode::Files,
+            )?;
             let mut profile = mehscan_engine::investigation::ReviewInventoryProfile::default();
-            let inventory = engine(
-                mehscan_engine::investigation::build_review_inventory_with_native_backends(
+            let mut inventory = engine(
+                mehscan_engine::investigation::build_review_inventory_scoped_with_native_backends(
                     &root,
                     include_review_material,
                     semantic.as_deref().zip(context.as_deref()),
                     context.as_deref().zip(backend.as_deref()),
                     ts_input,
+                    mehscan_engine::ScanOptions {
+                        impact_scope,
+                        ..Default::default()
+                    },
                     timings.then_some(&mut profile),
                 ),
             )?;
+            engine(mehscan_engine::investigation::bind_inventory_repository(
+                &mut inventory,
+                repository_key,
+                source_repository_key,
+            ))?;
             fs::create_dir_all(&output).map_err(|error| {
                 format!(
                     "could not create inventory directory {}: {error}",
@@ -751,6 +845,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "include_review_material": inventory.include_review_material,
                 "review_count": inventory.entries.len(),
                 "coverage": inventory.scan.coverage.totals,
+                "impact_scope": inventory.scan.impact_scope,
+                "identity_catalog": inventory.identity_catalog,
                 "entries": inventory.entries,
                 "admission_audit": inventory.admission_audit,
             });
@@ -796,11 +892,18 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 .sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
             top_areas.truncate(40);
             let overview = serde_json::json!({
+                "native_identity": inventory.identity_catalog.as_ref().map(|catalog| serde_json::json!({
+                    "schema_version": catalog.schema_version,
+                    "repository": catalog.repository,
+                    "assessment_context": catalog.assessment_context,
+                    "source_fingerprint": catalog.source_fingerprint,
+                })),
                 "schema_version": inventory.schema_version,
                 "source_fingerprint": inventory.source_fingerprint,
                 "input_fingerprint": engine(inventory.input_fingerprint())?,
                 "review_count": inventory.entries.len(),
                 "coverage": inventory.scan.coverage.totals,
+                "impact_scope": inventory.scan.impact_scope,
                 "by_capability": by_capability,
                 "by_cwe": by_cwe,
                 "by_operand_fact": by_operand_fact,
@@ -1050,6 +1153,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             }))
         }
         "review-jobs" => {
+            let repository_key = parsed.optional("--repository-key");
+            let source_repository_key = parsed.optional("--source-repository-key");
             let limit = parsed.optional_usize("--limit")?;
             let context_lines = parsed.optional_usize("--context-lines")?;
             let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
@@ -1057,37 +1162,51 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 .optional_bool("--include-review-material")?
                 .unwrap_or(false);
             parsed.finish()?;
-            print_json(&engine(
-                mehscan_engine::investigation::build_path_review_jobs_page(
-                    &root,
-                    context_lines,
-                    limit,
-                    offset,
-                    include_review_material,
-                ),
-            )?)
-        }
-        "review-tasks" => {
-            let limit = parsed.optional_usize("--limit")?;
-            let context_lines = parsed.optional_usize("--context-lines")?;
-            let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
-            let include_review_material = parsed
-                .optional_bool("--include-review-material")?
-                .unwrap_or(false);
-            parsed.finish()?;
-            let job = engine(mehscan_engine::investigation::build_path_review_jobs_page(
+            let mut job = engine(mehscan_engine::investigation::build_path_review_jobs_page(
                 &root,
                 context_lines,
                 limit,
                 offset,
                 include_review_material,
             ))?;
+            engine(mehscan_engine::investigation::bind_review_job_repository(
+                &mut job,
+                repository_key,
+                source_repository_key,
+            ))?;
+            print_json(&job)
+        }
+        "review-tasks" => {
+            let repository_key = parsed.optional("--repository-key");
+            let source_repository_key = parsed.optional("--source-repository-key");
+            let limit = parsed.optional_usize("--limit")?;
+            let context_lines = parsed.optional_usize("--context-lines")?;
+            let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
+            let include_review_material = parsed
+                .optional_bool("--include-review-material")?
+                .unwrap_or(false);
+            parsed.finish()?;
+            let mut job = engine(mehscan_engine::investigation::build_path_review_jobs_page(
+                &root,
+                context_lines,
+                limit,
+                offset,
+                include_review_material,
+            ))?;
+            engine(mehscan_engine::investigation::bind_review_job_repository(
+                &mut job,
+                repository_key,
+                source_repository_key,
+            ))?;
             print_json(&mehscan_engine::investigation::path_review_tasks(&job))
         }
         "review-bundles" => {
+            let repository_key = parsed.optional("--repository-key");
+            let source_repository_key = parsed.optional("--source-repository-key");
             let started = std::time::Instant::now();
             let output = PathBuf::from(parsed.required("--output")?);
             let inventory_dir = parsed.optional("--inventory").map(PathBuf::from);
+            let inventory_backed = inventory_dir.is_some();
             let ledger_path = parsed.optional("--ledger").map(PathBuf::from);
             let selected_ids = parsed.optional("--review-ids");
             let max_bytes = parsed.optional_usize("--max-bytes")?;
@@ -1099,6 +1218,23 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 .optional_bool("--include-review-material")?
                 .unwrap_or(false);
             let scope = parse_report_scope(&mut parsed);
+            if inventory_dir.is_some()
+                && (repository_key.is_some() || source_repository_key.is_some())
+            {
+                return Err("repository identity must be established with review-inventory; selected bundles inherit it".into());
+            }
+            if [
+                "--changed-from",
+                "--files-from",
+                "--diff-mode",
+                "--target",
+                "--merge-base",
+            ]
+            .iter()
+            .any(|flag| parsed.options.contains_key(*flag))
+            {
+                return Err("change scope must be established with review-inventory; review-bundles inherits it through --inventory and --review-ids".into());
+            }
             parsed.finish()?;
             if inventory_dir.is_some() != selected_ids.is_some() {
                 return Err("--inventory and --review-ids must be used together".to_string());
@@ -1182,6 +1318,14 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         None,
                     )
                 };
+            let mut job = job;
+            if !inventory_backed {
+                engine(mehscan_engine::investigation::bind_review_job_repository(
+                    &mut job,
+                    repository_key,
+                    source_repository_key,
+                ))?;
+            }
             let review_jobs_milliseconds = started.elapsed().as_millis();
             let mut bundle_set = engine(
                 mehscan_engine::investigation::build_path_review_bundles_with_run_limit(
@@ -1462,6 +1606,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         bundle_path.display()
                     )
                 })?;
+            validate_changed_bundle_binding(&bundle_path, &bundle, source_root.as_deref())?;
             let response_source = fs::read_to_string(&responses_path).map_err(|error| {
                 format!(
                     "could not read path-review bundle response {}: {error}",
@@ -1507,6 +1652,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     format!("could not read bundle {}: {error}", bundle_path.display())
                 })?)
                 .map_err(|error| format!("invalid bundle {}: {error}", bundle_path.display()))?;
+            validate_changed_bundle_binding(&bundle_path, &bundle, Some(&source_root))?;
             let draft: serde_json::Value =
                 serde_json::from_slice(&fs::read(&draft_path).map_err(|error| {
                     format!("could not read draft {}: {error}", draft_path.display())
@@ -2039,6 +2185,72 @@ fn summarize_query_journal(
     Ok(summary)
 }
 
+fn validate_changed_run_binding(
+    run: &Path,
+    scope: &mehscan_core::ImpactScanScope,
+    source_root: Option<&Path>,
+) -> Result<ReviewChunkBinding, String> {
+    let root = source_root.ok_or(
+        "changed-scope finalization requires --source-root for current source and Git validation",
+    )?;
+    engine(mehscan_engine::impact::validate_scope(root, scope))?;
+    let binding_path = run.join("input-binding.json");
+    let binding: ReviewChunkBinding = serde_json::from_slice(
+        &fs::read(&binding_path)
+            .map_err(|e| format!("changed-scope run requires its input binding: {e}"))?,
+    )
+    .map_err(|e| format!("invalid changed-scope input binding: {e}"))?;
+    if binding.source_fingerprint
+        != engine(mehscan_engine::investigation::review_repository_fingerprint(root))?
+    {
+        return Err(
+            "changed-scope run is stale: source files changed; regenerate the inventory".into(),
+        );
+    }
+    Ok(binding)
+}
+
+fn validate_changed_bundle_binding(
+    path: &Path,
+    bundle: &mehscan_core::PathReviewBundle,
+    source_root: Option<&Path>,
+) -> Result<(), String> {
+    let Some(scope) = &bundle.impact_scope else {
+        return Ok(());
+    };
+    let run = path
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("changed-scope bundle requires its run/requests layout and input binding")?;
+    let binding = validate_changed_run_binding(run, scope, source_root)?;
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("invalid changed-scope bundle filename")?;
+    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    if binding.requests.get(filename)
+        != Some(&mehscan_engine::investigation::review_content_fingerprint(
+            &bytes,
+        ))
+    {
+        return Err("changed-scope request does not match its input binding".into());
+    }
+    let manifest: mehscan_core::PathReviewBundleManifest =
+        serde_json::from_slice(&fs::read(run.join("manifest.json")).map_err(|e| e.to_string())?)
+            .map_err(|e| format!("invalid changed-scope manifest: {e}"))?;
+    if manifest.impact_scope.as_ref() != Some(scope)
+        || manifest.job_fingerprint != bundle.job_fingerprint
+        || !manifest.bundles.iter().any(|entry| {
+            entry.filename == filename
+                && entry.bundle_fingerprint == bundle.bundle_fingerprint
+                && entry.review_ids == bundle.review_ids
+        })
+    {
+        return Err("changed-scope bundle does not match its manifest".into());
+    }
+    Ok(())
+}
+
 fn read_complete_bundle_responses(
     run: &Path,
     responses: Option<&Path>,
@@ -2072,6 +2284,11 @@ fn read_complete_bundle_responses(
     let response_directory = responses
         .map(Path::to_path_buf)
         .unwrap_or_else(|| run.join("responses"));
+    let scope_binding = if let Some(scope) = &manifest.impact_scope {
+        Some(validate_changed_run_binding(run, scope, source_root)?)
+    } else {
+        None
+    };
     if manifest.bundle_count != manifest.bundles.len()
         || manifest.review_count
             != manifest
@@ -2126,6 +2343,18 @@ fn read_complete_bundle_responses(
                     request_path.display()
                 )
             })?;
+        if bundle.impact_scope != manifest.impact_scope {
+            return Err("review bundle change scope does not match its manifest".into());
+        }
+        if let Some(binding) = &scope_binding {
+            if binding.requests.get(&entry.filename)
+                != Some(&mehscan_engine::investigation::review_content_fingerprint(
+                    request_source.as_bytes(),
+                ))
+            {
+                return Err("changed-scope request does not match its input binding".into());
+            }
+        }
         if bundle.job_fingerprint != manifest.job_fingerprint
             || bundle.review_ids != entry.review_ids
             || bundle.review_ids.len() != entry.review_count
@@ -2874,9 +3103,13 @@ impl ParsedArguments {
                 continue;
             }
             if argument.starts_with('-') {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| format!("{argument} requires a value"))?;
+                let value = if argument == "--merge-base" {
+                    "true".to_string()
+                } else {
+                    arguments
+                        .next()
+                        .ok_or_else(|| format!("{argument} requires a value"))?
+                };
                 if value.starts_with('-') {
                     return Err(format!("{argument} requires a value"));
                 }
@@ -3753,13 +3986,13 @@ fn print_benchmark_summary(report: &mehscan_engine::benchmark::BenchmarkReport) 
 
 fn print_help() {
     println!(
-        "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact]\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n\nRun a command with --help for details."
+        "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact|files] [--target REF] [--merge-base]\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n  mehscan state <claim|runtime-template|plan-template|plan|pending|fact|work|record|end|status|history> [OPTIONS]\n\nRun a command with --help for details."
     );
 }
 
 fn print_report_help() {
     println!(
-        "USAGE:\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH] [--reviewer NAME] [--include-dismissed true|false] [--scope-label TEXT] [--project NAME] [--revision REF]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. Markdown is the human-readable summary and prioritizes unresolved review checks before confirmed and dismissed results; use --include-dismissed true to include not-issue summaries. --responses defaults to DIR/responses. --allow-partial true skips missing response files only and labels completed versus total review coverage; present responses must still validate as complete bundles. Scope, project and revision labels are user-supplied handoff metadata, not verified security facts."
+        "USAGE:\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH] [--reviewer NAME] [--sarif-category CATEGORY] [--sarif-run-id ID] [--include-dismissed true|false] [--scope-label TEXT] [--project NAME] [--revision REF]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. Markdown is the human-readable summary and prioritizes unresolved review checks before confirmed and dismissed results; use --include-dismissed true to include not-issue summaries. --responses defaults to DIR/responses. --allow-partial true skips missing response files only and labels completed versus total review coverage; present responses must still validate as complete bundles. Scope, project and revision labels are user-supplied handoff metadata, not verified security facts.\n\nSARIF category defaults to 'mehscan/triaged', or 'mehscan/triaged/changed' for change-scoped runs. Category is a stable analysis partition: keep reviewer, model, PR number, revision and changing file set out of it. --sarif-run-id optionally identifies an attempt without changing category. Category segments and run IDs use ASCII letters, digits, '.', '_' or '-'; category alone permits '/' separators. JSON retains the configuration for repeatable export. Complete review work is limited to the manifest and does not establish alert closure. Changed/partial SARIF is an advisory artifact; custom properties do not prevent GitHub from closing absent alerts if it is uploaded. Actual GitHub ingestion/closure acceptance remains pending."
     );
 }
 
@@ -3771,7 +4004,16 @@ fn print_scan_help() {
         "Optional TS/JS facts: --typescript-semantic SNAPSHOT --typescript-context CONTEXT (full scan context only)."
     );
     println!(
-        "USAGE:\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--timings] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact]\n\n'json' preserves raw evidence and SecurityPath data. 'candidates' emits only reviewable bounded relationships plus coverage. 'sarif-candidates' emits one SARIF 2.1.0 review result per candidate, never one result per raw observation; legacy 'sarif' remains an alias. Use 'mehscan report --format sarif' for confirmed post-triage findings. Secret detection is currently disabled; secret-only text is reported as ignored. '--timings' emits one machine-readable phase profile to stderr without changing stdout. Directory scans honor repository-local .gitignore, nested .gitignore, .ignore, and .git/info/exclude rules, but not global user ignores. Built-in dependency and generated-tree exclusions remain mandatory. By default, test, fixture, sample, generated, and bundled sources are excluded from SAST. '--include-tests' promotes those supported source files into full SAST. '--jobs N' overrides automatic per-file worker selection. '--changed-from REF' includes tracked changes since REF and untracked files. '--files-from PATH' accepts one repository-relative path per line; a missing path is treated as a deletion. Diff mode 'full' is the default: analyze the complete repository, then return evidence and paths touching changed lines. Diff mode 'impact' analyzes changed files, small same-directory context, and direct importers. Both modes return all full-scan results when deletions, renames, project-wide configuration, or central entrypoint changes make changed-location filtering unsafe; impact mode also falls back for large or broad expansions. Scope, result policy, fallback reasons, and Git changed-line ranges are retained in JSON, candidate, and SARIF run metadata."
+        r#"USAGE:
+  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--timings] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact|files] [--target REF] [--merge-base]
+
+'json' preserves raw evidence and SecurityPath data. 'candidates' emits only reviewable bounded relationships plus coverage. 'sarif-candidates' emits one SARIF 2.1.0 review result per candidate, never one result per raw observation; legacy 'sarif' remains an alias. Use 'mehscan report --format sarif' for confirmed post-triage findings. Secret detection is currently disabled; secret-only text is reported as ignored. '--timings' emits one machine-readable phase profile to stderr without changing stdout. Directory scans honor repository-local .gitignore, nested .gitignore, .ignore, and .git/info/exclude rules, but not global user ignores. Built-in dependency and generated-tree exclusions remain mandatory. By default, test, fixture, sample, generated, and bundled sources are excluded from SAST. '--include-tests' promotes those supported source files into full SAST. '--jobs N' overrides automatic per-file worker selection.
+
+'--changed-from REF' compares tracked working-tree contents with REF and includes nonignored untracked files. '--target REF' instead compares commits and requires a clean checkout at that target's HEAD. '--merge-base' compares one merge base with the target (HEAD by default); omit it for direct release endpoints. Neither option changes the checkout. '--files-from PATH' accepts one repository-relative path per line; blank/comment lines and surrounding whitespace are ignored, and a missing path is treated as a deletion.
+
+Diff mode 'files' analyzes whole existing changed files and returns their applicable results. It never expands to siblings/importers or falls back to a full scan for deletions, renames, configuration or large changes. Unchanged native analysis is excluded; removed controls and affected consumers need a reviewer change pass and targeted context. Zero candidates does not clear a diff. Optional compiler snapshots currently require 'full'.
+
+Diff mode 'full' remains the scan default: analyze the complete repository, then return evidence and paths touching changed lines. Diff mode 'impact' analyzes changed files, small same-directory context, and direct importers. Both modes return all full-scan results when deletions, renames, project-wide configuration, or central entrypoint changes make changed-location filtering unsafe; impact mode also falls back for large or broad expansions. Scope, result policy, fallback reasons, pinned Git comparison and changed-line ranges are retained in JSON, candidate, and SARIF run metadata."#
     );
 }
 
@@ -3796,7 +4038,7 @@ USAGE:
   mehscan investigate csharp-context [ROOT] --context SEED --output FILE
   mehscan investigate csharp-semantic [ROOT] --context FILE --backend EXE --output FILE [--inventory DIR] [--evidence-ids ID,ID]
   mehscan investigate typescript-semantic [ROOT] --context FILE --backend SCRIPT --output FILE [--inventory DIR] [--evidence-ids ID,ID]
-  mehscan investigate review-inventory [ROOT] --output DIR [--include-review-material true|false] [--csharp-backend EXE --csharp-context FILE | --csharp-semantic FILE --csharp-context FILE] [--timings true|false]
+  mehscan investigate review-inventory [ROOT] --output DIR [--changed-from REF | --files-from PATH] [--diff-mode full|impact|files] [--target REF] [--merge-base] [--include-review-material true|false] [--csharp-backend EXE --csharp-context FILE | --csharp-semantic FILE --csharp-context FILE] [--timings true|false]
     Optional TS/JS: [--typescript-backend SCRIPT --typescript-context FILE | --typescript-semantic FILE --typescript-context FILE]
   mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--selection all|value|deferred] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--group-by contract|implementation] [--contract KEY] [--limit N] [--offset N]
   mehscan investigate review-ledger --inventory DIR --history RUN_ROOT[,RUN_ROOT] --output FILE
@@ -3825,6 +4067,10 @@ USAGE:
   mehscan investigate paths [ROOT] --name TEXT [--limit N]
   mehscan investigate native-call-sites [ROOT] --callee NAME [--path FILE] [--limit N]
   mehscan investigate structural [ROOT] --language LANG --pattern PATTERN [--path FILE] [--limit N]
+
+Changed inventories default to 'files': whole changed files without expansion or full fallback. Use '--merge-base' for a branch comparison and '--target REF' for a clean pinned checkout; omit merge-base for release endpoints. Optional compiler inputs require full analysis. Selected review-bundles inherit inventory scope; change flags must be supplied at review-inventory. Keep output outside the source worktree. Scoped finalization, triage, summary and report require --source-root and the run's input-binding.json; stale source or Git comparisons require a new inventory. Zero IDs does not complete a diff review.
+
+Native identity: add --repository-key STABLE_ID to review-inventory, review-jobs, review-tasks or direct review-bundles. Use the assessed/base repository's stable platform ID or configured namespace; optional --source-repository-key ID records fork/head provenance. Selected bundles inherit identity and reject overrides. Unknown namespaces are explicitly unscoped. Identity matching never authorizes verdict reuse; canonical reports retain native decision records for issue, not_issue and needs_review.
 
 Add --journal FILE to a read-only query to append its exact arguments, output or error, and elapsed time as JSONL. Use one file per review. Response schema 1.3 cites only decisive source in investigation.decisive_artifacts; review-bundle-finalize attaches journal counts and checks the response. Source reads are capped at 400 lines and 64 KiB. References default to 20 results; other result limits default to 200. The maximum is 1000."#
     );

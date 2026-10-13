@@ -47,6 +47,7 @@ use crate::repository::{
     Discovery, FileClass, discover, discover_selected, discover_text, is_sast_excluded_source,
 };
 use crate::rules::parser_language;
+mod identity;
 use crate::{EngineError, code::executable_deserializer, csharp_review, scan_path};
 
 const DEFAULT_RESULT_LIMIT: usize = 200;
@@ -169,6 +170,8 @@ pub struct ValueReviewHint {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReviewInventoryEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<mehscan_core::ReviewIdentitySummary>,
     pub review_id: String,
     pub review_kind: String,
     pub path: String,
@@ -360,6 +363,8 @@ fn ordinary_browser_link(anchor: &Evidence) -> bool {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReviewInventory {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_catalog: Option<mehscan_core::ReviewIdentityCatalog>,
     pub schema_version: String,
     pub source_fingerprint: String,
     pub include_review_material: bool,
@@ -381,7 +386,7 @@ impl ReviewInventory {
     }
 }
 
-pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "22";
+pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "25";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -397,6 +402,9 @@ pub fn validate_review_inventory_for_collection(
     root: &Path,
     inventory: &ReviewInventory,
 ) -> Result<(), EngineError> {
+    if let Some(scope) = &inventory.scan.impact_scope {
+        crate::impact::validate_scope(root, scope)?;
+    }
     validate_inventory_source_binding(inventory, &RepositorySources::load(root)?)
 }
 
@@ -422,6 +430,9 @@ fn validate_review_inventory_sources(
     inventory: &ReviewInventory,
     sources: &RepositorySources,
 ) -> Result<(), EngineError> {
+    if let Some(scope) = &inventory.scan.impact_scope {
+        crate::impact::validate_scope(root, scope)?;
+    }
     if inventory.schema_version != REVIEW_INVENTORY_SCHEMA_VERSION {
         return Err(EngineError(
             "unsupported review inventory version; regenerate it".into(),
@@ -448,12 +459,15 @@ impl<'a> ReviewHistoryValidator<'a> {
     pub fn new(root: &Path, inventory: &'a ReviewInventory) -> Result<Self, EngineError> {
         let sources = RepositorySources::load(root)?;
         validate_review_inventory_sources(root, inventory, &sources)?;
-        let admission_evidence =
-            review_admission::marker_groups(&sources, &inventory.scan.evidence)
-                .into_iter()
-                .flat_map(|group| group.evidence)
-                .map(|fact| (fact.id.clone(), fact))
-                .collect();
+        let admission_evidence = review_admission::scoped_marker_groups(
+            &sources,
+            &inventory.scan.evidence,
+            inventory.scan.impact_scope.as_ref(),
+        )
+        .into_iter()
+        .flat_map(|group| group.evidence)
+        .map(|fact| (fact.id.clone(), fact))
+        .collect();
         Ok(Self {
             inventory,
             admission_evidence,
@@ -471,6 +485,28 @@ fn validate_history_bundle(
     admission_evidence: &BTreeMap<String, Evidence>,
     bundle: &PathReviewBundle,
 ) -> Result<(), EngineError> {
+    if bundle.impact_scope != inventory.scan.impact_scope {
+        return Err(EngineError(
+            "history chunk has a different change scope; regenerate it".into(),
+        ));
+    }
+    if let Some(saved) = &inventory.identity_catalog {
+        let current = bundle.identity_catalog.as_ref().ok_or_else(|| {
+            EngineError("history chunk has no native identity; regenerate it".into())
+        })?;
+        identity::validate_bundle(current, bundle)?;
+        if current.repository != saved.repository
+            || current.source_fingerprint != saved.source_fingerprint
+            || current
+                .subjects
+                .iter()
+                .any(|(id, subject)| saved.subjects.get(id) != Some(subject))
+        {
+            return Err(EngineError(
+                "history native identity or source basis differs from inventory".into(),
+            ));
+        }
+    }
     if bundle.triage_contract != path_review_triage_contract()
         || bundle.playbook_version != "triage-buckets-v3"
     {
@@ -567,15 +603,45 @@ pub fn build_review_inventory_with_native_backends(
     semantics: Option<(&Path, &Path)>,
     native_backend: Option<(&Path, &Path)>,
     typescript: Option<crate::typescript_semantic::Input<'_>>,
+    profile: Option<&mut ReviewInventoryProfile>,
+) -> Result<ReviewInventory, EngineError> {
+    build_review_inventory_scoped_with_native_backends(
+        root,
+        include_review_material,
+        semantics,
+        native_backend,
+        typescript,
+        Default::default(),
+        profile,
+    )
+}
+
+pub fn build_review_inventory_scoped_with_native_backends(
+    root: &Path,
+    include_review_material: bool,
+    semantics: Option<(&Path, &Path)>,
+    native_backend: Option<(&Path, &Path)>,
+    typescript: Option<crate::typescript_semantic::Input<'_>>,
+    options: crate::ScanOptions,
     mut profile: Option<&mut ReviewInventoryProfile>,
 ) -> Result<ReviewInventory, EngineError> {
+    if options
+        .impact_scope
+        .as_ref()
+        .is_some_and(|scope| scope.diff_mode != crate::ImpactDiffMode::Full)
+        && (semantics.is_some() || native_backend.is_some() || typescript.is_some())
+    {
+        return Err(EngineError(
+            "optional compiler inputs currently require full scan context; use --diff-mode full"
+                .into(),
+        ));
+    }
     if semantics.is_some() && native_backend.is_some() {
         return Err(EngineError(
             "supply a Roslyn snapshot or backend, not both".into(),
         ));
     }
-    let (mut scan, scan_profile) =
-        crate::scan_path_profiled_with_options(root, Default::default())?;
+    let (mut scan, scan_profile) = crate::scan_path_profiled_with_options(root, options)?;
     if let Some(profile) = profile.as_deref_mut() {
         profile.scan = scan_profile;
     }
@@ -612,6 +678,10 @@ pub fn build_review_inventory_with_native_backends(
         profile.native_milliseconds = native_started.elapsed().as_millis();
     }
     let inventory_started = std::time::Instant::now();
+    crate::impact::apply_result_policy(&mut scan);
+    if let Some(scope) = &scan.impact_scope {
+        crate::impact::validate_scope(root, scope)?;
+    }
     let sources = RepositorySources::load(root)?;
     let source_fingerprint = review_source_fingerprint(&sources);
     let mut entries = Vec::new();
@@ -631,6 +701,7 @@ pub fn build_review_inventory_with_native_backends(
         profile.inventory_milliseconds = inventory_started.elapsed().as_millis();
     }
     Ok(ReviewInventory {
+        identity_catalog: job.identity_catalog,
         schema_version: REVIEW_INVENTORY_SCHEMA_VERSION.to_string(),
         source_fingerprint,
         include_review_material,
@@ -675,7 +746,7 @@ fn build_selected_review_jobs_internal(
     context_lines: Option<usize>,
     mut profile: Option<&mut ReviewJobProfile>,
 ) -> Result<PathReviewJob, EngineError> {
-    if review_ids.is_empty() {
+    if review_ids.is_empty() && !inventory.entries.is_empty() {
         return Err(EngineError("select at least one review ID".to_string()));
     }
     let validation_started = std::time::Instant::now();
@@ -724,7 +795,64 @@ fn build_selected_review_jobs_internal(
             crate::csharp_semantic::digest(&identity)
         );
     }
+    if let (Some(current), Some(saved)) = (&mut job.identity_catalog, &inventory.identity_catalog) {
+        identity::bind_repository(
+            current,
+            saved.repository.repository_key.clone(),
+            saved.repository.source_repository_key.clone(),
+        )?;
+        for (id, subject) in &current.subjects {
+            if saved.subjects.get(id) != Some(subject) {
+                return Err(EngineError(
+                    "inventory native identity no longer matches current source; regenerate it"
+                        .into(),
+                ));
+            }
+        }
+        current.inventory_input_fingerprint = Some(inventory.input_fingerprint()?);
+        job.fingerprint =
+            identity::digest("path-reviewpack-identity/v1", &(&job.fingerprint, &current))?;
+    }
     Ok(job)
+}
+
+pub fn bind_inventory_repository(
+    inventory: &mut ReviewInventory,
+    key: Option<String>,
+    source_key: Option<String>,
+) -> Result<(), EngineError> {
+    let catalog = inventory
+        .identity_catalog
+        .as_mut()
+        .ok_or_else(|| EngineError("regenerate inventory to obtain native identity".into()))?;
+    identity::bind_repository(catalog, key, source_key)?;
+    for entry in &mut inventory.entries {
+        entry.identity = catalog
+            .subjects
+            .get(&entry.review_id)
+            .map(mehscan_core::ReviewIdentitySummary::from);
+    }
+    Ok(())
+}
+
+pub fn bind_review_job_repository(
+    job: &mut PathReviewJob,
+    key: Option<String>,
+    source_key: Option<String>,
+) -> Result<(), EngineError> {
+    let catalog = job
+        .identity_catalog
+        .as_mut()
+        .ok_or_else(|| EngineError("regenerate job to obtain native identity".into()))?;
+    if catalog.repository.repository_key == key
+        && catalog.repository.source_repository_key == source_key
+    {
+        return Ok(());
+    }
+    identity::bind_repository(catalog, key, source_key)?;
+    job.fingerprint =
+        identity::digest("path-reviewpack-identity/v1", &(&job.fingerprint, catalog))?;
+    Ok(())
 }
 
 fn review_source_fingerprint(sources: &RepositorySources) -> String {
@@ -1436,7 +1564,11 @@ fn build_path_review_jobs_internal(
             .any(|id| practical_exclusions.contains_key(id))
     });
     observation_exclusions.extend(practical_exclusions);
-    observation_groups.extend(review_admission::marker_groups(&sources, &scan.evidence));
+    observation_groups.extend(review_admission::scoped_marker_groups(
+        &sources,
+        &scan.evidence,
+        scan.impact_scope.as_ref(),
+    ));
     observation_groups.sort_by(|left, right| {
         left.review_material
             .cmp(&right.review_material)
@@ -1533,9 +1665,15 @@ fn build_path_review_jobs_internal(
         &excluded_review_material_observation_ids,
         &observation_exclusions,
     );
+    let mut identity_catalog =
+        identity::build_catalog(root, &sources, &candidates, &observation_groups)?;
     if let Some(entries) = inventory_entries.as_mut() {
         entries.extend(candidates.iter().map(|candidate| {
             ReviewInventoryEntry {
+                identity: identity_catalog
+                    .subjects
+                    .get(&candidate.id.replacen("path-", "review-", 1))
+                    .map(mehscan_core::ReviewIdentitySummary::from),
                 review_id: candidate.id.replacen("path-", "review-", 1),
                 review_kind: "path".to_string(),
                 path: candidate.primary_location.path.clone(),
@@ -1559,6 +1697,14 @@ fn build_path_review_jobs_internal(
                 .iter()
                 .find(|evidence| group.anchor_evidence_ids.contains(&evidence.id))?;
             Some(ReviewInventoryEntry {
+                identity: identity_catalog
+                    .subjects
+                    .get(&observation_review_id(
+                        &group.path,
+                        &group.symbol,
+                        &group.anchor_evidence_ids,
+                    ))
+                    .map(mehscan_core::ReviewIdentitySummary::from),
                 review_id: observation_review_id(
                     &group.path,
                     &group.symbol,
@@ -2095,13 +2241,23 @@ fn build_path_review_jobs_internal(
         );
     }
     let returned_reviews = reviews.len() + observation_reviews.len();
+    if inventory_entries.is_none() {
+        let returned = reviews
+            .iter()
+            .map(|r| r.id.as_str())
+            .chain(observation_reviews.iter().map(|r| r.id.as_str()))
+            .collect::<BTreeSet<_>>();
+        identity_catalog
+            .subjects
+            .retain(|id, _| returned.contains(id.as_str()));
+    }
     let next_offset = if selected_ids.is_some() {
         None
     } else {
         (offset + returned_reviews < total_reviews).then_some(offset + returned_reviews)
     };
     let truncated = next_offset.is_some();
-    let fingerprint = path_review_fingerprint(
+    let mut fingerprint = path_review_fingerprint(
         &reviews,
         &observation_reviews,
         &triage_contract,
@@ -2109,6 +2265,18 @@ fn build_path_review_jobs_internal(
         offset,
         include_review_material,
     );
+    if let Some(scope) = &scan.impact_scope {
+        let scope_identity =
+            serde_json::to_vec(&(fingerprint, scope)).map_err(|e| EngineError(e.to_string()))?;
+        fingerprint = format!(
+            "path-reviewpack-scoped-{}",
+            crate::csharp_semantic::digest(&scope_identity)
+        );
+    }
+    fingerprint = identity::digest(
+        "path-reviewpack-identity/v1",
+        &(&fingerprint, &identity_catalog),
+    )?;
     let mut review_coverage = ReviewPipelineCoverage {
         recognized_boundary_count,
         admitted_review_count: total_reviews,
@@ -2141,8 +2309,10 @@ fn build_path_review_jobs_internal(
             - profile.observation_reviews_milliseconds;
     }
     Ok(PathReviewJob {
+        identity_catalog: Some(identity_catalog),
         schema_version: SCHEMA_VERSION.to_string(),
         root: scan.root,
+        impact_scope: scan.impact_scope,
         operation: if selected_ids.is_some() {
             "build_selected_review_jobs"
         } else {
@@ -2281,7 +2451,12 @@ pub fn build_path_review_bundles_with_run_limit(
         cwe_candidates.sort();
         cwe_candidates.dedup();
         let category = PathReviewBundleCategory {
-            scope: "full".to_string(),
+            scope: if job.impact_scope.is_some() {
+                "changed"
+            } else {
+                "full"
+            }
+            .to_string(),
             review_kind: "path".to_string(),
             capability,
             cwe_candidates,
@@ -2323,7 +2498,12 @@ pub fn build_path_review_bundles_with_run_limit(
         cwe_candidates.sort();
         cwe_candidates.dedup();
         let category = PathReviewBundleCategory {
-            scope: "full".to_string(),
+            scope: if job.impact_scope.is_some() {
+                "changed"
+            } else {
+                "full"
+            }
+            .to_string(),
             review_kind: "observation".to_string(),
             capability,
             cwe_candidates,
@@ -2375,6 +2555,7 @@ pub fn build_path_review_bundles_with_run_limit(
         root: ".".to_string(),
         coverage: job.coverage.totals.clone(),
         scope: review_scope(job),
+        impact_scope: job.impact_scope.clone(),
         operation: "build_path_review_bundles".to_string(),
         job_fingerprint: job.fingerprint.clone(),
         max_input_bytes,
@@ -2487,6 +2668,9 @@ pub fn validate_path_review_bundle_response(
     bundle: &PathReviewBundle,
     responses: &PathReviewBundleResponseSet,
 ) -> Result<PathReviewBundleTriageReport, EngineError> {
+    if let Some(catalog) = &bundle.identity_catalog {
+        identity::validate_bundle(catalog, bundle)?;
+    }
     if bundle.schema_version != PATH_REVIEW_BUNDLE_SCHEMA_VERSION
         || bundle.playbook_version != "triage-buckets-v3"
         || bundle
@@ -2632,6 +2816,14 @@ pub fn summarize_path_review_bundle_manifest_run(
             "bundle manifest count does not match the run".to_string(),
         ));
     }
+    if bundle_responses
+        .iter()
+        .any(|(bundle, _)| bundle.impact_scope != manifest.impact_scope)
+    {
+        return Err(EngineError(
+            "bundle change scope does not match its manifest".into(),
+        ));
+    }
     let report = summarize_path_review_bundle_run_with_fingerprint(
         bundle_responses,
         manifest.job_fingerprint.clone(),
@@ -2661,6 +2853,7 @@ pub fn summarize_path_review_bundle_manifest_run_with_work(
         .collect::<BTreeSet<_>>();
     if bundle_responses.iter().any(|(bundle, _)| {
         bundle.job_fingerprint != manifest.job_fingerprint
+            || bundle.impact_scope != manifest.impact_scope
             || !manifest_bundles.contains(bundle.bundle_fingerprint.as_str())
     }) {
         return Err(EngineError(
@@ -2911,6 +3104,7 @@ pub fn build_finding_report_from_manifest(
     )?;
     report.scan.coverage = Some(manifest.coverage.clone());
     report.scan.scope = manifest.scope.clone();
+    report.scan.impact_scope = manifest.impact_scope.clone();
     Ok(report)
 }
 
@@ -2936,6 +3130,7 @@ pub fn build_finding_report_from_manifest_with_work(
     )?;
     report.scan.coverage = Some(manifest.coverage.clone());
     report.scan.scope = manifest.scope.clone();
+    report.scan.impact_scope = manifest.impact_scope.clone();
     Ok(report)
 }
 
@@ -2958,11 +3153,28 @@ fn finding_report_from_run(
             .collect::<Vec<_>>()
             .join("+")
     };
+    let impact_scope = bundle_responses
+        .first()
+        .and_then(|(bundle, _)| bundle.impact_scope.clone());
+    if bundle_responses
+        .iter()
+        .any(|(bundle, _)| bundle.impact_scope != impact_scope)
+    {
+        return Err(EngineError("finding reports cannot mix different change comparisons or scoped and unscoped bundles".into()));
+    }
     let mut records = BTreeMap::<String, ReportAccumulator>::new();
     let mut dismissed = Vec::new();
+    let mut decision_records = Vec::new();
 
     for (bundle, responses) in bundle_responses {
         for result in &responses.results {
+            let decision_record = identity::decision_record(bundle, result)?;
+            let subject = decision_record
+                .as_ref()
+                .map(|record| record.identity.clone());
+            if let Some(record) = decision_record {
+                decision_records.push(record);
+            }
             if result.decision == ReviewDecision::NotIssue {
                 if include_dismissed {
                     let (_, _, location, rule_id, _) =
@@ -2980,6 +3192,7 @@ fn finding_report_from_run(
                         result.summary.clone()
                     };
                     dismissed.push(DismissedReview {
+                        identity: subject.clone(),
                         review_id: result.review_id.clone(),
                         confidence: result.confidence,
                         description,
@@ -2990,8 +3203,20 @@ fn finding_report_from_run(
                 continue;
             }
             let mut item = reported_finding(bundle, result)?;
-            let key = issue_group_key(item.category, &item.primary_location, &item.rule_id);
-            item.id = stable_review_hash("finding", &key);
+            item.repository_path_prefix = bundle
+                .identity_catalog
+                .as_ref()
+                .map(|catalog| catalog.repository.path_prefix.clone())
+                .unwrap_or_default();
+            item.identities = subject.clone().into_iter().collect();
+            let key = match subject {
+                Some(ref identity) => format!("{}\0{:?}", identity.occurrence_key, item.status),
+                None => issue_group_key(item.category, &item.primary_location, &item.rule_id),
+            };
+            item.id = subject.map_or_else(
+                || stable_review_hash("finding", &key),
+                |identity| identity.occurrence_key,
+            );
             let is_path = item.flow.is_some();
             match records.get_mut(&key) {
                 Some(existing) => existing.merge(item, is_path),
@@ -3029,6 +3254,7 @@ fn finding_report_from_run(
     review_required.sort_by(reported_finding_order);
 
     Ok(FindingReport {
+        decision_records,
         schema_version: FINDING_REPORT_SCHEMA_VERSION.to_string(),
         report_kind: "triaged_findings".to_string(),
         tool: FindingReportTool {
@@ -3036,6 +3262,8 @@ fn finding_report_from_run(
             version: tool_version.into(),
         },
         scan: FindingReportScan {
+            sarif_automation: None,
+            impact_scope,
             root: ".".to_string(),
             job_fingerprint: run.job_fingerprint,
             coverage: None,
@@ -3073,6 +3301,25 @@ struct ReportAccumulator {
 
 impl ReportAccumulator {
     fn merge(&mut self, mut other: ReportedFinding, other_is_path: bool) {
+        // Alternative paths are separate proofs for the selected verdict. A
+        // legacy pending card merged into an issue must not supply issue proof.
+        let mut flows = Vec::new();
+        if self.item.status == other.status {
+            flows.extend(
+                self.item
+                    .flow
+                    .iter()
+                    .chain(&self.item.additional_flows)
+                    .cloned(),
+            );
+            flows.extend(other.flow.iter().chain(&other.additional_flows).cloned());
+        }
+        let mut identities = std::mem::take(&mut self.item.identities);
+        for identity in std::mem::take(&mut other.identities) {
+            if !identities.contains(&identity) {
+                identities.push(identity);
+            }
+        }
         let prefer_other = (self.item.status == FindingStatus::NeedsReview
             && other.status == FindingStatus::Issue)
             || (self.item.status == other.status && !self.is_path && other_is_path);
@@ -3104,7 +3351,17 @@ impl ReportAccumulator {
             self.item = other;
             self.is_path = other_is_path;
         }
+        if !flows.is_empty() {
+            flows.sort_by_cached_key(|flow| {
+                serde_json::to_vec(flow).expect("serializable native flow")
+            });
+            flows.dedup();
+            self.item.flow = Some(flows.remove(0));
+            self.item.additional_flows = flows;
+        }
         self.item.confidence = confidence;
+        identities.sort_by(|left, right| left.subject_key.cmp(&right.subject_key));
+        self.item.identities = identities;
         self.item.cwes = cwes;
         self.item.related_locations = related;
         self.item.provenance.review_ids = review_ids;
@@ -3198,6 +3455,7 @@ fn reported_finding(
             }));
             deduplicate_related_locations(&mut related_locations);
             Ok(ReportedFinding {
+                identities: Vec::new(),
                 id: String::new(),
                 rule_id: candidate.sink.rule_id.clone(),
                 title,
@@ -3216,6 +3474,7 @@ fn reported_finding(
                 cwes: candidate.cwe_candidates.clone(),
                 language: review.language,
                 primary_location: candidate.primary_location.clone(),
+                repository_path_prefix: String::new(),
                 context: reported_operation_context(
                     &candidate.sink.rule_id,
                     &candidate.sink.context,
@@ -3224,6 +3483,7 @@ fn reported_finding(
                 flow: Some(FindingFlow {
                     steps: candidate.steps.clone(),
                 }),
+                additional_flows: Vec::new(),
                 related_locations,
                 checks: result.checks.clone(),
                 remediation,
@@ -3314,6 +3574,7 @@ fn reported_finding(
             evidence_ids.sort();
             evidence_ids.dedup();
             Ok(ReportedFinding {
+                identities: Vec::new(),
                 id: String::new(),
                 rule_id: anchor.rule_id.clone(),
                 title,
@@ -3332,9 +3593,11 @@ fn reported_finding(
                 cwes: anchor.cwe_candidates.clone(),
                 language: review.language,
                 primary_location: anchor.location.clone(),
+                repository_path_prefix: String::new(),
                 context: reported_operation_context(&anchor.rule_id, &anchor.context),
                 related_feature_policies: report_policy_associations(&review.facts),
                 flow: None,
+                additional_flows: Vec::new(),
                 related_locations,
                 checks: result.checks.clone(),
                 remediation,
@@ -3666,6 +3929,10 @@ fn review_scope(job: &PathReviewJob) -> Vec<String> {
         },
         job.review_material_excluded,
     )];
+    if let Some(changed) = &job.impact_scope {
+        scope.push(format!("Change scope: {}; {} changed paths, {} included source files. Native result policy: {}.", changed.strategy, changed.changed_files.len(), changed.included_file_count, changed.result_policy));
+        scope.extend(changed.reasons.iter().cloned());
+    }
     if job.include_review_material {
         scope.push("Fixtures, tests, examples and teaching material may be included intentionally; these results do not establish deployed application vulnerabilities.".to_string());
     }
@@ -4715,9 +4982,13 @@ fn make_bundle(
         contract_identity,
     );
     PathReviewBundle {
+        identity_catalog: job.identity_catalog.clone().map(|mut catalog| {
+            catalog.subjects.retain(|id, _| review_ids.contains(id)); catalog
+        }),
         schema_version: PATH_REVIEW_BUNDLE_SCHEMA_VERSION.to_string(),
         bundle_fingerprint: stable_review_hash("review-bundle", &identity),
         job_fingerprint: job.fingerprint.clone(),
+        impact_scope: job.impact_scope.clone(),
         goal: "Decide whether every supplied Mehscan review candidate represents a real security issue in the shown repository context. Scanner evidence is a lead, not a verdict. Return exactly one decision for every review ID.".to_string(),
         category,
         part,

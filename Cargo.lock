@@ -343,6 +343,7 @@ dependencies = [
  "mehscan-engine",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

@@ -1,5 +1,9 @@
 # Plan a repository review
 
+For local changes, a PR or release delta, start with [Changed review](changed-review.md).
+Its scoped inventory replaces whole-repository preassessment; Value and
+Comprehensive still select review depth within that scope.
+
 ## Modes and queue
 
 For membership and rationale, use [review scope policy](review-scope.md).
@@ -272,7 +276,7 @@ closure does not settle an independently identified record-authority question.
 See [database scope](review-scope.md#database-exclusions-and-remaining-cleanup).
 
 PHP queue conditions and their limits are in [review scope](review-scope.md).
-Inventory schema 22 requires a fresh scan; do not reuse an older inventory or its
+Inventory schema 25 requires a fresh scan; do not reuse an older inventory or its
 ledger. Use `--selection all` for `php_relationship_research`. Verify its bounded
 producer navigation against the actual writes, transformations, writer and actor.
 Same-file/rule `issue`, `needs_review` or conflicting verdicts reopen retained
