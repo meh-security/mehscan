@@ -53,6 +53,35 @@ comment commands, Copilot/Claude parity and required merge gates need separate
 implementation and acceptance. GHAS dismissal must not import a native safe verdict.
 Org memory, hosted inference and automatic fixes are outside this release scope.
 
+## Review-evidence follow-up
+
+The `feat/v11-review-evidence` branch adds inferred C# ZIP extraction questions
+and bounded ASP.NET startup/base-class source preparation for the reviewer.
+Credential and authorization guidance requires actual effects. Extraction and
+temporary-file deletion retain separate native identities; source preparation
+supplies navigation evidence, not proof that a policy is active.
+
+Local acceptance covers inferred ZIP and existing C# filesystem regressions,
+source-bound policy preparation through worker admission, and Windows/Ubuntu
+provider and worker tests. These tests verify evidence delivery and admission;
+they do not certify the model's security reasoning.
+
+The paired Luna/medium run at vulnerable .NET revision
+`60d060faf08079887e71a98498fe9a9d623e8ffc` passed normal native admission.
+Value settled 45 of 47 selected questions with two pending and two deferred;
+Comprehensive settled 46 of 49 with three pending. Both dismissed the simulated
+password-reset operations and exported the new extraction sink at its actual
+line. Structural SARIF checks passed, including unique fingerprint sets within
+each run and identical maps for all 15 issue IDs shared between modes on that
+snapshot. Input tokens increased relative to the saved baseline in both modes.
+
+Live Luna/medium review of a pinned vulnerable .NET application found remaining
+quality gaps: a ZIP defect can still be attributed to adjacent cleanup, shell
+allowlist reasoning can miss permitted newlines, and public operations can be
+flagged without establishing a required access policy. Executable C# inside Razor
+and non-UTF-8 LDAP source remain coverage gaps. Treat these as release evaluation
+work, and do not infer safety or token savings from fewer pending questions.
+
 ## Development builds and reruns
 
 Reuse the checkout's `target` directory and overwrite the existing executable,

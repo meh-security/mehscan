@@ -150,6 +150,56 @@ else:
         self.assertNotIn(self.owner, (self.base / "worker/worker.json").read_text())
         self.assertNotIn(self.owner, (self.base / "worker/work.json").read_text())
 
+    def test_native_csharp_policy_source_reaches_reviewer_and_admits_both_verdicts(self):
+        (self.root / "app.js").unlink()
+        (self.root / "App.csproj").write_text('<Project Sdk="Microsoft.NET.Sdk.Web"/>\n')
+        (self.root / "Program.cs").write_text('builder.Services.AddControllers();\nbuilder.Services.AddAuthorization(o => o.FallbackPolicy = null);\napp.MapControllers();\n')
+        (self.root / "Base.cs").write_text('using Microsoft.AspNetCore.Mvc;\n[IgnoreAntiforgeryToken]\npublic abstract class DemoBase : ControllerBase {}\n')
+        fixture = ROOT / 'tests/fixtures/v11-review-effects/Actions.cs'
+        (self.root / "Actions.cs").write_text(fixture.read_text().replace('ActionsController : ControllerBase', 'ActionsController : DemoBase'))
+        self.inventory, self.store, self.run = [self.base / name for name in ('policy-inventory', 'policy-state', 'policy-run')]
+        self.native('investigate', 'review-inventory', str(self.root), '--repository-key', 'evaluation:worker', '--output', str(self.inventory))
+        claim = self.native('state', 'claim', '--store', str(self.store), '--stream', 'local-review', '--inventory', str(self.inventory),
+            '--source-root', str(self.root), '--attempt-id', 'policy', '--expected-generation', '0', '--operation-key', 'claim')
+        self.claim.write_text(json.dumps(claim))
+        self.owner = claim['result']['owner']
+        self.common = ['--store', str(self.store), '--stream', 'local-review', '--inventory', str(self.inventory),
+            '--source-root', str(self.root), '--generation', '1', '--owner', self.owner]
+        plan = self.native('state', 'plan-template', '--inventory', str(self.inventory), '--source-root', str(self.root),
+            '--policy', 'comprehensive', '--skill-root', str(ROOT / 'skills/mehscan-security'))
+        self.ids = plan['selected_review_ids']
+        (self.base / 'plan.json').write_text(json.dumps(plan))
+        self.native('state', 'plan', *self.common, '--input', str(self.base / 'plan.json'), '--operation-key', 'plan')
+        self.native('investigate', 'review-bundles', str(self.root), '--inventory', str(self.inventory), '--review-ids', ','.join(self.ids), '--output', str(self.run))
+        self.package.write_text(json.dumps(self.native('state', 'work', *self.common)))
+        self.reviewer.write_text('''import json,sys
+from pathlib import Path
+task=json.load(sys.stdin)
+packet=json.loads(Path(task['evidence_packet']).read_text())
+windows=packet['primary']['windows']
+assert any(w['path']=='Program.cs' and w['complete_file'] and 'FallbackPolicy' in w['text'] for w in windows)
+assert any(w['path']=='Base.cs' and 'IgnoreAntiforgeryToken' in w['text'] for w in windows)
+source=Path(task['source_root'],'Actions.cs').read_text().splitlines()
+results=[]
+for question in packet['native_questions']:
+    symbol=question['symbol']
+    mutation=symbol=='ResetPassword'
+    start=next(n for n,text in enumerate(source) if ' '+symbol+'(' in text)
+    line=next(n for n,text in enumerate(source[start:],start+1) if ('password = next;' if mutation else 'return Ok(new { success = true') in text)
+    results.append({'review_id':question['review_id'],'decision':'issue' if mutation else 'not_issue','confidence':'high',
+        'summary':'Deterministic fixture: actual write.' if mutation else 'Deterministic fixture: simulated operation.',
+        'reason':'Fixture source writes the credential.' if mutation else 'Fixture source only returns a success response.',
+        'evidence':[{'path':'Actions.cs','start_line':line,'end_line':line}],'checks':[],'blockers':[]})
+print(json.dumps({'results':results}))
+''')
+        result = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        record = json.loads((self.base / 'worker/worker.json').read_text())
+        self.assertEqual(record['status'], 'admitted', record)
+        self.assertTrue(record['completion']['review_work_complete'])
+        decisions = json.loads((self.base / 'worker/findings.json').read_text())['decision_records']
+        self.assertEqual({d['response']['decision'] for d in decisions}, {'issue', 'not_issue'})
+
     def test_invalid_reviewer_output_and_stale_package_do_not_admit_decisions(self):
         self.reviewer.write_text('print("not valid review JSON")\n')
         result = self.invoke()

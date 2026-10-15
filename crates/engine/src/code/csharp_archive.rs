@@ -259,35 +259,46 @@ fn receiver_has_type(
                     && node
                         .field("left")
                         .is_some_and(|left| left.text().trim() == receiver_name)
-                    && node
-                        .field("type")
-                        .is_some_and(|kind| {
-                            type_is(root, kind.text().as_ref(), canonical)
-                                || (canonical == ZIP_ENTRY
-                                    && kind.text().trim() == "var"
-                                    && node.field("right").is_some_and(|collection| {
-                                        collection.kind().as_ref() == "member_access_expression"
-                                            && collection.field("name").is_some_and(|name| name.text().trim() == "Entries")
-                                            && collection.field("expression").is_some_and(|archive| {
-                                                receiver_has_type(root, &node, &archive, ZIP_ARCHIVE)
-                                            })
-                                    }))
-                        })))
+                    && node.field("type").is_some_and(|kind| {
+                        type_is(root, kind.text().as_ref(), canonical)
+                            || (canonical == ZIP_ENTRY
+                                && kind.text().trim() == "var"
+                                && node.field("right").is_some_and(|collection| {
+                                    collection.kind().as_ref() == "member_access_expression"
+                                        && collection
+                                            .field("name")
+                                            .is_some_and(|name| name.text().trim() == "Entries")
+                                        && collection.field("expression").is_some_and(|archive| {
+                                            receiver_has_type(root, &node, &archive, ZIP_ARCHIVE)
+                                        })
+                                }))
+                    })))
     })
 }
 
-fn archive_initializer(root: &Node<'_, StrDoc<SupportLang>>, declaration: &Node<'_, StrDoc<SupportLang>>) -> bool {
+fn archive_initializer(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    declaration: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
     declaration.children().any(|initializer| {
         if initializer.kind().as_ref() == "object_creation_expression" {
-            return initializer.field("type").is_some_and(|kind| type_is(root, kind.text().as_ref(), ZIP_ARCHIVE));
+            return initializer
+                .field("type")
+                .is_some_and(|kind| type_is(root, kind.text().as_ref(), ZIP_ARCHIVE));
         }
         if initializer.kind().as_ref() != "invocation_expression" {
             return false;
         }
         initializer.field("function").is_some_and(|function| {
-            function.field("name").is_some_and(|name| name.text().trim() == "OpenRead")
+            function
+                .field("name")
+                .is_some_and(|name| name.text().trim() == "OpenRead")
                 && function.field("expression").is_some_and(|receiver| {
-                    type_is(root, receiver.text().as_ref(), "System.IO.Compression.ZipFile")
+                    type_is(
+                        root,
+                        receiver.text().as_ref(),
+                        "System.IO.Compression.ZipFile",
+                    )
                 })
         })
     })
@@ -485,37 +496,93 @@ mod inferred_tests {
         let ast = AstGrep::doc(StrDoc::try_new(source, SupportLang::CSharp).unwrap());
         let root = ast.root();
         let comments = CommentRanges::from_root(&root);
-        let conditional = ConditionalRegions::from_source(Language::Csharp, source, &BTreeMap::new());
+        let conditional =
+            ConditionalRegions::from_source(Language::Csharp, source, &BTreeMap::new());
         let literals = LiteralEnvironment::build(&root, Language::Csharp);
         let mut evidence = Vec::new();
-        add_archive_observations(path, &root, Language::Csharp, &comments, &conditional, &literals, &mut evidence);
+        add_archive_observations(
+            path,
+            &root,
+            Language::Csharp,
+            &comments,
+            &conditional,
+            &literals,
+            &mut evidence,
+        );
         evidence
     }
 
     #[test]
     fn inferred_entries_are_zip_typed_sources_and_extraction_sinks() {
-        let source = include_str!("../../../../tests/fixtures/v2-csharp-archive-inferred/Archive.cs");
+        let source =
+            include_str!("../../../../tests/fixtures/v2-csharp-archive-inferred/Archive.cs");
         let evidence = observations("Archive.cs", source);
-        let sinks = evidence.iter().filter(|e| e.kind == EvidenceKind::Sink).collect::<Vec<_>>();
+        let sinks = evidence
+            .iter()
+            .filter(|e| e.kind == EvidenceKind::Sink)
+            .collect::<Vec<_>>();
         assert_eq!(sinks.len(), 3);
         for symbol in ["Parameter", "Open", "Construct"] {
-            assert!(sinks.iter().any(|e| e.enclosing_symbol.as_deref() == Some(symbol) && e.captures["entry"].text == "entry"));
-            assert!(evidence.iter().any(|e| e.kind == EvidenceKind::Source && e.enclosing_symbol.as_deref() == Some(symbol)));
+            assert!(
+                sinks
+                    .iter()
+                    .any(|e| e.enclosing_symbol.as_deref() == Some(symbol)
+                        && e.captures["entry"].text == "entry")
+            );
+            assert!(
+                evidence.iter().any(|e| e.kind == EvidenceKind::Source
+                    && e.enclosing_symbol.as_deref() == Some(symbol))
+            );
         }
-        assert!(evidence.iter().all(|e| e.enclosing_symbol.as_deref() != Some("Unknown")));
-        assert!(sinks.iter().all(|e| source[e.location.start.byte_offset..e.location.end.byte_offset].contains("ExtractToFile")));
+        assert!(
+            evidence
+                .iter()
+                .all(|e| e.enclosing_symbol.as_deref() != Some("Unknown"))
+        );
+        assert!(sinks.iter().all(|e| {
+            source[e.location.start.byte_offset..e.location.end.byte_offset]
+                .contains("ExtractToFile")
+        }));
     }
 
     #[test]
     fn existing_explicit_alias_and_containment_evidence_remains_exact() {
         let cases = [
-            ("Positive.cs", include_str!("../../../../tests/fixtures/v2-csharp-c16/Positive.cs")),
-            ("Protected.cs", include_str!("../../../../tests/fixtures/v2-csharp-c16/Protected.cs")),
-            ("ForeachAndLookalikes.cs", include_str!("../../../../tests/fixtures/v2-csharp-c16/ForeachAndLookalikes.cs")),
+            (
+                "Positive.cs",
+                include_str!("../../../../tests/fixtures/v2-csharp-c16/Positive.cs"),
+            ),
+            (
+                "Protected.cs",
+                include_str!("../../../../tests/fixtures/v2-csharp-c16/Protected.cs"),
+            ),
+            (
+                "ForeachAndLookalikes.cs",
+                include_str!("../../../../tests/fixtures/v2-csharp-c16/ForeachAndLookalikes.cs"),
+            ),
         ];
-        let evidence = cases.into_iter().flat_map(|(path, source)| observations(path, source)).collect::<Vec<_>>();
-        assert_eq!(evidence.iter().filter(|e| e.kind == EvidenceKind::Source).count(), 11);
-        assert_eq!(evidence.iter().filter(|e| e.rule_id == "csharp-zip-entry-rooted-containment").count(), 2);
-        assert!(evidence.iter().all(|e| e.enclosing_symbol.as_deref() != Some("Shadow")));
+        let evidence = cases
+            .into_iter()
+            .flat_map(|(path, source)| observations(path, source))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            evidence
+                .iter()
+                .filter(|e| e.kind == EvidenceKind::Source)
+                .count(),
+            11
+        );
+        assert_eq!(
+            evidence
+                .iter()
+                .filter(|e| e.rule_id == "csharp-zip-entry-rooted-containment")
+                .count(),
+            2
+        );
+        assert!(
+            evidence
+                .iter()
+                .all(|e| e.enclosing_symbol.as_deref() != Some("Shadow"))
+        );
     }
 }

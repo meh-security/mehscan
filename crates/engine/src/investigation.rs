@@ -9570,7 +9570,8 @@ fn build_observation_reviews(
                 Capability::Authorization | Capability::Authentication
             )
         }) {
-            let (mut application, limited) = csharp_application_context::facts(sources, file, anchor);
+            let (mut application, limited) =
+                csharp_application_context::facts(sources, file, anchor);
             context_truncated |= limited;
             facts.append(&mut application);
         }

@@ -1349,9 +1349,17 @@ mod effect_cases {
     #[test]
     fn simulated_and_actual_transitions_keep_separate_source_bound_questions() {
         let source = include_str!("../../../../tests/fixtures/v11-review-effects/Actions.cs");
-        let sources = RepositorySources { root: ".".into(), files: BTreeMap::from([("Actions.cs".into(), SourceFile {
-            path: "Actions.cs".into(), language: Some(Language::Csharp), source: source.into(),
-        })]) };
+        let sources = RepositorySources {
+            root: ".".into(),
+            files: BTreeMap::from([(
+                "Actions.cs".into(),
+                SourceFile {
+                    path: "Actions.cs".into(),
+                    language: Some(Language::Csharp),
+                    source: source.into(),
+                },
+            )]),
+        };
         let groups = server_mutation_review_marker_groups(&sources, &[], None);
         assert_eq!(groups.len(), 3);
         let mut identities = BTreeSet::new();

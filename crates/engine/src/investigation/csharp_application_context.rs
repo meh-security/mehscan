@@ -32,7 +32,11 @@ pub(super) fn facts(
             && startup.source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES
         {
             facts.push(lead(
-                startup, 0, startup.source.len(), "application_policy_context", name,
+                startup,
+                0,
+                startup.source.len(),
+                "application_policy_context",
+                name,
             ));
         }
     }
@@ -83,17 +87,23 @@ pub(super) fn facts(
         }
         let mut matches = Vec::new();
         for candidate in &candidates {
-            let Ok(doc) = StrDoc::try_new(&candidate.source, parser_language(Language::Csharp)) else {
+            let Ok(doc) = StrDoc::try_new(&candidate.source, parser_language(Language::Csharp))
+            else {
                 continue;
             };
             let ast = AstGrep::doc(doc);
             for declaration in ast.root().dfs().filter(|node| {
                 node.kind().as_ref() == "class_declaration"
-                    && node.field("name").is_some_and(|name| name.text().trim() == base)
+                    && node
+                        .field("name")
+                        .is_some_and(|name| name.text().trim() == base)
             }) {
                 matches.push(lead(
-                    candidate, declaration.range().start, declaration.range().end,
-                    "inherited_policy_context", base,
+                    candidate,
+                    declaration.range().start,
+                    declaration.range().end,
+                    "inherited_policy_context",
+                    base,
                 ));
             }
         }
@@ -126,7 +136,9 @@ fn lead(
         location: location_from_offsets(&file.path, &file.source, start, end),
         excerpt: String::new(),
         evidence_id: None,
-        provenance: textual_provenance("same-project C# startup or unique lexical base-class navigation; effective policy and runtime activation unproved; location-only review lead 1"),
+        provenance: textual_provenance(
+            "same-project C# startup or unique lexical base-class navigation; effective policy and runtime activation unproved; location-only review lead 1",
+        ),
     }
 }
 
@@ -134,33 +146,79 @@ fn lead(
 mod tests {
     use super::*;
     fn fixture(files: &[(&str, &str)]) -> RepositorySources {
-        RepositorySources { root: ".".into(), files: files.iter().map(|(path, text)| (path.to_string(), SourceFile {
-            path: path.to_string(), language: path.ends_with(".cs").then_some(Language::Csharp), source: text.to_string(),
-        })).collect() }
+        RepositorySources {
+            root: ".".into(),
+            files: files
+                .iter()
+                .map(|(path, text)| {
+                    (
+                        path.to_string(),
+                        SourceFile {
+                            path: path.to_string(),
+                            language: path.ends_with(".cs").then_some(Language::Csharp),
+                            source: text.to_string(),
+                        },
+                    )
+                })
+                .collect(),
+        }
     }
     #[test]
     fn selects_same_project_startup_and_unique_base_without_borrowing_sibling_policy() {
         let sources = fixture(&[
-            ("app/App.csproj", "<Project />"), ("other/Other.csproj", "<Project />"),
-            ("app/Program.cs", "builder.Services.AddControllers();\napp.MapControllers();\n"),
+            ("app/App.csproj", "<Project />"),
+            ("other/Other.csproj", "<Project />"),
+            (
+                "app/Program.cs",
+                "builder.Services.AddControllers();\napp.MapControllers();\n",
+            ),
             ("other/Program.cs", "app.RequireAuthorization();"),
-            ("app/Base.cs", "[Authorize] class DemoBase : ControllerBase {}"),
-            ("app/Controller.cs", "class Controller : DemoBase { public void Reset() {} }"),
+            (
+                "app/Base.cs",
+                "[Authorize] class DemoBase : ControllerBase {}",
+            ),
+            (
+                "app/Controller.cs",
+                "class Controller : DemoBase { public void Reset() {} }",
+            ),
         ]);
         let file = &sources.files["app/Controller.cs"];
-        let anchor = location_from_offsets(&file.path, &file.source, file.source.find("public").unwrap(), file.source.find("public").unwrap()+6);
+        let anchor = location_from_offsets(
+            &file.path,
+            &file.source,
+            file.source.find("public").unwrap(),
+            file.source.find("public").unwrap() + 6,
+        );
         let (facts, limited) = super::facts(&sources, file, &anchor);
         assert!(!limited);
         assert_eq!(facts.len(), 2);
-        assert!(facts.iter().any(|fact| fact.role == "application_policy_context" && fact.location.path == "app/Program.cs" && fact.location.end.line == 2));
-        assert!(facts.iter().any(|fact| fact.role == "inherited_policy_context" && fact.location.path == "app/Base.cs"));
-        assert!(facts.iter().all(|fact| fact.location.path.starts_with("app/") && fact.excerpt.is_empty()));
+        assert!(
+            facts
+                .iter()
+                .any(|fact| fact.role == "application_policy_context"
+                    && fact.location.path == "app/Program.cs"
+                    && fact.location.end.line == 2)
+        );
+        assert!(
+            facts
+                .iter()
+                .any(|fact| fact.role == "inherited_policy_context"
+                    && fact.location.path == "app/Base.cs")
+        );
+        assert!(
+            facts
+                .iter()
+                .all(|fact| fact.location.path.starts_with("app/") && fact.excerpt.is_empty())
+        );
     }
     #[test]
     fn ambiguous_base_is_not_presented_as_inherited_policy() {
         let sources = fixture(&[
             ("App.csproj", "<Project />"),
-            ("Controller.cs", "class Controller : Base { public void Reset() {} }"),
+            (
+                "Controller.cs",
+                "class Controller : Base { public void Reset() {} }",
+            ),
             ("One.cs", "namespace One { [Authorize] class Base {} }"),
             ("Two.cs", "namespace Two { [AllowAnonymous] class Base {} }"),
         ]);
