@@ -127,6 +127,7 @@ mod scanner;
 #[path = "sql_flow.rs"]
 mod security_paths;
 mod symbols;
+mod url_shape;
 pub(crate) mod vue;
 mod webforms;
 

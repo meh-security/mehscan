@@ -12860,17 +12860,10 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
     {
         return match item.capability {
             Capability::OutboundNetworkRequest => {
-                item.context
-                    .literals
-                    .get("endpoint")
-                    .is_some_and(|literal| has_fixed_http_authority(item, literal, sources))
+                has_fixed_http_authority(item)
                     || is_fixed_imported_browser_outbound_request(item, sources)
             }
-            Capability::Redirect => item
-                .context
-                .literals
-                .get("location")
-                .is_some_and(|literal| has_fixed_internal_redirect_prefix(item, literal, sources)),
+            Capability::Redirect => has_fixed_internal_redirect_prefix(item),
             _ => false,
         };
     }
@@ -12934,11 +12927,8 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
     literal.is_some_and(|literal| {
         literal.state == LiteralState::Known
             && matches!(literal.value, Some(LiteralValue::String(_)))
-    }) || (item.capability == Capability::OutboundNetworkRequest
-        && literal.is_some_and(|literal| has_fixed_http_authority(item, literal, sources)))
-        || (item.capability == Capability::Redirect
-            && literal
-                .is_some_and(|literal| has_fixed_internal_redirect_prefix(item, literal, sources)))
+    }) || (item.capability == Capability::OutboundNetworkRequest && has_fixed_http_authority(item))
+        || (item.capability == Capability::Redirect && has_fixed_internal_redirect_prefix(item))
         || is_fixed_python_local_path(item, sources)
 }
 
@@ -14623,85 +14613,18 @@ fn scrub_python_strings_and_comments(source: &str) -> String {
     String::from_utf8(scrubbed).expect("scrubbing ASCII syntax preserves UTF-8")
 }
 
-fn has_fixed_internal_redirect_prefix(
-    item: &Evidence,
-    literal: &mehscan_core::LiteralEvaluation,
-    sources: &RepositorySources,
-) -> bool {
-    // Constant fragments do not say where unresolved values occur. In Node a
-    // suffix such as userUrl + '/login' must never masquerade as a fixed prefix.
-    // Use the AST construction tags above instead; leave other language policy
-    // unchanged until equivalent ordered construction facts are available.
-    if sources
-        .files
-        .get(&item.location.path)
-        .and_then(|file| file.language)
-        .is_some_and(|language| {
-            matches!(
-                language,
-                Language::Javascript | Language::Typescript | Language::Tsx
-            )
-        })
-    {
-        return false;
-    }
-    if literal.state != LiteralState::Partial {
-        return false;
-    }
-    let Some(prefix) = literal.constant_fragments.first().map(|value| value.trim()) else {
-        return false;
-    };
-    if prefix.is_empty()
-        || prefix.starts_with("//")
-        || prefix.starts_with("\\\\")
-        || prefix.contains("://")
-    {
-        return false;
-    }
-    prefix
-        .chars()
-        .any(|character| character.is_ascii_alphanumeric())
+// Fragments preserve content, not its position relative to unknown values.
+// Only ordered AST construction facts may close a partial URL observation.
+fn has_fixed_internal_redirect_prefix(item: &Evidence) -> bool {
+    item.tags
+        .iter()
+        .any(|tag| tag == "url-shape:fixed-navigation-prefix")
 }
 
-fn has_fixed_http_authority(
-    item: &Evidence,
-    literal: &mehscan_core::LiteralEvaluation,
-    sources: &RepositorySources,
-) -> bool {
-    if sources
-        .files
-        .get(&item.location.path)
-        .and_then(|file| file.language)
-        .is_some_and(|language| {
-            matches!(
-                language,
-                Language::Javascript | Language::Typescript | Language::Tsx
-            )
-        })
-    {
-        return item
-            .tags
-            .iter()
-            .any(|tag| tag == "url-shape:fixed-http-authority");
-    }
-    if literal.state != LiteralState::Partial {
-        return false;
-    }
-    let Some(prefix) = literal.constant_fragments.first() else {
-        return false;
-    };
-    let Some(authority_and_path) = prefix
-        .strip_prefix("https://")
-        .or_else(|| prefix.strip_prefix("http://"))
-    else {
-        return false;
-    };
-    let Some((authority, _)) = authority_and_path.split_once('/') else {
-        return false;
-    };
-    !authority.is_empty()
-        && !authority.contains(['@', '\\', '{', '}'])
-        && !authority.chars().any(char::is_whitespace)
+fn has_fixed_http_authority(item: &Evidence) -> bool {
+    item.tags
+        .iter()
+        .any(|tag| tag == "url-shape:fixed-http-authority")
 }
 
 fn is_fixed_python_local_path(item: &Evidence, sources: &RepositorySources) -> bool {

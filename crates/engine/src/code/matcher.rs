@@ -1773,6 +1773,7 @@ pub(crate) fn scan_source(
             });
         }
     }
+    super::url_shape::annotate(&root, language, &mut evidence);
     let summaries_microseconds = summaries_started.elapsed().as_micros();
     let paths_started = Instant::now();
     let mut security_paths = super::security_paths::build_security_paths(

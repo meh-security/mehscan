@@ -3,6 +3,8 @@
 use super::{MAX_PROPAGATION_DEPTH, Node, NodeOperandIndex, Range, StrDoc, SupportLang};
 use mehscan_core::{Capability, Evidence, EvidenceKind};
 
+use super::super::url_shape::{fixed_http_prefix, fixed_navigation_prefix};
+
 type Ast<'a> = Node<'a, StrDoc<SupportLang>>;
 
 #[derive(Clone)]
@@ -145,39 +147,6 @@ pub(super) fn contribution(
         (true, Some('#')) => Contribution::FragmentSuffix,
         _ => Contribution::Unknown,
     }
-}
-
-fn fixed_navigation_prefix(prefix: &str) -> bool {
-    if !prefix.is_ascii() || prefix.bytes().any(|b| b.is_ascii_control() || b == b'\\') {
-        return false;
-    }
-    if prefix.starts_with('/') && prefix.len() >= 2 && !prefix.starts_with("//") {
-        return true;
-    }
-    if prefix.starts_with('?') || prefix.starts_with('#') {
-        return true;
-    }
-    fixed_http_prefix(prefix)
-}
-
-fn fixed_http_prefix(prefix: &str) -> bool {
-    if !prefix.is_ascii() || prefix.bytes().any(|b| b.is_ascii_control() || b == b'\\') {
-        return false;
-    }
-    let Some(rest) = prefix
-        .strip_prefix("https://")
-        .or_else(|| prefix.strip_prefix("http://"))
-    else {
-        return false;
-    };
-    let Some(end) = rest.find(['/', '?', '#']) else {
-        return false;
-    };
-    let authority = &rest[..end];
-    !authority.is_empty()
-        && authority
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b':' | b'[' | b']'))
 }
 
 // At most four aliases, 64 expression nodes, and eight alternatives. Reuse the
