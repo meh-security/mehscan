@@ -614,11 +614,20 @@ fn resolution(
 }
 
 fn normalize_symbol(symbol: &str) -> String {
-    symbol
+    let normalized = symbol
         .trim()
         .trim_start_matches("node:")
         .trim_start_matches("global::")
-        .replace("::", ".")
+        .replace("::", ".");
+    // Both Node entrypoints expose the same promise API. Normalize only this
+    // exact built-in subpath; slashes in arbitrary package names are meaningful.
+    if normalized == "fs/promises" {
+        "fs.promises".to_string()
+    } else if let Some(member) = normalized.strip_prefix("fs/promises.") {
+        format!("fs.promises.{member}")
+    } else {
+        normalized
+    }
 }
 
 fn parse_csharp_using(
