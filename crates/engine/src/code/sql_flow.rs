@@ -34,19 +34,28 @@ struct TrackedValue {
     steps: Vec<SecurityPathStep>,
 }
 
-pub(crate) fn build_security_paths(
+pub(crate) fn build_security_paths<'tree>(
     path: &str,
-    root: &Node<'_, StrDoc<SupportLang>>,
+    root: &Node<'tree, StrDoc<SupportLang>>,
     language: Language,
     evidence: &[Evidence],
     symbols: &FileSymbolEnvironment,
     relations: &[RelationContract],
 ) -> Vec<SecurityPath> {
     let mut paths = Vec::new();
+    // Built only if a Node guarded-operand check needs it; shared across all
+    // source/sink pairs and relation families in this file.
+    let mut node_operands = None;
     for relation in relations {
         match relation.strategy {
             RelationStrategy::BoundedLocalValue => paths.extend(build_family_paths(
-                path, root, language, evidence, symbols, relation,
+                path,
+                root,
+                language,
+                evidence,
+                symbols,
+                relation,
+                &mut node_operands,
             )),
             RelationStrategy::StoredSubtitleFile => paths.extend(build_stored_subtitle_html_paths(
                 path, root, language, evidence, relation,
@@ -241,13 +250,15 @@ fn stored_subtitle_html_steps(
     ])
 }
 
-fn build_family_paths(
+#[allow(clippy::too_many_arguments)]
+fn build_family_paths<'tree>(
     path: &str,
-    root: &Node<'_, StrDoc<SupportLang>>,
+    root: &Node<'tree, StrDoc<SupportLang>>,
     language: Language,
     evidence: &[Evidence],
     symbols: &FileSymbolEnvironment,
     family: &RelationContract,
+    node_operands: &mut Option<NodeOperandIndex<'tree>>,
 ) -> Vec<SecurityPath> {
     let sources = evidence
         .iter()
@@ -726,7 +737,9 @@ fn build_family_paths(
                     && target_nodes
                         .iter()
                         .any(|(_, target)| node_direct_string_operand(target, &source_range))
-                    && node_source_is_unchanged(root, &source_node, &source_scope)
+                    && node_operands
+                        .get_or_insert_with(|| NodeOperandIndex::new(root, language))
+                        .source_is_unchanged(&source_node, &source_scope)
                 {
                     let mut steps = vec![evidence_step(SecurityPathStepKind::Source, source)];
                     steps.extend(
@@ -762,12 +775,14 @@ fn build_family_paths(
                             target_nodes.iter().find_map(|(_, target)| {
                                 node_guarded_alias_steps(
                                     path,
-                                    root,
                                     language,
                                     symbols,
                                     &source_node,
                                     target,
                                     &sink_scope,
+                                    node_operands.get_or_insert_with(|| {
+                                        NodeOperandIndex::new(root, language)
+                                    }),
                                 )
                             })
                         })
@@ -1646,47 +1661,251 @@ fn node_direct_string_operand(
         .any(|child| node_direct_string_operand(&child, source))
 }
 
+type NodeScope = (usize, usize);
+
+struct NodeOperandWrite {
+    range: Range<usize>,
+    scope: NodeScope,
+    access: Option<Vec<String>>,
+    text: String,
+    binding: bool,
+}
+
+#[derive(Default)]
+struct NodeOperandBinding<'tree> {
+    assignments: Vec<Assignment<'tree>>,
+    declarations: Vec<Range<usize>>,
+    writes: Vec<Range<usize>>,
+}
+
+/// Syntax facts only. Index once per file, query by callable scope/binding.
+/// Declaration and mutation facts are shared by source, alias and API checks;
+/// this index neither joins branches nor infers values or external behavior.
+#[derive(Default)]
+struct NodeOperandIndex<'tree> {
+    bindings: BTreeMap<NodeScope, BTreeMap<String, NodeOperandBinding<'tree>>>,
+    declarations: BTreeMap<String, Vec<(Range<usize>, NodeScope)>>,
+    writes: BTreeMap<String, Vec<NodeOperandWrite>>,
+    imported: BTreeSet<String>,
+    source_cache: std::cell::RefCell<BTreeMap<(NodeScope, usize, usize), bool>>,
+    api_cache: std::cell::RefCell<BTreeMap<usize, Option<&'static str>>>,
+}
+
+impl<'tree> NodeOperandIndex<'tree> {
+    fn new(root: &Node<'tree, StrDoc<SupportLang>>, language: Language) -> Self {
+        let mut index = Self::default();
+        for node in root.dfs() {
+            let kind = node.kind();
+            let (target, declaration) = match kind.as_ref() {
+                "import_statement" => {
+                    index.imported.extend(
+                        node.dfs()
+                            .filter(|n| n.kind().as_ref() == "identifier")
+                            .map(|n| n.text().into_owned()),
+                    );
+                    continue;
+                }
+                "variable_declarator" => (node.field("name"), true),
+                "assignment_expression" | "augmented_assignment_expression" => {
+                    (node.field("left"), false)
+                }
+                "update_expression" => (node.field("argument"), false),
+                _ => continue,
+            };
+            let Some(target) = target else { continue };
+            let scope = scope_range(&node, root);
+            let key = (scope.start, scope.end);
+            if let Some(assignment) = assignment_parts(node.clone(), language, &scope) {
+                index
+                    .bindings
+                    .entry(key)
+                    .or_default()
+                    .entry(assignment.left.clone())
+                    .or_default()
+                    .assignments
+                    .push(assignment);
+            }
+            if declaration && target.kind().as_ref() == "identifier" {
+                index
+                    .declarations
+                    .entry(target.text().into_owned())
+                    .or_default()
+                    .push((node.range(), key));
+            }
+            let bindings = if matches!(target.kind().as_ref(), "object_pattern" | "array_pattern") {
+                // Conservatively includes competing pattern keys, matching the
+                // previous write barrier rather than guessing destructuring.
+                target
+                    .dfs()
+                    .filter(|n| n.is_named())
+                    .filter_map(|n| simple_identifier(n.text().as_ref()).map(str::to_string))
+                    .collect::<BTreeSet<_>>()
+            } else if target.kind().as_ref() == "identifier" {
+                BTreeSet::from([target.text().into_owned()])
+            } else {
+                BTreeSet::new()
+            };
+            for binding in &bindings {
+                let effects = index
+                    .bindings
+                    .entry(key)
+                    .or_default()
+                    .entry(binding.clone())
+                    .or_default();
+                if declaration {
+                    effects.declarations.push(node.range());
+                } else {
+                    effects.writes.push(node.range());
+                }
+            }
+            if declaration {
+                continue;
+            }
+            let access = node_static_access(&target, 0).or_else(|| {
+                target
+                    .field("object")
+                    .and_then(|n| node_static_access(&n, 0))
+            });
+            let roots = if let Some(access) = &access {
+                access.first().cloned().into_iter().collect::<BTreeSet<_>>()
+            } else {
+                bindings
+            };
+            for name in roots {
+                index
+                    .writes
+                    .entry(name)
+                    .or_default()
+                    .push(NodeOperandWrite {
+                        range: node.range(),
+                        scope: key,
+                        access: access.clone(),
+                        text: compact_expression(target.text().as_ref()),
+                        binding: target.kind().as_ref() == "identifier",
+                    });
+            }
+        }
+        index
+    }
+
+    fn source_is_unchanged(
+        &self,
+        source: &Node<'_, StrDoc<SupportLang>>,
+        scope: &Range<usize>,
+    ) -> bool {
+        let scope = (scope.start, scope.end);
+        let key = (scope, source.range().start, source.range().end);
+        if let Some(result) = self.source_cache.borrow().get(&key) {
+            return *result;
+        }
+        let observed = compact_expression(source.text().as_ref());
+        let access = node_static_access(source, 0);
+        let affects_source = |write: &NodeOperandWrite| {
+            write.scope == scope
+                && write.range.end <= source.range().start
+                && (access
+                    .as_ref()
+                    .zip(write.access.as_ref())
+                    .is_some_and(|(source, written)| source.starts_with(written))
+                    || observed == write.text
+                    || observed.starts_with(&format!("{}.", write.text))
+                    || observed.starts_with(&format!("{}[", write.text)))
+        };
+        let changed = if let Some(head) = access.as_ref().and_then(|access| access.first()) {
+            self.writes
+                .get(head)
+                .is_some_and(|writes| writes.iter().any(affects_source))
+        } else {
+            self.writes.values().flatten().any(affects_source)
+        };
+        let unchanged = !changed;
+        self.source_cache.borrow_mut().insert(key, unchanged);
+        unchanged
+    }
+
+    fn binding(&self, scope: &Range<usize>, name: &str) -> Option<&NodeOperandBinding<'tree>> {
+        self.bindings.get(&(scope.start, scope.end))?.get(name)
+    }
+
+    fn path_api(
+        &self,
+        symbols: &FileSymbolEnvironment,
+        language: Language,
+        callee: &Node<'_, StrDoc<SupportLang>>,
+    ) -> Option<&'static str> {
+        let at = callee.range().start;
+        if let Some(api) = self.api_cache.borrow().get(&at) {
+            return *api;
+        }
+        let observed = compact_expression(callee.text().as_ref()).replace("?.", ".");
+        let head = observed.split('.').next()?;
+        let api = ["path.resolve", "path.join", "path.normalize"]
+            .into_iter()
+            .find(|api| symbols.resolve_imported(&observed, api).is_some());
+        let declared = self
+            .declarations
+            .get(head)
+            .into_iter()
+            .flatten()
+            .filter(|(_, scope)| scope.0 <= at && at < scope.1)
+            .collect::<Vec<_>>();
+        let stable = declared.len() <= 1
+            && declared.iter().all(|(range, _)| range.end <= at)
+            && (declared.is_empty() || !self.imported.contains(head))
+            && !self.writes.get(head).into_iter().flatten().any(|write| {
+                write.range.start < at
+                    && (write.binding
+                        || write
+                            .access
+                            .as_ref()
+                            .is_some_and(|access| access.first().is_some_and(|name| name == head)))
+            })
+            && !symbols.has_shadowing_parameter(callee, &observed, language)
+            && !callee
+                .ancestors()
+                .filter(|n| is_function_scope(n.kind().as_ref()))
+                .filter_map(|n| n.field("parameters"))
+                .any(|parameters| {
+                    parameters
+                        .dfs()
+                        .any(|n| n.kind().as_ref() == "identifier" && n.text() == head)
+                });
+        let api = api.filter(|_| stable);
+        self.api_cache.borrow_mut().insert(at, api);
+        api
+    }
+}
+
 // A bounded operand proof, not a branch join or general call interpreter. Each
 // alias is resolved at its own assignment, so later writes cannot alter a copy.
 #[allow(clippy::too_many_arguments)]
 fn node_guarded_alias_steps(
     path: &str,
-    root: &Node<'_, StrDoc<SupportLang>>,
     language: Language,
     symbols: &FileSymbolEnvironment,
     source: &Node<'_, StrDoc<SupportLang>>,
     target: &Node<'_, StrDoc<SupportLang>>,
     scope: &Range<usize>,
+    index: &NodeOperandIndex<'_>,
 ) -> Option<Vec<SecurityPathStep>> {
-    if !node_source_is_unchanged(root, source, scope) {
+    if !index.source_is_unchanged(source, scope) {
         return None;
     }
-    let assignments = assignments_in_scope(root, language, scope);
     let mut work = 64;
     node_operand_origin(
-        path,
-        root,
-        language,
-        symbols,
-        source,
-        target,
-        scope,
-        &assignments,
-        0,
-        &mut work,
+        path, language, symbols, source, target, scope, index, 0, &mut work,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn node_operand_origin(
     path: &str,
-    root: &Node<'_, StrDoc<SupportLang>>,
     language: Language,
     symbols: &FileSymbolEnvironment,
     source: &Node<'_, StrDoc<SupportLang>>,
     target: &Node<'_, StrDoc<SupportLang>>,
     scope: &Range<usize>,
-    assignments: &[Assignment<'_>],
+    index: &NodeOperandIndex<'_>,
     depth: usize,
     work: &mut usize,
 ) -> Option<Vec<SecurityPathStep>> {
@@ -1702,7 +1921,9 @@ fn node_operand_origin(
     }
     if target.kind().as_ref() == "identifier" {
         let name = target.text();
-        let assignment = assignments
+        let binding = index.binding(scope, name.as_ref())?;
+        let assignment = binding
+            .assignments
             .iter()
             .rev()
             .find(|a| a.left == name && a.node.range().end <= target.range().start)?;
@@ -1711,32 +1932,24 @@ fn node_operand_origin(
         }
         // Unsupported writes and uninitialized shadow declarations must also
         // kill the alias; the shared assignment inventory excludes these.
-        if root.dfs().any(|n| {
-            let written = match n.kind().as_ref() {
-                "variable_declarator" => n.field("name"),
-                "assignment_expression" | "augmented_assignment_expression" => n.field("left"),
-                "update_expression" => n.field("argument"),
-                _ => None,
-            };
-            written.is_some_and(|n| {
-                n.text() == name
-                    || (matches!(n.kind().as_ref(), "object_pattern" | "array_pattern")
-                        && n.dfs().any(|binding| binding.text() == name))
-            }) && n.range().start >= assignment.node.range().end
-                && n.range().end <= target.range().start
-                && scope_range(&n, root) == *scope
-        }) {
+        if binding
+            .declarations
+            .iter()
+            .chain(&binding.writes)
+            .any(|range| {
+                range.start >= assignment.node.range().end && range.end <= target.range().start
+            })
+        {
             return None;
         }
         let mut steps = node_operand_origin(
             path,
-            root,
             language,
             symbols,
             source,
             &assignment.right,
             scope,
-            assignments,
+            index,
             depth + 1,
             work,
         )?;
@@ -1750,31 +1963,7 @@ fn node_operand_origin(
     }
     let transform = if target.kind().as_ref() == "call_expression" {
         let callee = target.field("function")?;
-        let api = ["path.resolve", "path.join", "path.normalize"]
-            .into_iter()
-            .find(|api| {
-                super::node_api_boundaries::exact_imported_api(
-                    root, symbols, &callee, api, language,
-                )
-            })?;
-        // Replacing a path method invalidates the imported API contract too.
-        let head = compact_expression(callee.text().as_ref())
-            .split('.')
-            .next()?
-            .to_string();
-        if root.dfs().any(|n| {
-            matches!(
-                n.kind().as_ref(),
-                "assignment_expression" | "augmented_assignment_expression" | "update_expression"
-            ) && n.range().start < target.range().start
-                && n.field("left")
-                    .or_else(|| n.field("argument"))
-                    .and_then(|n| node_static_access(&n, 0))
-                    .is_some_and(|p| p.first() == Some(&head))
-        }) {
-            return None;
-        }
-        Some(api)
+        index.path_api(symbols, language, &callee).map(Some)?
     } else {
         match target.kind().as_ref() {
             "binary_expression" if target.field("operator").is_some_and(|n| n.text() == "+") => {}
@@ -1796,34 +1985,28 @@ fn node_operand_origin(
         .children()
         .filter(|n| n.is_named())
         .collect::<Vec<_>>();
-    let mut steps = arguments.iter().enumerate().find_map(|(index, n)| {
-        // resolve discards earlier components at a later absolute segment.
-        // Do not turn a definitely discarded input into a review candidate.
-        if transform == Some("path.resolve")
-            && arguments[index + 1..].iter().any(|later| {
-                let text = later.text();
-                simple_string_literal(text.trim()).is_some_and(|value| {
-                    value.starts_with('/')
-                        || value.starts_with('\\')
-                        || value.as_bytes().get(1) == Some(&b':')
+    let mut steps = arguments
+        .iter()
+        .enumerate()
+        .find_map(|(operand_index, n)| {
+            // resolve discards earlier components at a later absolute segment.
+            // Do not turn a definitely discarded input into a review candidate.
+            if transform == Some("path.resolve")
+                && arguments[operand_index + 1..].iter().any(|later| {
+                    let text = later.text();
+                    simple_string_literal(text.trim()).is_some_and(|value| {
+                        value.starts_with('/')
+                            || value.starts_with('\\')
+                            || value.as_bytes().get(1) == Some(&b':')
+                    })
                 })
-            })
-        {
-            return None;
-        }
-        node_operand_origin(
-            path,
-            root,
-            language,
-            symbols,
-            source,
-            n,
-            scope,
-            assignments,
-            depth,
-            work,
-        )
-    })?;
+            {
+                return None;
+            }
+            node_operand_origin(
+                path, language, symbols, source, n, scope, index, depth, work,
+            )
+        })?;
     if let Some(api) = transform {
         steps.push(SecurityPathStep {
             kind: SecurityPathStepKind::Alias,
@@ -1835,44 +2018,6 @@ fn node_operand_origin(
         });
     }
     Some(steps)
-}
-
-fn node_source_is_unchanged(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    source: &Node<'_, StrDoc<SupportLang>>,
-    scope: &Range<usize>,
-) -> bool {
-    let observed = compact_expression(source.text().as_ref());
-    let source_access = node_static_access(source, 0);
-    !root.dfs().any(|node| {
-        let target = match node.kind().as_ref() {
-            "assignment_expression" | "augmented_assignment_expression" => node.field("left"),
-            "update_expression" => node.field("argument"),
-            _ => return false,
-        };
-        if node.range().start < scope.start
-            || node.range().end > source.range().start
-            || scope_range(&node, root) != *scope
-        {
-            return false;
-        }
-        target.is_some_and(|target| {
-            if let Some(source_access) = &source_access
-                && let Some(written) = node_static_access(&target, 0).or_else(|| {
-                    target
-                        .field("object")
-                        .and_then(|object| node_static_access(&object, 0))
-                })
-                && source_access.starts_with(&written)
-            {
-                return true;
-            }
-            let written = compact_expression(target.text().as_ref());
-            observed == written
-                || observed.starts_with(&format!("{written}."))
-                || observed.starts_with(&format!("{written}["))
-        })
-    })
 }
 
 fn node_static_access(node: &Node<'_, StrDoc<SupportLang>>, depth: usize) -> Option<Vec<String>> {
