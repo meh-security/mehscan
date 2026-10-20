@@ -17,7 +17,8 @@ use super::reachability;
 const EXPRESS_TYPE_ENGINE: &str = "ast-grep 0.45.1 + bounded-express-type-boundary";
 
 #[derive(Default)]
-struct ExpressTypes {
+struct RequestTypes {
+    koa: bool,
     requests: BTreeSet<String>,
     responses: BTreeSet<String>,
     handlers: BTreeSet<String>,
@@ -175,8 +176,289 @@ pub(crate) fn add_typed_express_sources<'tree>(
     }
 }
 
-fn express_types(root: &Node<'_, StrDoc<SupportLang>>) -> ExpressTypes {
-    let mut types = ExpressTypes::default();
+/// Koa owns both a request and a response on its Context. In particular,
+/// `ctx.body` and `ctx.state` are not request inputs. Only imported context
+/// types (and bounded same-file aliases) establish receiver identity here.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_typed_koa_boundaries<'tree>(
+    path: &str,
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    language: Language,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    if !matches!(language, Language::Typescript | Language::Tsx) {
+        return;
+    }
+    // Exact imported Koa identity requires this module spelling. Avoid extra
+    // AST walks in the much larger set of unrelated TS/browser files.
+    if !root.text().contains("koa") {
+        return;
+    }
+    let types = framework_types(root, true);
+    if types.requests.is_empty() && types.namespaces.is_empty() {
+        return;
+    }
+    let contexts = root
+        .dfs()
+        .filter(|n| is_function_scope(n.kind().as_ref()))
+        .filter_map(|function| {
+            let (objects, _) = function_request_bindings(&function, &types);
+            (!objects.is_empty()).then_some((function.range().start, objects))
+        })
+        .collect::<BTreeMap<_, _>>();
+    if contexts.is_empty() {
+        return;
+    }
+    let mut writes = BTreeMap::<(usize, String), Vec<(usize, Vec<String>)>>::new();
+    for node in root.dfs().filter(|n| {
+        matches!(
+            n.kind().as_ref(),
+            "assignment_expression" | "augmented_assignment_expression" | "update_expression"
+        )
+    }) {
+        let Some(scope) = nearest_function_range(&node) else {
+            continue;
+        };
+        let Some(target) = node.field("left").or_else(|| node.field("argument")) else {
+            continue;
+        };
+        let Some(access) = super::security_paths::node_static_access(&target, 0).or_else(|| {
+            target
+                .field("object")
+                .and_then(|n| super::security_paths::node_static_access(&n, 0))
+        }) else {
+            continue;
+        };
+        if let Some(head) = access.first() {
+            writes
+                .entry((scope.start, head.clone()))
+                .or_default()
+                .push((node.range().start, access));
+        }
+    }
+    // A single pass over accesses; do not rescan each function body for every
+    // parameter. Nested callables must establish their own context identity.
+    for node in root.dfs().filter(|n| {
+        matches!(
+            n.kind().as_ref(),
+            "member_expression" | "subscript_expression" | "call_expression"
+        )
+    }) {
+        let Some(bindings) =
+            nearest_function_range(&node).and_then(|scope| contexts.get(&scope.start))
+        else {
+            continue;
+        };
+        let access_node = if node.kind().as_ref() == "call_expression" {
+            node.field("function")
+        } else {
+            Some(node.clone())
+        };
+        let access = access_node
+            .as_ref()
+            .and_then(|n| super::security_paths::node_static_access(n, 0));
+        if let Some(access) = &access {
+            let Some(head) = access.first() else { continue };
+            let Some(scope) = nearest_function_range(&node) else {
+                continue;
+            };
+            if writes
+                .get(&(scope.start, head.clone()))
+                .is_some_and(|writes| {
+                    writes.iter().any(|(at, written)| {
+                        *at < node.range().start && access.starts_with(written)
+                    })
+                })
+            {
+                continue;
+            }
+            if access.len() == 2
+                && access[1] == "redirect"
+                && bindings.iter().any(|b| b.name == *head)
+                && node.kind().as_ref() == "call_expression"
+            {
+                push_koa_redirect(
+                    path,
+                    language,
+                    &node,
+                    comments,
+                    conditional,
+                    literals,
+                    evidence,
+                );
+                continue;
+            }
+        }
+        let Some((binding, field)) = koa_input(&node, bindings) else {
+            continue;
+        };
+        if node.parent().is_some_and(|parent| {
+            koa_input(&parent, bindings).is_some()
+                || (parent.kind().as_ref() == "call_expression"
+                    && parent
+                        .field("function")
+                        .is_some_and(|callee| callee.range() == node.range()))
+        }) {
+            continue;
+        }
+        // A property assignment is not a read from the incoming request.
+        if node
+            .ancestors()
+            .take_while(|n| !is_function_scope(n.kind().as_ref()))
+            .any(|n| {
+                matches!(
+                    n.kind().as_ref(),
+                    "assignment_expression" | "augmented_assignment_expression"
+                ) && n.field("left").is_some_and(|left| {
+                    left.range().start <= node.range().start && node.range().end <= left.range().end
+                })
+            })
+        {
+            continue;
+        }
+        push_source(
+            path,
+            &node,
+            Capability::HttpRequestData,
+            &format!("{}-koa-typed-request-data", language_prefix(language)),
+            BTreeMap::from([
+                (
+                    "request".to_string(),
+                    text_capture(path, &node, &binding.name),
+                ),
+                ("name".to_string(), text_capture(path, &node, field)),
+            ]),
+            vec!["typed-request", "request-field"],
+            &binding.resolution,
+            "koa",
+            comments,
+            conditional,
+            literals,
+            evidence,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_koa_redirect<'tree>(
+    path: &str,
+    language: Language,
+    node: &Node<'tree, StrDoc<SupportLang>>,
+    comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    if comments.is_in_comment(node.range()) {
+        return;
+    }
+    let Some(argument) = node
+        .field("arguments")
+        .and_then(|args| args.children().find(|n| n.is_named()))
+    else {
+        return;
+    };
+    let rule_id = format!("{}-koa-context-redirect", language_prefix(language));
+    evidence.push(Evidence {
+        id: evidence_id(path, &rule_id, node.range().start, node.range().end),
+        kind: EvidenceKind::Sink,
+        capability: Capability::Redirect,
+        location: location(path, node),
+        enclosing_symbol: express_enclosing_symbol(node),
+        captures: BTreeMap::from([("location".to_string(), capture(path, &argument))]),
+        cwe_candidates: vec!["CWE-601".to_string()],
+        tags: [
+            "http",
+            "koa",
+            "redirect",
+            "exact-api-boundary",
+            "review-admission:source-sink-required",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+        confidence: Confidence::High,
+        provenance: Provenance {
+            resolution: Resolution::Ast,
+            engine: "ast-grep 0.45.1 + bounded-koa-type-boundary".to_string(),
+            rule_version: 1,
+        },
+        context: EvidenceContext {
+            comment: false,
+            reachability: Some(reachability::classify(node, literals)),
+            availability: Some(conditional.availability_for(node.range())),
+            ..EvidenceContext::default()
+        },
+        symbol_resolution: Some(SymbolResolution {
+            canonical: "koa.Context.redirect".to_string(),
+            observed: node
+                .field("function")
+                .map(|n| n.text().into_owned())
+                .unwrap_or_default(),
+            method: SymbolResolutionMethod::Alias,
+            confidence: SymbolConfidence::High,
+        }),
+        rule_id,
+        related_evidence: Vec::new(),
+    });
+}
+
+fn koa_input<'a, 'tree>(
+    node: &Node<'_, StrDoc<SupportLang>>,
+    bindings: &'a [RequestBinding<'tree>],
+) -> Option<(&'a RequestBinding<'tree>, &'static str)> {
+    let access = if node.kind().as_ref() == "call_expression" {
+        let callee = node.field("function")?;
+        let access = super::security_paths::node_static_access(&callee, 0)?;
+        let binding = bindings.iter().find(|b| access.first() == Some(&b.name))?;
+        let tail = access
+            .iter()
+            .skip(1)
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let field = match tail.as_slice() {
+            ["get"] | ["request", "get"] => "headers",
+            ["cookies", "get"] => "cookies",
+            _ => return None,
+        };
+        return Some((binding, field));
+    } else {
+        super::security_paths::node_static_access(node, 0)?
+    };
+    let binding = bindings.iter().find(|b| access.first() == Some(&b.name))?;
+    let mut tail = access.iter().skip(1).map(String::as_str);
+    let first = tail.next()?;
+    let field = if first == "request" {
+        tail.next()?
+    } else {
+        first
+    };
+    let field = match field {
+        "body" if first == "request" => "body",
+        "query" => "query",
+        "params" if first != "request" => "params",
+        "headers" | "header" => "headers",
+        "url" | "originalUrl" => "url",
+        "path" => "path",
+        "querystring" => "querystring",
+        "host" | "hostname" => "host",
+        _ => return None,
+    };
+    Some((binding, field))
+}
+
+fn express_types(root: &Node<'_, StrDoc<SupportLang>>) -> RequestTypes {
+    framework_types(root, false)
+}
+
+fn framework_types(root: &Node<'_, StrDoc<SupportLang>>, koa: bool) -> RequestTypes {
+    let mut types = RequestTypes {
+        koa,
+        ..RequestTypes::default()
+    };
     for import in root
         .dfs()
         .filter(|node| node.kind().as_ref() == "import_statement")
@@ -189,10 +471,12 @@ fn express_types(root: &Node<'_, StrDoc<SupportLang>>) -> ExpressTypes {
         else {
             continue;
         };
-        if !matches!(
-            exact_quoted(module.trim().trim_end_matches(';')),
-            Some("express" | "express-serve-static-core")
-        ) {
+        let module = exact_quoted(module.trim().trim_end_matches(';'));
+        if !(if koa {
+            module == Some("koa")
+        } else {
+            matches!(module, Some("express" | "express-serve-static-core"))
+        }) {
             continue;
         }
         let clause = clause.trim().strip_prefix("type ").unwrap_or(clause.trim());
@@ -226,13 +510,16 @@ fn express_types(root: &Node<'_, StrDoc<SupportLang>>) -> ExpressTypes {
                     imported
                 };
                 match imported {
-                    "Response" => {
-                        types.responses.insert(visible.to_string());
-                    }
-                    "Request" => {
+                    "Context" | "ParameterizedContext" | "DefaultContext" if koa => {
                         types.requests.insert(visible.to_string());
                     }
-                    "RequestHandler" => {
+                    "Response" if !koa => {
+                        types.responses.insert(visible.to_string());
+                    }
+                    "Request" if !koa => {
+                        types.requests.insert(visible.to_string());
+                    }
+                    "RequestHandler" if !koa => {
                         types.handlers.insert(visible.to_string());
                     }
                     _ => {}
@@ -257,7 +544,7 @@ fn express_types(root: &Node<'_, StrDoc<SupportLang>>) -> ExpressTypes {
     types
 }
 
-fn request_type_alias(node: Node<'_, StrDoc<SupportLang>>, types: &ExpressTypes) -> Option<String> {
+fn request_type_alias(node: Node<'_, StrDoc<SupportLang>>, types: &RequestTypes) -> Option<String> {
     match node.kind().as_ref() {
         "type_alias_declaration" => {
             let name = node.field("name")?.text().trim().to_string();
@@ -321,7 +608,7 @@ pub(super) fn typed_response_bindings(
     bindings
 }
 
-fn is_request_type(text: &str, types: &ExpressTypes) -> bool {
+fn is_request_type(text: &str, types: &RequestTypes) -> bool {
     let compact = compact(text);
     let text = compact.trim_start_matches(':');
     if text.contains('|') {
@@ -330,14 +617,19 @@ fn is_request_type(text: &str, types: &ExpressTypes) -> bool {
     text.split('&').any(|part| {
         let base = part.split_once('<').map_or(part, |(base, _)| base);
         types.requests.contains(base)
-            || types
-                .namespaces
-                .iter()
-                .any(|namespace| base == format!("{namespace}.Request"))
+            || types.namespaces.iter().any(|namespace| {
+                if types.koa {
+                    ["Context", "ParameterizedContext", "DefaultContext"]
+                        .iter()
+                        .any(|name| base == format!("{namespace}.{name}"))
+                } else {
+                    base == format!("{namespace}.Request")
+                }
+            })
     })
 }
 
-fn is_request_handler_type(text: &str, types: &ExpressTypes) -> bool {
+fn is_request_handler_type(text: &str, types: &RequestTypes) -> bool {
     let compact = compact(text);
     let text = compact.trim_start_matches(':');
     if text.contains(['|', '&']) {
@@ -353,7 +645,7 @@ fn is_request_handler_type(text: &str, types: &ExpressTypes) -> bool {
 
 fn function_request_bindings<'tree>(
     function: &Node<'tree, StrDoc<SupportLang>>,
-    types: &ExpressTypes,
+    types: &RequestTypes,
 ) -> (Vec<RequestBinding<'tree>>, Vec<RequestBinding<'tree>>) {
     let mut objects = Vec::new();
     let mut values = Vec::new();
@@ -606,6 +898,7 @@ fn push_binding_source<'tree>(
         ]),
         vec!["destructured-alias", "typed-request"],
         &binding.resolution,
+        "express",
         comments,
         conditional,
         literals,
@@ -644,6 +937,7 @@ fn push_member_source<'tree>(
         ]),
         vec!["renamed-request", "typed-request"],
         "express.Request",
+        "express",
         comments,
         conditional,
         literals,
@@ -673,6 +967,7 @@ fn push_source<'tree>(
     captures: BTreeMap<String, Capture>,
     extra_tags: Vec<&str>,
     observed_type: &str,
+    framework: &str,
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
@@ -692,7 +987,7 @@ fn push_source<'tree>(
         "http",
         "request",
         "attacker-controlled",
-        "express",
+        framework,
         "typescript-type",
     ];
     tags.extend(extra_tags);
@@ -716,7 +1011,12 @@ fn push_source<'tree>(
         confidence: Confidence::Medium,
         provenance: Provenance {
             resolution: Resolution::Ast,
-            engine: EXPRESS_TYPE_ENGINE.to_string(),
+            engine: if framework == "koa" {
+                "ast-grep 0.45.1 + bounded-koa-type-boundary"
+            } else {
+                EXPRESS_TYPE_ENGINE
+            }
+            .to_string(),
             rule_version: 1,
         },
         context: EvidenceContext {
@@ -726,7 +1026,12 @@ fn push_source<'tree>(
             ..EvidenceContext::default()
         },
         symbol_resolution: Some(SymbolResolution {
-            canonical: "express.Request".to_string(),
+            canonical: if framework == "koa" {
+                "koa.Context"
+            } else {
+                "express.Request"
+            }
+            .to_string(),
             observed: observed_type.to_string(),
             method: SymbolResolutionMethod::Alias,
             confidence: SymbolConfidence::High,

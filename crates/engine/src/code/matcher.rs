@@ -761,6 +761,15 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    super::node_express::add_typed_koa_boundaries(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
     super::node_api_boundaries::add_boundaries(
         path,
         &root,

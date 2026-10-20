@@ -2020,7 +2020,10 @@ fn node_operand_origin(
     Some(steps)
 }
 
-fn node_static_access(node: &Node<'_, StrDoc<SupportLang>>, depth: usize) -> Option<Vec<String>> {
+pub(super) fn node_static_access(
+    node: &Node<'_, StrDoc<SupportLang>>,
+    depth: usize,
+) -> Option<Vec<String>> {
     if depth >= 16 {
         return None;
     }
