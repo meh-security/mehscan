@@ -188,6 +188,9 @@ fn parts(
                 return None;
             }
             if let Some(assignment) = index.alias_assignment(scope, node) {
+                if !assignment.projection.is_empty() {
+                    return Some(vec![vec![Part::Other]]);
+                }
                 parts(&assignment.right, source, index, scope, depth + 1, work)
             } else {
                 Some(vec![vec![Part::Other]])

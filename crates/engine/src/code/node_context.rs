@@ -1,4 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
+#[path = "node_return_fields.rs"]
+mod returned_fields;
+pub(crate) use returned_fields::ReturnedObject;
 
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{AstGrep, Node};
@@ -221,6 +224,7 @@ pub(crate) struct NodeProjectContext {
     sensitive_model_fields: BTreeMap<String, BTreeSet<String>>,
     express_wrappers: BTreeSet<String>,
     parameter_returns: BTreeMap<String, ParameterReturnSummary>,
+    returned_objects: BTreeMap<(String, String), ReturnedObject>,
     parameter_sinks: BTreeMap<String, Vec<ParameterSinkSummary>>,
     callback_forwards: BTreeMap<String, CallbackForwardSummary>,
     mongo_callback_results: BTreeMap<String, MongoCallbackResultSummary>,
@@ -234,6 +238,38 @@ pub(crate) struct NodeProjectContext {
 }
 
 impl NodeProjectContext {
+    pub(crate) fn returned_objects_for_path(&self, path: &str) -> BTreeMap<String, ReturnedObject> {
+        let mut result = BTreeMap::new();
+        let module = module_path(path).unwrap_or_default();
+        let prefix = format!("{module}.");
+        for ((_, canonical), summary) in self
+            .returned_objects
+            .range((path.to_string(), String::new())..)
+            .take_while(|((file, _), _)| file == path)
+        {
+            if let Some(observed) = canonical.strip_prefix(&prefix) {
+                result.insert(observed.to_string(), summary.clone());
+            }
+        }
+        if let Some(imports) = self.imports_by_path.get(path) {
+            for (observed, target) in imports {
+                if !target.source || target.adapter.is_some() || target.instance {
+                    continue;
+                }
+                if let Some(canonical) = resolve_handler(observed, &module, imports)
+                    && let Some(source_file) = &target.source_file
+                    && let Some(summary) =
+                        self.returned_objects.get(&(source_file.clone(), canonical))
+                {
+                    let mut binding = summary.clone();
+                    binding.imported = true;
+                    result.insert(observed.clone(), binding);
+                }
+            }
+        }
+        result
+    }
+
     /// Input effects and return effects are separate contracts. The local
     /// expression-containment shortcut cannot establish a return flow through
     /// a resolved application helper. Explicit return/continuation sources
@@ -379,7 +415,12 @@ impl NodeProjectContext {
                 .imports_by_path
                 .insert((*path).to_string(), imports.clone());
             trace.step(path, "parameter_returns");
-            collect_parameter_return_summaries(path, &functions, &mut context.parameter_returns);
+            collect_parameter_return_summaries(
+                path,
+                &functions,
+                &mut context.parameter_returns,
+                &mut context.returned_objects,
+            );
             trace.step(path, "parameter_sinks");
             collect_parameter_sink_summaries(
                 path,
@@ -2692,6 +2733,7 @@ fn express_route_is_under_mount(route: &str, mount: &str) -> bool {
 
 #[derive(Clone, Debug)]
 struct ImportTarget {
+    source_file: Option<String>,
     source: bool,
     instance: bool,
     adapter: Option<super::node_modules::FunctionAdapter>,
@@ -2726,6 +2768,7 @@ fn resolved_javascript_imports(
         match modules.resolve(path, &target.module, target.mode) {
             ModuleTarget::Source(file) => {
                 target.source = true;
+                target.source_file = Some(file.clone());
                 if target.instance {
                     let Some(constructor) = modules
                         .resolve_export(&file, target.export.as_deref().unwrap_or("default"))
@@ -2736,6 +2779,7 @@ fn resolved_javascript_imports(
                         result.insert(
                             format!("{visible}.{method}"),
                             ImportTarget {
+                                source_file: Some(constructor.path.clone()),
                                 source: true,
                                 instance: false,
                                 adapter: None,
@@ -2746,6 +2790,7 @@ fn resolved_javascript_imports(
                             },
                         );
                     }
+                    target.source_file = Some(constructor.path.clone());
                     target.module = module_key(&constructor.path);
                     target.export = Some(String::new());
                     result.insert(visible, target);
@@ -2768,6 +2813,7 @@ fn resolved_javascript_imports(
                         result.insert(
                             format!("{visible}.{member}"),
                             ImportTarget {
+                                source_file: Some(resolved.path.clone()),
                                 source: true,
                                 instance: false,
                                 default_import: false,
@@ -2787,6 +2833,7 @@ fn resolved_javascript_imports(
                 });
                 if let Some(export) = export {
                     if let Some(resolved) = modules.resolve_export(&file, &export) {
+                        target.source_file = Some(resolved.path.clone());
                         target.module = module_key(&resolved.path);
                         target.export = Some(resolved.name);
                         target.adapter = resolved.adapter;
@@ -2843,6 +2890,7 @@ fn javascript_imports_raw(
                     imports.insert(
                         local.to_string(),
                         ImportTarget {
+                            source_file: None,
                             source: false,
                             instance: false,
                             adapter: None,
@@ -2864,6 +2912,7 @@ fn javascript_imports_raw(
             imports.insert(
                 alias.trim().to_string(),
                 ImportTarget {
+                    source_file: None,
                     source: false,
                     instance: false,
                     adapter: None,
@@ -2890,6 +2939,7 @@ fn javascript_imports_raw(
                 imports.insert(
                     visible.to_string(),
                     ImportTarget {
+                        source_file: None,
                         source: false,
                         instance: false,
                         adapter: None,
@@ -2904,6 +2954,7 @@ fn javascript_imports_raw(
             imports.insert(
                 local.to_string(),
                 ImportTarget {
+                    source_file: None,
                     source: false,
                     instance: false,
                     adapter: None,
@@ -2934,6 +2985,7 @@ fn javascript_imports_raw(
             imports.insert(
                 local.to_string(),
                 ImportTarget {
+                    source_file: None,
                     source: false,
                     instance: false,
                     adapter: None,
@@ -2974,6 +3026,7 @@ fn javascript_imports_raw(
             imports.insert(
                 local.to_string(),
                 ImportTarget {
+                    source_file: None,
                     source: false,
                     instance: false,
                     adapter: None,
@@ -3014,6 +3067,7 @@ fn javascript_imports_raw(
         imports.insert(
             local.to_string(),
             ImportTarget {
+                source_file: None,
                 source: false,
                 instance: true,
                 adapter: None,
@@ -3089,15 +3143,27 @@ fn collect_parameter_return_summaries(
     path: &str,
     functions: &[(String, Node<'_, StrDoc<SupportLang>>)],
     summaries: &mut BTreeMap<String, ParameterReturnSummary>,
+    returned_objects: &mut BTreeMap<(String, String), ReturnedObject>,
 ) {
     let Some(module) = module_path(path) else {
         return;
     };
+    let unique = returned_fields::unique_functions(functions);
     for (name, function) in functions.iter().cloned() {
         let parameters = function_parameter_names(&function);
         let Some(expression) = single_effective_return(&function) else {
             continue;
         };
+        if unique.contains(&name) {
+            returned_fields::collect_one(
+                path,
+                &format!("{module}.{name}"),
+                &function,
+                &expression,
+                &parameters,
+                returned_objects,
+            );
+        }
         for (parameter_index, parameter) in parameters.iter().enumerate() {
             if !summary_parameter_is_unmodified(&function, parameter, expression.range().start) {
                 continue;

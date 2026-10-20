@@ -8,6 +8,41 @@ fn object_fields_keep_separate_origins_and_stop_at_mutation_boundaries() {
     fs::create_dir_all(&root).unwrap();
     let cases = [
         (
+            "destructure",
+            "const dto={bad:req.query.command,clean:'date'}; const {bad:command}=dto; cp.exec(command);",
+            true,
+        ),
+        (
+            "destructureClean",
+            "const dto={bad:req.query.command,clean:'date'}; const {clean:command}=dto; cp.exec(command);",
+            false,
+        ),
+        (
+            "destructureNested",
+            "const dto={nested:{bad:req.query.command}}; const {nested:{bad:command}}=dto; cp.exec(command);",
+            true,
+        ),
+        (
+            "destructureLiteral",
+            "const {bad:command}={bad:req.query.command,clean:'date'}; cp.exec(command);",
+            true,
+        ),
+        (
+            "destructureDefault",
+            "const dto={bad:req.query.command}; const {bad:command='date'}=dto; cp.exec(command);",
+            false,
+        ),
+        (
+            "destructureOverwrite",
+            "const dto={bad:req.query.command}; let {bad:command}=dto; command='date'; cp.exec(command);",
+            false,
+        ),
+        (
+            "destructureAliasWrite",
+            "const dto={nested:{bad:req.query.command}}; const {nested}=dto; nested.bad='date'; cp.exec(dto.nested.bad);",
+            false,
+        ),
+        (
             "selected",
             "const dto={bad:req.query.command,clean:'date'}; cp.exec(dto.bad);",
             true,

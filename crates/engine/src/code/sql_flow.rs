@@ -31,6 +31,7 @@ struct Assignment<'tree> {
     left: String,
     right: Node<'tree, StrDoc<SupportLang>>,
     in_control_flow: bool,
+    projection: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -46,7 +47,9 @@ pub(crate) fn build_security_paths<'tree>(
     evidence: &mut [Evidence],
     symbols: &FileSymbolEnvironment,
     relations: &[RelationContract],
+    node_context: &super::node_context::NodeProjectContext,
 ) -> Vec<SecurityPath> {
+    let returned_objects = node_context.returned_objects_for_path(path);
     let mut paths = Vec::new();
     // Built only if a Node guarded-operand check needs it; shared across all
     // source/sink pairs and relation families in this file.
@@ -61,8 +64,9 @@ pub(crate) fn build_security_paths<'tree>(
                 Capability::Redirect | Capability::OutboundNetworkRequest
             )
     }) {
-        let index =
-            node_operands.get_or_insert_with(|| NodeOperandIndex::new(root, language, evidence));
+        let index = node_operands.get_or_insert_with(|| {
+            NodeOperandIndex::new(root, language, evidence, &returned_objects)
+        });
         node_url::annotate(evidence, index);
     }
     for relation in relations {
@@ -75,6 +79,7 @@ pub(crate) fn build_security_paths<'tree>(
                 symbols,
                 relation,
                 &mut node_operands,
+                &returned_objects,
             )),
             RelationStrategy::StoredSubtitleFile => paths.extend(build_stored_subtitle_html_paths(
                 path, root, language, evidence, relation,
@@ -278,6 +283,7 @@ fn build_family_paths<'tree>(
     symbols: &FileSymbolEnvironment,
     family: &RelationContract,
     node_operands: &mut Option<NodeOperandIndex<'tree>>,
+    returned_objects: &BTreeMap<String, super::node_context::ReturnedObject>,
 ) -> Vec<SecurityPath> {
     let sources = evidence
         .iter()
@@ -549,10 +555,17 @@ fn build_family_paths<'tree>(
                         | Capability::Deserialization
                 ) || (sink.capability == Capability::DatabaseQuery
                     && sink.cwe_candidates == ["CWE-89"]))
-                && node_fields::source_in_object(&source_node, &source_scope)
+                && (node_fields::source_in_object(&source_node, &source_scope)
+                    || node_fields::source_in_return_call(
+                        &source_node,
+                        &source_scope,
+                        returned_objects,
+                        &location_range(&sink.location),
+                    ))
             {
-                let index = node_operands
-                    .get_or_insert_with(|| NodeOperandIndex::new(root, language, evidence));
+                let index = node_operands.get_or_insert_with(|| {
+                    NodeOperandIndex::new(root, language, evidence, returned_objects)
+                });
                 if let Some(transfers) = target_nodes.iter().find_map(|(_, target)| {
                     node_guarded_alias_steps(
                         path,
@@ -601,8 +614,9 @@ fn build_family_paths<'tree>(
                     Language::Javascript | Language::Typescript | Language::Tsx
                 )
             {
-                let index = node_operands
-                    .get_or_insert_with(|| NodeOperandIndex::new(root, language, evidence));
+                let index = node_operands.get_or_insert_with(|| {
+                    NodeOperandIndex::new(root, language, evidence, returned_objects)
+                });
                 if let Some((_, target)) = target_nodes.first() {
                     match node_url::contribution(&source_node, target, index, &sink_scope) {
                         node_url::Contribution::NoValue => continue,
@@ -888,7 +902,9 @@ fn build_family_paths<'tree>(
                         .iter()
                         .any(|(_, target)| node_direct_string_operand(target, &source_range))
                     && node_operands
-                        .get_or_insert_with(|| NodeOperandIndex::new(root, language, evidence))
+                        .get_or_insert_with(|| {
+                            NodeOperandIndex::new(root, language, evidence, returned_objects)
+                        })
                         .source_is_unchanged(&source_node, &source_scope)
                 {
                     let mut steps = vec![evidence_step(SecurityPathStepKind::Source, source)];
@@ -931,7 +947,12 @@ fn build_family_paths<'tree>(
                                     target,
                                     &sink_scope,
                                     node_operands.get_or_insert_with(|| {
-                                        NodeOperandIndex::new(root, language, evidence)
+                                        NodeOperandIndex::new(
+                                            root,
+                                            language,
+                                            evidence,
+                                            returned_objects,
+                                        )
                                     }),
                                 )
                             })
@@ -1846,6 +1867,8 @@ struct NodeOperandIndex<'tree> {
     file_scope: Range<usize>,
     nested_binding_writes: BTreeSet<(NodeScope, String)>,
     root: Option<Node<'tree, StrDoc<SupportLang>>>,
+    returned_objects: BTreeMap<String, super::node_context::ReturnedObject>,
+    callable_declarations: BTreeMap<String, Vec<(Range<usize>, Range<usize>)>>,
     object_bindings: BTreeSet<String>,
     object_escapes: std::cell::OnceCell<BTreeMap<String, Vec<Range<usize>>>>,
     destination_nodes: BTreeMap<(usize, usize), Node<'tree, StrDoc<SupportLang>>>,
@@ -1862,10 +1885,12 @@ impl<'tree> NodeOperandIndex<'tree> {
         root: &Node<'tree, StrDoc<SupportLang>>,
         language: Language,
         evidence: &[Evidence],
+        returned_objects: &BTreeMap<String, super::node_context::ReturnedObject>,
     ) -> Self {
         let mut index = Self {
             file_scope: root.range(),
             root: Some(root.clone()),
+            returned_objects: returned_objects.clone(),
             ..Self::default()
         };
         let targets = evidence
@@ -1885,6 +1910,30 @@ impl<'tree> NodeOperandIndex<'tree> {
                     .insert((range.start, range.end), node.clone());
             }
             let kind = node.kind();
+            if (matches!(
+                kind.as_ref(),
+                "function_declaration" | "generator_function_declaration" | "class_declaration"
+            ) || (kind.as_ref() == "variable_declarator"
+                && node.field("value").is_some_and(|n| {
+                    matches!(n.kind().as_ref(), "arrow_function" | "function_expression")
+                })))
+                && let Some(name) = node.field("name")
+            {
+                let visibility = node
+                    .ancestors()
+                    .find(|n| {
+                        matches!(
+                            n.kind().as_ref(),
+                            "statement_block" | "program" | "switch_body"
+                        )
+                    })
+                    .map_or_else(|| root.range(), |n| n.range());
+                index
+                    .callable_declarations
+                    .entry(name.text().into_owned())
+                    .or_default()
+                    .push((node.range(), visibility));
+            }
             let (target, declaration) = match kind.as_ref() {
                 "import_statement" => {
                     index.imported.extend(
@@ -1905,7 +1954,9 @@ impl<'tree> NodeOperandIndex<'tree> {
             let scope = scope_range(&node, root);
             let key = (scope.start, scope.end);
             if let Some(assignment) = assignment_parts(node.clone(), language, &scope) {
-                if assignment.right.kind().as_ref() == "object" {
+                if assignment.right.kind().as_ref() == "object"
+                    || node_fields::is_return_call(&assignment.right, &index.returned_objects)
+                {
                     index.object_bindings.insert(assignment.left.clone());
                 }
                 index
@@ -1916,6 +1967,28 @@ impl<'tree> NodeOperandIndex<'tree> {
                     .or_default()
                     .assignments
                     .push(assignment);
+            }
+            if declaration
+                && target.kind().as_ref() == "object_pattern"
+                && let Some(value) = node.field("value")
+                && let Some(parts) = node_fields::destructured_bindings(&target)
+            {
+                for (name, projection) in parts {
+                    index
+                        .bindings
+                        .entry(key)
+                        .or_default()
+                        .entry(name.clone())
+                        .or_default()
+                        .assignments
+                        .push(Assignment {
+                            node: node.clone(),
+                            left: name,
+                            right: value.clone(),
+                            projection,
+                            in_control_flow: has_control_flow_ancestor(&node, &scope),
+                        });
+                }
             }
             if declaration && target.kind().as_ref() == "identifier" {
                 index
@@ -2208,17 +2281,45 @@ fn node_operand_origin<'tree>(
             return None;
         }
         let assignment = index.alias_assignment(scope, target)?;
+        let selection = if assignment.projection.is_empty() {
+            node_fields::Selection {
+                value: assignment.right.clone(),
+                steps: Vec::new(),
+            }
+        } else {
+            node_fields::selected_value(
+                &assignment.right,
+                &assignment.projection,
+                &assignment.node,
+                index,
+                scope,
+                depth + 1,
+                work,
+            )?
+        };
         let mut steps = node_operand_origin(
             path,
             language,
             symbols,
             source,
-            &assignment.right,
+            &selection.value,
             scope,
             index,
             depth + 1,
             work,
         )?;
+        steps.extend(selection.steps);
+        if !assignment.projection.is_empty() {
+            steps.push(SecurityPathStep {
+                kind: SecurityPathStepKind::Alias,
+                location: node_location(path, &assignment.node),
+                evidence_id: None,
+                symbol: Some(format!(
+                    "field projection: {}",
+                    assignment.projection.join(".")
+                )),
+            });
+        }
         steps.push(SecurityPathStep {
             kind: SecurityPathStepKind::Assignment,
             location: node_location(path, &assignment.node),
@@ -2231,23 +2332,30 @@ fn node_operand_origin<'tree>(
         target.kind().as_ref(),
         "member_expression" | "subscript_expression"
     ) {
-        let value = node_fields::projected_value(target, index, scope, depth, work)?;
+        let selection = node_fields::projected_value(target, index, scope, depth, work)?;
         let mut steps = node_operand_origin(
             path,
             language,
             symbols,
             source,
-            &value,
+            &selection.value,
             scope,
             index,
             depth + 1,
             work,
         )?;
+        steps.extend(selection.steps);
         steps.push(SecurityPathStep {
             kind: SecurityPathStepKind::Alias,
             location: node_location(path, target),
             evidence_id: None,
-            symbol: Some(format!("field projection: {}", target.text())),
+            symbol: Some(format!(
+                "field projection: {}",
+                node_static_access(target, 0)
+                    .map(|parts| parts.join("."))
+                    .filter(|text| text.len() <= 256)
+                    .unwrap_or_else(|| "selected return field".to_string())
+            )),
         });
         return Some(steps);
     }
@@ -3976,6 +4084,7 @@ fn assignment_parts<'tree>(
     }
     let left = assignment_identifier(&left, language)?;
     Some(Assignment {
+        projection: Vec::new(),
         in_control_flow: has_control_flow_ancestor(&node, scope),
         node,
         left,

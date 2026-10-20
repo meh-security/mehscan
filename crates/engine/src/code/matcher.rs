@@ -1783,6 +1783,7 @@ pub(crate) fn scan_source(
         &mut evidence,
         &symbol_environment,
         relations,
+        node_context,
     );
     node_context.retain_proved_helper_returns(
         path,
