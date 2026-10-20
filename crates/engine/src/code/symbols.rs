@@ -286,6 +286,28 @@ impl FileSymbolEnvironment {
         None
     }
 
+    /// Require an imported binding, including when its visible spelling equals
+    /// the canonical module name. A same-named local API is not package identity.
+    pub(crate) fn resolve_imported(
+        &self,
+        observed: &str,
+        canonical: &str,
+    ) -> Option<SymbolResolution> {
+        let observed = normalize_symbol(observed);
+        let canonical = normalize_symbol(canonical);
+        let (head, tail) = observed
+            .split_once('.')
+            .map_or((observed.as_str(), ""), |(head, tail)| (head, tail));
+        let binding = self.aliases.get(head)?;
+        let expanded = if tail.is_empty() {
+            binding.target.clone()
+        } else {
+            format!("{}.{tail}", binding.target)
+        };
+        (normalize_symbol(&expanded) == canonical)
+            .then(|| resolution(canonical, observed, binding.method, SymbolConfidence::High))
+    }
+
     pub(crate) fn resolve_fixed_format(
         &self,
         observed: &str,

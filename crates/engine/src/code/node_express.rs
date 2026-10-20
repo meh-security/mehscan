@@ -19,6 +19,7 @@ const EXPRESS_TYPE_ENGINE: &str = "ast-grep 0.45.1 + bounded-express-type-bounda
 #[derive(Default)]
 struct ExpressTypes {
     requests: BTreeSet<String>,
+    responses: BTreeSet<String>,
     handlers: BTreeSet<String>,
     namespaces: BTreeSet<String>,
 }
@@ -195,6 +196,21 @@ fn express_types(root: &Node<'_, StrDoc<SupportLang>>) -> ExpressTypes {
             continue;
         }
         let clause = clause.trim().strip_prefix("type ").unwrap_or(clause.trim());
+        let clause = if !clause.starts_with('{') && !clause.starts_with('*') {
+            if let Some((default, rest)) = clause.split_once(',') {
+                if is_identifier(default.trim()) {
+                    types.namespaces.insert(default.trim().to_string());
+                }
+                rest.trim()
+            } else {
+                if is_identifier(clause) {
+                    types.namespaces.insert(clause.to_string());
+                }
+                clause
+            }
+        } else {
+            clause
+        };
         if let Some(namespace) = clause.strip_prefix("* as ") {
             types.namespaces.insert(namespace.trim().to_string());
         } else if clause.starts_with('{') {
@@ -210,6 +226,9 @@ fn express_types(root: &Node<'_, StrDoc<SupportLang>>) -> ExpressTypes {
                     imported
                 };
                 match imported {
+                    "Response" => {
+                        types.responses.insert(visible.to_string());
+                    }
                     "Request" => {
                         types.requests.insert(visible.to_string());
                     }
@@ -258,6 +277,48 @@ fn request_type_alias(node: Node<'_, StrDoc<SupportLang>>, types: &ExpressTypes)
         }
         _ => None,
     }
+}
+
+/// Exact imported response types and contextual RequestHandler parameters.
+/// Route registration supplies the corresponding identity for untyped JS.
+pub(super) fn typed_response_bindings(
+    root: &Node<'_, StrDoc<SupportLang>>,
+) -> BTreeMap<usize, Vec<String>> {
+    let types = express_types(root);
+    let mut bindings = BTreeMap::new();
+    for function in root.dfs().filter(|n| is_function_scope(n.kind().as_ref())) {
+        let Some(parameters) = function.field("parameters") else {
+            continue;
+        };
+        let contextual = contextual_request_handler_type(&function)
+            .is_some_and(|n| is_request_handler_type(&n.text(), &types));
+        for (index, parameter) in parameters.children().filter(|n| n.is_named()).enumerate() {
+            let typed = parameter.field("type").is_some_and(|n| {
+                let text = compact(&n.text());
+                let text = text.trim_start_matches(':');
+                let base = text.split_once('<').map_or(text, |(base, _)| base);
+                types.responses.contains(base)
+                    || types
+                        .namespaces
+                        .iter()
+                        .any(|ns| base == format!("{ns}.Response"))
+            });
+            if !typed && !(contextual && index == 1 && parameter.field("type").is_none()) {
+                continue;
+            }
+            let pattern = parameter
+                .field("pattern")
+                .or_else(|| parameter.field("name"))
+                .unwrap_or(parameter);
+            if pattern.kind().as_ref() == "identifier" {
+                bindings
+                    .entry(function.range().start)
+                    .or_insert_with(Vec::new)
+                    .push(pattern.text().into_owned());
+            }
+        }
+    }
+    bindings
 }
 
 fn is_request_type(text: &str, types: &ExpressTypes) -> bool {

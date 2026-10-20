@@ -190,6 +190,17 @@ pub struct ReviewInventoryEntry {
 }
 
 fn complete_native_path_fact(anchor: &Evidence, kind: mehscan_core::OperandFactKind) -> bool {
+    if anchor
+        .tags
+        .iter()
+        .any(|tag| tag == "file-root:unresolved-options")
+    {
+        return false;
+    }
+    if anchor.captures.contains_key("root") && !has_known_string_literal(anchor, "root") {
+        // A fixed child filename does not close an independently selected root.
+        return false;
+    }
     if anchor.captures.contains_key("filesystem_source") {
         // A compiler's destination fact remains useful context, but cannot
         // close the independent source affected by a move.
@@ -12163,9 +12174,30 @@ fn observation_exclusion_disposition(
     {
         return Some(ReviewAdmissionDisposition::SafelySuppressed);
     }
+    // Node file effects need a bounded source relationship, independently of
+    // import spelling. Unlinked effects stay inventory, not AI verdict work.
     if is_source_free_generic_java_log(item, group)
+        || item
+            .tags
+            .iter()
+            .any(|tag| tag == "review-admission:source-sink-required")
         || is_unlinked_native_buffer_write_observation(item, sources)
         || is_unlinked_native_api_inventory_observation(item, sources)
+        || (item.kind == EvidenceKind::Sink
+            && matches!(
+                item.capability,
+                Capability::FilesystemRead | Capability::FilesystemWrite
+            )
+            && sources
+                .files
+                .get(&item.location.path)
+                .and_then(|file| file.language)
+                .is_some_and(|language| {
+                    matches!(
+                        language,
+                        Language::Javascript | Language::Typescript | Language::Tsx
+                    )
+                }))
         || is_go_resource_filter_without_observable_effect(item, sources)
     {
         return Some(ReviewAdmissionDisposition::InventoryOnly);
@@ -12726,6 +12758,16 @@ fn is_context_only_uploaded_filename_check(item: &Evidence, group: &[Evidence]) 
 }
 
 fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &RepositorySources) -> bool {
+    if item
+        .tags
+        .iter()
+        .any(|tag| tag == "file-root:unresolved-options")
+    {
+        return false;
+    }
+    if item.captures.contains_key("root") && !has_known_string_literal(item, "root") {
+        return false;
+    }
     if item.capability == Capability::OutboundNetworkRequest
         && item
             .tags
@@ -12831,6 +12873,8 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
         // performed by the fixed program (XML/YAML parsing, for example) keep
         // their own evidence and review jobs.
         Capability::DynamicCodeExecution => "code",
+        // Dynamic template data does not control a fixed template definition.
+        Capability::TemplateEvaluation => "template",
         Capability::OutboundNetworkRequest => "endpoint",
         Capability::Redirect => "location",
         // A literal response body can still be useful inventory evidence, but
