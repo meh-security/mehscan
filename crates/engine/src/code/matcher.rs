@@ -1779,7 +1779,7 @@ pub(crate) fn scan_source(
         path,
         &root,
         language,
-        &evidence,
+        &mut evidence,
         &symbol_environment,
         relations,
     );

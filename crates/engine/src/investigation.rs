@@ -12818,6 +12818,16 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
                         || is_process_constant_operand(&c.text)
                 });
     }
+    if item.capability == Capability::Redirect
+        && item.tags.iter().any(|tag| {
+            matches!(
+                tag.as_str(),
+                "redirect-closure:fixed-origin" | "redirect-closure:constant-targets"
+            )
+        })
+    {
+        return true;
+    }
     if closed_output_operand(item).is_some() {
         return true;
     }
@@ -12853,14 +12863,14 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
                 item.context
                     .literals
                     .get("endpoint")
-                    .is_some_and(has_fixed_http_authority)
+                    .is_some_and(|literal| has_fixed_http_authority(item, literal, sources))
                     || is_fixed_imported_browser_outbound_request(item, sources)
             }
             Capability::Redirect => item
                 .context
                 .literals
                 .get("location")
-                .is_some_and(has_fixed_internal_redirect_prefix),
+                .is_some_and(|literal| has_fixed_internal_redirect_prefix(item, literal, sources)),
             _ => false,
         };
     }
@@ -12925,9 +12935,10 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
         literal.state == LiteralState::Known
             && matches!(literal.value, Some(LiteralValue::String(_)))
     }) || (item.capability == Capability::OutboundNetworkRequest
-        && literal.is_some_and(has_fixed_http_authority))
+        && literal.is_some_and(|literal| has_fixed_http_authority(item, literal, sources)))
         || (item.capability == Capability::Redirect
-            && literal.is_some_and(has_fixed_internal_redirect_prefix))
+            && literal
+                .is_some_and(|literal| has_fixed_internal_redirect_prefix(item, literal, sources)))
         || is_fixed_python_local_path(item, sources)
 }
 
@@ -14612,7 +14623,28 @@ fn scrub_python_strings_and_comments(source: &str) -> String {
     String::from_utf8(scrubbed).expect("scrubbing ASCII syntax preserves UTF-8")
 }
 
-fn has_fixed_internal_redirect_prefix(literal: &mehscan_core::LiteralEvaluation) -> bool {
+fn has_fixed_internal_redirect_prefix(
+    item: &Evidence,
+    literal: &mehscan_core::LiteralEvaluation,
+    sources: &RepositorySources,
+) -> bool {
+    // Constant fragments do not say where unresolved values occur. In Node a
+    // suffix such as userUrl + '/login' must never masquerade as a fixed prefix.
+    // Use the AST construction tags above instead; leave other language policy
+    // unchanged until equivalent ordered construction facts are available.
+    if sources
+        .files
+        .get(&item.location.path)
+        .and_then(|file| file.language)
+        .is_some_and(|language| {
+            matches!(
+                language,
+                Language::Javascript | Language::Typescript | Language::Tsx
+            )
+        })
+    {
+        return false;
+    }
     if literal.state != LiteralState::Partial {
         return false;
     }
@@ -14631,7 +14663,27 @@ fn has_fixed_internal_redirect_prefix(literal: &mehscan_core::LiteralEvaluation)
         .any(|character| character.is_ascii_alphanumeric())
 }
 
-fn has_fixed_http_authority(literal: &mehscan_core::LiteralEvaluation) -> bool {
+fn has_fixed_http_authority(
+    item: &Evidence,
+    literal: &mehscan_core::LiteralEvaluation,
+    sources: &RepositorySources,
+) -> bool {
+    if sources
+        .files
+        .get(&item.location.path)
+        .and_then(|file| file.language)
+        .is_some_and(|language| {
+            matches!(
+                language,
+                Language::Javascript | Language::Typescript | Language::Tsx
+            )
+        })
+    {
+        return item
+            .tags
+            .iter()
+            .any(|tag| tag == "url-shape:fixed-http-authority");
+    }
     if literal.state != LiteralState::Partial {
         return false;
     }
@@ -15421,6 +15473,12 @@ fn path_review_questions(
 }
 
 fn uncertainty_review_question(reason: &str, source_capability: Capability) -> String {
+    if reason == "node_url_query_suffix_base_unclassified" {
+        return "Is the configured base an HTTP(S) or same-origin URL, and can this input affect anything beyond the shown query suffix? Inspect the base and any URL transformations before treating query data alone as an open redirect.".to_string();
+    }
+    if reason == "node_url_fragment_suffix_base_unclassified" {
+        return "Is the configured base an HTTP(S) or same-origin URL, and can this input affect anything beyond the shown fragment suffix? Inspect the base and any URL transformations before treating fragment data alone as an open redirect.".to_string();
+    }
     if reason == "integer_range_before_conversion_not_proven" {
         return "Can the pre-conversion integer exceed the unsigned 32-bit range, including a value whose low 32 bits are zero, on any supported target architecture?"
             .to_string();
@@ -23152,6 +23210,8 @@ mod tests {
             "runtime_dispatch_unverified",
             "python_value_preserving_origin",
             "value_transform_protection_is_syntactic",
+            "node_url_query_suffix_base_unclassified",
+            "node_url_fragment_suffix_base_unclassified",
         ];
         for reason in cases {
             let question = uncertainty_review_question(reason, Capability::HttpRequestData);

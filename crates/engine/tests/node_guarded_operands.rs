@@ -172,7 +172,7 @@ fn conditional_direct_operands_preserve_values_without_assuming_calls_or_predica
         ),
         (
             "template",
-            "if (req.method === 'GET') res.redirect(`/go/${req.query.next}`);",
+            "if (req.method === 'GET') res.redirect(`https://${req.query.next}`);",
             true,
             Capability::Redirect,
         ),
