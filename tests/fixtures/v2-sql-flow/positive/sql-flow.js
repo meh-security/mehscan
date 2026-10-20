@@ -11,3 +11,10 @@ function propagated(req, pool) {
 function protectedPath(req, pool) {
   return pool.query('SELECT * FROM users WHERE id = $1', [req.query.protected])
 }
+
+function branchSink(req, pool, enabled) {
+  const query = req.query.branchSink
+  if (enabled) {
+    return pool.query(query)
+  }
+}

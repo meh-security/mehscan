@@ -18,6 +18,8 @@ use super::java_context::FORWARDED_PARAMETER_RULE_ID as JAVA_FORWARDED_PARAMETER
 use super::java_ingress::{SPRING_MULTIPART_RULE_ID, SPRING_PARAMETER_RULE_ID};
 use super::symbols::FileSymbolEnvironment;
 
+#[path = "node_fields.rs"]
+mod node_fields;
 #[path = "node_url.rs"]
 mod node_url;
 
@@ -521,6 +523,75 @@ fn build_family_paths<'tree>(
                 )
                 && source_is_conditional_predicate(&source_node)
             {
+                continue;
+            }
+            // Do not seed an entire object from one request-derived field.
+            // Scalar sink operands need an exact local projection proof. Keep
+            // resource selectors / structured NoSQL contracts on their own path.
+            if source_scope == sink_scope
+                && matches!(
+                    language,
+                    Language::Javascript | Language::Typescript | Language::Tsx
+                )
+                && source.capability == Capability::HttpRequestData
+                && (matches!(
+                    sink.capability,
+                    Capability::ProcessExecution
+                        | Capability::DynamicCodeExecution
+                        | Capability::FilesystemRead
+                        | Capability::FilesystemWrite
+                        | Capability::OutboundNetworkRequest
+                        | Capability::Redirect
+                        | Capability::TemplateEvaluation
+                        | Capability::HtmlOutput
+                        | Capability::LdapQuery
+                        | Capability::XpathQuery
+                        | Capability::Deserialization
+                ) || (sink.capability == Capability::DatabaseQuery
+                    && sink.cwe_candidates == ["CWE-89"]))
+                && node_fields::source_in_object(&source_node, &source_scope)
+            {
+                let index = node_operands
+                    .get_or_insert_with(|| NodeOperandIndex::new(root, language, evidence));
+                if let Some(transfers) = target_nodes.iter().find_map(|(_, target)| {
+                    node_guarded_alias_steps(
+                        path,
+                        language,
+                        symbols,
+                        &source_node,
+                        target,
+                        &sink_scope,
+                        index,
+                    )
+                }) {
+                    let mut steps = vec![evidence_step(SecurityPathStepKind::Source, source)];
+                    steps.extend(transfers);
+                    steps.extend(
+                        attached_protections
+                            .iter()
+                            .map(|p| evidence_step(SecurityPathStepKind::Protection, p)),
+                    );
+                    steps.push(evidence_step(SecurityPathStepKind::Sink, sink));
+                    push_path(
+                        &mut paths,
+                        source,
+                        sink,
+                        SecurityPathState::Unknown,
+                        steps,
+                        &attached_protections,
+                        family,
+                    );
+                    if let Some(path) = paths.last_mut() {
+                        path.uncertainty_reasons
+                            .push("node_object_field_projection_is_syntactic".into());
+                        if has_control_flow_ancestor(&source_node, &sink_scope)
+                            || sink_in_control_flow
+                        {
+                            path.uncertainty_reasons
+                                .push("control_flow_context_not_modeled".into());
+                        }
+                    }
+                }
                 continue;
             }
             if source_scope == sink_scope
@@ -1774,6 +1845,9 @@ struct NodeOperandBinding<'tree> {
 struct NodeOperandIndex<'tree> {
     file_scope: Range<usize>,
     nested_binding_writes: BTreeSet<(NodeScope, String)>,
+    root: Option<Node<'tree, StrDoc<SupportLang>>>,
+    object_bindings: BTreeSet<String>,
+    object_escapes: std::cell::OnceCell<BTreeMap<String, Vec<Range<usize>>>>,
     destination_nodes: BTreeMap<(usize, usize), Node<'tree, StrDoc<SupportLang>>>,
     bindings: BTreeMap<NodeScope, BTreeMap<String, NodeOperandBinding<'tree>>>,
     declarations: BTreeMap<String, Vec<(Range<usize>, NodeScope)>>,
@@ -1791,6 +1865,7 @@ impl<'tree> NodeOperandIndex<'tree> {
     ) -> Self {
         let mut index = Self {
             file_scope: root.range(),
+            root: Some(root.clone()),
             ..Self::default()
         };
         let targets = evidence
@@ -1830,6 +1905,9 @@ impl<'tree> NodeOperandIndex<'tree> {
             let scope = scope_range(&node, root);
             let key = (scope.start, scope.end);
             if let Some(assignment) = assignment_parts(node.clone(), language, &scope) {
+                if assignment.right.kind().as_ref() == "object" {
+                    index.object_bindings.insert(assignment.left.clone());
+                }
                 index
                     .bindings
                     .entry(key)
@@ -1916,6 +1994,46 @@ impl<'tree> NodeOperandIndex<'tree> {
         index
     }
 
+    fn object_escapes(&self) -> &BTreeMap<String, Vec<Range<usize>>> {
+        self.object_escapes.get_or_init(|| {
+            let mut escapes = BTreeMap::<String, Vec<Range<usize>>>::new();
+            let Some(root) = &self.root else {
+                return escapes;
+            };
+            // Lazy, once per file, and only for literal-object bindings. URL and
+            // ordinary alias checks do not pay for field escape bookkeeping.
+            for node in root.dfs() {
+                if !matches!(
+                    node.kind().as_ref(),
+                    "identifier" | "shorthand_property_identifier"
+                ) || !self.object_bindings.contains(node.text().as_ref())
+                {
+                    continue;
+                }
+                let range = node.range();
+                let safe_read = node.parent().is_some_and(|parent| {
+                    (parent.field("object").is_some_and(|n| n.range() == range)
+                        && node_static_access(&parent, 0).is_some()
+                        && !parent.parent().is_some_and(|call| {
+                            call.kind().as_ref() == "call_expression"
+                                && call
+                                    .field("function")
+                                    .is_some_and(|n| n.range() == parent.range())
+                        }))
+                        || (parent.kind().as_ref() == "variable_declarator"
+                            && parent.field("name").is_some_and(|n| n.range() == range))
+                });
+                if !safe_read {
+                    escapes
+                        .entry(node.text().into_owned())
+                        .or_default()
+                        .push(range);
+                }
+            }
+            escapes
+        })
+    }
+
     fn source_is_unchanged(
         &self,
         source: &Node<'_, StrDoc<SupportLang>>,
@@ -1966,6 +2084,20 @@ impl<'tree> NodeOperandIndex<'tree> {
             .iter()
             .rev()
             .find(|a| a.node.range().end <= target.range().start)?;
+        // Callable indexing must not make a block-local let/const binding
+        // visible to a same-named read outside its lexical block.
+        if assignment
+            .node
+            .parent()
+            .is_some_and(|n| n.kind().as_ref() == "lexical_declaration")
+            && assignment
+                .node
+                .ancestors()
+                .find(|n| matches!(n.kind().as_ref(), "statement_block" | "switch_body"))
+                .is_some_and(|block| !contains_range(block.range(), target.range()))
+        {
+            return None;
+        }
         (lexical_if_try_path_is_prefix(&assignment.node, target, scope)
             && !binding
                 .declarations
@@ -2027,14 +2159,14 @@ impl<'tree> NodeOperandIndex<'tree> {
 // A bounded operand proof, not a branch join or general call interpreter. Each
 // alias is resolved at its own assignment, so later writes cannot alter a copy.
 #[allow(clippy::too_many_arguments)]
-fn node_guarded_alias_steps(
+fn node_guarded_alias_steps<'tree>(
     path: &str,
     language: Language,
     symbols: &FileSymbolEnvironment,
-    source: &Node<'_, StrDoc<SupportLang>>,
-    target: &Node<'_, StrDoc<SupportLang>>,
+    source: &Node<'tree, StrDoc<SupportLang>>,
+    target: &Node<'tree, StrDoc<SupportLang>>,
     scope: &Range<usize>,
-    index: &NodeOperandIndex<'_>,
+    index: &NodeOperandIndex<'tree>,
 ) -> Option<Vec<SecurityPathStep>> {
     if !index.source_is_unchanged(source, scope) {
         return None;
@@ -2046,14 +2178,14 @@ fn node_guarded_alias_steps(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn node_operand_origin(
+fn node_operand_origin<'tree>(
     path: &str,
     language: Language,
     symbols: &FileSymbolEnvironment,
-    source: &Node<'_, StrDoc<SupportLang>>,
-    target: &Node<'_, StrDoc<SupportLang>>,
+    source: &Node<'tree, StrDoc<SupportLang>>,
+    target: &Node<'tree, StrDoc<SupportLang>>,
     scope: &Range<usize>,
-    index: &NodeOperandIndex<'_>,
+    index: &NodeOperandIndex<'tree>,
     depth: usize,
     work: &mut usize,
 ) -> Option<Vec<SecurityPathStep>> {
@@ -2069,6 +2201,12 @@ fn node_operand_origin(
     }
     if target.kind().as_ref() == "identifier" {
         let name = target.text();
+        if index
+            .nested_binding_writes
+            .contains(&((scope.start, scope.end), name.to_string()))
+        {
+            return None;
+        }
         let assignment = index.alias_assignment(scope, target)?;
         let mut steps = node_operand_origin(
             path,
@@ -2086,6 +2224,30 @@ fn node_operand_origin(
             location: node_location(path, &assignment.node),
             evidence_id: None,
             symbol: Some(name.into_owned()),
+        });
+        return Some(steps);
+    }
+    if matches!(
+        target.kind().as_ref(),
+        "member_expression" | "subscript_expression"
+    ) {
+        let value = node_fields::projected_value(target, index, scope, depth, work)?;
+        let mut steps = node_operand_origin(
+            path,
+            language,
+            symbols,
+            source,
+            &value,
+            scope,
+            index,
+            depth + 1,
+            work,
+        )?;
+        steps.push(SecurityPathStep {
+            kind: SecurityPathStepKind::Alias,
+            location: node_location(path, target),
+            evidence_id: None,
+            symbol: Some(format!("field projection: {}", target.text())),
         });
         return Some(steps);
     }
