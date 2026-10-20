@@ -9,7 +9,9 @@ fn returned_fields_use_exact_helpers_and_keep_input_fields_separate() {
         root.join("helpers.js"),
         r#"
 import files from 'node:fs/promises';
+import cp from 'node:child_process';
 export function consume(input){files.readFile(input);return {clean:'date'};}
+export function execute(input){cp.exec(input);return {clean:'date'};}
 export function wrap(input) { return {command:input,clean:'date'}; }
 export function nested(input) { return {nested:{command:input},clean:'date'}; }
 export function select(input) { return {command:input.bad,clean:input.clean}; }
@@ -186,6 +188,11 @@ export const arrow = (input) => ({command:input});
         "import {consume} from './helpers.js'; function run(req){consume(req.query.command);}",
     )
     .unwrap();
+    fs::write(
+        root.join("process-input-effect.js"),
+        "import cp from 'node:child_process'; import {execute} from './helpers.js'; function run(req){const dto=execute(req.query.command);cp.exec(dto.clean);}",
+    )
+    .unwrap();
     let scan = mehscan_engine::scan_path(&root).unwrap();
     assert_eq!(scan.coverage.totals.parse_failed, 0);
     for (name, _, expected) in cases {
@@ -222,22 +229,45 @@ export const arrow = (input) => ({command:input});
             }
         }
     }
-    let effect_sink = scan
+    for (file, capability) in [
+        ("input-effect.js", Capability::FilesystemRead),
+        ("process-input-effect.js", Capability::ProcessExecution),
+    ] {
+        let effect_sink = scan
+            .evidence
+            .iter()
+            .find(|e| {
+                e.location.path == file
+                    && e.capability == capability
+                    && e.rule_id.contains("parameter-sink-summary")
+            })
+            .unwrap();
+        assert!(
+            scan.security_paths
+                .iter()
+                .any(|p| p.sink_evidence_id == effect_sink.id
+                    && !p
+                        .uncertainty_reasons
+                        .iter()
+                        .any(|r| r == "node_object_field_projection_is_syntactic")),
+            "input sink effects must remain separate from returned fields: {file}"
+        );
+    }
+    let clean_return_sink = scan
         .evidence
         .iter()
         .find(|e| {
-            e.location.path == "input-effect.js" && e.capability == Capability::FilesystemRead
+            e.location.path == "process-input-effect.js"
+                && e.capability == Capability::ProcessExecution
+                && !e.rule_id.contains("parameter-sink-summary")
         })
         .unwrap();
     assert!(
-        scan.security_paths
+        !scan
+            .security_paths
             .iter()
-            .any(|p| p.sink_evidence_id == effect_sink.id
-                && !p
-                    .uncertainty_reasons
-                    .iter()
-                    .any(|r| r == "node_object_field_projection_is_syntactic")),
-        "input sink effects must remain separate from returned fields"
+            .any(|p| p.sink_evidence_id == clean_return_sink.id),
+        "an input-consuming helper must not taint a constant returned field"
     );
     fs::remove_dir_all(root).unwrap();
 }

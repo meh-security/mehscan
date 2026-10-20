@@ -989,7 +989,8 @@ impl NodeProjectContext {
                     .chain(
                         (matches!(
                             summary.sink,
-                            SummarySink::FilesystemRead
+                            SummarySink::Process
+                                | SummarySink::FilesystemRead
                                 | SummarySink::FilesystemWrite
                                 | SummarySink::TemplateEvaluation
                                 | SummarySink::OutboundRequest
@@ -3679,7 +3680,9 @@ fn parameter_sink_operands<'tree>(
         .flatten()
         .or_else(|| receiver.then(|| "nunjucks.Environment.renderString".to_string()));
     let legacy = summary_sink(&callee);
+    let process_operand = api.as_deref().and_then(process_sink_operand);
     if legacy.is_none()
+        && process_operand.is_none()
         && callee != "fetch"
         && !api.as_deref().is_some_and(|api| {
             [
@@ -3711,6 +3714,11 @@ fn parameter_sink_operands<'tree>(
         return Vec::new();
     }
     let mut slots = Vec::new();
+    if process_operand.is_some() {
+        // Executable/module selection is distinct from argv or options.
+        // Those do not establish shell injection by themselves.
+        slots.push((0, SummarySink::Process));
+    }
     if let Some(api) = api.as_deref() {
         match api {
             "fs.readFile" | "fs.readFileSync" | "fs.createReadStream" | "fs.promises.readFile" => {
@@ -3826,6 +3834,8 @@ fn parameter_sink_operands<'tree>(
                 } else {
                     "destination_path"
                 }
+            } else if sink == SummarySink::Process {
+                process_operand.unwrap_or(sink.role())
             } else {
                 sink.role()
             };
@@ -4026,16 +4036,21 @@ fn summary_parameter_is_unmodified(
     })
 }
 
+fn process_sink_operand(api: &str) -> Option<&'static str> {
+    match api {
+        "child_process.exec" | "child_process.execSync" => Some("command"),
+        "child_process.execFile"
+        | "child_process.execFileSync"
+        | "child_process.spawn"
+        | "child_process.spawnSync" => Some("executable"),
+        "child_process.fork" => Some("module_path"),
+        _ => None,
+    }
+}
+
 fn summary_sink(callee: &str) -> Option<SummarySink> {
     let callee = compact(callee);
     match callee.as_str() {
-        "child_process.exec"
-        | "child_process.execSync"
-        | "child_process.execFile"
-        | "child_process.execFileSync"
-        | "child_process.spawn"
-        | "child_process.spawnSync"
-        | "child_process.fork" => Some(SummarySink::Process),
         "eval" | "global.eval" => Some(SummarySink::DynamicCode),
         "yaml.load" | "jsyaml.load" | "js_yaml.load" => Some(SummarySink::Deserialization),
         _ if terminal_symbol(&callee) == "redirect" => Some(SummarySink::Redirect),

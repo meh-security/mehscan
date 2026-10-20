@@ -17,6 +17,13 @@ import client from 'axios';
 import {request as requestHttp} from 'node:http';
 import {fetch as remote} from 'undici';
 import custom from 'unrelated-files';
+import cp from 'node:child_process';
+import * as processes from 'child_process';
+import {exec as run, spawn as start} from 'node:child_process';
+import child_process from 'unrelated-processes';
+const {execSync: runSync} = require('child_process');
+const processModule = require('node:child_process');
+const runFile = require('node:child_process').execFile;
 const {readFile: cjsLoad} = require('node:fs/promises');
 export function read(p) { return files.readFile(p, 'utf8'); }
 export function readCjs(p) { return cjsLoad(p); }
@@ -51,6 +58,24 @@ export function shadow(p, files) { return files.readFile(p); }
 export function localShadow(p) { const files = custom; return files.readFile(p); }
 export function fetchShadow(p) { const fetch = custom; return fetch(p); }
 export function constant(p) { return load('/safe/file'); }
+export function shell(p) { return cp.exec(p); }
+export function shellAlias(p) { return run(p); }
+export function shellNamespace(p) { return processes.execSync(p); }
+export function shellCommon(p) { return runSync(p); }
+export function spawnCommon(p) { return processModule.spawn(p, []); }
+export function execFileCommon(p) { return runFile(p, []); }
+export function spawnAlias(p) { return start(p, []); }
+export function execFileSync(p) { return cp.execFileSync(p, []); }
+export function spawnSync(p) { return cp.spawnSync(p, []); }
+export function fork(p) { return cp.fork(p, []); }
+export function argv(p) { return cp.spawn('/usr/bin/printf', [p]); }
+export function options(p) { return cp.exec('date', p); }
+export function processOverwrite(p) { p='date'; return cp.exec(p); }
+export function processShadow(p, cp) { return cp.exec(p); }
+export function processLocalShadow(p) { const cp = custom; return cp.exec(p); }
+export function processRebound(p) { cp=custom; return cp.exec(p); }
+export function unrelatedProcess(p) { return child_process.exec(p); }
+export function spellingOnly(p) { return unbound_process.exec(p); }
 "#,
     )
     .unwrap();
@@ -58,6 +83,7 @@ export function constant(p) { return load('/safe/file'); }
     let write = Capability::FilesystemWrite;
     let template = Capability::TemplateEvaluation;
     let network = Capability::OutboundNetworkRequest;
+    let process = Capability::ProcessExecution;
     let cases: &[(&str, &[Capability])] = &[
         ("read", &[read]),
         ("readCjs", &[read]),
@@ -92,6 +118,24 @@ export function constant(p) { return load('/safe/file'); }
         ("localShadow", &[]),
         ("fetchShadow", &[]),
         ("constant", &[]),
+        ("shell", &[process]),
+        ("shellAlias", &[process]),
+        ("shellNamespace", &[process]),
+        ("shellCommon", &[process]),
+        ("spawnCommon", &[process]),
+        ("execFileCommon", &[process]),
+        ("spawnAlias", &[process]),
+        ("execFileSync", &[process]),
+        ("spawnSync", &[process]),
+        ("fork", &[process]),
+        ("argv", &[]),
+        ("options", &[]),
+        ("processOverwrite", &[]),
+        ("processShadow", &[]),
+        ("processLocalShadow", &[]),
+        ("processRebound", &[]),
+        ("unrelatedProcess", &[]),
+        ("spellingOnly", &[]),
     ];
     for (index, (name, _)) in cases.iter().enumerate() {
         let extension = ["js", "ts", "tsx"][index % 3];
@@ -100,7 +144,7 @@ export function constant(p) { return load('/safe/file'); }
             "import {{{name}}} from './helpers.js'; export function handle(req{annotation}) {{ return {name}(req.query.value); }}"
         )).unwrap();
     }
-    fs::write(root.join("clean.js"), "import {read} from './helpers.js'; export function handle(req) { return read('/safe/file'); }").unwrap();
+    fs::write(root.join("clean.js"), "import {read,shell,spawnAlias} from './helpers.js'; export function handle(req) { read('/safe/file'); shell('date'); spawnAlias('/usr/bin/printf'); }").unwrap();
     let scan = mehscan_engine::scan_path(&root).unwrap();
     for (index, (name, expected)) in cases.iter().enumerate() {
         let path = format!("{name}.{}", ["js", "ts", "tsx"][index % 3]);
@@ -153,6 +197,10 @@ export function constant(p) { return load('/safe/file'); }
         ("copyDestination", "destination_path"),
         ("renameSource", "source_path"),
         ("renameDestination", "destination_path"),
+        ("shellAlias", "command"),
+        ("spawnAlias", "executable"),
+        ("execFileCommon", "executable"),
+        ("fork", "module_path"),
     ] {
         assert!(scan.evidence.iter().any(|e| {
             e.location.path.starts_with(&format!("{name}."))
