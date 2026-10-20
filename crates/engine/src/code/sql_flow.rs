@@ -533,6 +533,42 @@ fn build_family_paths<'tree>(
             {
                 continue;
             }
+            if source_scope == sink_scope
+                && family.sink.capability == Capability::Redirect
+                && matches!(
+                    language,
+                    Language::Javascript | Language::Typescript | Language::Tsx
+                )
+            {
+                let index = node_operands.get_or_insert_with(|| {
+                    NodeOperandIndex::new(root, language, evidence, returned_objects)
+                });
+                if let Some((_, target)) = target_nodes.first() {
+                    match node_url::contribution(&source_node, target, index, &sink_scope) {
+                        node_url::Contribution::NoValue => continue,
+                        node_url::Contribution::QuerySuffix => {
+                            url_facts.insert(
+                                (source.id.clone(), sink.id.clone()),
+                                "node_url_query_suffix_base_unclassified",
+                            );
+                        }
+                        node_url::Contribution::FragmentSuffix => {
+                            url_facts.insert(
+                                (source.id.clone(), sink.id.clone()),
+                                "node_url_fragment_suffix_base_unclassified",
+                            );
+                        }
+                        node_url::Contribution::Unknown => {}
+                    }
+                }
+            }
+            let exact_operand = source
+                .tags
+                .iter()
+                .any(|t| t == "flow-contract:exact-node-operand");
+            if exact_operand && source_scope != sink_scope {
+                continue;
+            }
             // Do not seed an entire object from one request-derived field.
             // Scalar sink operands need an exact local projection proof. Keep
             // resource selectors / structured NoSQL contracts on their own path.
@@ -542,28 +578,29 @@ fn build_family_paths<'tree>(
                     Language::Javascript | Language::Typescript | Language::Tsx
                 )
                 && source.capability == Capability::HttpRequestData
-                && (matches!(
-                    sink.capability,
-                    Capability::ProcessExecution
-                        | Capability::DynamicCodeExecution
-                        | Capability::FilesystemRead
-                        | Capability::FilesystemWrite
-                        | Capability::OutboundNetworkRequest
-                        | Capability::Redirect
-                        | Capability::TemplateEvaluation
-                        | Capability::HtmlOutput
-                        | Capability::LdapQuery
-                        | Capability::XpathQuery
-                        | Capability::Deserialization
-                ) || (sink.capability == Capability::DatabaseQuery
-                    && sink.cwe_candidates == ["CWE-89"]))
-                && (node_fields::source_in_object(&source_node, &source_scope)
-                    || node_fields::source_in_return_call(
-                        &source_node,
-                        &source_scope,
-                        returned_objects,
-                        &location_range(&sink.location),
-                    ))
+                && (exact_operand
+                    || ((matches!(
+                        sink.capability,
+                        Capability::ProcessExecution
+                            | Capability::DynamicCodeExecution
+                            | Capability::FilesystemRead
+                            | Capability::FilesystemWrite
+                            | Capability::OutboundNetworkRequest
+                            | Capability::Redirect
+                            | Capability::TemplateEvaluation
+                            | Capability::HtmlOutput
+                            | Capability::LdapQuery
+                            | Capability::XpathQuery
+                            | Capability::Deserialization
+                    ) || (sink.capability == Capability::DatabaseQuery
+                        && sink.cwe_candidates == ["CWE-89"]))
+                        && (node_fields::source_in_object(&source_node, &source_scope)
+                            || node_fields::source_in_return_call(
+                                &source_node,
+                                &source_scope,
+                                returned_objects,
+                                &location_range(&sink.location),
+                            ))))
             {
                 let index = node_operands.get_or_insert_with(|| {
                     NodeOperandIndex::new(root, language, evidence, returned_objects)
@@ -597,8 +634,14 @@ fn build_family_paths<'tree>(
                         family,
                     );
                     if let Some(path) = paths.last_mut() {
-                        path.uncertainty_reasons
-                            .push("node_object_field_projection_is_syntactic".into());
+                        path.uncertainty_reasons.push(
+                            if exact_operand {
+                                "node_explicit_operand_flow_is_syntactic"
+                            } else {
+                                "node_object_field_projection_is_syntactic"
+                            }
+                            .into(),
+                        );
                         if has_control_flow_ancestor(&source_node, &sink_scope)
                             || sink_in_control_flow
                         {
@@ -608,35 +651,6 @@ fn build_family_paths<'tree>(
                     }
                 }
                 continue;
-            }
-            if source_scope == sink_scope
-                && family.sink.capability == Capability::Redirect
-                && matches!(
-                    language,
-                    Language::Javascript | Language::Typescript | Language::Tsx
-                )
-            {
-                let index = node_operands.get_or_insert_with(|| {
-                    NodeOperandIndex::new(root, language, evidence, returned_objects)
-                });
-                if let Some((_, target)) = target_nodes.first() {
-                    match node_url::contribution(&source_node, target, index, &sink_scope) {
-                        node_url::Contribution::NoValue => continue,
-                        node_url::Contribution::QuerySuffix => {
-                            url_facts.insert(
-                                (source.id.clone(), sink.id.clone()),
-                                "node_url_query_suffix_base_unclassified",
-                            );
-                        }
-                        node_url::Contribution::FragmentSuffix => {
-                            url_facts.insert(
-                                (source.id.clone(), sink.id.clone()),
-                                "node_url_fragment_suffix_base_unclassified",
-                            );
-                        }
-                        node_url::Contribution::Unknown => {}
-                    }
-                }
             }
             if sink.rule_id.ends_with("postgres-query")
                 && sink.captures.get("query").is_some_and(|query| {

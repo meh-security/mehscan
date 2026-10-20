@@ -1,4 +1,4 @@
-//! Exact template-source and framework file-delivery boundaries. Discovery is
+//! Exact template, file-delivery and registered request boundaries. Discovery is
 //! local and bounded; this does not infer arbitrary same-named receiver APIs.
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -42,14 +42,29 @@ pub(super) fn add_boundaries<'a>(
     if !source.contains("nunjucks") && !source.contains("express") {
         return;
     }
-    if !["renderString", "compile", "sendFile", "download"]
-        .iter()
-        .any(|api| source.contains(api))
+    let needs_metadata = source.contains("express")
+        && ["path", "url", "originalUrl", "hostname"]
+            .iter()
+            .any(|field| source.contains(field));
+    if !needs_metadata
+        && !["renderString", "compile", "sendFile", "download"]
+            .iter()
+            .any(|api| source.contains(api))
     {
         return;
     }
-    let functions = root.dfs().filter(|n| is_function(n)).collect::<Vec<_>>();
+    let mut functions = Vec::new();
+    let mut request_effects = RequestEffects::default();
+    for node in root.dfs() {
+        if needs_metadata {
+            request_effects.record(&node);
+        }
+        if is_function(&node) {
+            functions.push(node);
+        }
+    }
     let mut responses = super::node_express::typed_response_bindings(root);
+    let mut requests = BTreeMap::new();
     let routers = root
         .dfs()
         .filter(|n| n.kind().as_ref() == "variable_declarator")
@@ -62,7 +77,7 @@ pub(super) fn add_boundaries<'a>(
                 && ["express", "express.Router"]
                     .iter()
                     .any(|api| exact_imported_api(root, symbols, &callee, api, language)))
-            .then(|| name.text().into_owned())
+            .then(|| n.range().start)
         })
         .collect::<BTreeSet<_>>();
 
@@ -92,18 +107,53 @@ pub(super) fn add_boundaries<'a>(
                     .iter()
                     .filter(|f| function_name(f).as_deref() == Some(argument.text().as_ref()))
                     .collect::<Vec<_>>();
-                (matches.len() == 1 && stable_binding(root, &argument)).then(|| matches[0].clone())
+                (matches.len() == 1
+                    && stable_binding(root, &argument)
+                    && matches[0]
+                        .ancestors()
+                        .find(|n| {
+                            matches!(
+                                n.kind().as_ref(),
+                                "statement_block" | "program" | "switch_body"
+                            )
+                        })
+                        .is_some_and(|block| block.range().contains(&argument.range().start)))
+                .then(|| matches[0].clone())
             } else {
                 None
             };
             let Some(handler) = handler else { continue };
-            let Some(parameters) = handler.field("parameters") else {
-                continue;
-            };
-            let parameters = parameters
-                .children()
-                .filter(|n| n.is_named())
-                .collect::<Vec<_>>();
+            let parameters = handler
+                .field("parameters")
+                .map(|p| p.children().filter(|n| n.is_named()).collect::<Vec<_>>())
+                .or_else(|| handler.field("parameter").map(|p| vec![p]))
+                .unwrap_or_default();
+            let request_index = if parameters.len() == 4 { 1 } else { 0 };
+            // Express distinguishes error handlers by runtime arity. Defaults
+            // and rest patterns can change it; do not guess their argument role.
+            let request_arity_known = parameters.len() <= 4
+                && parameters.iter().all(|p| {
+                    let pattern = p
+                        .field("pattern")
+                        .or_else(|| p.field("name"))
+                        .unwrap_or_else(|| p.clone());
+                    pattern.kind().as_ref() == "identifier" && p.field("value").is_none()
+                });
+            if let Some(parameter) = parameters
+                .get(request_index)
+                .filter(|_| needs_metadata && request_arity_known)
+            {
+                let pattern = parameter
+                    .field("pattern")
+                    .or_else(|| parameter.field("name"))
+                    .unwrap_or_else(|| parameter.clone());
+                if pattern.kind().as_ref() == "identifier" {
+                    requests.insert(
+                        handler.range().start,
+                        (pattern.text().into_owned(), callee.clone()),
+                    );
+                }
+            }
             // Error middleware has (err, req, res, next).
             let index = if parameters.len() == 4 { 2 } else { 1 };
             let Some(parameter) = parameters.get(index) else {
@@ -122,11 +172,43 @@ pub(super) fn add_boundaries<'a>(
         }
     }
 
-    for call in root
-        .dfs()
-        .filter(|n| n.kind().as_ref() == "call_expression")
-    {
+    for call in root.dfs() {
         if comments.is_in_comment(call.range()) {
+            continue;
+        }
+        if matches!(
+            call.kind().as_ref(),
+            "member_expression" | "subscript_expression"
+        ) {
+            if let Some(function) = owner(&call)
+                && let Some((request, registration)) = requests.get(&function.range().start)
+                && let Some(access) = super::security_paths::node_static_access(&call, 0)
+                && access.len() == 2
+                && &access[0] == request
+                && let Some(field) = super::node_express::url_metadata_field(&access[1])
+                && !request_effects.blocks(&function, request, field, call.range().start)
+                && !evidence.iter().any(|e| {
+                    e.kind == EvidenceKind::Source
+                        && e.capability == Capability::HttpRequestData
+                        && e.location.start.byte_offset == call.range().start
+                        && e.location.end.byte_offset == call.range().end
+                })
+            {
+                push_request_metadata(
+                    path,
+                    prefix,
+                    &call,
+                    registration,
+                    field,
+                    comments,
+                    conditional,
+                    literals,
+                    evidence,
+                );
+            }
+            continue;
+        }
+        if call.kind().as_ref() != "call_expression" {
             continue;
         }
         let Some(callee) = call.field("function") else {
@@ -325,6 +407,126 @@ fn capture(path: &str, node: &Ast<'_>) -> Capture {
     }
 }
 
+/// Collected in the existing function-discovery walk, queried by exact callable
+/// and request binding. This rejects observed replacement, not a heap analysis.
+#[derive(Default)]
+struct RequestEffects(BTreeMap<(usize, String), Vec<(usize, Vec<String>)>>);
+
+impl RequestEffects {
+    fn record(&mut self, node: &Ast<'_>) {
+        let (target, declaration) = match node.kind().as_ref() {
+            "variable_declarator"
+            | "function_declaration"
+            | "generator_function_declaration"
+            | "class_declaration" => (node.field("name"), true),
+            "assignment_expression" | "augmented_assignment_expression" => {
+                (node.field("left"), false)
+            }
+            "update_expression" => (node.field("argument"), false),
+            "unary_expression" if node.field("operator").is_some_and(|n| n.text() == "delete") => {
+                (node.field("argument"), false)
+            }
+            _ => return,
+        };
+        let Some(target) = target else { return };
+        let Some(function) = owner(node) else { return };
+        if let Some(access) = super::security_paths::node_static_access(&target, 0).or_else(|| {
+            target
+                .field("object")
+                .and_then(|n| super::security_paths::node_static_access(&n, 0))
+        }) && let Some(name) = access.first()
+        {
+            self.0
+                .entry((function.range().start, name.clone()))
+                .or_default()
+                .push((
+                    if declaration { 0 } else { node.range().start },
+                    access[1..].to_vec(),
+                ));
+        } else if matches!(target.kind().as_ref(), "object_pattern" | "array_pattern") {
+            for name in target.dfs().filter(|n| {
+                matches!(
+                    n.kind().as_ref(),
+                    "identifier" | "shorthand_property_identifier_pattern"
+                )
+            }) {
+                self.0
+                    .entry((function.range().start, name.text().into_owned()))
+                    .or_default()
+                    .push((node.range().start, Vec::new()));
+            }
+        }
+    }
+
+    fn blocks(&self, function: &Ast<'_>, name: &str, field: &str, before: usize) -> bool {
+        self.0
+            .get(&(function.range().start, name.to_string()))
+            .is_some_and(|effects| {
+                effects
+                    .iter()
+                    .any(|(at, access)| *at <= before && (access.is_empty() || access[0] == field))
+            })
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_request_metadata<'a>(
+    path: &str,
+    prefix: &str,
+    node: &Ast<'a>,
+    registration: &Ast<'_>,
+    field: &str,
+    _comments: &CommentRanges,
+    conditional: &ConditionalRegions,
+    literals: &LiteralEnvironment<'a, StrDoc<SupportLang>>,
+    evidence: &mut Vec<Evidence>,
+) {
+    let rule = format!("{prefix}-express-registered-request-metadata");
+    evidence.push(Evidence {
+        id: evidence_id(path, &rule, node.range().start, node.range().end),
+        kind: EvidenceKind::Source,
+        capability: Capability::HttpRequestData,
+        location: location(path, node),
+        enclosing_symbol: enclosing_symbol(node),
+        captures: BTreeMap::from([
+            ("name".into(), capture(path, node)),
+            ("registration".into(), capture(path, registration)),
+        ]),
+        cwe_candidates: vec!["CWE-20".into()],
+        tags: [
+            "http",
+            "express",
+            "request-metadata",
+            "registered-handler",
+            "attacker-controlled",
+            "flow-contract:exact-node-operand",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+        confidence: Confidence::Medium,
+        provenance: Provenance {
+            resolution: Resolution::Ast,
+            engine: "ast-grep 0.45.1 + bounded-express-registration-boundary".into(),
+            rule_version: 1,
+        },
+        context: EvidenceContext {
+            comment: false,
+            reachability: Some(reachability::classify(node, literals)),
+            availability: Some(conditional.availability_for(node.range())),
+            ..EvidenceContext::default()
+        },
+        symbol_resolution: Some(SymbolResolution {
+            canonical: format!("express.Request.{field}"),
+            observed: node.text().into_owned(),
+            method: SymbolResolutionMethod::Alias,
+            confidence: SymbolConfidence::High,
+        }),
+        rule_id: rule,
+        related_evidence: Vec::new(),
+    });
+}
+
 // Conservative local identity check. A competing declaration or assignment is
 // unresolved; this pass does not guess which dynamic receiver wins.
 fn stable_binding(root: &Ast<'_>, identifier: &Ast<'_>) -> bool {
@@ -341,6 +543,21 @@ fn stable_binding(root: &Ast<'_>, identifier: &Ast<'_>) -> bool {
         return false;
     }
     if let Some(declaration) = declarations.first() {
+        if declaration
+            .parent()
+            .is_some_and(|n| n.kind().as_ref() == "lexical_declaration")
+            && declaration
+                .ancestors()
+                .find(|n| {
+                    matches!(
+                        n.kind().as_ref(),
+                        "statement_block" | "program" | "switch_body"
+                    )
+                })
+                .is_some_and(|block| !block.range().contains(&identifier.range().start))
+        {
+            return false;
+        }
         if declaration.range().end > identifier.range().start {
             return false;
         }
@@ -380,11 +597,24 @@ fn stable_binding(root: &Ast<'_>, identifier: &Ast<'_>) -> bool {
             "assignment_expression" | "augmented_assignment_expression" => {
                 n.field("left").is_some_and(|left| {
                     left.text() == name
+                        || (left.kind().as_ref() == "subscript_expression"
+                            && root_identifier(&left).text() == name)
                         || member(&left).is_some_and(|(object, method)| {
                             object.text() == name
                                 && matches!(
                                     method.as_str(),
                                     "renderString"
+                                        | "Router"
+                                        | "route"
+                                        | "get"
+                                        | "post"
+                                        | "put"
+                                        | "patch"
+                                        | "delete"
+                                        | "head"
+                                        | "options"
+                                        | "all"
+                                        | "use"
                                         | "compile"
                                         | "configure"
                                         | "Environment"
@@ -461,15 +691,14 @@ fn unique_declaration<'a>(root: &Ast<'a>, receiver: &Ast<'a>) -> Option<Ast<'a>>
 fn router_receiver<'a>(
     root: &Ast<'a>,
     node: &Ast<'a>,
-    routers: &BTreeSet<String>,
+    routers: &BTreeSet<usize>,
     depth: usize,
 ) -> bool {
     if depth > 3 {
         return false;
     }
     if node.kind().as_ref() == "identifier" {
-        return routers.contains(node.text().as_ref())
-            && unique_declaration(root, node).is_some()
+        return unique_declaration(root, node).is_some_and(|d| routers.contains(&d.range().start))
             && !owner(node)
                 .and_then(|n| n.field("parameters"))
                 .is_some_and(|p| p.dfs().any(|n| n.text() == node.text()));

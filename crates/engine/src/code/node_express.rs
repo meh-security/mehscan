@@ -125,7 +125,7 @@ pub(crate) fn add_typed_express_sources<'tree>(
             };
             // Legacy rules cover req collection fields, but not URL scalars.
             // Keep those scalars behind the imported Express type boundary.
-            if request == "req" && !matches!(field, "session" | "path" | "url" | "originalUrl") {
+            if request == "req" && field != "session" && url_metadata_field(field).is_none() {
                 continue;
             }
             if node.parent().is_some_and(|parent| {
@@ -849,7 +849,7 @@ fn request_member_root<'a>(
 ) -> Option<(&'a str, &'static str)> {
     if let Some(access) = super::security_paths::node_static_access(node, 0)
         && access.len() == 2
-        && matches!(access[1].as_str(), "path" | "url" | "originalUrl")
+        && url_metadata_field(&access[1]).is_some()
     {
         let request = requests.iter().find(|r| access[0] == r.name)?;
         return Some((request.name.as_str(), canonical_request_field(&access[1])?));
@@ -861,7 +861,7 @@ fn request_member_root<'a>(
     requests.iter().find_map(|request| {
         let tail = text.strip_prefix(&format!("{}.", request.name))?;
         let field = canonical_request_field(tail.split(['.', '[']).next()?)?;
-        if matches!(field, "path" | "url" | "originalUrl") {
+        if url_metadata_field(field).is_some() {
             return None; // Scalar property, not a method reference or subfield.
         }
         Some((request.name.as_str(), field))
@@ -887,9 +887,16 @@ fn canonical_request_field(field: &str) -> Option<&'static str> {
         "session" => Some("session"),
         "file" => Some("file"),
         "files" => Some("files"),
+        _ => url_metadata_field(field),
+    }
+}
+
+pub(super) fn url_metadata_field(field: &str) -> Option<&'static str> {
+    match field {
         "path" => Some("path"),
         "url" => Some("url"),
         "originalUrl" => Some("originalUrl"),
+        "hostname" => Some("hostname"),
         _ => None,
     }
 }
@@ -957,7 +964,15 @@ fn push_member_source<'tree>(
             ("name".to_string(), text_capture(path, node, field)),
             ("request".to_string(), text_capture(path, node, request)),
         ]),
-        vec!["renamed-request", "typed-request"],
+        if url_metadata_field(field).is_some() {
+            vec![
+                "renamed-request",
+                "typed-request",
+                "flow-contract:exact-node-operand",
+            ]
+        } else {
+            vec!["renamed-request", "typed-request"]
+        },
         "express.Request",
         "express",
         comments,
