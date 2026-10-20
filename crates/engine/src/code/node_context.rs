@@ -207,6 +207,7 @@ struct PromiseContinuation<'tree> {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct NodeProjectContext {
+    imports_by_path: BTreeMap<String, BTreeMap<String, ImportTarget>>,
     runtime_by_path: BTreeMap<String, RuntimeEnvironment>,
     routes_by_handler: BTreeMap<String, Vec<ExpressRouteSummary>>,
     owner_field_overwrite_guards: BTreeSet<String>,
@@ -226,8 +227,22 @@ pub(crate) struct NodeProjectContext {
 }
 
 impl NodeProjectContext {
+    #[cfg(test)]
     pub(crate) fn from_sources<'a>(
         sources: impl Iterator<Item = (&'a str, Language, &'a str)>,
+    ) -> Self {
+        let sources = sources.collect::<Vec<_>>();
+        let modules = std::sync::Arc::new(super::node_modules::NodeModuleIndex::build(
+            None,
+            sources.iter().copied(),
+            std::iter::empty(),
+        ));
+        Self::from_sources_with_modules(sources.into_iter(), modules)
+    }
+
+    pub(crate) fn from_sources_with_modules<'a>(
+        sources: impl Iterator<Item = (&'a str, Language, &'a str)>,
+        modules: std::sync::Arc<super::node_modules::NodeModuleIndex>,
     ) -> Self {
         let sources = sources
             .filter(|(_, language, _)| is_node_language(*language))
@@ -267,7 +282,10 @@ impl NodeProjectContext {
             trace.step(path, "exported_functions");
             let functions = exported_functions(&root);
             trace.step(path, "imports");
-            let imports = javascript_imports(path, &root);
+            let imports = resolved_javascript_imports(path, &root, &modules);
+            context
+                .imports_by_path
+                .insert((*path).to_string(), imports.clone());
             trace.step(path, "parameter_returns");
             collect_parameter_return_summaries(path, &functions, &mut context.parameter_returns);
             trace.step(path, "parameter_sinks");
@@ -534,7 +552,11 @@ impl NodeProjectContext {
         if !is_node_language(language) || self.parameter_returns.is_empty() {
             return;
         }
-        let imports = javascript_imports(path, root);
+        let imports = self
+            .imports_by_path
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| javascript_imports(path, root));
         let current_module = module_path(path).unwrap_or_default();
         for node in root.dfs() {
             let Some(call) = call_site(node) else {
@@ -614,7 +636,11 @@ impl NodeProjectContext {
         if !is_node_language(language) || self.parameter_sinks.is_empty() {
             return;
         }
-        let imports = javascript_imports(path, root);
+        let imports = self
+            .imports_by_path
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| javascript_imports(path, root));
         let current_module = module_path(path).unwrap_or_default();
         for node in root.dfs() {
             let Some(call) = call_site(node) else {
@@ -811,7 +837,11 @@ impl NodeProjectContext {
         if !is_node_language(language) || self.xxe_parsers.is_empty() {
             return;
         }
-        let imports = javascript_imports(path, root);
+        let imports = self
+            .imports_by_path
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| javascript_imports(path, root));
         let current_module = module_path(path).unwrap_or_default();
         for node in root.dfs() {
             let Some(call) = call_site(node) else {
@@ -962,7 +992,11 @@ impl NodeProjectContext {
         if !is_node_language(language) {
             return;
         }
-        let imports = javascript_imports(path, root);
+        let imports = self
+            .imports_by_path
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| javascript_imports(path, root));
         let current_module = module_path(path).unwrap_or_default();
         for node in root.dfs() {
             let Some(call) = call_site(node) else {
@@ -1029,7 +1063,11 @@ impl NodeProjectContext {
         if !is_node_language(language) || self.mongo_callback_results.is_empty() {
             return;
         }
-        let imports = javascript_imports(path, root);
+        let imports = self
+            .imports_by_path
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| javascript_imports(path, root));
         let current_module = module_path(path).unwrap_or_default();
         for node in root.dfs() {
             let Some(call) = call_site(node) else {
@@ -2404,6 +2442,9 @@ fn express_route_is_under_mount(route: &str, mount: &str) -> bool {
 
 #[derive(Clone, Debug)]
 struct ImportTarget {
+    source: bool,
+    instance: bool,
+    mode: super::node_modules::ImportMode,
     module: String,
     export: Option<String>,
 }
@@ -2412,30 +2453,148 @@ fn javascript_imports(
     path: &str,
     root: &Node<'_, StrDoc<SupportLang>>,
 ) -> BTreeMap<String, ImportTarget> {
+    javascript_imports_raw(path, root)
+        .into_iter()
+        .filter_map(|(name, mut target)| {
+            target.source = target.module.starts_with('.');
+            target.module = resolve_module(path, &target.module)?;
+            Some((name, target))
+        })
+        .collect()
+}
+
+fn resolved_javascript_imports(
+    path: &str,
+    root: &Node<'_, StrDoc<SupportLang>>,
+    modules: &super::node_modules::NodeModuleIndex,
+) -> BTreeMap<String, ImportTarget> {
+    use super::node_modules::{ModuleTarget, module_key};
+    let mut result = BTreeMap::new();
+    for (visible, mut target) in javascript_imports_raw(path, root) {
+        match modules.resolve(path, &target.module, target.mode) {
+            ModuleTarget::Source(file) => {
+                target.source = true;
+                if target.instance {
+                    let Some(constructor) = modules
+                        .resolve_export(&file, target.export.as_deref().unwrap_or("default"))
+                    else {
+                        continue;
+                    };
+                    for method in modules.instance_methods(&constructor.path, &constructor.name) {
+                        result.insert(
+                            format!("{visible}.{method}"),
+                            ImportTarget {
+                                source: true,
+                                instance: false,
+                                mode: target.mode,
+                                module: module_key(&constructor.path),
+                                export: Some(method),
+                            },
+                        );
+                    }
+                    target.module = module_key(&constructor.path);
+                    target.export = Some(String::new());
+                    result.insert(visible, target);
+                    continue;
+                }
+                if let Some(export) = &target.export {
+                    let Some(resolved) = modules.resolve_export(&file, export) else {
+                        continue;
+                    };
+                    target.module = module_key(&resolved.path);
+                    target.export = Some(resolved.name);
+                } else {
+                    let names = modules.export_names(&file);
+                    for name in &names {
+                        if let Some(resolved) = modules.resolve_export(&file, &name) {
+                            result.insert(
+                                format!("{visible}.{name}"),
+                                ImportTarget {
+                                    source: true,
+                                    instance: false,
+                                    module: module_key(&resolved.path),
+                                    export: Some(resolved.name),
+                                    mode: target.mode,
+                                },
+                            );
+                        }
+                    }
+                    target.module = module_key(&file);
+                    // Local namespaces expose only resolved export members.
+                    // Do not fall back to a same-named private/local function.
+                    target.export = Some(String::new());
+                    if names.contains("default")
+                        && let Some(default) = modules.resolve_export(&file, "default")
+                    {
+                        target.module = module_key(&default.path);
+                        target.export = Some(default.name);
+                    }
+                }
+            }
+            ModuleTarget::External(module) => target.module = module,
+            ModuleTarget::Unresolved(_) => continue,
+        }
+        result.insert(visible, target);
+    }
+    result
+}
+
+fn javascript_imports_raw(
+    path: &str,
+    root: &Node<'_, StrDoc<SupportLang>>,
+) -> BTreeMap<String, ImportTarget> {
     let mut imports = BTreeMap::new();
     for node in root
         .dfs()
         .filter(|node| node.kind().as_ref() == "import_statement")
     {
-        let text = node.text();
-        let Some((clause, module_text)) = text
-            .trim()
-            .strip_prefix("import ")
-            .and_then(|rest| rest.rsplit_once(" from "))
+        if node.children().any(|n| n.kind().as_ref() == "type") {
+            continue;
+        }
+        let Some(module_node) = node.field("source") else {
+            continue;
+        };
+        let module_text = module_node.text();
+        let Some(imported) = exact_quoted(module_text.trim()) else {
+            continue;
+        };
+        let Some(clause_node) = node
+            .children()
+            .find(|n| n.kind().as_ref() == "import_clause")
         else {
             continue;
         };
-        let Some(imported) = exact_quoted(module_text.trim().trim_end_matches(';')) else {
-            continue;
+        let clause_text = clause_node.text();
+        let module = imported.to_string();
+        let clause = clause_text.trim();
+        let clause = if !clause.starts_with(['{', '*']) {
+            if let Some((default, rest)) = clause.split_once(',') {
+                if let Some(local) = simple_identifier(default.trim()) {
+                    imports.insert(
+                        local.to_string(),
+                        ImportTarget {
+                            source: false,
+                            instance: false,
+                            mode: super::node_modules::ImportMode::Import,
+                            module: module.clone(),
+                            export: None,
+                        },
+                    );
+                }
+                rest.trim()
+            } else {
+                clause
+            }
+        } else {
+            clause
         };
-        let Some(module) = resolve_module(path, imported) else {
-            continue;
-        };
-        let clause = clause.trim();
         if let Some(alias) = clause.strip_prefix("* as ") {
             imports.insert(
                 alias.trim().to_string(),
                 ImportTarget {
+                    source: false,
+                    instance: false,
+                    mode: super::node_modules::ImportMode::Import,
                     module,
                     export: None,
                 },
@@ -2446,6 +2605,9 @@ fn javascript_imports(
                 let Some(imported_name) = words.first().copied() else {
                     continue;
                 };
+                if imported_name == "type" {
+                    continue;
+                }
                 let visible = if words.get(1) == Some(&"as") {
                     words.get(2).copied().unwrap_or(imported_name)
                 } else {
@@ -2454,6 +2616,9 @@ fn javascript_imports(
                 imports.insert(
                     visible.to_string(),
                     ImportTarget {
+                        source: false,
+                        instance: false,
+                        mode: super::node_modules::ImportMode::Import,
                         module: module.clone(),
                         export: Some(imported_name.to_string()),
                     },
@@ -2463,6 +2628,9 @@ fn javascript_imports(
             imports.insert(
                 local.to_string(),
                 ImportTarget {
+                    source: false,
+                    instance: false,
+                    mode: super::node_modules::ImportMode::Import,
                     module,
                     export: None,
                 },
@@ -2485,7 +2653,16 @@ fn javascript_imports(
             continue;
         };
         if let Some(local) = simple_identifier(name.text().trim()) {
-            imports.insert(local.to_string(), ImportTarget { module, export });
+            imports.insert(
+                local.to_string(),
+                ImportTarget {
+                    source: false,
+                    instance: false,
+                    module,
+                    export,
+                    mode: super::node_modules::ImportMode::Require,
+                },
+            );
             continue;
         }
         if !matches!(name.kind().as_ref(), "object_pattern" | "object") {
@@ -2517,6 +2694,9 @@ fn javascript_imports(
             imports.insert(
                 local.to_string(),
                 ImportTarget {
+                    source: false,
+                    instance: false,
+                    mode: super::node_modules::ImportMode::Require,
                     module: module.clone(),
                     export: Some(imported.to_string()),
                 },
@@ -2552,8 +2732,11 @@ fn javascript_imports(
         imports.insert(
             local.to_string(),
             ImportTarget {
+                source: false,
+                instance: true,
+                mode: target.mode,
                 module: target.module.clone(),
-                export: None,
+                export: target.export.clone(),
             },
         );
     }
@@ -2561,7 +2744,7 @@ fn javascript_imports(
 }
 
 fn commonjs_require_target(
-    path: &str,
+    _path: &str,
     value: &Node<'_, StrDoc<SupportLang>>,
 ) -> Option<(String, Option<String>)> {
     if let Some(call) = call_site(value.clone())
@@ -2570,7 +2753,7 @@ fn commonjs_require_target(
     {
         let imported_text = call.arguments[0].text();
         let imported = exact_quoted(imported_text.trim())?;
-        return Some((resolve_module(path, imported)?, None));
+        return Some((imported.to_string(), None));
     }
     if value.kind().as_ref() != "member_expression" {
         return None;
@@ -2585,7 +2768,7 @@ fn commonjs_require_target(
     let property_text = property.text();
     let imported = exact_quoted(imported_text.trim())?;
     let export = simple_identifier(property_text.trim())?.to_string();
-    Some((resolve_module(path, imported)?, Some(export)))
+    Some((imported.to_string(), Some(export)))
 }
 
 fn unwrap_handler(
@@ -3883,8 +4066,17 @@ fn resolve_handler(
     current_module: &str,
     imports: &BTreeMap<String, ImportTarget>,
 ) -> Option<String> {
+    if let Some(target) = imports.get(observed)
+        && target.source
+        && let Some(export) = &target.export
+    {
+        return Some(format!("{}.{}", target.module, export));
+    }
     if let Some((head, tail)) = observed.split_once('.') {
         let target = imports.get(head)?;
+        if !target.source {
+            return None;
+        }
         if target.export.is_some() || simple_identifier(tail).is_none() {
             return None;
         }
@@ -3892,6 +4084,9 @@ fn resolve_handler(
     }
     let observed = simple_identifier(observed)?;
     if let Some(target) = imports.get(observed) {
+        if !target.source {
+            return None;
+        }
         return Some(format!("{}.{}", target.module, target.export.as_deref()?));
     }
     Some(format!("{current_module}.{observed}"))
@@ -5813,13 +6008,8 @@ fn push_request_policy_evidence<'tree>(
 }
 
 fn module_path(path: &str) -> Option<String> {
-    let path = path.replace('\\', "/");
-    let path = path.trim_start_matches("./");
-    let path = [".tsx", ".jsx", ".ts", ".js"]
-        .iter()
-        .find_map(|extension| path.strip_suffix(extension))
-        .unwrap_or(path);
-    (!path.is_empty()).then_some(path.to_string())
+    let path = super::node_modules::module_key(path);
+    (!path.is_empty()).then_some(path)
 }
 
 fn resolve_module(importer: &str, imported: &str) -> Option<String> {

@@ -147,6 +147,7 @@ mod tests {
     use super::*;
     fn fixture(files: &[(&str, &str)]) -> RepositorySources {
         RepositorySources {
+            node_modules: Default::default(),
             root: ".".into(),
             files: files
                 .iter()

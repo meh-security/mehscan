@@ -101,6 +101,7 @@ mod tests {
             );
         }
         RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".into(),
             files,
         }

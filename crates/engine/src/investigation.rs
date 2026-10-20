@@ -83,6 +83,7 @@ struct SourceFile {
 }
 
 struct RepositorySources {
+    node_modules: std::sync::Arc<crate::code::node_modules::NodeModuleIndex>,
     root: String,
     files: BTreeMap<String, SourceFile>,
 }
@@ -13802,9 +13803,6 @@ fn relative_named_import<'a>(source: &'a str, local: &str) -> Option<(&'a str, &
         let body = line.strip_prefix("import {")?;
         let (bindings, remainder) = body.split_once('}')?;
         let module = first_quoted_value(remainder)?;
-        if !module.starts_with('.') {
-            return None;
-        }
         bindings.split(',').find_map(|candidate| {
             let mut parts = candidate.split_whitespace();
             let imported = parts.next()?;
@@ -13825,6 +13823,29 @@ fn resolve_relative_typescript_module(
     module: &str,
     sources: &RepositorySources,
 ) -> Option<String> {
+    resolve_typescript_module_with_mode(
+        importing_path,
+        module,
+        sources,
+        crate::code::node_modules::ImportMode::Import,
+    )
+}
+
+fn resolve_typescript_module_with_mode(
+    importing_path: &str,
+    module: &str,
+    sources: &RepositorySources,
+    mode: crate::code::node_modules::ImportMode,
+) -> Option<String> {
+    if !sources.node_modules.is_empty() {
+        return match sources.node_modules.resolve(importing_path, module, mode) {
+            crate::code::node_modules::ModuleTarget::Source(path) => Some(path),
+            _ => None,
+        };
+    }
+    if !module.starts_with('.') {
+        return None;
+    }
     let mut parts = importing_path
         .replace('\\', "/")
         .split('/')
@@ -15932,7 +15953,7 @@ fn review_definition_owned_by_candidate(
         }
         if !matches!(
             candidate.language,
-            Some(Language::Javascript | Language::Typescript)
+            Some(Language::Javascript | Language::Typescript | Language::Tsx)
         ) {
             return false;
         }
@@ -16417,7 +16438,6 @@ fn relative_review_import_paths(
         if let Some(body) = line.strip_prefix("import * as ")
             && let Some((binding, remainder)) = body.split_once(" from ")
             && let Some(module) = first_quoted_value(remainder)
-            && module.starts_with('.')
             && contains_identifier(&candidate.source, &format!("{binding}.{name}"))
             && let Some(path) = resolve_relative_typescript_module(&candidate.path, module, sources)
         {
@@ -16429,14 +16449,12 @@ fn relative_review_import_paths(
             && let Some((binding, remainder)) = line["import ".len()..].split_once(" from ")
             && binding.trim() == name
             && let Some(module) = first_quoted_value(remainder)
-            && module.starts_with('.')
             && let Some(path) = resolve_relative_typescript_module(&candidate.path, module, sources)
         {
             paths.insert(path);
         }
         if let Some(require_at) = line.find("require(")
             && let Some(module) = first_quoted_value(&line[require_at + "require(".len()..])
-            && module.starts_with('.')
             && let Some((binding, _)) = line.split_once('=')
         {
             let binding_mentions_name = contains_identifier(binding, name);
@@ -16449,8 +16467,12 @@ fn relative_review_import_paths(
                 || namespace_binding.is_some_and(|binding| {
                     contains_identifier(&candidate.source, &format!("{binding}.{name}"))
                 }))
-                && let Some(path) =
-                    resolve_relative_typescript_module(&candidate.path, module, sources)
+                && let Some(path) = resolve_typescript_module_with_mode(
+                    &candidate.path,
+                    module,
+                    sources,
+                    crate::code::node_modules::ImportMode::Require,
+                )
             {
                 paths.insert(path);
             }
@@ -16476,9 +16498,12 @@ fn relative_review_import_paths(
                 });
                 if receiver.is_some_and(|receiver| {
                     contains_identifier(&candidate.source, &format!("{receiver}.{name}"))
-                }) && let Some(path) =
-                    resolve_relative_typescript_module(&candidate.path, module, sources)
-                {
+                }) && let Some(path) = resolve_typescript_module_with_mode(
+                    &candidate.path,
+                    module,
+                    sources,
+                    crate::code::node_modules::ImportMode::Require,
+                ) {
                     paths.insert(path);
                 }
             }
@@ -21324,6 +21349,16 @@ impl RepositorySources {
 
     fn from_discovery(discovery: Discovery, include_templates: bool) -> Result<Self, EngineError> {
         let display_root = display_path(&discovery.root);
+        let metadata = discovery
+            .files
+            .iter()
+            .filter(|file| {
+                file.absolute
+                    .file_name()
+                    .is_some_and(|name| name == "package.json")
+            })
+            .map(|file| file.relative.clone())
+            .collect::<Vec<_>>();
         let mut files = BTreeMap::new();
         for file in discovery.files {
             let (language, source) = match file.class {
@@ -21364,7 +21399,17 @@ impl RepositorySources {
                 },
             );
         }
+        let node_modules =
+            std::sync::Arc::new(crate::code::node_modules::NodeModuleIndex::file_index(
+                Some(&discovery.root),
+                files.values().filter_map(|file| {
+                    file.language
+                        .map(|language| (file.path.as_str(), language, file.source.as_str()))
+                }),
+                metadata.iter().map(String::as_str),
+            ));
         Ok(Self {
+            node_modules,
             root: display_root,
             files,
         })
@@ -22336,6 +22381,7 @@ mod tests {
             },
         );
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: ".".to_string(),
             files,
         };
@@ -22765,6 +22811,7 @@ mod tests {
         );
         let writer = "export function save(req) {\n  user.update({ name: req.body.name });\n}\n";
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files: [
                 ("a-generated.js", generated.as_str(), Language::Javascript),
@@ -22803,6 +22850,7 @@ mod tests {
             source: source.clone(),
         };
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files: BTreeMap::from([("app.js".to_string(), file)]),
         };
@@ -23218,6 +23266,7 @@ mod tests {
         let repository = "public class Repository {\n    public void Save(Order order) { command.CommandText = order.Name; }\n}\n";
         let controller = "public class OrdersController {\n    [HttpPost]\n    public IActionResult Create(InputModel model)\n    {\n        var order = new Order { Name = model.Name };\n        _repository.Save(order);\n        return Ok();\n    }\n}\n";
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files: BTreeMap::from([
                 (
@@ -23282,6 +23331,7 @@ mod tests {
             },
         );
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files,
         };
@@ -23334,6 +23384,7 @@ mod tests {
             "export function all() { return [] }\nexport function info() { return 'noise' }\n";
         let server = "app.get('/orders/:id', show)\napp.get('/noise', all)\n";
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files: BTreeMap::from([
                 (
@@ -23413,6 +23464,7 @@ mod tests {
         let form = "<?php\nnamespace App\\Form;\nfinal class ChangePasswordType extends AbstractType\n{\n    public function buildForm($builder): void\n    {\n        $builder->add('currentPassword', PasswordType::class, ['constraints' => [new UserPassword()]]);\n    }\n}\n";
         let noise = "<?php\nnamespace Other\\Form;\nfinal class ChangePasswordType extends AbstractType\n{\n    public function buildForm($builder): void { $builder->add('newPassword'); }\n}\n";
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files: BTreeMap::from([
                 (
@@ -23461,6 +23513,7 @@ mod tests {
         let helper = "namespace App.Models\n{\n    public class Order\n    {\n        public static string GetTrackingUrl(string carrier)\n        {\n            return $\"https://{carrier}\";\n        }\n    }\n}\n";
         let noise = "namespace Other.Models\n{\n    public class Order\n    {\n        public static string GetTrackingUrl(string carrier)\n        {\n            return carrier;\n        }\n    }\n}\n";
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files: BTreeMap::from([
                 (
@@ -23543,6 +23596,7 @@ mod tests {
             );
         }
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files,
         };
@@ -23593,6 +23647,7 @@ mod tests {
         let test = "httpMock.verify()\n";
         let teaching = "explanation: verify the database lookup\n";
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files: BTreeMap::from([
                 (
@@ -23663,6 +23718,7 @@ mod tests {
     fn review_context_indexes_one_lexical_helper_hop() {
         let source = "export function isChallengeEnabled (challenge: Challenge): boolean {\n  return getChallengeEnablementStatus(challenge).enabled\n}\nexport function getChallengeEnablementStatus (challenge: Challenge) {\n  return challenge.disabledEnv ? { enabled: false } : { enabled: true }\n}\n";
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files: BTreeMap::from([(
                 "lib/utils.ts".to_string(),
@@ -23722,6 +23778,7 @@ mod tests {
             );
         }
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files,
         };
@@ -23805,6 +23862,7 @@ mod tests {
         let persisted = "export function saveLoginIp () {\n  return async (req, res) => {\n    const lastLoginIp = req.headers['true-client-ip']\n    await user.update({ lastLoginIp })\n    res.json(user)\n  }\n}\n";
         let handler = "export function trackOrder () {\n  return (req, res) => {\n    const id = req.params.id\n    res.json({ data: [{ orderId: id }] })\n  }\n}\n";
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files: [
                 ("frontend/last-login.ts", consumer),
@@ -23935,6 +23993,7 @@ mod tests {
         };
 
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files: BTreeMap::new(),
         };
@@ -23968,6 +24027,7 @@ mod tests {
             remaining_checks: Vec::new(),
         });
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".into(),
             files: BTreeMap::new(),
         };
@@ -23996,6 +24056,7 @@ mod tests {
         let non_request_write = "export function saveDisplayName (profile) {\n  user.update({ displayName: profile.displayName })\n}\n";
         let static_response = "export function profile () {\n  return (req, res) => {\n    res.json({ displayName: 'system' })\n  }\n}\n";
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files: [
                 ("frontend/view.ts", consumer),
@@ -24148,6 +24209,7 @@ mod tests {
         })
         .collect();
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files,
         };
@@ -24163,6 +24225,7 @@ mod tests {
     fn marks_substring_redirect_allowlists_as_ineffective_context() {
         let helper = "export const isRedirectAllowed = (url: string) => {\n  for (const allowedUrl of redirectAllowlist) {\n    if (url.includes(allowedUrl)) return true\n  }\n  return false\n}\n";
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: "fixture".to_string(),
             files: BTreeMap::from([(
                 "lib/security.ts".to_string(),
@@ -24856,6 +24919,7 @@ mod tests {
     #[test]
     fn framework_context_is_collected_once_and_scoped_to_the_nearest_manifest() {
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: ".".to_string(),
             files: BTreeMap::from([
                 (
@@ -24963,6 +25027,7 @@ mod tests {
             ),
         ];
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: ".".into(),
             files: files
                 .into_iter()
@@ -25013,6 +25078,7 @@ mod tests {
             ("calls.js", "render(input);\n".repeat(30)),
         ];
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: ".".into(),
             files: files
                 .into_iter()

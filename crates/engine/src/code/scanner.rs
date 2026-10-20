@@ -22,6 +22,7 @@ use crate::code::matcher::{ParseOutcome, ScanDependencies, scan_source};
 use crate::code::native_drogon::DrogonProjectContext;
 use crate::code::native_invalidation::NativeInvalidationProjectContext;
 use crate::code::node_context::NodeProjectContext;
+use crate::code::node_modules::NodeModuleIndex;
 use crate::code::object_input::ObjectInputProjectContext;
 use crate::code::python_context::PythonProjectContext;
 use crate::code::rust_project::RustProjectContext;
@@ -104,6 +105,16 @@ pub(crate) fn scan_profiled(
         .is_some_and(|scope| scope.diff_mode == crate::ImpactDiffMode::Files);
     let discovery_microseconds = discovery_started.elapsed().as_micros();
     trace_scan_phase("discovery", discovery_microseconds);
+    let node_metadata = discovery
+        .files
+        .iter()
+        .filter(|file| {
+            file.absolute
+                .file_name()
+                .is_some_and(|name| name == "package.json")
+        })
+        .map(|file| file.relative.clone())
+        .collect::<Vec<_>>();
     let dotnet_project_sources = discovery
         .files
         .iter()
@@ -603,18 +614,32 @@ pub(crate) fn scan_profiled(
     );
 
     let project_symbols_started = Instant::now();
+    let node_modules_started = Instant::now();
+    let node_modules = std::sync::Arc::new(NodeModuleIndex::build(
+        Some(&discovery.root),
+        prepared
+            .iter()
+            .map(|file| (file.relative.as_str(), file.language, file.source.as_str())),
+        node_metadata.iter().map(String::as_str),
+    ));
+    trace_scan_phase(
+        "node_module_index",
+        node_modules_started.elapsed().as_micros(),
+    );
     let project_symbols = ProjectSymbolEnvironment::from_sources(
         prepared
             .iter()
             .map(|file| (file.relative.as_str(), file.language, file.source.as_str())),
-    );
+    )
+    .with_node_modules(node_modules.clone());
     let project_symbols_microseconds = project_symbols_started.elapsed().as_micros();
     trace_scan_phase("project_symbols", project_symbols_microseconds);
     let node_context_started = Instant::now();
-    let node_context = NodeProjectContext::from_sources(
+    let node_context = NodeProjectContext::from_sources_with_modules(
         prepared
             .iter()
             .map(|file| (file.relative.as_str(), file.language, file.source.as_str())),
+        node_modules.clone(),
     )
     .with_pug_templates(
         node_pug_template_sources
@@ -866,6 +891,17 @@ pub(crate) fn scan_profiled(
     (coverage.cwe, coverage.producers) =
         cwe_coverage(rules, &evidence, &coverage.files, options.scan_secrets);
     let root = display_path(&discovery.root);
+    node_modules.trace_metrics();
+    diagnostics.extend(
+        node_modules
+            .diagnostics()
+            .into_iter()
+            .map(|message| Diagnostic {
+                level: DiagnosticLevel::Warning,
+                message,
+                path: None,
+            }),
+    );
     let result = ScanResult {
         schema_version: SCHEMA_VERSION.to_string(),
         root,

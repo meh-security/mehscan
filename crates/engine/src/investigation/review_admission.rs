@@ -1350,6 +1350,7 @@ mod effect_cases {
     fn simulated_and_actual_transitions_keep_separate_source_bound_questions() {
         let source = include_str!("../../../../tests/fixtures/v11-review-effects/Actions.cs");
         let sources = RepositorySources {
+            node_modules: Default::default(),
             root: ".".into(),
             files: BTreeMap::from([(
                 "Actions.cs".into(),

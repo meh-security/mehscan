@@ -2,6 +2,7 @@ use super::*;
 
 fn repository(files: &[(&str, &str)]) -> RepositorySources {
     RepositorySources {
+        node_modules: Default::default(),
         root: "fixture".into(),
         files: files
             .iter()
