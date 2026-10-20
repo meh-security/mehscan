@@ -107,6 +107,12 @@ than rereading equivalent distributions.
   of a lookup result, not an ownership control or proof the query was awaited.
   Review the observable error/status difference and any credential or mutation
   enabled by that test. Do not infer safety from validation-shaped consumption.
+  `resource_selector.*` facts locate selector-value producers, including bounded
+  local constants. A member read such as `req.user.id` is not a verified subject
+  or proof that the selected model is that subject's account. Follow the identity
+  producer and match the resource/key. `resource_selector:fixed_equality` closes
+  caller-selected key substitution only; operation authorization and disclosure
+  remain separate questions.
 
 Stop when the exact target is fixed or constrained for the same operation, or
 when a lower-trust selector can reach the protected target. If resolution or

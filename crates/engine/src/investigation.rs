@@ -12895,7 +12895,18 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
             return is_fixed_imported_browser_navigation(item, sources);
         }
         Capability::ResourceAccess if item.cwe_candidates.iter().any(|cwe| cwe == "CWE-639") => {
-            return item
+            if item.context.operand_facts.iter().any(|fact| {
+                fact.kind == mehscan_core::OperandFactKind::OperandBoundary
+                    && fact.role == "filter"
+                    && fact.value == "effective_selector_slot"
+            }) {
+                return false;
+            }
+            return item.context.operand_facts.iter().any(|fact| {
+                fact.kind == mehscan_core::OperandFactKind::QueryStructure
+                    && fact.role == "filter"
+                    && fact.value == "resource_selector:fixed_equality"
+            }) || item
                 .captures
                 .get("filter")
                 .is_some_and(|capture| is_fixed_resource_selector(&capture.text))

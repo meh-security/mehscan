@@ -23,10 +23,11 @@ pub(crate) fn annotate(
     }
     let targets = evidence.iter().any(|item| {
         item.kind == EvidenceKind::Sink
-            && matches!(
+            && (matches!(
                 item.capability,
                 Capability::DatabaseQuery | Capability::ProcessExecution
-            )
+            ) || item.capability == Capability::ResourceAccess
+                && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-639"))
     });
     if !targets {
         return;
@@ -37,7 +38,8 @@ pub(crate) fn annotate(
             matches!(
                 item.capability,
                 Capability::DatabaseQuery | Capability::ProcessExecution
-            )
+            ) || item.capability == Capability::ResourceAccess
+                && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-639")
         })
         .flat_map(|item| {
             std::iter::once((
@@ -45,6 +47,12 @@ pub(crate) fn annotate(
                 item.location.end.byte_offset,
             ))
             .chain(item.captures.get("query").map(|capture| {
+                (
+                    capture.location.start.byte_offset,
+                    capture.location.end.byte_offset,
+                )
+            }))
+            .chain(item.captures.get("filter").map(|capture| {
                 (
                     capture.location.start.byte_offset,
                     capture.location.end.byte_offset,
@@ -58,6 +66,11 @@ pub(crate) fn annotate(
         .filter(|item| item.kind == EvidenceKind::Sink)
     {
         match item.capability {
+            Capability::ResourceAccess
+                if item.cwe_candidates.iter().any(|cwe| cwe == "CWE-639") =>
+            {
+                resource_selector(&index, source, item);
+            }
             Capability::DatabaseQuery if item.tags.iter().any(|tag| tag == "sql") => {
                 let Some(capture) = item.captures.get("query") else {
                     continue;
@@ -248,6 +261,7 @@ struct LocalObjects<'a> {
     bindings: BTreeMap<(usize, String), Vec<JsNode<'a>>>,
     uses: BTreeMap<String, Vec<JsNode<'a>>>,
     query_writes: Vec<JsNode<'a>>,
+    dynamic_scope: bool,
 }
 
 impl<'a> LocalObjects<'a> {
@@ -257,8 +271,17 @@ impl<'a> LocalObjects<'a> {
             bindings: BTreeMap::new(),
             uses: BTreeMap::new(),
             query_writes: Vec::new(),
+            dynamic_scope: false,
         };
         for node in root.dfs().filter(|node| node.is_named()) {
+            if node.kind().as_ref() == "with_statement"
+                || node.kind().as_ref() == "call_expression"
+                    && node.field("function").is_some_and(|f| {
+                        f.kind().as_ref() == "identifier" && f.text().as_ref() == "eval"
+                    })
+            {
+                index.dynamic_scope = true;
+            }
             // A visible method write invalidates identity-based query closure.
             // Deliberately file-wide: no receiver/alias/dispatch proof is claimed.
             if matches!(
@@ -333,6 +356,27 @@ fn resolve_object<'a>(
         boundary(source, item, role, node, "operand_producer");
         return None;
     }
+    let value = resolve_const_initializer(index, source, item, node, role)?;
+    if value.kind().as_ref() != "object" {
+        boundary(source, item, role, &value, "one_object_initializer");
+        return None;
+    }
+    if value.range().len() > 2048 {
+        boundary(source, item, role, &value, "oversized_object_initializer");
+        return None;
+    }
+    item.captures
+        .insert(format!("{role}_origin"), capture_at(source, item, &value));
+    Some(value)
+}
+
+fn resolve_const_initializer<'a>(
+    index: &LocalObjects<'a>,
+    source: &str,
+    item: &mut Evidence,
+    node: &JsNode<'a>,
+    role: &str,
+) -> Option<JsNode<'a>> {
     let owner = scope(node)?;
     let bindings = index
         .bindings
@@ -402,17 +446,172 @@ fn resolve_object<'a>(
         boundary(source, item, role, node, "callable_owner");
         return None;
     }
-    if value.kind().as_ref() != "object" {
-        boundary(source, item, role, &value, "one_object_initializer");
-        return None;
-    }
-    if value.range().len() > 2048 {
-        boundary(source, item, role, &value, "oversized_object_initializer");
-        return None;
-    }
-    item.captures
-        .insert(format!("{role}_origin"), capture_at(source, item, &value));
     Some(value)
+}
+
+/// Normalize an already detected selector. This does not identify an account
+/// model, authenticate a context member, or infer ownership from field names.
+fn resource_selector(index: &LocalObjects<'_>, source: &str, item: &mut Evidence) {
+    let Some(filter) = item.captures.get("filter") else {
+        return;
+    };
+    let Some(node) = index.nodes.get(&(
+        filter.location.start.byte_offset,
+        filter.location.end.byte_offset,
+    )) else {
+        return;
+    };
+    // A captured `where` is not necessarily the effective one when later
+    // spreads, duplicate keys or extra argument effects can replace it.
+    let effective_where = invocation_arguments(index, item)
+        .filter(|args| args.len() == 1)
+        .and_then(|args| selector_properties(&args[0]))
+        .and_then(|options| options.get("where").cloned());
+    if effective_where.is_none_or(|effective| effective.range() != node.range()) {
+        boundary(source, item, "filter", node, "effective_selector_slot");
+        return;
+    }
+    if node.kind().as_ref() == "identifier" {
+        if index.dynamic_scope {
+            boundary(source, item, "filter", node, "dynamic_scope_observer");
+            return;
+        }
+        if let Some(usage) = index
+            .uses
+            .get(node.text().as_ref())
+            .into_iter()
+            .flatten()
+            .find(|usage| {
+                usage.range().start >= node.range().end
+                    && usage.range().end <= item.location.end.byte_offset
+            })
+        {
+            boundary(
+                source,
+                item,
+                "filter",
+                usage,
+                "selector_use_during_invocation",
+            );
+            return;
+        }
+    }
+    let Some(object) = resolve_object(index, source, item, node, "filter") else {
+        return;
+    };
+    let Some(fields) = selector_properties(&object) else {
+        boundary(
+            source,
+            item,
+            "filter",
+            &object,
+            "selector_members_or_overrides",
+        );
+        return;
+    };
+    if fields.is_empty() || fields.len() > 8 {
+        return;
+    }
+    let mut fixed = true;
+    for (key, expression) in fields {
+        let role = format!("resource_selector.{key}");
+        let origin = if expression.kind().as_ref() == "identifier"
+            || expression.kind().as_ref() == "shorthand_property_identifier"
+        {
+            if index.dynamic_scope {
+                fixed = false;
+                boundary(source, item, &role, &expression, "dynamic_scope_observer");
+                continue;
+            }
+            match resolve_const_initializer(index, source, item, &expression, &role) {
+                Some(value) => value,
+                None => {
+                    fixed = false;
+                    continue;
+                }
+            }
+        } else {
+            expression
+        };
+        if origin.range().len() > 2048 {
+            fixed = false;
+            boundary(source, item, &role, &origin, "oversized_selector_value");
+            continue;
+        }
+        let kind = if selector_scalar(&origin) {
+            "selector_origin:fixed_scalar"
+        } else {
+            fixed = false;
+            match origin.kind().as_ref() {
+                "member_expression" | "subscript_expression" => "selector_origin:member_read",
+                "call_expression" | "await_expression" => "selector_origin:call",
+                _ => "selector_origin:unresolved_expression",
+            }
+        };
+        fact(
+            source,
+            item,
+            &role,
+            OperandFactKind::QueryStructure,
+            &origin,
+            kind,
+            &[
+                "identity_producer",
+                "resource_identity_matches_subject",
+                "operation_authorization",
+            ],
+        );
+    }
+    if fixed {
+        fact(
+            source,
+            item,
+            "filter",
+            OperandFactKind::QueryStructure,
+            &object,
+            "resource_selector:fixed_equality",
+            &["operation_authorization", "result_disclosure_policy"],
+        );
+    }
+}
+
+fn selector_properties<'a>(object: &JsNode<'a>) -> Option<BTreeMap<String, JsNode<'a>>> {
+    let mut fields = BTreeMap::new();
+    for child in object
+        .children()
+        .filter(|n| n.is_named() && n.kind().as_ref() != "comment")
+    {
+        let (key, value) = match child.kind().as_ref() {
+            "pair" => {
+                let key = child.field("key")?;
+                if !matches!(key.kind().as_ref(), "property_identifier" | "string") {
+                    return None;
+                }
+                (
+                    key.text().trim_matches(['\'', '"']).to_string(),
+                    child.field("value")?,
+                )
+            }
+            "shorthand_property_identifier" => (child.text().into_owned(), child.clone()),
+            _ => return None,
+        };
+        if key.is_empty()
+            || key.starts_with(|c: char| !c.is_ascii_alphabetic() && c != '_')
+            || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            || matches!(key.as_str(), "__proto__" | "constructor" | "prototype")
+            || fields.insert(key, value).is_some()
+        {
+            return None;
+        }
+    }
+    Some(fields)
+}
+
+fn selector_scalar(node: &JsNode<'_>) -> bool {
+    matches!(
+        node.kind().as_ref(),
+        "string" | "number" | "true" | "false" | "null"
+    )
 }
 
 fn properties<'a>(object: &JsNode<'a>) -> Option<BTreeMap<String, JsNode<'a>>> {
