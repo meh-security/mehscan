@@ -103,6 +103,10 @@ than rereading equivalent distributions.
   can matter without a mutation. Inspect earlier middleware on every matching
   route prefix to see whether it replaces request identity fields before the
   selected handler; compare the final field value used in the query.
+  `result_use:boolean_or_null_test_only` describes complete bounded local uses
+  of a lookup result, not an ownership control or proof the query was awaited.
+  Review the observable error/status difference and any credential or mutation
+  enabled by that test. Do not infer safety from validation-shaped consumption.
 
 Stop when the exact target is fixed or constrained for the same operation, or
 when a lower-trust selector can reach the protected target. If resolution or
