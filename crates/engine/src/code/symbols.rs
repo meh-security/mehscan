@@ -800,6 +800,12 @@ fn parse_javascript_import(text: &str, aliases: &mut BTreeMap<String, Binding>) 
             &module,
             SymbolResolutionMethod::ImportedNamespace,
         );
+        if let Some((_, remaining)) = clause.split_once(',') {
+            parse_javascript_import(
+                &format!("import {} from '{module}'", remaining.trim()),
+                aliases,
+            );
+        }
     }
 }
 

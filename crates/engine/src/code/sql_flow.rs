@@ -752,6 +752,54 @@ fn build_family_paths(
                     }
                     continue;
                 }
+                let node_operand_steps = matches!(
+                    language,
+                    Language::Javascript | Language::Typescript | Language::Tsx
+                )
+                .then(|| {
+                    (source.capability == Capability::HttpRequestData)
+                        .then(|| {
+                            target_nodes.iter().find_map(|(_, target)| {
+                                node_guarded_alias_steps(
+                                    path,
+                                    root,
+                                    language,
+                                    symbols,
+                                    &source_node,
+                                    target,
+                                    &sink_scope,
+                                )
+                            })
+                        })
+                        .flatten()
+                })
+                .flatten();
+                if let Some(transfer_steps) = node_operand_steps {
+                    let mut steps = vec![evidence_step(SecurityPathStepKind::Source, source)];
+                    steps.extend(transfer_steps);
+                    steps.extend(
+                        attached_protections
+                            .iter()
+                            .map(|p| evidence_step(SecurityPathStepKind::Protection, p)),
+                    );
+                    steps.push(evidence_step(SecurityPathStepKind::Sink, sink));
+                    push_path(
+                        &mut paths,
+                        source,
+                        sink,
+                        SecurityPathState::Unknown,
+                        steps,
+                        &attached_protections,
+                        family,
+                    );
+                    if let Some(path) = paths.last_mut() {
+                        path.uncertainty_reasons
+                            .push("node_guarded_alias_operand_flow".to_string());
+                        path.uncertainty_reasons
+                            .push("control_flow_context_not_modeled".to_string());
+                    }
+                    continue;
+                }
                 if sink.rule_id == "go-cookie-authenticated-state-change-review"
                     && sink.related_evidence.as_slice() == [source.id.as_str()]
                 {
@@ -1596,6 +1644,197 @@ fn node_direct_string_operand(
         .children()
         .filter(|n| n.is_named())
         .any(|child| node_direct_string_operand(&child, source))
+}
+
+// A bounded operand proof, not a branch join or general call interpreter. Each
+// alias is resolved at its own assignment, so later writes cannot alter a copy.
+#[allow(clippy::too_many_arguments)]
+fn node_guarded_alias_steps(
+    path: &str,
+    root: &Node<'_, StrDoc<SupportLang>>,
+    language: Language,
+    symbols: &FileSymbolEnvironment,
+    source: &Node<'_, StrDoc<SupportLang>>,
+    target: &Node<'_, StrDoc<SupportLang>>,
+    scope: &Range<usize>,
+) -> Option<Vec<SecurityPathStep>> {
+    if !node_source_is_unchanged(root, source, scope) {
+        return None;
+    }
+    let assignments = assignments_in_scope(root, language, scope);
+    let mut work = 64;
+    node_operand_origin(
+        path,
+        root,
+        language,
+        symbols,
+        source,
+        target,
+        scope,
+        &assignments,
+        0,
+        &mut work,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn node_operand_origin(
+    path: &str,
+    root: &Node<'_, StrDoc<SupportLang>>,
+    language: Language,
+    symbols: &FileSymbolEnvironment,
+    source: &Node<'_, StrDoc<SupportLang>>,
+    target: &Node<'_, StrDoc<SupportLang>>,
+    scope: &Range<usize>,
+    assignments: &[Assignment<'_>],
+    depth: usize,
+    work: &mut usize,
+) -> Option<Vec<SecurityPathStep>> {
+    if *work == 0
+        || depth > MAX_PROPAGATION_DEPTH
+        || !lexical_if_try_path_is_prefix(source, target, scope)
+    {
+        return None;
+    }
+    *work -= 1;
+    if target.range() == source.range() {
+        return Some(Vec::new());
+    }
+    if target.kind().as_ref() == "identifier" {
+        let name = target.text();
+        let assignment = assignments
+            .iter()
+            .rev()
+            .find(|a| a.left == name && a.node.range().end <= target.range().start)?;
+        if !lexical_if_try_path_is_prefix(&assignment.node, target, scope) {
+            return None;
+        }
+        // Unsupported writes and uninitialized shadow declarations must also
+        // kill the alias; the shared assignment inventory excludes these.
+        if root.dfs().any(|n| {
+            let written = match n.kind().as_ref() {
+                "variable_declarator" => n.field("name"),
+                "assignment_expression" | "augmented_assignment_expression" => n.field("left"),
+                "update_expression" => n.field("argument"),
+                _ => None,
+            };
+            written.is_some_and(|n| {
+                n.text() == name
+                    || (matches!(n.kind().as_ref(), "object_pattern" | "array_pattern")
+                        && n.dfs().any(|binding| binding.text() == name))
+            }) && n.range().start >= assignment.node.range().end
+                && n.range().end <= target.range().start
+                && scope_range(&n, root) == *scope
+        }) {
+            return None;
+        }
+        let mut steps = node_operand_origin(
+            path,
+            root,
+            language,
+            symbols,
+            source,
+            &assignment.right,
+            scope,
+            assignments,
+            depth + 1,
+            work,
+        )?;
+        steps.push(SecurityPathStep {
+            kind: SecurityPathStepKind::Assignment,
+            location: node_location(path, &assignment.node),
+            evidence_id: None,
+            symbol: Some(name.into_owned()),
+        });
+        return Some(steps);
+    }
+    let transform = if target.kind().as_ref() == "call_expression" {
+        let callee = target.field("function")?;
+        let api = ["path.resolve", "path.join", "path.normalize"]
+            .into_iter()
+            .find(|api| {
+                super::node_api_boundaries::exact_imported_api(
+                    root, symbols, &callee, api, language,
+                )
+            })?;
+        // Replacing a path method invalidates the imported API contract too.
+        let head = compact_expression(callee.text().as_ref())
+            .split('.')
+            .next()?
+            .to_string();
+        if root.dfs().any(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "assignment_expression" | "augmented_assignment_expression" | "update_expression"
+            ) && n.range().start < target.range().start
+                && n.field("left")
+                    .or_else(|| n.field("argument"))
+                    .and_then(|n| node_static_access(&n, 0))
+                    .is_some_and(|p| p.first() == Some(&head))
+        }) {
+            return None;
+        }
+        Some(api)
+    } else {
+        match target.kind().as_ref() {
+            "binary_expression" if target.field("operator").is_some_and(|n| n.text() == "+") => {}
+            "template_string"
+            | "template_substitution"
+            | "parenthesized_expression"
+            | "as_expression"
+            | "non_null_expression" => {}
+            _ => return None,
+        }
+        None
+    };
+    let operand = if transform.is_some() {
+        target.field("arguments")?
+    } else {
+        target.clone()
+    };
+    let arguments = operand
+        .children()
+        .filter(|n| n.is_named())
+        .collect::<Vec<_>>();
+    let mut steps = arguments.iter().enumerate().find_map(|(index, n)| {
+        // resolve discards earlier components at a later absolute segment.
+        // Do not turn a definitely discarded input into a review candidate.
+        if transform == Some("path.resolve")
+            && arguments[index + 1..].iter().any(|later| {
+                let text = later.text();
+                simple_string_literal(text.trim()).is_some_and(|value| {
+                    value.starts_with('/')
+                        || value.starts_with('\\')
+                        || value.as_bytes().get(1) == Some(&b':')
+                })
+            })
+        {
+            return None;
+        }
+        node_operand_origin(
+            path,
+            root,
+            language,
+            symbols,
+            source,
+            n,
+            scope,
+            assignments,
+            depth,
+            work,
+        )
+    })?;
+    if let Some(api) = transform {
+        steps.push(SecurityPathStep {
+            kind: SecurityPathStepKind::Alias,
+            location: node_location(path, target),
+            evidence_id: None,
+            symbol: Some(format!(
+                "{api}: input contribution; confinement not established"
+            )),
+        });
+    }
+    Some(steps)
 }
 
 fn node_source_is_unchanged(

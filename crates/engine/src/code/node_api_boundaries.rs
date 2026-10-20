@@ -61,7 +61,7 @@ pub(super) fn add_boundaries<'a>(
                 && value.kind().as_ref() == "call_expression"
                 && ["express", "express.Router"]
                     .iter()
-                    .any(|api| resolves(root, symbols, &callee, api, language)))
+                    .any(|api| exact_imported_api(root, symbols, &callee, api, language)))
             .then(|| name.text().into_owned())
         })
         .collect::<BTreeSet<_>>();
@@ -138,7 +138,7 @@ pub(super) fn add_boundaries<'a>(
         };
         let template_api = ["nunjucks.renderString", "nunjucks.compile"]
             .into_iter()
-            .find(|api| resolves(root, symbols, &callee, api, language))
+            .find(|api| exact_imported_api(root, symbols, &callee, api, language))
             .map(str::to_string)
             .or_else(|| {
                 let (receiver, method) = member(&callee)?;
@@ -159,7 +159,7 @@ pub(super) fn add_boundaries<'a>(
                 } else {
                     "nunjucks.configure"
                 };
-                resolves(root, symbols, &target, api, language)
+                exact_imported_api(root, symbols, &target, api, language)
                     .then(|| "nunjucks.Environment.renderString".to_string())
             });
         let (capability, suffix, canonical, role) = if let Some(api) = template_api {
@@ -404,7 +404,7 @@ fn stable_binding(root: &Ast<'_>, identifier: &Ast<'_>) -> bool {
         }
     })
 }
-fn resolves(
+pub(crate) fn exact_imported_api(
     root: &Ast<'_>,
     symbols: &FileSymbolEnvironment,
     callee: &Ast<'_>,
