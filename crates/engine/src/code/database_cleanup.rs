@@ -179,6 +179,31 @@ pub(super) fn annotate(language: Language, root: &N<'_>, evidence: &mut Vec<Evid
     }
     attach_reloads(language, root, &nodes, evidence);
     if needs_resource_uses {
+        for item in evidence
+            .iter_mut()
+            .filter(|item| resource_read_candidate(item))
+        {
+            let Some(owner) = nodes
+                .get(&(
+                    item.location.start.byte_offset,
+                    item.location.end.byte_offset,
+                ))
+                .and_then(scope)
+            else {
+                continue;
+            };
+            item.context.operand_facts.push(OperandFact {
+                kind: OperandFactKind::QueryStructure,
+                role: "resource_operation".into(),
+                location: super::node_operands::capture_at("", item, &owner).location,
+                value: "local_callable_context".into(),
+                remaining_checks: vec![
+                    "caller_authority".into(),
+                    "branch_ordering".into(),
+                    "operation_effects".into(),
+                ],
+            });
+        }
         attach_resource_result_uses(&nodes, &identifiers, evidence);
     }
 }

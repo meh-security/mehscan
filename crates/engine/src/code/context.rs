@@ -27,6 +27,36 @@ pub(crate) fn enclosing_symbol<D: Doc>(node: &Node<'_, D>) -> Option<String> {
         "function_item",
     ];
     node.ancestors().find_map(|ancestor| {
+        if matches!(
+            ancestor.kind().as_ref(),
+            "arrow_function" | "function_expression"
+        ) {
+            if let Some(name) = ancestor.field("name") {
+                return Some(name.text().into_owned());
+            }
+            // Only a direct callable binding supplies its name. A callback
+            // passed through an arbitrary wrapper is not that wrapper's result.
+            let parent = ancestor.parent()?;
+            let value = parent.field("value")?;
+            if value.range() != ancestor.range() {
+                return None;
+            }
+            return match parent.kind().as_ref() {
+                "variable_declarator" => parent
+                    .field("name")
+                    .filter(|name| name.kind().as_ref() == "identifier")
+                    .map(|name| name.text().into_owned()),
+                "pair" | "public_field_definition" | "field_definition" => parent
+                    .field("key")
+                    .or_else(|| parent.field("name"))
+                    .or_else(|| parent.field("property"))
+                    .filter(|name| {
+                        matches!(name.kind().as_ref(), "property_identifier" | "identifier")
+                    })
+                    .map(|name| name.text().into_owned()),
+                _ => None,
+            };
+        }
         if !SYMBOL_KINDS.contains(&ancestor.kind().as_ref()) {
             return None;
         }

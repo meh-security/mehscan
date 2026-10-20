@@ -113,6 +113,11 @@ than rereading equivalent distributions.
   producer and match the resource/key. `resource_selector:fixed_equality` closes
   caller-selected key substitution only; operation authorization and disclosure
   remain separate questions.
+  `resource_operation` locates the exact lexical callable, not a proven route or
+  policy scope. Compact callables can be supplied as one reusable source artifact
+  so later checks remain visible. Reuse that context across questions, but verify
+  each selector, branch and effect independently. Larger callables remain lookup
+  targets; a bounded excerpt cannot establish that a later control is absent.
 
 Stop when the exact target is fixed or constrained for the same operation, or
 when a lower-trust selector can reach the protected target. If resolution or

@@ -9153,7 +9153,11 @@ fn build_observation_reviews(
             }
         }
         let (mut slice, mut context_truncated) =
-            review_source_slice(file, start_line, end_line, anchor)?;
+            if let Some(slice) = resource_callable_slice(file, &group.evidence, anchor) {
+                (slice, false)
+            } else {
+                review_source_slice(file, start_line, end_line, anchor)?
+            };
         let mut decision_critical_context_truncated = context_truncated;
         redact_secrets_in_slice(&mut slice, &group.evidence);
         let mut configuration_tokens = BTreeSet::new();
@@ -21845,6 +21849,40 @@ fn source_slice(
         },
         truncated,
     ))
+}
+
+/// Complete compact callable context for a resource operation; not a policy proof.
+fn resource_callable_slice(
+    file: &SourceFile,
+    evidence: &[Evidence],
+    anchor: &Location,
+) -> Option<SourceSlice> {
+    let owner = evidence.iter().find_map(|item| {
+        (item.location == *anchor && item.capability == Capability::ResourceAccess)
+            .then(|| {
+                item.context.operand_facts.iter().find(|fact| {
+                    fact.kind == mehscan_core::OperandFactKind::QueryStructure
+                        && fact.role == "resource_operation"
+                        && fact.value == "local_callable_context"
+                })
+            })
+            .flatten()
+    })?;
+    let start = owner.location.start.byte_offset;
+    let end = owner.location.end.byte_offset;
+    // Use the existing card's 1.5 KiB allowance, not a larger prompt budget.
+    // Larger operations remain bounded anchor views with a callable locator.
+    if owner.location.path != file.path
+        || start > anchor.start.byte_offset
+        || end < anchor.end.byte_offset
+        || end.checked_sub(start)? > 1_536
+    {
+        return None;
+    }
+    Some(SourceSlice {
+        location: owner.location.clone(),
+        text: file.source.get(start..end)?.to_string(),
+    })
 }
 
 /// Returns normal line context when it is compact. For generated or minified
