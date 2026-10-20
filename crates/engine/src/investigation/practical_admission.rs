@@ -532,7 +532,10 @@ pub(super) fn filesystem_research_hint(item: &Evidence) -> Option<ValueReviewHin
 /// Standalone frontend occurrences need a useful producer/context question,
 /// rather than inheriting Value merely from the XSS capability. Connected paths
 /// and source/sink groups call the stronger admission policy instead.
-pub(super) fn frontend_research_hint(item: &Evidence) -> Option<ValueReviewHint> {
+pub(super) fn frontend_research_hint(
+    item: &Evidence,
+    evidence: &[Evidence],
+) -> Option<ValueReviewHint> {
     if item.capability != Capability::HtmlOutput || item.cwe_candidates != ["CWE-79"] {
         return None;
     }
@@ -544,6 +547,23 @@ pub(super) fn frontend_research_hint(item: &Evidence) -> Option<ValueReviewHint>
         )
     }) {
         return None;
+    }
+    // An unresolved v-html expression alone is not a demonstrated input flow.
+    // Keep its exact Comprehensive ID and producer question, rather than
+    // interpreting an asset/property/helper name as either tainted or safe.
+    // Vue script and template scopes differ: any observed component input
+    // conservatively prevents this cut, even without a linked template path.
+    if item.rule_id == "vue-sfc-v-html-output"
+        && !evidence.iter().any(|other| {
+            other.kind == EvidenceKind::Source && other.location.path == item.location.path
+        })
+    {
+        return Some(ValueReviewHint {
+            reason: "frontend_html_producer_research".into(),
+            target: item.location.path.clone(),
+            assumption: "Unconnected Vue raw-HTML consumer with no observed component input or bound operand origin. Value defers producer research; Comprehensive retains the exact ID. This is a cost/scope decision, not proof of static assets, sanitization or safety. Reopen for a demonstrated untrusted writer/caller or input relationship; stored content, props and reactive updates may require source review.".into(),
+            depends_on: None,
+        });
     }
     let link = (item.rule_id.ends_with("url-attribute-output")
         && item

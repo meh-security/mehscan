@@ -216,6 +216,71 @@ function InputSheet() { return <style dangerouslySetInnerHTML={{__html:window.lo
 }
 
 #[test]
+fn vue_unconnected_html_is_research_without_claiming_static_or_safe() {
+    let fixture = Fixture::new(
+        "vue-producer-research",
+        r#"<template>
+<div v-html="art.close"></div>
+<div v-html="$t('message')"></div>
+<div v-html="record.body"></div>
+</template>
+<script>export default { data() { return { art: Object.freeze({close:'<svg/>'}), record: {} }; } };</script>"#,
+        "vue",
+    );
+    fs::write(
+        fixture.0.join("Input.vue"),
+        r#"<template><div v-html="html"></div></template>
+<script setup>const html = window.location.hash;</script>"#,
+    )
+    .unwrap();
+    fs::write(
+        fixture.0.join("Dom.vue"),
+        r#"<template><div ref="preview"></div></template>
+<script setup>import { ref, onMounted } from 'vue'; const preview=ref(null);
+onMounted(() => { preview.value.innerHTML=window.location.hash; });</script>"#,
+    )
+    .unwrap();
+    let inventory = build_review_inventory(&fixture.0, false).unwrap();
+    assert_eq!(inventory.scan.coverage.totals.parse_failed, 0);
+    let unresolved = inventory
+        .entries
+        .iter()
+        .filter(|e| e.path == "app.vue")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        unresolved.len(),
+        3,
+        "all unresolved consumers stay in Comprehensive"
+    );
+    assert!(unresolved.iter().all(|e| {
+        e.value_hint.as_ref().is_some_and(|h| {
+            h.reason == "frontend_html_producer_research" && h.depends_on.is_none()
+        })
+    }));
+    assert_eq!(
+        inventory
+            .scan
+            .evidence
+            .iter()
+            .filter(|e| e.location.path == "app.vue" && e.kind == mehscan_core::EvidenceKind::Sink)
+            .count(),
+        3
+    );
+    for path in ["Input.vue", "Dom.vue"] {
+        let entries = inventory
+            .entries
+            .iter()
+            .filter(|e| e.path == path && e.capability == Capability::HtmlOutput)
+            .collect::<Vec<_>>();
+        assert!(!entries.is_empty(), "lost input-bearing component {path}");
+        assert!(
+            entries.iter().all(|e| e.value_hint.is_none()),
+            "deferred observed input {path}"
+        );
+    }
+}
+
+#[test]
 fn framework_consumer_context_keeps_raw_html_and_active_urls_in_value() {
     let fixture = Fixture::new(
         "framework-consumers",

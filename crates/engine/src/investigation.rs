@@ -1740,7 +1740,7 @@ fn build_path_review_jobs_internal(
                 .to_string(),
                 operand_facts: operand_summaries(anchor),
                 value_hint: (group.priority == 2)
-                    .then(|| practical_admission::frontend_research_hint(anchor))
+                    .then(|| practical_admission::frontend_research_hint(anchor, &scan.evidence))
                     .flatten()
                     .or_else(|| practical_admission::comprehensive_hint(anchor))
                     .or_else(|| {
