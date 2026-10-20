@@ -719,6 +719,39 @@ fn build_family_paths(
 
             let source_in_control_flow = has_control_flow_ancestor(&source_node, &sink_scope);
             if source_in_control_flow || sink_in_control_flow {
+                if matches!(
+                    language,
+                    Language::Javascript | Language::Typescript | Language::Tsx
+                ) && source.capability == Capability::HttpRequestData
+                    && target_nodes
+                        .iter()
+                        .any(|(_, target)| node_direct_string_operand(target, &source_range))
+                    && node_source_is_unchanged(root, &source_node, &source_scope)
+                {
+                    let mut steps = vec![evidence_step(SecurityPathStepKind::Source, source)];
+                    steps.extend(
+                        attached_protections
+                            .iter()
+                            .map(|p| evidence_step(SecurityPathStepKind::Protection, p)),
+                    );
+                    steps.push(evidence_step(SecurityPathStepKind::Sink, sink));
+                    push_path(
+                        &mut paths,
+                        source,
+                        sink,
+                        SecurityPathState::Unknown,
+                        steps,
+                        &attached_protections,
+                        family,
+                    );
+                    if let Some(path) = paths.last_mut() {
+                        path.uncertainty_reasons
+                            .push("node_guarded_direct_operand_flow".to_string());
+                        path.uncertainty_reasons
+                            .push("control_flow_context_not_modeled".to_string());
+                    }
+                    continue;
+                }
                 if sink.rule_id == "go-cookie-authenticated-state-change-review"
                     && sink.related_evidence.as_slice() == [source.id.as_str()]
                 {
@@ -1535,6 +1568,101 @@ fn contextual_step(
         evidence_id: None,
         symbol: Some(symbol.to_string()),
     }
+}
+
+// This establishes only value contribution within one operand, not branch
+// feasibility. Calls, predicates, object construction and transforms are not
+// implicitly value-preserving. Conditions remain available in enclosing code.
+fn node_direct_string_operand(
+    target: &Node<'_, StrDoc<SupportLang>>,
+    source: &Range<usize>,
+) -> bool {
+    if target.range() == *source {
+        return true;
+    }
+    if !contains_range(target.range(), source.clone()) {
+        return false;
+    }
+    match target.kind().as_ref() {
+        "binary_expression" if target.field("operator").is_some_and(|n| n.text() == "+") => {}
+        "template_string"
+        | "template_substitution"
+        | "parenthesized_expression"
+        | "as_expression"
+        | "non_null_expression" => {}
+        _ => return false,
+    }
+    target
+        .children()
+        .filter(|n| n.is_named())
+        .any(|child| node_direct_string_operand(&child, source))
+}
+
+fn node_source_is_unchanged(
+    root: &Node<'_, StrDoc<SupportLang>>,
+    source: &Node<'_, StrDoc<SupportLang>>,
+    scope: &Range<usize>,
+) -> bool {
+    let observed = compact_expression(source.text().as_ref());
+    let source_access = node_static_access(source, 0);
+    !root.dfs().any(|node| {
+        let target = match node.kind().as_ref() {
+            "assignment_expression" | "augmented_assignment_expression" => node.field("left"),
+            "update_expression" => node.field("argument"),
+            _ => return false,
+        };
+        if node.range().start < scope.start
+            || node.range().end > source.range().start
+            || scope_range(&node, root) != *scope
+        {
+            return false;
+        }
+        target.is_some_and(|target| {
+            if let Some(source_access) = &source_access
+                && let Some(written) = node_static_access(&target, 0).or_else(|| {
+                    target
+                        .field("object")
+                        .and_then(|object| node_static_access(&object, 0))
+                })
+                && source_access.starts_with(&written)
+            {
+                return true;
+            }
+            let written = compact_expression(target.text().as_ref());
+            observed == written
+                || observed.starts_with(&format!("{written}."))
+                || observed.starts_with(&format!("{written}["))
+        })
+    })
+}
+
+fn node_static_access(node: &Node<'_, StrDoc<SupportLang>>, depth: usize) -> Option<Vec<String>> {
+    if depth >= 16 {
+        return None;
+    }
+    if node.kind().as_ref() == "identifier" {
+        return Some(vec![node.text().into_owned()]);
+    }
+    let object = node.field("object")?;
+    let mut path = node_static_access(&object, depth + 1)?;
+    let key = match node.kind().as_ref() {
+        "member_expression" => node.field("property")?.text().into_owned(),
+        "subscript_expression" => {
+            let index = node.field("index")?;
+            if index.kind().as_ref() != "string" {
+                return None;
+            }
+            let text = index.text();
+            let quote = text.chars().next()?;
+            if !matches!(quote, '\'' | '"') || text.contains('\\') {
+                return None;
+            }
+            text.strip_prefix(quote)?.strip_suffix(quote)?.to_string()
+        }
+        _ => return None,
+    };
+    path.push(key);
+    Some(path)
 }
 
 fn angular_direct_steps(
