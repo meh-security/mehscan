@@ -1774,6 +1774,13 @@ pub(crate) fn scan_source(
         &symbol_environment,
         relations,
     );
+    node_context.retain_proved_helper_returns(
+        path,
+        &root,
+        language,
+        &evidence,
+        &mut security_paths,
+    );
     if language == Language::Kotlin {
         security_paths.extend(super::kotlin::paths(&root, &evidence, relations));
     }

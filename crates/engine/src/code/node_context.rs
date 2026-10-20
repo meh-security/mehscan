@@ -101,6 +101,7 @@ struct ParameterReturnSummary {
     canonical: String,
     parameter_index: usize,
     returned_suffix: String,
+    asynchronous: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -233,6 +234,76 @@ pub(crate) struct NodeProjectContext {
 }
 
 impl NodeProjectContext {
+    /// Input effects and return effects are separate contracts. The local
+    /// expression-containment shortcut cannot establish a return flow through
+    /// a resolved application helper. Explicit return/continuation sources
+    /// remain valid because their source location is the result, not an input.
+    pub(crate) fn retain_proved_helper_returns(
+        &self,
+        path: &str,
+        root: &Node<'_, StrDoc<SupportLang>>,
+        language: Language,
+        evidence: &[Evidence],
+        paths: &mut Vec<mehscan_core::SecurityPath>,
+    ) {
+        if !is_node_language(language) || paths.is_empty() {
+            return;
+        }
+        let Some(imports) = self.imports_by_path.get(path) else {
+            return;
+        };
+        let module = module_path(path).unwrap_or_default();
+        let calls = root
+            .dfs()
+            .filter_map(call_site)
+            .filter(|call| {
+                let observed = compact(&call.callee);
+                imports.get(&observed).is_some_and(|target| {
+                    target.source && target.export.as_deref().is_some_and(|s| !s.is_empty())
+                }) || resolve_handler(&observed, &module, imports).is_some_and(|name| {
+                    self.parameter_sinks.contains_key(&name)
+                        || self.parameter_returns.contains_key(&name)
+                        || self.callback_forwards.contains_key(&name)
+                })
+            })
+            .collect::<Vec<_>>();
+        let items = evidence
+            .iter()
+            .map(|e| (e.id.as_str(), e))
+            .collect::<BTreeMap<_, _>>();
+        paths.retain(|candidate| {
+            // Dedicated semantic relationships and explicit transfer proofs
+            // are not the raw source-inside-sink-expression shortcut. Do not
+            // reinterpret those contracts as generic function return flows.
+            if candidate.steps.iter().any(|step| {
+                !matches!(
+                    step.kind,
+                    mehscan_core::SecurityPathStepKind::Source
+                        | mehscan_core::SecurityPathStepKind::Sink
+                        | mehscan_core::SecurityPathStepKind::Protection
+                )
+            }) {
+                return true;
+            }
+            let (Some(source), Some(sink)) = (
+                items.get(candidate.source_evidence_id.as_str()),
+                items.get(candidate.sink_evidence_id.as_str()),
+            ) else {
+                return true;
+            };
+            let source = location_range(&source.location);
+            let sink = location_range(&sink.location);
+            !calls.iter().any(|call| {
+                let range = call.node.range();
+                !(range.start <= sink.start && sink.end <= range.end)
+                    && call.arguments.iter().any(|argument| {
+                        let input = argument.range();
+                        input.start <= source.start && source.end <= input.end
+                    })
+            })
+        });
+    }
+
     #[cfg(test)]
     pub(crate) fn from_sources<'a>(
         sources: impl Iterator<Item = (&'a str, Language, &'a str)>,
@@ -286,7 +357,22 @@ impl NodeProjectContext {
             trace.step(path, "owner_guards");
             collect_owner_field_overwrite_guards(source, &mut context.owner_field_overwrite_guards);
             trace.step(path, "exported_functions");
-            let functions = exported_functions(&root);
+            let mut functions = exported_functions(&root);
+            let ranges = modules.local_functions(path);
+            if !ranges.is_empty() {
+                let nodes = root
+                    .dfs()
+                    .filter(is_function_node)
+                    .map(|n| ((n.range().start, n.range().end), n))
+                    .collect::<BTreeMap<_, _>>();
+                for (name, range) in ranges {
+                    if let Some(node) = nodes.get(&range)
+                        && !functions.iter().any(|(existing, _)| existing == &name)
+                    {
+                        functions.push((name, node.clone()));
+                    }
+                }
+            }
             trace.step(path, "imports");
             let imports = resolved_javascript_imports(path, &root, &modules);
             context
@@ -558,6 +644,7 @@ impl NodeProjectContext {
         if !is_node_language(language) || self.parameter_returns.is_empty() {
             return;
         }
+        let bindings = SummaryBindingIndex::new(root);
         let imports = self
             .imports_by_path
             .get(path)
@@ -580,6 +667,25 @@ impl NodeProjectContext {
             let Some(summary) = self.parameter_returns.get(&canonical) else {
                 continue;
             };
+            if !continuation_binding_is_stable(
+                &bindings,
+                &call.node,
+                compact(&call.callee).split('.').next().unwrap_or(""),
+                true,
+            ) || (summary.asynchronous
+                && !call
+                    .node
+                    .parent()
+                    .is_some_and(|n| n.kind().as_ref() == "await_expression"))
+            {
+                continue;
+            }
+            if imports
+                .get(compact(&call.callee).as_str())
+                .is_some_and(|target| target.adapter.is_some())
+            {
+                continue;
+            }
             let Some(argument) = call.arguments.get(summary.parameter_index) else {
                 continue;
             };
@@ -642,6 +748,7 @@ impl NodeProjectContext {
         if !is_node_language(language) || self.parameter_sinks.is_empty() {
             return;
         }
+        let bindings = SummaryBindingIndex::new(root);
         let imports = self
             .imports_by_path
             .get(path)
@@ -661,7 +768,32 @@ impl NodeProjectContext {
             let Some(summaries) = self.parameter_sinks.get(&canonical) else {
                 continue;
             };
+            if !continuation_binding_is_stable(
+                &bindings,
+                &call.node,
+                compact(&call.callee).split('.').next().unwrap_or(""),
+                true,
+            ) {
+                continue;
+            }
             for summary in summaries {
+                if let Some(adapter) = imports
+                    .get(compact(&call.callee).as_str())
+                    .and_then(|target| target.adapter)
+                {
+                    if summary.parameter_index >= adapter.input_count() {
+                        continue;
+                    }
+                    let expected = match adapter {
+                        super::node_modules::FunctionAdapter::Callbackify(count) => count + 1,
+                        super::node_modules::FunctionAdapter::Promisify(count) => {
+                            count.saturating_sub(1)
+                        }
+                    };
+                    if call.arguments.len() != expected {
+                        continue;
+                    }
+                }
                 let Some(argument) = call.arguments.get(summary.parameter_index) else {
                     continue;
                 };
@@ -814,14 +946,29 @@ impl NodeProjectContext {
                     ]
                     .into_iter()
                     .chain(
-                        matches!(
+                        (matches!(
                             summary.sink,
                             SummarySink::FilesystemRead
                                 | SummarySink::FilesystemWrite
                                 | SummarySink::TemplateEvaluation
                                 | SummarySink::OutboundRequest
-                        )
+                        ) || imports
+                            .get(compact(&call.callee).as_str())
+                            .is_some_and(|target| target.adapter.is_some()))
                         .then(|| "review-admission:source-sink-required".to_string()),
+                    )
+                    .chain(
+                        imports
+                            .get(compact(&call.callee).as_str())
+                            .and_then(|target| target.adapter)
+                            .map(|adapter| match adapter {
+                                super::node_modules::FunctionAdapter::Callbackify(_) => {
+                                    "helper-adapter:node-util-callbackify".to_string()
+                                }
+                                super::node_modules::FunctionAdapter::Promisify(_) => {
+                                    "helper-adapter:node-util-promisify".to_string()
+                                }
+                            }),
                     )
                     .collect(),
                     confidence: Confidence::Medium,
@@ -1050,10 +1197,46 @@ impl NodeProjectContext {
                 }
                 continue;
             }
-            let Some(canonical) = resolve_handler(&call.callee, &current_module, &imports) else {
+            // A promisified error-first forwarder resolves only the success
+            // result. Its original callback argument is supplied by Node.
+            if call.arguments.len() == 1
+                && let Some(callee) = call.node.field("function")
+                && callee.field("property").is_some_and(|n| n.text() == "then")
+                && let Some(inner) = callee.field("object").and_then(call_site)
+                && let Some(target) = imports.get(&compact(&inner.callee))
+                && let Some(super::node_modules::FunctionAdapter::Promisify(arity)) = target.adapter
+            {
+                if let Some(canonical) = resolve_handler(&inner.callee, &current_module, &imports)
+                    && let Some(summary) = self.callback_forwards.get(&canonical)
+                    && summary.result_index == 1
+                    && summary.callback_index + 1 == arity
+                    && inner.arguments.len() + 1 == arity
+                    && let Some(value) = inner.arguments.get(summary.value_index)
+                    && request_argument_matches(value, &inner.node, "")
+                    && continuation_binding_is_stable(
+                        &bindings,
+                        &inner.node,
+                        compact(&inner.callee).split('.').next().unwrap_or(""),
+                        true,
+                    )
+                {
+                    push_continuation_source(
+                        path,
+                        language,
+                        &call.arguments[0],
+                        0,
+                        value,
+                        &format!("node:util.promisify:{canonical}"),
+                        &inner.callee,
+                        comments,
+                        conditional,
+                        literals,
+                        evidence,
+                    );
+                }
                 continue;
-            };
-            let Some(summary) = self.callback_forwards.get(&canonical) else {
+            }
+            let Some(canonical) = resolve_handler(&call.callee, &current_module, &imports) else {
                 continue;
             };
             let observed = compact(&call.callee);
@@ -1065,6 +1248,33 @@ impl NodeProjectContext {
             ) {
                 continue;
             }
+            if let Some(adapter) = imports.get(&observed).and_then(|target| target.adapter) {
+                if let super::node_modules::FunctionAdapter::Callbackify(arity) = adapter
+                    && call.arguments.len() == arity + 1
+                    && let Some(summary) = self.parameter_returns.get(&canonical)
+                    && summary.parameter_index < arity
+                    && let Some(value) = call.arguments.get(summary.parameter_index)
+                    && request_argument_matches(value, &call.node, &summary.returned_suffix)
+                {
+                    push_continuation_source(
+                        path,
+                        language,
+                        &call.arguments[arity],
+                        1,
+                        value,
+                        &format!("node:util.callbackify:{canonical}"),
+                        &call.callee,
+                        comments,
+                        conditional,
+                        literals,
+                        evidence,
+                    );
+                }
+                continue;
+            }
+            let Some(summary) = self.callback_forwards.get(&canonical) else {
+                continue;
+            };
             let (Some(value), Some(callback)) = (
                 call.arguments.get(summary.value_index),
                 call.arguments.get(summary.callback_index),
@@ -2484,6 +2694,8 @@ fn express_route_is_under_mount(route: &str, mount: &str) -> bool {
 struct ImportTarget {
     source: bool,
     instance: bool,
+    adapter: Option<super::node_modules::FunctionAdapter>,
+    default_import: bool,
     mode: super::node_modules::ImportMode,
     module: String,
     export: Option<String>,
@@ -2526,6 +2738,8 @@ fn resolved_javascript_imports(
                             ImportTarget {
                                 source: true,
                                 instance: false,
+                                adapter: None,
+                                default_import: false,
                                 mode: target.mode,
                                 module: module_key(&constructor.path),
                                 export: Some(method),
@@ -2537,38 +2751,54 @@ fn resolved_javascript_imports(
                     result.insert(visible, target);
                     continue;
                 }
-                if let Some(export) = &target.export {
-                    let Some(resolved) = modules.resolve_export(&file, export) else {
+                let names = modules.export_names(&file);
+                let prefix = if let Some(export) = &target.export {
+                    format!("{export}.")
+                } else if target.default_import && !modules.commonjs_object(&file) {
+                    "default.".to_string()
+                } else {
+                    String::new()
+                };
+                let mut members = 0;
+                for name in &names {
+                    let Some(member) = name.strip_prefix(&prefix).filter(|s| !s.is_empty()) else {
                         continue;
                     };
-                    target.module = module_key(&resolved.path);
-                    target.export = Some(resolved.name);
+                    if let Some(resolved) = modules.resolve_export(&file, name) {
+                        result.insert(
+                            format!("{visible}.{member}"),
+                            ImportTarget {
+                                source: true,
+                                instance: false,
+                                default_import: false,
+                                adapter: resolved.adapter,
+                                mode: target.mode,
+                                module: module_key(&resolved.path),
+                                export: Some(resolved.name),
+                            },
+                        );
+                        members += 1;
+                    }
+                }
+                let export = target.export.clone().or_else(|| {
+                    (target.default_import
+                        || target.mode == super::node_modules::ImportMode::Require)
+                        .then(|| "default".to_string())
+                });
+                if let Some(export) = export {
+                    if let Some(resolved) = modules.resolve_export(&file, &export) {
+                        target.module = module_key(&resolved.path);
+                        target.export = Some(resolved.name);
+                        target.adapter = resolved.adapter;
+                    } else if members > 0 {
+                        target.module = module_key(&file);
+                        target.export = Some(String::new());
+                    } else {
+                        continue;
+                    }
                 } else {
-                    let names = modules.export_names(&file);
-                    for name in &names {
-                        if let Some(resolved) = modules.resolve_export(&file, &name) {
-                            result.insert(
-                                format!("{visible}.{name}"),
-                                ImportTarget {
-                                    source: true,
-                                    instance: false,
-                                    module: module_key(&resolved.path),
-                                    export: Some(resolved.name),
-                                    mode: target.mode,
-                                },
-                            );
-                        }
-                    }
                     target.module = module_key(&file);
-                    // Local namespaces expose only resolved export members.
-                    // Do not fall back to a same-named private/local function.
                     target.export = Some(String::new());
-                    if names.contains("default")
-                        && let Some(default) = modules.resolve_export(&file, "default")
-                    {
-                        target.module = module_key(&default.path);
-                        target.export = Some(default.name);
-                    }
                 }
             }
             ModuleTarget::External(module) => target.module = module,
@@ -2615,6 +2845,8 @@ fn javascript_imports_raw(
                         ImportTarget {
                             source: false,
                             instance: false,
+                            adapter: None,
+                            default_import: true,
                             mode: super::node_modules::ImportMode::Import,
                             module: module.clone(),
                             export: None,
@@ -2634,6 +2866,8 @@ fn javascript_imports_raw(
                 ImportTarget {
                     source: false,
                     instance: false,
+                    adapter: None,
+                    default_import: false,
                     mode: super::node_modules::ImportMode::Import,
                     module,
                     export: None,
@@ -2658,6 +2892,8 @@ fn javascript_imports_raw(
                     ImportTarget {
                         source: false,
                         instance: false,
+                        adapter: None,
+                        default_import: false,
                         mode: super::node_modules::ImportMode::Import,
                         module: module.clone(),
                         export: Some(imported_name.to_string()),
@@ -2670,6 +2906,8 @@ fn javascript_imports_raw(
                 ImportTarget {
                     source: false,
                     instance: false,
+                    adapter: None,
+                    default_import: true,
                     mode: super::node_modules::ImportMode::Import,
                     module,
                     export: None,
@@ -2698,6 +2936,8 @@ fn javascript_imports_raw(
                 ImportTarget {
                     source: false,
                     instance: false,
+                    adapter: None,
+                    default_import: false,
                     module,
                     export,
                     mode: super::node_modules::ImportMode::Require,
@@ -2736,6 +2976,8 @@ fn javascript_imports_raw(
                 ImportTarget {
                     source: false,
                     instance: false,
+                    adapter: None,
+                    default_import: false,
                     mode: super::node_modules::ImportMode::Require,
                     module: module.clone(),
                     export: Some(imported.to_string()),
@@ -2774,6 +3016,8 @@ fn javascript_imports_raw(
             ImportTarget {
                 source: false,
                 instance: true,
+                adapter: None,
+                default_import: false,
                 mode: target.mode,
                 module: target.module.clone(),
                 export: target.export.clone(),
@@ -2855,6 +3099,9 @@ fn collect_parameter_return_summaries(
             continue;
         };
         for (parameter_index, parameter) in parameters.iter().enumerate() {
+            if !summary_parameter_is_unmodified(&function, parameter, expression.range().start) {
+                continue;
+            }
             let Some(returned_suffix) =
                 parameter_return_suffix(expression.text().as_ref(), parameter)
             else {
@@ -2867,6 +3114,7 @@ fn collect_parameter_return_summaries(
                     canonical,
                     parameter_index,
                     returned_suffix,
+                    asynchronous: function.children().any(|n| n.kind().as_ref() == "async"),
                 },
             );
             break;
@@ -4570,6 +4818,8 @@ fn resolve_handler(
     current_module: &str,
     imports: &BTreeMap<String, ImportTarget>,
 ) -> Option<String> {
+    let normalized = compact(observed);
+    let observed = normalized.as_str();
     if let Some(target) = imports.get(observed)
         && target.source
         && let Some(export) = &target.export
@@ -6432,8 +6682,8 @@ fn add_express_session_policy<'tree>(
                     "csrf".to_string(),
                     "cookie-authenticated".to_string(),
                     "state-changing-routes".to_string(),
-                    "project-csrf-middleware-not-observed".to_string(),
-                    "recommendation:fix-application".to_string(),
+                    "direct-csrf-middleware-not-observed".to_string(),
+                    "recommendation:review-effective-policy".to_string(),
                 ],
                 Confidence::Medium,
                 BTreeMap::from([

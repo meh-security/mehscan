@@ -395,6 +395,9 @@ impl FileSymbolEnvironment {
             return None;
         };
         let target = self.node_modules.resolve_export(&file, export)?;
+        if target.adapter.is_some() {
+            return None;
+        }
         Some(format!("{}.{}", module_key(&target.path), target.name))
     }
 }
