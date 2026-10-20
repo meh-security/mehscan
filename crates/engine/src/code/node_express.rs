@@ -115,18 +115,24 @@ pub(crate) fn add_typed_express_sources<'tree>(
             }
         }
         for node in function.dfs().filter(|node| {
-            node.kind().as_ref() == "member_expression"
-                && nearest_function_range(node) == Some(function.range())
+            matches!(
+                node.kind().as_ref(),
+                "member_expression" | "subscript_expression"
+            ) && nearest_function_range(node) == Some(function.range())
         }) {
             let Some((request, field)) = request_member_root(&node, &request_objects) else {
                 continue;
             };
-            if request == "req" && field != "session" {
+            // Legacy rules cover req collection fields, but not URL scalars.
+            // Keep those scalars behind the imported Express type boundary.
+            if request == "req" && !matches!(field, "session" | "path" | "url" | "originalUrl") {
                 continue;
             }
             if node.parent().is_some_and(|parent| {
-                parent.kind().as_ref() == "member_expression"
-                    && request_member_root(&parent, &request_objects).is_some()
+                matches!(
+                    parent.kind().as_ref(),
+                    "member_expression" | "subscript_expression"
+                ) && request_member_root(&parent, &request_objects).is_some()
             }) {
                 continue;
             }
@@ -841,10 +847,23 @@ fn request_member_root<'a>(
     node: &Node<'_, StrDoc<SupportLang>>,
     requests: &'a [RequestBinding<'_>],
 ) -> Option<(&'a str, &'static str)> {
+    if let Some(access) = super::security_paths::node_static_access(node, 0)
+        && access.len() == 2
+        && matches!(access[1].as_str(), "path" | "url" | "originalUrl")
+    {
+        let request = requests.iter().find(|r| access[0] == r.name)?;
+        return Some((request.name.as_str(), canonical_request_field(&access[1])?));
+    }
+    if node.kind().as_ref() == "subscript_expression" {
+        return None; // Existing collection matching remains unchanged.
+    }
     let text = compact(&node.text()).replace("?.", ".");
     requests.iter().find_map(|request| {
         let tail = text.strip_prefix(&format!("{}.", request.name))?;
         let field = canonical_request_field(tail.split(['.', '[']).next()?)?;
+        if matches!(field, "path" | "url" | "originalUrl") {
+            return None; // Scalar property, not a method reference or subfield.
+        }
         Some((request.name.as_str(), field))
     })
 }
@@ -868,6 +887,9 @@ fn canonical_request_field(field: &str) -> Option<&'static str> {
         "session" => Some("session"),
         "file" => Some("file"),
         "files" => Some("files"),
+        "path" => Some("path"),
+        "url" => Some("url"),
+        "originalUrl" => Some("originalUrl"),
         _ => None,
     }
 }

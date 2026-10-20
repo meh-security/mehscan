@@ -20,6 +20,8 @@ use super::symbols::FileSymbolEnvironment;
 
 #[path = "node_fields.rs"]
 mod node_fields;
+#[path = "node_strings.rs"]
+mod node_strings;
 #[path = "node_url.rs"]
 mod node_url;
 
@@ -2356,6 +2358,28 @@ fn node_operand_origin<'tree>(
                     .filter(|text| text.len() <= 256)
                     .unwrap_or_else(|| "selected return field".to_string())
             )),
+        });
+        return Some(steps);
+    }
+    if let Some(receiver) = node_strings::replacement_receiver(target)
+        && node_strings::path_string(&receiver, symbols, language, index, scope, depth, work)
+        && !["String", "RegExp"].iter().any(|name| {
+            index
+                .writes
+                .get(*name)
+                .is_some_and(|writes| writes.iter().any(|w| w.range.start < target.range().start))
+        })
+    {
+        // Only the receiver contributes. Search/replacement operands cannot
+        // seed a path, and this is no claim that a validator is effective.
+        let mut steps = node_operand_origin(
+            path, language, symbols, source, &receiver, scope, index, depth, work,
+        )?;
+        steps.push(SecurityPathStep {
+            kind: SecurityPathStepKind::Alias,
+            location: node_location(path, target),
+            evidence_id: None,
+            symbol: Some("String.replace: partial replacement of path-derived string; validation not established".into()),
         });
         return Some(steps);
     }
