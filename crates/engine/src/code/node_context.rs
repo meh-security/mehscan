@@ -189,6 +189,7 @@ struct CallbackForwardSummary {
     canonical: String,
     value_index: usize,
     callback_index: usize,
+    result_index: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1012,6 +1013,7 @@ impl NodeProjectContext {
         if !is_node_language(language) {
             return;
         }
+        let bindings = SummaryBindingIndex::new(root);
         let imports = self
             .imports_by_path
             .get(path)
@@ -1026,11 +1028,18 @@ impl NodeProjectContext {
                 continue;
             }
             if let Some(continuation) = promise_resolve_continuation(&call) {
+                if imports.contains_key("Promise")
+                    || !continuation_binding_is_stable(&bindings, &call.node, "Promise", false)
+                {
+                    continue;
+                }
                 if request_argument_matches(&continuation.value, &call.node, "") {
                     push_continuation_source(
                         path,
                         language,
                         &continuation.callback,
+                        0,
+                        &continuation.value,
                         continuation.canonical,
                         &call.callee,
                         comments,
@@ -1047,6 +1056,15 @@ impl NodeProjectContext {
             let Some(summary) = self.callback_forwards.get(&canonical) else {
                 continue;
             };
+            let observed = compact(&call.callee);
+            if !continuation_binding_is_stable(
+                &bindings,
+                &call.node,
+                observed.split('.').next().unwrap_or(&observed),
+                true,
+            ) {
+                continue;
+            }
             let (Some(value), Some(callback)) = (
                 call.arguments.get(summary.value_index),
                 call.arguments.get(summary.callback_index),
@@ -1058,6 +1076,8 @@ impl NodeProjectContext {
                     path,
                     language,
                     callback,
+                    summary.result_index,
+                    value,
                     &summary.canonical,
                     &call.callee,
                     comments,
@@ -2864,7 +2884,7 @@ fn collect_parameter_sink_summaries<'tree>(
     let Some(module) = module_path(path) else {
         return;
     };
-    let bindings = SummaryBindingIndex::new(root);
+    let bindings = SummaryBindingIndex::with_template_receivers(root, imports);
     for (name, function) in functions.iter().cloned() {
         let parameters = function_parameter_names(&function);
         let mut matches = Vec::new();
@@ -3124,14 +3144,27 @@ fn collect_callback_forward_summaries(
                 let callback_index = parameters
                     .iter()
                     .position(|parameter| parameter == &call.callee)?;
-                if call.arguments.len() != 1 {
-                    return None;
-                }
-                let argument = compact(call.arguments[0].text().as_ref());
+                let result_index = match call.arguments.as_slice() {
+                    [_] => 0,
+                    [error, _] if error.text().trim() == "null" => 1,
+                    _ => return None,
+                };
+                let argument = compact(call.arguments[result_index].text().as_ref());
                 let value_index = parameters
                     .iter()
                     .position(|parameter| parameter == &argument)?;
-                (value_index != callback_index).then_some((value_index, callback_index))
+                (value_index != callback_index
+                    && summary_parameter_is_unmodified(
+                        &function,
+                        &parameters[value_index],
+                        call.node.range().start,
+                    )
+                    && summary_parameter_is_unmodified(
+                        &function,
+                        &parameters[callback_index],
+                        call.node.range().start,
+                    ))
+                .then_some((value_index, callback_index, result_index))
             })
             .collect::<Vec<_>>();
         if forwards.len() != 1 {
@@ -3144,6 +3177,7 @@ fn collect_callback_forward_summaries(
                 canonical,
                 value_index: forwards[0].0,
                 callback_index: forwards[0].1,
+                result_index: forwards[0].2,
             },
         );
     }
@@ -3322,9 +3356,14 @@ fn parameter_sink_operands<'tree>(
     let callee = compact(&call.callee);
     let binding = callee.split('.').next().unwrap_or(&callee);
     // A handler parameter can shadow a module-level import.
+    let receiver = (!parameters.iter().any(|p| p == binding)
+        && callee == format!("{binding}.renderString"))
+    .then(|| bindings.template_receiver(function, binding, call.node.range().start))
+    .unwrap_or(false);
     let api = (!parameters.iter().any(|p| p == binding))
         .then(|| external_sink_api(&callee, imports))
-        .flatten();
+        .flatten()
+        .or_else(|| receiver.then(|| "nunjucks.Environment.renderString".to_string()));
     let legacy = summary_sink(&callee);
     if legacy.is_none()
         && callee != "fetch"
@@ -3347,12 +3386,14 @@ fn parameter_sink_operands<'tree>(
     {
         return Vec::new();
     }
-    if !bindings.is_stable(
-        function,
-        binding,
-        call.node.range().start,
-        imports.contains_key(binding),
-    ) {
+    if !receiver
+        && !bindings.is_stable(
+            function,
+            binding,
+            call.node.range().start,
+            imports.contains_key(binding),
+        )
+    {
         return Vec::new();
     }
     let mut slots = Vec::new();
@@ -3379,7 +3420,11 @@ fn parameter_sink_operands<'tree>(
             | "fs.rmSync"
             | "fs.promises.unlink"
             | "fs.promises.rm" => slots.push((0, SummarySink::FilesystemWrite)),
-            "ejs.render" | "ejs.compile" | "nunjucks.renderString" | "nunjucks.compile" => {
+            "ejs.render"
+            | "ejs.compile"
+            | "nunjucks.renderString"
+            | "nunjucks.compile"
+            | "nunjucks.Environment.renderString" => {
                 slots.push((0, SummarySink::TemplateEvaluation))
             }
             "node-fetch" | "undici.fetch" | "undici.request" | "axios.get" | "axios.post"
@@ -3481,6 +3526,8 @@ fn parameter_sink_operands<'tree>(
 #[derive(Default)]
 struct SummaryBindingEffects {
     declared: bool,
+    declaration_count: usize,
+    template_environment: Option<usize>,
     writes: Vec<usize>,
 }
 
@@ -3509,12 +3556,23 @@ impl SummaryBindingIndex {
             } else {
                 continue;
             };
-            let Some(name) = node
-                .field(field)
-                .filter(|n| n.kind().as_ref() == "identifier")
-            else {
+            let Some(mut name) = node.field(field) else {
                 continue;
             };
+            if !declaration {
+                while matches!(
+                    name.kind().as_ref(),
+                    "member_expression" | "subscript_expression"
+                ) {
+                    let Some(object) = name.field("object") else {
+                        break;
+                    };
+                    name = object;
+                }
+            }
+            if name.kind().as_ref() != "identifier" {
+                continue;
+            }
             let scope = if node.kind().as_ref() == "function_declaration" {
                 node.parent()
                     .and_then(|parent| nearest_function_range(&parent))
@@ -3529,11 +3587,84 @@ impl SummaryBindingIndex {
                 .or_default();
             if declaration {
                 effect.declared = true;
+                effect.declaration_count += 1;
             } else {
                 effect.writes.push(node.range().start);
             }
         }
         index
+    }
+
+    fn with_template_receivers(
+        root: &Node<'_, StrDoc<SupportLang>>,
+        imports: &BTreeMap<String, ImportTarget>,
+    ) -> Self {
+        let mut index = Self::new(root);
+        if !imports
+            .values()
+            .any(|target| !target.source && target.module == "nunjucks")
+        {
+            return index;
+        }
+        for declaration in root
+            .dfs()
+            .filter(|n| n.kind().as_ref() == "variable_declarator")
+        {
+            let (Some(name), Some(value)) = (declaration.field("name"), declaration.field("value"))
+            else {
+                continue;
+            };
+            if name.kind().as_ref() != "identifier" {
+                continue;
+            }
+            let (field, expected) = match value.kind().as_ref() {
+                "new_expression" => ("constructor", "nunjucks.Environment"),
+                "call_expression" => ("function", "nunjucks.configure"),
+                _ => continue,
+            };
+            let Some(target) = value.field(field) else {
+                continue;
+            };
+            let observed = compact(target.text().as_ref());
+            if external_sink_api(target.text().as_ref(), imports).as_deref() != Some(expected)
+                || !continuation_binding_is_stable(
+                    &index,
+                    &value,
+                    observed.split('.').next().unwrap_or(""),
+                    true,
+                )
+            {
+                continue;
+            }
+            let scope = nearest_function_range(&declaration).map(|r| (r.start, r.end));
+            if let Some(effect) = index
+                .scopes
+                .get_mut(&scope)
+                .and_then(|s| s.get_mut(name.text().as_ref()))
+            {
+                effect.template_environment = Some(declaration.range().end);
+            }
+        }
+        index
+    }
+
+    fn template_receiver(
+        &self,
+        function: &Node<'_, StrDoc<SupportLang>>,
+        binding: &str,
+        before: usize,
+    ) -> bool {
+        let scope = function.range();
+        for key in [Some((scope.start, scope.end)), None] {
+            if let Some(effect) = self.scopes.get(&key).and_then(|s| s.get(binding)) {
+                return effect.declaration_count == 1
+                    && effect.writes.is_empty()
+                    && effect
+                        .template_environment
+                        .is_some_and(|end| key.is_none() || end <= before);
+            }
+        }
+        false
     }
 
     fn is_stable(
@@ -3934,6 +4065,31 @@ fn request_argument_matches(
                 .is_some_and(|parameters| parameters.text().contains("Request")))
 }
 
+fn continuation_binding_is_stable(
+    bindings: &SummaryBindingIndex,
+    call: &Node<'_, StrDoc<SupportLang>>,
+    binding: &str,
+    allow_module_declaration: bool,
+) -> bool {
+    if call.ancestors().filter(is_function_node).any(|function| {
+        function_parameter_names(&function)
+            .iter()
+            .any(|p| p == binding)
+    }) {
+        return false;
+    }
+    let scope = call
+        .ancestors()
+        .find(is_function_node)
+        .unwrap_or_else(|| call.clone());
+    bindings.is_stable(
+        &scope,
+        binding,
+        call.range().start,
+        allow_module_declaration,
+    )
+}
+
 fn promise_resolve_continuation<'tree>(
     then_call: &CallSite<'tree>,
 ) -> Option<PromiseContinuation<'tree>> {
@@ -4260,6 +4416,8 @@ fn push_continuation_source<'tree>(
     path: &str,
     language: Language,
     callback: &Node<'tree, StrDoc<SupportLang>>,
+    result_index: usize,
+    origin: &Node<'tree, StrDoc<SupportLang>>,
     canonical: &str,
     observed: &str,
     comments: &CommentRanges,
@@ -4271,10 +4429,10 @@ fn push_continuation_source<'tree>(
         return;
     }
     let parameters = function_parameter_nodes(callback);
-    if parameters.len() != 1 {
+    if parameters.len() != result_index + 1 {
         return;
     }
-    let parameter = &parameters[0];
+    let parameter = &parameters[result_index];
     let parameter_name = parameter.text().into_owned();
     let uses = callback
         .dfs()
@@ -4283,6 +4441,20 @@ fn push_continuation_source<'tree>(
                 && node.range() != parameter.range()
                 && node.text().trim() == parameter_name
                 && nearest_function_range(node) == Some(callback.range())
+                && summary_parameter_is_unmodified(callback, &parameter_name, node.range().start)
+                && !node
+                    .ancestors()
+                    .take_while(|n| n.range() != callback.range())
+                    .any(|n| {
+                        matches!(
+                            n.kind().as_ref(),
+                            "assignment_expression"
+                                | "augmented_assignment_expression"
+                                | "update_expression"
+                        ) && n
+                            .field("left")
+                            .is_none_or(|left| left.range().contains(&node.range().start))
+                    })
         })
         .take(4)
         .collect::<Vec<_>>();
@@ -4303,13 +4475,17 @@ fn push_continuation_source<'tree>(
             capability: Capability::HttpRequestData,
             location: location(path, &value_use),
             enclosing_symbol: enclosing_symbol(callback),
-            captures: BTreeMap::from([("value".to_string(), capture(path, &value_use))]),
+            captures: BTreeMap::from([
+                ("value".to_string(), capture(path, &value_use)),
+                ("origin".to_string(), capture(path, origin)),
+            ]),
             cwe_candidates: Vec::new(),
             tags: vec![
                 "async-continuation".to_string(),
                 "callback-parameter-use".to_string(),
                 "maximum-depth-1".to_string(),
                 "maximum-uses-4".to_string(),
+                format!("callback-result-index:{result_index}"),
             ],
             confidence: Confidence::Medium,
             provenance: Provenance {
