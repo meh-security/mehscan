@@ -42,6 +42,7 @@ mod angular;
 mod csharp_application_context;
 mod frontend;
 mod practical_admission;
+mod resource_helpers;
 mod review_admission;
 
 use crate::repository::{
@@ -2104,6 +2105,7 @@ fn build_path_review_jobs_internal(
             &reference_tokens,
             (&facts, &candidate.sink.location),
             precise_consumer_fields.as_ref(),
+            true,
             MAX_REVIEW_SECOND_HOP_FACTS,
         );
         context_truncated |= second_hop_truncated;
@@ -9088,6 +9090,7 @@ fn build_observation_reviews(
         );
     }
     let mut php_contexts = BTreeMap::new();
+    let mut resource_helpers = BTreeMap::new();
     let mut reviews = Vec::new();
     for group in groups {
         let group_started = std::time::Instant::now();
@@ -9241,14 +9244,32 @@ fn build_observation_reviews(
         context_truncated |= framework_truncated;
         facts.append(&mut framework_facts);
         let helpers_started = std::time::Instant::now();
-        let (mut helpers, helpers_truncated) = observation_helper_definition_facts(
-            sources,
-            &review_context,
-            &paths,
-            &references,
-            &facts,
-            4,
-        );
+        let resource_operation = group
+            .evidence
+            .iter()
+            .filter(|e| e.location == *anchor && e.capability == Capability::ResourceAccess)
+            .flat_map(|e| &e.context.operand_facts)
+            .find(|f| f.role == "resource_operation" && f.value == "local_callable_context")
+            .map(|f| &f.location);
+        let precise_resource_helpers = resource_operation.is_some();
+        let (mut helpers, helpers_truncated) = if let Some(operation) = resource_operation {
+            resource_helpers
+                .entry(group.path.clone())
+                .or_insert_with(|| resource_helpers::LocalHelpers::build(file))
+                .as_ref()
+                .map_or((Vec::new(), false), |index| {
+                    index.facts(file, operation, &facts, 4)
+                })
+        } else {
+            observation_helper_definition_facts(
+                sources,
+                &review_context,
+                &paths,
+                &references,
+                &facts,
+                4,
+            )
+        };
         context_truncated |= helpers_truncated;
         facts.append(&mut helpers);
         let helpers_milliseconds = helpers_started.elapsed().as_millis();
@@ -9266,6 +9287,7 @@ fn build_observation_reviews(
             &references,
             (&facts, anchor),
             None,
+            !precise_resource_helpers,
             6,
         );
         context_truncated |= second_hop_truncated;
@@ -16999,6 +17021,7 @@ impl ReviewContextIndex {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn second_hop_review_facts(
     sources: &RepositorySources,
     context: &ReviewContextIndex,
@@ -17006,13 +17029,18 @@ fn second_hop_review_facts(
     references: &BTreeSet<String>,
     evidence: (&[ReviewNeighborhoodFact], &Location),
     precise_member_fields: Option<&BTreeSet<String>>,
+    expand_helper_names: bool,
     limit: usize,
 ) -> (Vec<ReviewNeighborhoodFact>, bool) {
     let (existing, anchor) = evidence;
     if limit == 0 {
         return (Vec::new(), false);
     }
-    let expanded = context.expanded_references(sources, candidate_paths, references);
+    let expanded = if expand_helper_names {
+        context.expanded_references(sources, candidate_paths, references)
+    } else {
+        references.clone()
+    };
     let second_only = expanded
         .difference(references)
         .cloned()

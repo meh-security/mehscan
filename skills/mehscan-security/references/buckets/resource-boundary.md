@@ -118,6 +118,12 @@ than rereading equivalent distributions.
   so later checks remain visible. Reuse that context across questions, but verify
   each selector, branch and effect independently. Larger callables remain lookup
   targets; a bounded excerpt cannot establish that a later control is absent.
+  Resource helper context can identify a direct call to a unique stable local
+  function. This establishes a lexical target, not that the helper ran, succeeded,
+  or protected this operation. Member calls, imported helpers, shadowed names and
+  mutable bindings may have no resolved helper excerpt. Use the operation and
+  import/receiver locations to inspect the actual implementation when its behavior
+  changes the verdict; missing helper context is not evidence of missing controls.
 
 Stop when the exact target is fixed or constrained for the same operation, or
 when a lower-trust selector can reach the protected target. If resolution or

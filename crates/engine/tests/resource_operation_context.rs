@@ -3,6 +3,109 @@ use mehscan_engine::investigation::{build_all_path_review_jobs, build_path_revie
 use std::fs;
 
 #[test]
+fn resource_helpers_follow_direct_local_bindings_without_guessing_receiver_methods() {
+    let root =
+        std::env::temp_dir().join(format!("mehscan-resource-helpers-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    for extension in ["js", "ts", "tsx"] {
+        fs::write(
+            root.join(format!("app.{extension}")),
+            r#"
+const verifyPassword = (password, hash) => crypt.compare(password, hash); const adjacentDefinition = () => unrelated();
+function findOne() { return unrelated(); }
+const mutableCheck = () => false;
+mutableCheck = replacement;
+const shadowedCheck = () => false;
+const escapedCheck = () => false;
+({escapedCheck} = replacements);
+const unrelatedCheck = () => false;
+function other(unrelatedCheck) { return unrelatedCheck(); }
+function credentials(email, password, shadowedCheck) {
+ const user = Accounts.findOne({where:{email}});
+ if (!user) return false;
+ return verifyPassword(password, user.hash) && shadowedCheck() && mutableCheck() && escapedCheck();
+}
+function lookup(id) {
+ const row = Accounts.findOne({where:{id}});
+ return client.findOne(row);
+}
+function separate() { function hiddenCheck() { return false; } }
+function outside(id) {
+ const row = Accounts.findOne({where:{id}});
+ return hiddenCheck(row);
+}
+"#,
+        )
+        .unwrap();
+    }
+    let job = build_all_path_review_jobs(&root, Some(1), false).unwrap();
+    for extension in ["js", "ts", "tsx"] {
+        let path = format!("app.{extension}");
+        let reviews =
+            job.observation_reviews
+                .iter()
+                .filter(|review| {
+                    review.evidence.iter().any(|e| {
+                        e.location.path == path && e.capability == Capability::ResourceAccess
+                    })
+                })
+                .collect::<Vec<_>>();
+        assert_eq!(
+            reviews.len(),
+            3,
+            "helper filtering must not remove resource questions"
+        );
+        let credential = reviews
+            .iter()
+            .find(|r| {
+                r.evidence
+                    .iter()
+                    .any(|e| e.enclosing_symbol.as_deref() == Some("credentials"))
+            })
+            .unwrap();
+        let helpers = credential
+            .facts
+            .iter()
+            .filter(|f| f.role == "helper_definition_context")
+            .collect::<Vec<_>>();
+        assert!(
+            helpers
+                .iter()
+                .any(|f| f.symbol == "verifyPassword" && f.excerpt.contains("crypt.compare")),
+            "actual verifier definition missing for {extension}"
+        );
+        assert!(
+            helpers
+                .iter()
+                .all(|f| !f.excerpt.contains("adjacentDefinition")),
+            "helper excerpt must respect exact byte boundaries"
+        );
+        for review in reviews {
+            for fact in review
+                .facts
+                .iter()
+                .filter(|f| f.role == "helper_definition_context")
+            {
+                assert!(
+                    ![
+                        "findOne",
+                        "mutableCheck",
+                        "shadowedCheck",
+                        "escapedCheck",
+                        "hiddenCheck",
+                        "unrelatedCheck"
+                    ]
+                    .contains(&fact.symbol.as_str()),
+                    "unresolved/irrelevant helper {} in {extension}",
+                    fact.symbol
+                );
+            }
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn compact_callable_context_preserves_credential_checks_and_separate_access_decisions() {
     let root =
         std::env::temp_dir().join(format!("mehscan-resource-operation-{}", std::process::id()));
