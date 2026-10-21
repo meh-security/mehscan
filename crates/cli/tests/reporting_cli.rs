@@ -313,6 +313,22 @@ fn scan(format: &str) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).expect("output should be JSON")
 }
 
+fn native_path_ids() -> Vec<String> {
+    let scan = scan("json");
+    let mut ids = scan["security_paths"]
+        .as_array()
+        .expect("native paths")
+        .iter()
+        .map(|path| path["id"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        !ids.is_empty(),
+        "reporting fixture must contain qualified paths"
+    );
+    ids.sort();
+    ids
+}
+
 #[test]
 fn candidate_format_excludes_raw_observation_inventory() {
     let report = scan("candidates");
@@ -320,10 +336,14 @@ fn candidate_format_excludes_raw_observation_inventory() {
     assert_eq!(report["schema_version"], "1.0");
     assert_eq!(report["root"], ".");
     assert_eq!(report["scan_schema_version"], "2.1");
-    assert_eq!(
-        report["candidates"].as_array().expect("candidates").len(),
-        15
-    );
+    let mut ids = report["candidates"]
+        .as_array()
+        .expect("candidates")
+        .iter()
+        .map(|item| item["id"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    ids.sort();
+    assert_eq!(ids, native_path_ids());
     assert!(report.get("evidence").is_none());
     assert!(report["candidates"][0].get("source").is_some());
     assert!(report["candidates"][0].get("sink").is_some());
@@ -336,13 +356,19 @@ fn sarif_format_emits_candidates_instead_of_raw_observations() {
     assert_eq!(sarif["version"], "2.1.0");
     assert_eq!(sarif["runs"][0]["properties"]["scanRoot"], ".");
     assert_eq!(sarif["runs"][0]["columnKind"], "unicodeCodePoints");
-    assert_eq!(
-        sarif["runs"][0]["results"]
-            .as_array()
-            .expect("results")
-            .len(),
-        15
-    );
+    let mut ids = sarif["runs"][0]["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .map(|item| {
+            item["properties"]["candidateId"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    ids.sort();
+    assert_eq!(ids, native_path_ids());
     assert_eq!(sarif["runs"][0]["results"][0]["kind"], "review");
     assert!(sarif["runs"][0].get("evidence").is_none());
     assert!(sarif["runs"][0]["results"][0]["codeFlows"].is_array());

@@ -6,11 +6,11 @@ fn ordinary_owned_directory_creation_is_excluded_from_both_modes_without_losing_
         std::env::temp_dir().join(format!("mehscan-directory-priority-{}", std::process::id()));
     let artifacts = root.with_extension("inventory");
     fs::create_dir_all(&root).unwrap();
-    fs::write(root.join("app.js"), "const fs=require('fs');\nfunction mkdir(path){fs.mkdirSync(path);}\nfunction write(path,data){fs.writeFileSync(path,data);}\nfunction endpoint(req,res){fs.mkdirSync(req.query.path);}").unwrap();
-    fs::write(root.join("app.php"), "<?php function make_dir($path){mkdir($path,0755);} function write_file($path,$data){file_put_contents($path,$data);} function endpoint(){mkdir($_GET['path'],0755);}").unwrap();
-    fs::write(root.join("app.ts"), "import * as fs from 'fs';\nfunction make(path:string){fs.mkdirSync(path);}\nfunction write(path:string,data:string){fs.writeFileSync(path,data);}").unwrap();
-    fs::write(root.join("App.java"), "import java.nio.file.Files; import java.nio.file.Path; class App { void make(Path path) throws Exception { Files.createDirectories(path); } void write(Path path,byte[] data) throws Exception { Files.write(path,data); } }").unwrap();
-    fs::write(root.join("app.go"), "package app\nimport \"os\"\nfunc makeDir(path string){os.MkdirAll(path,0755)}\nfunc write(path string,data []byte){os.WriteFile(path,data,0600)}").unwrap();
+    fs::write(root.join("app.js"), "const fs=require('fs');\nfunction mkdir(path){fs.mkdirSync(path);}\nfunction write(req){fs.writeFileSync(req.query.path,'constant');}\nfunction endpoint(req,res){fs.mkdirSync(req.query.path);}").unwrap();
+    fs::write(root.join("app.php"), "<?php function make_dir($path){mkdir($path,0755);} function write_file(){file_put_contents($_GET['path'],'constant');} function endpoint(){mkdir($_GET['path'],0755);}").unwrap();
+    fs::write(root.join("app.ts"), "import * as fs from 'fs';\nfunction make(path:string){fs.mkdirSync(path);}\nfunction write(req:any){fs.writeFileSync(req.query.path,'constant');}").unwrap();
+    fs::write(root.join("App.java"), "import java.nio.file.Files; import java.nio.file.Path; import javax.servlet.http.HttpServletRequest; class App { void make(Path path) throws Exception { Files.createDirectories(path); } void write(HttpServletRequest req) throws Exception { Files.write(Path.of(req.getParameter(\"path\")),new byte[0]); } }").unwrap();
+    fs::write(root.join("app.go"), "package app\nimport (\"os\"; \"net/http\")\nfunc makeDir(path string){os.MkdirAll(path,0755)}\nfunc write(r *http.Request){os.WriteFile(r.URL.Query().Get(\"path\"),[]byte(\"constant\"),0600)}").unwrap();
     fs::write(
         root.join("lookalike.js"),
         "const fs={mkdirSync(path){return eval(path)}}; function custom(path){fs.mkdirSync(path);}",
@@ -123,11 +123,19 @@ fn build_scope_defers_ordinary_sinks_and_preserves_runtime_and_connected_work() 
         r#"{"main":"app.js","scripts":{"build":"node tools/build.js","start":"node app.js"}}"#,
     )
     .unwrap();
-    fs::write(root.join("tools/build.js"), "require('./render'); const fs=require('fs'); function build(path,data) { fs.writeFileSync(path,data); }").unwrap();
-    fs::write(root.join("tools/render.js"), "const fs=require('fs'); module.exports=function render(path) { return fs.readFileSync(path); };").unwrap();
+    fs::write(
+        root.join("tools/build.js"),
+        "require('./render'); function build(url) { return fetch(url); }",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tools/render.js"),
+        "module.exports=function render(url) { return fetch(url); };",
+    )
+    .unwrap();
     fs::write(
         root.join("app.js"),
-        "const fs=require('fs'); function read(path) { return fs.readFileSync(path); }",
+        "function read(url) { return fetch(url); }",
     )
     .unwrap();
     let inventory = |output: &std::path::Path| {
@@ -185,7 +193,11 @@ fn build_scope_defers_ordinary_sinks_and_preserves_runtime_and_connected_work() 
             .iter()
             .all(|e| e["path"] == "app.js")
     );
-    fs::write(root.join("app.js"), "require('./tools/render'); const fs=require('fs'); function read(path) { return fs.readFileSync(path); }").unwrap();
+    fs::write(
+        root.join("app.js"),
+        "require('./tools/render'); function read(url) { return fetch(url); }",
+    )
+    .unwrap();
     let shared = inventory(&root.with_extension("shared-inventory"));
     assert!(
         shared["entries"]
