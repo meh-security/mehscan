@@ -13110,13 +13110,21 @@ fn closed_output_operand(item: &Evidence) -> Option<&mehscan_core::OperandFact> 
         && item.capability == Capability::HtmlOutput
         && matches!(
             item.rule_id.as_str(),
-            "csharp-aspnet-explicit-html-output" | "csharp-html-output"
+            "csharp-aspnet-explicit-html-output"
+                | "csharp-html-output"
+                | "javascript-parameter-sink-summary"
+                | "typescript-parameter-sink-summary"
+                | "tsx-parameter-sink-summary"
         )
         && item.cwe_candidates == ["CWE-79"]
     {
         let capture = item.captures.get("content")?;
         return item.context.operand_facts.iter().find(|fact| {
             (fact.kind == mehscan_core::OperandFactKind::EncodedHtmlOperand
+                && matches!(
+                    item.rule_id.as_str(),
+                    "csharp-aspnet-explicit-html-output" | "csharp-html-output"
+                )
                 && fact.remaining_checks == ["html_text_context_only"]
                 || fact.kind == mehscan_core::OperandFactKind::NonHtmlResponse
                     && fact.remaining_checks == ["explicit_non_html_response"])

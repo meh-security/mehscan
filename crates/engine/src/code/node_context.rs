@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
+#[path = "node_response_contract.rs"]
+mod response_contract;
 #[path = "node_return_fields.rs"]
 mod returned_fields;
 pub(crate) use returned_fields::ReturnedObject;
@@ -191,6 +193,7 @@ struct ParameterSinkSummary {
     parameter_index: usize,
     sink: SummarySink,
     operand: &'static str,
+    non_html_controls: Vec<Capture>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -970,6 +973,15 @@ impl NodeProjectContext {
                     related_evidence.push(source_id);
                 }
                 let mut context = evidence_context(&call.node, comments, conditional, literals);
+                if !summary.non_html_controls.is_empty() {
+                    context.operand_facts.push(mehscan_core::OperandFact {
+                        role: "content".to_string(),
+                        kind: mehscan_core::OperandFactKind::NonHtmlResponse,
+                        location: location(path, argument),
+                        value: argument.text().into_owned(),
+                        remaining_checks: vec!["explicit_non_html_response".to_string()],
+                    });
+                }
                 if summary.sink == SummarySink::ResourceAccess && self.has_express_session {
                     let scope = function_scope(argument, root);
                     if resource_owner_value_is_authenticated(
@@ -1003,7 +1015,18 @@ impl NodeProjectContext {
                         // Preserve its AST location for review; do not resolve
                         // aliases/barrels again using terminal-name guesses.
                         ("helper_definition".to_string(), summary.definition.clone()),
-                    ]),
+                    ])
+                    .into_iter()
+                    .chain(
+                        summary
+                            .non_html_controls
+                            .iter()
+                            .enumerate()
+                            .map(|(i, control)| {
+                                (format!("response_control_{i}_definition"), control.clone())
+                            }),
+                    )
+                    .collect(),
                     cwe_candidates: vec![summary.sink.cwe().to_string()],
                     tags: vec![
                         "interprocedural".to_string(),
@@ -3294,6 +3317,14 @@ fn collect_parameter_sink_summaries<'tree>(
             text: name.clone(),
             location: location(path, &function),
         };
+        let non_html_controls = if matches
+            .iter()
+            .any(|(_, sink, _)| *sink == SummarySink::HtmlOutput)
+        {
+            response_contract::plain_text_controls(path, root, &function, &bindings)
+        } else {
+            Vec::new()
+        };
         summaries
             .entry((path.to_string(), canonical.clone()))
             .or_default()
@@ -3304,6 +3335,11 @@ fn collect_parameter_sink_summaries<'tree>(
                     parameter_index,
                     sink,
                     operand,
+                    non_html_controls: if sink == SummarySink::HtmlOutput {
+                        non_html_controls.clone()
+                    } else {
+                        Vec::new()
+                    },
                 }
             }));
     }
@@ -3353,6 +3389,7 @@ fn collect_local_template_parameter_sinks(
                     parameter_index,
                     sink: SummarySink::TemplateEvaluation,
                     operand: "template",
+                    non_html_controls: Vec::new(),
                 };
                 let entries = summaries.entry((path.to_string(), canonical)).or_default();
                 if !entries.contains(&summary) {
