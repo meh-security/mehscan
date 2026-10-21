@@ -12,7 +12,9 @@ that covers the selected question/anchor rows replaces the initial card/sweep
 read below; inspect missing facts normally.
 
 1. Run `review-sweep --bundle REQUEST` to read the exact cards together. Read
-   each `source_contexts` window once; rows reference it through `source_context_ids`.
+   each `source_contexts` window once; rows reference it through `source_context_ids`. Resolved helper bodies use
+   `helper_context_ids` in the same source table. Check the source location,
+   truncation and each call's operand; a shared helper body is not a shared verdict.
    Read the row's `question_id` in `questions` for its question, category and playbook.
    The CLI merges overlapping whole-line windows. Complete byte-bounded callable
    ranges stay separate from neighboring fragments and identical ranges are read

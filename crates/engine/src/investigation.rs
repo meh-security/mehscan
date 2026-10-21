@@ -8846,7 +8846,10 @@ fn captured_definition_facts<'a>(
     for item in evidence {
         for (name, capture) in &item.captures {
             if !name.ends_with("_definition")
-                || facts_cover_location(existing, &capture.location)
+                // Ordinary source windows are clipped again by the compact
+                // reader. Preserve the resolved helper separately even when
+                // that larger window happens to cover its definition.
+                || (name != "helper_definition" && facts_cover_location(existing, &capture.location))
                 || facts_cover_location(&facts, &capture.location)
             {
                 continue;
@@ -8857,9 +8860,34 @@ fn captured_definition_facts<'a>(
             let Ok(file) = sources.file(&capture.location.path) else {
                 continue;
             };
-            let start_line = capture.location.start.line.saturating_sub(1).max(1);
-            let end_line = capture.location.end.line.saturating_add(1);
-            let Ok((slice, truncated)) = source_slice(file, start_line, end_line) else {
+            let slice = if name == "helper_definition" {
+                let start = capture.location.start.byte_offset;
+                let end = capture.location.end.byte_offset;
+                let Some(text) = file.source.get(start..end).filter(|text| !text.is_empty()) else {
+                    continue;
+                };
+                if text.len() <= MAX_REVIEW_PRIMARY_CONTEXT_BYTES {
+                    Ok((
+                        SourceSlice {
+                            location: capture.location.clone(),
+                            text: text.to_string(),
+                        },
+                        false,
+                    ))
+                } else {
+                    review_source_slice(
+                        file,
+                        capture.location.start.line,
+                        capture.location.end.line,
+                        &capture.location,
+                    )
+                }
+            } else {
+                let start_line = capture.location.start.line.saturating_sub(1).max(1);
+                let end_line = capture.location.end.line.saturating_add(1);
+                source_slice(file, start_line, end_line)
+            };
+            let Ok((slice, truncated)) = slice else {
                 continue;
             };
             facts.push(ReviewNeighborhoodFact {

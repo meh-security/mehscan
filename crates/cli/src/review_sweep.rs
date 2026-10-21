@@ -212,6 +212,28 @@ fn atomic_context(context: &Value) -> bool {
     context["truncated"] == true || context["location"]["start_byte_offset"].is_u64()
 }
 
+fn register_atomic_context(contexts: &mut Vec<Value>, mut source: Value) -> Result<String, String> {
+    source
+        .as_object_mut()
+        .ok_or("invalid source context")?
+        .remove("evidence_id");
+    if source["location"]["start_byte_offset"].is_u64()
+        && contexts.iter().any(|item| {
+            item["location"] == source["location"] && item["excerpt"] != source["excerpt"]
+        })
+    {
+        return Err("conflicting exact source ranges; inspect individual cards".into());
+    }
+    let index = contexts
+        .iter()
+        .position(|item| item == &source)
+        .unwrap_or_else(|| {
+            contexts.push(source);
+            contexts.len() - 1
+        });
+    Ok(format!("source-{}", index + 1))
+}
+
 pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, String> {
     // Read adjacent operations in source order. Identity still comes from the
     // exact ID/anchor, never the position of a row in this list.
@@ -280,24 +302,7 @@ pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, S
         let mut refs = Vec::new();
         if !source.is_null() {
             if atomic_context(&source) {
-                let mut source = source;
-                source.as_object_mut().unwrap().remove("evidence_id");
-                if source["location"]["start_byte_offset"].is_u64()
-                    && contexts.iter().any(|item| {
-                        item["location"] == source["location"]
-                            && item["excerpt"] != source["excerpt"]
-                    })
-                {
-                    return Err("conflicting exact source ranges; inspect individual cards".into());
-                }
-                let index = contexts
-                    .iter()
-                    .position(|item| item == &source)
-                    .unwrap_or_else(|| {
-                        contexts.push(source);
-                        contexts.len() - 1
-                    });
-                refs.push(format!("source-{}", index + 1));
+                refs.push(register_atomic_context(&mut contexts, source)?);
             } else {
                 for (index, context) in contexts.iter().enumerate() {
                     if !atomic_context(context)
@@ -318,6 +323,17 @@ pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, S
             contracts.entry(key.clone()).or_insert_with(|| json!({"contract":key,"kind":kind,"value":value,"verified":false,"checks":checks(&kind)}));
         }
         card["source_context_ids"] = json!(refs);
+        let helpers = card["helper_context"].take();
+        let mut helper_refs = Vec::new();
+        for helper in helpers.as_array().into_iter().flatten() {
+            helper_refs.push(register_atomic_context(&mut contexts, helper.clone())?);
+        }
+        if !helper_refs.is_empty() {
+            card["helper_context_ids"] = json!(helper_refs);
+        }
+        card.as_object_mut()
+            .ok_or("invalid review card")?
+            .remove("helper_context");
         let mut question = json!({});
         for field in ["category", "playbook", "security_question", "relationship"] {
             question[field] = card[field].take();
@@ -410,6 +426,24 @@ mod tests {
         let mut conflict = a.clone();
         conflict["source_context"]["excerpt"] = json!("different source");
         assert!(sweep("bundle", vec![a, conflict]).is_err());
+    }
+
+    #[test]
+    fn resolved_helper_source_is_shared_without_merging_call_decisions() {
+        let helper = json!({"role":"captured_definition_context", "symbol":"run",
+            "location":{"path":"helper.ts","start_line":1,"end_line":1,"start_byte_offset":0,"end_byte_offset":23},
+            "excerpt":"function run(x){exec(x)}", "truncated":false});
+        let cards = ["a", "b"].map(|id| {
+            json!({"review_id":id,"selected_anchor_id":id,
+            "anchor":{"location":{"path":format!("{id}.ts"),"start_line":1}},
+            "helper_context":[helper.clone()]})
+        });
+        let result = sweep("bundle", cards.into()).unwrap();
+        let rows = result["reviews"].as_array().unwrap();
+        assert_eq!(result["source_contexts"].as_array().unwrap().len(), 1);
+        assert_eq!(rows[0]["helper_context_ids"], rows[1]["helper_context_ids"]);
+        assert_ne!(rows[0]["selected_anchor_id"], rows[1]["selected_anchor_id"]);
+        assert!(rows.iter().all(|row| row.get("helper_context").is_none()));
     }
 
     #[test]

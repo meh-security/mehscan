@@ -3440,6 +3440,53 @@ fn compact_anchor_context(
     }))
 }
 
+// Preserve an already-resolved helper definition in the normal skill view.
+// This is source context for the selected call, not a protection verdict.
+fn compact_helper_context(
+    review: &serde_json::Value,
+    anchor: &serde_json::Value,
+) -> Vec<serde_json::Value> {
+    // Path candidates intentionally omit captures. The definition fact remains
+    // bound to this exact evidence ID; do not infer a target from its spelling.
+    if !anchor["rule_id"].as_str().is_some_and(|rule| {
+        ["javascript-", "typescript-", "tsx-"]
+            .iter()
+            .any(|prefix| rule.starts_with(prefix))
+            && rule.ends_with("parameter-sink-summary")
+    }) {
+        return Vec::new();
+    }
+    let Some(fact) = review["facts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|fact| {
+            fact["role"] == "captured_definition_context" && fact["evidence_id"] == anchor["id"]
+        })
+    else {
+        return Vec::new();
+    };
+    let location = &fact["location"];
+    let exact_excerpt = match (
+        location["start"]["byte_offset"].as_u64(),
+        location["end"]["byte_offset"].as_u64(),
+        fact["excerpt"].as_str(),
+    ) {
+        (Some(start), Some(end), Some(text)) => end.checked_sub(start) == Some(text.len() as u64),
+        _ => false,
+    };
+    vec![serde_json::json!({
+        "role": fact["role"], "symbol": fact["symbol"],
+        "location": {
+            "path": location["path"], "start_line": location["start"]["line"], "end_line": location["end"]["line"],
+            "start_column": location["start"]["column"], "end_column": location["end"]["column"],
+            "start_byte_offset": location["start"]["byte_offset"], "end_byte_offset": location["end"]["byte_offset"],
+        },
+        "excerpt": fact["excerpt"],
+        "truncated": !exact_excerpt || review["truncation"]["occurred"] == true,
+    })]
+}
+
 fn review_card_from_value(
     bundle: &mehscan_core::PathReviewBundle,
     review_id: &str,
@@ -3611,6 +3658,7 @@ fn review_card_from_value(
             "captures": captures,
         },
         "source_context": context,
+        "helper_context": compact_helper_context(review, anchor),
         "frontend_context": frontend_context,
         "application_context": application_context,
         "nearby_locations": nearby_locations,
@@ -4146,6 +4194,28 @@ mod tests {
     };
     use mehscan_core::Capability;
     use std::collections::{BTreeMap, BTreeSet};
+
+    #[test]
+    fn helper_view_uses_the_selected_evidence_fact_without_candidate_captures() {
+        let anchor =
+            serde_json::json!({"id":"selected", "rule_id":"typescript-parameter-sink-summary"});
+        let mut review = serde_json::json!({"facts":[{
+            "role":"captured_definition_context", "evidence_id":"selected", "symbol":"run",
+            "location":{"path":"helper.ts","start":{"line":1,"column":1,"byte_offset":0},"end":{"line":1,"column":2,"byte_offset":1}},
+            "excerpt":"x"
+        }], "truncation":{"occurred":false}});
+        let context = super::compact_helper_context(&review, &anchor);
+        assert_eq!(context.len(), 1);
+        assert_eq!(context[0]["location"]["path"], "helper.ts");
+        assert_eq!(context[0]["truncated"], false);
+        review["truncation"]["occurred"] = serde_json::json!(true);
+        assert_eq!(
+            super::compact_helper_context(&review, &anchor)[0]["truncated"],
+            true
+        );
+        review["facts"][0]["evidence_id"] = serde_json::json!("another-call");
+        assert!(super::compact_helper_context(&review, &anchor).is_empty());
+    }
 
     #[test]
     fn compact_context_preserves_only_a_complete_bounded_operation() {

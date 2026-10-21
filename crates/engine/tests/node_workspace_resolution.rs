@@ -279,6 +279,14 @@ fn missing_shared_tsconfig_does_not_break_relative_helpers_or_invent_aliases() {
             "const {run} = require('./helper.cjs'); function handle(req) { run(req.query.command); }",
         ),
         (
+            "helper.mjs",
+            "export function run(value) { return 'constant'; }",
+        ),
+        (
+            "clean-collision.ts",
+            "import {run} from './helper.mjs'; export function handle(req:any) { run(req.query.command); }",
+        ),
+        (
             "clean.ts",
             "export function run(value:string) { return 'constant'; }",
         ),
@@ -309,7 +317,12 @@ fn missing_shared_tsconfig_does_not_break_relative_helpers_or_invent_aliases() {
             scan.diagnostics
         );
     }
-    for file in ["negative.ts", "alias.ts", "missing.ts"] {
+    for file in [
+        "negative.ts",
+        "alias.ts",
+        "missing.ts",
+        "clean-collision.ts",
+    ] {
         assert!(!flows(file), "invented helper flow in {file}");
     }
     assert!(
@@ -322,18 +335,40 @@ fn missing_shared_tsconfig_does_not_break_relative_helpers_or_invent_aliases() {
     let ids = inventory
         .entries
         .iter()
-        .filter(|e| e.path == "direct.ts")
+        .filter(|e| matches!(e.path.as_str(), "direct.ts" | "positive.ts" | "positive.js"))
         .map(|e| e.review_id.clone())
         .collect();
     let job = mehscan_engine::investigation::build_selected_review_jobs(
         &fixture.0, &inventory, &ids, None,
     )
     .unwrap();
-    assert!(
-        job.reviews
+    for path in ["direct.ts", "positive.ts", "positive.js"] {
+        let helper_path = if path.ends_with(".js") {
+            "helper.cjs"
+        } else {
+            "helper.ts"
+        };
+        let reviews = job
+            .reviews
             .iter()
-            .flat_map(|review| &review.facts)
-            .any(|fact| { fact.location.path == "helper.ts" && fact.symbol == "run" }),
-        "reviewer lookup must follow the same direct relative import without the missing config"
-    );
+            .filter(|review| review.candidate.sink.location.path == path)
+            .collect::<Vec<_>>();
+        assert!(!reviews.is_empty(), "missing selected review for {path}");
+        assert!(
+            reviews.iter().all(|review| review.facts.iter().any(|fact| {
+                fact.role == "captured_definition_context"
+                    && fact.location.path == helper_path
+                    && fact.symbol == "run"
+            })),
+            "resolved helper definition missing for {path}: {:?}",
+            reviews
+                .iter()
+                .map(|r| r
+                    .facts
+                    .iter()
+                    .map(|f| (&f.role, &f.symbol, &f.location.path))
+                    .collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        );
+    }
 }

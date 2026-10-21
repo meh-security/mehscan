@@ -183,6 +183,7 @@ impl SummarySink {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ParameterSinkSummary {
     canonical: String,
+    definition: Capture,
     parameter_index: usize,
     sink: SummarySink,
     operand: &'static str,
@@ -809,6 +810,33 @@ impl NodeProjectContext {
             let Some(summaries) = self.parameter_sinks.get(&canonical) else {
                 continue;
             };
+            let observed = compact(&call.callee);
+            let imported = imports.get(&observed).or_else(|| {
+                observed
+                    .split_once('.')
+                    .and_then(|(head, _)| imports.get(head))
+            });
+            let definition_path = match imported {
+                Some(target) => target.source_file.as_deref(),
+                None => Some(path),
+            };
+            // Canonical display names omit file extensions. Distinct selected
+            // .ts/.js/.cjs files must not exchange parameter-sink contracts.
+            let owned = summaries
+                .iter()
+                .filter(|summary| {
+                    Some(summary.definition.location.path.as_str()) == definition_path
+                })
+                .collect::<Vec<_>>();
+            let Some(first) = owned.first() else {
+                continue;
+            };
+            if owned
+                .iter()
+                .any(|summary| summary.definition.location != first.definition.location)
+            {
+                continue; // Multiple declarations are not one exact callable.
+            }
             if !continuation_binding_is_stable(
                 &bindings,
                 &call.node,
@@ -817,7 +845,7 @@ impl NodeProjectContext {
             ) {
                 continue;
             }
-            for summary in summaries {
+            for summary in owned {
                 if let Some(adapter) = imports
                     .get(compact(&call.callee).as_str())
                     .and_then(|target| target.adapter)
@@ -965,10 +993,13 @@ impl NodeProjectContext {
                     capability: summary.sink.capability(),
                     location: location(path, &call.node),
                     enclosing_symbol: enclosing_symbol(&call.node),
-                    captures: BTreeMap::from([(
-                        summary.sink.role().to_string(),
-                        capture(path, argument),
-                    )]),
+                    captures: BTreeMap::from([
+                        (summary.sink.role().to_string(), capture(path, argument)),
+                        // The target was already resolved for this exact call.
+                        // Preserve its AST location for review; do not resolve
+                        // aliases/barrels again using terminal-name guesses.
+                        ("helper_definition".to_string(), summary.definition.clone()),
+                    ]),
                     cwe_candidates: vec![summary.sink.cwe().to_string()],
                     tags: vec![
                         "interprocedural".to_string(),
@@ -3236,12 +3267,17 @@ fn collect_parameter_sink_summaries<'tree>(
             continue;
         }
         let canonical = format!("{module}.{name}");
+        let definition = Capture {
+            text: name.clone(),
+            location: location(path, &function),
+        };
         summaries
             .entry(canonical.clone())
             .or_default()
             .extend(matches.into_iter().map(|(parameter_index, sink, operand)| {
                 ParameterSinkSummary {
                     canonical: canonical.clone(),
+                    definition: definition.clone(),
                     parameter_index,
                     sink,
                     operand,
@@ -3287,6 +3323,10 @@ fn collect_local_template_parameter_sinks(
                 let canonical = format!("{module}.{name}");
                 let summary = ParameterSinkSummary {
                     canonical: canonical.clone(),
+                    definition: Capture {
+                        text: name.clone(),
+                        location: location(path, &function),
+                    },
                     parameter_index,
                     sink: SummarySink::TemplateEvaluation,
                     operand: "template",
