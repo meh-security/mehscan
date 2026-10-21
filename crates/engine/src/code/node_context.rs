@@ -223,6 +223,7 @@ struct PromiseContinuation<'tree> {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct NodeProjectContext {
     imports_by_path: BTreeMap<String, BTreeMap<String, ImportTarget>>,
+    unresolved_imports_by_path: BTreeMap<String, BTreeSet<String>>,
     runtime_by_path: BTreeMap<String, RuntimeEnvironment>,
     routes_by_handler: BTreeMap<String, Vec<ExpressRouteSummary>>,
     owner_field_overwrite_guards: BTreeSet<String>,
@@ -277,7 +278,7 @@ impl NodeProjectContext {
 
     /// Input effects and return effects are separate contracts. The local
     /// expression-containment shortcut cannot establish a return flow through
-    /// a resolved application helper. Explicit return/continuation sources
+    /// an application helper or unresolved import. Explicit return/continuation sources
     /// remain valid because their source location is the result, not an input.
     pub(crate) fn retain_proved_helper_returns(
         &self,
@@ -299,15 +300,20 @@ impl NodeProjectContext {
             .filter_map(call_site)
             .filter(|call| {
                 let observed = compact(&call.callee);
-                imports.get(&observed).is_some_and(|target| {
-                    target.source && target.export.as_deref().is_some_and(|s| !s.is_empty())
-                }) || resolve_handler(&observed, &module, imports)
-                    .and_then(|name| resolved_summary_key(path, &observed, &name, imports))
-                    .is_some_and(|key| {
-                        self.parameter_sinks.contains_key(&key)
-                            || self.parameter_returns.contains_key(&key)
-                            || self.callback_forwards.contains_key(&key)
-                    })
+                let head = observed.split('.').next().unwrap_or(&observed);
+                let imported = imports.get(&observed).or_else(|| imports.get(head));
+                imported.is_some_and(|target| target.source)
+                    || self
+                        .unresolved_imports_by_path
+                        .get(path)
+                        .is_some_and(|names| names.contains(head))
+                    || resolve_handler(&observed, &module, imports)
+                        .and_then(|name| resolved_summary_key(path, &observed, &name, imports))
+                        .is_some_and(|key| {
+                            self.parameter_sinks.contains_key(&key)
+                                || self.parameter_returns.contains_key(&key)
+                                || self.callback_forwards.contains_key(&key)
+                        })
             })
             .collect::<Vec<_>>();
         let items = evidence
@@ -315,13 +321,14 @@ impl NodeProjectContext {
             .map(|e| (e.id.as_str(), e))
             .collect::<BTreeMap<_, _>>();
         paths.retain(|candidate| {
-            // Dedicated semantic relationships and explicit transfer proofs
-            // are not the raw source-inside-sink-expression shortcut. Do not
-            // reinterpret those contracts as generic function return flows.
+            // Assignments can carry the containment shortcut forward, but do
+            // not prove a callee's return. Preserve dedicated relationships
+            // and explicit transfer proofs rather than reinterpreting them.
             if candidate.steps.iter().any(|step| {
                 !matches!(
                     step.kind,
                     mehscan_core::SecurityPathStepKind::Source
+                        | mehscan_core::SecurityPathStepKind::Assignment
                         | mehscan_core::SecurityPathStepKind::Sink
                         | mehscan_core::SecurityPathStepKind::Protection
                 )
@@ -417,7 +424,10 @@ impl NodeProjectContext {
                 }
             }
             trace.step(path, "imports");
-            let imports = resolved_javascript_imports(path, &root, &modules);
+            let (imports, unresolved) = resolved_javascript_imports(path, &root, &modules);
+            context
+                .unresolved_imports_by_path
+                .insert((*path).to_string(), unresolved);
             context
                 .imports_by_path
                 .insert((*path).to_string(), imports.clone());
@@ -2798,9 +2808,12 @@ fn resolved_javascript_imports(
     path: &str,
     root: &Node<'_, StrDoc<SupportLang>>,
     modules: &super::node_modules::NodeModuleIndex,
-) -> BTreeMap<String, ImportTarget> {
+) -> (BTreeMap<String, ImportTarget>, BTreeSet<String>) {
     use super::node_modules::{ModuleTarget, module_key};
     let mut result = BTreeMap::new();
+    // Preserve identity only: failed resolution provides no callable contract.
+    // Keep these bindings out of the resolved map used by summaries/models.
+    let mut unresolved = BTreeSet::new();
     for (visible, mut target) in javascript_imports_raw(path, root) {
         match modules.resolve(path, &target.module, target.mode) {
             ModuleTarget::Source(file) => {
@@ -2810,6 +2823,7 @@ fn resolved_javascript_imports(
                     let Some(constructor) = modules
                         .resolve_export(&file, target.export.as_deref().unwrap_or("default"))
                     else {
+                        unresolved.insert(visible);
                         continue;
                     };
                     for method in modules.instance_methods(&constructor.path, &constructor.name) {
@@ -2878,6 +2892,7 @@ fn resolved_javascript_imports(
                         target.module = module_key(&file);
                         target.export = Some(String::new());
                     } else {
+                        unresolved.insert(visible);
                         continue;
                     }
                 } else {
@@ -2886,11 +2901,14 @@ fn resolved_javascript_imports(
                 }
             }
             ModuleTarget::External(module) => target.module = module,
-            ModuleTarget::Unresolved(_) => continue,
+            ModuleTarget::Unresolved(_) => {
+                unresolved.insert(visible);
+                continue;
+            }
         }
         result.insert(visible, target);
     }
-    result
+    (result, unresolved)
 }
 
 fn javascript_imports_raw(
