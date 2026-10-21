@@ -135,9 +135,44 @@ pub(super) fn contract_queue(
         "groups": groups.into_iter().skip(offset).take(limit).collect::<Vec<_>>()})
 }
 
+// Reuse an operation range already attached to this anchor. Labels such as
+// `perform` or `line-39-20` are not callable identities. Conflicting or foreign
+// ranges cannot replace the existing, explicitly labelled source hint.
+fn operation_location(entry: &Value) -> Option<&Value> {
+    let line = entry["line"].as_u64().filter(|line| *line > 0)?;
+    let mut locations = entry["operand_facts"]
+        .as_array()?
+        .iter()
+        .filter_map(|fact| {
+            if fact["kind"] != "query_structure"
+                || fact["value"] != "local_callable_context"
+                || !matches!(
+                    fact["role"].as_str(),
+                    Some("resource_operation" | "outbound_operation")
+                )
+            {
+                return None;
+            }
+            let location = &fact["location"];
+            let start = location["start"]["byte_offset"].as_u64()?;
+            let end = location["end"]["byte_offset"].as_u64()?;
+            let first = location["start"]["line"].as_u64()?;
+            let last = location["end"]["line"].as_u64()?;
+            (location["path"].is_string()
+                && location["path"] == entry["path"]
+                && end > start
+                && first > 0
+                && first <= line
+                && line <= last)
+                .then_some(location)
+        });
+    let first = locations.next()?;
+    locations.all(|location| location == first).then_some(first)
+}
+
 /// Source neighborhoods for planning reads, not shared security contracts.
-/// Partition by exact file, callable, capability and CWE set. Every ID remains
-/// independent, including distinct guards/operands inside the same callable.
+/// Prefer located callable ranges; otherwise retain a source-label hint.
+/// Every ID remains independent, including distinct guards and operands.
 pub(super) fn implementation_queue(
     entries: &[&Value],
     fingerprint: &Value,
@@ -146,22 +181,30 @@ pub(super) fn implementation_queue(
 ) -> Value {
     let mut grouped = BTreeMap::<String, Vec<&Value>>::new();
     for entry in entries {
-        let key = json!([
-            entry["path"],
-            entry["symbol"],
-            entry["capability"],
-            entry["cwe_candidates"]
-        ])
-        .to_string();
+        let neighborhood = operation_location(entry).map_or_else(
+            || json!(["source_label", entry["path"], entry["symbol"]]),
+            |location| {
+                json!([
+                    "callable_range",
+                    location["path"],
+                    location["start"]["byte_offset"],
+                    location["end"]["byte_offset"]
+                ])
+            },
+        );
+        let key = json!([neighborhood, entry["capability"], entry["cwe_candidates"]]).to_string();
         grouped.entry(key).or_default().push(entry);
     }
     let mut groups: Vec<Value> = grouped.into_values().map(|mut members| {
         members.sort_by(|a, b| a["line"].as_u64().cmp(&b["line"].as_u64())
             .then_with(|| a["review_id"].as_str().cmp(&b["review_id"].as_str())));
         let first = members[0];
+        let location = operation_location(first);
         let contracts: BTreeSet<_> = members.iter().flat_map(|entry| contract_keys(entry))
             .map(|(key, _, _)| key).collect();
         json!({"path": first["path"], "symbol": first["symbol"],
+            "grouping_basis": if location.is_some() { "callable_range" } else { "source_label" },
+            "source_location": location,
             "capability": first["capability"], "cwe_candidates": first["cwe_candidates"],
             "review_count": members.len(), "verified": false,
             "representative_review_id": first["review_id"],
@@ -389,6 +432,88 @@ pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn implementation_reads_use_ranges_without_merging_names_or_security_questions() {
+        let make = |id: &str, symbol: &str, start: u64, end: u64| {
+            json!({"review_id":id,"path":"routes.ts","symbol":symbol,"line":10,
+                "capability":"resource_access","cwe_candidates":["CWE-639"],
+                "operand_facts":[{"kind":"query_structure","value":"local_callable_context","role":"resource_operation",
+                    "location":{"path":"routes.ts","start":{"byte_offset":start,"line":10},"end":{"byte_offset":end,"line":10}}}]})
+        };
+        let a = make("a", "line-10-20", 0, 100);
+        let b = make("b", "line-10-40", 0, 100);
+        let c = make("c", "line-10-20", 120, 200);
+        let mut other_cwe = a.clone();
+        other_cwe["review_id"] = json!("other-cwe");
+        other_cwe["cwe_candidates"] = json!(["CWE-862"]);
+        let mut other_capability = a.clone();
+        other_capability["review_id"] = json!("other-capability");
+        other_capability["capability"] = json!("authorization");
+        let mut foreign = a.clone();
+        foreign["review_id"] = json!("foreign");
+        foreign["operand_facts"][0]["location"]["path"] = json!("other.ts");
+        let mut outside = a.clone();
+        outside["review_id"] = json!("outside");
+        outside["line"] = json!(30);
+        let mut conflicting = a.clone();
+        conflicting["review_id"] = json!("conflicting");
+        conflicting["operand_facts"]
+            .as_array_mut()
+            .unwrap()
+            .push(c["operand_facts"][0].clone());
+        assert!(operation_location(&foreign).is_none());
+        assert!(operation_location(&outside).is_none());
+        assert!(operation_location(&conflicting).is_none());
+        let entries = [
+            &a,
+            &b,
+            &c,
+            &other_cwe,
+            &other_capability,
+            &foreign,
+            &outside,
+            &conflicting,
+        ];
+        let queue = implementation_queue(&entries, &json!("revision"), 0, 100);
+        let groups = queue["groups"].as_array().unwrap();
+        let containing = |id: &str| {
+            groups
+                .iter()
+                .find(|g| g["review_ids"].as_array().unwrap().contains(&json!(id)))
+                .unwrap()
+        };
+        assert_eq!(containing("a")["review_ids"], json!(["a", "b"]));
+        assert_eq!(containing("a")["grouping_basis"], "callable_range");
+        assert_eq!(
+            containing("a")["source_location"]["start"]["byte_offset"],
+            0
+        );
+        for id in [
+            "c",
+            "other-cwe",
+            "other-capability",
+            "foreign",
+            "outside",
+            "conflicting",
+        ] {
+            assert!(
+                !containing("a")["review_ids"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(id))
+            );
+        }
+        assert!(groups.iter().all(|group| group["verified"] == false));
+        assert_eq!(
+            groups
+                .iter()
+                .map(|g| g["review_count"].as_u64().unwrap())
+                .sum::<u64>(),
+            entries.len() as u64
+        );
+        assert_eq!(containing("foreign")["grouping_basis"], "source_label");
+    }
 
     #[test]
     fn bound_producers_group_cross_file_members_without_transferring_safety() {
