@@ -3338,6 +3338,52 @@ fn compact_anchor_context(
 ) -> Option<serde_json::Value> {
     let anchor_path = anchor["location"]["path"].as_str()?;
     let anchor_line = anchor["location"]["start"]["line"].as_u64()?;
+    // Keep a complete, already-packed small operation. Re-clipping it around
+    // the sink hides late checks and defeats shared-callable source reuse.
+    let operation_role = match anchor["capability"].as_str() {
+        Some("resource_access") => Some("resource_operation"),
+        Some("outbound_network_request") => Some("outbound_operation"),
+        _ => None,
+    };
+    if let Some(operation) = anchor["context"]["operand_facts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|fact| {
+            fact["kind"] == "query_structure"
+                && fact["value"] == "local_callable_context"
+                && fact["role"]
+                    .as_str()
+                    .is_some_and(|role| Some(role) == operation_role)
+                && fact["location"]["path"] == anchor["location"]["path"]
+        })
+        && let Some(fact) = facts.iter().find(|fact| {
+            fact["role"] == "source_context"
+                && fact["location"] == operation["location"]
+                && fact["excerpt"]
+                    .as_str()
+                    .is_some_and(|text| !text.is_empty() && text.len() <= 1_536)
+        })
+        && let (Some(start), Some(end), Some(anchor_start), Some(anchor_end)) = (
+            operation["location"]["start"]["byte_offset"].as_u64(),
+            operation["location"]["end"]["byte_offset"].as_u64(),
+            anchor["location"]["start"]["byte_offset"].as_u64(),
+            anchor["location"]["end"]["byte_offset"].as_u64(),
+        )
+        && start <= anchor_start
+        && end >= anchor_end
+        && end.checked_sub(start) == Some(fact["excerpt"].as_str()?.len() as u64)
+    {
+        let location = &operation["location"];
+        return Some(serde_json::json!({
+            "evidence_id": fact["evidence_id"],
+            "location": {"path": anchor_path,
+                "start_line": location["start"]["line"], "end_line": location["end"]["line"],
+                "start_column": location["start"]["column"], "end_column": location["end"]["column"],
+                "start_byte_offset": start, "end_byte_offset": end},
+            "excerpt": fact["excerpt"], "truncated": false,
+        }));
+    }
     let center_line = anchor["captures"]
         .as_object()
         .and_then(|captures| {
@@ -4100,6 +4146,46 @@ mod tests {
     };
     use mehscan_core::Capability;
     use std::collections::{BTreeMap, BTreeSet};
+
+    #[test]
+    fn compact_context_preserves_only_a_complete_bounded_operation() {
+        let text = "async function request(url) {\n  const response = await fetch(url);\n\n\n\n\n\n\n\n\n  if (!allowed(response.url)) throw Error('blocked');\n  return response;\n}";
+        let location = serde_json::json!({"path":"client.ts","start":{"line":10,"column":1,"byte_offset":0},"end":{"line":22,"column":2,"byte_offset":text.len()}});
+        let fact = serde_json::json!({"role":"source_context","evidence_id":"callable","location":location,"excerpt":text});
+        let anchor = serde_json::json!({"capability":"outbound_network_request",
+            "location":{"path":"client.ts","start":{"line":11,"byte_offset":54},"end":{"line":11,"byte_offset":64}},
+            "context":{"operand_facts":[{"kind":"query_structure","role":"outbound_operation","value":"local_callable_context","location":location}]}});
+        let context = compact_anchor_context(&[fact.clone()], &anchor).unwrap();
+        assert_eq!(context["excerpt"], text);
+        assert_eq!(context["location"]["start_byte_offset"], 0);
+        assert_eq!(context["truncated"], false);
+        for case in ["wrong_role", "incomplete", "oversized"] {
+            let mut anchor = anchor.clone();
+            let mut fact = fact.clone();
+            match case {
+                "wrong_role" => {
+                    anchor["context"]["operand_facts"][0]["role"] = serde_json::json!("receiver")
+                }
+                "incomplete" => {
+                    fact["excerpt"] = serde_json::json!(text.replace("blocked", "changed-length"));
+                }
+                _ => {
+                    fact["excerpt"] = serde_json::json!(format!("{text}{}", " ".repeat(1536)));
+                }
+            }
+            let context = compact_anchor_context(&[fact], &anchor).unwrap();
+            assert!(
+                context["location"]["start_byte_offset"].is_null(),
+                "{case} cannot claim a complete callable"
+            );
+            assert!(
+                !context["excerpt"]
+                    .as_str()
+                    .unwrap()
+                    .contains("allowed(response.url)")
+            );
+        }
+    }
 
     #[test]
     fn compact_context_uses_the_sink_window_when_source_does_not_cover_it() {

@@ -106,7 +106,9 @@ than rereading equivalent distributions.
   construction and transport options. Check whether execution is in a browser
   or server and whether dynamic data can change the destination authority,
   rather than only a path/query. Configuration and SDK callbacks require their
-  actual producers checked. Shared client context does not prove identical
+  actual producers checked. A nearby configuration assignment does not prove
+  the reaching URL: inspect fallbacks, interpolation and later writes before
+  dismissing caller influence. Shared client context does not prove identical
   redirect, proxy, credential or branch policy across sites.
 - For resource access, identify whether the selected object belongs to the
   verified subject or another tenant. A sensitive read or existence oracle

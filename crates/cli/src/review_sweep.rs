@@ -206,6 +206,12 @@ pub(super) fn implementation_queue(
         "next_offset": next_offset, "groups": groups.into_iter().skip(offset).take(limit).collect::<Vec<_>>()})
 }
 
+// Complete AST ranges can begin/end mid-line. Keep them atomic rather than
+// weaving fragments from different same-line callbacks into one source view.
+fn atomic_context(context: &Value) -> bool {
+    context["truncated"] == true || context["location"]["start_byte_offset"].is_u64()
+}
+
 pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, String> {
     // Read adjacent operations in source order. Identity still comes from the
     // exact ID/anchor, never the position of a row in this list.
@@ -224,7 +230,7 @@ pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, S
     let mut contexts = Vec::<Value>::new();
     for card in &cards {
         let context = &card["source_context"];
-        if context.is_null() || context["truncated"] == true {
+        if context.is_null() || atomic_context(context) {
             continue;
         }
         let path = context["location"]["path"]
@@ -273,9 +279,17 @@ pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, S
         let source = card["source_context"].take();
         let mut refs = Vec::new();
         if !source.is_null() {
-            if source["truncated"] == true {
+            if atomic_context(&source) {
                 let mut source = source;
                 source.as_object_mut().unwrap().remove("evidence_id");
+                if source["location"]["start_byte_offset"].is_u64()
+                    && contexts.iter().any(|item| {
+                        item["location"] == source["location"]
+                            && item["excerpt"] != source["excerpt"]
+                    })
+                {
+                    return Err("conflicting exact source ranges; inspect individual cards".into());
+                }
                 let index = contexts
                     .iter()
                     .position(|item| item == &source)
@@ -286,7 +300,8 @@ pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, S
                 refs.push(format!("source-{}", index + 1));
             } else {
                 for (index, context) in contexts.iter().enumerate() {
-                    if context["location"]["path"] == source["location"]["path"]
+                    if !atomic_context(context)
+                        && context["location"]["path"] == source["location"]["path"]
                         && context["location"]["start_line"].as_u64()
                             <= source["location"]["end_line"].as_u64()
                         && context["location"]["end_line"].as_u64()
@@ -358,6 +373,43 @@ mod tests {
 
     fn card(text: &str, truncated: bool) -> Value {
         json!({"review_id":text,"source_context":{"location":{"path":"view.php","start_line":10,"end_line":10},"excerpt":text,"truncated":truncated}})
+    }
+
+    #[test]
+    fn exact_callables_reuse_source_without_merging_same_line_neighbors() {
+        let make = |id: &str, start: u64, text: &str| {
+            json!({"review_id":id,
+            "anchor":{"location":{"path":"client.ts","start_line":1}},
+            "source_context":{"location":{"path":"client.ts","start_line":1,"end_line":1,
+                "start_column":start+1,"end_column":start+1+text.len() as u64,
+                "start_byte_offset":start,"end_byte_offset":start+text.len() as u64},
+                "excerpt":text,"truncated":false}})
+        };
+        let a = make("a", 0, "() => fetch(left)");
+        let mut b = a.clone();
+        b["review_id"] = json!("b");
+        let c = make("c", 30, "() => fetch(right)");
+        let plain = json!({"review_id":"plain", "anchor":{"location":{"path":"client.ts","start_line":1}},
+            "source_context":{"location":{"path":"client.ts","start_line":1,"end_line":1},"excerpt":"whole line", "truncated":false}});
+        let result = sweep("bundle", vec![a.clone(), b, c, plain]).unwrap();
+        let rows = result["reviews"].as_array().unwrap();
+        let row = |id| rows.iter().find(|r| r["review_id"] == id).unwrap();
+        assert_eq!(
+            row("a")["source_context_ids"],
+            row("b")["source_context_ids"]
+        );
+        assert_ne!(
+            row("a")["source_context_ids"],
+            row("c")["source_context_ids"]
+        );
+        assert_eq!(
+            row("plain")["source_context_ids"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(result["source_contexts"].as_array().unwrap().len(), 3);
+        let mut conflict = a.clone();
+        conflict["source_context"]["excerpt"] = json!("different source");
+        assert!(sweep("bundle", vec![a, conflict]).is_err());
     }
 
     #[test]

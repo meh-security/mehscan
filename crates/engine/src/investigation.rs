@@ -6559,8 +6559,6 @@ fn observation_decision_facts(
             _ => None,
         }
     });
-    let operator_configured_endpoint =
-        observation_has_operator_configured_endpoint(evidence, facts);
     let server_generated_output_path =
         observation_has_server_generated_fixed_root_path(evidence, facts);
     let direct_stored_html_trust_bypass =
@@ -6781,12 +6779,6 @@ fn observation_decision_facts(
     if let Some(failure) = non_enforcing_rejection {
         established.push(failure.to_string());
     }
-    if operator_configured_endpoint {
-        established.push(
-            "The exact outbound destination is supplied by process environment configuration rather than request data; the observed call does not establish a web-attacker-controlled SSRF destination."
-                .to_string(),
-        );
-    }
     if server_generated_output_path {
         established.push(
             "The exact filesystem-write path uses a fixed application directory and a server-generated fixed-format filename composed from an observed fixed-format transform and server randomness; the supplied path construction contains no request-derived path segment."
@@ -6989,7 +6981,6 @@ fn observation_decision_facts(
         || cookie_omission.is_some()
         || resource_policy_applies
         || non_enforcing_rejection.is_some()
-        || operator_configured_endpoint
         || server_generated_output_path
         || direct_stored_html_trust_bypass
         || java_policy.is_some()
@@ -8532,27 +8523,6 @@ fn contains_web_request_origin(value: &str) -> bool {
     ]
     .iter()
     .any(|marker| value.contains(marker))
-}
-
-fn observation_has_operator_configured_endpoint(
-    evidence: &[Evidence],
-    facts: &[ReviewNeighborhoodFact],
-) -> bool {
-    evidence.iter().any(|item| {
-        item.kind == EvidenceKind::Sink
-            && item.capability == Capability::OutboundNetworkRequest
-            && item.captures.get("endpoint").is_some_and(|capture| {
-                let endpoint = capture.text.trim();
-                is_plain_identifier(endpoint)
-                    && facts.iter().any(|fact| {
-                        fact.role == "source_context"
-                            && (fact.excerpt.contains(&format!("{endpoint} = process.env."))
-                                || fact
-                                    .excerpt
-                                    .contains(&format!("const {endpoint} = process.env.")))
-                    })
-            })
-    })
 }
 
 fn observation_has_source_embedded_signing_key(

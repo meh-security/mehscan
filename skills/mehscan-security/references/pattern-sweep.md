@@ -14,7 +14,9 @@ read below; inspect missing facts normally.
 1. Run `review-sweep --bundle REQUEST` to read the exact cards together. Read
    each `source_contexts` window once; rows reference it through `source_context_ids`.
    Read the row's `question_id` in `questions` for its question, category and playbook.
-   The CLI merges overlapping windows and preserves clipped windows' truncation.
+   The CLI merges overlapping whole-line windows. Complete byte-bounded callable
+   ranges stay separate from neighboring fragments and identical ranges are read
+   once; clipped windows retain their truncation.
    For routing across many bundles, use the existing compact inventory's
    `--group-by contract` queue to find repeated operand questions. Select members
    with `--contract KEY`, existing surface filters and the ledger, then materialize

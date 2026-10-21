@@ -448,3 +448,57 @@ async function other(destination) {{ return fetch(destination); }}
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn nearby_environment_assignment_does_not_resolve_the_reaching_destination() {
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-destination-certainty-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("client.ts"),
+        r#"
+async function combined(input) {
+  const endpoint = process.env.BASE_URL + input;
+  return fetch(endpoint);
+}
+async function replaced(input) {
+  let endpoint = process.env.BASE_URL;
+  endpoint = input;
+  return fetch(endpoint);
+}
+async function configured() {
+  const endpoint = process.env.BASE_URL;
+  return fetch(endpoint);
+}
+"#,
+    )
+    .unwrap();
+    let job = build_all_path_review_jobs(&root, Some(1), false).unwrap();
+    for name in ["combined", "replaced", "configured"] {
+        let review = job
+            .observation_reviews
+            .iter()
+            .find(|r| {
+                r.evidence.iter().any(|e| {
+                    e.capability == Capability::OutboundNetworkRequest
+                        && e.enclosing_symbol.as_deref() == Some(name)
+                })
+            })
+            .unwrap();
+        assert!(
+            !review
+                .decision_facts
+                .established
+                .iter()
+                .any(|fact| fact.contains("rather than request data")),
+            "a nearby assignment cannot prove the reaching URL for {name}"
+        );
+        assert!(
+            !review.decision_facts.unresolved.is_empty(),
+            "{name} still needs destination provenance checked"
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
