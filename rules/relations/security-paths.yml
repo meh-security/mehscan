@@ -303,7 +303,7 @@
   source: { capabilities: [http_request_data, rpc_request_data] }
   sink:
     capability: resource_access
-    input_roles: [filter]
+    input_roles: [filter, resource_id]
   cwe_candidates: [CWE-639]
   strategy: bounded_local_value
 

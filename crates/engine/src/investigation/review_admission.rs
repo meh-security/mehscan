@@ -314,7 +314,13 @@ fn marker_covered_by_existing_evidence(
     descriptor: &ReviewAdmissionDescriptor,
 ) -> bool {
     evidence.iter().any(|item| {
-        item.location.path == path
+        // A source-gated lookup is not coverage of the surrounding mutation's
+        // policy question, even when it remains available as raw evidence.
+        !item
+            .tags
+            .iter()
+            .any(|tag| tag == "review:source-flow-required")
+            && item.location.path == path
             && item.location.start.byte_offset < end
             && item.location.end.byte_offset > start
             && matches!(

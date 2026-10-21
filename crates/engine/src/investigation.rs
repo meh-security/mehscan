@@ -1489,6 +1489,26 @@ fn build_path_review_jobs_internal(
                 .flat_map(|group| group.anchor_evidence_ids.iter().map(String::as_str)),
         )
         .collect::<BTreeSet<_>>();
+    // Some common API shapes are useful only with an actual bounded value
+    // relationship. Co-location/observation priority is deliberately not proof.
+    let source_flow_sink_ids = scan
+        .security_paths
+        .iter()
+        .filter(|path| {
+            matches!(
+                path.state,
+                SecurityPathState::Direct | SecurityPathState::Propagated
+            ) && path
+                .steps
+                .iter()
+                .any(|step| step.kind == SecurityPathStepKind::Source)
+                && path
+                    .steps
+                    .iter()
+                    .any(|step| step.kind == SecurityPathStepKind::Sink)
+        })
+        .map(|path| path.sink_evidence_id.as_str())
+        .collect::<BTreeSet<_>>();
     // An ordinary browser occurrence is not a mandatory investigation merely
     // because its caller/URL is unknown. Preserve actual paths, input
     // co-occurrences and consequential options; exclude only standalone rows.
@@ -1545,7 +1565,12 @@ fn build_path_review_jobs_internal(
         .evidence
         .iter()
         .filter(|item| {
-            ordinary_browser_ids.contains(&item.id)
+            (item
+                .tags
+                .iter()
+                .any(|tag| tag == "review:source-flow-required")
+                && !source_flow_sink_ids.contains(item.id.as_str()))
+                || ordinary_browser_ids.contains(&item.id)
                 || (!custom_sanitizer_policy && restricted_html_controls.contains(&item.id))
                 || practical_admission::inventory_only(
                     item,
