@@ -393,12 +393,16 @@ def run(args):
                             "blocked edge needs a precise cause", "open/inspected edges cannot claim a blocker",
                             "inspected edge requires source/query proof",
                             "research path filter must name a file; use path_prefix for a directory",
-                            "research path_prefix must name a directory")):
+                            "research path_prefix must name a directory",
+                            "research source window must contain 1 to 400 lines",
+                            "research result limit must be 1 to 100")):
                     raise
                 corrections += 1
                 feedback = {"reason": str(error), "instruction":
                     "Correct the rejected protocol response. Cite only the supplied stable artifact handles; "
-                    "use the declared tool arguments. Research available decisive open edges or record an honest "
+                    "use the declared tool arguments (source: 1 <= start_line <= end_line and "
+                    "end_line - start_line <= 399; discovery limit: 1 to 100). "
+                    "Research available decisive open edges or record an honest "
                     "precise blocker. The rejected draft was not admitted. Do not invent proof or change "
                     "a verdict just to pass validation."}
                 with (output / "review-feedback.jsonl").open("a", encoding="utf-8") as audit:

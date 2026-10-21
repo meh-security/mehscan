@@ -343,6 +343,31 @@ else:
         self.assertTrue(all(item["round"] == 0 for item in feedback))
         self.assertEqual(record["status"], "admitted")
 
+    def test_invalid_source_window_gets_one_repair_and_never_executes_its_batch(self):
+        normal = self.base / "normal.py"
+        normal.write_text(self.reviewer.read_text())
+        for name, repair in (("repeated-window", False), ("repaired-window", True)):
+            self.reviewer.write_text('import json,sys,subprocess\ntask=json.load(sys.stdin)\n'
+                'if not ' + repr(repair) + ' or task["research"]["round"] == 0:\n'
+                ' print(json.dumps({"research":[{"tool":"source","review_id":task["review_ids"][0],'
+                '"arguments":{"path":"app.js","start_line":1,"end_line":1}},'
+                '{"tool":"source","review_id":task["review_ids"][0],'
+                '"arguments":{"path":"app.js","start_line":1,"end_line":401}}]}))\n'
+                'else:\n'
+                ' assert "400 lines" in task["research"]["feedback"]["reason"]\n'
+                ' print(subprocess.check_output([sys.executable,' + repr(str(normal)) + '],input=json.dumps(task),text=True))\n')
+            result = self.invoke(name, extra=["--phase", "native"])
+            directory = self.base / name
+            record = json.loads((directory / "worker.json").read_text())
+            self.assertEqual(record["protocol_corrections"], 1)
+            self.assertFalse((directory / "research.jsonl").exists())
+            if repair:
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(record["status"], "admitted")
+            else:
+                self.assertNotEqual(result.returncode, 0)
+                self.assert_no_decisions()
+
     def test_evidence_handles_remain_stable_after_new_query_facts(self):
         normal = self.base / "normal.py"
         normal.write_text(self.reviewer.read_text())
