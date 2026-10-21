@@ -201,7 +201,44 @@ fn server_mutation_review_marker_groups(
             file_count += 1;
         }
     }
-    fair_marker_limit(groups, MAX_REVIEW_ADMISSION_MARKERS)
+    let mut groups = fair_marker_limit(groups, MAX_REVIEW_ADMISSION_MARKERS);
+    // Presentation must not affect marker classification, coverage checks or
+    // bounded selection. An adjacent middleware name is not an inline handler.
+    for group in &mut groups {
+        let Some(file) = sources.files.get(&group.path) else {
+            continue;
+        };
+        if !matches!(
+            file.language,
+            Some(Language::Javascript | Language::Typescript | Language::Tsx)
+        ) {
+            continue;
+        }
+        let Some(evidence) = group.evidence.first_mut() else {
+            continue;
+        };
+        let Some(excerpt) = file
+            .source
+            .get(evidence.location.start.byte_offset..evidence.location.end.byte_offset)
+        else {
+            continue;
+        };
+        if let Some(label) = inline_route_label(excerpt) {
+            group.symbol = label.clone();
+            evidence.enclosing_symbol = Some(label.clone());
+            if let Some(operation) = evidence.captures.get_mut("operation") {
+                operation.text = label;
+            }
+        }
+    }
+    groups
+}
+
+fn inline_route_label(excerpt: &str) -> Option<String> {
+    let prefix = excerpt.lines().take(12).collect::<Vec<_>>().join("\n");
+    (prefix.contains("=>") || prefix.contains("function"))
+        .then(|| http_mutation_symbol(prefix.lines().next().unwrap_or_default()))
+        .flatten()
 }
 
 fn fair_marker_limit(groups: Vec<ObservationGroup>, limit: usize) -> Vec<ObservationGroup> {
@@ -970,12 +1007,7 @@ fn marker_from_inline_boundary(
     let boundary_line = &file.source[spans[line_index].0..spans[line_index].1];
     let route_excerpt = excerpt.lines().take(12).collect::<Vec<_>>().join("\n");
     let route_handlers = terminal_route_handlers(&route_excerpt);
-    // An inline callback is the operation; preceding identifiers are middleware.
-    // Keep those identifiers as research context without naming the callback
-    // after them. A truncated registration likewise has no known terminal handler.
-    let route_handler = (!route_excerpt.contains("=>") && !route_excerpt.contains("function"))
-        .then(|| route_handlers.last().cloned())
-        .flatten();
+    let route_handler = route_handlers.last().cloned();
     for handler in route_handlers.into_iter().rev() {
         if !handlers.contains(&handler) {
             handlers.insert(0, handler);
@@ -1149,7 +1181,6 @@ fn terminal_route_handlers(line: &str) -> Vec<String> {
     let mut escaped = false;
     let mut argument_start = open + 1;
     let mut arguments = Vec::new();
-    let mut complete = false;
     for (offset, byte) in line.as_bytes().iter().enumerate().skip(open) {
         if let Some(delimiter) = quote {
             if escaped {
@@ -1168,7 +1199,6 @@ fn terminal_route_handlers(line: &str) -> Vec<String> {
                 depth -= 1;
                 if depth == 0 {
                     arguments.push(&line[argument_start..offset]);
-                    complete = true;
                     break;
                 }
             }
@@ -1178,9 +1208,6 @@ fn terminal_route_handlers(line: &str) -> Vec<String> {
             }
             _ => {}
         }
-    }
-    if !complete {
-        return Vec::new();
     }
     arguments
         .into_iter()
@@ -1221,22 +1248,17 @@ mod route_handler_tests {
     use super::terminal_route_handlers;
 
     #[test]
-    fn inline_operation_is_not_named_after_its_middleware() {
-        let source = "router.patch(\n '/:collection',\n collectionExists,\n asyncHandler(async (req, res) => {\n  await service.updateFields(req.params.collection, req.body);\n }),\n respond,\n);\n";
-        let file = super::SourceFile {
-            path: "app.ts".into(),
-            language: Some(super::Language::Typescript),
-            source: source.into(),
-        };
-        let marker = super::javascript_server_mutation_marker(
-            &file,
-            &super::line_spans(source),
-            0,
-            "router.patch(",
-        )
-        .unwrap();
-        assert_eq!(marker.symbol, "PATCH route");
-        assert!(marker.effect.contains("update"));
+    fn inline_route_label_does_not_claim_a_middleware_identity() {
+        assert_eq!(
+            super::inline_route_label(
+                "router.patch(\n '/:collection',\n collectionExists,\n asyncHandler(async (req) => {\n service.update(req.body);"
+            ),
+            Some("PATCH route".into())
+        );
+        assert_eq!(
+            super::inline_route_label("app.post('/items', authenticate, updateItem)"),
+            None
+        );
     }
 
     #[test]
@@ -1276,7 +1298,6 @@ mod route_handler_tests {
             vec!["appendUserId", "quantityCheckBeforeBasketItemUpdate"]
         );
         assert!(terminal_route_handlers("fastify.patch('/tasks/:id', async (request) => { return tasks.update(request.body) })").is_empty());
-        assert!(terminal_route_handlers("router.patch(\n '/:collection',\n collectionExists,\n asyncHandler(async (req) => {").is_empty(), "partial arguments must not invent a terminal handler");
         assert_eq!(
             terminal_route_handlers(
                 "router.route('/items/:id')\n  .put(\n    authenticateToken,\n    handlers.updateItem\n  )"

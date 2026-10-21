@@ -341,18 +341,21 @@ def lookup(request):
             .iter()
             .find(|e| e.capability == Capability::ResourceAccess && e.kind == EvidenceKind::Sink)
             .unwrap();
-        let origin = e
+        let owner = e
             .context
             .operand_facts
             .iter()
-            .find(|f| f.role == "resource_selector")
+            .find(|f| f.role == "resource_operation")
             .unwrap();
-        assert_eq!(origin.location, e.captures["filter"].location);
         assert!(
-            origin
+            owner.location.start.byte_offset <= e.captures["filter"].location.start.byte_offset
+        );
+        assert!(owner.location.end.byte_offset >= e.captures["filter"].location.end.byte_offset);
+        assert!(
+            owner
                 .remaining_checks
                 .iter()
-                .any(|c| c == "operation_authorization")
+                .any(|c| c == "caller_authority")
         );
         if e.enclosing_symbol.as_deref() == Some("handle") {
             let bases = e
@@ -368,7 +371,6 @@ def lookup(request):
             assert!(bases.remaining_checks.iter().any(|c| c == "other_callers"));
         }
         if e.enclosing_symbol.as_deref() == Some("reload") {
-            assert_eq!(origin.value, "origin:member_read");
             let context = review
                 .facts
                 .iter()
@@ -425,19 +427,16 @@ async function other(destination) {{ return fetch(destination); }}
             .iter()
             .find(|e| e.capability == Capability::OutboundNetworkRequest)
             .unwrap();
-        let origin = e
+        let owner = e
             .context
             .operand_facts
             .iter()
-            .find(|f| f.role == "outbound_endpoint")
+            .find(|f| f.role == "outbound_operation")
             .unwrap();
-        assert_eq!(origin.location, e.captures["endpoint"].location);
         assert!(
-            origin
-                .remaining_checks
-                .iter()
-                .any(|c| c == "redirect_policy")
+            owner.location.start.byte_offset <= e.captures["endpoint"].location.start.byte_offset
         );
+        assert!(owner.location.end.byte_offset >= e.captures["endpoint"].location.end.byte_offset);
         let context = review
             .facts
             .iter()

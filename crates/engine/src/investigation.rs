@@ -139,11 +139,7 @@ fn operand_summaries(evidence: &Evidence) -> Vec<ReviewOperandSummary> {
             let located = fact.kind == mehscan_core::OperandFactKind::SemanticDefinition
                 || matches!(
                     fact.role.as_str(),
-                    "resource_operation"
-                        | "resource_selector"
-                        | "resource_execution_context"
-                        | "outbound_operation"
-                        | "outbound_endpoint"
+                    "resource_operation" | "resource_execution_context" | "outbound_operation"
                 );
             ReviewOperandSummary {
                 kind: fact.kind.clone(),

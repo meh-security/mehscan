@@ -101,7 +101,7 @@ than rereading equivalent distributions.
   separately from the request URL. A fixed URL does not close proxy selection.
   A typed unknown connection retains its origin question; metadata/setup reads
   such as getURL and getRequestProperty are omitted from network reviews.
-  `outbound_endpoint` and `outbound_operation` locate the destination expression
+  The endpoint capture and `outbound_operation` locate the destination expression
   and exact lexical callable. Compact callable source can expose shared URL
   construction and transport options. Check whether execution is in a browser
   or server and whether dynamic data can change the destination authority,
@@ -134,8 +134,8 @@ than rereading equivalent distributions.
   mutable bindings may have no resolved helper excerpt. Use the operation and
   import/receiver locations to inspect the actual implementation when its behavior
   changes the verdict; missing helper context is not evidence of missing controls.
-  Python `resource_selector` facts describe the exact captured expression (name,
-  member, index or call), without tracing aliases or proving object identity.
+  Python filter captures identify the selector expression without tracing aliases
+  or proving object identity.
   `resource_execution_context` points to enclosing class bases: resolve their
   imports and actual registration before treating a method as CLI, HTTP or an
   authentication callback. A CLI-looking class may have other callers. A read

@@ -191,7 +191,7 @@ pub(super) fn annotate(language: Language, root: &N<'_>, evidence: &mut Vec<Evid
         }
     }
     if needs_python_resource || needs_outbound {
-        attach_operation_origins(language, &nodes, evidence);
+        attach_operation_context(language, &nodes, evidence);
     }
     attach_reloads(language, root, &nodes, evidence);
     if needs_resource_uses {
@@ -224,22 +224,22 @@ pub(super) fn annotate(language: Language, root: &N<'_>, evidence: &mut Vec<Evid
     }
 }
 
-/// Lexical source locators only: a parameter/member is not a trusted identity,
-/// and a containing class is not proof of its runtime registration.
-fn attach_operation_origins(
+/// Reuse the existing selector/endpoint captures; add only missing callable
+/// and class-base locators. Neither establishes a trusted identity or route.
+fn attach_operation_context(
     language: Language,
     nodes: &BTreeMap<(usize, usize), N<'_>>,
     evidence: &mut [Evidence],
 ) {
     for e in evidence.iter_mut().filter(|e| e.kind == EvidenceKind::Sink) {
-        let (capture_role, operation_role, origin_role) = match (language, e.capability) {
+        let (capture_role, operation_role) = match (language, e.capability) {
             (Language::Python, Capability::ResourceAccess) if resource_read_candidate(e) => {
-                ("filter", "resource_operation", "resource_selector")
+                ("filter", "resource_operation")
             }
             (
                 Language::Javascript | Language::Typescript | Language::Tsx,
                 Capability::OutboundNetworkRequest,
-            ) => ("endpoint", "outbound_operation", "outbound_endpoint"),
+            ) => ("endpoint", "outbound_operation"),
             _ => continue,
         };
         let Some(capture) = e.captures.get(capture_role) else {
@@ -259,33 +259,6 @@ fn attach_operation_origins(
         {
             continue;
         }
-        let origin = match operand.kind().as_ref() {
-            "identifier" => "origin:name_reference",
-            "attribute" | "member_expression" => "origin:member_read",
-            "subscript" | "subscript_expression" => "origin:indexed_read",
-            "call" | "call_expression" | "await" | "await_expression" => "origin:call",
-            _ => "origin:expression",
-        };
-        let checks = if operation_role == "resource_operation" {
-            vec![
-                "identity_producer".into(),
-                "resource_identity_matches_subject".into(),
-                "operation_authorization".into(),
-            ]
-        } else {
-            vec![
-                "destination_authority_producer".into(),
-                "client_transport_policy".into(),
-                "redirect_policy".into(),
-            ]
-        };
-        e.context.operand_facts.push(OperandFact {
-            kind: OperandFactKind::QueryStructure,
-            role: origin_role.into(),
-            location: capture.location.clone(),
-            value: origin.into(),
-            remaining_checks: checks,
-        });
         e.context.operand_facts.push(OperandFact {
             kind: OperandFactKind::QueryStructure,
             role: operation_role.into(),
