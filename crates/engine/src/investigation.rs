@@ -12932,11 +12932,15 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
                 fact.kind == mehscan_core::OperandFactKind::QueryStructure
                     && fact.role == "filter"
                     && fact.value == "resource_selector:fixed_equality"
-            }) || item
-                .captures
-                .get("filter")
-                .is_some_and(|capture| is_fixed_resource_selector(&capture.text))
-                || is_repository_created_resource_selector(item, sources);
+            }) || item.captures.get("filter").is_some_and(|capture| {
+                is_fixed_resource_selector(
+                    &capture.text,
+                    sources
+                        .file(&item.location.path)
+                        .ok()
+                        .and_then(|file| file.language),
+                )
+            });
         }
         Capability::FilesystemRead | Capability::FilesystemWrite
             if item.cwe_candidates.iter().any(|cwe| cwe == "CWE-22") =>
@@ -14001,9 +14005,9 @@ fn javascript_binding_shadowed_before_use(
         })
 }
 
-fn is_fixed_resource_selector(selector: &str) -> bool {
+fn is_fixed_resource_selector(selector: &str, language: Option<Language>) -> bool {
     let selector = selector.trim();
-    if is_fixed_selector_scalar(selector) {
+    if is_fixed_selector_scalar(selector, language) {
         return true;
     }
     if let Some(body) = selector
@@ -14017,7 +14021,8 @@ fn is_fixed_resource_selector(selector: &str) -> bool {
         return !fields.is_empty()
             && fields.iter().all(|field| {
                 field.split_once(':').is_some_and(|(name, value)| {
-                    is_plain_identifier(name.trim()) && is_fixed_selector_scalar(value.trim())
+                    is_plain_identifier(name.trim())
+                        && is_fixed_selector_scalar(value.trim(), language)
                 })
             });
     }
@@ -14045,15 +14050,28 @@ fn is_fixed_resource_selector(selector: &str) -> bool {
     let Some(property) = member.trim().strip_prefix(&format!("{parameter}.")) else {
         return false;
     };
-    is_plain_identifier(property) && is_fixed_selector_scalar(value.trim())
+    is_plain_identifier(property) && is_fixed_selector_scalar(value.trim(), language)
 }
 
-fn is_fixed_selector_scalar(selector: &str) -> bool {
-    is_quoted_literal(selector)
-        || selector.eq_ignore_ascii_case("true")
-        || selector.eq_ignore_ascii_case("false")
-        || selector.eq_ignore_ascii_case("none")
-        || selector.eq_ignore_ascii_case("null")
+fn is_fixed_selector_scalar(selector: &str, language: Option<Language>) -> bool {
+    let keyword = match language {
+        Some(Language::Python) => matches!(selector, "True" | "False" | "None"),
+        Some(Language::Php) => matches!(
+            selector.to_ascii_lowercase().as_str(),
+            "true" | "false" | "null"
+        ),
+        Some(
+            Language::Javascript
+            | Language::Typescript
+            | Language::Tsx
+            | Language::Csharp
+            | Language::Java
+            | Language::Kotlin,
+        ) => matches!(selector, "true" | "false" | "null"),
+        _ => false,
+    };
+    is_single_selector_string(selector)
+        || keyword
         || selector.parse::<i128>().is_ok()
         || selector
             .strip_suffix('l')
@@ -14061,116 +14079,32 @@ fn is_fixed_selector_scalar(selector: &str) -> bool {
             .is_some_and(|value| value.parse::<i128>().is_ok())
 }
 
-/// Omits IDOR review for one narrow initialization/cleanup shape: a private
-/// same-file helper selects by its sole identifier parameter, has exactly one
-/// call, and that call passes the `.id` of a record created immediately in the
-/// same repository source by the same captured ORM model. This is not general
-/// taint or authorization reasoning; request-derived and externally callable
-/// helpers remain reviewable.
-fn is_repository_created_resource_selector(item: &Evidence, sources: &RepositorySources) -> bool {
-    if item.rule_id != "typescript-sequelize-resource-access" {
-        return false;
-    }
-    let (Some(symbol), Some(filter), Some(model)) = (
-        item.enclosing_symbol.as_deref(),
-        item.captures
-            .get("filter")
-            .map(|capture| capture.text.trim()),
-        item.captures
-            .get("model")
-            .map(|capture| capture.text.trim()),
-    ) else {
+/// First/last quotes alone also match concatenations and executable expressions.
+/// Accept one complete literal only. Interpolating double quotes are deliberately
+/// conservative across the supported languages (notably Kotlin/PHP).
+fn is_single_selector_string(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let Some(&quote) = bytes.first().filter(|&&b| matches!(b, b'\'' | b'"')) else {
         return false;
     };
-    if !is_plain_identifier(symbol) || !is_plain_identifier(model) {
-        return false;
+    let mut escaped = false;
+    for (index, &byte) in bytes.iter().enumerate().skip(1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if byte == b'\\' {
+            escaped = true;
+            continue;
+        }
+        if byte == quote {
+            return index + 1 == bytes.len();
+        }
+        if matches!(byte, b'\n' | b'\r') || quote == b'"' && byte == b'$' {
+            return false;
+        }
     }
-    let Some(body) = filter
-        .strip_prefix('{')
-        .and_then(|value| value.strip_suffix('}'))
-    else {
-        return false;
-    };
-    if body.contains(',') {
-        return false;
-    }
-    let Some((field, selector)) = body.split_once(':') else {
-        return false;
-    };
-    let selector = selector.trim();
-    if field.trim() != "id" || !is_plain_identifier(selector) {
-        return false;
-    }
-    let Ok(file) = sources.file(&item.location.path) else {
-        return false;
-    };
-    let declarations = file
-        .source
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            if line.starts_with("export ") {
-                return None;
-            }
-            let marker = format!("function {symbol}");
-            let parameters = line.split_once(&marker)?.1.trim_start().strip_prefix('(')?;
-            let parameters = parameters.split_once(')')?.0;
-            Some(parameters)
-        })
-        .collect::<Vec<_>>();
-    let [parameters] = declarations.as_slice() else {
-        return false;
-    };
-    let parameter_names = parameters
-        .split(',')
-        .filter_map(|parameter| parameter.trim().split([':', '=']).next())
-        .map(str::trim)
-        .collect::<Vec<_>>();
-    if parameter_names.as_slice() != [selector] {
-        return false;
-    }
-    let calls = file
-        .source
-        .lines()
-        .filter(|line| !line.contains(&format!("function {symbol}")))
-        .filter_map(|line| {
-            let call = line.find(&format!("{symbol}("))?;
-            let argument = &line[call + symbol.len() + 1..];
-            Some(argument.split_once(')')?.0.trim())
-        })
-        .collect::<Vec<_>>();
-    let [argument] = calls.as_slice() else {
-        return false;
-    };
-    let Some((created, property)) = argument.split_once('.') else {
-        return false;
-    };
-    if !is_plain_identifier(created) || property != "id" {
-        return false;
-    }
-    if identifier_occurrence_count(&file.source, symbol) != 2 {
-        return false;
-    }
-    let compact = file
-        .source
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>();
-    compact.contains(&format!("const{created}=await{model}.create("))
-        || (compact.contains(&format!("{model}.create("))
-            && compact.contains(&format!(".then(async({created})=>")))
-}
-
-fn identifier_occurrence_count(source: &str, identifier: &str) -> usize {
-    source
-        .match_indices(identifier)
-        .filter(|(index, matched)| {
-            let before = source[..*index].chars().next_back();
-            let after = source[index + matched.len()..].chars().next();
-            before.is_none_or(|character| !is_identifier_character(character))
-                && after.is_none_or(|character| !is_identifier_character(character))
-        })
-        .count()
+    false
 }
 
 fn is_non_actionable_csrf_observation(item: &Evidence, sources: &RepositorySources) -> bool {
@@ -22778,7 +22712,10 @@ mod tests {
             "{ id: 1, tenant: \"system\" }",
             "item => item.Id == 1",
         ] {
-            assert!(is_fixed_resource_selector(selector), "{selector}");
+            assert!(
+                is_fixed_resource_selector(selector, Some(Language::Typescript)),
+                "{selector}"
+            );
         }
         for selector in [
             "request.params.id",
@@ -22787,8 +22724,24 @@ mod tests {
             "item => item.Id == request.params.id",
             "item => item.Id == 1 && item.OwnerId == request.user.id",
             "item => request.allowed == 1",
+            "{ id: 'prefix' + key + 'suffix' }",
+            "\"prefix\" + key + \"suffix\"",
+            "item => item.Id == \"prefix\" + key + \"suffix\"",
+            "\"$dynamic\"",
         ] {
-            assert!(!is_fixed_resource_selector(selector), "{selector}");
+            assert!(
+                !is_fixed_resource_selector(selector, Some(Language::Typescript)),
+                "{selector}"
+            );
+        }
+        for (language, constant, identifier) in [
+            (Language::Javascript, "null", "None"),
+            (Language::Typescript, "true", "True"),
+            (Language::Csharp, "false", "False"),
+            (Language::Python, "None", "null"),
+        ] {
+            assert!(is_fixed_resource_selector(constant, Some(language)));
+            assert!(!is_fixed_resource_selector(identifier, Some(language)));
         }
     }
 

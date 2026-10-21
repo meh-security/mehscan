@@ -124,6 +124,14 @@ than rereading equivalent distributions.
   mutable bindings may have no resolved helper excerpt. Use the operation and
   import/receiver locations to inspect the actual implementation when its behavior
   changes the verdict; missing helper context is not evidence of missing controls.
+  A thin repository getter still needs its caller checked. Imports, service
+  registries and callbacks can expose it even when no request-to-getter flow is
+  supplied. Use references or structural lookup to locate method calls and
+  service registrations, then check the actual caller's selector and authority.
+  An authorized caller does not close other callers; no local guard in a getter
+  does not establish a bypass. A nearby `create()` call does not establish that a
+  later selector retains the created record's ID: inspect intervening writes, model/context
+  identity and ordering. Keep distinct reads, disclosures and writes separate.
 
 Stop when the exact target is fixed or constrained for the same operation, or
 when a lower-trust selector can reach the protected target. If resolution or
