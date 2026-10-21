@@ -135,13 +135,22 @@ fn operand_summaries(evidence: &Evidence) -> Vec<ReviewOperandSummary> {
                 .iter()
                 .any(|c| c == "partial_semantic_context")
         })
-        .map(|fact| ReviewOperandSummary {
-            kind: fact.kind.clone(),
-            value: fact.value.clone(),
-            location: (fact.kind == mehscan_core::OperandFactKind::SemanticDefinition)
-                .then(|| fact.location.clone()),
-            role: (fact.kind == mehscan_core::OperandFactKind::SemanticDefinition)
-                .then(|| fact.role.clone()),
+        .map(|fact| {
+            let located = fact.kind == mehscan_core::OperandFactKind::SemanticDefinition
+                || matches!(
+                    fact.role.as_str(),
+                    "resource_operation"
+                        | "resource_selector"
+                        | "resource_execution_context"
+                        | "outbound_operation"
+                        | "outbound_endpoint"
+                );
+            ReviewOperandSummary {
+                kind: fact.kind.clone(),
+                value: fact.value.clone(),
+                location: located.then(|| fact.location.clone()),
+                role: located.then(|| fact.role.clone()),
+            }
         })
         .collect()
 }
@@ -9251,6 +9260,12 @@ fn build_observation_reviews(
             .flat_map(|e| &e.context.operand_facts)
             .find(|f| f.role == "resource_operation" && f.value == "local_callable_context")
             .map(|f| &f.location);
+        let resource_operation = resource_operation.filter(|_| {
+            matches!(
+                file.language,
+                Some(Language::Javascript | Language::Typescript | Language::Tsx)
+            )
+        });
         let precise_resource_helpers = resource_operation.is_some();
         let (mut helpers, helpers_truncated) = if let Some(operation) = resource_operation {
             resource_helpers
@@ -21806,22 +21821,29 @@ fn source_slice(
     ))
 }
 
-/// Complete compact callable context for a resource operation; not a policy proof.
+/// Complete compact callable context for a selected operation; not a policy proof.
 fn resource_callable_slice(
     file: &SourceFile,
     evidence: &[Evidence],
     anchor: &Location,
 ) -> Option<SourceSlice> {
     let owner = evidence.iter().find_map(|item| {
-        (item.location == *anchor && item.capability == Capability::ResourceAccess)
-            .then(|| {
-                item.context.operand_facts.iter().find(|fact| {
-                    fact.kind == mehscan_core::OperandFactKind::QueryStructure
-                        && fact.role == "resource_operation"
-                        && fact.value == "local_callable_context"
-                })
+        (item.location == *anchor
+            && matches!(
+                item.capability,
+                Capability::ResourceAccess | Capability::OutboundNetworkRequest
+            ))
+        .then(|| {
+            item.context.operand_facts.iter().find(|fact| {
+                fact.kind == mehscan_core::OperandFactKind::QueryStructure
+                    && matches!(
+                        fact.role.as_str(),
+                        "resource_operation" | "outbound_operation"
+                    )
+                    && fact.value == "local_callable_context"
             })
-            .flatten()
+        })
+        .flatten()
     })?;
     let start = owner.location.start.byte_offset;
     let end = owner.location.end.byte_offset;

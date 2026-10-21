@@ -287,3 +287,165 @@ const large = async (id) => {{
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn python_selector_and_execution_context_are_located_without_closing_authority() {
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-python-resource-context-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let source = r#"
+from django.core.management.base import BaseCommand
+class Command(BaseCommand):
+    def handle(self, **options):
+        page = Page.objects.get(pk=options["from_id"])
+        return page
+
+def reload(page):
+    selected = Page.objects.get(pk=page.id)
+    if not allowed(selected):
+        raise PermissionError()
+    return selected
+
+def lookup(request):
+    return Page.objects.get(pk=request.GET["id"])
+"#;
+    fs::write(root.join("app.py"), source).unwrap();
+    let job = build_all_path_review_jobs(&root, Some(1), false).unwrap();
+    let reviews = job
+        .observation_reviews
+        .iter()
+        .filter(|r| {
+            r.evidence
+                .iter()
+                .any(|e| e.capability == Capability::ResourceAccess && e.kind == EvidenceKind::Sink)
+        })
+        .collect::<Vec<_>>();
+    for name in ["handle", "reload", "lookup"] {
+        assert!(
+            reviews.iter().any(|r| r
+                .evidence
+                .iter()
+                .any(|e| e.capability == Capability::ResourceAccess
+                    && e.enclosing_symbol.as_deref() == Some(name)))
+                || job.reviews.iter().any(|r| r.candidate.sink.capability
+                    == Capability::ResourceAccess
+                    && r.candidate.sink.enclosing_symbol.as_deref() == Some(name)),
+            "{name} must retain an authority question, as a path or observation"
+        );
+    }
+    for review in &reviews {
+        let e = review
+            .evidence
+            .iter()
+            .find(|e| e.capability == Capability::ResourceAccess && e.kind == EvidenceKind::Sink)
+            .unwrap();
+        let origin = e
+            .context
+            .operand_facts
+            .iter()
+            .find(|f| f.role == "resource_selector")
+            .unwrap();
+        assert_eq!(origin.location, e.captures["filter"].location);
+        assert!(
+            origin
+                .remaining_checks
+                .iter()
+                .any(|c| c == "operation_authorization")
+        );
+        if e.enclosing_symbol.as_deref() == Some("handle") {
+            let bases = e
+                .context
+                .operand_facts
+                .iter()
+                .find(|f| f.role == "resource_execution_context")
+                .unwrap();
+            assert!(
+                source[bases.location.start.byte_offset..bases.location.end.byte_offset]
+                    .contains("BaseCommand")
+            );
+            assert!(bases.remaining_checks.iter().any(|c| c == "other_callers"));
+        }
+        if e.enclosing_symbol.as_deref() == Some("reload") {
+            assert_eq!(origin.value, "origin:member_read");
+            let context = review
+                .facts
+                .iter()
+                .find(|f| f.role == "source_context")
+                .unwrap();
+            assert!(context.excerpt.contains("raise PermissionError()"));
+            assert!(!context.excerpt.contains("def lookup"));
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn outbound_compact_callable_context_keeps_destination_and_late_controls() {
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-outbound-operation-context-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    for extension in ["js", "ts", "tsx"] {
+        fs::write(
+            root.join(format!("app.{extension}")),
+            format!(
+                r#"
+async function request(url, options) {{
+  const response = await fetch(url, options);
+{}
+  if (!permitted(response.url)) throw new Error('redirect rejected');
+  return response;
+}}
+async function other(destination) {{ return fetch(destination); }}
+"#,
+                "\n".repeat(18)
+            ),
+        )
+        .unwrap();
+    }
+    let job = build_all_path_review_jobs(&root, Some(1), false).unwrap();
+    for extension in ["js", "ts", "tsx"] {
+        let path = format!("app.{extension}");
+        let review = job
+            .observation_reviews
+            .iter()
+            .find(|r| {
+                r.evidence.iter().any(|e| {
+                    e.location.path == path
+                        && e.capability == Capability::OutboundNetworkRequest
+                        && e.enclosing_symbol.as_deref() == Some("request")
+                })
+            })
+            .unwrap();
+        let e = review
+            .evidence
+            .iter()
+            .find(|e| e.capability == Capability::OutboundNetworkRequest)
+            .unwrap();
+        let origin = e
+            .context
+            .operand_facts
+            .iter()
+            .find(|f| f.role == "outbound_endpoint")
+            .unwrap();
+        assert_eq!(origin.location, e.captures["endpoint"].location);
+        assert!(
+            origin
+                .remaining_checks
+                .iter()
+                .any(|c| c == "redirect_policy")
+        );
+        let context = review
+            .facts
+            .iter()
+            .find(|f| f.role == "source_context")
+            .unwrap();
+        assert!(context.excerpt.contains("redirect rejected"));
+        assert!(!context.excerpt.contains("function other"));
+        assert!(context.excerpt.len() <= 1_536);
+    }
+    fs::remove_dir_all(root).unwrap();
+}

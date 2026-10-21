@@ -13,6 +13,14 @@ pub(super) fn annotate(language: Language, root: &N<'_>, evidence: &mut Vec<Evid
         language,
         Language::Javascript | Language::Typescript | Language::Tsx
     ) && evidence.iter().any(resource_read_candidate);
+    let needs_python_resource =
+        language == Language::Python && evidence.iter().any(resource_read_candidate);
+    let needs_outbound = matches!(
+        language,
+        Language::Javascript | Language::Typescript | Language::Tsx
+    ) && evidence.iter().any(|e| {
+        e.kind == EvidenceKind::Sink && e.capability == Capability::OutboundNetworkRequest
+    });
     let needs_sql = matches!(
         language,
         Language::Php
@@ -24,7 +32,12 @@ pub(super) fn annotate(language: Language, root: &N<'_>, evidence: &mut Vec<Evid
     ) && evidence
         .iter()
         .any(|e| e.kind == EvidenceKind::Sink && e.cwe_candidates == ["CWE-89"]);
-    if !needs_sql && !needs_resource_uses && !evidence.iter().any(orm) {
+    if !needs_sql
+        && !needs_resource_uses
+        && !needs_python_resource
+        && !needs_outbound
+        && !evidence.iter().any(orm)
+    {
         return;
     }
     let ranges = evidence
@@ -177,6 +190,9 @@ pub(super) fn annotate(language: Language, root: &N<'_>, evidence: &mut Vec<Evid
             }
         }
     }
+    if needs_python_resource || needs_outbound {
+        attach_operation_origins(language, &nodes, evidence);
+    }
     attach_reloads(language, root, &nodes, evidence);
     if needs_resource_uses {
         for item in evidence
@@ -205,6 +221,100 @@ pub(super) fn annotate(language: Language, root: &N<'_>, evidence: &mut Vec<Evid
             });
         }
         attach_resource_result_uses(&nodes, &identifiers, evidence);
+    }
+}
+
+/// Lexical source locators only: a parameter/member is not a trusted identity,
+/// and a containing class is not proof of its runtime registration.
+fn attach_operation_origins(
+    language: Language,
+    nodes: &BTreeMap<(usize, usize), N<'_>>,
+    evidence: &mut [Evidence],
+) {
+    for e in evidence.iter_mut().filter(|e| e.kind == EvidenceKind::Sink) {
+        let (capture_role, operation_role, origin_role) = match (language, e.capability) {
+            (Language::Python, Capability::ResourceAccess) if resource_read_candidate(e) => {
+                ("filter", "resource_operation", "resource_selector")
+            }
+            (
+                Language::Javascript | Language::Typescript | Language::Tsx,
+                Capability::OutboundNetworkRequest,
+            ) => ("endpoint", "outbound_operation", "outbound_endpoint"),
+            _ => continue,
+        };
+        let Some(capture) = e.captures.get(capture_role) else {
+            continue;
+        };
+        let Some(operand) = nodes.get(&(
+            capture.location.start.byte_offset,
+            capture.location.end.byte_offset,
+        )) else {
+            continue;
+        };
+        let Some(owner) = scope(operand) else {
+            continue;
+        };
+        if owner.range().start > e.location.start.byte_offset
+            || owner.range().end < e.location.end.byte_offset
+        {
+            continue;
+        }
+        let origin = match operand.kind().as_ref() {
+            "identifier" => "origin:name_reference",
+            "attribute" | "member_expression" => "origin:member_read",
+            "subscript" | "subscript_expression" => "origin:indexed_read",
+            "call" | "call_expression" | "await" | "await_expression" => "origin:call",
+            _ => "origin:expression",
+        };
+        let checks = if operation_role == "resource_operation" {
+            vec![
+                "identity_producer".into(),
+                "resource_identity_matches_subject".into(),
+                "operation_authorization".into(),
+            ]
+        } else {
+            vec![
+                "destination_authority_producer".into(),
+                "client_transport_policy".into(),
+                "redirect_policy".into(),
+            ]
+        };
+        e.context.operand_facts.push(OperandFact {
+            kind: OperandFactKind::QueryStructure,
+            role: origin_role.into(),
+            location: capture.location.clone(),
+            value: origin.into(),
+            remaining_checks: checks,
+        });
+        e.context.operand_facts.push(OperandFact {
+            kind: OperandFactKind::QueryStructure,
+            role: operation_role.into(),
+            location: super::node_operands::capture_at("", e, &owner).location,
+            value: "local_callable_context".into(),
+            remaining_checks: vec![
+                "caller_authority".into(),
+                "branch_ordering".into(),
+                "operation_effects".into(),
+            ],
+        });
+        if language == Language::Python
+            && let Some(bases) = owner
+                .ancestors()
+                .find(|n| n.kind().as_ref() == "class_definition")
+                .and_then(|n| n.field("superclasses"))
+        {
+            e.context.operand_facts.push(OperandFact {
+                kind: OperandFactKind::QueryStructure,
+                role: "resource_execution_context".into(),
+                location: super::node_operands::capture_at("", e, &bases).location,
+                value: "enclosing_class_bases".into(),
+                remaining_checks: vec![
+                    "base_import_identity".into(),
+                    "actual_entrypoint_registration".into(),
+                    "other_callers".into(),
+                ],
+            });
+        }
     }
 }
 
@@ -472,6 +582,7 @@ fn scope<'a>(n: &N<'a>) -> Option<N<'a>> {
                 | "arrow_function"
                 | "function_expression"
                 | "lambda_expression"
+                | "lambda"
                 | "lambda_literal"
         )
     })

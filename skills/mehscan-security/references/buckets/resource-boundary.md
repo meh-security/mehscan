@@ -101,6 +101,13 @@ than rereading equivalent distributions.
   separately from the request URL. A fixed URL does not close proxy selection.
   A typed unknown connection retains its origin question; metadata/setup reads
   such as getURL and getRequestProperty are omitted from network reviews.
+  `outbound_endpoint` and `outbound_operation` locate the destination expression
+  and exact lexical callable. Compact callable source can expose shared URL
+  construction and transport options. Check whether execution is in a browser
+  or server and whether dynamic data can change the destination authority,
+  rather than only a path/query. Configuration and SDK callbacks require their
+  actual producers checked. Shared client context does not prove identical
+  redirect, proxy, credential or branch policy across sites.
 - For resource access, identify whether the selected object belongs to the
   verified subject or another tenant. A sensitive read or existence oracle
   can matter without a mutation. Inspect earlier middleware on every matching
@@ -127,6 +134,12 @@ than rereading equivalent distributions.
   mutable bindings may have no resolved helper excerpt. Use the operation and
   import/receiver locations to inspect the actual implementation when its behavior
   changes the verdict; missing helper context is not evidence of missing controls.
+  Python `resource_selector` facts describe the exact captured expression (name,
+  member, index or call), without tracing aliases or proving object identity.
+  `resource_execution_context` points to enclosing class bases: resolve their
+  imports and actual registration before treating a method as CLI, HTTP or an
+  authentication callback. A CLI-looking class may have other callers. A read
+  using a passed object's key is not automatically an authorized reload.
   A thin repository getter still needs its caller checked. Imports, service
   registries and callbacks can expose it even when no request-to-getter flow is
   supplied. Use references or structural lookup to locate method calls and

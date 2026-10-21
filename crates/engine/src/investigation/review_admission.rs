@@ -970,7 +970,12 @@ fn marker_from_inline_boundary(
     let boundary_line = &file.source[spans[line_index].0..spans[line_index].1];
     let route_excerpt = excerpt.lines().take(12).collect::<Vec<_>>().join("\n");
     let route_handlers = terminal_route_handlers(&route_excerpt);
-    let route_handler = route_handlers.last().cloned();
+    // An inline callback is the operation; preceding identifiers are middleware.
+    // Keep those identifiers as research context without naming the callback
+    // after them. A truncated registration likewise has no known terminal handler.
+    let route_handler = (!route_excerpt.contains("=>") && !route_excerpt.contains("function"))
+        .then(|| route_handlers.last().cloned())
+        .flatten();
     for handler in route_handlers.into_iter().rev() {
         if !handlers.contains(&handler) {
             handlers.insert(0, handler);
@@ -1144,6 +1149,7 @@ fn terminal_route_handlers(line: &str) -> Vec<String> {
     let mut escaped = false;
     let mut argument_start = open + 1;
     let mut arguments = Vec::new();
+    let mut complete = false;
     for (offset, byte) in line.as_bytes().iter().enumerate().skip(open) {
         if let Some(delimiter) = quote {
             if escaped {
@@ -1162,6 +1168,7 @@ fn terminal_route_handlers(line: &str) -> Vec<String> {
                 depth -= 1;
                 if depth == 0 {
                     arguments.push(&line[argument_start..offset]);
+                    complete = true;
                     break;
                 }
             }
@@ -1171,6 +1178,9 @@ fn terminal_route_handlers(line: &str) -> Vec<String> {
             }
             _ => {}
         }
+    }
+    if !complete {
+        return Vec::new();
     }
     arguments
         .into_iter()
@@ -1211,6 +1221,25 @@ mod route_handler_tests {
     use super::terminal_route_handlers;
 
     #[test]
+    fn inline_operation_is_not_named_after_its_middleware() {
+        let source = "router.patch(\n '/:collection',\n collectionExists,\n asyncHandler(async (req, res) => {\n  await service.updateFields(req.params.collection, req.body);\n }),\n respond,\n);\n";
+        let file = super::SourceFile {
+            path: "app.ts".into(),
+            language: Some(super::Language::Typescript),
+            source: source.into(),
+        };
+        let marker = super::javascript_server_mutation_marker(
+            &file,
+            &super::line_spans(source),
+            0,
+            "router.patch(",
+        )
+        .unwrap();
+        assert_eq!(marker.symbol, "PATCH route");
+        assert!(marker.effect.contains("update"));
+    }
+
+    #[test]
     fn uses_invoked_handler_instead_of_module_or_wrapper() {
         assert_eq!(
             terminal_route_handlers("app.delete('/api/Products/:id', security.denyAll())")
@@ -1247,6 +1276,7 @@ mod route_handler_tests {
             vec!["appendUserId", "quantityCheckBeforeBasketItemUpdate"]
         );
         assert!(terminal_route_handlers("fastify.patch('/tasks/:id', async (request) => { return tasks.update(request.body) })").is_empty());
+        assert!(terminal_route_handlers("router.patch(\n '/:collection',\n collectionExists,\n asyncHandler(async (req) => {").is_empty(), "partial arguments must not invent a terminal handler");
         assert_eq!(
             terminal_route_handlers(
                 "router.route('/items/:id')\n  .put(\n    authenticateToken,\n    handlers.updateItem\n  )"
