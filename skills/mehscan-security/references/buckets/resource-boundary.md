@@ -80,6 +80,14 @@ than rereading equivalent distributions.
   and destination after any parsing or rewrite. Fixed release URLs selected
   by OS or architecture do not become attacker-selected merely because a
   variable holds them.
+  Establish the intended network authority first. Fetching user-selected public
+  URLs for images, previews or imports is not by itself SSRF, and need not use
+  a fixed host allowlist. Show unintended protected-resource access or credential/
+  data disclosure; inspect actual scheme/address filtering, redirects and proxy
+  behavior. A named filtering wrapper is not proof: read its rejection behavior,
+  defaults and the selected call's overrides. Report a shown conditional bypass
+  with its activation conditions; do not replace that analysis with either an
+  automatic safe verdict or an issue based only on arbitrary public destinations.
   URL parsing alone is not destination approval. Review the dispatch, using
   `endpoint` and its related construction facts. When
   `outbound-request:unresolved-producer` is present, inspect the supplied

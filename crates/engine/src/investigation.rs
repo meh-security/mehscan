@@ -7203,7 +7203,7 @@ impl DecisionCriticalOrigin<'_> {
             DecisionCriticalBoundary::NativeFormat => "Can an attacker influence the printf-family format operand, or is the exact format string fixed by trusted code?".to_string(),
             DecisionCriticalBoundary::DynamicCode => "Can an attacker influence the program or expression interpreted by this runtime evaluator, or is the exact grammar fixed and trusted?".to_string(),
             DecisionCriticalBoundary::TemplateSource => "Can an attacker influence the template source interpreted by this template engine, or is the template fixed and untrusted values supplied only as data?".to_string(),
-            DecisionCriticalBoundary::OutboundDestination => "Can an attacker influence the effective scheme, authority, or address reached by this outbound request, or is the destination restricted to an exact server-owned allowlist?".to_string(),
+            DecisionCriticalBoundary::OutboundDestination => "Can lower-trust destination selection make this request reach protected or unintended resources, or disclose credentials or data to an unintended origin? Establish the operation's intended authority and effective destination controls; intended public-URL retrieval alone is not SSRF.".to_string(),
             DecisionCriticalBoundary::RedirectDestination => "Can an attacker influence the effective redirect destination, or is it restricted to an intended local path or exact origin allowlist?".to_string(),
             DecisionCriticalBoundary::ObjectDeserialization => "Can an attacker modify the payload consumed by this executable object deserializer, or is its exact producer protected by a trusted immutable or authenticated boundary?".to_string(),
             DecisionCriticalBoundary::RawNosql => "Can an attacker influence operators or structure in this raw NoSQL query document, or is the exact document fixed or built through typed scalar predicates?".to_string(),
@@ -7256,7 +7256,7 @@ impl DecisionCriticalOrigin<'_> {
                 self.operand, self.style
             ),
             DecisionCriticalBoundary::OutboundDestination => format!(
-                "Can attacker-controlled input influence the effective outbound destination `{}`, including its scheme, authority, resolved address, or redirects, or is it restricted to an exact server-owned allowlist?",
+                "Can lower-trust input selecting outbound destination `{}` cross the operation's intended resource or credential boundary? Inspect scheme, resolved addresses, redirects, proxy/client policy and request data. Intended public-URL retrieval does not require a fixed host allowlist to be safe; establish a concrete unintended reach or disclosure.",
                 self.operand
             ),
             DecisionCriticalBoundary::RedirectDestination => format!(
@@ -15511,7 +15511,7 @@ fn missing_protection_question(capability: Capability) -> &'static str {
             "Does the shown code canonicalize the source-derived path and enforce containment within an intended base directory before filesystem access?"
         }
         Capability::OutboundNetworkRequest => {
-            "Does the shown code parse the destination and enforce an allowlist that excludes internal, loopback, link-local, and metadata targets before the request?"
+            "What resource or credential boundary must this request enforce, and do its effective scheme, address, redirect and proxy/client controls prevent unintended reach or disclosure? A fixed host allowlist is not required for intended public-URL retrieval."
         }
         Capability::ProcessExecution => {
             "Who controls the executable, shell mode and child-program options? Separate arguments prevent shell parsing only when no shell/interpreter is invoked; check the target program's argument semantics."
