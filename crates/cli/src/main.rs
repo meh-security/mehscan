@@ -1484,6 +1484,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "decision",
                 "confidence",
                 "summary",
+                "diagnosis",
                 "checks",
                 "investigation",
             ];
@@ -1579,6 +1580,17 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                             "decision": {"type": "string", "enum": ["issue", "not_issue", "needs_review"]},
                             "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
                             "summary": {"type": "string", "maxLength": 450},
+                            "diagnosis": {"anyOf": [{"type":"null"}, {
+                                "type":"object", "additionalProperties":false,
+                                "required":["title","cwes","severity","impact","remediation"],
+                                "properties": {
+                                    "title":{"type":"string","minLength":1,"maxLength":160},
+                                    "cwes":{"type":"array","maxItems":5,"uniqueItems":true,"items":{"type":"string","pattern":"^CWE-[1-9][0-9]{0,5}$"}},
+                                    "severity":{"type":"string","enum":["unknown","note","low","medium","high","critical"]},
+                                    "impact":{"type":"string","minLength":1,"maxLength":1000},
+                                    "remediation":{"type":"string","minLength":1,"maxLength":1000}
+                                }
+                            }]},
                             "checks": {"type": "array", "items": {"type": "string"}},
                             "investigation": investigation_schema
                         }
@@ -3804,6 +3816,8 @@ struct BriefReview {
     confidence: mehscan_core::ReviewConfidence,
     summary: String,
     #[serde(default)]
+    diagnosis: Option<mehscan_core::ReviewFindingDiagnosis>,
+    #[serde(default)]
     reason: String,
     #[serde(default)]
     checks: Vec<String>,
@@ -3913,6 +3927,7 @@ fn expand_brief_reviews(
             decision: review.decision,
             confidence: review.confidence,
             summary: review.summary.clone(),
+            diagnosis: review.diagnosis.clone(),
             checks: review.checks.clone(),
             investigation: Some(mehscan_core::ReviewInvestigationTrace {
                 decisive_artifacts: artifacts,

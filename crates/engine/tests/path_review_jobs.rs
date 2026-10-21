@@ -589,6 +589,7 @@ fn emits_semantic_bundles_and_retries_incomplete_bundle_responses() {
         .review_ids
         .iter()
         .map(|review_id| PathReviewTriageResult {
+            diagnosis: None,
             review_id: review_id.clone(),
             selected_anchor_id: Some(selected_anchor_id(bundle, review_id)),
             decision: ReviewDecision::Issue,
@@ -1242,6 +1243,7 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
                 .review_ids
                 .iter()
                 .map(|review_id| PathReviewTriageResult {
+                    diagnosis: None,
                     review_id: review_id.clone(),
                     selected_anchor_id: Some(selected_anchor_id(&bundle, review_id)),
                     decision: if path_bundle {
@@ -1827,6 +1829,7 @@ fn consolidates_multiple_sources_at_one_exact_sink_and_invariant() {
             let results = reviews
                 .iter()
                 .map(|review| PathReviewTriageResult {
+                    diagnosis: None,
                     review_id: review.id.clone(),
                     selected_anchor_id: Some(review.candidate.sink.id.clone()),
                     decision: ReviewDecision::Issue,
@@ -1870,11 +1873,11 @@ fn consolidates_multiple_sources_at_one_exact_sink_and_invariant() {
     );
     assert_eq!(
         finding_report.findings[0].severity.level,
-        mehscan_core::Severity::Medium
+        mehscan_core::Severity::Unknown
     );
     assert_eq!(
         finding_report.findings[0].severity.source,
-        mehscan_core::SeveritySource::FallbackDefault
+        mehscan_core::SeveritySource::Unknown
     );
     assert!(finding_report.findings[0].flow.is_some());
     assert_eq!(finding_report.findings[0].provenance.review_ids.len(), 2);
@@ -1888,6 +1891,26 @@ fn consolidates_multiple_sources_at_one_exact_sink_and_invariant() {
         }
     }
     assert!(finding_report.to_markdown().contains("Source review-"));
+    let mut conflicting = bundle_responses.clone();
+    let mut index = 0;
+    for (_, response) in &mut conflicting {
+        for result in &mut response.results {
+            result.diagnosis = Some(mehscan_core::ReviewFindingDiagnosis {
+                title: "Reviewed output effect".into(),
+                cwes: vec![if index == 0 { "CWE-79" } else { "CWE-200" }.into()],
+                severity: mehscan_core::Severity::Medium,
+                impact: "The output exposes a protected consequence.".into(),
+                remediation: "Apply the control for the demonstrated output effect.".into(),
+            });
+            index += 1;
+        }
+    }
+    assert!(
+        mehscan_engine::investigation::build_finding_report(".", "test", None, &conflicting, false)
+            .unwrap_err()
+            .to_string()
+            .contains("conflicting classification")
+    );
 }
 
 #[test]

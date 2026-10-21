@@ -16,11 +16,13 @@ def build_schema(task, *, bound_handles=True):
             "summary":text,"questions":strings,"native_review_ids":strings,"evidence":{"type":"array","items":source_ref}})
         draft = object_schema({"change_pass":{"type":"array","items":entry}})
     else:
+        diagnosis = object_schema({"title":text,"cwes":strings,
+            "severity":{"type":"string","enum":["unknown","note","low","medium","high","critical"]},"impact":text,"remediation":text})
         entry = object_schema({"review_id":{"type":"string","enum":task["review_ids"]},
             "decision":{"type":"string","enum":["issue","not_issue","needs_review"]},
             "confidence":{"type":"string","enum":["high","medium","low"]},"summary":text,"reason":text,
             "evidence":{"type":"array","items":object_schema({"path":text,"start_line":integer,"end_line":integer})},
-            "checks":strings,"blockers":strings})
+            "checks":strings,"blockers":strings,"diagnosis":{"anyOf":[diagnosis,{"type":"null"}]}})
         draft = object_schema({"results":{"type":"array","items":entry}})
     query_id = {"type":"null"} if task["kind"] == "change_pass" else {"type":"string","enum":task["review_ids"]}
     query_variants = []

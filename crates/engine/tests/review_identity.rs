@@ -44,6 +44,7 @@ fn answers(
                 let anchor = bundle_selected_anchor_id(bundle, id).unwrap().to_string();
                 let decision = choose(id);
                 PathReviewTriageResult {
+                    diagnosis: None,
                     review_id: id.clone(),
                     selected_anchor_id: Some(anchor.clone()),
                     decision,
@@ -697,6 +698,7 @@ fn all_verdicts_keep_native_identity_evidence_and_distinct_decision_records() {
                 .map(|id| {
                     let anchor = bundle_selected_anchor_id(bundle, id).unwrap().to_string();
                     PathReviewTriageResult {
+                        diagnosis: None,
                         review_id: id.clone(),
                         selected_anchor_id: Some(anchor.clone()),
                         decision,

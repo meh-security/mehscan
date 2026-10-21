@@ -446,6 +446,28 @@ else:
         self.assertEqual(record["research_queries"], 1)
         self.assertEqual(record["status"], "admitted")
 
+    def test_reviewed_diagnosis_survives_brief_finalization_and_native_report(self):
+        normal = self.base / "normal.py"
+        normal.write_text(self.reviewer.read_text(), encoding="utf-8")
+        self.reviewer.write_text('import json,sys,subprocess\ntask=json.load(sys.stdin)\n'
+            'draft=json.loads(subprocess.check_output([sys.executable,' + repr(str(normal)) + '],input=json.dumps(task),text=True))\n'
+            'for result in draft.get("results",[]):\n'
+            ' if result["decision"] == "issue":\n'
+            '  result["diagnosis"]={"title":"Request-supplied code is evaluated","cwes":["CWE-95"],'
+            '"severity":"high","impact":"The request code executes with the service authority.",'
+            '"remediation":"Remove evaluation of request-controlled expressions."}\n'
+            'print(json.dumps(draft))\n', encoding="utf-8")
+        result = self.invoke(extra=["--phase", "native"])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads((self.base / "worker/findings.json").read_text(encoding="utf-8"))
+        self.assertTrue(report["findings"])
+        finding = report["findings"][0]
+        self.assertEqual(finding["title"], "Request-supplied code is evaluated")
+        self.assertEqual(finding["cwes"], ["CWE-95"])
+        self.assertEqual(finding["severity"], {"level":"high", "source":"reviewer_assessment"})
+        self.assertEqual(finding["remediation"]["text"], "Remove evaluation of request-controlled expressions.")
+        self.assertTrue(finding["provenance"]["candidate_cwes"])
+
     def test_evidence_handles_remain_stable_after_new_query_facts(self):
         normal = self.base / "normal.py"
         normal.write_text(self.reviewer.read_text())

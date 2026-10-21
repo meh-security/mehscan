@@ -119,6 +119,12 @@ than rereading equivalent distributions.
   dismissing caller influence. Shared client context does not prove identical
   redirect, proxy, credential or branch policy across sites.
 - For resource access, identify whether the selected object belongs to the
+  intended public surface or requires authority the caller lacks. Establish the
+  consequential read/disclosure/action before treating missing guards as a gap.
+  A response difference can be an existence oracle, but explain which protected
+  information it discloses and why that exceeds intended access. Expected
+  discovery behavior alone does not establish that consequence. Then compare the
+  selected object with the
   verified subject or another tenant. A sensitive read or existence oracle
   can matter without a mutation. Inspect earlier middleware on every matching
   route prefix to see whether it replaces request identity fields before the

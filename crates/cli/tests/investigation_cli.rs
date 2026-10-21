@@ -1445,8 +1445,9 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
     assert!(finding_report["findings"].as_array().is_some_and(|items| {
         items.iter().all(|item| {
             item["status"] == "issue"
-                && item["severity"]["level"] == "medium"
-                && item["severity"]["source"] == "fallback_default"
+                && item["severity"]["level"] == "unknown"
+                && item["severity"]["source"] == "unknown"
+                && item["cwes"].is_null()
                 && item["primary_location"]["path"].is_string()
         })
     }));

@@ -62,6 +62,7 @@ pub enum FindingStatus {
 #[serde(rename_all = "snake_case")]
 pub enum SeveritySource {
     Unknown,
+    ReviewerAssessment,
     RuleDefault,
     /// Conservative consumer default used until a rule has an adjudicated
     /// impact level. This is deliberately distinct from model confidence.
@@ -93,6 +94,9 @@ pub struct FindingRelatedLocation {
 pub struct FindingProvenance {
     pub review_ids: Vec<String>,
     pub evidence_ids: Vec<String>,
+    /// Detection-time classification leads, distinct from the reviewed failure.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidate_cwes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -730,6 +734,7 @@ mod tests {
             checks,
             remediation: None,
             provenance: FindingProvenance {
+                candidate_cwes: Vec::new(),
                 review_ids: vec!["review-1".to_string()],
                 evidence_ids: vec!["evidence-1".to_string()],
             },

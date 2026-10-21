@@ -177,6 +177,7 @@ fn decisive_policy_evidence_changes_the_same_incomplete_review_outcome() {
             schema_version: PATH_REVIEW_TRIAGE_RESPONSE_SCHEMA_VERSION.to_string(),
             bundle_fingerprint: bundle.bundle_fingerprint.clone(),
             results: vec![PathReviewTriageResult {
+                diagnosis: None,
                 review_id: review.id.clone(),
                 selected_anchor_id: Some(anchor.clone()),
                 decision,

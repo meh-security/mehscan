@@ -71,7 +71,7 @@ pub use investigation::{
     QueryResponse, RelationshipFunnel, RelationshipFunnelCapability, ReviewAdmissionAudit,
     ReviewAdmissionAuditCount, ReviewAdmissionAuditExample, ReviewAdmissionDisposition,
     ReviewArtifactCitation, ReviewConfidence, ReviewContextTruncation, ReviewDecision,
-    ReviewDecisionFacts, ReviewFamilyMeasurement, ReviewInvestigationPlan,
+    ReviewDecisionFacts, ReviewFamilyMeasurement, ReviewFindingDiagnosis, ReviewInvestigationPlan,
     ReviewInvestigationTrace, ReviewLookupRequest, ReviewNeighborhood, ReviewNeighborhoodFact,
     ReviewNeighborhoodVerification, ReviewPipelineCoverage, ReviewPlaybook,
     ReviewQueryJournalSummary, ReviewReadiness, ReviewRetrievedArtifact, ReviewTriageContract,

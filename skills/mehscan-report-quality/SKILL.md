@@ -34,6 +34,11 @@ Check these invariants:
 - Confidence measures confidence in the verdict, not severity. Medium
   confidence can still be decisive. Do not prefer `needs_review` merely because
   the reviewer cannot prove the whole program safe.
+- The displayed title, CWE and severity describe the reviewed failure and impact,
+  not the detector's candidate class or default priority. Candidate CWEs remain
+  provenance. Missing assessment stays unassigned; agreement on an observable
+  difference does not establish protected disclosure or its severity. Keep a
+  different adjacent weakness distinct from the selected review's diagnosis.
 - Dismissals state the supplied reason for inapplicability or safety. They do
   not make broad claims beyond the reviewed operation.
 - Verdict explanations stay within the evidence supplied for their exact

@@ -741,9 +741,24 @@ pub struct PathReviewTriageResult {
     pub decision: ReviewDecision,
     pub confidence: ReviewConfidence,
     pub summary: String,
+    /// Reviewer assessment of the demonstrated failure, not the detector's
+    /// candidate classification. Missing assessment leaves report metadata unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnosis: Option<ReviewFindingDiagnosis>,
     pub checks: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub investigation: Option<ReviewInvestigationTrace>,
+}
+
+/// Reviewer-owned classification and impact, never deterministic scan proof.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewFindingDiagnosis {
+    pub title: String,
+    pub cwes: Vec<String>,
+    pub severity: crate::Severity,
+    pub impact: String,
+    pub remediation: String,
 }
 
 /// One model-sized task extracted from a review page. It repeats the page

@@ -49,6 +49,12 @@ issue/not_issue; pending checks name a precise unresolved fact. The controller
 reads actual cited text and binds the response; it does not certify reasoning.
 Completed response work is not application safety, full coverage or alert closure.
 Never turn deferred work into a safe verdict or reuse old verdicts automatically.
+For an issue, supply diagnosis: a concise title, demonstrated CWE IDs (empty if
+unclassified), severity (unknown if unassessed), and a source-supported impact
+rationale and specific remediation direction. Candidate CWE and detector severity are leads, not the reviewed
+classification or impact. Confidence is separate from severity. Use null for
+diagnosis on not_issue/needs_review. A different weakness must be distinguished
+from the selected relationship; preserve unrelated effects as separate leads.
 <!-- /runtime:common -->
 
 <!-- runtime:change_pass -->

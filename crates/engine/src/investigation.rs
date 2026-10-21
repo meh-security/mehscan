@@ -2765,6 +2765,7 @@ pub fn validate_path_review_bundle_response(
             &result.summary,
             &result.checks,
         )?;
+        validate_finding_diagnosis(result)?;
         let expected = bundle_selected_anchor_id(bundle, &result.review_id)?;
         if result.selected_anchor_id.as_deref() != Some(expected) {
             return Err(EngineError(format!(
@@ -3266,7 +3267,15 @@ fn finding_report_from_run(
             );
             let is_path = item.flow.is_some();
             match records.get_mut(&key) {
-                Some(existing) => existing.merge(item, is_path),
+                Some(existing) => {
+                    if existing.item.status == item.status
+                        && (existing.item.cwes != item.cwes
+                            || existing.item.severity != item.severity)
+                    {
+                        return Err(EngineError("reviews of the same reported occurrence have conflicting classification or severity; reconcile the assessments before reporting".into()));
+                    }
+                    existing.merge(item, is_path)
+                }
                 None => {
                     let descriptions = BTreeSet::from([item.description.clone()]);
                     records.insert(
@@ -3289,7 +3298,9 @@ fn finding_report_from_run(
     for record in records.into_values() {
         match record.item.status {
             FindingStatus::Issue => {
-                if record.item.remediation.is_none() {
+                if record.item.severity.source == SeveritySource::Unknown {
+                    quality_warnings.push(format!("No reviewed diagnosis was supplied for {} at {}:{}; classification and severity remain unassigned.", record.item.rule_id, record.item.primary_location.path, record.item.primary_location.start.line));
+                } else if record.item.remediation.is_none() {
                     quality_warnings.push(format!("No operation-specific remediation is registered for {} at {}:{}; obtain an invariant-specific repair before handoff.", record.item.rule_id, record.item.primary_location.path, record.item.primary_location.start.line));
                 }
                 findings.push(record.item);
@@ -3385,6 +3396,10 @@ impl ReportAccumulator {
         evidence_ids.append(&mut other.provenance.evidence_ids);
         evidence_ids.sort();
         evidence_ids.dedup();
+        let mut candidate_cwes = std::mem::take(&mut self.item.provenance.candidate_cwes);
+        candidate_cwes.append(&mut other.provenance.candidate_cwes);
+        candidate_cwes.sort();
+        candidate_cwes.dedup();
         let confidence = self.item.confidence.max(other.confidence);
         let mut cwes = std::mem::take(&mut self.item.cwes);
         cwes.append(&mut other.cwes);
@@ -3413,6 +3428,7 @@ impl ReportAccumulator {
         self.item.related_locations = related;
         self.item.provenance.review_ids = review_ids;
         self.item.provenance.evidence_ids = evidence_ids;
+        self.item.provenance.candidate_cwes = candidate_cwes;
         self.item.description = self
             .descriptions
             .iter()
@@ -3435,7 +3451,7 @@ fn reported_finding(
             result.review_id
         ))
     })?;
-    match &bundle.payload {
+    let mut finding = match &bundle.payload {
         PathReviewBundlePayload::SecurityPath { reviews } => {
             let review = reviews
                 .iter()
@@ -3501,7 +3517,7 @@ fn reported_finding(
                 }
             }));
             deduplicate_related_locations(&mut related_locations);
-            Ok(ReportedFinding {
+            Ok::<ReportedFinding, EngineError>(ReportedFinding {
                 identities: Vec::new(),
                 id: String::new(),
                 rule_id: candidate.sink.rule_id.clone(),
@@ -3515,7 +3531,7 @@ fn reported_finding(
                     Some(&candidate.sink.location),
                 ),
                 status,
-                severity: default_severity(),
+                severity: unassessed_severity(),
                 confidence: result.confidence,
                 category: candidate.capability,
                 cwes: candidate.cwe_candidates.clone(),
@@ -3537,6 +3553,7 @@ fn reported_finding(
                 provenance: FindingProvenance {
                     review_ids: vec![review.id.clone()],
                     evidence_ids,
+                    candidate_cwes: Vec::new(),
                 },
             })
         }
@@ -3620,7 +3637,7 @@ fn reported_finding(
                 .collect::<Vec<_>>();
             evidence_ids.sort();
             evidence_ids.dedup();
-            Ok(ReportedFinding {
+            Ok::<ReportedFinding, EngineError>(ReportedFinding {
                 identities: Vec::new(),
                 id: String::new(),
                 rule_id: anchor.rule_id.clone(),
@@ -3634,7 +3651,7 @@ fn reported_finding(
                     Some(&anchor.location),
                 ),
                 status,
-                severity: default_severity(),
+                severity: unassessed_severity(),
                 confidence: result.confidence,
                 category: anchor.capability,
                 cwes: anchor.cwe_candidates.clone(),
@@ -3651,10 +3668,77 @@ fn reported_finding(
                 provenance: FindingProvenance {
                     review_ids: vec![review.id.clone()],
                     evidence_ids,
+                    candidate_cwes: Vec::new(),
                 },
             })
         }
+    }?;
+    // A detector's plausible CWE and canned title are navigation, not the
+    // reviewed diagnosis. Never invent impact from its default severity.
+    finding.provenance.candidate_cwes = std::mem::take(&mut finding.cwes);
+    finding.title = result.summary.clone();
+    finding.severity = unassessed_severity();
+    finding.remediation = None;
+    if let Some(diagnosis) = &result.diagnosis {
+        finding.title = diagnosis.title.clone();
+        finding.cwes = diagnosis.cwes.clone();
+        finding.cwes.sort();
+        finding.severity = ReportedSeverity {
+            level: diagnosis.severity,
+            source: SeveritySource::ReviewerAssessment,
+        };
+        finding.description = format!(
+            "{}\n\nImpact assessment: {}",
+            result.summary, diagnosis.impact
+        );
+        finding.remediation = Some(FindingRemediation {
+            text: diagnosis.remediation.clone(),
+            references: Vec::new(),
+        });
     }
+    Ok(finding)
+}
+
+fn validate_finding_diagnosis(
+    result: &mehscan_core::PathReviewTriageResult,
+) -> Result<(), EngineError> {
+    let Some(diagnosis) = &result.diagnosis else {
+        return Ok(());
+    };
+    if result.decision != ReviewDecision::Issue {
+        return Err(EngineError(
+            "only issue decisions may carry a finding diagnosis".into(),
+        ));
+    }
+    validate_trace_line(&result.review_id, "diagnosis title", &diagnosis.title, 160)?;
+    validate_trace_line(
+        &result.review_id,
+        "diagnosis impact",
+        &diagnosis.impact,
+        1000,
+    )?;
+    validate_trace_line(
+        &result.review_id,
+        "diagnosis remediation",
+        &diagnosis.remediation,
+        1000,
+    )?;
+    let mut seen = BTreeSet::new();
+    if diagnosis.cwes.len() > 5
+        || diagnosis.cwes.iter().any(|cwe| {
+            let number = cwe.strip_prefix("CWE-").unwrap_or_default();
+            number.is_empty()
+                || number.starts_with('0')
+                || number.len() > 6
+                || !number.bytes().all(|b| b.is_ascii_digit())
+                || !seen.insert(cwe)
+        })
+    {
+        return Err(EngineError(
+            "diagnosis CWEs must be at most five distinct CWE-N identifiers".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn reported_operation_context(
@@ -3959,10 +4043,10 @@ fn kotlin_finding_description(
     description
 }
 
-fn default_severity() -> ReportedSeverity {
+fn unassessed_severity() -> ReportedSeverity {
     ReportedSeverity {
-        level: Severity::Medium,
-        source: SeveritySource::FallbackDefault,
+        level: Severity::Unknown,
+        source: SeveritySource::Unknown,
     }
 }
 
@@ -8850,6 +8934,12 @@ fn observation_review_basis(
             contract.security_question.to_string()
         } else if let Some(origin) = decision_critical_origin {
             origin.security_question()
+        } else if evidence.iter().any(|item| {
+            item.kind == EvidenceKind::Sink
+                && item.capability == Capability::ResourceAccess
+                && item.cwe_candidates.iter().any(|cwe| cwe == "CWE-639")
+        }) {
+            "Does this resource selection allow a protected read, disclosure or action beyond the caller's intended authority? Establish the actual effect and applicable policy; a selected key or observable response difference alone is not a bypass.".to_string()
         } else {
             format!(
                 "Does the supplied context establish a concrete weakness involving {capabilities}, rather than only the observed syntax or API boundary?"
@@ -24913,7 +25003,7 @@ mod tests {
     }
 
     #[test]
-    fn embedded_key_observation_keeps_the_key_disclosure_repair() {
+    fn reviewed_key_diagnosis_retains_candidate_provenance_and_specific_repair() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/v2-identity-boundary/positive");
         let job = build_all_path_review_jobs(&root, Some(100), false).expect("identity review job");
@@ -24956,6 +25046,14 @@ mod tests {
             truncation: ReviewContextTruncation::default(),
         };
         let result = mehscan_core::PathReviewTriageResult {
+            diagnosis: Some(mehscan_core::ReviewFindingDiagnosis {
+                title: "Embedded signing key permits forged credentials".into(),
+                cwes: vec!["CWE-321".into()],
+                severity: Severity::High,
+                impact: "A leaked private key allows credential forgery.".into(),
+                remediation:
+                    "Remove and rotate the exposed key and invalidate affected credentials.".into(),
+            }),
             review_id: review.id.clone(),
             selected_anchor_id: None,
             decision: ReviewDecision::Issue,
