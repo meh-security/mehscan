@@ -326,7 +326,11 @@ def run(args):
                 raise ValueError("work changed during reviewer research")
 
         for round_index in range(args.research_rounds + 1):
-            check_fresh()
+            # Later turns follow a validated provider response or query batch.
+            # That post-check also brackets the next operation; do not repeat
+            # the full snapshot walk without an intervening source consumer.
+            if round_index == 0:
+                check_fresh()
             record["step"] = "reviewer/" + task["kind"]
             aliases = artifact_handles()
             frame = {**task, "artifact_root": str(artifact_root), "sensitive_paths": [str(store), str(claim_path), str(invocation)],
@@ -414,7 +418,8 @@ def run(args):
                 continue
             feedback = None
             for query, arguments in zip(queries, commands):
-                check_fresh()
+                # The provider/previous query post-check is this query's
+                # pre-check. Only trusted bookkeeping occurs between them.
                 without_journal = arguments[:arguments.index("--journal")] if "--journal" in arguments else arguments
                 key = context.digest([scanner_hash, expected["payload"]["snapshot_id"],
                                       expected["payload"]["inventory_input_fingerprint"], without_journal])

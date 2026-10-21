@@ -470,6 +470,32 @@ else:
         self.assertFalse((self.base / "worker/research.jsonl").exists())
         self.assert_no_decisions()
 
+    def test_source_changed_during_query_is_rejected_before_receipt_or_admission(self):
+        from argparse import Namespace
+        self.research_reviewer('[{"tool":"references","review_id":task["review_ids"][0],'
+                              '"arguments":{"symbol":"eval","limit":20}}]')
+        original = worker.execute
+        queried = []
+        def changing_query(command, *args, **kwargs):
+            result = original(command, *args, **kwargs)
+            if command[1:3] == ["investigate", "references"]:
+                queried.append(True)
+                (self.root / "app.js").write_text("const changed = true;\n")
+            return result
+        args = Namespace(scanner=str(self.scanner), source_root=str(self.root), inventory=str(self.inventory),
+            store=str(self.store), stream="local-review", claim=str(self.claim), work_package=str(self.package),
+            reviewer_command=str(self.command), reviewer_label="deterministic/medium", run=str(self.run),
+            output=str(self.base / "query-drift"), provider_contract=None, artifact_root=None,
+            phase="native", supersede=False, timeout=None, skill_root=str(ROOT / "skills/mehscan-security"),
+            research_rounds=None, research_queries=None, research_bytes=None)
+        with patch.object(worker, "execute", side_effect=changing_query):
+            record = worker.run(args)
+        self.assertEqual(queried, [True])
+        self.assertEqual(record["status"], "incomplete")
+        self.assertEqual(record["step"], "native/state/work")
+        self.assertFalse((self.base / "query-drift/research.jsonl").exists())
+        self.assert_no_decisions()
+
     def test_native_runtime_matches_python_package_and_rejects_worker_override(self):
         package = json.loads(self.package.read_text())
         runtime = package["payload"]["runtime"]

@@ -411,7 +411,7 @@ pub fn validate_review_inventory(
     root: &Path,
     inventory: &ReviewInventory,
 ) -> Result<(), EngineError> {
-    validate_review_inventory_sources(root, inventory, &RepositorySources::load(root)?)
+    validate_review_inventory_sources(root, inventory, &RepositorySources::load_snapshot(root)?)
 }
 
 /// Validate the raw source snapshot for fresh compiler collection only.
@@ -424,7 +424,7 @@ pub fn validate_review_inventory_for_collection(
     if let Some(scope) = &inventory.scan.impact_scope {
         crate::impact::validate_scope(root, scope)?;
     }
-    validate_inventory_source_binding(inventory, &RepositorySources::load(root)?)
+    validate_inventory_source_binding(inventory, &RepositorySources::load_snapshot(root)?)
 }
 
 fn validate_inventory_source_binding(
@@ -573,7 +573,9 @@ pub fn review_content_fingerprint(bytes: &[u8]) -> String {
 }
 
 pub fn review_repository_fingerprint(root: &Path) -> Result<String, EngineError> {
-    Ok(review_source_fingerprint(&RepositorySources::load(root)?))
+    Ok(review_source_fingerprint(
+        &RepositorySources::load_snapshot(root)?,
+    ))
 }
 
 pub fn build_review_inventory(
@@ -20753,11 +20755,11 @@ pub fn find_text_references(
     }
     let limit = bounded_limit(limit.or(Some(20)))?;
     let sources = if let Some(path) = path {
-        RepositorySources::from_discovery(discover_text(root, Some(path))?, true)?
+        RepositorySources::from_discovery(discover_text(root, Some(path))?, true, true)?
     } else if let Some(prefix) = path_prefix {
         RepositorySources::load_directory(root, prefix)?
     } else {
-        RepositorySources::from_discovery(discover_text(root, None)?, true)?
+        RepositorySources::from_discovery(discover_text(root, None)?, true, true)?
     };
     let requested_path = path.map(normalize_relative);
     if let Some(path) = &requested_path {
@@ -21275,11 +21277,17 @@ fn native_expression_context(
 
 impl RepositorySources {
     fn load(root: &Path) -> Result<Self, EngineError> {
-        Self::from_discovery(discover(root)?, false)
+        Self::from_discovery(discover(root)?, false, true)
+    }
+
+    // Freshness hashes the same discovered bytes, without preparing import lookup.
+    // No persistent cache: every validation still discovers and reads the source.
+    fn load_snapshot(root: &Path) -> Result<Self, EngineError> {
+        Self::from_discovery(discover(root)?, false, false)
     }
 
     fn load_selected(root: &Path, path: &str) -> Result<Self, EngineError> {
-        Self::from_discovery(discover_selected(root, path)?, true)
+        Self::from_discovery(discover_selected(root, path)?, true, true)
     }
 
     fn load_directory(root: &Path, prefix: &str) -> Result<Self, EngineError> {
@@ -21296,10 +21304,14 @@ impl RepositorySources {
                 "--path-prefix must name a directory inside the scan root".to_string(),
             ));
         }
-        Self::from_discovery(discovery, true)
+        Self::from_discovery(discovery, true, true)
     }
 
-    fn from_discovery(discovery: Discovery, include_templates: bool) -> Result<Self, EngineError> {
+    fn from_discovery(
+        discovery: Discovery,
+        include_templates: bool,
+        prepare_lookup: bool,
+    ) -> Result<Self, EngineError> {
         let display_root = display_path(&discovery.root);
         let metadata = discovery
             .files
@@ -21351,7 +21363,7 @@ impl RepositorySources {
                 },
             );
         }
-        let node_modules =
+        let node_modules = if prepare_lookup {
             std::sync::Arc::new(crate::code::node_modules::NodeModuleIndex::file_index(
                 Some(&discovery.root),
                 files.values().filter_map(|file| {
@@ -21359,7 +21371,10 @@ impl RepositorySources {
                         .map(|language| (file.path.as_str(), language, file.source.as_str()))
                 }),
                 metadata.iter().map(String::as_str),
-            ));
+            ))
+        } else {
+            Default::default()
+        };
         Ok(Self {
             node_modules,
             root: display_root,
@@ -22193,6 +22208,74 @@ mod tests {
                 assert!(actual.skipped_files.is_empty());
             }
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn freshness_snapshot_preserves_discovery_and_hashes_without_changing_module_lookup() {
+        let root =
+            std::env::temp_dir().join(format!("mehscan-freshness-snapshot-{}", std::process::id()));
+        fs::create_dir_all(root.join("src")).unwrap();
+        for (path, source) in [
+            ("package.json", r#"{"type":"module"}"#),
+            (
+                "tsconfig.json",
+                r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+            ),
+            (
+                "app.ts",
+                "import {value} from '@/helper'; export const result=value;",
+            ),
+            ("src/helper.ts", "export const value='original';"),
+            ("view.vue", "<script setup>const value='view';</script>"),
+            (".gitignore", "ignored.ts\n"),
+            ("ignored.ts", "const ignored='before';"),
+        ] {
+            fs::write(root.join(path), source).unwrap();
+        }
+        let normal = RepositorySources::load(&root).unwrap();
+        let snapshot = RepositorySources::load_snapshot(&root).unwrap();
+        assert_eq!(
+            review_source_fingerprint(&normal),
+            review_source_fingerprint(&snapshot)
+        );
+        assert_eq!(
+            resolve_relative_typescript_module("app.ts", "@/helper", &normal).as_deref(),
+            Some("src/helper.ts")
+        );
+        let inventory = build_review_inventory(&root, false).unwrap();
+        validate_review_inventory(&root, &inventory).unwrap();
+        fs::write(root.join("ignored.ts"), "const ignored='changed';").unwrap();
+        validate_review_inventory(&root, &inventory).unwrap();
+        for (path, original, changed) in [
+            (
+                "src/helper.ts",
+                "export const value='original';",
+                "export const value='changed';",
+            ),
+            (
+                "view.vue",
+                "<script setup>const value='view';</script>",
+                "<script setup>const value='changed';</script>",
+            ),
+            (
+                "package.json",
+                r#"{"type":"module"}"#,
+                r#"{"type":"commonjs"}"#,
+            ),
+        ] {
+            fs::write(root.join(path), changed).unwrap();
+            assert!(
+                validate_review_inventory(&root, &inventory)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("stale"),
+                "changed source must invalidate: {path}"
+            );
+            fs::write(root.join(path), original).unwrap();
+        }
+        fs::write(root.join("src/added.ts"), "export const added=1;").unwrap();
+        assert!(validate_review_inventory(&root, &inventory).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
