@@ -415,6 +415,37 @@ else:
                 self.assertNotEqual(result.returncode, 0)
                 self.assert_no_decisions()
 
+    def test_conflicting_path_filters_repair_before_any_batch_query_executes(self):
+        normal = self.base / "normal.py"
+        normal.write_text(self.reviewer.read_text(), encoding="utf-8")
+        self.reviewer.write_text('import json,sys,subprocess\ntask=json.load(sys.stdin)\n'
+            'round=task["research"]["round"]\nid=task["review_ids"][0]\n'
+            'if round == 0:\n'
+            ' print(json.dumps({"research":[{"tool":"source","review_id":id,'
+            '"arguments":{"path":"app.js","start_line":1,"end_line":1}},'
+            '{"tool":"references","review_id":id,'
+            '"arguments":{"symbol":"eval","path":"app.js","path_prefix":"src"}}]}))\n'
+            'elif round == 1:\n'
+            ' assert task["research"]["feedback"]["reason"] == "choose one research path filter"\n'
+            ' assert "never both" in task["research"]["feedback"]["instruction"]\n'
+            ' assert not task["research"]["results"]\n'
+            ' print(json.dumps({"research":[{"tool":"references","review_id":id,'
+            '"arguments":{"symbol":"eval","path":"app.js"}}]}))\n'
+            'else:\n'
+            ' assert len(task["research"]["results"]) == 1\n'
+            ' print(subprocess.check_output([sys.executable,' + repr(str(normal)) + '],input=json.dumps(task),text=True))\n',
+            encoding="utf-8")
+        result = self.invoke(extra=["--phase", "native"])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        directory = self.base / "worker"
+        audit = [json.loads(line) for line in (directory / "research.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([row["query"]["tool"] for row in audit], ["references"])
+        self.assertEqual(audit[0]["query"]["arguments"]["path"], "app.js")
+        record = json.loads((directory / "worker.json").read_text(encoding="utf-8"))
+        self.assertEqual(record["protocol_corrections"], 1)
+        self.assertEqual(record["research_queries"], 1)
+        self.assertEqual(record["status"], "admitted")
+
     def test_evidence_handles_remain_stable_after_new_query_facts(self):
         normal = self.base / "normal.py"
         normal.write_text(self.reviewer.read_text())

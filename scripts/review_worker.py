@@ -425,6 +425,7 @@ def run(args):
                             "inspected edge requires source/query proof",
                             "research path filter must name a file; use path_prefix for a directory",
                             "research path_prefix must name a directory",
+                            "choose one research path filter",
                             "research source window must contain 1 to 400 lines",
                             "research result limit must be 1 to 100")):
                     raise
@@ -433,6 +434,7 @@ def run(args):
                     "Correct the rejected protocol response. Cite only the supplied stable artifact handles; "
                     "use the declared tool arguments (source: 1 <= start_line <= end_line and "
                     "end_line - start_line <= 399; discovery limit: 1 to 100). "
+                    "For references, use path for one file OR path_prefix for a directory, never both. "
                     "Research available decisive open edges or record an honest "
                     "precise blocker. The rejected draft was not admitted. Do not invent proof or change "
                     "a verdict just to pass validation."}
