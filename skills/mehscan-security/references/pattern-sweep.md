@@ -13,7 +13,11 @@ read below; inspect missing facts normally.
 
 1. Run `review-sweep --bundle REQUEST` to read the exact cards together. Read
    each `source_contexts` window once; rows reference it through `source_context_ids`. Resolved helper bodies use
-   `helper_context_ids` in the same source table. Check the source location,
+   `helper_context_ids` in the same source table. Path reviews also retain
+   `path_steps`: read each step's `context_ids` for its source, assignments and
+   controls as well as the sink. Missing or clipped step context requires a
+   targeted source lookup; a bounded path does not prove arbitrary operand control.
+   Check the source location,
    truncation and each call's operand; a shared helper body is not a shared verdict.
    Read the row's `question_id` in `questions` for its question, category and playbook.
    The CLI merges overlapping whole-line windows. Complete byte-bounded callable

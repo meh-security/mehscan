@@ -234,6 +234,28 @@ fn register_atomic_context(contexts: &mut Vec<Value>, mut source: Value) -> Resu
     Ok(format!("source-{}", index + 1))
 }
 
+fn context_refs(contexts: &mut Vec<Value>, source: Value) -> Result<Vec<String>, String> {
+    if source.is_null() {
+        return Ok(Vec::new());
+    }
+    if atomic_context(&source) {
+        return Ok(vec![register_atomic_context(contexts, source)?]);
+    }
+    Ok(contexts
+        .iter()
+        .enumerate()
+        .filter(|(_, context)| {
+            !atomic_context(context)
+                && context["location"]["path"] == source["location"]["path"]
+                && context["location"]["start_line"].as_u64()
+                    <= source["location"]["end_line"].as_u64()
+                && context["location"]["end_line"].as_u64()
+                    >= source["location"]["start_line"].as_u64()
+        })
+        .map(|(index, _)| format!("source-{}", index + 1))
+        .collect())
+}
+
 pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, String> {
     // Read adjacent operations in source order. Identity still comes from the
     // exact ID/anchor, never the position of a row in this list.
@@ -250,8 +272,15 @@ pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, S
     });
     let mut lines = BTreeMap::<String, BTreeMap<u64, String>>::new();
     let mut contexts = Vec::<Value>::new();
-    for card in &cards {
-        let context = &card["source_context"];
+    for context in cards.iter().flat_map(|card| {
+        std::iter::once(&card["source_context"]).chain(
+            card["path_steps"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|step| &step["context"]),
+        )
+    }) {
         if context.is_null() || atomic_context(context) {
             continue;
         }
@@ -299,30 +328,22 @@ pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, S
     let mut questions = Vec::<Value>::new();
     for card in &mut cards {
         let source = card["source_context"].take();
-        let mut refs = Vec::new();
-        if !source.is_null() {
-            if atomic_context(&source) {
-                refs.push(register_atomic_context(&mut contexts, source)?);
-            } else {
-                for (index, context) in contexts.iter().enumerate() {
-                    if !atomic_context(context)
-                        && context["location"]["path"] == source["location"]["path"]
-                        && context["location"]["start_line"].as_u64()
-                            <= source["location"]["end_line"].as_u64()
-                        && context["location"]["end_line"].as_u64()
-                            >= source["location"]["start_line"].as_u64()
-                    {
-                        refs.push(format!("source-{}", index + 1));
-                    }
-                }
-            }
-        }
+        let refs = context_refs(&mut contexts, source)?;
         let keys = contract_keys(card);
         card["contract_keys"] = json!(keys.iter().map(|item| &item.0).collect::<Vec<_>>());
         for (key, kind, value) in keys {
             contracts.entry(key.clone()).or_insert_with(|| json!({"contract":key,"kind":kind,"value":value,"verified":false,"checks":checks(&kind)}));
         }
         card["source_context_ids"] = json!(refs);
+        if let Some(steps) = card["path_steps"].as_array_mut() {
+            for step in steps {
+                let context = step["context"].take();
+                step["context_ids"] = json!(context_refs(&mut contexts, context)?);
+                step.as_object_mut()
+                    .ok_or("invalid path step")?
+                    .remove("context");
+            }
+        }
         let helpers = card["helper_context"].take();
         let mut helper_refs = Vec::new();
         for helper in helpers.as_array().into_iter().flatten() {

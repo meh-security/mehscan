@@ -3336,6 +3336,14 @@ fn compact_anchor_context(
     facts: &[serde_json::Value],
     anchor: &serde_json::Value,
 ) -> Option<serde_json::Value> {
+    compact_location_context(facts, anchor, false)
+}
+
+fn compact_location_context(
+    facts: &[serde_json::Value],
+    anchor: &serde_json::Value,
+    include_path_steps: bool,
+) -> Option<serde_json::Value> {
     let anchor_path = anchor["location"]["path"].as_str()?;
     let anchor_line = anchor["location"]["start"]["line"].as_u64()?;
     // Keep a complete, already-packed small operation. Re-clipping it around
@@ -3402,7 +3410,18 @@ fn compact_anchor_context(
             matches!(
                 fact["role"].as_str(),
                 Some("source_context" | "sink_context")
-            ) && fact["location"]["path"].as_str() == Some(anchor_path)
+            ) || include_path_steps
+                && matches!(
+                    fact["role"].as_str(),
+                    Some(
+                        "intermediate_context"
+                            | "protection_context"
+                            | "ineffective_protection_context"
+                    )
+                )
+        })
+        .filter(|fact| {
+            fact["location"]["path"].as_str() == Some(anchor_path)
                 && fact["excerpt"].as_str().is_some_and(|s| !s.is_empty())
         })
         .min_by_key(|fact| {
@@ -3485,6 +3504,32 @@ fn compact_helper_context(
         "excerpt": fact["excerpt"],
         "truncated": !exact_excerpt || review["truncation"]["occurred"] == true,
     })]
+}
+
+// Path provenance is decision context, even when it is far from the sink.
+// Project only the existing bounded steps and packed source; never infer edges.
+fn compact_path_steps(review: &serde_json::Value) -> Vec<serde_json::Value> {
+    let facts = review["facts"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    review["candidate"]["steps"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|step| {
+            let mut context = compact_location_context(facts, step, true);
+            if let Some(context) = &mut context {
+                let end = step["location"]["end"]["line"].as_u64();
+                if end > context["location"]["end_line"].as_u64() {
+                    context["truncated"] = serde_json::json!(true);
+                }
+            }
+            serde_json::json!({
+                "kind":step["kind"], "symbol":step["symbol"],
+                "evidence_id":step["evidence_id"],
+                "location":brief_location(&step["location"]),
+                "context":context,
+            })
+        })
+        .collect()
 }
 
 fn review_card_from_value(
@@ -3639,6 +3684,33 @@ fn review_card_from_value(
             serde_json::json!({"role":fact["role"],"symbol":fact["symbol"],"location":brief_location(&fact["location"])})
         })
         .collect();
+    let path_steps = compact_path_steps(review);
+    let mut truncation = review["truncation"].clone();
+    for step in &path_steps {
+        if step["context"].is_null() || step["context"]["truncated"] == true {
+            truncation["occurred"] = serde_json::json!(true);
+            truncation["decision_critical"] = serde_json::json!(true);
+            let roles = truncation
+                .as_object_mut()
+                .unwrap()
+                .entry("roles")
+                .or_insert_with(|| serde_json::json!([]));
+            if let Some(roles) = roles.as_array_mut()
+                && !roles.iter().any(|role| role == "path_step_context")
+            {
+                roles.push(serde_json::json!("path_step_context"));
+            }
+            lookups.insert(0, serde_json::json!({
+                "operation":"source",
+                "arguments":{"path":step["location"]["path"],
+                    "start-line":step["location"]["start_line"].as_u64().unwrap_or(1).to_string(),
+                    "end-line":step["location"]["end_line"].as_u64().unwrap_or(1).to_string()},
+                "purpose":"Inspect missing or clipped path-step context before relying on this relationship."
+            }));
+        }
+    }
+    lookups.dedup();
+    lookups.truncate(2);
     Ok(serde_json::json!({
         "bundle_fingerprint": bundle.bundle_fingerprint,
         "review_id": review_id,
@@ -3658,12 +3730,13 @@ fn review_card_from_value(
             "captures": captures,
         },
         "source_context": context,
+        "path_steps": path_steps,
         "helper_context": compact_helper_context(review, anchor),
         "frontend_context": frontend_context,
         "application_context": application_context,
         "nearby_locations": nearby_locations,
         "suggested_lookups": lookups,
-        "truncation": review["truncation"],
+        "truncation": truncation,
     }))
 }
 
@@ -4255,6 +4328,37 @@ mod tests {
                     .contains("allowed(response.url)")
             );
         }
+    }
+
+    #[test]
+    fn path_step_context_never_substitutes_another_file_or_hides_clipping() {
+        for (kind, role) in [
+            ("assignment", "intermediate_context"),
+            ("protection", "protection_context"),
+            ("ineffective_protection", "ineffective_protection_context"),
+        ] {
+            let location =
+                serde_json::json!({"path":"Helper.cs","start":{"line":20},"end":{"line":20}});
+            let review = serde_json::json!({"candidate":{"steps":[{"kind":kind,"location":location}]},"facts":[{"role":role,"location":location,"excerpt":"Guard(value);"}]});
+            assert_eq!(
+                super::compact_path_steps(&review)[0]["context"]["excerpt"],
+                "Guard(value);"
+            );
+        }
+        let source = serde_json::json!({"role":"source_context", "location":{"path":"app.ts","start":{"line":1}}, "excerpt":"x".repeat(900)});
+        let step = serde_json::json!({"kind":"source", "location":{"path":"app.ts","start":{"line":1},"end":{"line":1}}});
+        let mut review = serde_json::json!({"candidate":{"steps":[step]},"facts":[source]});
+        let steps = super::compact_path_steps(&review);
+        assert_eq!(steps[0]["context"]["truncated"], true);
+        assert_eq!(steps[0]["context"]["excerpt"].as_str().unwrap().len(), 700);
+        review["candidate"]["steps"][0]["location"]["path"] = serde_json::json!("other.ts");
+        assert!(super::compact_path_steps(&review)[0]["context"].is_null());
+        review["candidate"]["steps"][0]["location"]["path"] = serde_json::json!("app.ts");
+        review["candidate"]["steps"][0]["location"]["end"]["line"] = serde_json::json!(20);
+        assert_eq!(
+            super::compact_path_steps(&review)[0]["context"]["truncated"],
+            true
+        );
     }
 
     #[test]

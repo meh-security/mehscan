@@ -611,3 +611,105 @@ add_filter('esc_html', 'unsafe_callback');
         fs::remove_dir_all(Path::new(path)).unwrap();
     }
 }
+
+#[test]
+fn path_views_keep_distant_source_assignments_and_share_them_without_sharing_verdicts() {
+    let root = std::env::temp_dir().join(format!("mehscan-path-views-{}", std::process::id()));
+    let source = root.join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("app.js"), format!("import cp from 'node:child_process';\nexport function handle(req){{\n  const command=req.query.command;\n{}  cp.exec(command);\n  cp.exec(command);\n}}", "\n".repeat(30))).unwrap();
+    let output = root.join("bundles");
+    let manifest = run(&[
+        "investigate",
+        "review-bundles",
+        source.to_str().unwrap(),
+        "--output",
+        output.to_str().unwrap(),
+    ]);
+    let bundle = manifest["bundles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["category"]["review_kind"] == "path")
+        .unwrap();
+    let request = output
+        .join("requests")
+        .join(bundle["filename"].as_str().unwrap());
+    let sweep = run(&[
+        "investigate",
+        "review-sweep",
+        "--bundle",
+        request.to_str().unwrap(),
+    ]);
+    let reviews = sweep["reviews"].as_array().unwrap();
+    assert_eq!(reviews.len(), 2);
+    let mut source_refs = BTreeSet::new();
+    for review in reviews {
+        let card = run(&[
+            "investigate",
+            "review-card",
+            "--bundle",
+            request.to_str().unwrap(),
+            "--review-id",
+            review["review_id"].as_str().unwrap(),
+        ]);
+        assert!(
+            !card["source_context"]["excerpt"]
+                .as_str()
+                .unwrap()
+                .contains("req.query")
+        );
+        let steps = card["path_steps"].as_array().unwrap();
+        assert!(steps.iter().any(|s| s["kind"] == "assignment"));
+        assert!(steps.iter().any(|s| {
+            s["kind"] == "source"
+                && s["context"]["excerpt"]
+                    .as_str()
+                    .unwrap()
+                    .contains("const command=req.query.command")
+        }));
+        for (step, projected) in steps.iter().zip(review["path_steps"].as_array().unwrap()) {
+            assert_eq!(step["kind"], projected["kind"]);
+            assert_eq!(step["location"], projected["location"]);
+            let id = projected["context_ids"][0].as_str().unwrap();
+            let context = sweep["source_contexts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["id"] == id)
+                .unwrap();
+            for line in step["context"]["excerpt"]
+                .as_str()
+                .unwrap()
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+            {
+                assert!(
+                    context["excerpt"]
+                        .as_str()
+                        .unwrap()
+                        .lines()
+                        .any(|actual| actual == line)
+                );
+            }
+            assert!(
+                context["location"]["start_line"].as_u64()
+                    <= step["location"]["start_line"].as_u64()
+            );
+            assert!(
+                context["location"]["end_line"].as_u64() >= step["location"]["end_line"].as_u64()
+            );
+            if step["kind"] == "source" {
+                source_refs.insert(id.to_string());
+            }
+        }
+        assert_eq!(card["selected_anchor_id"], review["selected_anchor_id"]);
+        assert_eq!(card["truncation"]["decision_critical"], false);
+    }
+    assert_eq!(
+        source_refs.len(),
+        1,
+        "same source should be read once for independent sinks"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
