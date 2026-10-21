@@ -26,6 +26,10 @@ Authentication alone does not authorize the action on that object.
 2. If the subject comes from a token, session or API key, inspect the accepted
    branch that supplies it. Check verification before trusting an owner lookup.
 3. Follow delegation to the service that selects or mutates the object.
+   For a receiver method, locate its construction/type and import, then check
+   applicable implementations or overrides. A same-named method elsewhere is
+   a search result, not the invoked contract. If ownership stays unresolved,
+   name that missing edge rather than borrowing a nearby rejection.
    Compare the verified subject with that same resource.
 4. Check policy attachment, matching scope, ordering and whether rejection
    actually stops this operation. A policy name, annotation or framework

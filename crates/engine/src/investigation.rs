@@ -9282,12 +9282,8 @@ fn build_observation_reviews(
         context_truncated |= helpers_truncated;
         facts.append(&mut helpers);
         let helpers_milliseconds = helpers_started.elapsed().as_millis();
-        let marker_started = std::time::Instant::now();
-        let (mut marker_helpers, marker_helpers_truncated) =
-            review_admission::helper_facts(sources, &group, &facts, 4);
-        context_truncated |= marker_helpers_truncated;
-        facts.append(&mut marker_helpers);
-        let marker_milliseconds = marker_started.elapsed().as_millis();
+        // Reuse ownership-checked helper context above. A repository-wide
+        // terminal-name search cannot identify a receiver's mutation method.
         let second_started = std::time::Instant::now();
         let (mut second_hop, second_hop_truncated) = second_hop_review_facts(
             sources,
@@ -9307,13 +9303,12 @@ fn build_observation_reviews(
             profile.observation_pre_origin_milliseconds += pre_milliseconds;
             if pre_milliseconds >= 500 {
                 eprintln!(
-                    "review-bundles slow observation {}:{}: pre={} ms config={} ms helpers={} ms marker={} ms second={} ms",
+                    "review-bundles slow observation {}:{}: pre={} ms config={} ms helpers={} ms second={} ms",
                     group.path,
                     group.symbol,
                     pre_milliseconds,
                     configuration_milliseconds,
                     helpers_milliseconds,
-                    marker_milliseconds,
                     second_milliseconds,
                 );
             }

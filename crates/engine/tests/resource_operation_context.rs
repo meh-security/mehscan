@@ -502,3 +502,61 @@ async function configured() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn mutation_reviews_keep_unknown_receiver_contracts_despite_unrelated_same_named_helpers() {
+    let root = std::env::temp_dir().join(format!("mehscan-mutation-owners-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    for (file, source) in [
+        (
+            "unknown.ts",
+            "router.patch('/items/:id', async (req,res)=>{ await service.updateOne(req.params.id,req.body); res.end(); });",
+        ),
+        (
+            "decoy.ts",
+            "export function updateOne(){ throw Error('DECOY_CONTROL'); }",
+        ),
+        (
+            "owned.ts",
+            "import {updateEntry} from './helper'; router.patch('/items/:id', async (req,res)=>{ await updateEntry(req.body); res.end(); });",
+        ),
+        (
+            "helper.ts",
+            "export function updateEntry(value){return database.update(value);}",
+        ),
+    ] {
+        fs::write(root.join(file), source).unwrap();
+    }
+    let job = build_all_path_review_jobs(&root, Some(1), false).unwrap();
+    let marker = |file: &str| {
+        job.observation_reviews
+            .iter()
+            .find(|r| {
+                r.evidence.iter().any(|e| {
+                    e.location.path == file && e.rule_id == "framework-authorization-review-marker"
+                })
+            })
+            .unwrap()
+    };
+    let unknown = marker("unknown.ts");
+    assert!(
+        unknown.facts.iter().all(|f| f.location.path != "decoy.ts"),
+        "unrelated rejection cannot supply the service contract"
+    );
+    assert!(
+        unknown
+            .decision_facts
+            .unresolved
+            .iter()
+            .any(|q| q.contains("updateOne")),
+        "missing receiver contract must remain a question"
+    );
+    let owned = marker("owned.ts");
+    assert!(
+        owned.facts.iter().any(|f| f.location.path == "helper.ts"
+            && f.symbol == "updateEntry"
+            && f.excerpt.contains("database.update(value)")),
+        "owned imported helper must remain available"
+    );
+    fs::remove_dir_all(root).unwrap();
+}

@@ -616,7 +616,8 @@ fn fact_supplies_mutation_helper(fact: &ReviewNeighborhoodFact, handler: &str) -
     matches!(
         fact.role.as_str(),
         "review_admission_helper_context" | "helper_definition_context"
-    ) && supplied_lines < MAX_REVIEW_HELPER_LINES
+    ) && !fact.excerpt.trim().is_empty()
+        && supplied_lines < MAX_REVIEW_HELPER_LINES
 }
 
 pub(super) fn preferred_lookup_symbol(evidence: &[Evidence]) -> Option<String> {
@@ -655,73 +656,6 @@ fn preferred_capture(evidence: &[Evidence], names: &[&str]) -> Option<String> {
             .find(|value| is_helpful_reference_identifier(value))
             .map(str::to_string)
     })
-}
-
-pub(super) fn helper_facts(
-    sources: &RepositorySources,
-    group: &ObservationGroup,
-    existing: &[ReviewNeighborhoodFact],
-    limit: usize,
-) -> (Vec<ReviewNeighborhoodFact>, bool) {
-    if !group.evidence.iter().any(is_marker) {
-        return (Vec::new(), false);
-    }
-    let Ok(anchor_file) = sources.file(&group.path) else {
-        return (Vec::new(), false);
-    };
-    let handlers = group
-        .evidence
-        .iter()
-        .flat_map(|item| item.captures.iter())
-        .filter(|(name, _)| name.starts_with("related_handler_"))
-        .map(|(_, capture)| capture.text.as_str())
-        .collect::<BTreeSet<_>>();
-    let mut facts = Vec::new();
-    for handler in handlers {
-        for file in sources
-            .files
-            .values()
-            .filter(|file| file.language == anchor_file.language)
-            .filter(|file| !is_generic_mutation_reference(&handler) || file.path == group.path)
-            .filter(|file| file.source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES)
-        {
-            let spans = line_spans(&file.source);
-            for (line_index, (start, end)) in spans.iter().copied().enumerate() {
-                if authorization_definition_identifier(&file.source[start..end]).as_deref()
-                    != Some(handler)
-                {
-                    continue;
-                }
-                let end_index = textual_definition_end_with_limit(
-                    &file.source,
-                    &spans,
-                    line_index,
-                    MAX_REVIEW_HELPER_LINES,
-                );
-                let location =
-                    location_from_offsets(&file.path, &file.source, start, spans[end_index].1);
-                if facts_cover_location(existing, &location)
-                    || facts_cover_location(&facts, &location)
-                {
-                    continue;
-                }
-                if facts.len() == limit {
-                    return (facts, true);
-                }
-                facts.push(ReviewNeighborhoodFact {
-                    role: "review_admission_helper_context".to_string(),
-                    symbol: handler.to_string(),
-                    location,
-                    excerpt: file.source[start..spans[end_index].1].to_string(),
-                    evidence_id: group.anchor_evidence_ids.first().cloned(),
-                    provenance: textual_provenance(
-                        "bounded exact review-admission helper definition, lexical non-flow 1",
-                    ),
-                });
-            }
-        }
-    }
-    (facts, false)
 }
 
 fn server_mutation_review_marker(

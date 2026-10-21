@@ -3346,6 +3346,38 @@ fn compact_location_context(
 ) -> Option<serde_json::Value> {
     let anchor_path = anchor["location"]["path"].as_str()?;
     let anchor_line = anchor["location"]["start"]["line"].as_u64()?;
+    // Mutation markers cover an operation, not only the route-header line.
+    // Preserve a complete small range from its own packed source fact.
+    if anchor["tags"]
+        .as_array()
+        .is_some_and(|tags| tags.iter().any(|tag| tag == "review-admission-marker"))
+    {
+        for fact in facts.iter().filter(|fact| {
+            fact["role"] == "source_context"
+                && fact["location"]["path"].as_str() == Some(anchor_path)
+        }) {
+            let location = &anchor["location"];
+            if let (Some(start), Some(end), Some(base), Some(limit), Some(text)) = (
+                location["start"]["byte_offset"].as_u64(),
+                location["end"]["byte_offset"].as_u64(),
+                fact["location"]["start"]["byte_offset"].as_u64(),
+                fact["location"]["end"]["byte_offset"].as_u64(),
+                fact["excerpt"].as_str(),
+            ) && start >= base
+                && end <= limit
+                && end > start
+                && end - start <= 1_536
+                && limit.checked_sub(base) == Some(text.len() as u64)
+                && let Some(excerpt) = text.get((start - base) as usize..(end - base) as usize)
+            {
+                return Some(serde_json::json!({"evidence_id":anchor["id"],
+                    "location":{"path":anchor_path,"start_line":location["start"]["line"],"end_line":location["end"]["line"],
+                        "start_column":location["start"]["column"],"end_column":location["end"]["column"],
+                        "start_byte_offset":start,"end_byte_offset":end},
+                    "excerpt":excerpt,"truncated":false}));
+            }
+        }
+    }
     // Keep a complete, already-packed small operation. Re-clipping it around
     // the sink hides late checks and defeats shared-callable source reuse.
     let operation_role = match anchor["capability"].as_str() {
@@ -3449,7 +3481,11 @@ fn compact_location_context(
     let start = center.saturating_sub(2);
     let end = (center + 5).min(lines.len());
     let full_excerpt = lines[start..end].join("\n");
-    let truncated = full_excerpt.chars().count() > 700 || !covers(anchor_line);
+    let truncated = full_excerpt.chars().count() > 700
+        || !covers(anchor_line)
+        || anchor["location"]["end"]["line"]
+            .as_u64()
+            .is_some_and(|line| line >= first_line + end as u64);
     let excerpt = full_excerpt.chars().take(700).collect::<String>();
     Some(serde_json::json!({
         "evidence_id": fact["evidence_id"],
@@ -3686,7 +3722,13 @@ fn review_card_from_value(
         .collect();
     let path_steps = compact_path_steps(review);
     let mut truncation = review["truncation"].clone();
-    for step in &path_steps {
+    let anchor_view =
+        serde_json::json!({"context":context,"location":brief_location(&anchor["location"])});
+    for (step, role) in path_steps
+        .iter()
+        .map(|step| (step, "path_step_context"))
+        .chain(std::iter::once((&anchor_view, "selected_anchor_context")))
+    {
         if step["context"].is_null() || step["context"]["truncated"] == true {
             truncation["occurred"] = serde_json::json!(true);
             truncation["decision_critical"] = serde_json::json!(true);
@@ -3696,16 +3738,16 @@ fn review_card_from_value(
                 .entry("roles")
                 .or_insert_with(|| serde_json::json!([]));
             if let Some(roles) = roles.as_array_mut()
-                && !roles.iter().any(|role| role == "path_step_context")
+                && !roles.iter().any(|existing| existing == role)
             {
-                roles.push(serde_json::json!("path_step_context"));
+                roles.push(serde_json::json!(role));
             }
             lookups.insert(0, serde_json::json!({
                 "operation":"source",
                 "arguments":{"path":step["location"]["path"],
                     "start-line":step["location"]["start_line"].as_u64().unwrap_or(1).to_string(),
                     "end-line":step["location"]["end_line"].as_u64().unwrap_or(1).to_string()},
-                "purpose":"Inspect missing or clipped path-step context before relying on this relationship."
+                "purpose":"Inspect missing or clipped operation/path context before relying on this relationship."
             }));
         }
     }
@@ -4358,6 +4400,30 @@ mod tests {
         assert_eq!(
             super::compact_path_steps(&review)[0]["context"]["truncated"],
             true
+        );
+    }
+
+    #[test]
+    fn mutation_marker_view_keeps_its_exact_effect_and_refuses_unbound_source() {
+        let text = "router.patch('/', async(req) => {\n  const service = new Service(req.actor);\n\n\n\n\n\n\n  await service.updateOne(req.body);\n});";
+        let location = serde_json::json!({"path":"routes.ts","start":{"line":1,"column":1,"byte_offset":0},"end":{"line":10,"column":4,"byte_offset":text.len()}});
+        let anchor = serde_json::json!({"id":"selected","tags":["review-admission-marker"],"location":location});
+        let fact = serde_json::json!({"role":"source_context","evidence_id":"selected","location":location,"excerpt":text});
+        let context = compact_anchor_context(&[fact.clone()], &anchor).unwrap();
+        assert_eq!(context["excerpt"], text);
+        assert_eq!(context["truncated"], false);
+        assert_eq!(context["location"]["start_byte_offset"], 0);
+        let mut other = fact;
+        other["location"]["start"]["byte_offset"] = serde_json::json!(1);
+        other["location"]["end"]["byte_offset"] = serde_json::json!(text.len() + 1);
+        let fallback = compact_anchor_context(&[other], &anchor).unwrap();
+        assert!(fallback["location"]["start_byte_offset"].is_null());
+        assert_eq!(fallback["truncated"], true);
+        assert!(
+            !fallback["excerpt"]
+                .as_str()
+                .unwrap()
+                .contains("service.updateOne")
         );
     }
 
