@@ -613,6 +613,23 @@ pub(super) fn frontend_research_hint(
 }
 
 pub(super) fn comprehensive_hint(item: &Evidence) -> Option<ValueReviewHint> {
+    if item.capability == Capability::OutboundNetworkRequest
+        && item
+            .tags
+            .iter()
+            .any(|t| t == "url-shape:fixed-http-authority")
+        && item
+            .tags
+            .iter()
+            .any(|t| t == "outbound-request:unresolved-client-options")
+    {
+        return Some(ValueReviewHint {
+            reason: "fixed_destination_client_options_research".into(),
+            target: item.location.path.clone(),
+            assumption: "The observed URL has fixed authority; inspect the separately supplied client options/hooks before closing destination selection. No attacker-selected destination or safe client configuration is established.".into(),
+            depends_on: None,
+        });
+    }
     // An origin can decide the redirect verdict without making ordinary
     // navigation high-value. Keep the question and exact Comprehensive ID.
     if item

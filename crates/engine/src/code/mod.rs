@@ -101,6 +101,7 @@ pub(crate) use node_browser::unverified_dompurify_binding;
 mod node_context;
 mod node_express;
 mod node_fastify;
+mod node_http_clients;
 mod node_identity;
 pub(crate) mod node_modules;
 mod node_nest;

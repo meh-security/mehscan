@@ -12917,12 +12917,16 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
         return false;
     }
     if item.capability == Capability::OutboundNetworkRequest
-        && item
-            .tags
-            .iter()
-            .any(|t| t == "outbound-request:unresolved-proxy-policy")
+        && item.tags.iter().any(|t| {
+            matches!(
+                t.as_str(),
+                "outbound-request:unresolved-proxy-policy"
+                    | "outbound-request:unresolved-client-options"
+            )
+        })
     {
-        // A fixed request URL does not settle the separately selected proxy.
+        // A fixed URL does not settle a separately selected proxy, client
+        // hooks, prefix URL or destination-overriding request options.
         return false;
     }
     if item.capability == Capability::HtmlOutput
