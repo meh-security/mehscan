@@ -9,6 +9,9 @@ write does not prevent extraction.
 Trace **selector origin → resolved resource or destination → applicable
 constraint → read, write or request**. Compare the final target, not just a
 raw path or URL string.
+Check the complete expression: quoted fragments do not make an operand fixed.
+Concatenation and conditional/logical operators can select a different path or
+destination even when a literal prefix is visible.
 
 Establish where the request executes before calling an outbound request
 SSRF. A browser or desktop client fetch is not a server-side request merely

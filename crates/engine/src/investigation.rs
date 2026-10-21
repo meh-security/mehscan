@@ -12977,28 +12977,8 @@ fn is_non_actionable_fixed_sink_observation(item: &Evidence, sources: &Repositor
 // collections and unresolved options remain reviewable unless the AST literal
 // evaluator has proved their complete value.
 fn is_process_constant_operand(text: &str) -> bool {
-    let text = text.trim();
-    let Some(quote @ (b'\'' | b'"')) = text.as_bytes().first().copied() else {
-        return false;
-    };
-    let mut escaped = false;
-    for (i, b) in text.bytes().enumerate().skip(1) {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if b == b'\\' {
-            escaped = true;
-            continue;
-        }
-        if b == b'$' {
-            return false;
-        }
-        if b == quote {
-            return i == text.len() - 1;
-        }
-    }
-    false
+    complete_quoted_literal_contents(text.trim())
+        .is_some_and(|contents| !contains_unescaped(contents, b"$"))
 }
 
 /// A complete numeric operand cannot introduce HTML/script delimiters. This
@@ -14079,32 +14059,13 @@ fn is_fixed_selector_scalar(selector: &str, language: Option<Language>) -> bool 
             .is_some_and(|value| value.parse::<i128>().is_ok())
 }
 
-/// First/last quotes alone also match concatenations and executable expressions.
-/// Accept one complete literal only. Interpolating double quotes are deliberately
-/// conservative across the supported languages (notably Kotlin/PHP).
+/// Selector syntax must also exclude interpolation in languages with dollar
+/// expansion in double quotes; this is separate from complete token boundaries.
 fn is_single_selector_string(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    let Some(&quote) = bytes.first().filter(|&&b| matches!(b, b'\'' | b'"')) else {
-        return false;
-    };
-    let mut escaped = false;
-    for (index, &byte) in bytes.iter().enumerate().skip(1) {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if byte == b'\\' {
-            escaped = true;
-            continue;
-        }
-        if byte == quote {
-            return index + 1 == bytes.len();
-        }
-        if matches!(byte, b'\n' | b'\r') || quote == b'"' && byte == b'$' {
-            return false;
-        }
-    }
-    false
+    complete_quoted_literal_contents(value).is_some_and(|contents| {
+        !contains_unescaped(contents, b"\n\r")
+            && (value.as_bytes()[0] != b'"' || !contains_unescaped(contents, b"$"))
+    })
 }
 
 fn is_non_actionable_csrf_observation(item: &Evidence, sources: &RepositorySources) -> bool {
@@ -14728,10 +14689,42 @@ fn python_path_join(value: &str) -> Option<(&str, &str)> {
     (!leaf.contains(',')).then_some((base.trim(), leaf.trim()))
 }
 
+/// One complete ordinary quoted token, not an expression whose endpoints
+/// happen to be quotes. Interpolation policy belongs to each language/use.
+fn complete_quoted_literal_contents(value: &str) -> Option<&str> {
+    let quote = *value
+        .as_bytes()
+        .first()
+        .filter(|&&b| matches!(b, b'\'' | b'"'))?;
+    let mut escaped = false;
+    for (index, byte) in value.bytes().enumerate().skip(1) {
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == quote {
+            return (index + 1 == value.len()).then(|| &value[1..index]);
+        }
+    }
+    None
+}
+
+fn contains_unescaped(contents: &str, forbidden: &[u8]) -> bool {
+    let mut escaped = false;
+    for byte in contents.bytes() {
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if forbidden.contains(&byte) {
+            return true;
+        }
+    }
+    false
+}
+
 fn is_quoted_literal(value: &str) -> bool {
-    value.len() >= 2
-        && ((value.starts_with('"') && value.ends_with('"'))
-            || (value.starts_with('\'') && value.ends_with('\'')))
+    complete_quoted_literal_contents(value).is_some()
 }
 
 fn is_plain_identifier(value: &str) -> bool {
@@ -22703,6 +22696,40 @@ mod tests {
     }
 
     #[test]
+    fn quoted_literals_require_one_token_and_keep_use_specific_interpolation_policy() {
+        for value in [
+            "''",
+            "\"\"",
+            "'αβ'",
+            r#"'can\'t'"#,
+            r#""literal\\path""#,
+            r#""$literal""#,
+            "'line\nbreak'",
+        ] {
+            assert!(is_quoted_literal(value), "complete token rejected: {value}");
+        }
+        for value in [
+            "value",
+            "'unclosed",
+            "'pre' + value + 'post'",
+            "'first' if choice else 'second'",
+            "'/inside' && value || '/fallback'",
+            "'a'; action(); 'b'",
+            "'trailing\\'",
+            "\"mixed'",
+        ] {
+            assert!(
+                !is_quoted_literal(value),
+                "expression accepted as a literal: {value}"
+            );
+        }
+        assert!(is_process_constant_operand(r#""\$literal""#));
+        assert!(!is_process_constant_operand(r#""$dynamic""#));
+        assert!(is_single_selector_string(r#""\$literal""#));
+        assert!(!is_single_selector_string(r#""$dynamic""#));
+    }
+
+    #[test]
     fn fixed_resource_selectors_cover_scalar_map_and_predicate_shapes() {
         for selector in [
             "1",
@@ -24336,6 +24363,13 @@ mod tests {
         };
         assert!(observation_has_server_generated_fixed_root_path(
             &evidence,
+            std::slice::from_ref(&fact)
+        ));
+        let mut dynamic_root = evidence.clone();
+        dynamic_root[1].captures.get_mut("path").unwrap().text =
+            "path.join('ftp/' + selected + '/out/', pdfFile)".into();
+        assert!(!observation_has_server_generated_fixed_root_path(
+            &dynamic_root,
             std::slice::from_ref(&fact)
         ));
 

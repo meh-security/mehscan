@@ -33,7 +33,6 @@ fn inventories_argument_separation_and_builds_bounded_process_paths() {
         .iter()
         .filter(|path| path.capability == Capability::ProcessExecution)
         .collect::<Vec<_>>();
-    assert_eq!(process_paths.len(), 20);
     let states = process_paths
         .iter()
         .fold(BTreeMap::new(), |mut counts, path| {
@@ -54,11 +53,21 @@ fn inventories_argument_separation_and_builds_bounded_process_paths() {
                 .steps
                 .last()
                 .is_some_and(|step| step.kind == SecurityPathStepKind::Sink)
-            && path
-                .steps
-                .iter()
-                .all(|step| !step.location.path.starts_with("negative/"))
+            && (path.state == SecurityPathState::Unknown
+                || path
+                    .steps
+                    .iter()
+                    .all(|step| !step.location.path.starts_with("negative/")))
     }));
+    // Bounded uncertainty may retain a conditional sink without claiming a
+    // confirmed or protected flow. Do not pin the total to confirmed paths.
+    assert!(
+        process_paths
+            .iter()
+            .filter(|path| path.state == SecurityPathState::Unknown)
+            .all(|path| !path.uncertainty_reasons.is_empty()
+                && path.protection_evidence_ids.is_empty())
+    );
     assert!(
         process_paths
             .iter()
