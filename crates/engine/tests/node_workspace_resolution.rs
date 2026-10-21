@@ -4,8 +4,12 @@ use std::{fs, path::PathBuf};
 struct Fixture(PathBuf);
 impl Fixture {
     fn new(files: &[(&str, &str)]) -> Self {
-        let root =
-            std::env::temp_dir().join(format!("mehscan-node-workspaces-{}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "mehscan-node-workspaces-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         fs::create_dir_all(&root).unwrap();
         for (path, source) in files {
             let path = root.join(path);
@@ -247,4 +251,89 @@ fn workspace_conditions_aliases_and_barrels_connect_only_real_selected_exports()
     )
     .unwrap();
     assert!(job.reviews.iter().flat_map(|review| &review.facts).any(|fact| fact.location.path == "packages/danger/exec.ts" && fact.symbol == "execute"), "reviewer helper context must follow the same TS workspace alias");
+}
+
+#[test]
+fn missing_shared_tsconfig_does_not_break_relative_helpers_or_invent_aliases() {
+    let fixture = Fixture::new(&[
+        ("tsconfig.json", r#"{"extends":"@uninstalled/config/node"}"#),
+        (
+            "helper.ts",
+            "import cp from 'node:child_process'; export function run(value:string) { cp.exec(value); }",
+        ),
+        ("barrel.ts", "export {run as launch} from './helper.js';"),
+        (
+            "direct.ts",
+            "import {run} from './helper.js'; export function handle(req:any) { run(req.query.command); }",
+        ),
+        (
+            "positive.ts",
+            "import {launch as invoke} from './barrel.js'; export function handle(req:any) { invoke(req.query.command); }",
+        ),
+        (
+            "helper.cjs",
+            "const cp = require('node:child_process'); function run(value) { cp.exec(value); } module.exports = {run};",
+        ),
+        (
+            "positive.js",
+            "const {run} = require('./helper.cjs'); function handle(req) { run(req.query.command); }",
+        ),
+        (
+            "clean.ts",
+            "export function run(value:string) { return 'constant'; }",
+        ),
+        (
+            "negative.ts",
+            "import {run} from './clean.js'; export function handle(req:any) { run(req.query.command); }",
+        ),
+        (
+            "alias.ts",
+            "import {run} from '@helpers/helper'; export function handle(req:any) { run(req.query.command); }",
+        ),
+        (
+            "missing.ts",
+            "import {run} from './dist/helper.js'; export function handle(req:any) { run(req.query.command); }",
+        ),
+    ]);
+    let scan = mehscan_engine::scan_path(&fixture.0).unwrap();
+    let flows = |file: &str| {
+        scan.security_paths.iter().any(|p| {
+            p.capability == Capability::ProcessExecution
+                && p.steps.last().is_some_and(|s| s.location.path == file)
+        })
+    };
+    for file in ["positive.ts", "positive.js", "direct.ts"] {
+        assert!(
+            flows(file),
+            "missing relative helper flow in {file}: {:?}",
+            scan.diagnostics
+        );
+    }
+    for file in ["negative.ts", "alias.ts", "missing.ts"] {
+        assert!(!flows(file), "invented helper flow in {file}");
+    }
+    assert!(
+        scan.diagnostics
+            .iter()
+            .any(|d| d.message.contains("./dist/helper.js"))
+    );
+    let inventory =
+        mehscan_engine::investigation::build_review_inventory(&fixture.0, false).unwrap();
+    let ids = inventory
+        .entries
+        .iter()
+        .filter(|e| e.path == "direct.ts")
+        .map(|e| e.review_id.clone())
+        .collect();
+    let job = mehscan_engine::investigation::build_selected_review_jobs(
+        &fixture.0, &inventory, &ids, None,
+    )
+    .unwrap();
+    assert!(
+        job.reviews
+            .iter()
+            .flat_map(|review| &review.facts)
+            .any(|fact| { fact.location.path == "helper.ts" && fact.symbol == "run" }),
+        "reviewer lookup must follow the same direct relative import without the missing config"
+    );
 }
