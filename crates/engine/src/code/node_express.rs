@@ -114,6 +114,28 @@ pub(crate) fn add_typed_express_sources<'tree>(
                 }
             }
         }
+        // The legacy req rules cover collection members, not the collection
+        // itself. Keep whole-collection reads behind the imported type boundary
+        // and stop at writes rather than inferring the middleware's new value.
+        let collection_writes = function
+            .dfs()
+            .filter(|node| {
+                matches!(
+                    node.kind().as_ref(),
+                    "assignment_expression"
+                        | "augmented_assignment_expression"
+                        | "update_expression"
+                ) || node.kind().as_ref() == "unary_expression"
+                    && node
+                        .field("operator")
+                        .is_some_and(|operator| operator.text() == "delete")
+            })
+            .filter_map(|node| {
+                let target = node.field("left").or_else(|| node.field("argument"))?;
+                let access = super::security_paths::node_static_access(&target, 0)?;
+                Some((node.range().start, access))
+            })
+            .collect::<Vec<_>>();
         for node in function.dfs().filter(|node| {
             matches!(
                 node.kind().as_ref(),
@@ -123,9 +145,42 @@ pub(crate) fn add_typed_express_sources<'tree>(
             let Some((request, field)) = request_member_root(&node, &request_objects) else {
                 continue;
             };
-            // Legacy rules cover req collection fields, but not URL scalars.
-            // Keep those scalars behind the imported Express type boundary.
-            if request == "req" && field != "session" && url_metadata_field(field).is_none() {
+            let collection = super::security_paths::node_static_access(&node, 0).filter(|access| {
+                access.len() == 2
+                    && matches!(field, "body" | "query" | "params" | "headers" | "cookies")
+            });
+            if let Some(access) = &collection {
+                let written = collection_writes.iter().any(|(at, written)| {
+                    *at < node.range().start
+                        && (access.starts_with(written) || written.starts_with(access))
+                });
+                let assignment_target =
+                    node.ancestors()
+                        .take_while(|n| n.range() != function.range())
+                        .any(|n| {
+                            matches!(
+                                n.kind().as_ref(),
+                                "assignment_expression"
+                                    | "augmented_assignment_expression"
+                                    | "update_expression"
+                            ) && n.field("left").or_else(|| n.field("argument")).is_some_and(
+                                |left| {
+                                    left.range().start <= node.range().start
+                                        && node.range().end <= left.range().end
+                                },
+                            )
+                        });
+                if written || assignment_target {
+                    continue;
+                }
+            }
+            // Legacy rules cover req collection fields, but not whole
+            // collections or URL scalars. Never seed a schema's return here.
+            if request == "req"
+                && field != "session"
+                && url_metadata_field(field).is_none()
+                && collection.is_none()
+            {
                 continue;
             }
             if node.parent().is_some_and(|parent| {
@@ -964,7 +1019,12 @@ fn push_member_source<'tree>(
             ("name".to_string(), text_capture(path, node, field)),
             ("request".to_string(), text_capture(path, node, request)),
         ]),
-        if url_metadata_field(field).is_some() {
+        if url_metadata_field(field).is_some()
+            || super::security_paths::node_static_access(node, 0).is_some_and(|access| {
+                access.len() == 2
+                    && matches!(field, "body" | "query" | "params" | "headers" | "cookies")
+            })
+        {
             vec![
                 "renamed-request",
                 "typed-request",
