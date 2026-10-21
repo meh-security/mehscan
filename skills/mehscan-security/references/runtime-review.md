@@ -25,6 +25,9 @@ Check actor, producer, branch, operand, transformations, effective controls and
 effect for each relationship. Shared facts are not shared verdicts. Reuse supplied
 source and query results; fetch only the next missing edge. Navigation searches
 are bounded; inspect their truncation/provenance and read named decisive source.
+Batch already-known independent lookups. Wait for discovery results before
+choosing dependent source reads; copy returned paths and line ranges rather than
+guessing them. A definition locator is navigation, not an inspected implementation.
 
 Research is optional for an already settled chain. Give each query its missing-
 edge purpose. Known local consumers/helpers are available research, not missing

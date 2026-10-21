@@ -123,6 +123,14 @@ than rereading equivalent distributions.
   can matter without a mutation. Inspect earlier middleware on every matching
   route prefix to see whether it replaces request identity fields before the
   selected handler; compare the final field value used in the query.
+  Before closing on delegated protection, inspect the applicable policy and its
+  rejection behavior for the selected actor, resource and action. A call named
+  `authorize` or `can`, or an actor ID passed to a finder, does not establish that
+  protection. Finder options, association loading and policy context can preload
+  data without restricting which row is selected. Read the effective filter or
+  the invoked guard's implementation; cite that behavior, not only its call site.
+  If this decisive code remains unread or unresolved within the budget, retain
+  the specific gap rather than returning a safe verdict from the names/arguments.
   `result_use:boolean_or_null_test_only` describes complete bounded local uses
   of a lookup result, not an ownership control or proof the query was awaited.
   Review the observable error/status difference and any credential or mutation
