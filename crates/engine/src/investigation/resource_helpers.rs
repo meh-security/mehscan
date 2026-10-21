@@ -1,4 +1,4 @@
-//! Bounded local call targets for resource packets. No receiver dispatch or flow inference.
+//! Bounded local call targets for review packets. No receiver dispatch or flow inference.
 use super::*;
 
 type N<'a> = ast_grep_core::Node<'a, StrDoc<SupportLang>>;
@@ -11,6 +11,7 @@ struct Target {
 
 pub(super) struct LocalHelpers {
     targets: Vec<Target>,
+    owners: Vec<std::ops::Range<usize>>,
 }
 
 fn callable(node: &N<'_>) -> bool {
@@ -51,9 +52,13 @@ impl LocalHelpers {
             BTreeMap::<String, Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>>::new();
         let mut blocked = BTreeSet::new();
         let mut calls = Vec::new();
+        let mut owners = Vec::new();
         // One traversal per selected file, shared across all its resource questions.
         for node in root.dfs() {
             let kind = node.kind();
+            if callable(&node) || kind.as_ref() == "method_definition" {
+                owners.push(node.range());
+            }
             if kind.as_ref() == "ERROR" || node.is_missing() || kind.as_ref() == "with_statement" {
                 return None;
             }
@@ -166,7 +171,21 @@ impl LocalHelpers {
             })
             .collect::<Vec<_>>();
         targets.sort_by_key(|target| target.call.start);
-        Some(Self { targets })
+        Some(Self { targets, owners })
+    }
+
+    pub(super) fn owner_location(&self, file: &SourceFile, anchor: &Location) -> Option<Location> {
+        let range = self
+            .owners
+            .iter()
+            .filter(|r| r.start <= anchor.start.byte_offset && r.end >= anchor.end.byte_offset)
+            .min_by_key(|r| r.end - r.start)?;
+        Some(location_from_offsets(
+            &file.path,
+            &file.source,
+            range.start,
+            range.end,
+        ))
     }
 
     pub(super) fn facts(

@@ -1844,6 +1844,7 @@ fn build_path_review_jobs_internal(
         .saturating_sub(selected_candidate_start)
         .min(max_reviews);
     let mut reviews = Vec::new();
+    let mut exact_local_helpers = BTreeMap::new();
     for candidate in candidates
         .into_iter()
         .skip(selected_candidate_start)
@@ -1962,6 +1963,18 @@ fn build_path_review_jobs_internal(
         );
         context_truncated |= captured_definitions_truncated;
         facts.append(&mut captured_definitions);
+        if let Some(sink) = evidence_by_id.get(candidate.sink.id.as_str()) {
+            let (mut controls, cut) = exact_local_control_facts(
+                &sources,
+                &mut exact_local_helpers,
+                &candidate.sink.location,
+                std::iter::once(*sink),
+                &facts,
+                2,
+            );
+            context_truncated |= cut;
+            facts.append(&mut controls);
+        }
         if candidate.sink.rule_id == "python-source-file-content-write"
             && let Some(sink) = evidence_by_id.get(candidate.sink.id.as_str())
         {
@@ -9327,6 +9340,16 @@ fn build_observation_reviews(
         }
         context_truncated |= captured_definitions_truncated;
         facts.append(&mut captured_definitions);
+        let (mut controls, cut) = exact_local_control_facts(
+            sources,
+            &mut resource_helpers,
+            anchor,
+            group.evidence.iter(),
+            &facts,
+            2,
+        );
+        context_truncated |= cut;
+        facts.append(&mut controls);
         let php_context = php_contexts.entry(group.path.clone()).or_insert_with(|| {
             if file.language != Some(Language::Php)
                 || file.source.len() > MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES
@@ -10084,6 +10107,62 @@ fn php_request_binding_review_facts(
         });
     }
     (facts, false)
+}
+
+fn exact_local_control_facts<'a>(
+    sources: &RepositorySources,
+    cache: &mut BTreeMap<String, Option<resource_helpers::LocalHelpers>>,
+    primary: &Location,
+    evidence: impl Iterator<Item = &'a Evidence>,
+    existing: &[ReviewNeighborhoodFact],
+    limit: usize,
+) -> (Vec<ReviewNeighborhoodFact>, bool) {
+    let mut locations = vec![primary.clone()];
+    for item in evidence {
+        if item.capability == Capability::ResourceAccess {
+            // Resource packets already use their exact operation neighborhood;
+            // do not widen those proven read-planning boundaries to the owner.
+            return (Vec::new(), false);
+        }
+        locations.extend(
+            item.captures
+                .iter()
+                .filter(|(key, _)| key.ends_with("_definition"))
+                .map(|(_, c)| c.location.clone()),
+        );
+    }
+    let mut facts = Vec::new();
+    let mut truncated = false;
+    for (i, location) in locations.iter().enumerate() {
+        let Ok(file) = sources.file(&location.path) else {
+            continue;
+        };
+        let Some(index) = cache
+            .entry(file.path.clone())
+            .or_insert_with(|| resource_helpers::LocalHelpers::build(file))
+            .as_ref()
+        else {
+            continue;
+        };
+        let operation = if i == 0 {
+            index
+                .owner_location(file, location)
+                .unwrap_or_else(|| location.clone())
+        } else {
+            location.clone()
+        };
+        let mut covered = existing.to_vec();
+        covered.extend(facts.iter().cloned());
+        let (mut local, cut) = index.facts(
+            file,
+            &operation,
+            &covered,
+            limit.saturating_sub(facts.len()),
+        );
+        truncated |= cut;
+        facts.append(&mut local);
+    }
+    (facts, truncated)
 }
 
 fn observation_helper_definition_facts(
@@ -15778,14 +15857,47 @@ fn collect_php_boundary_configuration_tokens(rule: &str, output: &mut BTreeSet<S
 }
 
 fn collect_configuration_tokens(source: &str, output: &mut BTreeSet<String>) {
-    for token in source.split(|character: char| {
-        !(character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | '-'))
-    }) {
-        let token = token.trim_matches(['.', '-']);
-        if is_configuration_token(token) {
-            output.insert(token.to_ascii_lowercase());
+    // Nearby routes, markup attributes and local option names are not links
+    // to repository-wide configuration. Search only observed config accesses.
+    for line in source
+        .lines()
+        .filter(|line| looks_like_configuration_reference(line))
+    {
+        for token in line.split(|character: char| {
+            !(character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | '-'))
+        }) {
+            let token = token.trim_matches(['.', '-']);
+            if is_configuration_token(token) && !generic_configuration_word(token) {
+                output.insert(token.to_ascii_lowercase());
+                if let Some(terminal) = token
+                    .rsplit('.')
+                    .next()
+                    .filter(|t| is_configuration_token(t) && !generic_configuration_word(t))
+                {
+                    output.insert(terminal.to_ascii_lowercase());
+                }
+            }
         }
     }
+}
+
+fn generic_configuration_word(token: &str) -> bool {
+    matches!(
+        token.to_ascii_lowercase().as_str(),
+        "enabled"
+            | "disabled"
+            | "enable"
+            | "disable"
+            | "verify"
+            | "secure"
+            | "unsafe"
+            | "allow"
+            | "proxy"
+            | "shell"
+            | "mode"
+            | "debug"
+            | "feature"
+    )
 }
 
 fn is_configuration_token(token: &str) -> bool {
@@ -20275,7 +20387,7 @@ fn configuration_facts(
         let config_file = is_configuration_file(&file.path);
         let candidate_file = candidate_paths.contains(file.path.as_str());
         let normalized_path = file.path.replace('\\', "/").to_ascii_lowercase();
-        if !candidate_file && normalized_path.starts_with(".github/workflows/") {
+        if !candidate_file && normalized_path.starts_with(".github/") {
             continue;
         }
         if !candidate_file && is_nonproduction_review_context_path(&file.path) {
@@ -20372,6 +20484,22 @@ fn looks_like_configuration_reference(line: &str) -> bool {
     ]
     .iter()
     .any(|marker| lower.contains(marker))
+        || lower
+            .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '[')))
+            .any(|access| {
+                [
+                    "config.",
+                    "config[",
+                    "configuration.",
+                    "settings.",
+                    "settings[",
+                    "this.config.",
+                    "this.settings.",
+                    "this._config.",
+                ]
+                .iter()
+                .any(|prefix| access.starts_with(prefix))
+            })
 }
 
 fn is_configuration_file(path: &str) -> bool {
