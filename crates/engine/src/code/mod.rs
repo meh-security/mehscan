@@ -96,6 +96,7 @@ mod native_signedness;
 mod native_state;
 mod native_toctou;
 mod node_api_boundaries;
+pub(crate) use node_api_boundaries::stable_binding as stable_js_import_binding;
 mod node_browser;
 pub(crate) use node_browser::unverified_dompurify_binding;
 mod node_context;

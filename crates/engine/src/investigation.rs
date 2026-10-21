@@ -39,6 +39,7 @@ use mehscan_core::{
 };
 
 mod angular;
+mod caller_examples;
 mod csharp_application_context;
 mod frontend;
 mod practical_admission;
@@ -1845,6 +1846,7 @@ fn build_path_review_jobs_internal(
         .min(max_reviews);
     let mut reviews = Vec::new();
     let mut exact_local_helpers = BTreeMap::new();
+    let mut caller_examples = caller_examples::Examples::default();
     for candidate in candidates
         .into_iter()
         .skip(selected_candidate_start)
@@ -1974,6 +1976,9 @@ fn build_path_review_jobs_internal(
             );
             context_truncated |= cut;
             facts.append(&mut controls);
+            let (mut callers, cut) = caller_examples.facts(&sources, sink, &facts);
+            context_truncated |= cut;
+            facts.append(&mut callers);
         }
         if candidate.sink.rule_id == "python-source-file-content-write"
             && let Some(sink) = evidence_by_id.get(candidate.sink.id.as_str())
@@ -5194,7 +5199,22 @@ fn project_investigation_facts(
             && fact.location.end.byte_offset >= anchor.end.byte_offset
     };
     let mut order = (0..facts.len()).collect::<Vec<_>>();
-    order.sort_by_key(|&index| !primary(&facts[index]));
+    order.sort_by_key(|&index| {
+        let fact = &facts[index];
+        if primary(fact) {
+            0
+        } else if fact.role == "caller_context" {
+            1
+        } else if fact.role == "caller_bridge_context" {
+            2
+        } else if fact.role == "helper_definition_context"
+            && fact.provenance.resolution == Resolution::Ast
+        {
+            3
+        } else {
+            4
+        }
+    });
     let mut retained_bytes = 0usize;
     let angular_packet = facts.iter().any(|fact| {
         matches!(
@@ -5252,6 +5272,9 @@ fn project_investigation_facts(
         // into anchor evidence or let them consume the small card's source budget.
         let allowed = match fact.role.as_str() {
             "source_context" | "sink_context" | "anchor_context" => 1_536,
+            "caller_context" => 512,
+            "caller_bridge_context" => 384,
+            "helper_definition_context" if fact.provenance.resolution == Resolution::Ast => 512,
             "configuration_context" | "feature_gate_policy_context" | "framework_context" => 768,
             _ if fact
                 .evidence_id
@@ -5919,7 +5942,40 @@ fn path_review_investigation(
         });
         plan.lookup_requests.truncate(2);
     }
+    route_caller_examples(&mut plan, facts);
     plan
+}
+
+// Incoming calls are independent investigation leads. Do not search a generic
+// wrapper parameter repository-wide or let one safe consumer settle the others.
+fn route_caller_examples(plan: &mut ReviewInvestigationPlan, facts: &[ReviewNeighborhoodFact]) {
+    if plan.missing_facts.is_empty() {
+        return;
+    }
+    let callers = facts.iter().filter(|f| f.role == "caller_context").take(3);
+    let mut requests = Vec::new();
+    for caller in callers {
+        let question = format!(
+            "For the separate caller at {}:{}, inspect {}: establish the actual argument's producer, intended authority and applicable controls. This example does not establish other callers safe or prove a taint flow.",
+            caller.location.path, caller.location.start.line, caller.symbol
+        );
+        plan.missing_facts.push(question.clone());
+        if requests.len() < 2 {
+            requests.push(ReviewLookupRequest {
+                operation: "source".into(),
+                arguments: [
+                    ("path".into(), caller.location.path.clone()),
+                    ("start-line".into(), caller.location.start.line.saturating_sub(15).max(1).to_string()),
+                    ("end-line".into(), caller.location.end.line.saturating_add(25).to_string()),
+                ].into(),
+                questions: vec![question],
+                purpose: "Inspect this resolved consumer independently, then follow its argument or control only as needed; use supplied forwarding locators to reconnect it to the shared operation. Caller examples are incomplete.".into(),
+            });
+        }
+    }
+    if !requests.is_empty() {
+        plan.lookup_requests = requests;
+    }
 }
 
 fn observation_review_investigation(
@@ -5991,7 +6047,7 @@ fn observation_review_investigation(
         })
         .map(|fact| &fact.location)
         .unwrap_or(anchor);
-    review_investigation_plan(
+    let mut plan = review_investigation_plan(
         evidence
             .first()
             .map(|item| item.capability)
@@ -6000,7 +6056,9 @@ fn observation_review_investigation(
         truncation,
         lookup_anchor,
         lookup_symbol.as_deref(),
-    )
+    );
+    route_caller_examples(&mut plan, facts);
+    plan
 }
 
 /// A C++ wrapper's parameter is a poor repository-reference target. An exact
@@ -9224,6 +9282,7 @@ fn build_observation_reviews(
     }
     let mut php_contexts = BTreeMap::new();
     let mut resource_helpers = BTreeMap::new();
+    let mut caller_examples = caller_examples::Examples::default();
     let mut reviews = Vec::new();
     for group in groups {
         let group_started = std::time::Instant::now();
@@ -9350,6 +9409,11 @@ fn build_observation_reviews(
         );
         context_truncated |= cut;
         facts.append(&mut controls);
+        if let Some(item) = group.evidence.iter().find(|e| e.location == *anchor) {
+            let (mut callers, cut) = caller_examples.facts(sources, item, &facts);
+            context_truncated |= cut;
+            facts.append(&mut callers);
+        }
         let php_context = php_contexts.entry(group.path.clone()).or_insert_with(|| {
             if file.language != Some(Language::Php)
                 || file.source.len() > MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES

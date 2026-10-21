@@ -188,6 +188,12 @@ impl LocalHelpers {
         ))
     }
 
+    pub(super) fn calls(
+        &self,
+    ) -> impl Iterator<Item = (&std::ops::Range<usize>, &std::ops::Range<usize>)> {
+        self.targets.iter().map(|t| (&t.call, &t.definition))
+    }
+
     pub(super) fn facts(
         &self,
         file: &SourceFile,

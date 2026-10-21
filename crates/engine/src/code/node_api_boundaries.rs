@@ -529,7 +529,7 @@ fn push_request_metadata<'a>(
 
 // Conservative local identity check. A competing declaration or assignment is
 // unresolved; this pass does not guess which dynamic receiver wins.
-pub(super) fn stable_binding(root: &Ast<'_>, identifier: &Ast<'_>) -> bool {
+pub(crate) fn stable_binding(root: &Ast<'_>, identifier: &Ast<'_>) -> bool {
     let name = identifier.text();
     let declarations = root
         .dfs()
