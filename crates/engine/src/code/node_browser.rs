@@ -1173,6 +1173,11 @@ fn shadowed_browser_globals(root: &Node<'_, StrDoc<SupportLang>>) -> BTreeSet<St
             _ => None,
         })
         .filter_map(|name| {
+            if name.text().as_ref() == "location"
+                && !super::node_identity::module_declaration(&name)
+            {
+                return None;
+            }
             let name = normalized(&name.text());
             GLOBALS.contains(&name.as_str()).then_some(name)
         })

@@ -1693,6 +1693,7 @@ pub(crate) fn scan_source(
     if let Some(context) = &php_context {
         super::php::add_operand_facts(path, &php_operand_nodes, context, &literals, &mut evidence);
     }
+    super::node_identity::correct(language, &root, &symbol_environment, &mut evidence);
     super::node_operands::annotate(language, source, &root, &mut evidence);
     super::filesystem_operands::annotate(language, &root, &literals, &mut evidence);
     super::python_operands::annotate(language, &root, &mut evidence);
