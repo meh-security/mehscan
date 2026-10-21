@@ -33,6 +33,20 @@ class ArtifactCopy(unittest.TestCase):
                 worker.copy_review_files(source, root / "rejected")
 
 
+class LookupFailures(unittest.TestCase):
+    def test_only_exact_current_source_not_found_is_recoverable(self):
+        query = {"tool": "source", "arguments": {"path": "missing.ts"}}
+        message = 'error: text file "missing.ts" was not found under the scan root\n'
+        result = worker.missing_source_result(query, worker.CommandFailure(2, message))
+        self.assertEqual(result["error"]["code"], "not_found")
+        self.assertEqual(result["results"], [])
+        for code, diagnostic in [(1, message), (2, 'permission denied'), (2, message + 'other failure'),
+                                 (2, message.replace('missing.ts', 'another.ts'))]:
+            with self.subTest(code=code, diagnostic=diagnostic):
+                self.assertIsNone(worker.missing_source_result(query, worker.CommandFailure(code, diagnostic)))
+        self.assertIsNone(worker.missing_source_result({**query, "tool": "base_source"}, worker.CommandFailure(2, message)))
+
+
 class Worker(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="mehscan-worker-")
@@ -305,6 +319,39 @@ else:
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         report = json.loads((self.base / "worker/findings.json").read_text())
         self.assertEqual(report["decision_records"][0]["response"]["investigation"]["journal_summary"]["query_count"], 1)
+
+    def test_missing_source_returns_negative_lookup_then_discovers_and_reads_real_source(self):
+        normal = self.base / "normal.py"
+        normal.write_text(self.reviewer.read_text(), encoding="utf-8")
+        self.reviewer.write_text('import json,sys,subprocess\ntask=json.load(sys.stdin)\n'
+            'round=task["research"]["round"]\nid=task["review_ids"][0]\n'
+            'if round == 0:\n'
+            ' print(json.dumps({"research":[{"tool":"source","review_id":id,"arguments":'
+            '{"path":"missing.js","start_line":1,"end_line":10}}]}))\n'
+            'elif round == 1:\n'
+            ' result=task["research"]["results"][0]["result"]\n'
+            ' assert result["error"]["code"] == "not_found" and result["results"] == []\n'
+            ' print(json.dumps({"research":[{"tool":"paths","review_id":id,"arguments":{"name":"app.js"}}]}))\n'
+            'elif round == 2:\n'
+            ' assert "app.js" in json.dumps(task["research"]["results"])\n'
+            ' print(json.dumps({"research":[{"tool":"source","review_id":id,"arguments":'
+            '{"path":"app.js","start_line":1,"end_line":1}}]}))\n'
+            'else:\n'
+            ' assert "eval" in json.dumps(task["research"]["results"])\n'
+            ' print(subprocess.check_output([sys.executable,' + repr(str(normal)) + '],input=json.dumps(task),text=True))\n',
+            encoding="utf-8")
+        result = self.invoke(extra=["--phase", "native"])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        directory = self.base / "worker"
+        audit = [json.loads(line) for line in (directory / "research.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([entry["query"]["tool"] for entry in audit], ["source", "paths", "source"])
+        self.assertEqual(audit[0]["result"]["error"]["code"], "not_found")
+        journal = [json.loads(line) for line in (directory / "journals" / (self.ids[0] + ".jsonl")).read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(journal[0]["status"], "error")
+        self.assertEqual(journal[1]["status"], "ok")
+        record = json.loads((directory / "worker.json").read_text(encoding="utf-8"))
+        self.assertEqual(record["status"], "admitted")
+        self.assertEqual(record["research_queries"], 3)  # The failed read is not free research.
 
     def test_progress_uses_short_handles_but_saved_proof_is_full_current_identity(self):
         original = self.reviewer.read_text()

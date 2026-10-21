@@ -14,6 +14,31 @@ import review_context as context
 _cancelled = False
 
 
+class CommandFailure(RuntimeError):
+    def __init__(self, returncode, stderr):
+        super().__init__("review command failed")
+        self.returncode = returncode
+        self.stderr = stderr
+
+
+def missing_source_result(query, error):
+    """Recover only the native reader's exact missing-current-file outcome.
+
+    Arguments and source scope have already been validated. Never forward raw
+    subprocess diagnostics or treat other read/runtime failures as empty facts.
+    """
+    if query["tool"] != "source" or error.returncode != 2:
+        return None
+    path = query["arguments"]["path"]
+    expected = 'error: text file ' + json.dumps(path, ensure_ascii=False) + ' was not found under the scan root'
+    if error.stderr.strip() != expected:
+        return None
+    return {"operation": "source_lookup_error", "results": [],
+            "error": {"code": "not_found", "path": path,
+                      "message": "The requested text file was not found. Discover its actual path with paths or references; "
+                                 "a failed guessed path does not prove a control or implementation is absent."}}
+
+
 def cancel(signum, frame):
     global _cancelled
     _cancelled = True
@@ -125,12 +150,12 @@ def execute(command, cwd, env, timeout, payload=None):
             if time.monotonic() >= deadline:
                 raise TimeoutError("review command timed out")
             try:
-                output, _ = process.communicate(input=payload if not supplied else None, timeout=0.25)
+                output, diagnostic = process.communicate(input=payload if not supplied else None, timeout=0.25)
                 break
             except subprocess.TimeoutExpired:
                 supplied = True
         if process.returncode:
-            raise RuntimeError("review command failed")
+            raise CommandFailure(process.returncode, diagnostic)
         if len(output) > 8 * 1024 * 1024:
             raise ValueError("reviewer output exceeds bounded intake")
         return json.loads(output) if output.strip() else None
@@ -205,8 +230,10 @@ def run(args):
         if digest_file(scanner) != scanner_hash:
             raise ValueError("trusted scanner changed during review")
         started = time.monotonic()
-        value = execute([str(scanner), *arguments], output, native_env, args.timeout if timeout is None else timeout)
-        timings.append({"operation": "/".join(arguments[:2]), "elapsed_ms": round((time.monotonic() - started) * 1000)})
+        try:
+            value = execute([str(scanner), *arguments], output, native_env, args.timeout if timeout is None else timeout)
+        finally:
+            timings.append({"operation": "/".join(arguments[:2]), "elapsed_ms": round((time.monotonic() - started) * 1000)})
         return value
 
     package_path = output / "work.json"
@@ -429,7 +456,12 @@ def run(args):
                     result = fact["result"]
                 else:
                     prepared_result = source_lookup(query, remaining()) if query["tool"] in ("source", "base_source") else None
-                    result = prepared_result if prepared_result is not None else native(arguments, remaining())
+                    try:
+                        result = prepared_result if prepared_result is not None else native(arguments, remaining())
+                    except CommandFailure as error:
+                        result = missing_source_result(query, error)
+                        if result is None:
+                            raise
                     origin_kind = "preparation" if result.get("operation") == "prepared_source" else "pinned_base" if result.get("operation") == "get_base_source" else task["kind"]
                     fact = {"result_id": "mehscanQueryFact/v1:" + context.digest([key, result]),
                             "origin_kind": origin_kind,
