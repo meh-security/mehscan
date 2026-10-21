@@ -127,6 +127,8 @@ mod scanner;
 #[path = "sql_flow.rs"]
 mod security_paths;
 mod symbols;
+mod typescript_syntax;
+pub(crate) use typescript_syntax::has_unsupported_errors as has_unsupported_syntax_errors;
 mod url_shape;
 pub(crate) mod vue;
 mod webforms;

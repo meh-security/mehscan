@@ -20941,7 +20941,7 @@ pub fn run_structural_query(
         };
         let ast = AstGrep::doc(document);
         let root = ast.root();
-        if root.dfs().any(|node| node.is_error() || node.is_missing()) {
+        if crate::code::has_unsupported_syntax_errors(&root, language) {
             if requested_path.is_some() {
                 return Err(EngineError(format!(
                     "could not run structural query on {}: parser produced ERROR or missing nodes",
@@ -21158,10 +21158,7 @@ fn parsed_native_file(
         }
     };
     let ast = AstGrep::doc(document);
-    let recovered = ast
-        .root()
-        .dfs()
-        .any(|node| node.is_error() || node.is_missing());
+    let recovered = crate::code::has_unsupported_syntax_errors(&ast.root(), language);
     if recovered {
         parse_recovered_files.push(file.path.clone());
     }
@@ -21441,7 +21438,7 @@ impl OutlineExtractors {
             .map_err(|error| EngineError(format!("could not parse {}: {error}", file.path)))?;
         let ast = AstGrep::doc(document);
         let root = ast.root();
-        if root.dfs().any(|node| node.is_error() || node.is_missing()) {
+        if crate::code::has_unsupported_syntax_errors(&root, language) {
             return Err(EngineError(format!(
                 "could not build outline for {}: parser produced ERROR or missing nodes",
                 file.path

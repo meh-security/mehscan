@@ -154,7 +154,7 @@ pub(crate) fn scan_source(
         scan_secrets_if_enabled(scan_secrets, path, source, &comments, secret_allowlist);
     let parse_issue_ranges = root
         .dfs()
-        .filter(|node| node.is_error() || node.is_missing())
+        .filter(|node| super::typescript_syntax::unsupported_error(node, language))
         .map(|node| node.range())
         .collect::<Vec<_>>();
     let conditional = ConditionalRegions::from_source(language, source, build_symbols);
