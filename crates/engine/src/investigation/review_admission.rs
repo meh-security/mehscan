@@ -1,4 +1,5 @@
 use super::*;
+mod javascript_boundaries;
 
 const AUTHORIZATION_REVIEW_MARKER_RULE_ID: &str = "framework-authorization-review-marker";
 const CREDENTIAL_LIFECYCLE_REVIEW_MARKER_RULE_ID: &str =
@@ -92,20 +93,25 @@ fn server_mutation_review_marker_groups(
             continue;
         }
         let spans = line_spans(&file.source);
-        let comment_ranges = file
-            .source
-            .contains("/*")
-            .then(|| StrDoc::try_new(&file.source, parser_language(language)).ok())
-            .flatten()
-            .map(|document| {
-                let ast = AstGrep::doc(document);
-                let root = ast.root();
-                root.dfs()
-                    .filter(|node| node.kind().as_ref().contains("comment"))
-                    .map(|node| node.range())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let mut javascript_boundaries = javascript_boundaries::inspect(file, &spans);
+        let comment_ranges = javascript_boundaries
+            .as_ref()
+            .map(|index| index.comments.clone())
+            .unwrap_or_else(|| {
+                file.source
+                    .contains("/*")
+                    .then(|| StrDoc::try_new(&file.source, parser_language(language)).ok())
+                    .flatten()
+                    .map(|document| {
+                        let ast = AstGrep::doc(document);
+                        let root = ast.root();
+                        root.dfs()
+                            .filter(|node| node.kind().as_ref().contains("comment"))
+                            .map(|node| node.range())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            });
         let mut file_count = 0;
         for line_index in 0..spans.len() {
             if file_count >= MAX_REVIEW_ADMISSION_MARKERS_PER_FILE {
@@ -120,7 +126,25 @@ fn server_mutation_review_marker_groups(
             {
                 continue;
             }
-            let Some(marker) = server_mutation_review_marker(file, &spans, line_index) else {
+            let line = file.source[line_start..line_end].trim();
+            let marker = if let Some(index) = javascript_boundaries.as_mut() {
+                if ["@Post(", "@Put(", "@Patch(", "@Delete(", "@Mutation("]
+                    .iter()
+                    .any(|s| line.starts_with(s))
+                {
+                    index.decorated.remove(&line_index)
+                } else {
+                    server_mutation_review_marker(
+                        file,
+                        &spans,
+                        line_index,
+                        Some(index.mutation_members.contains(&line_index)),
+                    )
+                }
+            } else {
+                server_mutation_review_marker(file, &spans, line_index, None)
+            };
+            let Some(marker) = marker else {
                 continue;
             };
             let start = spans[marker.start_index].0;
@@ -668,6 +692,7 @@ fn server_mutation_review_marker(
     file: &SourceFile,
     spans: &[(usize, usize)],
     line_index: usize,
+    javascript_mutation_member: Option<bool>,
 ) -> Option<ServerMutationMarker> {
     let (start, end) = spans[line_index];
     let line = file.source[start..end].trim();
@@ -683,7 +708,13 @@ fn server_mutation_review_marker(
         }
         Language::Kotlin => kotlin_server_mutation_marker(file, spans, line_index, line),
         Language::Javascript | Language::Typescript | Language::Tsx => {
-            javascript_server_mutation_marker(file, spans, line_index, line)
+            javascript_server_mutation_marker(
+                file,
+                spans,
+                line_index,
+                line,
+                javascript_mutation_member,
+            )
         }
         Language::Php => php_server_mutation_marker(file, spans, line_index, line),
         Language::Go => go_server_mutation_marker(file, spans, line_index, line),
@@ -784,6 +815,7 @@ fn javascript_server_mutation_marker(
     spans: &[(usize, usize)],
     line_index: usize,
     line: &str,
+    mutation_member: Option<bool>,
 ) -> Option<ServerMutationMarker> {
     if ["@Post(", "@Put(", "@Patch(", "@Delete(", "@Mutation("]
         .iter()
@@ -822,7 +854,9 @@ fn javascript_server_mutation_marker(
     }
 
     if line.contains(": async")
-        && javascript_inside_mutation_object(&file.source, start_of(spans, line_index))
+        && mutation_member.unwrap_or_else(|| {
+            javascript_inside_mutation_object(&file.source, start_of(spans, line_index))
+        })
     {
         return marker_from_inline_boundary(file, spans, line_index, "graphql-mutation");
     }

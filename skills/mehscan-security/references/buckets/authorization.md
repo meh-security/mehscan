@@ -15,6 +15,10 @@ and a success-shaped response can simulate deletion or transfer without doing
 either. Read prepared same-project startup and inherited policy source before
 spending per-endpoint queries; those files are navigation, not proof that a
 policy applies. A clipped startup window cannot prove absence of a fallback.
+Locate the actual handler or resolver body. Documentation objects, decorator
+arguments and client mutation-success callbacks do not themselves establish a
+server authorization boundary. For GraphQL, check that the candidate is the
+resolver member, rather than a callback merely near mutation-related text.
 
 Trace **route/action → accepted credential branch → verified subject →
 selected object → applicable guard and rejection → sensitive effect**.
@@ -51,3 +55,7 @@ A `review-admission-marker` proves a server boundary and mutation-shaped
 effect, not a missing guard. If its service, credential branch or effective
 policy is absent and the bundle offers no lookup, identify that exact
 packaging gap rather than closing the review safe.
+Marker admission is bounded. When assessing authorization coverage, compare
+the selected questions with real entrypoints and effects; the marker list is
+not an exhaustive authorization audit. A boundary omitted by the admission
+budget has not been reviewed or found safe.
