@@ -16280,7 +16280,7 @@ fn index_review_context_names(
             let Some(name) = textual_definition_identifier(line) else {
                 continue;
             };
-            if !wanted.contains(&name) {
+            if !wanted.contains(&name) || !has_review_declaration_prefix(line, &name) {
                 continue;
             }
             let end_line_index = textual_definition_end(&file.source, &spans, line_index);
@@ -16306,6 +16306,55 @@ fn index_review_context_names(
             });
         }
     }
+}
+
+// The general lexical navigator also recognizes incomplete call-shaped lines.
+// Those are useful references, but must not become supplied helper definitions.
+// Check only the declaration prefix: a body may legitimately contain calls,
+// assignments and strings. This is syntax evidence, not receiver resolution.
+fn has_review_declaration_prefix(line: &str, name: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with(&format!("this.{name}")) {
+        return trimmed
+            .strip_prefix(&format!("this.{name}"))
+            .is_some_and(|tail| tail.trim_start().starts_with('='));
+    }
+    // Go receiver declarations have punctuation before the declared name.
+    if trimmed.starts_with("func (") {
+        return true;
+    }
+    let identifier_byte = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$');
+    trimmed.match_indices(name).any(|(start, _)| {
+        if (start > 0 && identifier_byte(trimmed.as_bytes()[start - 1]))
+            || trimmed
+                .as_bytes()
+                .get(start + name.len())
+                .is_some_and(|byte| identifier_byte(*byte))
+        {
+            return false;
+        }
+        let prefix = &trimmed[..start];
+        // A qualified return type is allowed (e.g. Task<Result> or pkg.Result),
+        // but an immediately qualified name is an invocation, not a declaration.
+        !prefix.is_empty()
+            && (prefix.ends_with(char::is_whitespace)
+                || prefix.ends_with(['&', '*']) && prefix.chars().any(|c| c.is_ascii_alphabetic()))
+            && prefix.chars().all(|character| {
+                character.is_ascii_alphanumeric()
+                    || character.is_whitespace()
+                    || matches!(
+                        character,
+                        '_' | '$' | '.' | ':' | '<' | '>' | '[' | ']' | ',' | '?' | '&' | '*'
+                    )
+            })
+            && !prefix.trim_end().ends_with(['.', ':'])
+            && !prefix.split_whitespace().any(|word| {
+                matches!(
+                    word,
+                    "return" | "throw" | "await" | "new" | "yield" | "if" | "else" | "case"
+                )
+            })
+    })
 }
 
 /// Returns true only when a helper definition has a defensible relationship
@@ -24309,6 +24358,83 @@ mod tests {
         assert!(!facts.iter().any(|fact| {
             fact.location.path.ends_with(".spec.ts") || fact.location.path.contains("/codefixes/")
         }));
+    }
+
+    #[test]
+    fn review_context_keeps_call_sites_as_references_not_helper_definitions() {
+        for declaration in [
+            "export class Check {",
+            "public Task<Check> Check(Request request) {",
+            "public function &Check($request) {",
+            "char *Check(Request request) {",
+            "func (s *Service) Check(request Request) {",
+            "async def Check(request):",
+            "pub fn Check(request: Request) {",
+            "fun Check(request: Request) {",
+        ] {
+            assert_eq!(
+                textual_definition_identifier(declaration).as_deref(),
+                Some("Check")
+            );
+            assert!(
+                has_review_declaration_prefix(declaration, "Check"),
+                "{declaration}"
+            );
+        }
+        for call in [
+            "client.Check(",
+            "client. Check(",
+            "Client::Check(",
+            "client->Check(",
+            "await Check(",
+            "return Check(",
+            ".Check(",
+        ] {
+            assert!(!has_review_declaration_prefix(call, "Check"), "{call}");
+        }
+        let source = "import * as policy from './policy'\nrouter.post(\npolicy.requireEntityAccess({\n  role: 'manager'\n})\nawait policy.check(\nreturn permit(\nrouter.post('/class Fake', handler)\nexport function handler(req) { return policy.check(req) }\nexport const limit = (req) => policy.check(req)\npublic Task<Result> Verify(Request req) { return Check(req); }\nthis.authorize = function(req) { return check(req) }\n";
+        let sources = RepositorySources {
+            node_modules: Default::default(),
+            root: "fixture".to_string(),
+            files: BTreeMap::from([(
+                "routes.ts".to_string(),
+                SourceFile {
+                    path: "routes.ts".to_string(),
+                    language: Some(Language::Typescript),
+                    source: source.to_string(),
+                },
+            )]),
+        };
+        let wanted = [
+            "post",
+            "requireEntityAccess",
+            "check",
+            "permit",
+            "Fake",
+            "handler",
+            "limit",
+            "Verify",
+            "authorize",
+        ]
+        .map(str::to_string)
+        .into_iter()
+        .collect();
+        let index = ReviewContextIndex::build(&sources, &wanted).unwrap();
+        for name in ["post", "requireEntityAccess", "check", "permit", "Fake"] {
+            assert!(
+                !index.definitions.contains_key(name),
+                "call indexed as definition: {name}"
+            );
+        }
+        for name in ["handler", "limit", "Verify", "authorize"] {
+            assert!(
+                index.definitions.contains_key(name),
+                "lost declaration: {name}"
+            );
+        }
+        for name in ["post", "requireEntityAccess", "check", "permit"] {
+            assert!(index.usages.contains_key(name), "lost reference: {name}");
+        }
     }
 
     #[test]
