@@ -23,6 +23,9 @@ resolver member, rather than a callback merely near mutation-related text.
 Trace **route/action → accepted credential branch → verified subject →
 selected object → applicable guard and rejection → sensitive effect**.
 Authentication alone does not authorize the action on that object.
+For self-service actions, also inspect privilege, enrollment, billing or ownership
+side effects. A session-bound user does not alone authorize a state transition;
+check supplied resource IDs against the policy and membership actually affected.
 An owner check can settle object ownership while leaving action permissions,
 delegated-client scopes or tenant policy unresolved. Match the full selected
 question before closing it. When permission metadata is present, locate the

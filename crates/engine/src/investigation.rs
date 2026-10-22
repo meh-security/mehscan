@@ -6934,7 +6934,7 @@ fn observation_decision_facts(
             .find_map(|tag| tag.strip_prefix("review-invariant:"))
             .unwrap_or("security");
         established.push(format!(
-            "The bounded classifier established `{operation}` as a server mutation boundary with a mutation-shaped `{effect}` effect. This admits review of `{invariant}` even without an ordinary sink rule; it does not by itself prove that invariant is violated."
+            "The bounded classifier recorded `{operation}` as a candidate operation with a `{effect}` text hint for `{invariant}` review. Verify the registered boundary and executable effect; names, documentation and this marker do not establish a mutation or missing control."
         ));
     }
     for item in evidence.iter().filter(|item| {
