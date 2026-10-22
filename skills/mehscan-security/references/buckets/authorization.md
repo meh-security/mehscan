@@ -51,8 +51,10 @@ middleware and mount scope matter. For DRF, use the effective global, class
 or action permission and object check. For GraphQL or generated routes,
 establish the registered operation before applying its guard.
 
-A `review-admission-marker` proves a server boundary and mutation-shaped
-effect, not a missing guard. If its service, credential branch or effective
+A `review-admission-marker` records a candidate server boundary and mutation-
+shaped effect, not a missing guard. Verify actual server registration and
+invocation: a similarly named client, CLI or database call is not boundary
+proof. If its service, credential branch or effective
 policy is absent and the bundle offers no lookup, identify that exact
 packaging gap rather than closing the review safe.
 Marker admission is bounded. When assessing authorization coverage, compare
