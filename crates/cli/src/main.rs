@@ -3555,6 +3555,22 @@ fn compact_helper_context(
     review: &serde_json::Value,
     anchor: &serde_json::Value,
 ) -> Vec<serde_json::Value> {
+    // These are complete declared members reached through explicit imports.
+    // Keep them in the skill's initial view, not only as nearby locations.
+    // Prefixes remain lookup work; declaration context is not a guard verdict.
+    let mut contexts = review["facts"].as_array().into_iter().flatten()
+        .filter(|fact| fact["role"] == "imported_member_definition_context")
+        .take(6)
+        .map(|fact| {
+            let location = &fact["location"];
+            serde_json::json!({
+                "role":fact["role"], "symbol":fact["symbol"], "provenance":fact["provenance"],
+                "location":{"path":location["path"], "start_line":location["start"]["line"], "end_line":location["end"]["line"],
+                    "start_column":location["start"]["column"], "end_column":location["end"]["column"],
+                    "start_byte_offset":location["start"]["byte_offset"], "end_byte_offset":location["end"]["byte_offset"]},
+                "excerpt":fact["excerpt"], "truncated":false,
+            })
+        }).collect::<Vec<_>>();
     // Path candidates intentionally omit captures. The definition fact remains
     // bound to this exact evidence ID; do not infer a target from its spelling.
     if !anchor["rule_id"].as_str().is_some_and(|rule| {
@@ -3563,7 +3579,7 @@ fn compact_helper_context(
             .any(|prefix| rule.starts_with(prefix))
             && rule.ends_with("parameter-sink-summary")
     }) {
-        return Vec::new();
+        return contexts;
     }
     let Some(fact) = review["facts"]
         .as_array()
@@ -3573,7 +3589,7 @@ fn compact_helper_context(
             fact["role"] == "captured_definition_context" && fact["evidence_id"] == anchor["id"]
         })
     else {
-        return Vec::new();
+        return contexts;
     };
     let location = &fact["location"];
     let exact_excerpt = match (
@@ -3584,7 +3600,7 @@ fn compact_helper_context(
         (Some(start), Some(end), Some(text)) => end.checked_sub(start) == Some(text.len() as u64),
         _ => false,
     };
-    vec![serde_json::json!({
+    contexts.push(serde_json::json!({
         "role": fact["role"], "symbol": fact["symbol"],
         "location": {
             "path": location["path"], "start_line": location["start"]["line"], "end_line": location["end"]["line"],
@@ -3593,7 +3609,8 @@ fn compact_helper_context(
         },
         "excerpt": fact["excerpt"],
         "truncated": !exact_excerpt || review["truncation"]["occurred"] == true,
-    })]
+    }));
+    contexts
 }
 
 // Path provenance is decision context, even when it is far from the sink.
@@ -4367,6 +4384,29 @@ mod tests {
     };
     use mehscan_core::Capability;
     use std::collections::{BTreeMap, BTreeSet};
+
+    #[test]
+    fn helper_view_preserves_complete_imported_members_for_ordinary_reviews() {
+        let anchor = serde_json::json!({"id":"operation", "rule_id":"framework-authorization-review-marker"});
+        let review = serde_json::json!({"facts":[
+            {"role":"imported_member_prefix_context", "symbol":"module", "excerpt":"prefix only"},
+            {"role":"imported_member_definition_context", "symbol":"permit", "excerpt":"function permit() {}",
+             "location":{"path":"policy.ts","start":{"line":10,"column":1,"byte_offset":20},"end":{"line":11,"column":1,"byte_offset":40}},
+             "provenance":{"resolution":"textual", "engine":"explicit import; runtime dispatch not established"}}
+        ]});
+        let contexts = super::compact_helper_context(&review, &anchor);
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0]["symbol"], "permit");
+        assert_eq!(contexts[0]["excerpt"], "function permit() {}");
+        assert_eq!(contexts[0]["location"]["path"], "policy.ts");
+        assert_eq!(contexts[0]["truncated"], false);
+        assert!(
+            contexts[0]["provenance"]["engine"]
+                .as_str()
+                .unwrap()
+                .contains("not established")
+        );
+    }
 
     #[test]
     fn helper_view_uses_the_selected_evidence_fact_without_candidate_captures() {

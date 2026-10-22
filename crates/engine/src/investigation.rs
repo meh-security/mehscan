@@ -42,6 +42,7 @@ mod angular;
 mod caller_examples;
 mod csharp_application_context;
 mod frontend;
+mod imported_members;
 mod node_constant_admission;
 mod practical_admission;
 mod resource_helpers;
@@ -941,6 +942,7 @@ fn review_source_fingerprint(sources: &RepositorySources) -> String {
 }
 
 struct ReviewContextIndex {
+    imported_members: std::rc::Rc<RefCell<imported_members::Cache>>,
     angular: OnceCell<angular::AngularContext>,
     definitions: BTreeMap<String, Vec<OutlineSymbol>>,
     registrations: BTreeMap<String, Vec<ReviewNeighborhoodFact>>,
@@ -2204,8 +2206,14 @@ fn build_path_review_jobs_internal(
                 && let Some(helper) = direct_call_reference(&file.source[start..end])
             {
                 let exact_reference = BTreeSet::from([helper]);
-                let (mut exact_helper_facts, exact_helper_truncated) =
-                    review_context.facts(&sources, &candidate_paths, &exact_reference, &facts, 1);
+                let (mut exact_helper_facts, exact_helper_truncated) = review_context.facts(
+                    &sources,
+                    &candidate_paths,
+                    &exact_reference,
+                    &facts,
+                    &[&candidate.sink.location],
+                    1,
+                );
                 context_truncated |= exact_helper_truncated;
                 facts.append(&mut exact_helper_facts);
             }
@@ -2215,6 +2223,11 @@ fn build_path_review_jobs_internal(
             &candidate_paths,
             &reference_tokens,
             &facts,
+            &candidate
+                .steps
+                .iter()
+                .map(|step| &step.location)
+                .collect::<Vec<_>>(),
             MAX_REVIEW_HELPER_FACTS,
         );
         context_truncated |= helper_truncated;
@@ -9526,6 +9539,7 @@ fn build_observation_reviews(
                 &frontend_paths,
                 &frontend_references,
                 &frontend_facts,
+                None,
                 2,
             );
             context_truncated |= cut;
@@ -9621,6 +9635,7 @@ fn build_observation_reviews(
                 &paths,
                 &references,
                 &facts,
+                Some(anchor),
                 4,
             )
         };
@@ -10376,15 +10391,79 @@ fn exact_local_control_facts<'a>(
     (facts, truncated)
 }
 
+fn imported_member_definition_facts(
+    sources: &RepositorySources,
+    context: &ReviewContextIndex,
+    candidate_paths: &BTreeSet<&str>,
+    references: &BTreeSet<String>,
+    existing: &[ReviewNeighborhoodFact],
+    scopes: &[&Location],
+    limit: usize,
+) -> (Vec<ReviewNeighborhoodFact>, bool) {
+    let (imported, imported_truncated) = context.imported_members.borrow_mut().definitions(
+        sources,
+        candidate_paths,
+        references,
+        scopes,
+        limit,
+    );
+    let mut facts = Vec::new();
+    for symbol in &imported {
+        if facts_cover_location(existing, &symbol.location) {
+            continue;
+        }
+        let Ok(file) = sources.file(&symbol.location.path) else {
+            continue;
+        };
+        let last_line = symbol
+            .location
+            .end
+            .line
+            .saturating_sub(usize::from(symbol.location.end.column == 1));
+        let end_line = last_line.min(symbol.location.start.line + MAX_REVIEW_HELPER_LINES - 1);
+        let Ok((slice, truncated)) = source_slice(file, symbol.location.start.line, end_line)
+        else {
+            continue;
+        };
+        let clipped = truncated || end_line < last_line;
+        let excerpt = redact_helper_definition(&symbol.name, &slice.text);
+        let complete = !clipped && excerpt == slice.text;
+        facts.push(ReviewNeighborhoodFact {
+            role: if complete { "imported_member_definition_context" } else { "imported_member_prefix_context" }.into(), symbol: symbol.name.clone(),
+            location: slice.location, excerpt, evidence_id: None,
+            provenance: textual_provenance("AST declared member through an explicit source import; navigation only, runtime dispatch/control effectiveness not established"),
+        });
+        if clipped {
+            return (facts, true);
+        }
+    }
+    (facts, imported_truncated)
+}
+
 fn observation_helper_definition_facts(
     sources: &RepositorySources,
     context: &ReviewContextIndex,
     candidate_paths: &BTreeSet<&str>,
     references: &BTreeSet<String>,
     existing: &[ReviewNeighborhoodFact],
+    scope: Option<&Location>,
     limit: usize,
 ) -> (Vec<ReviewNeighborhoodFact>, bool) {
-    let mut facts = Vec::new();
+    let (mut facts, imported_truncated) = imported_member_definition_facts(
+        sources,
+        context,
+        candidate_paths,
+        references,
+        existing,
+        &scope.into_iter().collect::<Vec<_>>(),
+        limit,
+    );
+    if facts
+        .iter()
+        .any(|fact| fact.excerpt.lines().count() >= MAX_REVIEW_HELPER_LINES)
+    {
+        return (facts, true);
+    }
     let mut names = references.iter().collect::<Vec<_>>();
     names.sort_by(|left, right| {
         reference_priority(right)
@@ -10405,6 +10484,7 @@ fn observation_helper_definition_facts(
         for symbol in selected {
             if !looks_like_review_helper_signature(name, &symbol.signature)
                 || facts_cover_location(existing, &symbol.location)
+                || facts_cover_location(&facts, &symbol.location)
             {
                 continue;
             }
@@ -10442,7 +10522,7 @@ fn observation_helper_definition_facts(
             }
         }
     }
-    (facts, false)
+    (facts, imported_truncated)
 }
 
 fn looks_like_review_helper_signature(name: &str, signature: &str) -> bool {
@@ -10599,7 +10679,15 @@ fn csharp_sql_assigned_helper_facts(
     if references.is_empty() {
         return (Vec::new(), false);
     }
-    observation_helper_definition_facts(sources, context, &paths, &references, existing, limit)
+    observation_helper_definition_facts(
+        sources,
+        context,
+        &paths,
+        &references,
+        existing,
+        None,
+        limit,
+    )
 }
 
 /// Supply a unique type instantiated by an exact caller when its name matches
@@ -16158,6 +16246,7 @@ fn contains_sensitive_config_key(value: &str) -> bool {
 // reference cap and definitions regardless of its neighboring query names.
 // Share only these searches, never the expanded review-specific index.
 struct ReviewContextNameCache<'a> {
+    imported_members: std::rc::Rc<RefCell<imported_members::Cache>>,
     sources: &'a RepositorySources,
     indexed: BTreeSet<String>,
     definitions: BTreeMap<String, Vec<OutlineSymbol>>,
@@ -16168,6 +16257,7 @@ struct ReviewContextNameCache<'a> {
 impl<'a> ReviewContextNameCache<'a> {
     fn new(sources: &'a RepositorySources) -> Self {
         Self {
+            imported_members: Default::default(),
             sources,
             indexed: BTreeSet::new(),
             definitions: BTreeMap::new(),
@@ -17037,6 +17127,7 @@ impl ReviewContextIndex {
             sort_review_facts(facts);
         }
         Ok(Self {
+            imported_members: names.imported_members.clone(),
             definitions,
             angular: OnceCell::new(),
             registrations,
@@ -17288,13 +17379,21 @@ impl ReviewContextIndex {
         candidate_paths: &BTreeSet<&str>,
         references: &BTreeSet<String>,
         existing: &[ReviewNeighborhoodFact],
+        scopes: &[&Location],
         limit: usize,
     ) -> (Vec<ReviewNeighborhoodFact>, bool) {
         if references.is_empty() || limit == 0 {
             return (Vec::new(), false);
         }
-        let mut facts = Vec::new();
-        let mut truncated = false;
+        let (mut facts, mut truncated) = imported_member_definition_facts(
+            sources,
+            self,
+            candidate_paths,
+            references,
+            existing,
+            scopes,
+            limit.min(6),
+        );
 
         let mut ordered_references = references.iter().collect::<Vec<_>>();
         ordered_references.sort_by(|left, right| {
@@ -17302,7 +17401,7 @@ impl ReviewContextIndex {
                 .cmp(&reference_priority(left))
                 .then_with(|| left.cmp(right))
         });
-        let mut definition_count = 0usize;
+        let mut definition_count = facts.len();
         for name in ordered_references {
             if definition_count == 6 {
                 truncated = true;
@@ -17320,6 +17419,7 @@ impl ReviewContextIndex {
             {
                 if !looks_like_review_helper_signature(name, &symbol.signature)
                     || facts_cover_location(existing, &symbol.location)
+                    || facts_cover_location(&facts, &symbol.location)
                 {
                     continue;
                 }
@@ -17509,6 +17609,7 @@ fn second_hop_review_facts(
         candidate_paths,
         &second_only,
         &covered,
+        &[anchor],
         limit.saturating_sub(facts.len()).min(2),
     );
     truncated |= helper_truncated;
@@ -23889,10 +23990,13 @@ mod tests {
             missing_protection_question(Capability::DatabaseQuery).contains("database parameter")
         );
         assert!(missing_protection_question(Capability::FilesystemRead).contains("containment"));
-        assert!(
-            missing_protection_question(Capability::OutboundNetworkRequest)
-                .contains("metadata targets")
-        );
+        let outbound = missing_protection_question(Capability::OutboundNetworkRequest);
+        for control in ["boundary", "scheme", "address", "redirect", "proxy"] {
+            assert!(
+                outbound.contains(control),
+                "missing outbound control question: {control}"
+            );
+        }
         assert!(
             missing_protection_question(Capability::TemplateEvaluation).contains("template itself")
         );
@@ -23999,12 +24103,14 @@ mod tests {
         }];
         let indexed_names = index.definitions.keys().cloned().collect::<Vec<_>>();
         assert!(!indexed_names.iter().any(|name| name == "run"));
-        let (facts, _) = index.facts(&sources, &paths, &references, &existing, 12);
+        let (facts, _) = index.facts(&sources, &paths, &references, &existing, &[], 12);
 
         assert!(
             facts.iter().any(|fact| {
-                fact.role == "helper_definition_context"
-                    && fact.symbol == "hash"
+                matches!(
+                    fact.role.as_str(),
+                    "helper_definition_context" | "imported_member_definition_context"
+                ) && fact.symbol == "hash"
                     && fact.excerpt.contains("createHash('md5')")
             }),
             "indexed: {indexed_names:#?}; facts: {facts:#?}"
@@ -24084,7 +24190,7 @@ mod tests {
             provenance: textual_provenance("test"),
         }];
 
-        let (facts, _) = index.facts(&sources, &paths, &references, &existing, 12);
+        let (facts, _) = index.facts(&sources, &paths, &references, &existing, &[], 12);
         assert!(facts.iter().any(|fact| {
             fact.role == "helper_definition_context" && fact.symbol == "loadOrder"
         }));
@@ -24142,8 +24248,15 @@ mod tests {
         let references = BTreeSet::from(["ChangePasswordType".to_string()]);
         let index = ReviewContextIndex::build(&sources, &references).expect("context index");
         let paths = BTreeSet::from(["src/Controller/UserController.php"]);
-        let (facts, truncated) =
-            observation_helper_definition_facts(&sources, &index, &paths, &references, &[], 4);
+        let (facts, truncated) = observation_helper_definition_facts(
+            &sources,
+            &index,
+            &paths,
+            &references,
+            &[],
+            None,
+            4,
+        );
 
         assert!(!truncated);
         assert_eq!(facts.len(), 1, "facts: {facts:#?}");
@@ -24205,7 +24318,7 @@ mod tests {
             provenance: textual_provenance("test"),
         }];
 
-        let (facts, _) = index.facts(&sources, &paths, &references, &existing, 12);
+        let (facts, _) = index.facts(&sources, &paths, &references, &existing, &[], 12);
         let helpers = facts
             .iter()
             .filter(|fact| {

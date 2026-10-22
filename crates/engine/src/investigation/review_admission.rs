@@ -646,7 +646,9 @@ pub(super) fn decision_questions(
             if facts.iter().any(|fact| {
                 matches!(
                     fact.role.as_str(),
-                    "helper_definition_context" | "captured_definition_context"
+                    "helper_definition_context"
+                        | "captured_definition_context"
+                        | "imported_member_definition_context"
                 ) && fact.symbol == helper
             }) {
                 Vec::new()
@@ -673,7 +675,9 @@ pub(super) fn decision_questions(
             if facts.iter().any(|fact| {
                 matches!(
                     fact.role.as_str(),
-                    "helper_definition_context" | "captured_definition_context"
+                    "helper_definition_context"
+                        | "captured_definition_context"
+                        | "imported_member_definition_context"
                 ) && fact.symbol == helper
             }) {
                 Vec::new()
@@ -702,7 +706,9 @@ fn fact_supplies_mutation_helper(fact: &ReviewNeighborhoodFact, handler: &str) -
         .saturating_add(1);
     matches!(
         fact.role.as_str(),
-        "review_admission_helper_context" | "helper_definition_context"
+        "review_admission_helper_context"
+            | "helper_definition_context"
+            | "imported_member_definition_context"
     ) && !fact.excerpt.trim().is_empty()
         && supplied_lines < MAX_REVIEW_HELPER_LINES
 }
