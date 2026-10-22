@@ -1704,6 +1704,15 @@ pub(crate) fn scan_source(
         &mut evidence,
     );
     super::node_identity::correct(language, &root, &symbol_environment, &mut evidence);
+    node_context.add_http_effect_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
     super::node_operands::annotate(language, source, &root, &mut evidence);
     super::filesystem_operands::annotate(language, &root, &literals, &mut evidence);
     super::python_operands::annotate(language, &root, &mut evidence);

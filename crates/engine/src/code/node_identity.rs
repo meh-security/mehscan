@@ -91,7 +91,14 @@ fn bindings<'a>(root: &N<'a>) -> Vec<Binding<'a>> {
                 let text = name.text().into_owned();
                 if matches!(
                     text.as_str(),
-                    "fetch" | "location" | "window" | "globalThis"
+                    "fetch"
+                        | "location"
+                        | "window"
+                        | "globalThis"
+                        | "document"
+                        | "navigator"
+                        | "localStorage"
+                        | "sessionStorage"
                 ) {
                     let declaration_scope = if matches!(
                         kind.as_ref(),
@@ -151,7 +158,14 @@ fn bindings<'a>(root: &N<'a>) -> Vec<Binding<'a>> {
             for name in names {
                 if matches!(
                     name.as_str(),
-                    "fetch" | "location" | "window" | "globalThis"
+                    "fetch"
+                        | "location"
+                        | "window"
+                        | "globalThis"
+                        | "document"
+                        | "navigator"
+                        | "localStorage"
+                        | "sessionStorage"
                 ) {
                     result.push(Binding {
                         name,
@@ -239,7 +253,10 @@ pub(super) fn correct(
         .filter(|n| {
             matches!(
                 n.kind().as_ref(),
-                "call_expression" | "assignment_expression"
+                "call_expression"
+                    | "assignment_expression"
+                    | "member_expression"
+                    | "subscript_expression"
             )
         })
         .map(|n| ((n.range().start, n.range().end), n))
@@ -272,6 +289,12 @@ pub(super) fn correct(
                 | "javascript-browser-navigation"
                 | "typescript-browser-navigation"
                 | "tsx-browser-navigation"
+                | "javascript-browser-url-source"
+                | "typescript-browser-url-source"
+                | "tsx-browser-url-source"
+                | "javascript-browser-cookie-source"
+                | "typescript-browser-cookie-source"
+                | "tsx-browser-cookie-source"
         ) {
             return true;
         }
@@ -279,6 +302,11 @@ pub(super) fn correct(
             return true;
         };
         let at = n.range().start;
+        if e.capability == Capability::BrowserInput {
+            let observed = n.text();
+            let head = observed.split(['.', '[', '?']).next().unwrap_or("").trim();
+            return binding(&bindings, head, at).is_none();
+        }
         if e.capability == Capability::BrowserNavigation {
             let Some(target) = n.field("left").or_else(|| n.field("function")) else {
                 return true;

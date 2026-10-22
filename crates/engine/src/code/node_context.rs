@@ -4,6 +4,8 @@ mod response_contract;
 #[path = "node_return_fields.rs"]
 mod returned_fields;
 pub(crate) use returned_fields::ReturnedObject;
+#[path = "node_http_effects.rs"]
+mod http_effects;
 
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{AstGrep, Node};
@@ -235,6 +237,7 @@ pub(crate) struct NodeProjectContext {
     parameter_returns: BTreeMap<NodeSummaryKey, ParameterReturnSummary>,
     returned_objects: BTreeMap<(String, String), ReturnedObject>,
     parameter_sinks: BTreeMap<NodeSummaryKey, Vec<ParameterSinkSummary>>,
+    http_effects: BTreeMap<NodeSummaryKey, Vec<http_effects::HttpEffect>>,
     callback_forwards: BTreeMap<NodeSummaryKey, CallbackForwardSummary>,
     mongo_callback_results: BTreeMap<NodeSummaryKey, MongoCallbackResultSummary>,
     xxe_parsers: BTreeMap<NodeSummaryKey, XxeParserSummary>,
@@ -448,6 +451,7 @@ impl NodeProjectContext {
                 &functions,
                 &imports,
                 &mut context.parameter_sinks,
+                &mut context.http_effects,
             );
             if has_ejs_import(source) {
                 trace.step(path, "local_template_sinks");
@@ -3272,6 +3276,7 @@ fn collect_parameter_sink_summaries<'tree>(
     functions: &[(String, Node<'tree, StrDoc<SupportLang>>)],
     imports: &BTreeMap<String, ImportTarget>,
     summaries: &mut BTreeMap<NodeSummaryKey, Vec<ParameterSinkSummary>>,
+    http_effects: &mut BTreeMap<NodeSummaryKey, Vec<http_effects::HttpEffect>>,
 ) {
     let Some(module) = module_path(path) else {
         return;
@@ -3280,8 +3285,11 @@ fn collect_parameter_sink_summaries<'tree>(
     for (name, function) in functions.iter().cloned() {
         let parameters = function_parameter_names(&function);
         let mut matches = Vec::new();
-        if !function_has_control_flow(&function) {
-            for call in calls_in_function(&function) {
+        let straight_line = !function_has_control_flow(&function);
+        for call in calls_in_function(&function) {
+            // HTTP observations may sit behind controls. They are not the
+            // unconditional contracts consumed by the path-summary engine.
+            if straight_line || http_effects::known_fetch_api(&call.callee, imports).is_some() {
                 for (sink_argument, sink, operand) in
                     parameter_sink_operands(&bindings, &function, &call, imports, &parameters)
                 {
@@ -3292,7 +3300,20 @@ fn collect_parameter_sink_summaries<'tree>(
                     // This is a direct parameter contract, not a dataflow claim
                     // about values reassigned inside the helper.
                     if summary_parameter_is_unmodified(&function, &text, call.node.range().start) {
-                        matches.push((index, sink, operand));
+                        if sink == SummarySink::OutboundRequest {
+                            http_effects::collect(
+                                path,
+                                &module,
+                                &name,
+                                &function,
+                                &call,
+                                index,
+                                http_effects,
+                            );
+                        }
+                        if straight_line {
+                            matches.push((index, sink, operand));
+                        }
                     }
                 }
             }
