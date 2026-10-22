@@ -36,6 +36,14 @@ class UsageTests(unittest.TestCase):
         self.assertIsNone(result["reported_token_sums"]["output_tokens"])
         self.assertNotIn("private prompt", json.dumps(result))
         self.assertIsNone(result["cost"])
+        self.assertFalse(result["usage_complete"])
+
+    def test_failed_or_unobserved_calls_prevent_complete_usage_claim(self):
+        self.put(self.row(usage={"input_tokens":7, "cached_input_tokens":3, "output_tokens":2}))
+        self.assertTrue(export.usage(self.path, self.runtime)["usage_complete"])
+        partial = export.usage(self.path, self.runtime, unobserved_provider_calls=1)
+        self.assertFalse(partial["usage_complete"])
+        self.assertEqual(partial["reported_token_sums"]["input_tokens"], 7)
 
     def test_duplicate_or_mismatched_provider_metrics_are_rejected(self):
         self.put(self.row(), self.row())

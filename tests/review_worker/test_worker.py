@@ -153,6 +153,116 @@ else:
         self.assertEqual(record["completion"]["security_resolution"], "not_established")
         self.assertEqual(json.loads((self.base / "worker/prepared-changes.json").read_text())["windows"], [])
 
+    def test_parallel_bundles_share_queries_and_recover_only_unfinished_work(self):
+        (self.root / "app.js").write_text("".join(
+            "function handle" + str(index) + "(request) { eval(request.query.code); }\n" for index in range(4)))
+        self.inventory, self.store, self.run = [self.base / name for name in ("parallel-inventory", "parallel-state", "parallel-run")]
+        self.native("investigate", "review-inventory", str(self.root), "--repository-key", "evaluation:worker", "--output", str(self.inventory))
+        claim = self.native("state", "claim", "--store", str(self.store), "--stream", "local-review", "--inventory", str(self.inventory),
+            "--source-root", str(self.root), "--attempt-id", "parallel", "--expected-generation", "0", "--operation-key", "claim")
+        self.claim.write_text(json.dumps(claim))
+        self.owner = claim["result"]["owner"]
+        self.common = ["--store", str(self.store), "--stream", "local-review", "--inventory", str(self.inventory),
+            "--source-root", str(self.root), "--generation", "1", "--owner", self.owner]
+        plan = self.native("state", "plan-template", "--inventory", str(self.inventory), "--source-root", str(self.root),
+            "--policy", "comprehensive", "--skill-root", str(ROOT / "skills/mehscan-security"))
+        self.ids = plan["selected_review_ids"]
+        self.assertEqual(len(self.ids), 4)
+        (self.base / "parallel-plan.json").write_text(json.dumps(plan))
+        self.native("state", "plan", *self.common, "--input", str(self.base / "parallel-plan.json"), "--operation-key", "plan")
+        self.package.write_text(json.dumps(self.native("state", "work", *self.common)))
+        self.native("investigate", "review-bundles", str(self.root), "--inventory", str(self.inventory),
+            "--review-ids", ",".join(self.ids), "--max-reviews", "1", "--output", str(self.run))
+        self.reviewer.write_text('''import json,sys,time
+from pathlib import Path
+task=json.load(sys.stdin)
+base=Path(__file__).parent
+events=base/'events'
+events.mkdir(exist_ok=True)
+ids=json.loads(Path(task['work_package']).read_text())['payload']['review_ids']
+id=task['review_ids'][0]
+round=task['research']['round']
+event=events/(task['conversation_id']+'-'+str(round)+'.json')
+started=time.time()
+if round==0:
+    (events/(id+'.started')).touch()
+    deadline=time.monotonic()+15
+    while len(list(events.glob('*.started')))<2:
+        if time.monotonic()>deadline: raise RuntimeError('review jobs did not overlap')
+        time.sleep(0.02)
+    result={'research':[{'tool':'references','review_id':id,'arguments':{'symbol':'eval','limit':20}}]}
+else:
+    assert task['research']['results']
+    if id==ids[-1] and not (base/'allow-last').exists():
+        event.write_text(json.dumps({'id':id,'start':started,'end':time.time(),'failed':True}))
+        sys.exit(2)
+    packet=json.loads(Path(task['evidence_packet']).read_text())
+    result={'results':[{'review_id':q['review_id'],'decision':'issue','confidence':'medium',
+        'summary':'Synthetic controller issue.','reason':'The selected function evaluates request data.',
+        'evidence':[{'path':q['path'],'start_line':q['line'],'end_line':q['line']}],'checks':[],'blockers':[]}
+        for q in packet['native_questions']]}
+event.write_text(json.dumps({'id':id,'start':started,'end':time.time(),'failed':False}))
+print(json.dumps(result))
+''')
+        result = self.invoke("parallel-first", ["--phase", "native", "--workers", "2", "--query-workers", "2"])
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        first = self.base / "parallel-first"
+        record = json.loads((first / "worker.json").read_text())
+        self.assertEqual(sum(job["status"] == "finalized" for job in record["jobs"].values()), 3)
+        self.assertEqual(record["research_executions"], 1)
+        self.assertEqual(record["research_cache_hits"], 3)
+        self.assert_no_decisions()
+        self.assertFalse((first / "findings.json").exists())
+        facts = json.loads((first / "source-facts.json").read_text())["facts"]
+        self.assertEqual(len(facts), 1)
+        origin = facts[0]["origin_review_id"]
+        self.assertEqual(len(list((first / "journals").glob("*.jsonl"))), 1)
+        self.assertEqual((first / "journals" / (origin + ".jsonl")).read_text().count('\n'), 1)
+        events = [json.loads(path.read_text()) for path in (self.base / "events").glob("*.json")]
+        boundaries = sorted([(event["start"], 1) for event in events] + [(event["end"], -1) for event in events])
+        active, peak = 0, 0
+        for _, change in boundaries:
+            active += change
+            peak = max(peak, active)
+        self.assertEqual(peak, 2)
+        before = {id: sum(event["id"] == id for event in events) for id in self.ids}
+
+        # Repacking identical authorized IDs changes job identities. It must
+        # not silently create fresh conversation budgets in a recovery chain.
+        original_run = self.run
+        self.run = self.base / "regrouped-run"
+        self.native("investigate", "review-bundles", str(self.root), "--inventory", str(self.inventory),
+            "--review-ids", ",".join(self.ids), "--max-reviews", "2", "--output", str(self.run))
+        self.assertEqual(len(json.loads((self.run / "manifest.json").read_text())["bundles"]), 2)
+        result = self.invoke("parallel-regrouped", ["--phase", "native", "--resume-from", str(first)])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("recovery requires", json.loads((self.base / "parallel-regrouped/worker.json").read_text())["detail"])
+        self.assertFalse((first / "continued-to.json").exists())
+        self.assertEqual(len(list((self.base / "events").glob("*.json"))), len(events))
+        self.run = original_run
+
+        (self.base / "allow-last").touch()
+        result = self.invoke("parallel-recovered", ["--phase", "native", "--workers", "2", "--resume-from", str(first)])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + (self.base / "parallel-recovered/worker.json").read_text())
+        recovered = self.base / "parallel-recovered"
+        record = json.loads((recovered / "worker.json").read_text())
+        self.assertEqual(sum(job["recovered_draft"] for job in record["jobs"].values()), 3)
+        self.assertTrue(record["completion"]["review_work_complete"])
+        self.assertEqual(record["unknown_provider_calls"], 1)
+        events = [json.loads(path.read_text()) for path in (self.base / "events").glob("*.json")]
+        after = {id: sum(event["id"] == id for event in events) for id in self.ids}
+        self.assertEqual({id: after[id]-before[id] for id in self.ids}, {id: 2 if id == self.ids[-1] else 0 for id in self.ids})
+        self.assertEqual(len(json.loads((recovered / "source-facts.json").read_text())["facts"]), 1)
+        self.assertEqual((recovered / "journals" / (origin + ".jsonl")).read_bytes(), (first / "journals" / (origin + ".jsonl")).read_bytes())
+
+        # A newly admitted decision changes the work package. Recovery must not
+        # replay old drafts into a new generation/parent set or call providers.
+        self.package.write_text(json.dumps(self.native("state", "work", *self.common)))
+        result = self.invoke("parallel-stale", ["--phase", "native", "--resume-from", str(first)])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("recovery requires", json.loads((self.base / "parallel-stale/worker.json").read_text())["detail"])
+        self.assertEqual(len(list((self.base / "events").glob("*.json"))), len(events))
+
     def test_change_pass_native_finalization_and_state_admission_share_one_bound_workflow(self):
         result = self.invoke()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -163,6 +273,33 @@ else:
         self.assertEqual(len(record["completion"]["issue_review_ids"]), len(self.ids))
         self.assertNotIn(self.owner, (self.base / "worker/worker.json").read_text())
         self.assertNotIn(self.owner, (self.base / "worker/work.json").read_text())
+
+    def test_recovery_cannot_reset_exhausted_turn_budget_or_fork_an_old_attempt(self):
+        normal = self.base / "normal.py"
+        normal.write_text(self.reviewer.read_text())
+        self.reviewer.write_text('import json,sys,subprocess\nfrom pathlib import Path\ntask=json.load(sys.stdin)\n'
+            'base=Path(__file__).parent\n'
+            'with (base/"model-calls.jsonl").open("a") as log: log.write("call\\n")\n'
+            'if (base/"release-budget").exists():\n'
+            ' print(subprocess.check_output([sys.executable,' + repr(str(normal)) + '],input=json.dumps(task),text=True))\n'
+            'else:\n'
+            ' print(json.dumps({"research":[{"tool":"references","review_id":task["review_ids"][0],'
+            '"arguments":{"symbol":"eval","limit":20}}]}))\n')
+        first = self.base / "budget-first"
+        result = self.invoke(first.name, ["--phase", "native", "--workers", "1"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len((self.base / "model-calls.jsonl").read_text().splitlines()), 4)
+        (self.base / "release-budget").touch()
+        result = self.invoke("budget-retry", ["--phase", "native", "--resume-from", str(first)])
+        self.assertNotEqual(result.returncode, 0)
+        record = json.loads((self.base / "budget-retry/worker.json").read_text())
+        self.assertIn("no remaining model turns", record["detail"])
+        result = self.invoke("budget-fork", ["--phase", "native", "--resume-from", str(first)])
+        self.assertNotEqual(result.returncode, 0)
+        record = json.loads((self.base / "budget-fork/worker.json").read_text())
+        self.assertIn("already continued", record["detail"])
+        self.assertEqual(len((self.base / "model-calls.jsonl").read_text().splitlines()), 4)
+        self.assert_no_decisions()
 
     def test_native_csharp_policy_source_reaches_reviewer_and_admits_both_verdicts(self):
         (self.root / "app.js").unlink()

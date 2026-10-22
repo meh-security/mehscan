@@ -8,7 +8,9 @@ def write(path, value):
     path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
 
-def usage(path, runtime):
+def usage(path, runtime, unobserved_provider_calls=0):
+    if type(unobserved_provider_calls) is not int or unobserved_provider_calls < 0:
+        raise ValueError("invalid unobserved provider call count")
     rows = []
     if path.exists():
         if path.stat().st_size > 8 * 1024 * 1024:
@@ -41,7 +43,9 @@ def usage(path, runtime):
         "research_limits":runtime["limits"], "round_count":len(rows), "token_accounting":"reported_conversation_deltas",
         "reported_token_sums":counters, "counter_reporting_rounds":reporting,
         "provider_elapsed_ms":elapsed, "prompt_bytes":prompt,
-        "usage_available":bool(rows), "cost":None}
+        "usage_available":bool(rows), "unobserved_provider_calls":unobserved_provider_calls,
+        "usage_complete":bool(rows) and unobserved_provider_calls == 0 and all(
+            reporting[key] == len(rows) for key in counters), "cost":None}
 
 
 def export_review(plan, directory, record, reviewer, execute, env):
@@ -79,7 +83,8 @@ def export_review(plan, directory, record, reviewer, execute, env):
         write(directory / "findings.json", canonical)
         write(directory / "findings.sarif", sarif)
         files += ["findings.json", "findings.sarif"]
-    write(directory / "usage.json", usage(directory / "review/provider-metrics.jsonl", plan["review"]["runtime"]))
+    write(directory / "usage.json", usage(directory / "review/provider-metrics.jsonl", plan["review"]["runtime"],
+                                         worker.get("unknown_provider_calls", 0)))
     return {"schema_version":"1", "snapshot_id":record["snapshot_id"], "native_findings":native_export,
         "scan_root":plan["scan_root"], "files":files,
         "publication":"artifact_only"}

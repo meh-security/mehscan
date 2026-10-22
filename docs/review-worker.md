@@ -119,8 +119,52 @@ the rejection; `review-feedback.jsonl` preserves it. The draft is not admitted.
 Repeated errors, exhausted budgets and freshness failures remain incomplete.
 Legacy plain final-draft adapters stay compatible.
 
+## Parallel execution and recovery
+
+The controller runs up to three independent native bundle investigations at once.
+Use `--workers N` (1–16) to set the reviewer cap and `--query-workers N` (1–8,
+default 2) for model-requested source queries. Set both to 1 for serial execution.
+Existing bundle boundaries, review policy and admitted conversation limits stay
+in effect. The change pass finishes before native jobs begin; stronger-model
+routing and independent verification are not part of this execution increment.
+
+Each job has an atomic checkpoint under `jobs/`, a distinct provider conversation
+and its own evidence view. Independent reads in a validated query batch can run
+concurrently. Identical in-flight requests share one execution and retain its
+original attribution; the controller does not invent sibling journal activity.
+Appends to the same native query journal are serialized. Only the controller
+finalizes responses and admits the complete native set. If a job fails, other
+jobs can finish and their drafts remain available; the attempt is incomplete,
+and no partial set is admitted as a completed run.
+
+To recover an interrupted investigation, refresh the native work package and use
+the normal invocation with a **new** `--output` plus `--resume-from PRIOR_ATTEMPT`.
+The current work, source, runtime, reviewer configuration and bundle bindings
+must still match. Keep the same `--phase` and original bundle layout; regrouping
+requires separate work, not a reset recovery budget. A completed change pass need
+not be repeated. Completed drafts
+are revalidated natively without another model call. Unfinished jobs start fresh
+provider conversations with previous query results and remaining turn/query/byte/
+time budgets. Recovery never silently changes model or resets consumed limits.
+A recovery chain cannot fork from an already continued attempt; follow its
+`continued-to.json` to the latest attempt. One OS lock fences controllers for the
+same local state stream and releases when the controller exits.
+
+This is job-level recovery before native admission. If a crash occurred during
+a plan/pending/decision state transaction and changed the exact work package,
+inspect native state and obtain a fresh handoff; this increment does not replay
+those transactions automatically. Native history is retained. A hard crash may
+leave a remote model call unobserved; active unobserved time is charged
+conservatively, and `unknown_provider_calls` marks incomplete usage accounting.
+No exactly-once remote execution or cross-attempt total token cap is promised.
+
+Provider usage is written per conversation, then consolidated after jobs stop.
+Recovery retains previous reported usage. Canonical Action usage exposes
+`usage_complete` and `unobserved_provider_calls`; missing usage is never zero or
+an estimate. Pool overlap is not evidence of live model speed or token savings.
+
 `source-facts.json` retains actual lookups and original attribution. Repeated
-queries reuse results only within the same worker attempt and bound source.
+queries reuse results within the same bound source and explicit recovery chain.
 Covered source reads use prepared bytes without inventing native journal activity.
 Freshness checks still surround each lookup, including cache hits. No verdict
 or fact reuse across revisions is implemented. Metrics distinguish native

@@ -1,5 +1,6 @@
 """Adapter, exact continuation and real process tests; no model credentials or inference."""
 import copy
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -78,6 +80,23 @@ class Adapter(unittest.TestCase):
         self.assertEqual(sum(json.loads(row)["usage"]["input_tokens"] for row in metrics.splitlines()), 200)
         self.assertEqual(json.loads(metrics.splitlines()[1])["reported_conversation_usage"]["input_tokens"], 200)
         self.assertFalse(Path(self.config["private_directory"]).is_relative_to(self.public))
+
+    def test_parallel_first_conversations_initialize_once_and_keep_separate_metrics(self):
+        barrier = threading.Barrier(4)
+        def start(letter):
+            task = {**self.task, "conversation_id": letter * 64,
+                    "provider_metrics": str(self.public / (letter + "-metrics.jsonl"))}
+            barrier.wait(timeout=5)
+            return reviewer.run(self.config, task, self.factory)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            self.assertEqual(len(list(pool.map(start, "abcd"))), 4)
+        marker = Path(self.config["private_directory"]) / "mehscan-provider.json"
+        self.assertEqual(json.loads(marker.read_text()), launcher.provider_contract(self.config))
+        for letter in "abcd":
+            rows = (self.public / (letter + "-metrics.jsonl")).read_text().splitlines()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(json.loads(rows[0])["conversation_id"], letter * 64)
+        self.assertFalse((self.public / "provider-metrics.jsonl").exists())
 
     def test_progress_handles_are_exhaustive_in_schema_and_each_prompt(self):
         self.task["research"]["artifact_handles"] = {"sweep":"bound-sweep"}

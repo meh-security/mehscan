@@ -3,10 +3,13 @@
 import argparse
 import hashlib
 import json
+import errno
+import os
 from pathlib import Path
 import re
 import signal
 import sys
+import tempfile
 import time
 import uuid
 
@@ -81,6 +84,29 @@ def usage_delta(current, previous, resumed):
     return delta, unknown
 
 
+def initialize_store(private, expected):
+    """Publish the initialized directory atomically for parallel first jobs."""
+    marker = private / "mehscan-provider.json"
+    if not private.exists():
+        private.parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix="." + private.name + "-", dir=private.parent))
+        try:
+            staging.chmod(0o700)
+            save(staging / marker.name, expected)
+            try:
+                os.rename(staging, private)
+            except OSError as error:
+                if error.errno not in (errno.EEXIST, errno.ENOTEMPTY) and not isinstance(error, FileExistsError):
+                    raise
+        finally:
+            if staging.exists():
+                import shutil
+                shutil.rmtree(staging)
+    if not marker.is_file() or read(marker) != expected:
+        raise ValueError("private provider directory is not an initialized compatible store")
+    private.chmod(0o700)
+
+
 def run(config, task, launcher_factory=Launcher):
     started = time.monotonic()
     packet, facts_file = read(task["evidence_packet"]), read(task["shared_facts"])
@@ -102,14 +128,10 @@ def run(config, task, launcher_factory=Launcher):
     conversation = task["conversation_id"]
     if not isinstance(conversation, str) or not re.fullmatch(r"[0-9a-f]{64}", conversation):
         raise ValueError("invalid native conversation identity")
-    marker = private / "mehscan-provider.json"
-    if private.exists():
-        if not marker.is_file() or read(marker) != expected:
-            raise ValueError("private provider directory is not an initialized compatible store")
-    else:
-        private.mkdir(parents=True, mode=0o700)
-        save(marker, expected)
-    private.chmod(0o700)
+    initialize_store(private, expected)
+    metrics_path = Path(task.get("provider_metrics", public / "provider-metrics.jsonl")).resolve()
+    if not metrics_path.is_relative_to(public) or metrics_path.parent != public:
+        raise ValueError("provider metrics must stay in the public conversation artifact directory")
     session = private / conversation
     session.mkdir(exist_ok=True)
     session.chmod(0o700)
@@ -148,7 +170,7 @@ def run(config, task, launcher_factory=Launcher):
               "resumed": state is not None, "elapsed_ms": round((time.monotonic()-started)*1000),
               "prompt_bytes": len(prompt.encode()), "usage":delta, "usage_basis":"conversation_delta",
               "reported_conversation_usage":usage, "unknown_delta_counters":unknown}
-    with (public / "provider-metrics.jsonl").open("a", encoding="utf-8") as handle:
+    with metrics_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(metric) + "\n")
     return result
 
