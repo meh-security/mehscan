@@ -28,6 +28,16 @@ class ArtifactCopy(unittest.TestCase):
             with patch("shutil.copystat", side_effect=PermissionError("metadata unsupported")):
                 worker.copy_review_files(source, root / "copied")
             self.assertEqual((root / "copied/request.json").read_bytes(), data)
+            run = root / "run"
+            run.mkdir()
+            (run / "manifest.json").write_bytes(data)
+            (run / "input-binding.json").write_bytes(data)
+            shutil.copytree(source, run / "requests")
+            shutil.copytree(source, run / "responses")
+            with patch("shutil.copystat", side_effect=PermissionError("metadata unsupported")):
+                worker.copy_bundle_run(run, root / "copied-run")
+            for relative in ("manifest.json", "input-binding.json", "requests/request.json", "responses/request.json"):
+                self.assertEqual((root / "copied-run" / relative).read_bytes(), data)
             (source / "unexpected-directory").mkdir()
             with self.assertRaises(ValueError):
                 worker.copy_review_files(source, root / "rejected")
@@ -388,6 +398,105 @@ print(json.dumps(result))
         self.assertEqual(len(record["completion"]["issue_review_ids"]), len(self.ids))
         self.assertNotIn(self.owner, (self.base / "worker/worker.json").read_text())
         self.assertNotIn(self.owner, (self.base / "worker/work.json").read_text())
+
+    def test_native_admission_and_pending_crashes_resume_without_more_model_calls(self):
+        args = self.configure_tiered()
+        calls = []
+        provider = self.tiered_provider(calls, conflict=True)
+        crash = ["record"]
+        def interrupted(command, *rest, **kwargs):
+            result = provider(command, *rest, **kwargs)
+            if command[1:3] == ["state", crash[0]]:
+                raise TimeoutError("lost native response after commit")
+            return result
+        first = Path(args.output)
+        with patch.object(worker, "execute", interrupted):
+            result = worker.run(args)
+        self.assertEqual(result["status"], "incomplete", result)
+        self.assertEqual(len(calls), 2, result)
+        batch = json.loads((first / "native-writes/admission.json").read_text())
+        self.assertEqual(batch["receipts"], [])  # The record really committed without a local receipt.
+        self.assertGreater(len(batch["entries"]), 1)
+        args.resume_from, args.output = str(first), str(self.base / "retry-pending")
+        crash[0] = "pending"
+        with patch.object(worker, "execute", interrupted):
+            result = worker.run(args)
+        self.assertEqual(result["status"], "incomplete", result)
+        second = Path(args.output)
+        admission_sequence = json.loads((second / "native-writes/admission.json").read_text())["receipts"][0]["sequence"]
+        args.resume_from, args.output = str(second), str(self.base / "retry-complete")
+        crash[0] = "never"
+        with patch.object(worker, "execute", interrupted):
+            result = worker.run(args)
+        self.assertEqual(result["status"], "admitted", result)
+        self.assertTrue(result["recovered_admission"])
+        self.assertEqual(result["admission_sequence"], admission_sequence)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(json.loads((Path(args.output) / "budget.json").read_text())["totals"]["model_calls"], 2)
+        self.assertEqual(len(result["completion"]["pending_review_ids"]), len(self.ids))
+        receipts = json.loads((Path(args.output) / "native-writes/admission.json").read_text())["receipts"]
+        self.assertTrue(all(receipt["replayed"] for receipt in receipts[:2]))
+        canonical = self.native("report", "--run", str(Path(args.output) / "run"), "--source-root", str(self.root), "--reviewer", args.reviewer_label)
+        self.assertEqual(canonical, json.loads((Path(args.output) / "findings.json").read_text()))
+        for path in (Path(args.output) / "native-writes").glob("*.json"):
+            self.assertNotIn(self.owner, path.read_text())
+        # A source change cannot use a committed batch as an escape from freshness.
+        last = args.output
+        (self.root / "app.js").write_text("function handle(request) { return 'changed'; }\n")
+        args.resume_from, args.output = last, str(self.base / "retry-stale")
+        with patch.object(worker, "execute", interrupted):
+            stale = worker.run(args)
+        self.assertEqual(stale["status"], "incomplete", stale)
+        self.assertEqual(len(calls), 2)
+        (self.root / "app.js").write_text("function handle(request) { eval(request.query.code); }\n")
+        self.native("state", "claim", "--store", str(self.store), "--stream", "local-review", "--inventory", str(self.inventory),
+            "--source-root", str(self.root), "--attempt-id", "superseding", "--expected-generation", "1", "--retry", "true",
+            "--operation-key", "superseding-claim")
+        args.output = str(self.base / "retry-superseded")
+        with patch.object(worker, "execute", interrupted):
+            superseded = worker.run(args)
+        self.assertEqual(superseded["status"], "incomplete", superseded)
+        self.assertEqual(len(calls), 2)
+
+    def test_change_plan_and_change_question_crashes_resume_before_native_review(self):
+        from argparse import Namespace
+        args = Namespace(scanner=str(self.scanner), source_root=str(self.root), inventory=str(self.inventory),
+            store=str(self.store), stream="local-review", claim=str(self.claim), work_package=str(self.package),
+            reviewer_command=str(self.command), reviewer_label="deterministic/medium", run=str(self.run),
+            output=str(self.base / "plan-crash"), provider_contract=None, artifact_root=None,
+            phase="all", supersede=False, timeout=None, skill_root=str(ROOT / "skills/mehscan-security"),
+            research_rounds=None, research_queries=None, research_bytes=None, workers=2, query_workers=2,
+            expert_command=None, expert_workers=1, expert_review_ids=None, resume_from=None)
+        original, calls, crash = worker.execute, [], ["plan"]
+        def interrupted(command, *rest, **kwargs):
+            result = original(command, *rest, **kwargs)
+            if command[0] == sys.executable and command[1] == str(self.reviewer):
+                task = json.loads(kwargs.get("payload") or rest[-1])
+                calls.append(task["kind"])
+                if task["kind"] == "change_pass":
+                    result["change_pass"][0].update(status="needs_review", questions=["Confirm the delegated policy applies here."])
+            if command[1:3] == ["state", crash[0]]:
+                raise TimeoutError("lost native response after commit")
+            return result
+        with patch.object(worker, "execute", interrupted):
+            first = worker.run(args)
+        self.assertEqual(first["status"], "incomplete", first)
+        self.assertEqual(calls, ["change_pass"])
+        args.resume_from, args.output = args.output, str(self.base / "change-question-crash")
+        crash[0] = "pending"
+        with patch.object(worker, "execute", interrupted):
+            second = worker.run(args)
+        self.assertEqual(second["status"], "incomplete", second)
+        self.assertEqual(calls, ["change_pass"])
+        args.resume_from, args.output = args.output, str(self.base / "change-resumed")
+        crash[0] = "never"
+        with patch.object(worker, "execute", interrupted):
+            final = worker.run(args)
+        self.assertEqual(final["status"], "admitted", final)
+        self.assertEqual(calls.count("change_pass"), 1)
+        self.assertEqual(calls.count("native_bundle"), 1)
+        self.assertTrue(json.loads((Path(args.output) / "native-writes/plan.json").read_text())["receipts"][0]["replayed"])
+        self.assertTrue(json.loads((Path(args.output) / "native-writes/change-questions.json").read_text())["receipts"][0]["replayed"])
 
     def test_recovery_cannot_reset_exhausted_turn_budget_or_fork_an_old_attempt(self):
         normal = self.base / "normal.py"

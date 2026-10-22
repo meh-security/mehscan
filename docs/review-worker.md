@@ -125,8 +125,8 @@ The controller runs up to three independent native bundle investigations at once
 Use `--workers N` (1–16) to set the reviewer cap and `--query-workers N` (1–8,
 default 2) for model-requested source queries. Set both to 1 for serial execution.
 Existing bundle boundaries, review policy and admitted conversation limits stay
-in effect. The change pass finishes before native jobs begin; stronger-model
-routing and independent verification are not part of this execution increment.
+in effect. The change pass finishes before native jobs begin. Optional
+[tiered review](#tiered-review) adds stronger-model routing and verification.
 
 Each job has an atomic checkpoint under `jobs/`, a distinct provider conversation
 and its own evidence view. Independent reads in a validated query batch can run
@@ -137,10 +137,10 @@ finalizes responses and admits the complete native set. If a job fails, other
 jobs can finish and their drafts remain available; the attempt is incomplete,
 and no partial set is admitted as a completed run.
 
-To recover an interrupted investigation, refresh the native work package and use
-the normal invocation with a **new** `--output` plus `--resume-from PRIOR_ATTEMPT`.
-The current work, source, runtime, reviewer configuration and bundle bindings
-must still match. Keep the same `--phase` and original bundle layout; regrouping
+To recover an interrupted investigation, keep the original `--work-package` and
+claim and use the normal invocation with a **new** `--output` plus
+`--resume-from PRIOR_ATTEMPT`. Source, runtime, reviewer configuration and bundle
+bindings must still match. Keep the same `--phase` and original bundle layout; regrouping
 requires separate work, not a reset recovery budget. A completed change pass need
 not be repeated. Completed drafts
 are revalidated natively without another model call. Unfinished jobs start fresh
@@ -150,11 +150,20 @@ A recovery chain cannot fork from an already continued attempt; follow its
 `continued-to.json` to the latest attempt. One OS lock fences controllers for the
 same local state stream and releases when the controller exits.
 
-This is job-level recovery before native admission. If a crash occurred during
-a plan/pending/decision state transaction and changed the exact work package,
-inspect native state and obtain a fresh handoff; this increment does not replay
-those transactions automatically. Native history is retained. A hard crash may
-leave a remote model call unobserved; active unobserved time is charged
+Recovery also covers native plan, decision and pending-question writes. Before
+writing, the controller saves a typed batch under `native-writes/`, with the
+original operation keys and input hashes. A retry checks native source/runtime
+and ownership, verifies those exact inputs and replays the original transactions.
+The native journal returns existing receipts rather than admitting duplicates.
+A committed decision batch resumes without calling reviewers or regenerating
+its responses. Interrupted change-pass writes complete before native reviews.
+Changed inputs or superseded ownership stop recovery; they do not authorize a
+new verdict. Keep all earlier attempt directories: replay references their
+original artifacts. The checkpoints contain no ownership credential and are
+not a second findings database. This is process-crash recovery on one host,
+not a distributed workflow service or a machine power-loss guarantee.
+
+A hard crash may leave a remote model call unobserved; active unobserved time is charged
 conservatively, and `unknown_provider_calls` marks incomplete usage accounting.
 No exactly-once remote execution or cross-attempt total token cap is promised.
 
@@ -389,5 +398,5 @@ proof that a remote provider ran or that its reasoning is correct. Canonical
 usage groups actual reported counters by provider and role.
 
 The automatic Action provider setup still configures its existing single-profile
-workflow. This local opt-in mode does not yet add Action inputs, automatic
-adjudication/final cross-finding QA or recovery across native state transactions.
+workflow. This local opt-in mode does not yet add Action inputs or automatic
+adjudication/final cross-finding QA.

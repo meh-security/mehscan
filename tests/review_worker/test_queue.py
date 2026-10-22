@@ -11,6 +11,69 @@ from test_worker import worker
 
 
 class QueueBoundaries(unittest.TestCase):
+    def test_native_replay_binds_the_run_and_secondary_assessment_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root, run, stages = base / "source", base / "run", base / "assessments"
+            for path in (root, run, stages):
+                path.mkdir()
+            (run / "response.json").write_text('{"decision":"issue"}')
+            stage = stages / "expert.json"
+            stage.write_text('{"decision":"issue","source":"original"}')
+            work, execution = base / "work.json", base / "execution.json"
+            work.write_text('{}')
+            execution.write_text('{}')
+            calls = []
+            def native(argv):
+                calls.append(argv)
+                return {"sequence":1, "replayed":bool(len(calls) > 1), "currently_owned":True}
+            writes = worker.NativeWrites(base / "writes", root, native, [])
+            writes.apply("admission", [{"operation":"record", "operation_key":"worker-record:one", "options":{
+                "--run":str(run), "--work-package":str(work), "--reviewer":"fixture", "--review-execution":str(execution)}}])
+            stage.write_text('{"decision":"issue","source":"altered"}')
+            with self.assertRaisesRegex(ValueError, "inputs changed"):
+                writes.apply("admission")
+            self.assertEqual(len(calls), 1)
+            stage.write_text('{"decision":"issue","source":"original"}')
+            (run / "new-response.json").write_text('{}')
+            with self.assertRaisesRegex(ValueError, "inputs changed"):
+                writes.apply("admission")
+            self.assertEqual(len(calls), 1)
+
+    def test_native_writes_replay_lost_receipts_and_reject_changed_inputs_or_ownership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "source"
+            root.mkdir()
+            question = base / "question.json"
+            question.write_text('{"question":"Check the delegated policy"}')
+            committed, calls = {}, []
+            def native(arguments):
+                key = arguments[arguments.index("--operation-key") + 1]
+                calls.append(key)
+                replayed = key in committed
+                committed.setdefault(key, len(committed) + 1)
+                if len(calls) == 1:
+                    raise TimeoutError("response lost after native commit")
+                return {"sequence":committed[key], "replayed":replayed, "currently_owned":True}
+            writes = worker.NativeWrites(base / "first", root, native, ["--owner", "private-owner"])
+            entries = [{"operation":"pending", "operation_key":"worker-question:one",
+                        "options":{"--input":str(question)}}]
+            with self.assertRaises(TimeoutError):
+                writes.apply("admission", entries)
+            resumed = worker.NativeWrites(base / "second", root, native, ["--owner", "private-owner"], base / "first")
+            self.assertEqual(resumed.apply("admission"), [{"sequence":1, "replayed":True}])
+            self.assertEqual(calls, ["worker-question:one"] * 2)
+            self.assertNotIn("private-owner", (base / "second/admission.json").read_text())
+            question.write_text('{"question":"An altered question"}')
+            with self.assertRaisesRegex(ValueError, "inputs changed"):
+                resumed.apply("admission")
+            self.assertEqual(len(calls), 2)
+            question.write_text('{"question":"Check the delegated policy"}')
+            resumed.native = lambda argv: {"sequence":1, "replayed":True, "currently_owned":False}
+            with self.assertRaisesRegex(ValueError, "no longer owned"):
+                resumed.apply("admission")
+
     def test_same_inflight_query_runs_once_and_failure_is_not_a_negative_fact(self):
         broker = worker.EvidenceBroker()
         entered, release, waiting = threading.Event(), threading.Event(), threading.Event()
