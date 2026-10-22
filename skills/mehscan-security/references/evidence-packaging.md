@@ -51,6 +51,27 @@ receiver, branch and control for relevant entries. Syntax matches and truncated
 reference searches do not prove complete writer coverage. Load dependency
 source only when its behavior can change the decision, checking the exact version.
 
+## HTTP and process: package the consequential boundary
+
+For HTTP, locate the execution side, final URL construction, actual client and
+request options. Distinguish authority selection from data within a fixed
+authority, and show any credential/data consequence separately. For processes,
+keep executable selection, argv, shell/interpreter mode and invocation authority
+distinct. A generic variable or nearby branch does not explain why the selected
+operation merits review.
+
+Add a missing producer, client factory or effective control definition once for
+consumers with a verified shared binding. Preserve differing options and callers;
+use targeted lookup for the remaining edge instead of adding every surrounding
+method or guard. Keep established boundaries beside the precise unresolved
+question so later research does not reopen them without new evidence.
+
+Tie that question to a concrete lower-trust lever and protected consequence, or
+name which of those is still unknown. If additional context exposes a different
+weakness, preserve it separately rather than silently replacing the selected
+question with a broader audit. These are packaging choices, not safety verdicts
+or instructions to dismiss an unresolved consequential relationship.
+
 ## Packet use
 
 A source-bound packet may replace the initial card/sweep read when it contains
