@@ -1269,6 +1269,19 @@ fn runtime_template(
         })
         .transpose()?;
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let orchestration = args
+        .optional("--review-orchestration")
+        .map(|path| {
+            if let Some(root) = root {
+                outside_source(Path::new(&path), root)?;
+            }
+            let contract: mehscan_core::ReviewOrchestrationContract =
+                serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?)
+                    .map_err(|error| error.to_string())?;
+            contract.validate(provider.as_ref())?;
+            Ok::<_, String>(contract)
+        })
+        .transpose()?;
     Ok(mehscan_core::ReviewRuntimeContract {
         schema_version: "1".into(),
         policy,
@@ -1281,6 +1294,7 @@ fn runtime_template(
         skill_bundle_id: super::engine(mehscan_engine::review_runtime::skill_bundle_id(&skill))?,
         limits,
         provider,
+        orchestration,
     })
 }
 
@@ -1548,6 +1562,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 validate_runtime_skill(runtime, skill.as_deref(), provider.as_deref(), &root)?;
             }
             let reviewer = args.optional("--reviewer");
+            let execution = args.optional("--review-execution");
             if let Some(label_value) = &reviewer {
                 label(label_value)?;
             }
@@ -1583,6 +1598,29 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 provenance["work_package_id"] = json!(package.package_id);
                 if let Some(runtime) = &package.payload.runtime {
                     provenance["runtime"] = json!(runtime);
+                    if runtime.orchestration.is_some() {
+                        let path = Path::new(
+                            execution
+                                .as_deref()
+                                .ok_or("tiered review requires --review-execution")?,
+                        );
+                        outside_source(path, &root)?;
+                        let receipt: mehscan_core::ReviewExecutionReceipt = serde_json::from_slice(
+                            &fs::read(path).map_err(|error| error.to_string())?,
+                        )
+                        .map_err(|error| error.to_string())?;
+                        validate_execution(
+                            &receipt,
+                            package,
+                            &report.decision_records,
+                            &pairs,
+                            path.parent().unwrap(),
+                            &root,
+                        )?;
+                        provenance["review_execution"] = json!(receipt);
+                    } else if execution.is_some() {
+                        return Err("execution receipt requires a tiered runtime".into());
+                    }
                 }
                 provenance["evidence_update_ids"] = json!(
                     package
@@ -1591,6 +1629,11 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                         .iter()
                         .map(|fact| &fact.fact_id)
                         .collect::<Vec<_>>()
+                );
+            }
+            if execution.is_some() && provenance.get("review_execution").is_none() {
+                return Err(
+                    "execution receipt requires a tiered runtime-bound work package".into(),
                 );
             }
             Command::Record {
@@ -1626,6 +1669,136 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     super::print_json(&transact(&store, &operation_key, command)?)
 }
 
+fn validate_execution(
+    receipt: &mehscan_core::ReviewExecutionReceipt,
+    package: &mehscan_core::ReviewWorkPackage,
+    records: &[mehscan_core::ReviewDecisionRecord],
+    pairs: &[(
+        mehscan_core::PathReviewBundle,
+        mehscan_core::PathReviewBundleResponseSet,
+    )],
+    execution_root: &Path,
+    root: &Path,
+) -> Result<(), String> {
+    use mehscan_core::ReviewDecision::{Issue, NeedsReview, NotIssue};
+    let runtime = package
+        .payload
+        .runtime
+        .as_ref()
+        .ok_or("execution requires runtime")?;
+    let policy = runtime
+        .orchestration
+        .as_ref()
+        .ok_or("execution requires orchestration")?;
+    let primary = runtime
+        .provider
+        .as_ref()
+        .ok_or("execution requires primary provider")?;
+    let digest = |value: &str| {
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    let mut sources = std::collections::BTreeMap::<
+        String,
+        (String, mehscan_core::PathReviewBundleResponseSet),
+    >::new();
+    if receipt.schema_version != "1"
+        || receipt.package_id != package.package_id
+        || receipt.cases.len() != records.len()
+    {
+        return Err("execution receipt differs from native work/decision coverage".into());
+    }
+    for case in &receipt.cases {
+        let record = records
+            .iter()
+            .find(|r| r.response.review_id == case.review_id)
+            .ok_or("execution receipt names an unrelated review")?;
+        if !seen.insert(&case.review_id) || !(1..=2).contains(&case.assessments.len()) {
+            return Err("execution receipt contains duplicate or missing assessments".into());
+        }
+        let mut profiles = std::collections::BTreeSet::new();
+        let mut jobs = std::collections::BTreeSet::new();
+        for assessment in &case.assessments {
+            let expected = match assessment.profile.as_str() {
+                "routine" => primary,
+                "expert" => &policy.expert,
+                _ => return Err("unknown execution provider profile".into()),
+            };
+            if &assessment.provider != expected
+                || !profiles.insert(&assessment.profile)
+                || !digest(&assessment.job_id)
+                || !digest(&assessment.response_sha256)
+                || !jobs.insert(&assessment.job_id)
+            {
+                return Err("execution assessment differs from bound provider policy".into());
+            }
+            let bundle = &pairs
+                .iter()
+                .find(|(bundle, _)| bundle.review_ids.contains(&case.review_id))
+                .ok_or("execution assessment has no matching native bundle")?
+                .0;
+            if !sources.contains_key(&assessment.job_id) {
+                let path = execution_root
+                    .join("assessments")
+                    .join(format!("{}.json", assessment.job_id));
+                outside_source(&path, root)?;
+                if fs::metadata(&path).map_err(|e| e.to_string())?.len() > 8 * 1024 * 1024 {
+                    return Err("assessment artifact exceeds bounded intake".into());
+                }
+                let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+                let response: mehscan_core::PathReviewBundleResponseSet =
+                    serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+                super::engine(
+                    mehscan_engine::investigation::validate_path_review_bundle_response(
+                        bundle, &response,
+                    ),
+                )?;
+                super::validate_review_artifact_source_text(root, &response)?;
+                sources.insert(
+                    assessment.job_id.clone(),
+                    (format!("{:x}", Sha256::digest(bytes)), response),
+                );
+            }
+            let (digest, response) = &sources[&assessment.job_id];
+            if digest != &assessment.response_sha256
+                || response.bundle_fingerprint != bundle.bundle_fingerprint
+                || !response
+                    .results
+                    .iter()
+                    .any(|r| r.review_id == case.review_id && r.decision == assessment.decision)
+            {
+                return Err("assessment receipt differs from its validated source artifact".into());
+            }
+        }
+        let final_decision = record.response.decision;
+        let first = case.assessments[0].decision;
+        if final_decision == Issue
+            && (case.assessments.len() != 2 || case.assessments.iter().any(|a| a.decision != Issue))
+        {
+            return Err("reported issue requires two independent bound assessments".into());
+        }
+        if final_decision != NeedsReview
+            && case
+                .assessments
+                .iter()
+                .any(|a| a.decision != final_decision)
+        {
+            return Err("conflicting assessments require explicit pending adjudication".into());
+        }
+        let sample = Sha256::digest(format!("{}:{}", policy.audit_seed, case.review_id).as_bytes());
+        let sampled =
+            u32::from_be_bytes(sample[..4].try_into().unwrap()) % 100 < policy.audit_percent as u32;
+        if final_decision == NotIssue && first == NotIssue && sampled && case.assessments.len() != 2
+        {
+            return Err("sampled closure requires an independent assessment".into());
+        }
+    }
+    Ok(())
+}
+
 fn read_work_package(
     path: Option<String>,
 ) -> Result<Option<mehscan_core::ReviewWorkPackage>, String> {
@@ -1649,5 +1822,8 @@ fn help() {
     );
     println!(
         "\nCompletion accounting:\n  mehscan state runtime-template --skill-root DIR [--policy value|comprehensive] [--research-rounds N --research-queries N --research-bytes N --timeout SECONDS]\n  mehscan state plan-template --inventory DIR --source-root ROOT [--policy value|comprehensive] [--skill-root DIR --provider-contract FILE]\n  mehscan state plan --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID [--expected-plan-id ID]\nRuntime-bound plan, work and record require --skill-root DIR and verify actual trusted package bytes outside source. Provider-bound runtime/plan templates accept --provider-contract FILE; bound plan/work/record require the same descriptor. Templates select all native IDs and leave changed paths unassessed. Value may defer IDs with explicit reasons; Comprehensive must select every admitted ID. Every changed path requires an entry, including deletions and unsupported paths. Assessed modifications/deletions/renames require pinned base evidence; primary current evidence is required for existing files. Native response completion, pending effects, coverage limits and execution status remain distinct. Plan updates require the exact current parent. Evidence is materialized from authorized source, not caller-supplied text."
+    );
+    println!(
+        "\nTiered local review: runtime-template and plan-template accept --review-orchestration FILE with a bound expert provider, shared case/run limits and seeded closure audits. Tiered state record also requires --review-execution FILE and its assessments/ artifacts; native admission validates their source, provider policy and issue verification coverage."
     );
 }

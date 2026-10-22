@@ -112,8 +112,14 @@ def run(config, task, launcher_factory=Launcher):
     packet, facts_file = read(task["evidence_packet"]), read(task["shared_facts"])
     facts = facts_file["facts"]
     expected = provider_contract(config)
-    if packet["work"]["runtime"].get("provider") != expected:
+    runtime = packet["work"]["runtime"]
+    profile = task.get("profile", "routine")
+    allowed = runtime.get("provider") if profile == "routine" else (runtime.get("orchestration") or {}).get("expert") if profile == "expert" else None
+    if allowed != expected:
         raise ValueError("provider configuration differs from the native work binding")
+    if runtime.get("orchestration") and packet.get("job_binding") != {
+            "profile": profile, "role": task.get("review_role", "investigator"), "provider": expected}:
+        raise ValueError("job provider/role differs from its native runtime profile")
     root = Path(task["source_root"]).resolve(strict=True)
     public = Path(task["evidence_packet"]).resolve(strict=True).parent
     artifact_root = Path(task.get("artifact_root", public)).resolve(strict=True)
@@ -167,6 +173,7 @@ def run(config, task, launcher_factory=Launcher):
                       "sent_facts": [fact["result_id"] for fact in facts], "sent_results": len(task["research"]["results"]),
                       "reported_conversation_usage":usage})
     metric = {"schema_version": "1", "provider": expected, "conversation_id": conversation, "round": round_index,
+              "profile":profile, "role":task.get("review_role", "investigator"),
               "resumed": state is not None, "elapsed_ms": round((time.monotonic()-started)*1000),
               "prompt_bytes": len(prompt.encode()), "usage":delta, "usage_basis":"conversation_delta",
               "reported_conversation_usage":usage, "unknown_delta_counters":unknown}

@@ -148,3 +148,26 @@ plan/work/record commands. The worker receives the same file and requires the
 bundled adapter configuration to match. Model/effort/client-version changes invalidate
 old work. Use provider descriptors; schema-1 execution needs a fresh plan.
 See the [BYOK adapter contract](../../../docs/codex-reviewer.md).
+
+## Tiered controller
+
+Opt in at `state runtime-template` or `state plan-template` with
+`--review-orchestration FILE`, alongside the normal primary `--provider-contract`.
+The trusted JSON declares `expert` (a different model's provider descriptor),
+`case_limits` and `run_limits` (`model_calls`, `queries`, `bytes`,
+`timeout_seconds`), `max_reviews_per_job`, `audit_percent` and `audit_seed`.
+Use small related bundles within that declared size. A case is one bundle;
+its limits cover both assessments and explicit recovery attempts. Budget for
+verification and audits, not only the first review. Limits are dispatch/source
+work bounds, not a hard token or currency cap.
+
+Pass `--expert-command FILE` to the installed worker, using a separate trusted
+argv/config for the pinned expert profile. `--expert-workers` bounds that pool;
+`--expert-review-ids ID,ID` starts the containing bundles there directly. Otherwise
+typed routing, proposed issues and seeded closure audits select a second stage.
+Keep the normal primary descriptor on native work/record calls. Native tiered
+admission also requires the controller's `--review-execution FILE` and its
+`assessments/` artifacts. Do not hand-assemble execution receipts to bypass review.
+Contrary verdicts remain pending; inspect both source-backed assessments for
+adjudication. The Action's automatic single-profile setup does not configure this
+local opt-in workflow. Preserve the run's checkpoints, receipts and stage files.

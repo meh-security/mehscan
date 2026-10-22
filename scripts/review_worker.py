@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Local provider-neutral review controller. No GitHub publication or merge verdict."""
 import argparse
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor, wait, FIRST_COMPLETED
 from contextlib import contextmanager
 import hashlib
 import json
@@ -14,6 +15,7 @@ import tempfile
 import threading
 import time
 import review_context as context
+import review_orchestration as orchestration
 
 _cancelled = False
 
@@ -317,8 +319,11 @@ def run_locked(args):
     started_run = time.monotonic()
     workers = getattr(args, "workers", 3)
     query_workers = getattr(args, "query_workers", 2)
+    expert_workers = getattr(args, "expert_workers", 1)
     if type(workers) is not int or not 1 <= workers <= 16 or type(query_workers) is not int or not 1 <= query_workers <= 8:
         raise ValueError("review workers must be 1 to 16 and query workers 1 to 8")
+    if type(expert_workers) is not int or not 1 <= expert_workers <= 8:
+        raise ValueError("expert workers must be 1 to 8")
     limit_options = {"rounds": "research_rounds", "queries": "research_queries", "bytes": "research_bytes", "timeout_seconds": "timeout"}
     requested_limits = {key: getattr(args, name) for key, name in limit_options.items()}
     for key, fallback in {"rounds": 3, "queries": 12, "bytes": 256 * 1024, "timeout_seconds": 600}.items():
@@ -364,6 +369,10 @@ def run_locked(args):
               "reviewer": args.reviewer_label, "alert_disposition": "not_established", "timings_ms": timings,
               "workers": workers, "query_workers": query_workers, "jobs": {}}
     bound_runtime = None
+    shared_budget = None
+    tiered_policy = None
+    expert_command = None
+    expert_path = None
 
     def check_runtime():
         if bound_runtime is not None and (
@@ -451,10 +460,12 @@ def run_locked(args):
         return native(["state", "work", *common, "--review-ids", ",".join(requested)])
 
     def job_for(task):
-        identity = context.digest([task["kind"], task.get("review_ids", [])])
+        identity = context.digest([task["kind"], task.get("review_ids", []),
+                                   task.get("profile", "routine"), task.get("review_role", "investigator")])
         binding = {"package_id": package["package_id"], "runtime": bound_runtime,
                    "reviewer_configuration": reviewer_configuration,
                    "kind": task["kind"], "review_ids": task.get("review_ids", []),
+                   "profile": task.get("profile", "routine"), "role": task.get("review_role", "investigator"),
                    "bundle_sha256": digest_file(task["bundle"]) if task.get("bundle") else None}
         return JobCheckpoint(output / "jobs" / (identity + ".json"), binding,
                              recovery / "jobs" / (identity + ".json") if recovery else None)
@@ -464,10 +475,13 @@ def run_locked(args):
         job.started = started
         reused = job.state["status"] == "drafted"
         try:
+            if shared_budget and not reused:
+                shared_budget.begin_case(case_identity(task))
             draft = reviewer(task, job)
             with shared_lock:
                 record["jobs"][job.path.stem] = {"review_ids": task.get("review_ids", []), "kind": task["kind"],
                     "status": "drafted", "recovered_draft": reused,
+                    "profile": task.get("profile", "routine"), "role": task.get("review_role", "investigator"),
                     "elapsed_ms": round((time.monotonic() - started) * 1000)}
             return draft
         except Exception as error:
@@ -477,10 +491,15 @@ def run_locked(args):
                     "status": "incomplete", "reason": type(error).__name__, "detail": str(error)}
             raise
         finally:
+            if shared_budget:
+                shared_budget.end_case(case_identity(task))
             with shared_lock:
                 # Progress survives a controller crash without becoming native
                 # decision authority. Each job has its own atomic checkpoint.
                 write(output / "worker.json", record)
+
+    def case_identity(task):
+        return context.digest([task["kind"], sorted(task.get("review_ids", []))])
 
     def reviewer(task, job):
         if job.state["status"] == "drafted":
@@ -493,16 +512,32 @@ def run_locked(args):
             "origin_review_id": entry["origin_review_id"], "query": entry["query"],
             "result": entry["result"]} for entry in results}.values())
         expected = package
+        profile = task.get("profile", "routine")
+        role = task.get("review_role", "investigator")
+        worker_command = expert_command if profile == "expert" else command
+        case_id = case_identity(task)
+        if shared_budget and shared_budget.remaining(case_id, "model_calls") <= 0:
+            raise orchestration.BudgetExhausted("shared review model_calls budget exhausted")
+        if shared_budget and shared_budget.remaining(case_id, "bytes") < 0:
+            raise orchestration.BudgetExhausted("shared received-byte budget already exceeded")
         # Recovery of an unfinished job is a fresh provider session with the
         # previous source results and remaining budget, not an unsafe replay.
-        conversation_id = context.digest([expected["package_id"], task["kind"], task.get("review_ids", []), attempt_key])
+        conversation_id = context.digest([expected["package_id"], task["kind"], task.get("review_ids", []), profile, role, attempt_key])
         ids = task.get("review_ids", [])
         entries = [entry for entry in inventory_data["entries"] if entry["review_id"] in (ids or payload["planned_review_ids"])]
         packet = {"schema_version": "1", "package_id": expected["package_id"],
                   "source_binding": {"snapshot_id": payload["snapshot_id"], "inventory_input_fingerprint": payload["inventory_input_fingerprint"]},
-                  "contract": context.compile_contract(skill_root, task["kind"], entries, [item["path"] for item in (payload["impact_scope"] or {}).get("changed_files", [])], task.get("review_playbooks")),
+                  "contract": context.compile_contract(skill_root, task["kind"], entries, [item["path"] for item in (payload["impact_scope"] or {}).get("changed_files", [])], task.get("review_playbooks"), role=role),
                   "work": context.compact_work(payload, ids or requested), "native_questions": entries,
                   "primary": prepared_changes}
+        if tiered_policy:
+            packet["job_binding"] = {"profile": profile, "role": role,
+                "provider": tiered_policy["expert"] if profile == "expert" else bound_runtime["provider"]}
+        if role == "verification":
+            # Neither current drafts nor historical verdicts belong in the blind
+            # assessment. Source updates remain facts, with their original scope.
+            packet["work"]["parent_decisions"] = {}
+            packet["work"]["change_pass"] = []
         if task["kind"] == "native_bundle":
             packet["sweep"] = native(["investigate", "review-sweep", "--bundle", task["bundle"]])
             packet["sweep_artifact_id"] = "mehscanPreparedSweep/v1:" + context.digest(packet["sweep"])
@@ -546,9 +581,16 @@ def run_locked(args):
 
         def remaining():
             seconds = deadline - time.monotonic()
+            if shared_budget:
+                seconds = min(seconds, shared_budget.remaining(case_id, "timeout_seconds"))
             if seconds <= 0:
+                if shared_budget:
+                    raise orchestration.BudgetExhausted("review conversation or shared deadline exhausted")
                 raise TimeoutError("review conversation exceeded its deadline")
             return seconds
+
+        def remaining_count(key, local):
+            return max(0, min(local, shared_budget.remaining(case_id, key))) if shared_budget else local
 
         def check_fresh():
             remaining()
@@ -557,6 +599,7 @@ def run_locked(args):
                 raise ValueError("work changed during reviewer research")
 
         calls_left = args.research_rounds + 1 - job.state["calls"]
+        calls_left = remaining_count("model_calls", calls_left)
         if calls_left <= 0:
             raise ValueError("recovery job has no remaining model turns")
         if byte_count > args.research_bytes or query_count > args.research_queries:
@@ -570,24 +613,30 @@ def run_locked(args):
             with shared_lock:
                 record["step"] = "reviewer/" + task["kind"]
             aliases = artifact_handles()
+            display_facts = json.loads(json.dumps(job_facts))
+            if role == "verification":
+                for fact in display_facts:
+                    fact.get("query", {}).pop("purpose", None)
             write(facts_path, {"schema_version": "1", "scanner_sha256": scanner_hash,
-                              "snapshot_id": payload["snapshot_id"], "facts": job_facts})
+                              "snapshot_id": payload["snapshot_id"], "facts": display_facts})
             frame = {**task, "artifact_root": str(artifact_root), "sensitive_paths": [str(store), str(claim_path), str(invocation)],
                      "conversation_id": conversation_id, "evidence_packet": str(packet_path),
                      "provider_metrics": str(output / ("provider-metrics-" + conversation_id + ".jsonl")),
                      "shared_facts": str(facts_path),
                      "research": {"version": "2", "round": round_index,
                      "seconds_remaining": remaining(), "rounds_remaining": calls_left - round_index - 1,
-                     "queries_remaining": args.research_queries - query_count,
-                     "bytes_remaining": args.research_bytes - byte_count,
+                     "queries_remaining": remaining_count("queries", args.research_queries - query_count),
+                     "bytes_remaining": remaining_count("bytes", args.research_bytes - byte_count),
                      "tools": ["source", "base_source", "symbol", "references", "paths"],
                      "semantics": {"references": "Bounded identifier text matches; navigation, not semantic binding. path_prefix must name a directory.",
                                    "paths": "Case-insensitive literal path substring, not a glob. Searches the native investigation index; absence does not prove runtime absence.",
                                    "source": "Current source only. Inspect truncation and native provenance before drawing conclusions."},
                      "artifact_handles": aliases, "working_chain": working_chain, "progress": progress, "feedback": feedback, "results": results}}
             started = time.monotonic()
+            if shared_budget:
+                shared_budget.reserve(case_id, "model_calls", 1)
             job.save(status="running", calls=job.state["calls"] + 1, model_inflight=True, active_since=time.time())
-            value = execute(command, output, dict(os.environ), remaining(), json.dumps(frame))
+            value = execute(worker_command, output, dict(os.environ), remaining(), json.dumps(frame))
             job.save(model_inflight=False, active_since=time.time())
             with shared_lock:
                 timings.append({"operation": "reviewer/" + task["kind"], "round": round_index,
@@ -595,9 +644,11 @@ def run_locked(args):
             check_fresh()
             received_response = json.loads(json.dumps(value))
             try:
-                if isinstance(value, dict) and ("working_chain" in value or "progress" in value or "draft" in value):
-                    if value.keys() - {"research", "draft", "working_chain", "progress"}:
+                if isinstance(value, dict) and ("working_chain" in value or "progress" in value or "draft" in value or "routing" in value):
+                    if value.keys() - {"research", "draft", "working_chain", "progress", "routing"}:
                         raise ValueError("review envelope contains unsupported fields")
+                    routing = orchestration.validate_routing(value.get("routing", []), ids)
+                    job.save(routing=routing)
                     working_chain = value.get("working_chain", working_chain)
                     progress = value.get("progress", progress)
                     if not isinstance(working_chain, str) or len(working_chain) > 1500 or not isinstance(progress, list) or len(progress) > 20:
@@ -622,6 +673,10 @@ def run_locked(args):
                     if "draft" in value:
                         if "research" in value or any(edge["status"] == "open" for edge in progress):
                             raise ValueError("final draft cannot leave an available local edge open")
+                        decisions = {item["review_id"]: item["decision"] for item in value["draft"].get("results", [])}
+                        if any(item["reason"] in {"external_required", "human_required", "budget_exhausted"}
+                               and decisions.get(item["review_id"]) != "needs_review" for item in routing):
+                            raise ValueError("missing-fact routing requires a needs_review draft")
                         return job.complete(value["draft"])
                     value = {"research": value.get("research")}
                 if not isinstance(value, dict) or "research" not in value:
@@ -638,7 +693,7 @@ def run_locked(args):
                         or str(error) not in ("review progress must cite current inspected artifacts",
                             "final draft cannot leave an available local edge open", "unsupported research arguments",
                             "blocked edge needs a precise cause", "open/inspected edges cannot claim a blocker",
-                            "inspected edge requires source/query proof",
+                                    "inspected edge requires source/query proof", "missing-fact routing requires a needs_review draft",
                             "research path filter must name a file; use path_prefix for a directory",
                             "research path_prefix must name a directory",
                             "choose one research path filter",
@@ -665,6 +720,8 @@ def run_locked(args):
             feedback = None
             # Reserve the whole validated batch before execution so a failed or
             # interrupted batch does not gain free queries on recovery.
+            if shared_budget:
+                shared_budget.reserve(case_id, "queries", len(queries))
             job.save(queries=query_count + len(queries), active_since=time.time())
 
             def lookup(pair):
@@ -706,7 +763,10 @@ def run_locked(args):
                 query, fact, reused = future.result(timeout=remaining())
                 result = fact["result"]
                 query_count += 1
-                byte_count += len(json.dumps(result, ensure_ascii=False).encode("utf-8"))
+                result_bytes = len(json.dumps(result, ensure_ascii=False).encode("utf-8"))
+                if shared_budget:
+                    shared_budget.reserve(case_id, "bytes", result_bytes)
+                byte_count += result_bytes
                 entry = {"kind": task["kind"], "round": round_index, "query": query,
                          "package_id": expected["package_id"], "result_id": fact["result_id"],
                          "reused": reused, "origin_package_id": fact["origin_package_id"],
@@ -744,20 +804,44 @@ def run_locked(args):
                 raise ValueError("worker override differs from native runtime limits; admit a new plan")
             setattr(args, name, configured)
         check_runtime()
-        if bound_runtime.get("provider") is not None:
+        def validate_provider_command(argv, expected):
+            if expected is None:
+                return
             expected_adapter = (skill_root / "scripts/codex_reviewer.py").resolve(strict=True)
-            if len(command) != 4 or Path(command[1]).resolve(strict=True) != expected_adapter or command[2] != "--config":
+            if len(argv) != 4 or Path(argv[1]).resolve(strict=True) != expected_adapter or argv[2] != "--config":
                 raise ValueError("bound Codex provider requires the bundled BYOK adapter")
-            provider_config_path = outside(command[3], root)
+            provider_config_path = outside(argv[3], root)
             if provider_config_path.is_relative_to(artifact_root):
                 raise ValueError("provider configuration must stay outside exported artifacts")
             config = read(provider_config_path)
             actual_provider = {"schema_version": config["schema_version"], "provider": "codex-cli",
                 **{key: config[key] for key in ("executable_version", "model", "reasoning_effort")}}
-            if actual_provider != bound_runtime["provider"]:
+            if actual_provider != expected:
                 raise ValueError("actual provider configuration differs from the native work binding")
+        validate_provider_command(command, bound_runtime.get("provider"))
+        tiered_policy = bound_runtime.get("orchestration")
+        if tiered_policy:
+            if not getattr(args, "expert_command", None):
+                raise ValueError("tiered review requires --expert-command")
+            expert_path = outside(args.expert_command, root)
+            expert_command = read(expert_path)
+            if (not isinstance(expert_command, list) or not expert_command
+                    or not all(isinstance(value, str) for value in expert_command)
+                    or not Path(expert_command[0]).is_absolute()):
+                raise ValueError("expert command must be a trusted JSON argv array")
+            for value in expert_command:
+                if Path(value).is_file():
+                    outside(value, root)
+            validate_provider_command(expert_command, tiered_policy["expert"])
+        elif getattr(args, "expert_command", None) or getattr(args, "expert_review_ids", None):
+            raise ValueError("expert work requires a native orchestration contract")
         record["runtime"] = bound_runtime
-        reviewer_configuration = context.digest([command, [digest_file(value) for value in command if Path(value).is_file()]])
+        all_commands = [*command, *(expert_command or [])]
+        reviewer_configuration = context.digest([command, expert_command,
+            [digest_file(value) for value in all_commands if Path(value).is_file()]])
+        direct_ids = set(filter(None, (getattr(args, "expert_review_ids", None) or "").split(",")))
+        if not direct_ids <= set(requested):
+            raise ValueError("direct expert IDs must belong to this exact work package")
         bundle_binding = None
         if args.phase in ("all", "native") and requested:
             selected_run = outside(args.run, root)
@@ -773,7 +857,9 @@ def run_locked(args):
         recovery_binding = {"schema_version": "1", "package_id": package["package_id"],
                             "reviewer_configuration": reviewer_configuration, "reviewer_label": args.reviewer_label,
                             "stream": args.stream, "store": str(store), "supersede": args.supersede,
-                            "phase": args.phase, "bundle_binding": bundle_binding}
+                            "phase": args.phase, "bundle_binding": bundle_binding, "direct_expert_ids": sorted(direct_ids),
+                            "controller_sha256": digest_file(__file__),
+                            "orchestrator_sha256": digest_file(Path(__file__).with_name("review_orchestration.py"))}
         recovered_change_pass = False
         if recovery:
             prior = read(recovery / "recovery.json")
@@ -808,6 +894,11 @@ def run_locked(args):
 
         save_recovery(recovered_change_pass)
         save_facts()
+        if tiered_policy:
+            if recovery and not (recovery / "budget.json").is_file():
+                raise ValueError("tiered recovery requires its existing shared budget ledger")
+            shared_budget = orchestration.SharedReviewBudget(output / "budget.json", tiered_policy, write,
+                recovery / "budget.json" if recovery else None)
         if recovery:
             # A retry chain cannot fork from an older budget checkpoint. The
             # stream lock fences this append before any new model invocation.
@@ -866,38 +957,81 @@ def run_locked(args):
             ids = [review_id for _, _, data in requests for review_id in data["review_ids"]]
             if len(ids) != len(set(ids)) or set(ids) != set(requested):
                 raise ValueError("bundle run does not exactly match handoff IDs")
+            if tiered_policy and any(len(data["review_ids"]) > tiered_policy["max_reviews_per_job"] for _, _, data in requests):
+                raise ValueError("tiered bundle exceeds max_reviews_per_job; prepare smaller related bundles")
             # Work and finalized responses stay in this attempt. Original requests
             # and bindings remain required; the importer accepts this response dir.
             response_dir = output / "responses"
             response_dir.mkdir()
             if fresh_work() != package:
                 raise ValueError("work changed before reviewer invocation")
-            failures = []
-            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="mehscan-review") as pool:
-                futures = {}
+            failures, execution_cases = [], {}
+            ready = {"routine": deque(), "expert": deque()}
+            (output / "assessments").mkdir()
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="mehscan-review") as pool, \
+                    ThreadPoolExecutor(max_workers=expert_workers, thread_name_prefix="mehscan-expert") as experts:
+                pools, caps = {"routine": pool, "expert": experts}, {"routine": workers, "expert": expert_workers}
+                futures, active = {}, {"routine": 0, "expert": 0}
                 for filename, request, data in requests:
                     task = {**task_base, "kind": "native_bundle", "bundle": str(request),
                             "review_ids": data["review_ids"], "review_playbooks": data.get("review_playbooks", {})}
-                    job = job_for(task)
-                    futures[pool.submit(execute_job, task, job)] = (filename, request, job)
-                for future in as_completed(futures):
-                    filename, request, job = futures[future]
-                    try:
-                        draft = future.result()
-                        draft_path = output / ("draft-" + filename)
-                        write(draft_path, draft)
-                        # Only this controller finalizes and admits decisions.
-                        native(["investigate", "review-bundle-finalize", "--bundle", str(request), "--draft", str(draft_path),
-                                "--source-root", str(root), "--journal-dir", str(journals), "--output", str(response_dir / filename)])
-                        with shared_lock:
-                            record["jobs"][job.path.stem]["status"] = "finalized"
-                    except Exception as error:
-                        # execute_job already checkpoints investigator failures.
-                        # A finalization interruption must not erase a completed
-                        # draft or cause an unnecessary provider replay.
-                        failures.append(error)
-                        with shared_lock:
-                            record["jobs"].setdefault(job.path.stem, {}).update(status="incomplete", reason=type(error).__name__, detail=str(error))
+                    profile = "expert" if set(data["review_ids"]) & direct_ids else "routine"
+                    task.update(profile=profile, review_role="investigator")
+                    ready[profile].append((filename, request, task, None))
+                while any(ready.values()) or futures:
+                    for profile in pools:
+                        while ready[profile] and active[profile] < caps[profile]:
+                            filename, request, task, first = ready[profile].popleft()
+                            job = job_for(task)
+                            future = pools[profile].submit(execute_job, task, job)
+                            futures[future] = (filename, request, task, job, first)
+                            active[profile] += 1
+                    completed, _ = wait(futures, return_when=FIRST_COMPLETED)
+                    for future in completed:
+                        filename, request, task, job, first = futures.pop(future)
+                        profile = task["profile"]
+                        active[profile] -= 1
+                        try:
+                            draft = future.result()
+                            draft_path = output / ("draft-" + job.path.stem + ".json")
+                            write(draft_path, draft)
+                            assessment_path = output / "assessments" / (job.path.stem + ".json")
+                            native(["investigate", "review-bundle-finalize", "--bundle", str(request), "--draft", str(draft_path),
+                                    "--source-root", str(root), "--journal-dir", str(journals), "--output", str(assessment_path)])
+                            assessed = read(assessment_path)
+                            receipt = {"job_id": job.path.stem, "profile": profile,
+                                "provider": tiered_policy["expert"] if profile == "expert" else bound_runtime.get("provider"),
+                                "response_sha256": digest_file(assessment_path)}
+                            with shared_lock:
+                                record["jobs"][job.path.stem]["status"] = "finalized"
+                            if tiered_policy and first is None and orchestration.needs_secondary(
+                                    assessed["results"], job.state.get("routing", []), tiered_policy, profile == "expert"):
+                                next_profile = "expert" if profile == "routine" else "routine"
+                                verify_task = {**task, "profile": next_profile, "review_role": "verification"}
+                                ready[next_profile].appendleft((filename, request, verify_task, (assessed, receipt)))
+                                continue
+                            if first is not None:
+                                first_response, first_receipt = first
+                                combined = orchestration.reconcile(first_response, assessed, first_receipt["profile"],
+                                                                    job.state.get("routing", []))
+                                write(draft_path, combined)
+                                native(["investigate", "review-bundle-finalize", "--bundle", str(request), "--draft", str(draft_path),
+                                        "--source-root", str(root), "--journal-dir", str(journals), "--output", str(response_dir / filename)])
+                                first_by_id = {r["review_id"]: r for r in first_response["results"]}
+                                for result in assessed["results"]:
+                                    execution_cases[result["review_id"]] = {"review_id": result["review_id"], "assessments": [
+                                        {**first_receipt, "decision": first_by_id[result["review_id"]]["decision"]},
+                                        {**receipt, "decision": result["decision"]}]}
+                            else:
+                                import shutil
+                                shutil.copyfile(assessment_path, response_dir / filename)
+                                for result in assessed["results"]:
+                                    execution_cases[result["review_id"]] = {"review_id": result["review_id"],
+                                        "assessments": [{**receipt, "decision": result["decision"]}]}
+                        except Exception as error:
+                            failures.append(error)
+                            with shared_lock:
+                                record["jobs"].setdefault(job.path.stem, {}).update(status="incomplete", reason=type(error).__name__, detail=str(error))
             if failures:
                 # Preserve completed drafts/responses; never fabricate the missing
                 # ones or admit a partial set as a complete native run.
@@ -906,6 +1040,10 @@ def run_locked(args):
             report = native(["report", "--run", str(run_dir), "--responses", str(response_dir), "--source-root", str(root),
                              "--reviewer", args.reviewer_label])
             write(output / "findings.json", report)
+            execution_path = output / "review-execution.json"
+            if tiered_policy:
+                write(execution_path, {"schema_version": "1", "package_id": package["package_id"],
+                                      "cases": [execution_cases[identity] for identity in requested]})
             links = []
             if args.supersede:
                 for decision in report["decision_records"]:
@@ -929,6 +1067,8 @@ def run_locked(args):
                 links_path = output / "supersessions.json"
                 write(links_path, links)
                 command_args += ["--supersessions", str(links_path)]
+            if tiered_policy:
+                command_args += ["--review-execution", str(execution_path)]
             receipt = native(command_args)
             record["admission_sequence"] = receipt["sequence"]
             for decision in report["decision_records"]:
@@ -955,6 +1095,8 @@ def run_locked(args):
         record.update(status="cancelled" if _cancelled else "incomplete", reason=type(error).__name__, detail=str(error))
     finally:
         query_pool.shutdown(wait=True, cancel_futures=True)
+        if shared_budget:
+            shared_budget.close()
     record["elapsed_ms"] = round((time.monotonic() - started_run) * 1000)
     checkpoints = [read(path) for path in (output / "jobs").glob("*.json")]
     record["unknown_provider_calls"] = sum(job["unknown_provider_calls"] for job in checkpoints)
@@ -985,6 +1127,9 @@ def main():
     parser.add_argument("--workers", type=int, default=3, help="maximum concurrent bundle reviewers (1 for serial)")
     parser.add_argument("--query-workers", type=int, default=2, help="maximum concurrent source queries")
     parser.add_argument("--resume-from", help="recover source-bound jobs from an earlier incomplete attempt into a new output")
+    parser.add_argument("--expert-command", help="trusted argv file for the expert profile bound in the native runtime")
+    parser.add_argument("--expert-workers", type=int, default=1)
+    parser.add_argument("--expert-review-ids", help="route these exact IDs' bounded bundles directly to the expert")
     args = parser.parse_args()
     if not ((args.research_rounds is None or 0 <= args.research_rounds <= 10)
             and (args.research_queries is None or 0 <= args.research_queries <= 100)

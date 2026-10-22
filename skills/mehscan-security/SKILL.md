@@ -9,6 +9,13 @@ For a source-bound worker task, use the compiled
 [runtime review contract](references/runtime-review.md). It applies the same
 scope, decision and evidence policy with controller-owned finalization; applicable
 category guidance remains available. Use the guides below for manual CLI work.
+For a configured tiered controller run, preserve the bound routine/expert
+profiles and shared budgets. Investigators return decisions and typed routing
+requests; independent assessors use the verification section of that contract.
+Let the controller reconcile assessments and account for sampled dismissals.
+Do not resume a conversation under another model or replace unresolved conflicts
+with a confidence threshold. Local controller setup is in the installed
+[controller commands](references/commands.md#tiered-controller).
 
 Use the supplied executable, `mehscan` on `PATH`, or the executable in the
 current Mehscan checkout. Scan only the authorized source root. If the executable

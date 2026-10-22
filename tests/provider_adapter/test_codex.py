@@ -98,6 +98,25 @@ class Adapter(unittest.TestCase):
             self.assertEqual(json.loads(rows[0])["conversation_id"], letter * 64)
         self.assertFalse((self.public / "provider-metrics.jsonl").exists())
 
+    def test_expert_job_uses_only_its_bound_profile_and_role(self):
+        primary = launcher.provider_contract(self.config)
+        self.config["model"] = "gpt-6-sol"
+        expert = launcher.provider_contract(self.config)
+        self.body["work"]["runtime"].update(provider=primary, orchestration={"expert":expert})
+        self.body["job_binding"] = {"profile":"expert", "role":"verification", "provider":expert}
+        self.packet.write_text(json.dumps(self.body))
+        self.task.update(profile="expert", review_role="verification")
+        self.invoke()
+        self.assertEqual(len(self.calls), 1)
+        self.task["profile"] = "routine"
+        with self.assertRaisesRegex(ValueError, "native work binding"):
+            self.invoke()
+        self.task["profile"] = "expert"
+        self.task["review_role"] = "investigator"
+        with self.assertRaisesRegex(ValueError, "job provider/role"):
+            self.invoke()
+        self.assertEqual(len(self.calls), 1)
+
     def test_progress_handles_are_exhaustive_in_schema_and_each_prompt(self):
         self.task["research"]["artifact_handles"] = {"sweep":"bound-sweep"}
         self.invoke()

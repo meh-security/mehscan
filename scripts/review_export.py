@@ -12,6 +12,9 @@ def usage(path, runtime, unobserved_provider_calls=0):
     if type(unobserved_provider_calls) is not int or unobserved_provider_calls < 0:
         raise ValueError("invalid unobserved provider call count")
     rows = []
+    allowed = [runtime.get("provider")]
+    if runtime.get("orchestration"):
+        allowed.append(runtime["orchestration"]["expert"])
     if path.exists():
         if path.stat().st_size > 8 * 1024 * 1024:
             raise ValueError("provider metrics exceed export limits")
@@ -23,7 +26,7 @@ def usage(path, runtime, unobserved_provider_calls=0):
                     or row["round"] < 0 or not isinstance(row.get("usage", {}), dict)):
                 raise ValueError("invalid provider metrics record")
             identity = (row["conversation_id"], row["round"])
-            if (row["schema_version"] != "1" or row["provider"] != runtime.get("provider") or identity in seen
+            if (row["schema_version"] != "1" or row["provider"] not in allowed or identity in seen
                     or row.get("usage_basis") != "conversation_delta"):
                 raise ValueError("provider metrics are incompatible or duplicated")
             seen.add(identity)
@@ -39,11 +42,19 @@ def usage(path, runtime, unobserved_provider_calls=0):
         counters[key], reporting[key] = counter([row.get("usage", {}) for row in rows], key)
     elapsed, _ = counter(rows, "elapsed_ms")
     prompt, _ = counter(rows, "prompt_bytes")
+    profiles = []
+    for provider in allowed:
+        selected = [row for row in rows if row["provider"] == provider]
+        if selected:
+            profiles.append({"provider":provider, "round_count":len(selected),
+                "reported_token_sums":{key:counter([row.get("usage", {}) for row in selected], key)[0] for key in counters},
+                "roles":{role:sum(row.get("role", "investigator") == role for row in selected)
+                         for role in sorted({row.get("role", "investigator") for row in selected})}})
     return {"schema_version":"1", "provider":runtime.get("provider"), "policy":runtime["policy"],
         "research_limits":runtime["limits"], "round_count":len(rows), "token_accounting":"reported_conversation_deltas",
         "reported_token_sums":counters, "counter_reporting_rounds":reporting,
         "provider_elapsed_ms":elapsed, "prompt_bytes":prompt,
-        "usage_available":bool(rows), "unobserved_provider_calls":unobserved_provider_calls,
+        "usage_available":bool(rows), "profiles":profiles, "unobserved_provider_calls":unobserved_provider_calls,
         "usage_complete":bool(rows) and unobserved_provider_calls == 0 and all(
             reporting[key] == len(rows) for key in counters), "cost":None}
 
@@ -85,6 +96,11 @@ def export_review(plan, directory, record, reviewer, execute, env):
         files += ["findings.json", "findings.sarif"]
     write(directory / "usage.json", usage(directory / "review/provider-metrics.jsonl", plan["review"]["runtime"],
                                          worker.get("unknown_provider_calls", 0)))
+    execution = directory / "review/review-execution.json"
+    if execution.is_file():
+        import shutil
+        shutil.copyfile(execution, directory / "review-execution.json")
+        files.append("review-execution.json")
     return {"schema_version":"1", "snapshot_id":record["snapshot_id"], "native_findings":native_export,
         "scan_root":plan["scan_root"], "files":files,
         "publication":"artifact_only"}

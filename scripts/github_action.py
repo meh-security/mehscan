@@ -380,7 +380,8 @@ def prepare(get=None, execute=run_command):
         plan["review"] = {"policy": mode, "skill_root": str(skill), "runtime": runtime,
                           "controller_sha256": file_digest(Path(__file__).with_name("review_worker.py")),
                           "context_sha256": file_digest(Path(__file__).with_name("review_context.py")),
-                          "exporter_sha256": file_digest(Path(__file__).with_name("review_export.py"))}
+                          "exporter_sha256": file_digest(Path(__file__).with_name("review_export.py")),
+                          "orchestrator_sha256": file_digest(Path(__file__).with_name("review_orchestration.py"))}
         if provider_path:
             plan["review"]["provider_contract"] = provider_path
 
@@ -625,7 +626,7 @@ def review_tools(plan, execute):
         if file_digest(model["command"]) != model["command_sha256"] or file_digest(model["config"]) != model["config_sha256"]:
             raise ValueError("configured BYOK reviewer changed after preparation")
     config = plan["review"]
-    for name, key in (("review_worker.py", "controller_sha256"), ("review_context.py", "context_sha256"), ("review_export.py", "exporter_sha256")):
+    for name, key in (("review_worker.py", "controller_sha256"), ("review_context.py", "context_sha256"), ("review_export.py", "exporter_sha256"), ("review_orchestration.py", "orchestrator_sha256")):
         if file_digest(Path(__file__).with_name(name)) != config[key]:
             raise ValueError("trusted review controller changed")
     runtime = state_json(plan, execute, "runtime-template", ["--skill-root", config["skill_root"], "--policy", config["policy"], *provider_arguments(plan)])

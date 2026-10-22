@@ -312,3 +312,82 @@ not authentication. Opt-in Action model execution and advisory artifact packagin
 are implemented and tested with a deterministic provider on Ubuntu; live/hosted
 acceptance remains pending. See [Action exports](github-action.md#opt-in-byok-action-execution)
 for canonical JSON, SARIF, completion, usage and the hash manifest.
+
+## Tiered review
+
+Tiered review is an opt-in local controller mode. The native runtime pins a
+routine provider, a different expert model, shared limits and an audit policy.
+Existing single-profile runs remain available. No agent SDK is required.
+
+Prepare two private adapter configurations/argv files as above. Export the expert
+descriptor with the adapter's `--config EXPERT_CONFIG --contract` command and use
+that exact object as `expert` in a trusted orchestration JSON outside source.
+For example, replace the illustrative expert descriptor below with that export:
+
+```json
+{
+  "expert": {
+    "schema_version": "1",
+    "provider": "codex-cli",
+    "executable_version": "YOUR_CLIENT_VERSION",
+    "model": "gpt-6-sol",
+    "reasoning_effort": "medium"
+  },
+  "case_limits": {"model_calls": 8, "queries": 24, "bytes": 524288, "timeout_seconds": 1200},
+  "run_limits": {"model_calls": 200, "queries": 500, "bytes": 20971520, "timeout_seconds": 3600},
+  "max_reviews_per_job": 5,
+  "audit_percent": 10,
+  "audit_seed": "review-2026-10"
+}
+```
+
+Pass `--review-orchestration FILE` when creating the native runtime/plan template,
+with the usual primary `--provider-contract FILE`. Admit the resulting plan
+normally. Prepare small related bundles, for example with `--max-reviews 5`, then
+add `--expert-command EXPERT_ARGV_JSON` to the normal worker invocation.
+`--expert-workers N` defaults to one. `--expert-review-ids ID,ID` sends the
+containing bundles directly to the expert. These settings are explicit choices,
+not a measured optimal model or pool configuration.
+
+The controller routes a bounded bundle as a unit to reuse its source context;
+a trigger on one ID causes an independent assessment of all IDs in that bundle.
+It does not yet create a smaller expert-only subset. The second stage starts as
+slots become available, without waiting for the whole first queue. Routine
+issues receive expert verification. Direct expert issues receive a fresh
+assessment by the routine model. Clear closures may finish after one assessment;
+typed risk/reasoning requests and a seeded sample of dismissals require another.
+An actually missing external/human fact remains pending rather than receiving
+an automatic expensive retry. Routing never uses a numeric confidence threshold.
+
+The independent assessor receives the original source question and normal facts,
+with prior verdicts/confidence and change-pass conclusions withheld. It can
+research through the same broker. Same verdicts do not certify correctness;
+both assessments must satisfy the source-evidence contract. Conflicting verdicts
+or a remaining question from the second assessor produce `needs_review`, retain
+both stage artifacts and register native pending work. Source-backed adjudication
+is a later explicit step, not a majority vote.
+
+A case is one bounded bundle. Its call/query/byte/time limits span both profiles
+and explicit recovery attempts. Run call/query/byte limits span all cases; the
+run timeout measures elapsed wall time, while a case timeout sums its active
+assessment time. Conversation limits also remain in force. Model calls and
+queries are reserved before dispatch; received bytes are charged even when an
+oversized result stops work. Cache hits still consume the recipient's research
+allowance. These are not hard token/currency limits. Budget exhaustion or provider
+failure leaves the run incomplete and cannot admit an unverified issue.
+Byte limits count requested research results; prepared packets and provider
+tokens are measured separately rather than charged to that research allowance.
+
+Keep `review-execution.json` together with `assessments/`, checkpoints and native
+query journals. The receipt identifies each question's assessments, configured
+providers and artifact hashes. Tiered `state record` requires `--review-execution`
+and checks both stage artifacts against their original bundle and actual source.
+A reported issue needs two distinct configured-model assessments; sampled
+closures need a second assessment; contrary assessments cannot be admitted as
+closed. These are trusted-controller provenance assertions, not authenticated
+proof that a remote provider ran or that its reasoning is correct. Canonical
+usage groups actual reported counters by provider and role.
+
+The automatic Action provider setup still configures its existing single-profile
+workflow. This local opt-in mode does not yet add Action inputs, automatic
+adjudication/final cross-finding QA or recovery across native state transactions.

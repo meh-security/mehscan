@@ -39,8 +39,16 @@ def build_schema(task, *, bound_handles=True):
     edge = object_schema({"edge":text,"status":{"type":"string","enum":["open","inspected","blocked"]},
         "cause":{"type":["string","null"],"enum":[None,"search_limited","not_found_in_scope","unsupported","external_required","human_required","budget_exhausted"]},
         "artifacts":artifacts})
+    routing = {"type":"array", "items":object_schema({"review_id":text,
+        "reason":{"type":"string","enum":["reasoning_gap","control_applicability","conflicting_evidence",
+            "risky_dismissal","external_required","human_required","budget_exhausted"]}})}
+    if task["kind"] == "change_pass":
+        routing["maxItems"] = 0
+    else:
+        routing["items"]["properties"]["review_id"]["enum"] = task["review_ids"]
     schema = object_schema({"action":{"type":"string","enum":["research","final"]},"research":{"type":"array","items":query},
-        "draft":{"anyOf":[draft,{"type":"null"}]},"working_chain":text,"progress":{"type":"array","items":edge}})
+        "draft":{"anyOf":[draft,{"type":"null"}]},"working_chain":text,"progress":{"type":"array","items":edge},
+        "routing":routing})
     return schema
 
 
@@ -93,6 +101,8 @@ def build_prompt(task, packet, facts, state):
 
 def envelope(response):
     out = {"working_chain": response["working_chain"], "progress": response["progress"]}
+    if response.get("routing"):
+        out["routing"] = response["routing"]
     if response["action"] == "research" and response["draft"] is None and response["research"]:
         for value in response["research"]:
             value["arguments"] = {key: item for key, item in value["arguments"].items() if item is not None}

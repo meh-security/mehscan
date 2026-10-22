@@ -121,6 +121,121 @@ else:
             "--reviewer-label", "deterministic/medium", "--run", str(self.run), "--output", str(self.base / name), *extra],
             capture_output=True, text=True, encoding="utf-8", timeout=60)
 
+    def configure_tiered(self, run_calls=2):
+        from argparse import Namespace
+        primary = {"schema_version":"1", "provider":"codex-cli", "executable_version":"fixture-1",
+                   "model":"gpt-6-luna", "reasoning_effort":"medium"}
+        expert = {**primary, "model":"gpt-6-sol"}
+        provider = self.base / "provider.json"
+        provider.write_text(json.dumps(primary))
+        limits = {"model_calls":2, "queries":0, "bytes":262144, "timeout_seconds":300}
+        policy = {"expert":expert, "case_limits":limits, "run_limits":{**limits, "model_calls":run_calls},
+                  "max_reviews_per_job":5, "audit_percent":100, "audit_seed":"controller-test"}
+        policy_path = self.base / "orchestration.json"
+        policy_path.write_text(json.dumps(policy))
+        draft = self.native("state", "plan-template", "--inventory", str(self.inventory), "--source-root", str(self.root),
+            "--policy", "comprehensive", "--skill-root", str(ROOT / "skills/mehscan-security"),
+            "--provider-contract", str(provider), "--review-orchestration", str(policy_path), "--research-rounds", "0")
+        plan = self.base / "tiered-plan.json"
+        plan.write_text(json.dumps(draft))
+        parent = json.loads(self.package.read_text())["payload"]["plan_id"]
+        self.native("state", "plan", *self.common, "--input", str(plan), "--expected-plan-id", parent,
+            "--provider-contract", str(provider), "--operation-key", "tiered-plan-" + str(run_calls))
+        self.package.write_text(json.dumps(self.native("state", "work", *self.common, "--provider-contract", str(provider))))
+        adapter = ROOT / "skills/mehscan-security/scripts/codex_reviewer.py"
+        for profile, descriptor in (("routine", primary), ("expert", expert)):
+            config = self.base / (profile + "-config.json")
+            config.write_text(json.dumps({**{key:value for key,value in descriptor.items() if key != "provider"},
+                "executable":sys.executable, "auth_file":str(self.base / "unused-auth.json"),
+                "private_directory":str(self.base / (profile + "-private"))}))
+            (self.base / (profile + "-command.json")).write_text(json.dumps([sys.executable, str(adapter), "--config", str(config)]))
+        return Namespace(scanner=str(self.scanner), source_root=str(self.root), inventory=str(self.inventory),
+            store=str(self.store), stream="local-review", claim=str(self.claim), work_package=str(self.package),
+            reviewer_command=str(self.base / "routine-command.json"), reviewer_label="tiered-test", run=str(self.run),
+            output=str(self.base / ("tiered-" + str(run_calls))), provider_contract=str(provider), artifact_root=None,
+            phase="native", supersede=False, timeout=None, skill_root=str(ROOT / "skills/mehscan-security"),
+            research_rounds=None, research_queries=None, research_bytes=None, workers=2, query_workers=2,
+            expert_command=str(self.base / "expert-command.json"), expert_workers=1, expert_review_ids=None, resume_from=None)
+
+    def tiered_provider(self, calls, conflict=False, reject_unverified=False):
+        original = worker.execute
+        def execute(command, cwd, env, timeout, payload=None):
+            if len(command) == 4 and command[1].endswith("codex_reviewer.py"):
+                task = json.loads(payload)
+                packet = json.loads(Path(task["evidence_packet"]).read_text())
+                calls.append((task["profile"], task["review_role"]))
+                self.assertEqual(packet["job_binding"]["profile"], task["profile"])
+                self.assertEqual(packet["job_binding"]["provider"]["model"],
+                    "gpt-6-sol" if task["profile"] == "expert" else "gpt-6-luna")
+                if task["review_role"] == "verification":
+                    self.assertEqual(packet["work"]["parent_decisions"], {})
+                    self.assertEqual(packet["work"]["change_pass"], [])
+                    self.assertEqual(task["research"]["results"], [])
+                    self.assertNotIn("draft", packet)
+                decision = "not_issue" if conflict and task["profile"] == "expert" else "issue"
+                return {"draft":{"results":[{"review_id":identity, "decision":decision, "confidence":"medium",
+                    "summary":"Deterministic source assessment.", "reason":"The source evaluates the request operand.",
+                    "checks":[], "blockers":[], "evidence":[{"path":"app.js", "start_line":1,"end_line":1}]}
+                    for identity in task["review_ids"]]}, "progress":[], "working_chain":"", "routing":[]}
+            if reject_unverified and command[1:3] == ["state", "record"]:
+                path = Path(command[command.index("--review-execution") + 1])
+                saved = path.read_bytes()
+                receipt = json.loads(saved)
+                receipt["cases"][0]["assessments"] = receipt["cases"][0]["assessments"][:1]
+                path.write_text(json.dumps(receipt))
+                try:
+                    with self.assertRaises(worker.CommandFailure) as rejected:
+                        original(command, cwd, env, timeout, payload)
+                    self.assertIn("two independent", rejected.exception.stderr)
+                finally:
+                    path.write_bytes(saved)
+                receipt = json.loads(saved)
+                stage = path.parent / "assessments" / (receipt["cases"][0]["assessments"][0]["job_id"] + ".json")
+                stage_bytes = stage.read_bytes()
+                forged = json.loads(stage_bytes)
+                forged["results"][0]["investigation"]["decisive_artifacts"][0]["excerpt"] = "invented source"
+                stage.write_text(json.dumps(forged))
+                receipt["cases"][0]["assessments"][0]["response_sha256"] = worker.digest_file(stage)
+                path.write_text(json.dumps(receipt))
+                try:
+                    with self.assertRaises(worker.CommandFailure):
+                        original(command, cwd, env, timeout, payload)
+                finally:
+                    path.write_bytes(saved)
+                    stage.write_bytes(stage_bytes)
+            return original(command, cwd, env, timeout, payload)
+        return execute
+
+    def test_tiered_blind_reviews_preserve_conflicts_as_native_pending_work(self):
+        args = self.configure_tiered()
+        calls = []
+        with patch.object(worker, "execute", side_effect=self.tiered_provider(calls, conflict=True)):
+            record = worker.run(args)
+        self.assertEqual(record["status"], "admitted", record)
+        self.assertEqual(calls, [("routine", "investigator"), ("expert", "verification")])
+        self.assertEqual(record["completion"]["pending_review_ids"], self.ids)
+        receipt = json.loads((Path(args.output) / "review-execution.json").read_text())
+        self.assertEqual([a["decision"] for a in receipt["cases"][0]["assessments"]], ["issue", "not_issue"])
+        self.assertEqual(json.loads((Path(args.output) / "budget.json").read_text())["totals"]["model_calls"], 2)
+
+    def test_tiered_budget_and_native_gate_block_unverified_issues_then_direct_expert_works(self):
+        args = self.configure_tiered(run_calls=1)
+        args.expert_review_ids = ",".join(self.ids)
+        calls = []
+        with patch.object(worker, "execute", side_effect=self.tiered_provider(calls)):
+            record = worker.run(args)
+        self.assertEqual(record["status"], "incomplete", record)
+        self.assertEqual(calls, [("expert", "investigator")])
+        self.assert_no_decisions()
+        args = self.configure_tiered(run_calls=2)
+        args.expert_review_ids = ",".join(self.ids)
+        calls.clear()
+        with patch.object(worker, "execute", side_effect=self.tiered_provider(calls, reject_unverified=True)):
+            record = worker.run(args)
+        self.assertEqual(record["status"], "admitted", record)
+        self.assertEqual(calls, [("expert", "investigator"), ("routine", "verification")])
+        self.assertEqual(record["completion"]["issue_review_ids"], self.ids)
+
     def test_full_repository_work_preserves_null_scope_and_native_admission(self):
         self.inventory = self.base / "full-inventory"
         self.store = self.base / "full-state"
