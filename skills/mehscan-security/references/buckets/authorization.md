@@ -58,4 +58,6 @@ packaging gap rather than closing the review safe.
 Marker admission is bounded. When assessing authorization coverage, compare
 the selected questions with real entrypoints and effects; the marker list is
 not an exhaustive authorization audit. A boundary omitted by the admission
-budget has not been reviewed or found safe.
+budget has not been reviewed or found safe. Read `marker_admission` in the
+inventory overview; use bounded marker continuation from review planning when
+the remaining questions warrant review.

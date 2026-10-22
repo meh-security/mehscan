@@ -53,11 +53,15 @@ fn server_mutation_review_marker_groups(
     sources: &RepositorySources,
     existing_evidence: &[Evidence],
     scope: Option<&mehscan_core::ImpactScanScope>,
-) -> Vec<ObservationGroup> {
+    page: usize,
+    include_review_material: bool,
+) -> (Vec<ObservationGroup>, mehscan_core::ReviewMarkerAdmission) {
     let mut groups = Vec::new();
     let mut seen = BTreeSet::new();
-    let mut family_counts = BTreeMap::new();
     for file in sources.files.values() {
+        if !include_review_material && is_review_material_path(&file.path) {
+            continue;
+        }
         if scope.is_some_and(|scope| match scope.result_policy.as_str() {
             "changed_files" | "impact_scope" => !scope
                 .included_files
@@ -112,11 +116,7 @@ fn server_mutation_review_marker_groups(
                     })
                     .unwrap_or_default()
             });
-        let mut file_count = 0;
         for line_index in 0..spans.len() {
-            if file_count >= MAX_REVIEW_ADMISSION_MARKERS_PER_FILE {
-                break;
-            }
             let (line_start, line_end) = spans[line_index];
             let first_content = line_start + file.source[line_start..line_end].len()
                 - file.source[line_start..line_end].trim_start().len();
@@ -153,6 +153,12 @@ fn server_mutation_review_marker_groups(
                 continue;
             }
             let location = location_from_offsets(&file.path, &file.source, start, end);
+            if scope.is_some_and(|scope| {
+                scope.result_policy == "changed_locations"
+                    && !crate::impact::location_is_changed(&location, &scope.changed_files)
+            }) {
+                continue;
+            }
             let excerpt = &file.source[start..end];
             let descriptor = review_admission_descriptor(&marker, excerpt);
             if marker_covered_by_existing_evidence(
@@ -162,10 +168,6 @@ fn server_mutation_review_marker_groups(
                 end,
                 &descriptor,
             ) {
-                continue;
-            }
-            let family_count = family_counts.entry(descriptor.rule_id).or_insert(0usize);
-            if *family_count >= MAX_REVIEW_ADMISSION_MARKERS_PER_FAMILY {
                 continue;
             }
             let mut captures = BTreeMap::new();
@@ -221,11 +223,51 @@ fn server_mutation_review_marker_groups(
                 anchor_evidence_ids: vec![id],
                 priority: 1,
             });
-            *family_count += 1;
-            file_count += 1;
         }
     }
-    let mut groups = fair_marker_limit(groups, MAX_REVIEW_ADMISSION_MARKERS);
+    let recognized = groups.len();
+    let mut previously_admitted = 0;
+    let mut selected = Vec::new();
+    for current_page in 0..=page {
+        let mut files = BTreeMap::new();
+        let mut families = BTreeMap::new();
+        let eligible = groups
+            .iter()
+            .filter(|group| {
+                let file = files.entry(group.path.as_str()).or_insert(0usize);
+                let family = families
+                    .entry(group.evidence[0].rule_id.as_str())
+                    .or_insert(0usize);
+                if *file >= MAX_REVIEW_ADMISSION_MARKERS_PER_FILE
+                    || *family >= MAX_REVIEW_ADMISSION_MARKERS_PER_FAMILY
+                {
+                    return false;
+                }
+                *file += 1;
+                *family += 1;
+                true
+            })
+            .cloned()
+            .collect();
+        selected = fair_marker_limit(eligible, MAX_REVIEW_ADMISSION_MARKERS);
+        if current_page == page || selected.is_empty() {
+            break;
+        }
+        let ids = selected
+            .iter()
+            .map(|g| g.anchor_evidence_ids[0].clone())
+            .collect::<BTreeSet<_>>();
+        previously_admitted += selected.len();
+        groups.retain(|g| !ids.contains(&g.anchor_evidence_ids[0]));
+    }
+    let accounting = mehscan_core::ReviewMarkerAdmission {
+        page,
+        recognized,
+        previously_admitted,
+        admitted: selected.len(),
+        budget_deferred: recognized - previously_admitted - selected.len(),
+    };
+    let mut groups = selected;
     // Presentation must not affect marker classification, coverage checks or
     // bounded selection. An adjacent middleware name is not an inline handler.
     for group in &mut groups {
@@ -255,7 +297,7 @@ fn server_mutation_review_marker_groups(
             }
         }
     }
-    groups
+    (groups, accounting)
 }
 
 fn inline_route_label(excerpt: &str) -> Option<String> {
@@ -314,20 +356,29 @@ pub(super) fn marker_groups(
     scoped_marker_groups(sources, existing_evidence, None)
 }
 
+#[cfg(test)]
 pub(super) fn scoped_marker_groups(
     sources: &RepositorySources,
     existing_evidence: &[Evidence],
     scope: Option<&mehscan_core::ImpactScanScope>,
 ) -> Vec<ObservationGroup> {
-    let mut groups = server_mutation_review_marker_groups(sources, existing_evidence, scope);
-    if let Some(scope) = scope.filter(|scope| scope.result_policy == "changed_locations") {
-        groups.retain(|group| {
-            group.evidence.iter().any(|evidence| {
-                crate::impact::location_is_changed(&evidence.location, &scope.changed_files)
-            })
-        });
-    }
-    groups
+    marker_page(sources, existing_evidence, scope, 0, true).0
+}
+
+pub(super) fn marker_page(
+    sources: &RepositorySources,
+    existing_evidence: &[Evidence],
+    scope: Option<&mehscan_core::ImpactScanScope>,
+    page: usize,
+    include_review_material: bool,
+) -> (Vec<ObservationGroup>, mehscan_core::ReviewMarkerAdmission) {
+    server_mutation_review_marker_groups(
+        sources,
+        existing_evidence,
+        scope,
+        page,
+        include_review_material,
+    )
 }
 
 fn marker_covered_by_existing_evidence(
@@ -1386,7 +1437,7 @@ mod effect_cases {
                 },
             )]),
         };
-        let groups = server_mutation_review_marker_groups(&sources, &[], None);
+        let groups = server_mutation_review_marker_groups(&sources, &[], None, 0, true).0;
         assert_eq!(groups.len(), 3);
         let mut identities = BTreeSet::new();
         for symbol in ["ResetPasswordDemo", "ResetPassword", "DeleteUser"] {

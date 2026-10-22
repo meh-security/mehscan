@@ -392,6 +392,8 @@ pub struct ReviewInventory {
     pub entries: Vec<ReviewInventoryEntry>,
     #[serde(default)]
     pub admission_audit: ReviewAdmissionAudit,
+    #[serde(default)]
+    pub marker_admission: mehscan_core::ReviewMarkerAdmission,
     pub scan: mehscan_core::ScanResult,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub semantic_inputs: Option<crate::csharp_semantic::InputBinding>,
@@ -480,11 +482,14 @@ impl<'a> ReviewHistoryValidator<'a> {
     pub fn new(root: &Path, inventory: &'a ReviewInventory) -> Result<Self, EngineError> {
         let sources = RepositorySources::load(root)?;
         validate_review_inventory_sources(root, inventory, &sources)?;
-        let admission_evidence = review_admission::scoped_marker_groups(
+        let admission_evidence = review_admission::marker_page(
             &sources,
             &inventory.scan.evidence,
             inventory.scan.impact_scope.as_ref(),
+            inventory.marker_admission.page,
+            inventory.include_review_material,
         )
+        .0
         .into_iter()
         .flat_map(|group| group.evidence)
         .map(|fact| (fact.id.clone(), fact))
@@ -719,6 +724,7 @@ pub fn build_review_inventory_scoped_with_native_backends(
         None,
         Some(&mut entries),
         Some(sources),
+        0,
     )?;
     if let Some(profile) = profile {
         profile.inventory_milliseconds = inventory_started.elapsed().as_millis();
@@ -730,10 +736,56 @@ pub fn build_review_inventory_scoped_with_native_backends(
         include_review_material,
         entries,
         admission_audit: job.review_coverage.admission_audit,
+        marker_admission: job.review_coverage.marker_admission,
         scan,
         semantic_inputs,
         typescript_inputs,
     })
+}
+
+/// Reuse the validated scan snapshot; each page admits at most 48 additional
+/// marker questions. Ordinary reviews stay in page zero and are not repeated.
+pub fn continue_review_markers(
+    root: &Path,
+    inventory: &ReviewInventory,
+    page: usize,
+) -> Result<ReviewInventory, EngineError> {
+    if page == 0 {
+        return Err(EngineError(
+            "marker continuation page must be greater than zero".into(),
+        ));
+    }
+    let sources = RepositorySources::load(root)?;
+    validate_review_inventory_sources(root, inventory, &sources)?;
+    let mut entries = Vec::new();
+    let job = build_path_review_jobs_internal(
+        root,
+        None,
+        Some(0),
+        0,
+        inventory.include_review_material,
+        None,
+        Some(inventory.scan.clone()),
+        None,
+        Some(&mut entries),
+        Some(sources),
+        page,
+    )?;
+    let mut continued = ReviewInventory {
+        entries,
+        identity_catalog: job.identity_catalog,
+        admission_audit: job.review_coverage.admission_audit,
+        marker_admission: job.review_coverage.marker_admission,
+        ..inventory.clone()
+    };
+    if let Some(catalog) = &inventory.identity_catalog {
+        bind_inventory_repository(
+            &mut continued,
+            catalog.repository.repository_key.clone(),
+            catalog.repository.source_repository_key.clone(),
+        )?;
+    }
+    Ok(continued)
 }
 
 pub fn build_selected_review_jobs(
@@ -801,6 +853,7 @@ fn build_selected_review_jobs_internal(
         Some(review_ids),
         None,
         Some(sources),
+        inventory.marker_admission.page,
     )?;
     if let Some(binding) = &inventory.semantic_inputs {
         let identity = serde_json::to_vec(&(&job.fingerprint, binding))
@@ -1355,6 +1408,7 @@ pub fn build_path_review_jobs_page(
         None,
         None,
         None,
+        0,
     )
 }
 
@@ -1376,6 +1430,7 @@ pub fn build_all_path_review_jobs(
         None,
         None,
         None,
+        0,
     )
 }
 
@@ -1413,6 +1468,7 @@ pub fn build_all_path_review_jobs_profiled(
         None,
         None,
         None,
+        0,
     )?;
     Ok((job, profile))
 }
@@ -1428,6 +1484,7 @@ fn build_path_review_jobs_internal(
     selected_ids: Option<&BTreeSet<String>>,
     mut inventory_entries: Option<&mut Vec<ReviewInventoryEntry>>,
     supplied_sources: Option<RepositorySources>,
+    marker_page: usize,
 ) -> Result<PathReviewJob, EngineError> {
     let started = std::time::Instant::now();
     let context_lines =
@@ -1614,11 +1671,14 @@ fn build_path_review_jobs_internal(
             .any(|id| practical_exclusions.contains_key(id))
     });
     observation_exclusions.extend(practical_exclusions);
-    observation_groups.extend(review_admission::scoped_marker_groups(
+    let (markers, marker_admission) = review_admission::marker_page(
         &sources,
         &scan.evidence,
         scan.impact_scope.as_ref(),
-    ));
+        marker_page,
+        include_review_material,
+    );
+    observation_groups.extend(markers);
     observation_groups.sort_by(|left, right| {
         left.review_material
             .cmp(&right.review_material)
@@ -1642,7 +1702,10 @@ fn build_path_review_jobs_internal(
         );
     }
     let all_observation_count = observation_groups.len();
-    let recognized_boundary_count = all_candidates.len() + all_observation_count;
+    let recognized_boundary_count = all_candidates.len()
+        + all_observation_count
+        + marker_admission.previously_admitted
+        + marker_admission.budget_deferred;
     let excluded_review_material_observation_ids = observation_groups
         .iter()
         .filter(|group| group.review_material)
@@ -1715,6 +1778,21 @@ fn build_path_review_jobs_internal(
         &excluded_review_material_observation_ids,
         &observation_exclusions,
     );
+    // A continuation is additional marker work, not another copy of page zero.
+    // Preserve the full scan admission audit above, but bind identities and
+    // review counts only to this continuation's selected marker questions.
+    if marker_page > 0 {
+        candidates.clear();
+        observation_groups.retain(|group| {
+            group.evidence.first().is_some_and(|fact| {
+                matches!(
+                    fact.rule_id.as_str(),
+                    "framework-authorization-review-marker"
+                        | "framework-credential-lifecycle-review-marker"
+                )
+            })
+        });
+    }
     let mut identity_catalog =
         identity::build_catalog(root, &sources, &candidates, &observation_groups)?;
     if let Some(entries) = inventory_entries.as_mut() {
@@ -2353,6 +2431,7 @@ fn build_path_review_jobs_internal(
     let mut review_coverage = ReviewPipelineCoverage {
         recognized_boundary_count,
         admitted_review_count: total_reviews,
+        marker_admission,
         returned_review_count: returned_reviews,
         admission_audit,
         ..ReviewPipelineCoverage::default()

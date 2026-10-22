@@ -751,12 +751,13 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             )
         }
         "review-inventory" => {
+            let continue_from = parsed.optional("--continue-from").map(PathBuf::from);
+            let marker_page = parsed.optional_usize("--marker-page")?;
             let repository_key = parsed.optional("--repository-key");
             let source_repository_key = parsed.optional("--source-repository-key");
             let output = PathBuf::from(parsed.required("--output")?);
-            let include_review_material = parsed
-                .optional_bool("--include-review-material")?
-                .unwrap_or(false);
+            let review_material_option = parsed.optional_bool("--include-review-material")?;
+            let include_review_material = review_material_option.unwrap_or(false);
             let semantic = parsed.optional("--csharp-semantic").map(PathBuf::from);
             let context = parsed.optional("--csharp-context").map(PathBuf::from);
             let backend = parsed.optional("--csharp-backend").map(PathBuf::from);
@@ -813,25 +814,64 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 mehscan_engine::ImpactDiffMode::Files,
             )?;
             let mut profile = mehscan_engine::investigation::ReviewInventoryProfile::default();
-            let mut inventory = engine(
-                mehscan_engine::investigation::build_review_inventory_scoped_with_native_backends(
+            let mut inventory = if let Some(directory) = continue_from {
+                let started = std::time::Instant::now();
+                if semantic.is_some()
+                    || backend.is_some()
+                    || ts_input.is_some()
+                    || impact_scope.is_some()
+                {
+                    return Err("continuation reuses cached scope and native facts; omit scan/native options".into());
+                }
+                let cached: mehscan_engine::investigation::ReviewInventory =
+                    serde_json::from_slice(
+                        &fs::read(directory.join("scan-cache.json")).map_err(|e| e.to_string())?,
+                    )
+                    .map_err(|e| e.to_string())?;
+                if review_material_option
+                    .is_some_and(|value| value != cached.include_review_material)
+                {
+                    return Err("continuation must retain the cached review-material scope".into());
+                }
+                let continued = engine(mehscan_engine::investigation::continue_review_markers(
                     &root,
-                    include_review_material,
-                    semantic.as_deref().zip(context.as_deref()),
-                    context.as_deref().zip(backend.as_deref()),
-                    ts_input,
-                    mehscan_engine::ScanOptions {
-                        impact_scope,
-                        ..Default::default()
-                    },
-                    timings.then_some(&mut profile),
-                ),
-            )?;
-            engine(mehscan_engine::investigation::bind_inventory_repository(
-                &mut inventory,
-                repository_key,
-                source_repository_key,
-            ))?;
+                    &cached,
+                    marker_page.ok_or("supply --marker-page with --continue-from")?,
+                ))?;
+                profile.inventory_milliseconds = started.elapsed().as_millis();
+                continued
+            } else {
+                if marker_page.is_some() {
+                    return Err("--marker-page requires --continue-from DIR".into());
+                }
+                engine(
+                    mehscan_engine::investigation::build_review_inventory_scoped_with_native_backends(
+                        &root,
+                        include_review_material,
+                        semantic.as_deref().zip(context.as_deref()),
+                        context.as_deref().zip(backend.as_deref()),
+                        ts_input,
+                        mehscan_engine::ScanOptions {
+                            impact_scope,
+                            ..Default::default()
+                        },
+                        timings.then_some(&mut profile),
+                    ),
+                )?
+            };
+            if repository_key.is_some()
+                || source_repository_key.is_some()
+                || inventory
+                    .identity_catalog
+                    .as_ref()
+                    .is_some_and(|c| c.repository.repository_key.is_none())
+            {
+                engine(mehscan_engine::investigation::bind_inventory_repository(
+                    &mut inventory,
+                    repository_key,
+                    source_repository_key,
+                ))?;
+            }
             fs::create_dir_all(&output).map_err(|error| {
                 format!(
                     "could not create inventory directory {}: {error}",
@@ -849,6 +889,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "identity_catalog": inventory.identity_catalog,
                 "entries": inventory.entries,
                 "admission_audit": inventory.admission_audit,
+                "marker_admission": inventory.marker_admission,
             });
             let mut by_capability = BTreeMap::<String, usize>::new();
             let mut by_cwe = BTreeMap::<String, usize>::new();
@@ -907,6 +948,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "by_capability": by_capability,
                 "by_cwe": by_cwe,
                 "by_operand_fact": by_operand_fact,
+                "marker_admission": inventory.marker_admission,
                 "deterministic_operand_closures": inventory.admission_audit.closed_operands.len(),
                 "value_deferred_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_some()).count(),
                 "value_active_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_none()).count(),
@@ -4279,6 +4321,7 @@ USAGE:
   mehscan investigate typescript-semantic [ROOT] --context FILE --backend SCRIPT --output FILE [--inventory DIR] [--evidence-ids ID,ID]
   mehscan investigate review-inventory [ROOT] --output DIR [--changed-from REF | --files-from PATH] [--diff-mode full|impact|files] [--target REF] [--merge-base] [--include-review-material true|false] [--csharp-backend EXE --csharp-context FILE | --csharp-semantic FILE --csharp-context FILE] [--timings true|false]
     Optional TS/JS: [--typescript-backend SCRIPT --typescript-context FILE | --typescript-semantic FILE --typescript-context FILE]
+  mehscan investigate review-inventory ROOT --continue-from DIR --marker-page N --output DIR
   mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--selection all|value|deferred] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--group-by contract|implementation] [--contract KEY] [--limit N] [--offset N]
   mehscan investigate review-ledger --inventory DIR --history RUN_ROOT[,RUN_ROOT] --output FILE
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]

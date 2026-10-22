@@ -94,3 +94,104 @@ app.post('/items', async (req,res) => { await service.updateItem(req.body); });
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn budget_continuation_is_disjoint_complete_and_source_bound() {
+    use mehscan_engine::investigation::*;
+    use std::collections::BTreeSet;
+    let root = std::env::temp_dir().join(format!("mehscan-marker-pages-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    for file in 0..7 {
+        let mut source = "import {Controller, Post} from '@nestjs/common';\n@Controller('/items')\nclass ItemsController {\n".to_string();
+        for method in 0..10 {
+            source.push_str(&format!(" @Post('/{method}')\n async updateItem{method}(input:any) {{ return this.service.updateItem(input); }}\n"));
+        }
+        source.push_str("}\n");
+        fs::write(root.join(format!("Controller{file}.ts")), source).unwrap();
+    }
+    fs::write(
+        root.join("Ordinary.ts"),
+        "function run(req:any) { eval(req.query.code); }\n",
+    )
+    .unwrap();
+    let mut initial = build_review_inventory(&root, false).unwrap();
+    assert!(
+        initial
+            .entries
+            .iter()
+            .any(|entry| entry.rule_id != "framework-authorization-review-marker")
+    );
+    bind_inventory_repository(&mut initial, Some("evaluation:marker-pages".into()), None).unwrap();
+    let mut seen = BTreeSet::new();
+    let mut previous = 0;
+    for page in 0..4 {
+        let inventory = if page == 0 {
+            initial.clone()
+        } else {
+            continue_review_markers(&root, &initial, page).unwrap()
+        };
+        if page > 0 {
+            assert!(
+                inventory
+                    .entries
+                    .iter()
+                    .all(|entry| entry.rule_id == "framework-authorization-review-marker")
+            );
+        }
+        let coverage = &inventory.marker_admission;
+        assert_eq!(coverage.recognized, 70);
+        assert_eq!(coverage.previously_admitted, previous);
+        assert_eq!(
+            coverage.recognized,
+            previous + coverage.admitted + coverage.budget_deferred
+        );
+        assert!(coverage.admitted <= 48);
+        let markers = inventory
+            .entries
+            .iter()
+            .filter(|r| r.rule_id == "framework-authorization-review-marker")
+            .collect::<Vec<_>>();
+        assert_eq!(markers.len(), coverage.admitted);
+        for entry in &markers {
+            assert!(seen.insert(entry.review_id.clone()), "repeated marker");
+        }
+        for file in 0..7 {
+            assert!(
+                markers
+                    .iter()
+                    .filter(|r| r.path == format!("Controller{file}.ts"))
+                    .count()
+                    <= 8
+            );
+        }
+        if page == 1 {
+            let ids = markers.iter().map(|r| r.review_id.clone()).collect();
+            let job = build_selected_review_jobs(&root, &inventory, &ids, None).unwrap();
+            assert_eq!(job.total_reviews, markers.len());
+            let bundles = build_path_review_bundles(&job, None).unwrap();
+            assert!(!bundles.bundles.is_empty());
+            let validator = ReviewHistoryValidator::new(&root, &inventory).unwrap();
+            for bundle in bundles.bundles {
+                validator.validate_bundle(&bundle).unwrap();
+            }
+            let repeated = continue_review_markers(&root, &initial, page).unwrap();
+            assert_eq!(
+                repeated
+                    .entries
+                    .iter()
+                    .map(|e| &e.review_id)
+                    .collect::<Vec<_>>(),
+                inventory
+                    .entries
+                    .iter()
+                    .map(|e| &e.review_id)
+                    .collect::<Vec<_>>()
+            );
+        }
+        previous += coverage.admitted;
+    }
+    assert_eq!(seen.len(), 70);
+    fs::write(root.join("Controller0.ts"), "// source changed").unwrap();
+    assert!(continue_review_markers(&root, &initial, 1).is_err());
+    fs::remove_dir_all(root).unwrap();
+}

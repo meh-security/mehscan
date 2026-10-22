@@ -600,6 +600,19 @@ pub struct ReviewPipelineCoverage {
     /// finding or review.
     #[serde(default)]
     pub admission_audit: ReviewAdmissionAudit,
+    #[serde(default)]
+    pub marker_admission: ReviewMarkerAdmission,
+}
+
+/// Synthetic review questions deferred by a budget are unresolved, never safe.
+/// Counts cover eligible recognized markers, not all application operations.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewMarkerAdmission {
+    pub page: usize,
+    pub recognized: usize,
+    pub previously_admitted: usize,
+    pub admitted: usize,
+    pub budget_deferred: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]

@@ -176,6 +176,29 @@ closures. `scope_count` is the filtered, unreviewed population before selection;
 `matching_count` is the selected population and `deferred_count` its heuristic
 deferral population. Contract queues use `matching_review_count`.
 
+Synthetic operation-marker budgets are separate from Value deferrals. Read
+`marker_admission` in the overview: `recognized = previously_admitted + admitted
++ budget_deferred`. These counts cover eligible recognized mutation questions,
+not every authorization boundary in the app. A budget-deferred question has no
+verdict. Do not describe the initial Comprehensive inventory as exhaustive when
+`budget_deferred` is nonzero.
+
+When this lane warrants more review, generate a bounded continuation using the
+same validated scan, without rescanning or repeating ordinary reviews:
+
+```sh
+mehscan investigate review-inventory ROOT --continue-from RUN/inventory --marker-page 1 --output RUN/markers-1
+```
+
+Page zero is the original inventory; subsequent pages are deterministic,
+disjoint marker-only inventories, with the same 48-per-page and eight-per-file
+limits. List and bundle their exact IDs with their own inventory directory.
+Increase the page number only while additional review is justified; stop when
+`budget_deferred` is zero. Keep each page's inventory with its responses and
+report remaining budget deferrals separately from Value-only deferrals. Source
+or native-input changes invalidate continuation. Recognition still has syntax,
+file-size and language limits; draining these pages is not an exhaustive audit.
+
 ## Scope lanes
 
 Value focuses on authored application behavior. Before selecting bundles, separate
