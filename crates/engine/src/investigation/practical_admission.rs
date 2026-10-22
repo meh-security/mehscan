@@ -612,6 +612,28 @@ pub(super) fn frontend_research_hint(
     })
 }
 
+/// Called only for a standalone, single-anchor sink observation. Connected
+/// input relationships retain their existing Value priority.
+pub(super) fn browser_relative_research_hint(item: &Evidence) -> Option<ValueReviewHint> {
+    if item.capability == Capability::OutboundNetworkRequest
+        && item.cwe_candidates == ["CWE-918"]
+        && item.context.runtime_environment == Some(RuntimeEnvironment::Browser)
+        && item
+            .tags
+            .iter()
+            .any(|t| t == "url-shape:root-relative-request-target")
+    {
+        Some(ValueReviewHint {
+            reason: "browser_relative_destination_research".into(),
+            target: item.location.path.clone(),
+            assumption: "Bounded URL construction retains a fixed root-relative prefix at an ordinary browser request. Variable route/query data alone does not demonstrate a network-authority change. Comprehensive retains the exact destination question: inspect client defaults/base/hooks and any actual credential/data disclosure or protected endpoint effect. No same-origin, authorization or safety verdict is inferred.".into(),
+            depends_on: None,
+        })
+    } else {
+        None
+    }
+}
+
 pub(super) fn comprehensive_hint(item: &Evidence) -> Option<ValueReviewHint> {
     if item.capability == Capability::OutboundNetworkRequest
         && item

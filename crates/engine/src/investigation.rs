@@ -1776,6 +1776,11 @@ fn build_path_review_jobs_internal(
                 value_hint: (group.priority == 2)
                     .then(|| practical_admission::frontend_research_hint(anchor, &scan.evidence))
                     .flatten()
+                    .or_else(|| {
+                        (group.priority == 2 && group.anchor_evidence_ids.len() == 1)
+                            .then(|| practical_admission::browser_relative_research_hint(anchor))
+                            .flatten()
+                    })
                     .or_else(|| practical_admission::comprehensive_hint(anchor))
                     .or_else(|| {
                         (group.priority == 2)
@@ -6773,6 +6778,13 @@ fn observation_decision_facts(
             )
         })
         .collect::<Vec<_>>();
+    if evidence.iter().any(|item| {
+        item.tags
+            .iter()
+            .any(|tag| tag == "url-shape:root-relative-request-target")
+    }) {
+        established.push("Bounded URL syntax retains a fixed root-relative prefix across the inspected alternatives at a standard request signature. Dynamic route/query data is not itself a demonstrated authority change. Resolve actual client base/defaults/hooks and any credential/data or protected endpoint effect separately; this fact establishes neither same-origin execution nor endpoint authorization or safety.".into());
+    }
     for item in evidence
         .iter()
         .filter(|item| review_admission::is_marker(item))

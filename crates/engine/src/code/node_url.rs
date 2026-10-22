@@ -72,6 +72,29 @@ pub(super) fn annotate(evidence: &mut [Evidence], index: &NodeOperandIndex<'_>) 
                 // closure: paths on a fixed internal host can still matter.
                 sink.tags.push("url-shape:fixed-http-authority".to_string());
             }
+            if shapes.iter().all(|shape| {
+                let prefix = shape
+                    .iter()
+                    .take_while(|p| matches!(p, Part::Literal(_)))
+                    .filter_map(|p| {
+                        if let Part::Literal(s) = p {
+                            Some(s.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<String>();
+                prefix.starts_with('/')
+                    && !prefix.starts_with("//")
+                    && fixed_navigation_prefix(&prefix)
+            }) && ordinary_request_arguments(sink, target)
+            {
+                // Only the argument's construction and dispatch signature are
+                // known. Client defaults/base/hooks and route authorization
+                // remain open; never reuse this tag as a source-flow closure.
+                sink.tags
+                    .push("url-shape:root-relative-request-target".into());
+            }
         } else if shapes
             .iter()
             .all(|shape| shape.iter().all(|part| matches!(part, Part::Literal(_))))
@@ -95,6 +118,49 @@ pub(super) fn annotate(evidence: &mut [Evidence], index: &NodeOperandIndex<'_>) 
             sink.tags.push("redirect-closure:fixed-origin".to_string());
         }
     }
+}
+
+/// Explicit standard client signatures only. An Axios write's second argument
+/// is data, not routing configuration. Unknown/spread config and custom clients
+/// stay open. Abort signals cannot replace the target; no other option is
+/// inferred here, even if it looks harmless by name.
+fn ordinary_request_arguments(sink: &Evidence, target: &Ast<'_>) -> bool {
+    let Some(canonical) = sink
+        .symbol_resolution
+        .as_ref()
+        .map(|s| s.canonical.as_str())
+    else {
+        return false;
+    };
+    let config_index = match canonical {
+        "fetch" | "axios.get" | "axios.head" | "axios.options" | "axios.delete" => 1,
+        "axios.post" | "axios.put" | "axios.patch" => 2,
+        _ => return false,
+    };
+    let Some(arguments) = target.parent().filter(|n| n.kind().as_ref() == "arguments") else {
+        return false;
+    };
+    let args = arguments
+        .children()
+        .filter(|n| n.is_named() && n.kind().as_ref() != "comment")
+        .take(4)
+        .collect::<Vec<_>>();
+    if args.first().is_none_or(|n| n.range() != target.range())
+        || args.iter().any(|n| n.kind().as_ref() == "spread_element")
+        || args.len() > config_index + 1
+    {
+        return false;
+    }
+    args.get(config_index).is_none_or(|config| {
+        config.kind().as_ref() == "object"
+            && config
+                .children()
+                .filter(|n| n.is_named() && n.kind().as_ref() != "comment")
+                .all(|entry| {
+                    entry.kind().as_ref() == "pair"
+                        && entry.field("key").is_some_and(|key| key.text() == "signal")
+                })
+    })
 }
 
 pub(super) fn contribution(
