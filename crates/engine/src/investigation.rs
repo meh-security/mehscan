@@ -42,6 +42,7 @@ mod angular;
 mod caller_examples;
 mod csharp_application_context;
 mod frontend;
+mod node_constant_admission;
 mod practical_admission;
 mod resource_helpers;
 mod review_admission;
@@ -1562,6 +1563,7 @@ fn build_path_review_jobs_internal(
                 || file.source.contains(".setConfig")
                 || frontend::unverified_sanitizer_binding(file)
         });
+    let constant_operand_exclusions = node_constant_admission::exclusions(&scan.evidence, &sources);
     let practical_exclusions = scan
         .evidence
         .iter()
@@ -1571,6 +1573,7 @@ fn build_path_review_jobs_internal(
                 .iter()
                 .any(|tag| tag == "review:source-flow-required")
                 && !source_flow_sink_ids.contains(item.id.as_str()))
+                || constant_operand_exclusions.contains(&item.id)
                 || ordinary_browser_ids.contains(&item.id)
                 || (!custom_sanitizer_policy && restricted_html_controls.contains(&item.id))
                 || practical_admission::inventory_only(

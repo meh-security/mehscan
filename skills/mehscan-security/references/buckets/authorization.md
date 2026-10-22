@@ -19,6 +19,11 @@ policy applies. A clipped startup window cannot prove absence of a fallback.
 Trace **route/action → accepted credential branch → verified subject →
 selected object → applicable guard and rejection → sensitive effect**.
 Authentication alone does not authorize the action on that object.
+An owner check can settle object ownership while leaving action permissions,
+delegated-client scopes or tenant policy unresolved. Match the full selected
+question before closing it. When permission metadata is present, locate the
+code that consumes it and establish that enforcement applies to this route;
+neither the annotation nor its apparent missing local guard proves the verdict.
 
 1. Resolve the exact method/path, action or resolver. For generated CRUD,
    separate the supported collection and item operations; do not transfer a

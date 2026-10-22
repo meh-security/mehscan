@@ -45,8 +45,23 @@ argument alone.
 
 Co-occurrence is navigation, not propagation. It may retain research when the
 effect is worthwhile; it does not override an ordinary/low-effect exclusion.
+Check the operand that decides the selected question: request data in a POST
+body does not establish control of the request destination. A resolved literal
+URL can close that destination question without certifying the data transfer,
+endpoint permissions or every redirect behavior. Environment/configuration
+values are not universally trusted; establish who can change them and the
+intended boundary. Deliberate deployment-operator code injection is different
+from a lower-trust application setting reaching code or markup.
 Do not require theoretical format, environment or plugin attacks to keep a case.
 Reopen when source or repository knowledge supplies the missing practical edge.
+
+The JS/TS admission pass can resolve complete string destinations through
+immutable application constants and explicit ESM aliases/re-exports. It uses
+the workspace resolver, bounded export depth and per-file cached syntax;
+dynamic suffixes, mutable exports, environment values and unresolved fetch
+options do not receive this exclusion. Explicit unmodified js-yaml data schemas
+are also supporting context rather than executable-deserialization reviews.
+Neither mechanism removes raw scan evidence or certifies adjacent properties.
 
 Record **Value**, **Comprehensive-only**, or **excluded**, and the reason, when
 calibrating each rule or relationship. Supporting sources/guards/Resource facts
