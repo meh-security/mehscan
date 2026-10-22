@@ -139,10 +139,16 @@ fn server_mutation_review_marker_groups(
                         &spans,
                         line_index,
                         Some(index.mutation_members.contains(&line_index)),
+                        Some(index.route_invocations.get(&line_index).copied().unwrap_or(
+                            javascript_boundaries::RouteInvocation {
+                                possible_route: false,
+                                end_line: line_index,
+                            },
+                        )),
                     )
                 }
             } else {
-                server_mutation_review_marker(file, &spans, line_index, None)
+                server_mutation_review_marker(file, &spans, line_index, None, None)
             };
             let Some(marker) = marker else {
                 continue;
@@ -744,6 +750,7 @@ fn server_mutation_review_marker(
     spans: &[(usize, usize)],
     line_index: usize,
     javascript_mutation_member: Option<bool>,
+    javascript_route_invocation: Option<javascript_boundaries::RouteInvocation>,
 ) -> Option<ServerMutationMarker> {
     let (start, end) = spans[line_index];
     let line = file.source[start..end].trim();
@@ -765,6 +772,7 @@ fn server_mutation_review_marker(
                 line_index,
                 line,
                 javascript_mutation_member,
+                javascript_route_invocation,
             )
         }
         Language::Php => php_server_mutation_marker(file, spans, line_index, line),
@@ -867,6 +875,7 @@ fn javascript_server_mutation_marker(
     line_index: usize,
     line: &str,
     mutation_member: Option<bool>,
+    route_invocation: Option<javascript_boundaries::RouteInvocation>,
 ) -> Option<ServerMutationMarker> {
     if ["@Post(", "@Put(", "@Patch(", "@Delete(", "@Mutation("]
         .iter()
@@ -890,10 +899,18 @@ fn javascript_server_mutation_marker(
     } else {
         false
     };
-    if javascript_http_mutation_route(line) || chained_mutation_route {
+    if (javascript_http_mutation_route(line) || chained_mutation_route)
+        && route_invocation.is_none_or(|call| call.possible_route)
+    {
         let symbol =
             http_mutation_symbol(line).unwrap_or_else(|| "HTTP mutation route".to_string());
-        return marker_from_inline_boundary(file, spans, line_index, &symbol);
+        return marker_from_inline_boundary_through(
+            file,
+            spans,
+            line_index,
+            &symbol,
+            route_invocation.map(|call| call.end_line),
+        );
     }
 
     if (line.contains("validatedActionWithUser(")
@@ -1026,7 +1043,22 @@ fn marker_from_inline_boundary(
     line_index: usize,
     fallback_symbol: &str,
 ) -> Option<ServerMutationMarker> {
-    let end_index = textual_definition_end_with_limit(&file.source, spans, line_index, 120);
+    marker_from_inline_boundary_through(file, spans, line_index, fallback_symbol, None)
+}
+
+fn marker_from_inline_boundary_through(
+    file: &SourceFile,
+    spans: &[(usize, usize)],
+    line_index: usize,
+    fallback_symbol: &str,
+    call_end_line: Option<usize>,
+) -> Option<ServerMutationMarker> {
+    let mut end_index = textual_definition_end_with_limit(&file.source, spans, line_index, 120);
+    if let Some(call_end_line) = call_end_line {
+        // A multiline route chain can continue after the first balanced call.
+        // Extend through its invocation without widening the source budget.
+        end_index = end_index.max(call_end_line.min(line_index + 119).min(spans.len() - 1));
+    }
     let excerpt = &file.source[spans[line_index].0..spans[end_index].1];
     let mut handlers = terminal_call_identifiers(excerpt, "");
     let boundary_line = &file.source[spans[line_index].0..spans[line_index].1];
@@ -1333,6 +1365,9 @@ mod route_handler_tests {
 }
 
 fn javascript_http_mutation_route(line: &str) -> bool {
+    if !line.contains('.') || !line.contains('(') {
+        return false;
+    }
     let compact = line
         .split_whitespace()
         .collect::<String>()

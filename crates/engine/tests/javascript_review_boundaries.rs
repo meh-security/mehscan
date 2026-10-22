@@ -195,3 +195,102 @@ fn budget_continuation_is_disjoint_complete_and_source_bound() {
     assert!(continue_review_markers(&root, &initial, 1).is_err());
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn http_markers_require_invocation_shape_not_database_or_documentation_text() {
+    let root =
+        std::env::temp_dir().join(format!("mehscan-route-invocations-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let cases = [
+        (
+            "Orm.ts",
+            "async function main() { await prisma.app.delete({where: {slug: process.argv[2]}}); }",
+            false,
+        ),
+        (
+            "OrmPromise.ts",
+            "const result = db.server.delete({where: {id}}).then(removeCache);",
+            false,
+        ),
+        (
+            "Object.ts",
+            "const result = app.delete( /* options */ {where: {id}});",
+            false,
+        ),
+        (
+            "Documentation.ts",
+            "const usage = `app.delete('/items', deleteItem)`;",
+            false,
+        ),
+        (
+            "ChainDocumentation.ts",
+            "const usage = `router.route('/items').delete(deleteItem)`;",
+            false,
+        ),
+        (
+            "Broken.ts",
+            "app.delete(routePath, deleteItem);\nfunction unfinished(",
+            true,
+        ),
+        (
+            "Structured.ts",
+            "app.post({path: '/items', handler: createItem});",
+            true,
+        ),
+        (
+            "ShorthandStructured.ts",
+            "server.delete({path: '/items', handler});",
+            true,
+        ),
+        ("Dynamic.ts", "router.delete(routePath, deleteItem);", true),
+        (
+            "Multiline.ts",
+            "router.patch(\n routePath,\n authenticate,\n updateItem\n);",
+            true,
+        ),
+        (
+            "Nested.ts",
+            "this.router.delete(routePath, handlers.deleteItem);",
+            true,
+        ),
+        (
+            "SplitReceiver.ts",
+            "this\n .router.delete(routePath, handlers.deleteItem);",
+            true,
+        ),
+        (
+            "Alias.ts",
+            "itemsRouter.delete(routePath, deleteItem);",
+            true,
+        ),
+        (
+            "Fastify.ts",
+            "fastify.patch(routePath, {preHandler: authorize}, async (req) => { return service.updateItem(req.body); });",
+            true,
+        ),
+        (
+            "Chained.ts",
+            "router.route(routePath)\n .delete(authenticate, deleteItem);",
+            true,
+        ),
+        ("Spread.ts", "app.delete(...deleteRoute);", true),
+        (
+            "Mixed.ts",
+            "prisma.app.delete({where: {id}}); app.delete(routePath, deleteItem);",
+            true,
+        ),
+    ];
+    for (name, source, _) in &cases {
+        fs::write(root.join(name), source).unwrap();
+    }
+    let inventory = build_review_inventory(&root, false).unwrap();
+    assert_eq!(inventory.scan.coverage.totals.parse_failed, 1);
+    for (name, _, expected) in &cases {
+        let present = inventory
+            .entries
+            .iter()
+            .any(|r| r.path == *name && r.rule_id == "framework-authorization-review-marker");
+        assert_eq!(present, *expected, "unexpected marker admission for {name}");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
