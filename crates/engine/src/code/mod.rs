@@ -98,6 +98,7 @@ mod native_toctou;
 mod node_api_boundaries;
 pub(crate) use node_api_boundaries::stable_binding as stable_js_import_binding;
 mod node_browser;
+mod node_cfg;
 pub(crate) use node_browser::unverified_dompurify_binding;
 mod node_context;
 mod node_express;

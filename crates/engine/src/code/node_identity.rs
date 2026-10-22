@@ -46,7 +46,7 @@ pub(super) fn module_declaration(node: &N<'_>) -> bool {
         .all(|n| !function(n.kind().as_ref()) && n.kind().as_ref() != "statement_block")
 }
 
-fn bound_names(pattern: &N<'_>, out: &mut Vec<String>) {
+pub(super) fn bound_names(pattern: &N<'_>, out: &mut Vec<String>) {
     match pattern.kind().as_ref() {
         "identifier" | "shorthand_property_identifier_pattern" => {
             out.push(pattern.text().into_owned())
