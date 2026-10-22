@@ -52,6 +52,15 @@ pub(super) fn inventory_only(
     if crate::code::closed_query(item) {
         return true;
     }
+    if item.capability == Capability::HtmlOutput
+        && item.cwe_candidates == ["CWE-79"]
+        && item
+            .tags
+            .iter()
+            .any(|tag| tag == "html-url:non-executable-link-prefix")
+    {
+        return true;
+    }
     if matches!(
         item.rule_id.as_str(),
         "php-html-output" | "php-file-inclusion"

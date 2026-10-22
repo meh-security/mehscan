@@ -188,10 +188,22 @@ fn imported_target(
             .text()
             .trim_matches(['\'', '"'])
             .to_string();
-        if !module.starts_with('.') {
-            continue;
-        }
-        let Some(path) = resolve_relative_typescript_module(&file.path, &module, sources) else {
+        // The shared resolver admits selected application sources only. A
+        // workspace package or tsconfig alias can own the same helper contract
+        // as a relative import; external dependencies still return no source.
+        let path = if sources.node_modules.is_empty() {
+            resolve_relative_typescript_module(&file.path, &module, sources)
+        } else {
+            match sources.node_modules.resolve_review_source(
+                &file.path,
+                &module,
+                crate::code::node_modules::ImportMode::Import,
+            ) {
+                crate::code::node_modules::ModuleTarget::Source(path) => Some(path),
+                _ => None,
+            }
+        };
+        let Some(path) = path else {
             continue;
         };
         for spec in import.dfs().filter(|n| {

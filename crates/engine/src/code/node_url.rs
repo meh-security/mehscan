@@ -21,16 +21,33 @@ pub(super) enum Contribution {
     Unknown,
 }
 
+pub(super) fn intrinsic_link(sink: &Evidence) -> bool {
+    sink.capability == Capability::HtmlOutput
+        && sink.cwe_candidates == ["CWE-79"]
+        && matches!(
+            sink.rule_id.as_str(),
+            "javascript-react-url-attribute-output"
+                | "typescript-react-url-attribute-output"
+                | "tsx-react-url-attribute-output"
+        )
+        && sink
+            .tags
+            .iter()
+            .any(|t| t == "url-consumer:link-navigation")
+}
+
 pub(super) fn annotate(evidence: &mut [Evidence], index: &NodeOperandIndex<'_>) {
     for sink in evidence.iter_mut().filter(|e| {
         e.kind == EvidenceKind::Sink
-            && matches!(
+            && (matches!(
                 e.capability,
                 Capability::Redirect | Capability::OutboundNetworkRequest
-            )
+            ) || intrinsic_link(e))
     }) {
         let role = if sink.capability == Capability::Redirect {
             "location"
+        } else if sink.capability == Capability::HtmlOutput {
+            "content"
         } else {
             "endpoint"
         };
@@ -51,6 +68,62 @@ pub(super) fn annotate(evidence: &mut [Evidence], index: &NodeOperandIndex<'_>) 
         let Some(shapes) = parts(target, None, index, &scope, 0, &mut 64) else {
             continue;
         };
+        if intrinsic_link(sink) {
+            if index.custom_jsx_factory {
+                continue;
+            }
+            let Some(element) = target
+                .ancestors()
+                .find(|n| n.kind().as_ref() == "jsx_attribute")
+                .and_then(|n| n.parent())
+            else {
+                continue;
+            };
+            // A later spread/duplicate can replace the effective href. Do not
+            // let one closed attribute stand for an unresolved effective prop.
+            if element
+                .children()
+                .any(|n| n.kind().as_ref() == "jsx_expression")
+                || element
+                    .children()
+                    .filter(|n| {
+                        n.kind().as_ref() == "jsx_attribute"
+                            && n.children()
+                                .find(|c| c.is_named())
+                                .is_some_and(|c| c.text() == "href")
+                    })
+                    .count()
+                    != 1
+            {
+                continue;
+            }
+            // React escapes the native attribute value. This closes only the
+            // executable-scheme/attribute-breakout question, not destination,
+            // mail headers, navigation policy or downstream interpretation.
+            if shapes.iter().all(|shape| {
+                let prefix = shape
+                    .iter()
+                    .take_while(|p| matches!(p, Part::Literal(_)))
+                    .filter_map(|p| {
+                        if let Part::Literal(s) = p {
+                            Some(s.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<String>();
+                let normalized = prefix.to_ascii_lowercase();
+                prefix.is_ascii()
+                    && !prefix.bytes().any(|b| b.is_ascii_control() || b == b'\\')
+                    && (["https://", "http://", "mailto:", "tel:"]
+                        .iter()
+                        .any(|p| normalized.starts_with(p))
+                        || prefix.starts_with('#'))
+            }) {
+                sink.tags.push("html-url:non-executable-link-prefix".into());
+            }
+            continue;
+        }
         // All possible syntax alternatives must establish a fixed navigation
         // origin before any unresolved content. A suffix literal is not a prefix.
         if sink.capability == Capability::OutboundNetworkRequest {

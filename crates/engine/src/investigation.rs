@@ -5233,8 +5233,48 @@ fn project_investigation_facts(
         )
     });
     let mut angular_bytes = 0usize;
+    // A short output helper often settles the selected property. Keep its
+    // actual body and bounded policy/import context instead of forcing one
+    // lookup per consumer. This is source context, never a safe-helper model.
+    let imported_helper_packet = !angular_packet
+        && facts
+            .iter()
+            .any(|f| f.role == "frontend_imported_helper_context" && !f.excerpt.is_empty());
+    let mut helper_order = order
+        .iter()
+        .copied()
+        .filter(|&i| {
+            imported_helper_packet
+                && (matches!(
+                    facts[i].role.as_str(),
+                    "frontend_imported_helper_context"
+                        | "frontend_helper_dependency_context"
+                        | "frontend_helper_setup_context"
+                ) || facts[i].role == "frontend_import_binding_context"
+                    && facts[i].location.path != anchor.path)
+        })
+        .collect::<Vec<_>>();
+    helper_order.sort_by_key(|&i| {
+        if facts[i].role == "frontend_imported_helper_context" {
+            0
+        } else {
+            1
+        }
+    });
+    let mut helper_bytes = 0;
+    let mut helper_inline = BTreeSet::new();
+    for index in helper_order {
+        let len = facts[index].excerpt.len();
+        if len > 0 && len <= 2_048 && helper_bytes + len <= 2_048 {
+            helper_bytes += len;
+            helper_inline.insert(index);
+        }
+    }
     for index in order {
         let fact = &mut facts[index];
+        if helper_inline.contains(&index) {
+            continue;
+        }
         // Angular packets already bound the registration/handoff/consumer chain
         // to eight facts and 6 KiB. Preserve that initial evidence even when the
         // actor/producer still needs research; stripping it recreates each edge
@@ -6787,6 +6827,13 @@ fn observation_decision_facts(
             .any(|tag| tag == "url-shape:root-relative-request-target")
     }) {
         established.push("Bounded URL syntax retains a fixed root-relative prefix across the inspected alternatives at a standard request signature. Dynamic route/query data is not itself a demonstrated authority change. Resolve actual client base/defaults/hooks and any credential/data or protected endpoint effect separately; this fact establishes neither same-origin execution nor endpoint authorization or safety.".into());
+    }
+    if evidence.iter().any(|item| {
+        item.tags
+            .iter()
+            .any(|tag| tag == "html-url:non-executable-link-prefix")
+    }) {
+        established.push("The exact native React link operand retains a fixed non-executable scheme or fragment prefix across the inspected alternatives. React attribute escaping and that prefix close only this operand's executable-scheme/attribute-breakout question; recipient selection, navigation policy and downstream interpretation remain separate.".into());
     }
     for item in evidence
         .iter()
@@ -9867,6 +9914,12 @@ fn build_observation_reviews(
         let review_basis = observation_review_basis(basis_evidence, rules_by_id);
         let mut decision_facts =
             observation_decision_facts(&selected_evidence, &facts, &open_questions);
+        if facts
+            .iter()
+            .any(|f| f.role == "frontend_imported_helper_context")
+        {
+            decision_facts.established.push("The packet supplies application helper bodies located through bounded import/workspace/path-alias navigation. These excerpts are not a sanitization or runtime-binding proof. Inspect the complete transformations, actual options and relevant configuration when it could change this call; do not infer safety from helper names or invent an override without evidence.".into());
+        }
         if facts
             .iter()
             .any(|f| f.role == "frontend_prop_caller_context")

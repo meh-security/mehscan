@@ -61,10 +61,10 @@ pub(crate) fn build_security_paths<'tree>(
         Language::Javascript | Language::Typescript | Language::Tsx
     ) && evidence.iter().any(|e| {
         e.kind == EvidenceKind::Sink
-            && matches!(
+            && (matches!(
                 e.capability,
                 Capability::Redirect | Capability::OutboundNetworkRequest
-            )
+            ) || node_url::intrinsic_link(e))
     }) {
         let index = node_operands.get_or_insert_with(|| {
             NodeOperandIndex::new(root, language, evidence, &returned_objects)
@@ -1881,6 +1881,7 @@ struct NodeOperandBinding<'tree> {
 #[derive(Default)]
 struct NodeOperandIndex<'tree> {
     file_scope: Range<usize>,
+    custom_jsx_factory: bool,
     nested_binding_writes: BTreeSet<(NodeScope, String)>,
     root: Option<Node<'tree, StrDoc<SupportLang>>>,
     returned_objects: BTreeMap<String, super::node_context::ReturnedObject>,
@@ -1905,6 +1906,7 @@ impl<'tree> NodeOperandIndex<'tree> {
     ) -> Self {
         let mut index = Self {
             file_scope: root.range(),
+            custom_jsx_factory: root.text().contains("@jsx"),
             root: Some(root.clone()),
             returned_objects: returned_objects.clone(),
             ..Self::default()
@@ -1914,6 +1916,7 @@ impl<'tree> NodeOperandIndex<'tree> {
             .filter_map(|e| match e.capability {
                 Capability::Redirect => e.captures.get("location"),
                 Capability::OutboundNetworkRequest => e.captures.get("endpoint"),
+                Capability::HtmlOutput if node_url::intrinsic_link(e) => e.captures.get("content"),
                 _ => None,
             })
             .map(|c| (c.location.start.byte_offset, c.location.end.byte_offset))

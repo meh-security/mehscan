@@ -52,6 +52,11 @@ helper imports. Verify the actual helper, options and complete transformation
 chain. If that control settles the exact HTML property for all inputs, stop;
 caller sampling gaps do not reopen it. Do not reread supplied producer windows
 or investigate caller origins merely to confirm them.
+Workspace-package/path-alias helper excerpts are application-source navigation.
+An explicit workspace source may be supplied even when an external importer
+configuration cannot be loaded; that does not establish a runtime propagation
+edge. Check a real conflicting mapping or binding gap when decisive, rather
+than treating a helper name as protection or inventing deployment overrides.
 If the control is absent, bypassed or unresolved, use
 `frontend_component_prop_context`, `frontend_prop_caller_context` and
 `frontend_prop_producer_context` to research the next missing edge. For multiple
@@ -67,6 +72,13 @@ registration and handoff evidence and how to research the next missing edge.
 For React/Solid JSX output, use local producer/type facts and exact imported
 callers first. React `memo`/`forwardRef` wrappers are navigation, not controls;
 ordinary JSX text is escaped, while `dangerouslySetInnerHTML` interprets HTML.
+For native link attributes, a fixed non-executable scheme/fragment prefix plus
+React attribute escaping can close the selected executable-URL or attribute
+breakout question even when the suffix is untrusted. This does not protect raw
+HTML strings, arbitrary renderers, scripts, embedded documents or other resource
+consumers. Check effective props (including spreads/overrides), transformations
+and alternatives. An allowed scheme does not establish an approved recipient,
+navigation policy or safe downstream use; keep any separately shown issue.
 `frontend_state_declaration_context` and `frontend_state_writer_context` locate
 owned useState initialization and setter candidates; verify invocation, updates
 and controls. `frontend_collection_producer_context` locates a map receiver,
