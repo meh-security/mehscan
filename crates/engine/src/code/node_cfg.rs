@@ -208,6 +208,7 @@ struct Analysis<'a> {
     graph: Graph<'a>,
     locals: Vec<Local>,
     incoming: Vec<Option<State>>,
+    predicates: BTreeMap<String, (Range<usize>, Range<usize>, BTreeSet<String>)>,
 }
 #[derive(Default)]
 struct Outcome {
@@ -215,6 +216,21 @@ struct Outcome {
     guards: Vec<(Range<usize>, bool)>,
     unreachable: bool,
     guards_cut: bool,
+    predicate_definitions: BTreeMap<usize, Range<usize>>,
+    operand_related: BTreeSet<usize>,
+}
+
+// Source association for choosing context, not a value/taint/sanitizer proof.
+fn identifiers(n: &N<'_>) -> BTreeSet<String> {
+    n.dfs()
+        .filter(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "identifier" | "shorthand_property_identifier"
+            )
+        })
+        .map(|n| n.text().into_owned())
+        .collect()
 }
 
 fn written<'a>(n: &N<'a>) -> Option<N<'a>> {
@@ -329,6 +345,17 @@ impl<'a> Analysis<'a> {
         function_node: &N<'a>,
         literals: &LiteralEnvironment<'a, StrDoc<SupportLang>>,
     ) -> Result<Self, &'static str> {
+        Self::build_region(
+            function_node,
+            function_node.field("body").ok_or("missing_body")?,
+            literals,
+        )
+    }
+    fn build_region(
+        function_node: &N<'a>,
+        body: N<'a>,
+        literals: &LiteralEnvironment<'a, StrDoc<SupportLang>>,
+    ) -> Result<Self, &'static str> {
         if function_node.range().len() > 65_536 {
             return Err("function_bytes");
         }
@@ -342,7 +369,7 @@ impl<'a> Analysis<'a> {
         }) {
             return Err("unsupported_control");
         }
-        for n in function_node
+        for n in body
             .dfs()
             .filter(|n| owner(n).is_some_and(|p| p.range() == own))
         {
@@ -405,7 +432,12 @@ impl<'a> Analysis<'a> {
                     own.clone()
                 } else {
                     d.ancestors()
-                        .find(|p| p.kind().as_ref() == "statement_block")
+                        .find(|p| {
+                            matches!(
+                                p.kind().as_ref(),
+                                "statement_block" | "for_statement" | "for_in_statement"
+                            )
+                        })
                         .map(|p| p.range())
                         .unwrap_or(own.clone())
                 };
@@ -453,17 +485,43 @@ impl<'a> Analysis<'a> {
             });
             local.usable = counts[&local.name] == 1 && !captured && !blocked.contains(&local.name);
         }
+        let mut predicates = BTreeMap::new();
+        for d in function_node.dfs().filter(|n| {
+            n.kind().as_ref() == "variable_declarator" && owner(n).is_some_and(|p| p.range() == own)
+        }) {
+            let Some(name) = d
+                .field("name")
+                .filter(|n| n.kind().as_ref() == "identifier")
+            else {
+                continue;
+            };
+            let Some(value) = d.field("value") else {
+                continue;
+            };
+            // Only unique const bindings. Include a callback's source references
+            // for inspection; this does not claim the callback executes or is pure.
+            if !d
+                .parent()
+                .is_some_and(|p| p.text().trim_start().starts_with("const "))
+                || d.range().len() > 2048
+                || counts.get(name.text().as_ref()) != Some(&1)
+            {
+                continue;
+            }
+            let Some(local) = locals.iter().find(|l| l.name == name.text().as_ref()) else {
+                continue;
+            };
+            predicates.insert(
+                name.text().into_owned(),
+                (local.scope.clone(), d.range(), identifiers(&value)),
+            );
+        }
         let mut graph = Graph {
             steps: vec![],
             entry: 0,
         };
         let exit = graph.push(None, vec![], false)?;
-        let body = graph.statement(
-            function_node.field("body").ok_or("missing_body")?,
-            exit,
-            None,
-            0,
-        )?;
+        let body = graph.statement(body, exit, None, 0)?;
         graph.entry = graph.push(None, vec![body], false)?;
         let mut incoming = vec![None; graph.steps.len()];
         incoming[graph.entry] = Some(vec![None; locals.len()]);
@@ -498,6 +556,7 @@ impl<'a> Analysis<'a> {
             graph,
             locals,
             incoming,
+            predicates,
         })
     }
     fn outcome(&self, at: usize, operand: Option<&str>) -> Outcome {
@@ -568,12 +627,65 @@ impl<'a> Analysis<'a> {
                     .push((guard.node.as_ref().unwrap().range(), yes));
             }
         }
-        outcome
-            .guards
-            .sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+        let mut operand_names = operand
+            .and_then(|text| step.node.as_ref()?.dfs().find(|n| n.text().trim() == text))
+            .map(|n| identifiers(&n))
+            .unwrap_or_default();
+        // Shared module constants/callees do not connect two operations. Only
+        // same-function bindings participate in this context-ranking heuristic.
+        operand_names.retain(|name| {
+            self.locals
+                .iter()
+                .any(|l| l.name == *name && l.scope.contains(&at))
+        });
+        let mut scores = BTreeMap::new();
+        for (range, _) in &outcome.guards {
+            let Some(condition) = self
+                .graph
+                .steps
+                .iter()
+                .filter_map(|s| s.node.as_ref())
+                .find(|n| n.range() == *range)
+            else {
+                continue;
+            };
+            let names = identifiers(condition);
+            let mut score = usize::from(!names.is_disjoint(&operand_names)) * 2;
+            for name in names {
+                if let Some((scope, definition, refs)) = self.predicates.get(&name) {
+                    if scope.contains(&range.start)
+                        && definition.end <= range.start
+                        && !refs.is_disjoint(&operand_names)
+                    {
+                        score = score.max(1);
+                        outcome
+                            .predicate_definitions
+                            .insert(range.start, definition.clone());
+                        break;
+                    }
+                }
+            }
+            if score > 0 {
+                outcome.operand_related.insert(range.start);
+            }
+            scores.insert(range.start, score);
+        }
+        outcome.guards.sort_by_key(|(r, _)| {
+            (
+                std::cmp::Reverse(scores.get(&r.start).copied().unwrap_or(0)),
+                std::cmp::Reverse(r.start),
+            )
+        });
         outcome.guards_cut = outcome.guards.len() > 3;
         outcome.guards.truncate(3);
         outcome
+    }
+
+    fn guard_only_outcome(&self, at: usize, operand: Option<&str>) -> Outcome {
+        let mut result = self.outcome(at, operand);
+        result.literal = None;
+        result.unreachable = false;
+        result
     }
 }
 
@@ -582,13 +694,16 @@ mod tests {
     use super::*;
     use ast_grep_core::AstGrep;
     fn inspect(body: &str) -> Result<Outcome, &'static str> {
+        inspect_operand(body, "url")
+    }
+    fn inspect_operand(body: &str, operand: &str) -> Result<Outcome, &'static str> {
         let source = format!("function f(input:any,flag:boolean){{{body}}}");
         let ast = AstGrep::doc(StrDoc::try_new(&source, SupportLang::TypeScript).unwrap());
         let root = ast.root();
         let literals = LiteralEnvironment::build(&root, Language::Typescript);
         let function = root.dfs().find(super::function).unwrap();
         let analysis = Analysis::build(&function, &literals)?;
-        Ok(analysis.outcome(source.rfind("sink(").unwrap(), Some("url")))
+        Ok(analysis.outcome(source.rfind("sink(").unwrap(), Some(operand)))
     }
     #[test]
     fn branch_joins_loops_and_mutations_require_a_complete_literal_proof() {
@@ -613,6 +728,7 @@ mod tests {
             "let url='fixed';function mutate(){url=input;}invoke(mutate);sink(url);",
             "let url='fixed';{let url=input;sink(url);}",
             "{let url='fixed';}sink(url);",
+            "for(let url='fixed';flag;){noop();}sink(url);",
             "let url='fixed';({url}=input);sink(url);",
             "let url='fixed';{const {url}=input;sink(url);}",
             "let url='fixed';{function url(){}sink(url);}",
@@ -676,6 +792,61 @@ mod tests {
             Some("node_budget")
         );
     }
+
+    #[test]
+    fn guard_budget_prefers_operand_context_over_nearby_unrelated_checks() {
+        let result = inspect("let url=input;const accepted=[flag].some(x=>validate(url,x));if(!accepted)throw Error();if(a)return;if(b)return;if(c)return;sink(url);").unwrap();
+        assert_eq!(result.guards.len(), 3);
+        assert!(result.guards_cut);
+        assert!(result.operand_related.contains(&result.guards[0].0.start));
+        assert!(
+            result
+                .predicate_definitions
+                .contains_key(&result.guards[0].0.start)
+        );
+        // A source reference is not a pure predicate or same-value proof.
+        assert!(result.literal.is_none());
+        for body in [
+            "let url=input;let accepted=validate(url);accepted=true;if(!accepted)return;if(a)return;if(b)return;if(c)return;sink(url);",
+            "let url=input;{const accepted=validate(url);}if(!accepted)return;if(a)return;if(b)return;if(c)return;sink(url);",
+        ] {
+            assert!(inspect(body).unwrap().predicate_definitions.is_empty());
+        }
+        let unrelated = inspect_operand("let id=input;const response=dispatch(`${HOST}/delete`);if(!response.ok)return;sink(`${HOST}/${id}`);", "`${HOST}/${id}`").unwrap();
+        assert!(unrelated.predicate_definitions.is_empty());
+        assert!(unrelated.operand_related.is_empty());
+    }
+
+    #[test]
+    fn exception_region_provides_local_guards_without_scalar_or_unreachable_proofs() {
+        let source = "function f(input,flag){try{let url='fixed';if(!allowed(url))throw Error();sink(url);}catch(e){sink(input);}finally{cleanup();}}";
+        let ast = AstGrep::doc(StrDoc::try_new(source, SupportLang::TypeScript).unwrap());
+        let root = ast.root();
+        let literals = LiteralEnvironment::build(&root, Language::Typescript);
+        let function = root.dfs().find(super::function).unwrap();
+        assert_eq!(
+            Analysis::build(&function, &literals).err(),
+            Some("unsupported_control")
+        );
+        let body = root
+            .dfs()
+            .find(|n| n.kind().as_ref() == "try_statement")
+            .unwrap()
+            .field("body")
+            .unwrap();
+        let analysis = Analysis::build_region(&function, body, &literals).unwrap();
+        let result = analysis.guard_only_outcome(source.find("sink(url)").unwrap(), Some("url"));
+        assert_eq!(result.guards.len(), 1);
+        assert!(!result.guards[0].1);
+        assert!(result.literal.is_none() && !result.unreachable);
+        // Guard in the try body must not be attributed to catch/finally sinks.
+        assert!(
+            analysis
+                .guard_only_outcome(source.find("sink(input)").unwrap(), Some("input"))
+                .guards
+                .is_empty()
+        );
+    }
 }
 
 fn enabled() -> bool {
@@ -703,6 +874,8 @@ fn role(e: &Evidence) -> Option<&'static str> {
         Capability::FilesystemRead | Capability::FilesystemWrite => Some("path"),
         Capability::ProcessExecution => Some("command"),
         Capability::DynamicCodeExecution => Some("code"),
+        Capability::Redirect => Some("location"),
+        Capability::BrowserNavigation => Some("destination"),
         _ => None,
     }
 }
@@ -730,6 +903,8 @@ pub(super) fn emit_if_enabled<'a>(
     let started = std::time::Instant::now();
     let functions = root.dfs().filter(function).collect::<Vec<_>>();
     let mut cache = BTreeMap::new();
+    let mut region_cache = BTreeMap::new();
+    let mut regions = BTreeMap::new();
     let mut skipped = BTreeMap::new();
     let (mut guarded, mut literal, mut unreachable) = (0, 0, 0);
     for e in evidence.iter_mut() {
@@ -748,16 +923,57 @@ pub(super) fn emit_if_enabled<'a>(
         let analysis = cache
             .entry(key)
             .or_insert_with(|| Analysis::build(function, literals));
-        let analysis = match analysis {
-            Ok(a) => a,
-            Err(reason) => {
+        // Recover only control placement inside an independently supported
+        // exception body. Never infer function reachability or scalar closure
+        // through catches/finally. Inspect at most three regions per sink.
+        let mut region_keys = Vec::new();
+        if matches!(analysis, Err("unsupported_control")) {
+            let mut candidates = function
+                .dfs()
+                .filter(|n| {
+                    n.kind().as_ref() == "statement_block"
+                        && n.range().contains(&at)
+                        && owner(n).is_some_and(|p| p.range() == function.range())
+                        && n.parent().is_some_and(|p| {
+                            matches!(
+                                p.kind().as_ref(),
+                                "try_statement" | "catch_clause" | "finally_clause"
+                            )
+                        })
+                })
+                .collect::<Vec<_>>();
+            candidates.sort_by_key(|n| std::cmp::Reverse(n.range().len()));
+            for block in candidates.into_iter().take(3) {
+                let key = (block.range().start, block.range().end);
+                region_cache
+                    .entry(key)
+                    .or_insert_with(|| Analysis::build_region(function, block, literals));
+                region_keys.push(key);
+            }
+        }
+        let region = region_keys
+            .iter()
+            .find_map(|k| region_cache.get(k)?.as_ref().ok().map(|a| (*k, a)));
+        let region_only = region.is_some();
+        let analysis = match (analysis, region) {
+            (_, Some((bounds, a))) => {
+                regions.insert(e.id.clone(), serde_json::json!({"scope":"exception-body-only","start_byte":bounds.0,"end_byte":bounds.1}));
+                e.tags.push("local-cfg:guard-region-only".into());
+                a
+            }
+            (Ok(a), _) => a,
+            (Err(reason), _) => {
                 *skipped.entry(*reason).or_insert(0usize) += 1;
                 e.tags.push(format!("local-cfg:unavailable:{reason}"));
                 continue;
             }
         };
         let operand = e.captures.get(role).map(|c| c.text.trim());
-        let result = analysis.outcome(at, operand);
+        let result = if region_only {
+            analysis.guard_only_outcome(at, operand)
+        } else {
+            analysis.outcome(at, operand)
+        };
         if result.unreachable {
             e.tags
                 .push("local-cfg:unreachable-in-modeled-function".into());
@@ -785,6 +1001,16 @@ pub(super) fn emit_if_enabled<'a>(
                 format!("local_cfg_guard_{i}_definition"),
                 captured(path, root, &r),
             );
+            if result.operand_related.contains(&r.start) {
+                e.tags
+                    .push(format!("local-cfg:guard-{i}:operand-reference-context"));
+            }
+            if let Some(definition) = result.predicate_definitions.get(&r.start) {
+                e.captures.insert(
+                    format!("local_cfg_guard_{i}_predicate_definition"),
+                    captured(path, root, definition),
+                );
+            }
         }
         if result.guards_cut {
             e.tags.push("local-cfg:guard-budget-partial".into());
@@ -794,11 +1020,12 @@ pub(super) fn emit_if_enabled<'a>(
     }
     let observations=evidence.iter().filter(|e|e.tags.iter().any(|t|t.starts_with("local-cfg:"))).map(|e|serde_json::json!({
         "id":e.id,
+        "region":regions.get(&e.id),
         "tags":e.tags.iter().filter(|t|t.starts_with("local-cfg:")).collect::<Vec<_>>(),
         "captures":e.captures.iter().filter(|(k,_)|k.starts_with("local_cfg_")).collect::<BTreeMap<_,_>>()
     })).collect::<Vec<_>>();
     eprintln!(
         "mehscan_node_cfg {}",
-        serde_json::json!({"path":path,"functions":cache.len(),"analyzed":cache.values().filter(|a|a.is_ok()).count(),"nodes":cache.values().filter_map(|a|a.as_ref().ok()).map(|a|a.graph.steps.len()).sum::<usize>(),"guarded_sinks":guarded,"literal_sinks":literal,"unreachable_sinks":unreachable,"skipped_sinks":skipped,"microseconds":started.elapsed().as_micros(),"observations":observations})
+        serde_json::json!({"path":path,"functions":cache.len(),"analyzed":cache.values().filter(|a|a.is_ok()).count(),"analyzed_regions":region_cache.values().filter(|a|a.is_ok()).count(),"nodes":cache.values().filter_map(|a|a.as_ref().ok()).map(|a|a.graph.steps.len()).sum::<usize>(),"region_nodes":region_cache.values().filter_map(|a|a.as_ref().ok()).map(|a|a.graph.steps.len()).sum::<usize>(),"guarded_sinks":guarded,"literal_sinks":literal,"unreachable_sinks":unreachable,"skipped_sinks":skipped,"microseconds":started.elapsed().as_micros(),"observations":observations})
     );
 }
