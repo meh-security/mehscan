@@ -325,6 +325,32 @@ fn evidence_updates_resume_exact_questions_without_changing_the_native_verdict()
         );
         question_ids.push(saved["result"]["question_id"].clone());
     }
+    let batch = fixture.base.join("pending-batch.json");
+    let drafts = records[0]["response"]["checks"].as_array().unwrap().iter().enumerate().map(|(index,question)|
+        json!({"schema_version":"1","origin":{"kind":"decision","decision_id":records[0]["decision_id"]},
+            "kind":if index == 0 {"source_authority"} else {"control_coverage"},"question":question})).collect::<Vec<_>>();
+    let journal_before = fs::read(fixture.store.join("transactions.jsonl")).unwrap();
+    let mut invalid = drafts.clone();
+    invalid[1]["question"] = json!("A question absent from the admitted response.");
+    fs::write(&batch, serde_json::to_vec(&invalid).unwrap()).unwrap();
+    reject(
+        &fixture.typed_args("pending-batch", owner, &batch, "invalid-batch"),
+        "explicit check/blocker",
+    );
+    assert_eq!(
+        fs::read(fixture.store.join("transactions.jsonl")).unwrap(),
+        journal_before
+    );
+    fs::write(&batch, serde_json::to_vec(&drafts).unwrap()).unwrap();
+    let saved = ok(&fixture.typed_args("pending-batch", owner, &batch, "valid-batch"));
+    assert_eq!(
+        saved["result"]["question_ids"].as_array().unwrap().len(),
+        drafts.len()
+    );
+    assert_eq!(
+        ok(&fixture.typed_args("pending-batch", owner, &batch, "valid-batch"))["replayed"],
+        true
+    );
     assert!(
         fixture.work(owner, true)["payload"]["review_ids"]
             .as_array()

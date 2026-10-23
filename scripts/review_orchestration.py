@@ -11,6 +11,83 @@ ROUTING_REASONS = {"reasoning_gap", "control_applicability", "conflicting_eviden
 UNAVAILABLE = {"external_required", "human_required", "budget_exhausted"}
 
 
+def grounded_note(value, known, *, dependency=False):
+    """Validate source references, never certify a model's interpretation."""
+    fields = {"question":500, "scope":500} if dependency else {"claim":700, "conditions":700, "limits":700}
+    expected = set(fields) | {"artifacts"} | (set() if dependency else {"status"})
+    if not isinstance(value, dict) or set(value) != expected:
+        raise ValueError("invalid grounded research note")
+    for key, limit in fields.items():
+        if not isinstance(value[key], str) or not 1 <= len(value[key].strip()) <= limit:
+            raise ValueError("grounded research note requires bounded explicit scope and limits")
+    if (not isinstance(value["artifacts"], list) or not 1 <= len(value["artifacts"]) <= 8
+            or any(not isinstance(a, str) or a not in known for a in value["artifacts"])):
+        raise ValueError("grounded research note requires inspected source handles")
+    if not dependency and value["status"] not in ("established", "unresolved"):
+        raise ValueError("invalid research resolution status")
+    result = copy.deepcopy(value)
+    result["artifacts"] = sorted(set(result["artifacts"]))
+    return result
+
+
+class DependencyKnowledge:
+    """Snapshot-bound research register. Controller owns scheduling, not verdicts.
+
+    Exact question/scope/evidence identity only: no fuzzy semantic merging or
+    inheritance of safe labels. Completed notes remain model interpretations.
+    """
+    def __init__(self, path, binding, write, previous=None):
+        self.path, self.write = path, write
+        self.state = json.loads(previous.read_text(encoding="utf-8")) if previous and previous.is_file() else {
+            "binding":binding, "dependencies":{}}
+        if self.state["binding"] != binding:
+            raise ValueError("research knowledge differs from current source/runtime")
+        for key, row in self.state["dependencies"].items():
+            if key != self.identity(row["request"]):
+                raise ValueError("research dependency identity changed")
+            if row.get("resolution_digest") != self.resolution_digest(row):
+                raise ValueError("research knowledge contents changed")
+        self.save()
+
+    @staticmethod
+    def identity(request):
+        canonical = {**request, "question":" ".join(request["question"].split()),
+                     "scope":" ".join(request["scope"].split()), "artifacts":sorted(set(request["artifacts"]))}
+        return hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
+
+    @staticmethod
+    def resolution_digest(row):
+        if "resolution" not in row:
+            return None
+        return hashlib.sha256(json.dumps([row["resolution"], row["source_handoff"]], sort_keys=True).encode()).hexdigest()
+
+    def save(self):
+        self.write(self.path, self.state)
+
+    def request(self, request, consumer):
+        key = self.identity(request)
+        created = key not in self.state["dependencies"]
+        row = self.state["dependencies"].setdefault(key, {"request":copy.deepcopy(request), "consumers":[], "status":"waiting"})
+        if consumer not in row["consumers"]:
+            row["consumers"].append(consumer)
+        self.save()
+        return key, created
+
+    def resolve(self, key, note, source_handoff):
+        row = self.state["dependencies"][key]
+        row.update(status="resolved", resolution=copy.deepcopy(note), source_handoff=copy.deepcopy(source_handoff))
+        row["resolution_digest"] = self.resolution_digest(row)
+        self.save()
+
+    def context(self, key):
+        row = self.state["dependencies"][key]
+        if row["status"] != "resolved":
+            raise ValueError("cannot resume before dependency resolution")
+        return {"dependency_id":key, "question":row["request"]["question"], "scope":row["request"]["scope"],
+                "assertion":"source-backed model interpretation; verify applicability to this caller",
+                **copy.deepcopy(row["resolution"])}
+
+
 class BudgetExhausted(RuntimeError):
     pass
 
@@ -150,9 +227,9 @@ def needs_secondary(results, routing, policy, direct=False):
         reason = reasons.get(identity)
         if decision == "issue":
             return True
-        if reason in {"reasoning_gap", "control_applicability", "conflicting_evidence", "risky_dismissal", "stage_budget_exhausted"}:
+        if not direct and reason in {"reasoning_gap", "control_applicability", "conflicting_evidence", "risky_dismissal", "stage_budget_exhausted"}:
             return True
-        if decision == "not_issue" and (direct or sampled(identity, policy)):
+        if decision == "not_issue" and sampled(identity, policy):
             return True
         if decision == "needs_review" and not direct and reason not in {"external_required", "human_required", "budget_exhausted"}:
             return True
@@ -169,11 +246,11 @@ def reconcile(primary, secondary, primary_profile, routing=()):
     for index, first in enumerate(primary["results"]):
         second = other[first["review_id"]]
         chosen = copy.deepcopy(second if primary_profile == "routine" else first)
-        if first["decision"] != second["decision"] or first["review_id"] in unresolved:
+        if contrary(first["decision"], second["decision"]) or first["review_id"] in unresolved:
             chosen.update(decision="needs_review", confidence="low", diagnosis=None,
-                          summary="Independent review leaves a source question requiring adjudication.")
+                          summary="Review leaves a decisive source question unresolved.")
             question = ("Resolve the contrary assessments for this exact operation using their decisive source evidence."
-                        if first["decision"] != second["decision"] else
+                        if contrary(first["decision"], second["decision"]) else
                         "Resolve the independent assessor's remaining question for this exact operation.")
             chosen["checks"] = list(dict.fromkeys([*first.get("checks", []), *second.get("checks", []), question]))
             chosen["investigation"]["blockers"] = list(dict.fromkeys([
@@ -187,9 +264,14 @@ def adjudication_ids(stages):
     reasons = {item["review_id"]: item["reason"] for stage in stages for item in stage["routing"]
                if item["reason"] in UNAVAILABLE}
     left, right = ({r["review_id"]: r for r in stage["response"]["results"]} for stage in stages)
-    routed = {item["review_id"] for stage in stages for item in stage["routing"]}
+    routed = {item["review_id"] for stage in stages for item in stage["routing"] if item["reason"] == "conflicting_evidence"}
     return sorted(identity for identity in left if identity not in reasons and (
-        left[identity]["decision"] != right[identity]["decision"] or identity in routed))
+        contrary(left[identity]["decision"], right[identity]["decision"]) or identity in routed))
+
+
+def contrary(left, right):
+    """An open question is not an affirmative contrary security claim."""
+    return {left, right} == {"issue", "not_issue"}
 
 
 def validate_resolutions(values, ids, draft):
@@ -270,6 +352,12 @@ def assessment_basis(assessments):
     decisions = [a["decision"] for a in assessments]
     if len(decisions) == 3:
         return decisions[-1] if decisions[-1] in decisions[:2] else "needs_review"
+    if len(decisions) == 2:
+        if contrary(*decisions):
+            return "needs_review"
+        expert = next((a for a in assessments if a.get("profile") == "expert"), None)
+        if expert:
+            return expert["decision"]
     return decisions[0] if len(set(decisions)) == 1 else "needs_review"
 
 
@@ -299,12 +387,15 @@ def quality_intent(draft, actions, baseline, assigned):
 
 def apply_revalidation(baseline, first, second, proposals, routing=()):
     paired = reconcile(first, second, "routine", routing)
+    first_by_id = {r["review_id"]:r for r in first["results"]}
+    second_by_id = {r["review_id"]:r for r in second["results"]}
     result = copy.deepcopy(baseline)
     by_id = {r["review_id"]:r for r in paired["results"]}
     for index, row in enumerate(result["results"]):
         if row["review_id"] in proposals:
             chosen = by_id[row["review_id"]]
-            if chosen["decision"] not in ("needs_review", proposals[row["review_id"]]):
+            if (first_by_id[row["review_id"]]["decision"] != second_by_id[row["review_id"]]["decision"]
+                    or chosen["decision"] not in ("needs_review", proposals[row["review_id"]])):
                 chosen.update(decision="needs_review", confidence="low", diagnosis=None)
                 question = "Resolve the recovered-source proposal against the fresh assessments for this exact operation."
                 chosen["checks"] = [*chosen.get("checks", []), question]

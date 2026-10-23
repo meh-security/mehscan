@@ -47,13 +47,21 @@ def usage(path, runtime, unobserved_provider_calls=0):
         selected = [row for row in rows if row["provider"] == provider]
         if selected:
             profiles.append({"provider":provider, "round_count":len(selected),
+                "provider_elapsed_ms":counter(selected,"elapsed_ms")[0],
+                "elapsed_reporting_rounds":counter(selected,"elapsed_ms")[1],
                 "reported_token_sums":{key:counter([row.get("usage", {}) for row in selected], key)[0] for key in counters},
+                "counter_reporting_rounds":{key:counter([row.get("usage", {}) for row in selected], key)[1] for key in counters},
+                "stages":[{"role":role,"round_count":len(stage),
+                    "provider_elapsed_ms":counter(stage,"elapsed_ms")[0],
+                    "reported_token_sums":{key:counter([row.get("usage",{}) for row in stage],key)[0] for key in counters}}
+                    for role in sorted({row.get("role","investigator") for row in selected})
+                    for stage in [[row for row in selected if row.get("role","investigator") == role]]],
                 "roles":{role:sum(row.get("role", "investigator") == role for row in selected)
                          for role in sorted({row.get("role", "investigator") for row in selected})}})
     return {"schema_version":"1", "provider":runtime.get("provider"), "policy":runtime["policy"],
         "research_limits":runtime["limits"], "round_count":len(rows), "token_accounting":"reported_conversation_deltas",
         "reported_token_sums":counters, "counter_reporting_rounds":reporting,
-        "provider_elapsed_ms":elapsed, "prompt_bytes":prompt,
+        "provider_elapsed_ms":elapsed, "time_basis":"sum_provider_calls_not_wall_time", "prompt_bytes":prompt,
         "usage_available":bool(rows), "profiles":profiles, "unobserved_provider_calls":unobserved_provider_calls,
         "usage_complete":bool(rows) and unobserved_provider_calls == 0 and all(
             reporting[key] == len(rows) for key in counters), "cost":None}

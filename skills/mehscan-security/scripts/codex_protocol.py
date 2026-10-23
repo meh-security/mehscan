@@ -80,6 +80,22 @@ def build_schema(task, *, bound_handles=True):
             variants.append(object_schema({**properties, "status":{"type":"string", "enum":["inspected"]},
                 "cause":{"type":"null"}, "artifacts":{**artifacts, "minItems":1}}))
         schema["properties"]["progress"]["items"] = {"anyOf":variants}
+    if task.get("dependency_allowed"):
+        bounded = {"type":"string","minLength":1,"maxLength":500}
+        schema["properties"]["dependency"] = {"anyOf":[object_schema({"question":bounded,"scope":bounded,
+            "artifacts":{**artifacts,"minItems":1,"maxItems":8}}),{"type":"null"}]}
+        schema["required"].append("dependency")
+        schema["properties"]["action"]["enum"].append("dependency")
+        schema["properties"]["draft"] = {"anyOf":[draft,{"type":"null"}]}
+    if task.get("review_role") == "research":
+        bounded = {"type":"string","minLength":1,"maxLength":700}
+        note = object_schema({"claim":bounded,"conditions":bounded,"limits":bounded,
+            "status":{"type":"string","enum":["established","unresolved"]},"artifacts":{**artifacts,"minItems":1,"maxItems":8}})
+        schema = object_schema({"action":{"type":"string","enum":["research","knowledge"]},
+            "research":schema["properties"]["research"], "knowledge":{"anyOf":[note,{"type":"null"}]}})
+        if bound_handles and any(remaining.get(key,1) <= 0 for key in ("rounds_remaining","queries_remaining","bytes_remaining")):
+            schema["properties"]["action"]["enum"] = ["knowledge"]
+            schema["properties"]["knowledge"] = note
     return schema
 
 
@@ -117,11 +133,20 @@ def build_prompt(task, packet, facts, state):
         if isinstance(value, list):
             return [readable(item) for item in value]
         return value
+    instructions = INSTRUCTIONS
+    if task.get("dependency_allowed"):
+        instructions += "\nBounded routine task: do the clear local work. For a shared implementation/security-contract question that needs deeper reasoning, use action=dependency, research=[], draft=null and dependency={question,scope,artifacts}. Name one precise question, its applicability boundary and inspected source handles. Yield before a broad caller hunt; do not guess a verdict. Otherwise dependency=null.\n"
+    if task.get("review_role") == "research":
+        instructions = """Return schema JSON only. Follow the trusted research contract. No tools, execution, edits or external access.
+Use action=research, knowledge=null and a bounded source-query batch, or action=knowledge, research=[] and knowledge={claim,conditions,limits,status,artifacts}.
+Resolve only the supplied dependency question. status=unresolved is valid. Cite inspected artifact handles; this is a scoped interpretation, never a finding or global safety verdict.
+Queries use the declared broker schema and exact prompting review ID. Check truncation, source completeness and applicability. Do not repeat supplied source.
+"""
     if state is None:
         trusted = "\n\n".join(value["text"] for value in packet["contract"]["sources"])
         body = {key:value for key,value in packet.items() if key != "contract"}
         phase = {"kind":task["kind"],"available_native_questions":[{key:value.get(key) for key in ("review_id","path","line","capability","rule_id")} for value in packet["native_questions"]]}
-        prompt = INSTRUCTIONS + "\nCurrent phase and available native coverage (inspect before claiming a source-only gap):\n" + json.dumps(phase) + "\nTrusted runtime contract:\n" + trusted + "\nBound source evidence:\n" + json.dumps(readable(body)) + "\nPrior inspected source facts:\n" + json.dumps(readable(new_facts))
+        prompt = instructions + "\nCurrent phase and available native coverage (inspect before claiming a source-only gap):\n" + json.dumps(phase) + "\nTrusted runtime contract:\n" + trusted + "\nBound source evidence:\n" + json.dumps(readable(body)) + "\nPrior inspected source facts:\n" + json.dumps(readable(new_facts))
     else:
         prompt = "Continue the same bound review using the unchanged contract/schema. Return schema JSON only.\nNew actual source facts:\n" + json.dumps(readable(new_facts))
     receipts = task["research"]["results"][(state or {}).get("sent_results", 0):]
@@ -130,11 +155,25 @@ def build_prompt(task, packet, facts, state):
     prompt += "\nAvailable artifact handles (exhaustive for this turn):\n" + json.dumps(list(task["research"]["artifact_handles"]))
     prompt += "\nCurrent research budget/progress:\n" + json.dumps(readable({key:value for key,value in task["research"].items() if key not in ("results", "artifact_handles")}))
     if any(task["research"].get(key, 1) <= 0 for key in ("rounds_remaining", "queries_remaining", "bytes_remaining")):
-        prompt += "\nThis turn is final-only. Return the complete draft. Progress can only be inspected with source handles, or blocked with a precise cause. If decisive code remains unread, use needs_review with its exact remaining checks and an honest budget blocker; do not leave open edges, request another lookup or infer safety from exhaustion."
+        prompt += ("\nResearch is finished. Return the scoped knowledge result, including precise limits if unresolved." if task.get("review_role") == "research" else
+            "\nThis turn has no further source queries. Return the complete draft or yield the permitted dependency. Unread decisive code remains pending; never infer safety from exhaustion.")
     return prompt
 
 
 def envelope(response):
+    if response["action"] in ("dependency", "knowledge"):
+        field = response["action"]
+        if response.get("research") or response.get("draft") is not None or not isinstance(response.get(field), dict):
+            raise ValueError("research handoff combines incompatible actions")
+        return {field:response[field]}
+    if "knowledge" in response:
+        if response["action"] != "research" or response["knowledge"] is not None or not response["research"]:
+            raise ValueError("research handoff combines incompatible actions")
+        for value in response["research"]:
+            value["arguments"] = {key:item for key,item in value["arguments"].items() if item is not None}
+        return {"research":response["research"]}
+    if response.get("dependency") is not None:
+        raise ValueError("dependency only belongs to a yielded research question")
     out = {"working_chain": response["working_chain"], "progress": response["progress"]}
     if response.get("routing"):
         out["routing"] = response["routing"]

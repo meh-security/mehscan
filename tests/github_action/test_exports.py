@@ -48,13 +48,17 @@ class UsageTests(unittest.TestCase):
     def test_tiered_usage_keeps_actual_counters_by_bound_provider(self):
         expert = {"provider":"codex-cli", "model":"gpt-6-sol"}
         self.runtime["orchestration"] = {"expert":expert}
-        self.put(self.row(usage={"input_tokens":7}), self.row(1, provider=expert, role="verification", usage={"input_tokens":11}),
-            self.row(2, provider=expert, role="adjudication", usage={"input_tokens":13}),
-            self.row(3, provider=expert, role="final_qa", usage={"input_tokens":17}))
+        self.put(self.row(elapsed_ms=20,usage={"input_tokens":7}),
+            self.row(1, provider=expert, role="verification", elapsed_ms=30,usage={"input_tokens":11}),
+            self.row(2, provider=expert, role="adjudication", elapsed_ms=40,usage={"input_tokens":13}),
+            self.row(3, provider=expert, role="final_qa",elapsed_ms=50,usage={"input_tokens":17}))
         result = export.usage(self.path, self.runtime)
         self.assertEqual(result["reported_token_sums"]["input_tokens"], 48)
         self.assertEqual([row["reported_token_sums"]["input_tokens"] for row in result["profiles"]], [7,41])
         self.assertEqual(result["profiles"][1]["roles"], {"verification":1,"adjudication":1,"final_qa":1})
+        self.assertEqual([row["provider_elapsed_ms"] for row in result["profiles"]],[20,120])
+        self.assertEqual(result["profiles"][1]["stages"][0]["provider_elapsed_ms"],40)
+        self.assertEqual(result["profiles"][1]["stages"][0]["reported_token_sums"]["input_tokens"],13)
 
     def test_duplicate_or_mismatched_provider_metrics_are_rejected(self):
         self.put(self.row(), self.row())

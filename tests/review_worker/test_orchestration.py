@@ -82,7 +82,10 @@ class Orchestration(unittest.TestCase):
                   {"response":response("issue"), "routing":[]}]
         self.assertEqual(flow.adjudication_ids(stages), [])
         stages[0]["routing"] = []
+        self.assertEqual(flow.adjudication_ids(stages), [])
+        stages[0]["response"] = response("not_issue")
         self.assertEqual(flow.adjudication_ids(stages), ["id"])
+        stages[0]["response"] = response("needs_review")
         stages[1]["response"] = response("needs_review")
         result = flow.apply_resolution(response("needs_review"), response("issue"), stages, ["id"])
         self.assertEqual(result["results"][0]["decision"], "needs_review")
@@ -176,6 +179,40 @@ class Orchestration(unittest.TestCase):
         self.assertTrue(flow.needs_secondary([{**result, "decision":"not_issue"}], [], sampled))
         with self.assertRaises(ValueError):
             flow.validate_routing([{"review_id":"other", "reason":"risky_dismissal"}], ["id"])
+
+    def test_expert_resolution_of_pending_is_terminal_but_contrary_claims_are_not(self):
+        def response(decision):
+            return {"results":[{"review_id":"id", "decision":decision, "checks":[],
+                "investigation":{"journal_summary":None, "blockers":[]}}]}
+        for decision in ("issue", "not_issue", "needs_review"):
+            stages = [{"response":response("needs_review"), "routing":[{"review_id":"id","reason":"reasoning_gap"}]},
+                {"response":response(decision), "routing":[]}]
+            self.assertEqual(flow.adjudication_ids(stages), [])
+            self.assertEqual(flow.reconcile(stages[0]["response"], stages[1]["response"], "routine")["results"][0]["decision"],decision)
+            self.assertEqual(flow.assessment_basis([{"decision":"needs_review","profile":"routine"},
+                {"decision":decision,"profile":"expert"}]),decision)
+        self.assertFalse(flow.needs_secondary(response("not_issue")["results"], [], policy(), direct=True))
+
+    def test_dependency_knowledge_shares_exact_scoped_questions_and_survives_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "knowledge.json"
+            request = flow.grounded_note({"question":"What does this guard enforce?", "scope":"Calls with this exact argument.",
+                "artifacts":["source-proof"]}, {"source-proof"}, dependency=True)
+            book = flow.DependencyKnowledge(path, {"snapshot":"one"}, worker.write)
+            key, created = book.request(request, "first")
+            self.assertTrue(created)
+            self.assertEqual(book.request(request, "second"), (key,False))
+            with self.assertRaises(ValueError):book.context(key)
+            note = flow.grounded_note({"claim":"Rejects absent membership.", "conditions":"The caller passes the subject's tenant.",
+                "limits":"Does not establish the caller's tenant selection.","status":"established","artifacts":["source-proof"]}, {"source-proof"})
+            book.resolve(key, note, {"facts":[],"omitted_facts":0})
+            recovered = flow.DependencyKnowledge(Path(directory) / "recovered.json", {"snapshot":"one"}, worker.write, path)
+            self.assertEqual(recovered.context(key)["conditions"],note["conditions"])
+            self.assertNotEqual(recovered.request({**request,"scope":"Another receiver."},"third")[0],key)
+            with self.assertRaises(ValueError):
+                flow.DependencyKnowledge(Path(directory) / "stale.json", {"snapshot":"two"}, worker.write, path)
+            with self.assertRaises(ValueError):
+                flow.grounded_note({**note,"artifacts":["invented"]}, {"source-proof"})
 
     def test_conflicts_preserve_pending_while_matching_results_retain_expert_evidence(self):
         first = {"schema_version":"1.3", "results":[{"review_id":"id", "decision":"issue",

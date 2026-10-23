@@ -73,6 +73,13 @@ enum Command {
         inventory_input_fingerprint: String,
         draft: mehscan_core::ReviewPendingDraft,
     },
+    PendingBatch {
+        key: String,
+        generation: u64,
+        owner: String,
+        inventory_input_fingerprint: String,
+        drafts: Vec<mehscan_core::ReviewPendingDraft>,
+    },
     Fact {
         key: String,
         generation: u64,
@@ -108,7 +115,7 @@ struct Attempt {
     admissions: BTreeSet<String>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Stream {
     repository_key: String,
     name: String,
@@ -178,6 +185,12 @@ impl State {
                 ..
             }
             | Command::Pending {
+                key,
+                generation,
+                owner,
+                ..
+            }
+            | Command::PendingBatch {
                 key,
                 generation,
                 owner,
@@ -503,6 +516,41 @@ impl State {
                         .map(|package| package.package_id.clone()),
                 });
                 Ok(json!({"status":"planned","generation":generation,"plan_id":plan_id}))
+            }
+            Command::PendingBatch {
+                key,
+                generation,
+                owner,
+                inventory_input_fingerprint,
+                drafts,
+            } => {
+                if drafts.is_empty() || drafts.len() > 256 {
+                    return Err("pending batch must contain 1 to 256 questions".into());
+                }
+                // Validate the whole batch in an isolated derived state before
+                // mutating this state or appending its single transaction.
+                let mut trial = State::default();
+                trial.streams.insert(
+                    key.clone(),
+                    self.streams.get(key).ok_or("unknown state stream")?.clone(),
+                );
+                let results = drafts
+                    .iter()
+                    .map(|draft| {
+                        trial.apply(&Command::Pending {
+                            key: key.clone(),
+                            generation: *generation,
+                            owner: owner.clone(),
+                            inventory_input_fingerprint: inventory_input_fingerprint.clone(),
+                            draft: draft.clone(),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>();
+                let results = results?;
+                self.streams
+                    .insert(key.clone(), trial.streams.remove(key).unwrap());
+                Ok(json!({"status":"pending","generation":generation,
+                    "question_ids":results.iter().map(|r| r["question_id"].clone()).collect::<Vec<_>>()}))
             }
             Command::Pending {
                 key,
@@ -1421,7 +1469,7 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     }
     let operation_key = args.required("--operation-key")?;
     let command = match operation.as_str() {
-        "pending" | "fact" => {
+        "pending" | "pending-batch" | "fact" => {
             let inventory_path = PathBuf::from(args.required("--inventory")?);
             let root = PathBuf::from(args.required("--source-root")?);
             outside_source(&store, &root)?;
@@ -1435,7 +1483,21 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
                 &stream,
             )?;
             let bytes = fs::read(input).map_err(|error| error.to_string())?;
-            if operation == "pending" {
+            if operation == "pending-batch" {
+                let drafts =
+                    serde_json::from_slice::<Vec<mehscan_core::ReviewPendingDraft>>(&bytes)
+                        .map_err(|error| error.to_string())?;
+                if drafts.is_empty() || drafts.len() > 256 {
+                    return Err("pending batch must contain 1 to 256 questions".into());
+                }
+                Command::PendingBatch {
+                    key,
+                    generation,
+                    owner,
+                    inventory_input_fingerprint: binding.inventory_input_fingerprint,
+                    drafts,
+                }
+            } else if operation == "pending" {
                 let draft = serde_json::from_slice::<mehscan_core::ReviewPendingDraft>(&bytes)
                     .map_err(|error| error.to_string())?;
                 Command::Pending {
@@ -1856,7 +1918,19 @@ fn validate_execution(
             if case.resolution.is_some() {
                 return Err("resolution requires an adjudication assessment".into());
             }
-            if case.assessments.iter().any(|a| a.decision != first) {
+            if case.assessments.len() == 2
+                && !matches!(
+                    (first, case.assessments[1].decision),
+                    (Issue, NotIssue) | (NotIssue, Issue)
+                )
+            {
+                // Resolving a pending question is progress, not conflicting
+                // affirmative evidence. The expert owns this terminal decision.
+                case.assessments
+                    .iter()
+                    .find(|a| a.profile == "expert")
+                    .map_or(NeedsReview, |a| a.decision)
+            } else if case.assessments.iter().any(|a| a.decision != first) {
                 NeedsReview
             } else {
                 first
@@ -1963,7 +2037,7 @@ fn read_work_package(
 
 fn help() {
     println!(
-        "Pending facts and handoff:\n  mehscan state pending|fact --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID\n  mehscan state work --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN [--review-ids ID,ID] [--resume-only true|false]\nPending questions attach to exact current needs_review checks or a current change-pass question. Source-bound evidence updates request revalidation; they never change verdicts. Work exports a provider-neutral package without ownership credentials. Pass --work-package FILE to plan/record to reject changed parents, facts, plans or generations. Record accepts --reviewer LABEL as unauthenticated provenance. External/deployment fact authority remains unsupported.\n"
+        "Pending facts and handoff:\n  mehscan state pending|pending-batch|fact --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID\n  mehscan state work --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN [--review-ids ID,ID] [--resume-only true|false]\nPending questions attach to exact current needs_review checks or a current change-pass question. Source-bound evidence updates request revalidation; they never change verdicts. Work exports a provider-neutral package without ownership credentials. Pass --work-package FILE to plan/record to reject changed parents, facts, plans or generations. Record accepts --reviewer LABEL as unauthenticated provenance. External/deployment fact authority remains unsupported.\n"
     );
     println!(
         "USAGE:\n  mehscan state claim --store DIR --stream KEY --inventory DIR --source-root ROOT --attempt-id ID --expected-generation N --operation-key ID [--retry true|false]\n  mehscan state record --store DIR --stream KEY --inventory DIR --source-root ROOT --run DIR --generation N --owner TOKEN --operation-key ID [--supersessions FILE] [--allow-partial true|false]\n  mehscan state end --store DIR --stream KEY --repository-key KEY --generation N --owner TOKEN --status finished|cancelled|incomplete --operation-key ID\n  mehscan state status|history --store DIR --stream KEY --repository-key KEY\n\nLocal trusted-worker state, not an authorization or merge gate. Store outside source. Claim uses compare-and-swap generation; duplicate snapshots coalesce without granting ownership. Retry receipts retain original generation and may be stale. Record validates current inventory, native bundle evidence and all three verdicts. Supersessions is an array of {{decision_id, parents, reason}}; exact unresolved parents and same subject/context are required. History never clears newly discovered or missing work. Finished is execution state, not complete security coverage. Hash-chained durable journal rejects corrupt/torn data instead of guessing recovery. Hosted generation coordination, authenticated provenance and cross-revision verdict reuse remain unsupported."

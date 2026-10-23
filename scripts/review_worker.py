@@ -7,6 +7,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -38,11 +39,32 @@ def missing_source_result(query, error):
     path = query["arguments"]["path"]
     expected = 'error: text file ' + json.dumps(path, ensure_ascii=False) + ' was not found under the scan root'
     if error.stderr.strip() != expected:
-        return None
+        start = query["arguments"].get("start_line")
+        if type(start) is not int:
+            return None
+        match = re.fullmatch(r"error: start line " + str(start) + r" is outside " + re.escape(path) + r" \((\d+) lines\)", error.stderr.strip())
+        if not match or start <= int(match[1]):
+            return None
+        return {"operation":"source_lookup_error", "results":[], "error":{
+            "code":"range_outside_file", "path":path, "line_count":int(match[1]),
+            "message":"The requested start is past EOF. Use the actual line count or a returned declaration range; no source was inspected."}}
     return {"operation": "source_lookup_error", "results": [],
             "error": {"code": "not_found", "path": path,
                       "message": "The requested text file was not found. Discover its actual path with paths or references; "
                                  "a failed guessed path does not prove a control or implementation is absent."}}
+
+
+def citation_feedback(error, ids):
+    """Only the finalizer's per-review source-citation diagnostics are repairable."""
+    diagnostic = error.stderr.strip()
+    if error.returncode != 2 or not any(diagnostic.startswith("error: review " + identity + " evidence ") for identity in ids):
+        return None
+    _, separator, detail = diagnostic.partition("): ")
+    if not separator or "\n" in detail or not detail.startswith((
+            "brief evidence line is past end", "brief evidence excerpt is empty",
+            "brief evidence must select", "could not resolve brief evidence")):
+        return None
+    return detail[:700]
 
 
 def cancel(signum, frame):
@@ -183,6 +205,8 @@ class JobCheckpoint:
         if self.state["status"] == "drafted":
             if context.digest(self.state["draft"]) != self.state["draft_digest"]:
                 raise ValueError("recovery draft changed")
+        if "candidate_draft" in self.state and context.digest(self.state["candidate_draft"]) != self.state.get("candidate_digest"):
+            raise ValueError("recovery candidate draft changed")
         self.save()
 
     def save(self, **updates):
@@ -246,6 +270,7 @@ class NativeWrites:
     OPTIONS = {
         "plan": ({"--input", "--work-package", "--expected-plan-id"}, set()),
         "pending": ({"--input"}, set()),
+        "pending-batch": ({"--input"}, set()),
         "record": ({"--run", "--work-package", "--reviewer"}, {"--supersessions", "--review-execution"}),
     }
     PATHS = {"--input", "--work-package", "--run", "--supersessions", "--review-execution"}
@@ -303,6 +328,30 @@ class NativeWrites:
         else:
             if entries is None:
                 raise ValueError("missing native recovery batch")
+            compact, pending = [], []
+            def flush():
+                if not pending:
+                    return
+                if len(pending) == 1:
+                    compact.extend(pending)
+                    pending.clear()
+                    return
+                key = context.digest([entry["operation_key"] for entry in pending])
+                path = self.directory / ("pending-" + key + ".json")
+                write(path, [read(entry["options"]["--input"]) for entry in pending])
+                compact.append({"operation":"pending-batch", "operation_key":"worker-pending-batch:" + key,
+                                "options":{"--input":str(path)}})
+                pending.clear()
+            for entry in entries:
+                if entry["operation"] == "pending":
+                    pending.append(entry)
+                    if len(pending) == 256:
+                        flush()
+                else:
+                    flush()
+                    compact.append(entry)
+            flush()
+            entries = compact
             batch = {"entries": entries, "inputs": self.inputs(entries), "receipts": []}
             write(path, batch)
         receipts = []
@@ -657,6 +706,11 @@ def run_locked(args):
     def reviewer(task, job):
         if job.state["status"] == "drafted":
             return job.state["draft"]
+        if "candidate_draft" in job.state:
+            # A native finalization response may have been lost after the model
+            # finished. Reuse its exact bytes; the scheduler still source-validates
+            # them before admission. No provider replay or new model reservation.
+            return job.complete(job.state["candidate_draft"])
         deadline = time.monotonic() + max(0, args.timeout - job.prior_elapsed)
         results = list(job.state["results"])
         byte_count, query_count = job.state["bytes"], job.state["queries"]
@@ -703,7 +757,13 @@ def run_locked(args):
             # assessment. Source updates remain facts, with their original scope.
             packet["work"]["parent_decisions"] = {}
             packet["work"]["change_pass"] = []
-        if task["kind"] == "native_bundle":
+        sweep_facts = []
+        if role == "research":
+            packet["native_questions"] = []
+            packet["work"]["parent_decisions"] = {}
+            packet["work"]["change_pass"] = []
+            packet["primary"] = {"windows":[], "limits":[]}
+        elif task["kind"] == "native_bundle":
             packet["sweep"] = native(["investigate", "review-sweep", "--bundle", task["bundle"]])
             packet["sweep_artifact_id"] = "mehscanPreparedSweep/v1:" + context.digest(packet["sweep"])
             with shared_lock:
@@ -712,6 +772,14 @@ def run_locked(args):
             packet["primary"] = {**prepared_changes,
                 "windows": [*prepared_changes["windows"], *application["windows"]],
                 "limits": [*prepared_changes["limits"], *application["limits"]]}
+            for source in packet["sweep"].get("source_contexts", []):
+                fact = {"result_id":"mehscanSweepSource/v1:" + context.digest([payload["snapshot_id"], source]),
+                    "origin_package_id":expected["package_id"], "origin_review_id":None,
+                    "query":{"tool":"source_context", "arguments":source["location"]},
+                    "result":{"operation":"native_source_context", "results":source}}
+                sweep_facts.append(fact)
+            packet["sweep_source_handles"] = [{"artifact_id":f["result_id"], "source_context_index":index}
+                                               for index,f in enumerate(sweep_facts)]
         packet_path = output / ("context-" + conversation_id + ".json")
         write(packet_path, packet)
         if packet_path.stat().st_size > 2 * 1024 * 1024:
@@ -728,6 +796,8 @@ def run_locked(args):
                 aliases["source" + str(index)] = item["artifact_id"]
             for index, item in enumerate(job_facts, 1):
                 aliases["fact" + str(index)] = item["result_id"]
+            for index, item in enumerate(sweep_facts, 1):
+                aliases["context" + str(index)] = item["result_id"]
             if "sweep_artifact_id" in packet:
                 aliases["sweep"] = packet["sweep_artifact_id"]
             def collect(value):
@@ -771,6 +841,14 @@ def run_locked(args):
         calls_left = remaining_count("model_calls", calls_left)
         if task.get("assessment_cycle") == "revalidation":
             calls_left = min(calls_left, 1)  # Assess already recovered source, no new research loop.
+        if tiered_policy and profile == "routine" and role in ("investigator", "verification"):
+            calls_left = min(calls_left, max(0, 2 - job.state["calls"]))
+        if role == "research":
+            calls_left = min(calls_left, max(0, 2 - job.state["calls"]))
+        if task.get("assessment_cycle") == "dependency_resume":
+            # Final-only; a second reserved turn permits citation repair or
+            # recovery of an interrupted call, never another research loop.
+            calls_left = min(calls_left, max(0, 2 - job.state["calls"]))
         if calls_left <= 0:
             raise ValueError("recovery job has no remaining model turns")
         if byte_count > args.research_bytes or query_count > args.research_queries:
@@ -791,6 +869,7 @@ def run_locked(args):
             write(facts_path, {"schema_version": "1", "scanner_sha256": scanner_hash,
                               "snapshot_id": payload["snapshot_id"], "facts": display_facts})
             frame = {**task, "artifact_root": str(artifact_root), "sensitive_paths": [str(store), str(claim_path), str(invocation)],
+                     "dependency_allowed":bool(tiered_policy and profile == "routine" and role == "investigator" and not task.get("assessment_cycle")),
                      "conversation_id": conversation_id, "evidence_packet": str(packet_path),
                      "provider_metrics": str(output / ("provider-metrics-" + conversation_id + ".jsonl")),
                      "shared_facts": str(facts_path),
@@ -804,6 +883,8 @@ def run_locked(args):
                                    "paths": "Case-insensitive literal path substring, not a glob. Searches the native investigation index; absence does not prove runtime absence.",
                                    "source": "Current source only. Inspect truncation and native provenance before drawing conclusions."},
                      "artifact_handles": aliases, "working_chain": working_chain, "progress": progress, "feedback": feedback, "results": results}}
+            if task.get("assessment_cycle") == "dependency_resume":
+                frame["research"].update(rounds_remaining=0, queries_remaining=0)
             started = time.monotonic()
             if shared_budget:
                 shared_budget.reserve(case_id, "model_calls", 1)
@@ -816,6 +897,32 @@ def run_locked(args):
             check_fresh()
             received_response = json.loads(json.dumps(value))
             try:
+                if isinstance(value, dict) and ("dependency" in value or "knowledge" in value):
+                    field = "dependency" if "dependency" in value else "knowledge"
+                    if set(value) != {field} or (field == "dependency" and not frame["dependency_allowed"]) or (
+                            field == "knowledge" and role != "research"):
+                        raise ValueError("research handoff is not allowed for this task")
+                    note = json.loads(json.dumps(value[field]))
+                    if isinstance(note, dict) and isinstance(note.get("artifacts"), list):
+                        note["artifacts"] = [aliases.get(a,a) if isinstance(a,str) else a for a in note["artifacts"]]
+                    # Sweep/peer summaries are leads, not inspected source support.
+                    known = {f["result_id"] for f in [*job_facts,*sweep_facts] if f["result"].get("operation") in (
+                        "get_source", "get_base_source", "prepared_source", "native_source_context") or (
+                        f["result"].get("operation") == "get_definition" and f["result"].get("source_complete"))}
+                    known |= {w["artifact_id"] for w in packet["primary"]["windows"]}
+                    note = orchestration.grounded_note(note, known, dependency=field == "dependency")
+                    support = [*job_facts, *(f for f in sweep_facts if f["result_id"] in note["artifacts"])]
+                    for window in packet["primary"]["windows"]:
+                        if window["artifact_id"] in note["artifacts"]:
+                            support.append({"result_id":window["artifact_id"], "origin_package_id":expected["package_id"],
+                                "origin_review_id":None, "query":{"tool":"source", "review_id":ids[0],
+                                    "arguments":{key:window[key] for key in ("path","start_line","end_line")}},
+                                "result":{"operation":"prepared_source", "results":window}})
+                    handoff = orchestration.source_handoff([{"source_facts":support}], args.research_bytes)
+                    if not set(note["artifacts"]) <= {f["result_id"] for f in handoff["facts"]}:
+                        raise ValueError("research handoff cannot fit its decisive source support")
+                    job.save(dependency_support=handoff)
+                    return job.complete({field:note})
                 if isinstance(value, dict) and ("working_chain" in value or "progress" in value or "draft" in value or "routing" in value):
                     if value.keys() - {"research", "draft", "working_chain", "progress", "routing", "resolutions", "qa_actions"}:
                         raise ValueError("review envelope contains unsupported fields")
@@ -865,11 +972,38 @@ def run_locked(args):
                             job.save(resolutions=resolutions)
                         elif value.get("resolutions"):
                             raise ValueError("only adjudication can return resolutions")
+                        if role == "research":
+                            raise ValueError("research tasks return scoped knowledge, not verdicts")
+                        if task["kind"] == "native_bundle":
+                            # Validate while a bounded repair turn is still possible.
+                            job.save(candidate_draft=value["draft"], candidate_digest=context.digest(value["draft"]))
+                            draft_path = output / ("draft-" + job.path.stem + ".json")
+                            assessment_path = output / "assessments" / (job.path.stem + ".json")
+                            write(draft_path, value["draft"])
+                            try:
+                                native(["investigate", "review-bundle-finalize", "--bundle", task["bundle"], "--draft", str(draft_path),
+                                    "--source-root", str(root), "--journal-dir", str(journals), "--output", str(assessment_path)], remaining())
+                            except CommandFailure as error:
+                                message = citation_feedback(error, ids)
+                                if corrections or round_index == calls_left - 1 or message is None:
+                                    raise
+                                corrections += 1
+                                job.state.pop("candidate_draft", None)
+                                job.state.pop("candidate_digest", None)
+                                job.save()
+                                feedback = {"reason":message,
+                                    "instruction":"Correct only the rejected source citation using actual supplied ranges. The draft was not admitted; preserve honest uncertainty."}
+                                continue
+                            job.save(assessment_sha256=digest_file(assessment_path))
                         return job.complete(value["draft"])
                     value = {"research": value.get("research")}
                 if not isinstance(value, dict) or "research" not in value:
+                    if role == "research":
+                        raise ValueError("research tasks return scoped knowledge, not verdicts")
                     return job.complete(value)  # Existing final-draft adapters remain compatible.
                 queries = value["research"]
+                if task.get("assessment_cycle") == "dependency_resume":
+                    raise ValueError("dependency resumption cannot start another research loop")
                 if set(value) != {"research"} or not isinstance(queries, list) or not queries:
                     raise ValueError("research response must be a nonempty query batch only")
                 if round_index == calls_left - 1:
@@ -1120,6 +1254,9 @@ def run_locked(args):
             if (recovery / "research.jsonl").is_file():
                 import shutil
                 shutil.copyfile(recovery / "research.jsonl", output / "research.jsonl")
+            if (recovery / "research-knowledge.json").is_file():
+                import shutil
+                shutil.copyfile(recovery / "research-knowledge.json", output / "research-knowledge.json")
         else:
             (output / "journals").mkdir()
             (output / "jobs").mkdir()
@@ -1255,6 +1392,11 @@ def run_locked(args):
                 else:
                     (output / "decisions").mkdir()
                 quality_policy = (tiered_policy or {}).get("quality") or {}
+                knowledge = orchestration.DependencyKnowledge(output / "research-knowledge.json",
+                    {"package_id":package["package_id"], "runtime":bound_runtime, "scanner_sha256":scanner_hash,
+                     "controller_sha256":recovery_binding["controller_sha256"], "orchestrator_sha256":recovery_binding["orchestrator_sha256"]},
+                    write, recovery / "research-knowledge.json" if recovery else None)
+                waiting, researching = {}, set()
                 final_handoffs, final_histories = {}, {}
                 qa_reopened, repair_deferred = set(), set()
 
@@ -1272,7 +1414,7 @@ def run_locked(args):
                     with shared_lock:
                         record["jobs"][job.path.stem]["status"] = "finalized"
                     return {"response":read(assessment_path), "routing":job.state.get("routing", []),
-                        "source_facts":job.state["results"],
+                        "source_facts":[*task.get("source_handoff",{}).get("facts",[]), *job.state["results"]],
                         "receipt":{"job_id":job.path.stem, "profile":task["profile"], "role":task["review_role"],
                             "provider":tiered_policy["expert"] if task["profile"] == "expert" else bound_runtime.get("provider"),
                             "response_sha256":digest_file(assessment_path)}}
@@ -1295,9 +1437,21 @@ def run_locked(args):
                         job.save(combined_sha256=digest_file(destination))
                         shutil.copyfile(destination, response_dir / filename)
 
-                with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="mehscan-review") as pool, \
-                        ThreadPoolExecutor(max_workers=expert_workers, thread_name_prefix="mehscan-expert") as experts:
-                    pools, caps = {"routine": pool, "expert": experts}, {"routine": workers, "expert": expert_workers}
+                def resume_dependency(item, key):
+                    filename, request, task, first, support = item
+                    row = knowledge.state["dependencies"][key]
+                    handoff = orchestration.source_handoff([
+                        {"source_facts":support["facts"]}, {"source_facts":row["source_handoff"]["facts"]}], args.research_bytes)
+                    resumed = {**task, "assessment_cycle":"dependency_resume", "source_handoff":handoff,
+                               "stage_context":{"resolved_dependency":knowledge.context(key)}}
+                    ready[task["profile"]].appendleft((filename, request, resumed, first))
+
+                # One capacity pool: an idle routine slot can serve expert work,
+                # without increasing the total number of simultaneous calls.
+                capacity = workers + expert_workers if tiered_policy else workers
+                record["review_capacity"] = capacity
+                with ThreadPoolExecutor(max_workers=capacity, thread_name_prefix="mehscan-review") as pool:
+                    pools, caps = {"routine": pool, "expert": pool}, {"routine": workers, "expert": expert_workers}
                     futures, active = {}, {"routine": 0, "expert": 0}
                     for filename, request, data in requests:
                         task = {**task_base, "kind": "native_bundle", "bundle": str(request),
@@ -1307,7 +1461,9 @@ def run_locked(args):
                         ready[profile].append((filename, request, task, None))
                     while any(ready.values()) or futures:
                         for profile in pools:
-                            while ready[profile] and active[profile] < caps[profile]:
+                            other = "expert" if profile == "routine" else "routine"
+                            cap = caps[profile] if ready[other] else capacity
+                            while ready[profile] and active[profile] < cap and sum(active.values()) < capacity:
                                 filename, request, task, first = ready[profile].popleft()
                                 job = job_for(task)
                                 future = pools[profile].submit(execute_job, task, job)
@@ -1320,20 +1476,52 @@ def run_locked(args):
                             active[profile] -= 1
                             try:
                                 draft = future.result()
+                                if task["review_role"] == "research":
+                                    key = task["dependency_key"]
+                                    knowledge.resolve(key, draft["knowledge"], job.state["dependency_support"])
+                                    researching.remove(key)
+                                    for item in waiting.pop(key, []):
+                                        resume_dependency(item, key)
+                                    continue
+                                if "dependency" in draft:
+                                    support = job.state["dependency_support"]
+                                    key, _ = knowledge.request(draft["dependency"], filename)
+                                    with shared_lock:
+                                        record["jobs"][job.path.stem].update(status="waiting_dependency", dependency_id=key)
+                                    item = (filename, request, task, first, support)
+                                    if knowledge.state["dependencies"][key]["status"] == "resolved":
+                                        resume_dependency(item, key)
+                                    else:
+                                        waiting.setdefault(key, []).append(item)
+                                        if key not in researching:
+                                            research_task = {**task, "profile":"expert", "review_role":"research",
+                                                "assessment_cycle":"dependency:" + key, "dependency_key":key,
+                                                "review_playbooks":{}, "source_handoff":support,
+                                                "stage_context":{"dependency":draft["dependency"]}}
+                                            ready["expert"].appendleft((filename, request, research_task, None))
+                                            researching.add(key)
+                                    continue
                                 stage = finalize_stage(task, job, draft, request)
                                 history = [*(first or []), stage]
                                 assessed, receipt = stage["response"], stage["receipt"]
                                 role = task["review_role"]
-                                if tiered_policy and role == "investigator" and orchestration.needs_secondary(
+                                unresolved_dependency = (task.get("assessment_cycle") == "dependency_resume"
+                                    and task["stage_context"]["resolved_dependency"]["status"] == "unresolved"
+                                    and all(r["decision"] == "needs_review" for r in assessed["results"]))
+                                if tiered_policy and role == "investigator" and not unresolved_dependency and orchestration.needs_secondary(
                                         assessed["results"], stage["routing"], tiered_policy, profile == "expert"):
                                     next_profile = "expert" if profile == "routine" else "routine"
                                     verify_task = {**task, "profile": next_profile, "review_role": "verification",
                                         "source_handoff":orchestration.source_handoff(history, args.research_bytes)}
+                                    # Carry raw support, never the research interpretation
+                                    # or the caller's final-only resumption protocol.
+                                    verify_task.pop("stage_context", None)
+                                    verify_task.pop("assessment_cycle", None)
                                     ready[next_profile].appendleft((filename, request, verify_task, history))
                                     continue
                                 if role == "verification":
                                     combined = orchestration.reconcile(history[0]["response"], assessed, history[0]["receipt"]["profile"],
-                                        [item for previous in history for item in previous["routing"]])
+                                        stage["routing"])
                                     targets = orchestration.adjudication_ids(history) if quality_policy.get("adjudicate_disagreements") else []
                                     if targets:
                                         next_task = {**task, "profile":"expert", "review_role":"adjudication", "adjudicate_ids":targets,
@@ -1365,6 +1553,14 @@ def run_locked(args):
                                 failures.append(error)
                                 with shared_lock:
                                     record["jobs"].setdefault(job.path.stem, {}).update(status="incomplete", reason=type(error).__name__, detail=str(error))
+                dependencies = knowledge.state["dependencies"]
+                record["research_dependencies"] = {"questions":len(dependencies),
+                    "consumers":sum(len(row["consumers"]) for row in dependencies.values()),
+                    "shared_consumers":sum(max(0,len(row["consumers"]) - 1) for row in dependencies.values()),
+                    "unresolved_questions":sum(row.get("resolution",{}).get("status") == "unresolved" for row in dependencies.values()),
+                    "waiting_questions":sum(row["status"] == "waiting" for row in dependencies.values())}
+                if waiting and not failures:
+                    raise ValueError("research dependencies remain unresolved; no complete report can be admitted")
                 if failures:
                     # Preserve completed drafts/responses; never fabricate the missing
                     # ones or admit a partial set as a complete native run.

@@ -162,12 +162,26 @@ verification and audits, not only the first review. Limits are dispatch/source
 work bounds, not a hard token or currency cap.
 
 Pass `--expert-command FILE` to the installed worker, using a separate trusted
-argv/config for the pinned expert profile. `--expert-workers` bounds that pool;
+argv/config for the pinned expert profile. `--workers` and `--expert-workers`
+reserve routine/expert capacity; either queue can borrow unused capacity, with
+their sum as the tiered run's total concurrent-call cap;
 `--expert-review-ids ID,ID` starts the containing bundles there directly. Otherwise
 typed routing, proposed issues and seeded closure audits select a second stage.
 Keep the normal primary descriptor on native work/record calls. Native tiered
 admission also requires the controller's `--review-execution FILE` and its
 `assessments/` artifacts. Do not hand-assemble execution receipts to bypass review.
+Routine investigation allows up to two model turns for clear local work or a
+source-backed dependency request. Matching questions, scope and evidence share
+one expert research task (up to two turns). `research-knowledge.json` retains
+conditional interpretations and original source support for the same snapshot
+and runtime. Each waiting caller resumes without new source queries; one further
+turn permits citation repair or interrupted-call recovery. All calls retain the
+original shared case/run ledger. Unresolved research is valid pending work, not
+a trigger to repeat the same expert investigation. Ordinary pending-to-resolved
+progress is terminal; affirmative contrary verdicts still need resolution.
+The controller batches adjacent pending-question registrations into native
+`state pending-batch` transactions (up to 256 exact questions per transaction),
+preserving source/ownership checks and idempotent recovery.
 Optionally add `quality: {"adjudicate_disagreements": true, "final_qa": true}`
 to the orchestration JSON. Budget for up to four conversations per bundle plus
 their research turns. Adjudication retains the independent assessments and names

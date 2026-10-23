@@ -148,6 +148,23 @@ class Adapter(unittest.TestCase):
         self.assertEqual([r["checks"] for r in value["draft"]["results"]],
                          [["Inspect the effective guard."], ["Read the caller."], [], []])
 
+    def test_dependency_and_knowledge_have_separate_wire_actions_and_source_handles(self):
+        task = {**self.task,"kind":"native_bundle","review_ids":["one"],"dependency_allowed":True}
+        task["research"] = {**task["research"],"artifact_handles":{"source1":"proof"},"rounds_remaining":0}
+        schema = protocol.build_schema(task)
+        self.assertEqual(schema["properties"]["action"]["enum"],["final","dependency"])
+        request = {"question":"What does this guard establish?","scope":"This receiver only.","artifacts":["source1"]}
+        self.assertEqual(protocol.envelope({"action":"dependency","research":[],"draft":None,"dependency":request}),{"dependency":request})
+        task.update(review_role="research",profile="expert",dependency_allowed=False)
+        schema = protocol.build_schema(task)
+        self.assertEqual(schema["properties"]["action"]["enum"],["knowledge"])
+        self.assertNotIn("draft",schema["properties"])
+        note = {"claim":"Rejects missing membership.","conditions":"Caller supplies subject tenant.",
+            "limits":"Tenant selection is not established.","status":"established","artifacts":["source1"]}
+        self.assertEqual(protocol.envelope({"action":"knowledge","research":[],"knowledge":note}),{"knowledge":note})
+        with self.assertRaises(ValueError):
+            protocol.envelope({"action":"knowledge","research":[{}],"knowledge":note})
+
     def test_exhausted_research_is_final_only_without_changing_continuation_binding(self):
         self.task.update(kind="native_bundle", review_ids=["review-a"])
         stable = protocol.build_schema(self.task, bound_handles=False)

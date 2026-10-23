@@ -4066,8 +4066,9 @@ fn read_brief_source(
     if excerpt.trim().is_empty() || excerpt.len() > 64 * 1024 {
         return Err("brief evidence excerpt is empty or exceeds 64 KiB".to_string());
     }
-    // Retain every selected byte in ordered, contiguous artifacts. Do not
-    // truncate source, repair paths or change verdicts to normalize citations.
+    // Validate the entire selected range above. Retain nonblank chunks at their
+    // original offsets; whitespace-only chunks carry no evidence. Do not repair
+    // paths, accept nonexistent lines, or change verdicts to normalize citations.
     let mut artifacts = Vec::new();
     let mut start = source_ref.start_line - 1;
     while start < source_ref.end_line {
@@ -4089,9 +4090,9 @@ fn read_brief_source(
         }
         let excerpt = lines[start..end].concat();
         if excerpt.trim().is_empty() {
-            return Err(
-                "brief evidence produces an empty artifact; select decision-relevant ranges".into(),
-            );
+            start_offset += excerpt.len();
+            start = end;
+            continue;
         }
         let end_offset = start_offset + excerpt.len();
         let (end_line, end_column) = if excerpt.ends_with('\n') {
@@ -4284,7 +4285,7 @@ fn print_benchmark_summary(report: &mehscan_engine::benchmark::BenchmarkReport) 
 
 fn print_help() {
     println!(
-        "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact|files] [--target REF] [--merge-base]\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n  mehscan state <claim|runtime-template|plan-template|plan|pending|fact|work|record|end|status|history> [OPTIONS]\n\nRun a command with --help for details."
+        "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact|files] [--target REF] [--merge-base]\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n  mehscan state <claim|runtime-template|plan-template|plan|pending|pending-batch|fact|work|record|end|status|history> [OPTIONS]\n\nRun a command with --help for details."
     );
 }
 
@@ -4694,6 +4695,21 @@ mod tests {
                 .unwrap_err()
                 .contains("64 KiB")
         );
+        let padded = "const x = 1;\n".repeat(40) + &"\n".repeat(40) + "const y = 2;\n\n";
+        std::fs::write(directory.join("source.ts"), &padded).unwrap();
+        let artifacts = read_brief_source(&directory, &range(82)).unwrap();
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(artifacts[1].0.start.line, 81);
+        assert_eq!(
+            artifacts[1].0.start.byte_offset,
+            padded.find("const y").unwrap()
+        );
+        assert!(
+            read_brief_source(&directory, &range(83))
+                .unwrap_err()
+                .contains("past end")
+        );
+        assert_eq!(read_brief_source(&directory, &range(41)).unwrap().len(), 1);
         std::fs::write(directory.join("source.ts"), " \r\n").unwrap();
         assert!(
             read_brief_source(&directory, &range(1))

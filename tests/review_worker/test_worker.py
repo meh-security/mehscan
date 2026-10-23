@@ -80,6 +80,12 @@ class LookupFailures(unittest.TestCase):
             with self.subTest(code=code, diagnostic=diagnostic):
                 self.assertIsNone(worker.missing_source_result(query, worker.CommandFailure(code, diagnostic)))
         self.assertIsNone(worker.missing_source_result({**query, "tool": "base_source"}, worker.CommandFailure(2, message)))
+        outside = {"tool":"source", "arguments":{"path":"app.ts","start_line":1201,"end_line":1300}}
+        result = worker.missing_source_result(outside,worker.CommandFailure(2,"error: start line 1201 is outside app.ts (872 lines)"))
+        self.assertEqual(result["error"]["line_count"],872)
+        self.assertEqual(result["error"]["code"],"range_outside_file")
+        self.assertIsNone(worker.missing_source_result(outside,worker.CommandFailure(2,
+            "error: start line 1201 is outside app.ts (872 lines)\npermission denied")))
 
 
 class Worker(unittest.TestCase):
@@ -156,7 +162,7 @@ else:
             "--reviewer-label", "deterministic/medium", "--run", str(self.run), "--output", str(self.base / name), *extra],
             capture_output=True, text=True, encoding="utf-8", timeout=60)
 
-    def configure_tiered(self, run_calls=2, quality=False, research_rounds=0):
+    def configure_tiered(self, run_calls=2, quality=False, research_rounds=0, audit_percent=100, final_qa=True):
         from argparse import Namespace
         primary = {"schema_version":"1", "provider":"codex-cli", "executable_version":"fixture-1",
                    "model":"gpt-6-luna", "reasoning_effort":"medium"}
@@ -165,9 +171,9 @@ else:
         provider.write_text(json.dumps(primary))
         limits = {"model_calls":run_calls if quality else 2, "queries":6 if research_rounds else 0, "bytes":262144, "timeout_seconds":300}
         policy = {"expert":expert, "case_limits":limits, "run_limits":{**limits, "model_calls":run_calls},
-                  "max_reviews_per_job":5, "audit_percent":100, "audit_seed":"controller-test"}
+                  "max_reviews_per_job":5, "audit_percent":audit_percent, "audit_seed":"controller-test"}
         if quality:
-            policy["quality"] = {"adjudicate_disagreements":True, "final_qa":True}
+            policy["quality"] = {"adjudicate_disagreements":True, "final_qa":final_qa}
         policy_path = self.base / "orchestration.json"
         policy_path.write_text(json.dumps(policy))
         draft = self.native("state", "plan-template", "--inventory", str(self.inventory), "--source-root", str(self.root),
@@ -286,7 +292,7 @@ else:
             return result
         return execute
 
-    def test_stage_exhaustion_reuses_raw_source_for_blind_verification_and_resolution(self):
+    def test_stage_exhaustion_reuses_source_and_expert_resolution_is_terminal(self):
         args = self.configure_tiered(run_calls=6, quality=True, research_rounds=1)
         original, calls = worker.execute, []
         def provider(command, cwd, env, timeout, payload=None):
@@ -326,10 +332,10 @@ else:
             result = worker.run(args)
         self.assertEqual(result["status"], "admitted", result)
         self.assertEqual(calls, [("routine","investigator"),("routine","investigator"),
-            ("expert","verification"),("expert","adjudication"),("expert","final_qa")])
+            ("expert","verification"),("expert","final_qa")])
         directory = Path(args.output)
         budget = json.loads((directory / "budget.json").read_text())
-        self.assertEqual(budget["totals"]["model_calls"], 5)
+        self.assertEqual(budget["totals"]["model_calls"], 4)
         self.assertEqual(budget["totals"]["queries"], 2)
         execution = json.loads((directory / "review-execution.json").read_text())
         self.assertTrue(all("blocker" not in c for c in execution["cases"]))
@@ -337,6 +343,114 @@ else:
                             if json.loads(p.read_text())["binding"]["role"] == "investigator")
         self.assertEqual(investigator["reported_routing"][0]["reason"], "budget_exhausted")
         self.assertEqual(investigator["routing"][0]["reason"], "stage_budget_exhausted")
+
+    def test_shared_dependency_research_resumes_callers_and_restart_keeps_knowledge_and_spend(self):
+        (self.root / "app.js").write_text(
+            "function first(request) { eval(request.query.one); }\n"
+            "function second(request) { eval(request.query.two); }\n")
+        (self.root / "policy.js").write_text("export function allow(subject) { return subject.admin === true; }\n")
+        self.inventory, self.store, self.run = [self.base / name for name in ("shared-inventory", "shared-state", "shared-run")]
+        self.native("investigate", "review-inventory", str(self.root), "--repository-key", "evaluation:worker", "--output", str(self.inventory))
+        claim = self.native("state", "claim", "--store", str(self.store), "--stream", "local-review", "--inventory", str(self.inventory),
+            "--source-root", str(self.root), "--attempt-id", "shared", "--expected-generation", "0", "--operation-key", "claim")
+        self.claim.write_text(json.dumps(claim))
+        self.common = ["--store", str(self.store), "--stream", "local-review", "--inventory", str(self.inventory),
+            "--source-root", str(self.root), "--generation", "1", "--owner", claim["result"]["owner"]]
+        plan = self.native("state", "plan-template", "--inventory", str(self.inventory), "--source-root", str(self.root),
+            "--policy", "comprehensive", "--skill-root", str(ROOT / "skills/mehscan-security"))
+        self.ids = plan["selected_review_ids"]
+        self.assertEqual(len(self.ids),2)
+        path = self.base / "shared-plan.json"
+        path.write_text(json.dumps(plan))
+        self.native("state", "plan", *self.common, "--input", str(path), "--operation-key", "plan")
+        self.package.write_text(json.dumps(self.native("state", "work", *self.common)))
+        self.native("investigate", "review-bundles", str(self.root), "--inventory", str(self.inventory),
+            "--review-ids", ",".join(self.ids), "--max-reviews", "1", "--output", str(self.run))
+        args = self.configure_tiered(run_calls=12, quality=True, research_rounds=1, audit_percent=0, final_qa=False)
+        original, calls, interrupted = worker.execute, [], []
+        def provider(command, cwd, env, timeout, payload=None):
+            if len(command) != 4 or not command[1].endswith("codex_reviewer.py"):
+                return original(command,cwd,env,timeout,payload)
+            task = json.loads(payload)
+            packet = json.loads(Path(task["evidence_packet"]).read_text())
+            role, resumed = task["review_role"], task.get("assessment_cycle") == "dependency_resume"
+            calls.append((role,resumed,task["review_ids"][0]))
+            if role == "research":
+                self.assertEqual(packet["native_questions"],[])
+                self.assertNotIn("sweep",packet)
+                self.assertFalse(task["dependency_allowed"])
+                source_id = packet["stage_context"]["dependency"]["artifacts"][0]
+                handle = next(k for k,v in task["research"]["artifact_handles"].items() if v == source_id)
+                return {"knowledge":{"claim":"allow checks that subject.admin is exactly true.",
+                    "conditions":"Requires a caller that invokes this function with the relevant subject.",
+                    "limits":"Does not establish route exposure or protection for callers that never invoke allow.",
+                    "status":"established","artifacts":[handle]}}
+            if role == "investigator" and not resumed:
+                self.assertTrue(task["dependency_allowed"])
+                if task["research"]["round"] == 0:
+                    return {"research":[{"tool":"source","review_id":task["review_ids"][0],
+                        "arguments":{"path":"policy.js","start_line":1,"end_line":1}}]}
+                fact = next(f for f in json.loads(Path(task["shared_facts"]).read_text())["facts"]
+                            if f["query"]["tool"] == "source")
+                handle = next(k for k,v in task["research"]["artifact_handles"].items() if v == fact["result_id"])
+                return {"dependency":{"question":"What does allow establish for its caller?",
+                    "scope":"The implementation in policy.js, conditional on actual invocation.","artifacts":[handle]}}
+            if resumed:
+                self.assertEqual(task["research"]["queries_remaining"],0)
+                self.assertEqual(task["research"]["rounds_remaining"],0)
+                note = packet["stage_context"]["resolved_dependency"]
+                self.assertIn("route exposure",note["limits"])
+                if not interrupted:
+                    interrupted.append(True)
+                    raise TimeoutError("interrupted resumed provider call")
+            else:
+                self.assertEqual(role,"verification")
+                self.assertNotIn("stage_context",packet)  # Interpretation never enters blind verification.
+            return {"draft":{"results":[{"review_id":q["review_id"],"decision":"issue","confidence":"medium",
+                "summary":"Request data reaches evaluation in this handler.","reason":"The complete handler evaluates a request query operand without a guard.",
+                "checks":[],"blockers":[],"evidence":[{"path":q["path"],"start_line":q["line"],"end_line":q["line"]}]}
+                for q in packet["native_questions"]]},"progress":[],"working_chain":"","routing":[]}
+        with patch.object(worker,"execute",side_effect=provider):
+            result = worker.run(args)
+        self.assertNotEqual(result["status"],"admitted")
+        first = Path(args.output)
+        book = json.loads((first / "research-knowledge.json").read_text())
+        self.assertEqual(len(book["dependencies"]),1,result)
+        self.assertEqual(len(next(iter(book["dependencies"].values()))["consumers"]),2)
+        self.assertEqual(sum(role == "research" for role,_,_ in calls),1)
+        prior_calls = len(calls)
+        args.resume_from, args.output = str(first), str(self.base / "shared-recovered")
+        with patch.object(worker,"execute",side_effect=provider):
+            result = worker.run(args)
+        self.assertEqual(result["status"],"admitted",result)
+        self.assertEqual(sum(role == "research" for role,_,_ in calls),1)
+        self.assertEqual(len(calls)-prior_calls,2)  # Only interrupted caller and its independent verification.
+        budget = json.loads((Path(args.output) / "budget.json").read_text())
+        self.assertEqual(budget["totals"]["model_calls"],len(calls))
+        self.assertEqual(len(json.loads((Path(args.output) / "review-execution.json").read_text())["cases"]),2)
+
+    def test_native_citation_feedback_repairs_once_without_an_expert_or_budget_reset(self):
+        args = self.configure_tiered(run_calls=2,research_rounds=1,audit_percent=0)
+        original, calls = worker.execute, []
+        def provider(command,cwd,env,timeout,payload=None):
+            if len(command) != 4 or not command[1].endswith("codex_reviewer.py"):
+                return original(command,cwd,env,timeout,payload)
+            task = json.loads(payload)
+            calls.append(task["profile"])
+            if len(calls) == 2:
+                self.assertIn("past end",task["research"]["feedback"]["reason"])
+            return {"draft":{"results":[{"review_id":identity,"decision":"needs_review","confidence":"medium",
+                "summary":"The handler evaluates the query operand; exposure is unresolved.",
+                "reason":"The local source does not establish deployment exposure.",
+                "evidence":[{"path":"app.js","start_line":1,"end_line":99 if len(calls) == 1 else 1}],
+                "checks":["Establish the deployed entrypoint for this handler."],"blockers":[]}
+                for identity in task["review_ids"]]},"working_chain":"","progress":[],
+                "routing":[{"review_id":identity,"reason":"external_required"} for identity in task["review_ids"]]}
+        with patch.object(worker,"execute",side_effect=provider):
+            result = worker.run(args)
+        self.assertEqual(result["status"],"admitted",result)
+        self.assertEqual(calls,["routine","routine"])
+        self.assertEqual(json.loads((Path(args.output) / "budget.json").read_text())["totals"]["model_calls"],2)
 
     def run_revalidation_case(self, reopening=False, interrupt=False):
         args = self.configure_tiered(run_calls=10, quality=True, research_rounds=1)
@@ -363,7 +477,8 @@ else:
                     "summary":"The reaching request operand is evaluated." if fresh else "A source question remains.",
                     "reason":"The handler evaluates request.query.code.","checks":["Check the precise reaching condition."] if decision == "needs_review" else [],
                     "blockers":[],"evidence":[{"path":"app.js","start_line":1,"end_line":1}]} for identity in self.ids]},
-                    "progress":[],"working_chain":"","routing":[{"review_id":identity,"reason":"reasoning_gap"}
+                    "progress":[],"working_chain":"","routing":[{"review_id":identity,
+                        "reason":"reasoning_gap" if reopening else "conflicting_evidence"}
                         for identity in self.ids] if decision == "needs_review" else []}
                 if role == "adjudication":
                     draft["resolutions"] = [{"review_id":identity,"disputed_claim":"Does the request operand reach eval?",

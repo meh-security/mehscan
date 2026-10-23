@@ -11,7 +11,10 @@ scope, decision and evidence policy with controller-owned finalization; applicab
 category guidance remains available. Use the guides below for manual CLI work.
 For a configured tiered controller run, preserve the bound routine/expert
 profiles and shared budgets. Investigators return decisions and typed routing
-requests; independent assessors use the verification section of that contract.
+requests, or yield a scoped dependency when the controller permits it. Shared
+research returns source-backed conditional knowledge; waiting cases resume on
+that new evidence and check their own caller binding. Knowledge is not a shared
+verdict. Independent assessors use the verification section of that contract.
 Let the controller reconcile assessments and account for sampled dismissals.
 When enabled, adjudication names and resolves a concrete source disagreement;
 final QA can reopen exact IDs, never silently discard findings. Both use the

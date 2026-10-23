@@ -99,7 +99,32 @@ the exact remaining question, never a safe closure. A dismissal based on unread 
 neighboring controls or an incomplete search should request risky_dismissal
 review, not quietly treat absence of scanner evidence as safety. Ordinary clear
 cases need no routing entry. The controller owns model selection and audit policy.
+
+For bounded routine investigation, finish clear local cases. When dependency_allowed
+is true, yield one precise shared implementation or security-contract question
+with its applicability scope and inspected source handles instead of a verdict.
+Do not start an exhaustive caller search, infer deployment policy or repeatedly
+try to resolve ambiguous ownership/dispatch. The controller schedules deeper
+research and resumes this case only after a new source-backed result arrives.
+A dependency_resume is final-only: check that result against this caller's
+actor, arguments, branch and effect. Conditions that do not bind remain pending.
+Knowledge is a scoped model interpretation, not a certified fact or shared safe
+label. A needs_review-to-supported-verdict transition is ordinary progress;
+affirmative issue/not_issue counterclaims are a real disagreement.
 <!-- /runtime:native_bundle -->
+
+<!-- runtime:dependency_research -->
+Resolve only stage_context.dependency: one named question and applicability
+boundary. The supplied source is reusable evidence, not a prior verdict.
+Inspect the deciding implementation/control with one focused research batch if
+needed. Return knowledge with claim, conditions, limits, status and artifacts.
+Use status=established only for an interpretation supported in the stated scope;
+use unresolved when a decisive fact is unavailable or still ambiguous. Both
+require inspected source handles and explicit conditions/limits ("none observed"
+is acceptable where appropriate). Do not decide the original candidate queue,
+certify a framework, hunt all callers or spawn further dependencies. Consumers
+must separately verify caller binding. No findings or ordinary results draft.
+<!-- /runtime:dependency_research -->
 
 <!-- runtime:verification -->
 Make a fresh source-backed assessment of the exact supplied questions. This role
