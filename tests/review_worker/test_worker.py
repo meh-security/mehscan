@@ -372,6 +372,7 @@ else:
         self.native("investigate", "review-bundles", str(self.root), "--inventory", str(self.inventory),
             "--review-ids", ",".join(self.ids), "--max-reviews", "1", "--output", str(self.run))
         args = self.configure_tiered(run_calls=12, quality=True, research_rounds=1, audit_percent=0, final_qa=False)
+        args.source_collector_profile = "routine"
         original, calls, interrupted = worker.execute, [], []
         first_caller, caller_lock, research_started = [], threading.Lock(), threading.Event()
         def provider(command, cwd, env, timeout, payload=None):
@@ -417,6 +418,7 @@ else:
                 self.assertEqual(task["research"]["rounds_remaining"],0)
                 note = packet["stage_context"]["resolved_dependency"]
                 self.assertIn("route exposure",note["remaining"])
+                self.assertNotIn("summary",note)  # Collector prose cannot anchor the verdict.
                 self.assertIn(task["review_ids"][0],note["consumer_request"]["scope"])
                 if not interrupted:
                     interrupted.append(True)

@@ -118,11 +118,16 @@ class DependencyKnowledge:
         row = self.state["dependencies"][key]
         if row["status"] != "resolved":
             raise ValueError("cannot resume before dependency resolution")
+        resolution = copy.deepcopy(row["resolution"])
+        if "summary" in resolution:
+            # Keep narrative in the audit register, not in the caller's judgment.
+            # Collection can misidentify dispatch or overstate what was retrieved.
+            resolution.pop("summary")
         return {"dependency_id":key, "question":row["request"]["question"], "scope":row["request"]["scope"],
                 "consumer_request":copy.deepcopy(row.get("consumer_requests", {}).get(consumer)),
                 "assertion":("source collection summary is navigation only; assess raw evidence and caller applicability"
                     if "summary" in row["resolution"] else "source-backed model interpretation; verify applicability to this caller"),
-                **copy.deepcopy(row["resolution"])}
+                **resolution}
 
 
 class BudgetExhausted(RuntimeError):

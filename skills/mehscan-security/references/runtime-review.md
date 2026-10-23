@@ -124,6 +124,9 @@ establish equivalence. Prefer one operation/shared check over a whole API family
 Joining shares research only; the controller retains each consumer's request.
 A dependency_resume is final-only: check that result against this caller's
 actor, arguments, branch and effect. Conditions that do not bind remain pending.
+Collection status only describes retrieval. An unread deciding control, relevant
+override or source for a required authority condition prevents a safe closure;
+neither a collector's completion flag nor a named guard supplies that proof.
 Knowledge is a scoped model interpretation, not a certified fact or shared safe
 label. A needs_review-to-supported-verdict transition is ordinary progress;
 affirmative issue/not_issue counterclaims are a real disagreement.
@@ -155,6 +158,10 @@ binding. Follow explicit imports/base declarations with the existing source
 tools. If a method is absent in a subclass, inspect its named base declaration;
 do not repeat the same empty search. Prefer the requested member over a large
 class prefix. Copy returned paths/ranges; ambiguous runtime dispatch stays open.
+For this.member calls, inspect relevant subclass overrides before assuming the
+base member runs. Follow imported helpers to their declaration file; the file
+that imports a helper is not necessarily where it is defined. A partial class
+prefix does not establish absence of an override.
 Retrieve the deciding method body, called check and rejection/effect ordering,
 plus authority/argument source needed to interpret its conditions. A validator
 name alone is not its implementation. Stop after the bounded missing edge,

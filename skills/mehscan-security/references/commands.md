@@ -171,12 +171,20 @@ Keep the normal primary descriptor on native work/record calls. Native tiered
 admission also requires the controller's `--review-execution FILE` and its
 `assessments/` artifacts. Do not hand-assemble execution receipts to bypass review.
 Routine investigation allows up to two model turns for clear local work or a
-source-backed dependency request. Matching questions, scope and evidence share
-one expert research task (up to two turns). `research-knowledge.json` retains
-conditional interpretations and original source support for the same snapshot
-and runtime. Each waiting caller resumes without new source queries; one further
+source-backed dependency request. Matching questions, scope and evidence, or an
+explicitly selected existing request, share scoped expert research by default.
+Experimental `--source-collector-profile routine` selects raw-source collection
+instead; `expert` selects the already bound expert profile for that collection.
+The profile is recorded in recovery bindings; it cannot change during recovery.
+Collection uses the bound runtime's research turns and shared budgets to locate
+then read relevant source; set research-rounds to permit dependent navigation.
+`research-knowledge.json` retains navigation summaries, unread edges and raw
+source support for the same snapshot and runtime, never a shared safe verdict.
+Collector narrative summaries stay in the audit register; callers receive raw
+source and explicit gaps, not the collector's description of effective checks.
+Each waiting caller resumes without new source queries; one further
 turn permits citation repair or interrupted-call recovery. All calls retain the
-original shared case/run ledger. Unresolved research is valid pending work, not
+original shared case/run ledger. Incomplete collection is valid pending work, not
 a trigger to repeat the same expert investigation. Ordinary pending-to-resolved
 progress is terminal; affirmative contrary verdicts still need resolution.
 If a routine draft's citation fails after its last normal turn, one unused turn

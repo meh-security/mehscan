@@ -12,7 +12,8 @@ category guidance remains available. Use the guides below for manual CLI work.
 For a configured tiered controller run, preserve the bound routine/expert
 profiles and shared budgets. Investigators return decisions and typed routing
 requests, or yield a scoped dependency when the controller permits it. Shared
-source collection uses the routine model to retrieve raw implementation/binding
+research returns scoped interpretations. Experimental source collection can
+instead use a configured bound profile to retrieve raw implementation/binding
 facts, with explicit unread edges and no verdict. Waiting cases resume on
 that new evidence and check their own caller binding. Knowledge is not a shared
 verdict. Independent assessors use the verification section of that contract.

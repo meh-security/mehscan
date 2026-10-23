@@ -510,6 +510,9 @@ def run(args):
 
 
 def run_locked(args):
+    collection_profile = getattr(args, "source_collector_profile", None)
+    if collection_profile not in (None, "routine", "expert"):
+        raise ValueError("source collector must use a bound routine or expert profile")
     started_run = time.monotonic()
     workers = getattr(args, "workers", 3)
     query_workers = getattr(args, "query_workers", 2)
@@ -1226,12 +1229,12 @@ def run_locked(args):
                 if Path(value).is_file():
                     outside(value, root)
             validate_provider_command(expert_command, tiered_policy["expert"])
-        elif getattr(args, "expert_command", None) or getattr(args, "expert_review_ids", None):
+        elif getattr(args, "expert_command", None) or getattr(args, "expert_review_ids", None) or collection_profile:
             raise ValueError("expert work requires a native orchestration contract")
         record["runtime"] = bound_runtime
         all_commands = [*command, *(expert_command or [])]
         reviewer_configuration = context.digest([command, expert_command,
-            [digest_file(value) for value in all_commands if Path(value).is_file()]])
+            [digest_file(value) for value in all_commands if Path(value).is_file()], collection_profile])
         direct_ids = set(filter(None, (getattr(args, "expert_review_ids", None) or "").split(",")))
         if not direct_ids <= set(requested):
             raise ValueError("direct expert IDs must belong to this exact work package")
@@ -1519,11 +1522,11 @@ def run_locked(args):
                                     else:
                                         waiting.setdefault(key, []).append(item)
                                         if key not in researching:
-                                            research_task = {**task, "profile":"routine", "review_role":"collection",
+                                            research_task = {**task, "profile":collection_profile or "expert", "review_role":"collection" if collection_profile else "research",
                                                 "assessment_cycle":"dependency:" + key, "dependency_key":key,
                                                 "review_playbooks":{}, "source_handoff":support,
                                                 "stage_context":{"dependency":draft["dependency"]}}
-                                            ready["routine"].appendleft((filename, request, research_task, None))
+                                            ready[research_task["profile"]].appendleft((filename, request, research_task, None))
                                             researching.add(key)
                                     continue
                                 stage = finalize_stage(task, job, draft, request)
@@ -1787,6 +1790,8 @@ def main():
     parser.add_argument("--expert-command", help="trusted argv file for the expert profile bound in the native runtime")
     parser.add_argument("--expert-workers", type=int, default=1)
     parser.add_argument("--expert-review-ids", help="route these exact IDs' bounded bundles directly to the expert")
+    parser.add_argument("--source-collector-profile", choices=("routine", "expert"),
+                        help="experimental raw-source collection using a bound profile; otherwise use scoped expert research")
     args = parser.parse_args()
     if not ((args.research_rounds is None or 0 <= args.research_rounds <= 10)
             and (args.research_queries is None or 0 <= args.research_queries <= 100)
