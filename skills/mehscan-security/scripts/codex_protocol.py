@@ -59,6 +59,8 @@ def build_schema(task, *, bound_handles=True):
     # handles or remaining research allowance. The actual wire schema makes a
     # final-only turn enforceable instead of asking the model to remember it.
     remaining = task["research"]
+    if bound_handles and "queries_remaining" in remaining:
+        schema["properties"]["research"]["maxItems"] = max(0, remaining["queries_remaining"])
     if bound_handles and any(remaining.get(key, 1) <= 0 for key in
                              ("rounds_remaining", "queries_remaining", "bytes_remaining")):
         schema["properties"]["action"]["enum"] = ["final"]
@@ -84,6 +86,7 @@ Do not cite invented IDs. Mark available unread decisive code open, not blocked.
 Inspected edges need artifacts; blocked edges need precise causes. No mandatory research when supplied evidence settles the chain.
 Queries: source(path,start_line,end_line) for CURRENT bytes; base_source(path,start_line,end_line) for the PINNED BASE; definition(name, optional path/limit) locates and reads one unambiguous declaration up to 120 lines, reserving two query units; symbol(name, optional path/limit) locates only; references(symbol, optional path OR path_prefix/limit); paths(name, optional limit).
 Prefer definition when the helper's implementation decides the question. Its actual source is inspected evidence; ambiguous, truncated or large matches remain navigation. Check source_complete and limit, and scope path when already known. No recursive callees or receiver binding is inferred.
+The batch's total query units must fit queries_remaining: two per definition, one per other query. Reuse a shared lookup across bundle IDs instead of requesting it once per ID.
 Prepared windows are verified actual source, not model summaries. complete_file=true means the complete file is supplied. Do not reread supplied source to confirm it or populate journals; a covered query is served from preparation without a native query.
 Optional path filters are null when unused. Tool argument schemas are distinct; symbol takes name, references takes symbol. Each query has a purpose <=300 characters. Native queries use their exact prompting ID; change-pass uses null.
 References are textual navigation and their limits count occurrences. Inspect named code; two preview lines are not complete effect coverage.

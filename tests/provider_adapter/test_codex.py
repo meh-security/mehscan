@@ -176,6 +176,7 @@ class Adapter(unittest.TestCase):
             return [v["properties"]["tool"]["enum"][0] for v in schema["properties"]["research"]["items"]["anyOf"]]
         self.assertNotIn("definition", tools(protocol.build_schema(self.task)))
         self.assertIn("source", tools(protocol.build_schema(self.task)))
+        self.assertEqual(protocol.build_schema(self.task)["properties"]["research"]["maxItems"], 1)
         self.assertIn("definition", tools(protocol.build_schema(self.task, bound_handles=False)))
 
     def test_expert_job_uses_only_its_bound_profile_and_role(self):

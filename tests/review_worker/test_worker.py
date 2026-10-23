@@ -958,6 +958,28 @@ else:
                 self.assertNotEqual(result.returncode, 0)
                 self.assert_no_decisions()
 
+    def test_oversized_definition_batch_gets_one_charged_repair_before_any_lookup(self):
+        normal = self.base / "normal.py"
+        normal.write_text(self.reviewer.read_text())
+        self.reviewer.write_text('import json,sys,subprocess\ntask=json.load(sys.stdin)\n'
+            'if task["research"]["round"] == 0:\n'
+            ' q={"tool":"definition","review_id":task["review_ids"][0],"arguments":{"name":"handle"}}\n'
+            ' print(json.dumps({"research":[q]*(task["research"]["queries_remaining"]//2+1)}))\n'
+            'else:\n'
+            ' assert task["research"]["feedback"]["reason"] == "research batch exceeds remaining query units"\n'
+            ' assert not task["research"]["results"]\n'
+            ' print(subprocess.check_output([sys.executable,' + repr(str(normal)) + '],input=json.dumps(task),text=True))\n')
+        result = self.invoke(extra=["--phase", "native"])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        directory = self.base / "worker"
+        record = json.loads((directory / "worker.json").read_text())
+        self.assertEqual(record["protocol_corrections"], 1)
+        self.assertFalse((directory / "research.jsonl").exists())
+        job = json.loads(next((directory / "jobs").glob("*.json")).read_text())
+        self.assertEqual(job["calls"], 2)
+        self.assertEqual(job["queries"], 0)
+        self.assertEqual(record["status"], "admitted")
+
     def test_conflicting_path_filters_repair_before_any_batch_query_executes(self):
         normal = self.base / "normal.py"
         normal.write_text(self.reviewer.read_text(), encoding="utf-8")

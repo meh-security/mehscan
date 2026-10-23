@@ -845,8 +845,10 @@ def run_locked(args):
                 queries = value["research"]
                 if set(value) != {"research"} or not isinstance(queries, list) or not queries:
                     raise ValueError("research response must be a nonempty query batch only")
-                if round_index == calls_left - 1 or query_count + research_cost(queries) > args.research_queries:
+                if round_index == calls_left - 1:
                     raise ValueError("reviewer exhausted its research budget without a final draft")
+                if research_cost(queries) > remaining_count("queries", args.research_queries - query_count):
+                    raise ValueError("research batch exceeds remaining query units")
                 # Validate the entire batch before running any lookup.
                 commands = [research_arguments(query, root, task.get("review_ids", []), journals) for query in queries]
             except ValueError as error:
@@ -859,6 +861,7 @@ def run_locked(args):
                             "research path_prefix must name a directory",
                             "choose one research path filter",
                             "research source window must contain 1 to 400 lines",
+                            "research batch exceeds remaining query units",
                             "research result limit must be 1 to 100")):
                     raise
                 corrections += 1
@@ -867,6 +870,8 @@ def run_locked(args):
                     "use the declared tool arguments (source: 1 <= start_line <= end_line and "
                     "end_line - start_line <= 399; discovery limit: 1 to 100). "
                     "For references, use path for one file OR path_prefix for a directory, never both. "
+                    "A definition reserves two query units; every other query reserves one. The batch's "
+                    "total must fit queries_remaining. Reuse identical shared lookups across IDs. "
                     "Research available decisive open edges or record an honest "
                     "precise blocker. The rejected draft was not admitted. Do not invent proof or change "
                     "a verdict just to pass validation."}
