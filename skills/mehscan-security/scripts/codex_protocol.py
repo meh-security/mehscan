@@ -53,6 +53,15 @@ def build_schema(task, *, bound_handles=True):
         schema["properties"]["resolutions"] = {"type":"array", "items":object_schema({
             "review_id":{"type":"string", "enum":task["adjudicate_ids"]}, "disputed_claim":text, "reason":text})}
         schema["required"].append("resolutions")
+    # The unbound schema pins the continuation protocol, not a turn's changing
+    # handles or remaining research allowance. The actual wire schema makes a
+    # final-only turn enforceable instead of asking the model to remember it.
+    remaining = task["research"]
+    if bound_handles and any(remaining.get(key, 1) <= 0 for key in
+                             ("rounds_remaining", "queries_remaining", "bytes_remaining")):
+        schema["properties"]["action"]["enum"] = ["final"]
+        schema["properties"]["research"]["maxItems"] = 0
+        schema["properties"]["draft"] = draft
     return schema
 
 
@@ -100,6 +109,8 @@ def build_prompt(task, packet, facts, state):
         {key:value for key,value in entry.items() if key != "result"} for entry in receipts]))
     prompt += "\nAvailable artifact handles (exhaustive for this turn):\n" + json.dumps(list(task["research"]["artifact_handles"]))
     prompt += "\nCurrent research budget/progress:\n" + json.dumps(readable({key:value for key,value in task["research"].items() if key not in ("results", "artifact_handles")}))
+    if any(task["research"].get(key, 1) <= 0 for key in ("rounds_remaining", "queries_remaining", "bytes_remaining")):
+        prompt += "\nThis turn is final-only. Return the complete draft. If decisive code remains unread, use needs_review with its exact remaining checks and an honest budget blocker; do not request another lookup or infer safety from exhaustion."
     return prompt
 
 

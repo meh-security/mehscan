@@ -148,6 +148,20 @@ class Adapter(unittest.TestCase):
         self.assertEqual([r["checks"] for r in value["draft"]["results"]],
                          [["Inspect the effective guard."], ["Read the caller."], [], []])
 
+    def test_exhausted_research_is_final_only_without_changing_continuation_binding(self):
+        self.task.update(kind="native_bundle", review_ids=["review-a"])
+        stable = protocol.build_schema(self.task, bound_handles=False)
+        self.assertEqual(protocol.build_schema(self.task)["properties"]["action"]["enum"], ["research", "final"])
+        for key in ("rounds_remaining", "queries_remaining", "bytes_remaining"):
+            with self.subTest(key=key):
+                task = copy.deepcopy(self.task)
+                task["research"][key] = 0
+                schema = protocol.build_schema(task)
+                self.assertEqual(schema["properties"]["action"]["enum"], ["final"])
+                self.assertEqual(schema["properties"]["research"]["maxItems"], 0)
+                self.assertIn("results", schema["properties"]["draft"]["properties"])
+                self.assertEqual(protocol.build_schema(task, bound_handles=False), stable)
+
     def test_expert_job_uses_only_its_bound_profile_and_role(self):
         primary = launcher.provider_contract(self.config)
         self.config["model"] = "gpt-6-sol"
