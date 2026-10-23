@@ -18,6 +18,40 @@ def policy(calls=4, run_calls=6):
 
 
 class Orchestration(unittest.TestCase):
+    def test_unread_control_tail_requires_current_source_from_the_same_file(self):
+        partial = {"query":{"tool":"definition"}, "result":{
+            "source_complete":False, "symbol_lookup":{"results":[{"name":"allow", "location":{
+                "path":"policy.ts", "start":{"line":10}, "end":{"line":150}}}]},
+            "source":{"results":{"text":"control prefix", "location":{"path":"policy.ts"},
+                "line_range":{"start_line":10,"end_line":129}}}}}
+        def window(path, tool="source"):
+            return {"query":{"tool":tool}, "result":{"results":{"text":"return allowed;", "location":{"path":path},
+                "line_range":{"start_line":130,"end_line":150}}}}
+        empty = {"query":{"tool":"definition"}, "result":{"source":None,"source_complete":False,
+            "symbol_lookup":{"results":[]}}}
+        facts = [empty, partial, window("other-policy.ts"), window("policy.ts", "base_source")]
+        gap = flow.evidence_agenda({}, facts)["declaration_query_gaps"]
+        self.assertEqual(gap, [{"path":"policy.ts","name":"allow","start_line":130,"end_line":150}])
+        self.assertEqual(flow.evidence_agenda({}, [*facts, window("policy.ts")])["declaration_query_gaps"], [])
+
+    def test_shared_control_source_keeps_each_callers_activation_question_on_resume(self):
+        with tempfile.TemporaryDirectory() as temp:
+            write = lambda path,value:path.write_text(json.dumps(value))
+            knowledge = flow.DependencyKnowledge(Path(temp)/"knowledge.json", {}, write)
+            requests = [{"question":"Inspect the shared delete guard", "scope":scope, "artifacts":["source"]}
+                for scope in ("Safe caller passes request identity", "Unsafe caller passes null identity")]
+            key, _ = knowledge.request(requests[0], "safe")
+            knowledge.request({**requests[1], "reuse_id":key}, "unsafe")
+            knowledge.resolve(key, {"summary":"Safe for the first caller", "remaining":"Activation still unread",
+                "status":"collected", "artifacts":["source"]}, {"facts":[],"omitted_facts":0})
+            for caller, request in zip(("safe", "unsafe"), requests):
+                task = {"stage_context":{"resolved_dependency":knowledge.context(key, caller)}}
+                agenda = flow.evidence_agenda(task, [])
+                self.assertEqual(agenda["caller_request"], request)
+                self.assertIn("conditions activating", " ".join(agenda["questions"]))
+                self.assertNotIn("Safe for the first caller", json.dumps(agenda))
+                self.assertNotIn("decision", agenda)
+
     def test_revalidation_requires_new_proposal_or_qa_reopening_and_preserves_siblings(self):
         for decisions, expected in ((["issue","issue"],"issue"),(["issue","not_issue"],"needs_review"),
                 (["needs_review","needs_review","issue"],"needs_review"),(["issue","not_issue","issue"],"issue")):

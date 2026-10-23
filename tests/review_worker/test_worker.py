@@ -420,6 +420,7 @@ else:
                 self.assertIn("route exposure",note["remaining"])
                 self.assertNotIn("summary",note)  # Collector prose cannot anchor the verdict.
                 self.assertIn(task["review_ids"][0],note["consumer_request"]["scope"])
+                self.assertEqual(task["research"]["evidence_agenda"]["caller_request"], note["consumer_request"])
                 if not interrupted:
                     interrupted.append(True)
                     raise TimeoutError("interrupted resumed provider call")

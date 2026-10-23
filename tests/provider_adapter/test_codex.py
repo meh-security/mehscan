@@ -268,15 +268,18 @@ class Adapter(unittest.TestCase):
 
     def test_progress_handles_are_exhaustive_in_schema_and_each_prompt(self):
         self.task["research"]["artifact_handles"] = {"sweep":"bound-sweep"}
+        self.task["research"]["evidence_agenda"] = {"declaration_query_gaps":[{"path":"policy.ts","start_line":164,"end_line":175}]}
         self.invoke()
         prompt, _, schema = self.calls[-1]
         self.assertIn('Available artifact handles (exhaustive for this turn):\n["sweep"]', prompt)
         artifacts = schema["properties"]["progress"]["items"]["properties"]["artifacts"]
         self.assertEqual(artifacts["items"]["enum"], ["sweep"])
         self.assertNotIn("source1", artifacts["items"]["enum"])
+        self.assertIn('"start_line": 164', prompt)
         self.task["research"]["round"] = 1
         self.task["research"]["artifact_handles"]["fact1"] = "bound-fact"
         self.invoke()
+        self.assertIn('"start_line": 164', self.calls[-1][0])  # Agenda survives provider continuation.
         self.assertIn('["sweep", "fact1"]', self.calls[-1][0])
         self.assertEqual(self.calls[-1][2]["properties"]["progress"]["items"]["properties"]["artifacts"]["items"]["enum"], ["sweep", "fact1"])
         self.task["research"]["artifact_handles"] = {}

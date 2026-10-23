@@ -262,6 +262,52 @@ def source_handoff(stages, max_bytes):
     return {"facts":facts, "omitted_facts":omitted}
 
 
+def evidence_agenda(task, facts, limit=16):
+    """Carry review questions and factual unread ranges, never certify controls.
+
+    Coverage means carried query source, not semantic resolution or model attention.
+    Do not use global broker facts or another caller's interpretation.
+    """
+    coverage, declarations = {}, {}
+    for fact in facts:
+        if fact.get("query", {}).get("tool") == "base_source":
+            continue
+        result = fact.get("result", {})
+        source = result.get("source") or result
+        body = source.get("results", {})
+        if isinstance(body, dict) and isinstance(body.get("text"), str) and body["text"]:
+            location, lines = body.get("location", {}), body.get("line_range", {})
+            if location.get("path") and isinstance(lines.get("start_line"), int) and isinstance(lines.get("end_line"), int):
+                coverage.setdefault(location["path"], []).append((lines["start_line"], lines["end_line"]))
+        if result.get("source_complete") is False:
+            symbols = result.get("symbol_lookup", {}).get("results", [])
+            if len(symbols) == 1:
+                symbol = symbols[0]
+                location = symbol.get("location", {})
+                path, start, end = location.get("path"), location.get("start", {}).get("line"), location.get("end", {}).get("line")
+                if path and isinstance(start, int) and isinstance(end, int):
+                    declarations[(path, start, end)] = symbol.get("name")
+    gaps = []
+    for (path, start, end), name in sorted(declarations.items()):
+        pending = [(start, end)]
+        for low, high in coverage.get(path, []):
+            pending = [(a, b) for left, right in pending for a, b in
+                ((left, min(right, low - 1)), (max(left, high + 1), right)) if a <= b]
+        for low, high in pending:
+            gaps.append({"path":path, "name":name, "start_line":low, "end_line":high})
+    context = task.get("stage_context", {})
+    resolved = context.get("resolved_dependency", {})
+    request = resolved.get("consumer_request") or context.get("dependency")
+    return {"caller_request":copy.deepcopy(request),
+        "questions":[
+            "Bind the selected operation to its actual effect, including relevant overrides or delegation.",
+            "Inspect the deciding control or transformation and its success/failure behavior, not just its name.",
+            "Check caller conditions activating that control: arguments, identity, configuration or execution order. Shared helper source does not establish these.",
+        ],
+        "declaration_query_gaps":gaps[:limit], "omitted_ranges":max(0, len(gaps) - limit),
+        "omitted_source_facts":task.get("source_handoff", {}).get("omitted_facts", 0)}
+
+
 def needs_secondary(results, routing, policy, direct=False):
     reasons = {item["review_id"]: item["reason"] for item in routing}
     for result in results:

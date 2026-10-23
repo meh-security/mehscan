@@ -909,6 +909,7 @@ def run_locked(args):
                                    "source": "Current source only. Inspect truncation and native provenance before drawing conclusions."},
                      "artifact_handles": aliases, "source_artifact_handles":source_handles,
                      "dependency_catalog":dependency_catalog,
+                     "evidence_agenda":orchestration.evidence_agenda(task, display_facts),
                      "working_chain": working_chain, "progress": progress, "feedback": feedback, "results": results}}
             if task.get("assessment_cycle") == "dependency_resume" or job.state.get("citation_feedback") or round_index >= calls_left:
                 frame["research"].update(rounds_remaining=0, queries_remaining=0)
