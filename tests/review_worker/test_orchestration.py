@@ -214,6 +214,38 @@ class Orchestration(unittest.TestCase):
             with self.assertRaises(ValueError):
                 flow.grounded_note({**note,"artifacts":["invented"]}, {"source-proof"})
 
+    def test_explicit_research_reuse_preserves_each_callers_authority_question(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "knowledge.json"
+            book = flow.DependencyKnowledge(path, {"snapshot":"one"}, worker.write)
+            shared = {"question":"What checks precede ItemsService.updateMany mutation?",
+                "scope":"Implementation only; authority argument is a condition, not a route verdict.",
+                "artifacts":["items-source"]}
+            key, _ = book.request(shared, "access")
+            self.assertEqual(book.catalog()[0]["status"], "waiting")
+            comment = {"question":"Does this inherited update use the inspected implementation?",
+                "scope":"Comments caller passes request accountability; verify overrides separately.",
+                "artifacts":["comments-source"],"reuse_id":key}
+            self.assertEqual(book.request(comment, "comments"), (key,False))
+            note = {"claim":"The displayed branch checks supplied accountability.",
+                "conditions":"Requires non-null accountability and the inspected implementation.",
+                "limits":"Does not establish caller argument, overrides, other methods or route access.",
+                "status":"established","artifacts":["items-source"]}
+            book.resolve(key, note, {"facts":[],"omitted_facts":0})
+            internal = {**comment,"scope":"Internal caller passes null accountability; condition may fail."}
+            self.assertEqual(book.request(internal, "internal"), (key,False))
+            recovered = flow.DependencyKnowledge(Path(directory) / "recovered.json", {"snapshot":"one"}, worker.write, path)
+            self.assertNotEqual(recovered.context(key,"comments")["consumer_request"]["scope"],
+                                recovered.context(key,"internal")["consumer_request"]["scope"])
+            self.assertEqual(recovered.context(key,"internal")["conditions"], note["conditions"])
+            self.assertNotIn("decision", recovered.context(key,"internal"))
+            unrelated = {**shared,"artifacts":["different-package-same-name"]}
+            self.assertNotEqual(book.request(unrelated,"unrelated")[0],key)
+            other_action = {**shared,"question":"What checks precede deleteMany?"}
+            self.assertNotEqual(book.request(other_action,"delete")[0],key)
+            with self.assertRaises(ValueError):
+                book.request({**comment,"reuse_id":"f"*64},"unknown")
+
     def test_conflicts_preserve_pending_while_matching_results_retain_expert_evidence(self):
         first = {"schema_version":"1.3", "results":[{"review_id":"id", "decision":"issue",
             "confidence":"medium", "summary":"first", "checks":[],

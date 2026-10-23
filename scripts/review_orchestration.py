@@ -15,6 +15,8 @@ def grounded_note(value, known, *, dependency=False):
     """Validate source references, never certify a model's interpretation."""
     fields = {"question":500, "scope":500} if dependency else {"claim":700, "conditions":700, "limits":700}
     expected = set(fields) | {"artifacts"} | (set() if dependency else {"status"})
+    if dependency and isinstance(value, dict) and "reuse_id" in value:
+        expected.add("reuse_id")
     if not isinstance(value, dict) or set(value) != expected:
         raise ValueError("invalid grounded research note")
     for key, limit in fields.items():
@@ -26,6 +28,12 @@ def grounded_note(value, known, *, dependency=False):
     if not dependency and value["status"] not in ("established", "unresolved"):
         raise ValueError("invalid research resolution status")
     result = copy.deepcopy(value)
+    if dependency:
+        reuse = result.pop("reuse_id", None)
+        if reuse is not None:
+            if not isinstance(reuse, str) or len(reuse) != 64 or any(c not in "0123456789abcdef" for c in reuse):
+                raise ValueError("invalid research reuse identity")
+            result["reuse_id"] = reuse
     result["artifacts"] = sorted(set(result["artifacts"]))
     return result
 
@@ -33,8 +41,8 @@ def grounded_note(value, known, *, dependency=False):
 class DependencyKnowledge:
     """Snapshot-bound research register. Controller owns scheduling, not verdicts.
 
-    Exact question/scope/evidence identity only: no fuzzy semantic merging or
-    inheritance of safe labels. Completed notes remain model interpretations.
+    Exact identity by default; callers may explicitly join an offered task.
+    Joining shares research, never caller applicability or a safe verdict.
     """
     def __init__(self, path, binding, write, previous=None):
         self.path, self.write = path, write
@@ -64,12 +72,24 @@ class DependencyKnowledge:
     def save(self):
         self.write(self.path, self.state)
 
+    def catalog(self, limit=8):
+        """Bounded discovery of research questions, not imported verdicts."""
+        rows = list(self.state["dependencies"].items())[-limit:]
+        return [{"dependency_id":key, "status":row["status"],
+                 "question":row["request"]["question"], "scope":row["request"]["scope"]}
+                for key,row in rows]
+
     def request(self, request, consumer):
-        key = self.identity(request)
+        request = copy.deepcopy(request)
+        reuse = request.pop("reuse_id", None)
+        if reuse is not None and reuse not in self.state["dependencies"]:
+            raise ValueError("unknown research reuse identity")
+        key = reuse or self.identity(request)
         created = key not in self.state["dependencies"]
         row = self.state["dependencies"].setdefault(key, {"request":copy.deepcopy(request), "consumers":[], "status":"waiting"})
         if consumer not in row["consumers"]:
             row["consumers"].append(consumer)
+        row.setdefault("consumer_requests", {})[consumer] = request
         self.save()
         return key, created
 
@@ -79,11 +99,12 @@ class DependencyKnowledge:
         row["resolution_digest"] = self.resolution_digest(row)
         self.save()
 
-    def context(self, key):
+    def context(self, key, consumer=None):
         row = self.state["dependencies"][key]
         if row["status"] != "resolved":
             raise ValueError("cannot resume before dependency resolution")
         return {"dependency_id":key, "question":row["request"]["question"], "scope":row["request"]["scope"],
+                "consumer_request":copy.deepcopy(row.get("consumer_requests", {}).get(consumer)),
                 "assertion":"source-backed model interpretation; verify applicability to this caller",
                 **copy.deepcopy(row["resolution"])}
 

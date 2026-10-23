@@ -107,6 +107,12 @@ with its applicability scope and inspected source handles instead of a verdict.
 Do not start an exhaustive caller search, infer deployment policy or repeatedly
 try to resolve ambiguous ownership/dispatch. The controller schedules deeper
 research and resumes this case only after a new source-backed result arrives.
+The bounded dependency_catalog lists existing research questions, not facts.
+Use reuse_id=null for new research or explicitly select an offered dependency_id
+whose question covers the implementation evidence needed. Retain your own
+question, caller scope and inspected artifacts. Shared names alone do not
+establish equivalence. Prefer one operation/shared check over a whole API family.
+Joining shares research only; the controller retains each consumer's request.
 A dependency_resume is final-only: check that result against this caller's
 actor, arguments, branch and effect. Conditions that do not bind remain pending.
 Knowledge is a scoped model interpretation, not a certified fact or shared safe

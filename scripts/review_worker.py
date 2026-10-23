@@ -877,6 +877,10 @@ def run_locked(args):
                 record["step"] = "reviewer/" + task["kind"]
             aliases = artifact_handles()
             source_handles = [alias for alias,identity in aliases.items() if identity in grounded_artifact_ids()]
+            dependency_catalog = []
+            if source_handles and tiered_policy and profile == "routine" and role == "investigator" and not task.get("assessment_cycle"):
+                with shared_lock:
+                    dependency_catalog = knowledge.catalog()
             display_facts = json.loads(json.dumps(job_facts))
             if role == "verification":
                 for fact in display_facts:
@@ -898,6 +902,7 @@ def run_locked(args):
                                    "paths": "Case-insensitive literal path substring, not a glob. Searches the native investigation index; absence does not prove runtime absence.",
                                    "source": "Current source only. Inspect truncation and native provenance before drawing conclusions."},
                      "artifact_handles": aliases, "source_artifact_handles":source_handles,
+                     "dependency_catalog":dependency_catalog,
                      "working_chain": working_chain, "progress": progress, "feedback": feedback, "results": results}}
             if task.get("assessment_cycle") == "dependency_resume" or job.state.get("citation_feedback") or round_index >= calls_left:
                 frame["research"].update(rounds_remaining=0, queries_remaining=0)
@@ -924,6 +929,9 @@ def run_locked(args):
                     # Sweep/peer summaries are leads, not inspected source support.
                     known = grounded_artifact_ids()
                     note = orchestration.grounded_note(note, known, dependency=field == "dependency")
+                    if field == "dependency" and note.get("reuse_id") is not None and note["reuse_id"] not in {
+                            row["dependency_id"] for row in dependency_catalog}:
+                        raise ValueError("research reuse must select an offered dependency")
                     support = [*job_facts, *(f for f in sweep_facts if f["result_id"] in note["artifacts"])]
                     for window in packet["primary"]["windows"]:
                         if window["artifact_id"] in note["artifacts"]:
@@ -1457,7 +1465,7 @@ def run_locked(args):
                     handoff = orchestration.source_handoff([
                         {"source_facts":support["facts"]}, {"source_facts":row["source_handoff"]["facts"]}], args.research_bytes)
                     resumed = {**task, "assessment_cycle":"dependency_resume", "source_handoff":handoff,
-                               "stage_context":{"resolved_dependency":knowledge.context(key)}}
+                               "stage_context":{"resolved_dependency":knowledge.context(key, filename)}}
                     ready[task["profile"]].appendleft((filename, request, resumed, first))
 
                 # One capacity pool: an idle routine slot can serve expert work,
@@ -1492,14 +1500,16 @@ def run_locked(args):
                                 draft = future.result()
                                 if task["review_role"] == "research":
                                     key = task["dependency_key"]
-                                    knowledge.resolve(key, draft["knowledge"], job.state["dependency_support"])
+                                    with shared_lock:
+                                        knowledge.resolve(key, draft["knowledge"], job.state["dependency_support"])
                                     researching.remove(key)
                                     for item in waiting.pop(key, []):
                                         resume_dependency(item, key)
                                     continue
                                 if "dependency" in draft:
                                     support = job.state["dependency_support"]
-                                    key, _ = knowledge.request(draft["dependency"], filename)
+                                    with shared_lock:
+                                        key, _ = knowledge.request(draft["dependency"], filename)
                                     with shared_lock:
                                         record["jobs"][job.path.stem].update(status="waiting_dependency", dependency_id=key)
                                     item = (filename, request, task, first, support)

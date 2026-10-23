@@ -155,6 +155,13 @@ class Adapter(unittest.TestCase):
         schema = protocol.build_schema(task)
         self.assertEqual(schema["properties"]["action"]["enum"],["final","dependency"])
         self.assertEqual(schema["properties"]["dependency"]["anyOf"][0]["properties"]["artifacts"]["items"]["enum"],["source1"])
+        self.assertEqual(schema["properties"]["dependency"]["anyOf"][0]["properties"]["reuse_id"], {"type":"null"})
+        stable = protocol.build_schema(task, bound_handles=False)
+        task["research"]["dependency_catalog"] = [{"dependency_id":"a"*64,"status":"waiting",
+            "question":"Guard implementation?","scope":"Not caller applicability."}]
+        offered = protocol.build_schema(task)["properties"]["dependency"]["anyOf"][0]["properties"]["reuse_id"]
+        self.assertEqual(offered["anyOf"][0]["enum"],["a"*64])
+        self.assertEqual(stable, protocol.build_schema(task, bound_handles=False))
         request = {"question":"What does this guard establish?","scope":"This receiver only.","artifacts":["source1"]}
         self.assertEqual(protocol.envelope({"action":"dependency","research":[],"draft":None,"dependency":request}),{"dependency":request})
         task.update(review_role="research",profile="expert",dependency_allowed=False)

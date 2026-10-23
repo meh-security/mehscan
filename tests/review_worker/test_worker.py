@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -372,6 +373,7 @@ else:
             "--review-ids", ",".join(self.ids), "--max-reviews", "1", "--output", str(self.run))
         args = self.configure_tiered(run_calls=12, quality=True, research_rounds=1, audit_percent=0, final_qa=False)
         original, calls, interrupted = worker.execute, [], []
+        first_caller, caller_lock, research_started = [], threading.Lock(), threading.Event()
         def provider(command, cwd, env, timeout, payload=None):
             if len(command) != 4 or not command[1].endswith("codex_reviewer.py"):
                 return original(command,cwd,env,timeout,payload)
@@ -380,6 +382,7 @@ else:
             role, resumed = task["review_role"], task.get("assessment_cycle") == "dependency_resume"
             calls.append((role,resumed,task["review_ids"][0]))
             if role == "research":
+                research_started.set()
                 self.assertEqual(packet["native_questions"],[])
                 self.assertNotIn("sweep",packet)
                 self.assertFalse(task["dependency_allowed"])
@@ -392,18 +395,29 @@ else:
             if role == "investigator" and not resumed:
                 self.assertTrue(task["dependency_allowed"])
                 if task["research"]["round"] == 0:
+                    with caller_lock:
+                        if not first_caller:
+                            first_caller.append(task["review_ids"][0])
+                    if task["review_ids"][0] != first_caller[0]:
+                        self.assertTrue(research_started.wait(60), "shared research never started")
                     return {"research":[{"tool":"source","review_id":task["review_ids"][0],
                         "arguments":{"path":"policy.js","start_line":1,"end_line":1}}]}
                 fact = next(f for f in json.loads(Path(task["shared_facts"]).read_text())["facts"]
                             if f["query"]["tool"] == "source")
                 handle = next(k for k,v in task["research"]["artifact_handles"].items() if v == fact["result_id"])
-                return {"dependency":{"question":"What does allow establish for its caller?",
-                    "scope":"The implementation in policy.js, conditional on actual invocation.","artifacts":[handle]}}
+                joined = task["review_ids"][0] != first_caller[0]
+                catalog = task["research"]["dependency_catalog"]
+                if joined:
+                    self.assertEqual(len(catalog),1)
+                return {"dependency":{"question":"Can this second caller use the same implementation evidence?" if joined else "What does allow establish for its caller?",
+                    "scope":"Caller " + task["review_ids"][0] + "; applicability remains unproven.","artifacts":[handle],
+                    "reuse_id":catalog[0]["dependency_id"] if joined else None}}
             if resumed:
                 self.assertEqual(task["research"]["queries_remaining"],0)
                 self.assertEqual(task["research"]["rounds_remaining"],0)
                 note = packet["stage_context"]["resolved_dependency"]
                 self.assertIn("route exposure",note["limits"])
+                self.assertIn(task["review_ids"][0],note["consumer_request"]["scope"])
                 if not interrupted:
                     interrupted.append(True)
                     raise TimeoutError("interrupted resumed provider call")

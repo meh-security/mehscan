@@ -84,8 +84,12 @@ def build_schema(task, *, bound_handles=True):
         bounded = {"type":"string","minLength":1,"maxLength":500}
         proof_handles = task["research"].get("source_artifact_handles", handles)
         proof_artifacts = {"type":"array","items":{"type":"string","enum":proof_handles}} if bound_handles else strings
+        reuse_ids = [row["dependency_id"] for row in task["research"].get("dependency_catalog", [])]
+        reuse = {"anyOf":[{"type":"string", **({"enum":reuse_ids} if bound_handles else {})},{"type":"null"}]}
+        if bound_handles and not reuse_ids:
+            reuse = {"type":"null"}
         schema["properties"]["dependency"] = {"anyOf":[object_schema({"question":bounded,"scope":bounded,
-            "artifacts":{**proof_artifacts,"minItems":1,"maxItems":8}}),{"type":"null"}]}
+            "artifacts":{**proof_artifacts,"minItems":1,"maxItems":8}, "reuse_id":reuse}),{"type":"null"}]}
         schema["required"].append("dependency")
         schema["properties"]["action"]["enum"].append("dependency")
         schema["properties"]["draft"] = {"anyOf":[draft,{"type":"null"}]}
@@ -140,6 +144,7 @@ def build_prompt(task, packet, facts, state):
     instructions = INSTRUCTIONS
     if task.get("dependency_allowed"):
         instructions += "\nBounded routine task: do the clear local work. For a shared implementation/security-contract question that needs deeper reasoning, use action=dependency, research=[], draft=null and dependency={question,scope,artifacts}. Name one precise question, its applicability boundary and inspected source handles. Yield before a broad caller hunt; do not guess a verdict. Otherwise dependency=null.\n"
+        instructions += "Select one operation or shared check, not certification of an entire service API. Set dependency.reuse_id=null for new research, or an offered dependency_id when that existing question covers the implementation evidence you need. Keep your own question, caller scope and source artifacts even when joining. A matching name is insufficient; different actions or authority arguments may need separate research. Joining does not establish caller applicability or a safe verdict.\n"
     if task.get("review_role") == "research":
         instructions = """Return schema JSON only. Follow the trusted research contract. No tools, execution, edits or external access.
 Use action=research, knowledge=null and a bounded source-query batch, or action=knowledge, research=[] and knowledge={claim,conditions,limits,status,artifacts}.
@@ -160,6 +165,8 @@ Queries use the declared broker schema and exact prompting review ID. Check trun
     if task.get("dependency_allowed") or task.get("review_role") == "research":
         prompt += "\nInspected source handles eligible for dependency/knowledge artifacts:\n" + json.dumps(task["research"].get("source_artifact_handles",[]))
         prompt += "\nNavigation and locator-only definitions explain limits, not inspected implementation. A clipped declaration prefix proves only its shown code; unread remainder stays unresolved. Cite eligible source handles for the grounded note."
+    if task.get("dependency_allowed"):
+        prompt += "\nExisting research questions available to join (not security facts or verdicts):\n" + json.dumps(task["research"].get("dependency_catalog", []))
     prompt += "\nCurrent research budget/progress:\n" + json.dumps(readable({key:value for key,value in task["research"].items() if key not in ("results", "artifact_handles")}))
     if any(task["research"].get(key, 1) <= 0 for key in ("rounds_remaining", "queries_remaining", "bytes_remaining")):
         prompt += ("\nResearch is finished. Return the scoped knowledge result, including precise limits if unresolved." if task.get("review_role") == "research" else
