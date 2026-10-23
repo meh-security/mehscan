@@ -817,7 +817,7 @@ def run_locked(args):
             received_response = json.loads(json.dumps(value))
             try:
                 if isinstance(value, dict) and ("working_chain" in value or "progress" in value or "draft" in value or "routing" in value):
-                    if value.keys() - {"research", "draft", "working_chain", "progress", "routing", "resolutions"}:
+                    if value.keys() - {"research", "draft", "working_chain", "progress", "routing", "resolutions", "qa_actions"}:
                         raise ValueError("review envelope contains unsupported fields")
                     routing = orchestration.validate_routing(value.get("routing", []), ids)
                     reported_routing = routing
@@ -850,6 +850,12 @@ def run_locked(args):
                     if "draft" in value:
                         if "research" in value or any(edge["status"] == "open" for edge in progress):
                             raise ValueError("final draft cannot leave an available local edge open")
+                        if "qa_actions" in value:
+                            if role != "final_qa":
+                                raise ValueError("only final QA can return claim actions")
+                            value["draft"] = orchestration.quality_intent(value["draft"], value["qa_actions"],
+                                task["stage_context"]["baseline"], set(task["stage_context"].get("assigned_ids", ids)))
+                            job.save(qa_actions=value["qa_actions"])
                         decisions = {item["review_id"]: item["decision"] for item in value["draft"].get("results", [])}
                         if any(item["reason"] in {"external_required", "human_required", "budget_exhausted", "stage_budget_exhausted"}
                                and decisions.get(item["review_id"]) != "needs_review" for item in [*reported_routing, *routing]):
@@ -1426,6 +1432,8 @@ def run_locked(args):
                         if quality_policy.get("final_qa") and any(r["decision"] != "needs_review" and r["review_id"] in targets for r in combined["results"]):
                             task = {**base_task, "profile":"expert", "review_role":"final_qa",
                                 "stage_context":{"baseline":combined,"assigned_ids":sorted(targets),
+                                    "prior_checks":[{k:r.get(k) for k in ("review_id","summary","checks")}
+                                        for r in baseline["results"] if r["review_id"] in targets],
                                     "assessments":[{k:v for k,v in stage.items() if k != "source_facts"} for stage in stages],
                                     "related_reviews":[],"omitted_related_reviews":0}}
                             job = job_for(task)

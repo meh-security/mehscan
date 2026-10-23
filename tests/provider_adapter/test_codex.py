@@ -189,6 +189,14 @@ class Adapter(unittest.TestCase):
             if "limit" in arguments:
                 self.assertEqual(arguments["limit"]["maximum"], 100)
 
+    def test_qa_intent_survives_the_wire_even_with_the_same_verdict(self):
+        self.task.update(kind="native_bundle",review_role="final_qa",review_ids=["id"])
+        schema = protocol.build_schema(self.task)
+        self.assertIn("qa_actions",schema["required"])
+        actions = [{"review_id":"id","action":"repair","claim":"Verify the narrower reaching condition."}]
+        out = protocol.envelope({"action":"final","draft":{"results":[]},"research":[],"working_chain":"","progress":[],"qa_actions":actions})
+        self.assertEqual(out["qa_actions"],actions)
+
     def test_expert_job_uses_only_its_bound_profile_and_role(self):
         primary = launcher.provider_contract(self.config)
         self.config["model"] = "gpt-6-sol"

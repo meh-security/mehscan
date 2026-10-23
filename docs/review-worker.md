@@ -422,6 +422,10 @@ controller keeps the original assessments and QA, does not reset shared spend,
 and leaves disagreements or insufficient capacity pending. No repair loop runs.
 `quality-summary.json` records QA, revalidation, adjudication and reopening
 counts; omitted peer context remains a coverage limit.
+The QA response explicitly distinguishes keeping the baseline claim, repairing
+its conditions/impact, and reopening an unresolved question. A repair stays
+pending even when the underlying issue label still holds; corrected QA prose
+is never silently treated as approval of the older wording.
 This is not an exhaustive comparison of every finding across the application.
 
 Validated stage responses and pre-QA baselines are frozen and hash checked during

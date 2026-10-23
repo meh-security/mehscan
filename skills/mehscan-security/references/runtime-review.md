@@ -150,6 +150,12 @@ supplied, check those IDs and preserve other baseline entries unchanged.
 Peer IDs outside this job have their own QA jobs. Explicit
 peer truncation and bounded groups are coverage limits, not proof of a complete
 cross-finding review. Do not launch broad hunts or repeat the entire triage.
+Return qa_actions for every bundle ID on a final draft (empty during research):
+keep only when the baseline's claims remain supported, repair when a condition,
+extent or impact must change despite the same underlying verdict, reopen for
+an unresolved decisive question. Give the concrete claim to verify for repair
+or reopen; keep can use an empty claim. Merely returning more precise prose does
+not edit the baseline. A repair becomes pending and requires separate verification.
 When fresh assessments are supplied, compare their actors, inputs, reaching
 conditions and effects, not only verdict labels. A repair must address the
 original counterevidence without claiming unsupported conditions or impact.

@@ -273,6 +273,30 @@ def assessment_basis(assessments):
     return decisions[0] if len(set(decisions)) == 1 else "needs_review"
 
 
+def quality_intent(draft, actions, baseline, assigned):
+    """An explicit claim repair is pending even when its underlying label holds."""
+    if (not isinstance(actions, list) or len(actions) != len(baseline["results"])
+            or {a.get("review_id") for a in actions if isinstance(a, dict)} != {r["review_id"] for r in baseline["results"]}):
+        raise ValueError("QA actions must cover exact assigned bundle IDs")
+    result = copy.deepcopy(draft)
+    rows = {r["review_id"]:r for r in result["results"]}
+    before = {r["review_id"]:r for r in baseline["results"]}
+    for action in actions:
+        if (set(action) != {"review_id","action","claim"} or action["action"] not in ("keep","repair","reopen")
+                or not isinstance(action["claim"], str) or len(action["claim"]) > 300):
+            raise ValueError("QA action requires a bounded claim and typed intent")
+        if action["action"] == "keep":
+            if rows[action["review_id"]]["decision"] != before[action["review_id"]]["decision"]:
+                raise ValueError("QA keep must preserve the baseline verdict")
+            continue
+        if action["review_id"] not in assigned or not action["claim"].strip():
+            raise ValueError("QA repair/reopening requires an assigned claim")
+        row = rows[action["review_id"]]
+        row.update(decision="needs_review", diagnosis=None)
+        row["checks"] = list(dict.fromkeys([*row.get("checks", []), action["claim"]]))
+    return result
+
+
 def apply_revalidation(baseline, first, second, proposals, routing=()):
     paired = reconcile(first, second, "routine", routing)
     result = copy.deepcopy(baseline)

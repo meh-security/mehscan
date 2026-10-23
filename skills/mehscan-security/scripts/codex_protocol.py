@@ -56,6 +56,11 @@ def build_schema(task, *, bound_handles=True):
         schema["properties"]["resolutions"] = {"type":"array", "items":object_schema({
             "review_id":{"type":"string", "enum":task["adjudicate_ids"]}, "disputed_claim":text, "reason":text})}
         schema["required"].append("resolutions")
+    if task.get("review_role") == "final_qa":
+        schema["properties"]["qa_actions"] = {"type":"array","maxItems":len(task["review_ids"]),"items":object_schema({
+            "review_id":{"type":"string","enum":task["review_ids"]},
+            "action":{"type":"string","enum":["keep","repair","reopen"]},"claim":{"type":"string","maxLength":300}})}
+        schema["required"].append("qa_actions")
     # The unbound schema pins the continuation protocol, not a turn's changing
     # handles or remaining research allowance. The actual wire schema makes a
     # final-only turn enforceable instead of asking the model to remember it.
@@ -135,6 +140,8 @@ def envelope(response):
         out["routing"] = response["routing"]
     if "resolutions" in response:
         out["resolutions"] = response["resolutions"]
+    if "qa_actions" in response:
+        out["qa_actions"] = response["qa_actions"]
     if response["action"] == "research" and response["draft"] is None and response["research"]:
         for value in response["research"]:
             value["arguments"] = {key: item for key, item in value["arguments"].items() if item is not None}

@@ -368,6 +368,11 @@ else:
                 if role == "adjudication":
                     draft["resolutions"] = [{"review_id":identity,"disputed_claim":"Does the request operand reach eval?",
                         "reason":"The handler evaluates request.query.code."} for identity in task["adjudicate_ids"]]
+                if reopening and role == "final_qa" and not fresh:
+                    # Same issue label, corrected claim: this must not quietly
+                    # preserve the overbroad baseline prose as an approval.
+                    for row in draft["draft"]["results"]:row.update(decision="issue",checks=[])
+                    draft["qa_actions"] = [{"review_id":identity,"action":"repair","claim":"Verify the precise reaching condition."} for identity in self.ids]
                 return draft
             if command[1:3] == ["state","record"]:
                 path = Path(command[command.index("--review-execution")+1]); saved = path.read_bytes()
