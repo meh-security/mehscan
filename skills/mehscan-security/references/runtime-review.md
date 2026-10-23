@@ -162,6 +162,10 @@ For this.member calls, inspect relevant subclass overrides before assuming the
 base member runs. Follow imported helpers to their declaration file; the file
 that imports a helper is not necessarily where it is defined. A partial class
 prefix does not establish absence of an override.
+Use the existing outline query to locate members/imports in a known source file.
+It supplies AST navigation, not dispatch proof. Definition lookup filters by
+declaration name/file; it does not resolve Class.member expressions or follow
+imports from a caller-context path automatically.
 Retrieve the deciding method body, called check and rejection/effect ordering,
 plus authority/argument source needed to interpret its conditions. A validator
 name alone is not its implementation. Stop after the bounded missing edge,

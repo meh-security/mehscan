@@ -48,10 +48,11 @@ def build_schema(task, *, bound_handles=True):
         draft = object_schema({"results":{"type":"array","items":entry}})
     query_id = {"type":"null"} if task["kind"] == "change_pass" else {"type":"string","enum":task["review_ids"]}
     query_variants = []
-    for tool in ("source", "base_source", "symbol", "definition", "references", "paths"):
+    for tool in ("source", "base_source", "outline", "symbol", "definition", "references", "paths"):
         if tool == "definition" and bound_handles and task["research"].get("queries_remaining", 2) < 2:
             continue
         props = ({"path":text,"start_line":integer,"end_line":integer} if tool in ("source","base_source") else
+                 {"path":text} if tool == "outline" else
                  {"name":text,"path":{"type":["string","null"]},"limit":limit} if tool in ("symbol", "definition") else
                  {"symbol":text,"path":{"type":["string","null"]},"path_prefix":{"type":["string","null"]},"limit":limit} if tool == "references" else
                  {"name":text,"limit":limit})
@@ -190,6 +191,7 @@ Use action=research, collection=null with a focused source-query batch, or actio
 Collect source for the supplied missing edge. Do not decide whether any candidate is vulnerable or safe. Your summary is navigation only, not a security interpretation.
 Use status=collected when the requested implementation and relevant caller binding source have been retrieved; otherwise incomplete with the exact unread edge. Cite source handles, not locator-only results.
 Follow explicit imports and base classes when a member is absent in the subclass. Search for the named method in a known source file, not the entire class body. Avoid limit=1 discovery, repeated empty queries and rereading supplied source. Use returned locations for dependent reads. No arbitrary dispatch inference or exhaustive caller hunt.
+Use outline on a known class file to locate imports and relevant overrides without reading an arbitrary class prefix. definition is a declaration lookup, not a compiler resolver: use native-reported names and the defining file, not Class.member spelling or an importing file as context.
 """
     if state is None:
         trusted = "\n\n".join(value["text"] for value in packet["contract"]["sources"])

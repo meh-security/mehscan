@@ -387,6 +387,7 @@ def research_arguments(query, root, review_ids, journals):
     tool, values = query["tool"], query["arguments"]
     definitions = {"source": ({"path", "start_line", "end_line"}, set()),
                    "base_source": ({"path", "start_line", "end_line"}, set()),
+                   "outline": ({"path"}, set()),
                    "symbol": ({"name"}, {"path", "limit"}),
                    "definition": ({"name"}, {"path", "limit"}),
                    "references": ({"symbol"}, {"path", "path_prefix", "limit"}),
@@ -407,7 +408,7 @@ def research_arguments(query, root, review_ids, journals):
                 or any(part in ("", ".", "..", ".git") for part in path.split("/"))
                 or Path(path).is_absolute() or not (root / path).resolve().is_relative_to(root)):
             raise ValueError("research paths must stay relative to the authorized source")
-    if tool in ("symbol", "definition", "references") and "path" in values and (root / values["path"]).is_dir():
+    if tool in ("outline", "symbol", "definition", "references") and "path" in values and (root / values["path"]).is_dir():
         raise ValueError("research path filter must name a file; use path_prefix for a directory")
     if "path_prefix" in values and (root / values["path_prefix"]).is_file():
         raise ValueError("research path_prefix must name a directory")
@@ -419,7 +420,7 @@ def research_arguments(query, root, review_ids, journals):
         first, last = values["start_line"], values["end_line"]
         if type(first) is not int or type(last) is not int or first < 1 or last < first or last - first >= 400:
             raise ValueError("research source window must contain 1 to 400 lines")
-    else:
+    elif tool != "outline":
         limit = values.setdefault("limit", 20)
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("research result limit must be 1 to 100")
@@ -900,8 +901,10 @@ def run_locked(args):
                      "queries_remaining": remaining_count("queries", args.research_queries - query_count),
                      "bytes_remaining": remaining_count("bytes", args.research_bytes - byte_count),
                      "shared_budget_remaining": shared_remaining(),
-                     "tools": ["source", "base_source", "symbol", "definition", "references", "paths"],
+                     "tools": ["source", "base_source", "outline", "symbol", "definition", "references", "paths"],
                      "semantics": {"references": "Bounded identifier text matches; navigation, not semantic binding. path_prefix must name a directory.",
+                                   "outline": "Current-file AST declarations/imports, including member locations. Navigation only; inspect bodies and explicit overrides. No inherited dispatch resolution.",
+                                   "definition": "Finds declared names, not a compiler resolver. Use native-reported names; Class.member spelling does not resolve members. path filters the declaration file, not the caller/import site. Follow imports explicitly or omit path for bounded discovery.",
                                    "paths": "Case-insensitive literal path substring, not a glob. Searches the native investigation index; absence does not prove runtime absence.",
                                    "source": "Current source only. Inspect truncation and native provenance before drawing conclusions."},
                      "artifact_handles": aliases, "source_artifact_handles":source_handles,
