@@ -72,7 +72,7 @@ Client entry/library bindings may be expressed through package exports, build or
 Artifact handles remain stable throughout this conversation. Source facts are reusable source-bound outputs, not verdicts. Use their result_id and retain original attribution. Previously answered queries do not gain information by repetition.
 When a changed guard reaches a state/credential issuer or named consumer, inspect that helper/effect before declaring it unavailable.
 Prefer one consequential actual chain plus honest remaining coverage over an all-routes search. In the CHANGE PASS, source-only effect tracking remains needs_review only when no supplied native ID covers that effect, even after a local defect is established: name remaining coverage/representation work, not an invented missing fact. In NATIVE BUNDLE review, the task review_ids and native_questions supply exact native IDs. Decide those questions directly; source-only tracking language from a previous change pass is not a blocker for a represented native finding.
-Native draft summaries/reasons are concise; summaries <=500 characters, checks <=300. issue/not_issue checks and blockers empty. Evidence uses actual path/inclusive lines, usually <=20 each.
+Native draft summaries/reasons are concise; summaries <=500 characters, checks <=300. issue/not_issue checks and blockers empty. needs_review requires at least one decisive remaining question in checks; blockers describe the obstacle, not a substitute for checks. Evidence uses actual path/inclusive lines, usually <=20 each.
 Change-pass drafts cover every changed path. Reviewed has questions=[]; needs_review requires concrete questions. Cite actual base/current primary windows as required, with independently mapped old/new lines.
 """
 
@@ -115,6 +115,12 @@ def envelope(response):
         out["research"] = response["research"]
     elif response["action"] == "final" and not response["research"] and response["draft"] is not None:
         out["draft"] = response["draft"]
+        # Keep an explicitly supplied pending question when a provider placed it
+        # only in blockers. This copies its words; it never invents a question,
+        # changes the decision, or bypasses native validation of the draft.
+        for result in out["draft"].get("results", []):
+            if result.get("decision") == "needs_review" and not result.get("checks") and result.get("blockers"):
+                result["checks"] = list(result["blockers"])
     else:
         raise ValueError("reviewer envelope combines incompatible actions")
     return out

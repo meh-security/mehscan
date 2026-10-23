@@ -138,6 +138,16 @@ class Adapter(unittest.TestCase):
         self.assertEqual(properties["evidence"]["items"]["properties"]["path"], {"type":"string"})
         self.assertEqual(schema["properties"]["routing"]["items"]["properties"]["review_id"]["enum"], self.task["review_ids"])
 
+    def test_pending_blocker_question_is_retained_without_inventing_checks(self):
+        draft = {"results":[
+            {"decision":"needs_review", "checks":[], "blockers":["Inspect the effective guard."]},
+            {"decision":"needs_review", "checks":["Read the caller."], "blockers":["Caller scope unresolved."]},
+            {"decision":"needs_review", "checks":[], "blockers":[]},
+            {"decision":"not_issue", "checks":[], "blockers":[]}]}
+        value = protocol.envelope({"action":"final", "research":[], "draft":draft, "working_chain":"", "progress":[]})
+        self.assertEqual([r["checks"] for r in value["draft"]["results"]],
+                         [["Inspect the effective guard."], ["Read the caller."], [], []])
+
     def test_expert_job_uses_only_its_bound_profile_and_role(self):
         primary = launcher.provider_contract(self.config)
         self.config["model"] = "gpt-6-sol"
