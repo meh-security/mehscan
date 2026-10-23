@@ -50,6 +50,16 @@ def cancel(signum, frame):
     _cancelled = True
 
 
+def finalization_draft(response):
+    # Canonical siblings retain native-derived counts. The native finalizer owns
+    # regenerating these, including unchanged siblings of a reopened question.
+    result = json.loads(json.dumps(response))
+    for row in result.get("results", []):
+        if row.get("investigation") is not None:
+            row["investigation"]["journal_summary"] = None
+    return result
+
+
 def write(path, value):
     write_text(path, json.dumps(value, indent=2) + "\n")
 
@@ -1265,7 +1275,7 @@ def run_locked(args):
                         shutil.copyfile(output / "assessments" / (job.path.stem + ".json"), destination)
                     else:
                         draft_path = output / ("combined-" + filename)
-                        write(draft_path, response)
+                        write(draft_path, finalization_draft(response))
                         native(["investigate", "review-bundle-finalize", "--bundle", str(request), "--draft", str(draft_path),
                                 "--source-root", str(root), "--journal-dir", str(journals), "--output", str(destination)])
                     if job:

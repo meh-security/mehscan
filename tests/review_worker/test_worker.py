@@ -18,6 +18,14 @@ spec.loader.exec_module(worker)
 
 
 class ArtifactCopy(unittest.TestCase):
+    def test_refinalization_clears_native_journal_counts_without_mutating_approved_siblings(self):
+        response = {"results":[{"decision":"issue","investigation":{"journal_summary":{"queries":1},"decisive_artifacts":["source"]}},
+            {"decision":"needs_review","checks":["Read the control."],"investigation":{"journal_summary":None}}]}
+        draft = worker.finalization_draft(response)
+        self.assertEqual(response["results"][0]["investigation"]["journal_summary"],{"queries":1})
+        self.assertEqual([r["investigation"]["journal_summary"] for r in draft["results"]],[None,None])
+        self.assertEqual(draft["results"][0]["investigation"]["decisive_artifacts"],["source"])
+
     def test_artifact_copy_preserves_bytes_without_requiring_metadata(self):
         with tempfile.TemporaryDirectory(prefix="mehscan-artifact-") as name:
             root = Path(name)
