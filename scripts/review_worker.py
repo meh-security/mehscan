@@ -952,7 +952,6 @@ def run_locked(args):
                                     raise
                                 return missing
                         result = definition_result(result, read_definition)
-                    check_fresh()
                     origin_kind = "preparation" if result.get("operation") == "prepared_source" else "pinned_base" if result.get("operation") == "get_base_source" else task["kind"]
                     fact = {"result_id": "mehscanQueryFact/v1:" + context.digest([key, result]),
                             "cache_key": key,
@@ -961,20 +960,27 @@ def run_locked(args):
                             "origin_package_id": expected["package_id"], "query": query, "result": result}
                     if query["tool"] == "definition":
                         fact["native_query_count"] = native_queries
-                    with shared_lock:
-                        shared_facts.append(fact)
-                        save_facts()
                     return fact
 
                 fact, reused = broker.get(key, load, remaining())
-                check_fresh()
                 return query, fact, reused
 
             # Preserve request order in the conversation/audit while independent
             # reads execute through one bounded run-level pool.
             lookups = [query_pool.submit(lookup, pair) for pair in zip(queries, commands)]
-            for future in lookups:
-                query, fact, reused = future.result(timeout=remaining())
+            batch = [future.result(timeout=remaining()) for future in lookups]
+            # The provider post-check brackets this batch. Broker entries are
+            # provisional: every consumer, including a cache hit, must pass its
+            # own post-check before facts reach a model, receipt, or recovery.
+            check_fresh()
+            with shared_lock:
+                known_facts = {fact["result_id"] for fact in shared_facts}
+                for _, fact, _ in batch:
+                    if fact["result_id"] not in known_facts:
+                        shared_facts.append(fact)
+                        known_facts.add(fact["result_id"])
+                save_facts()
+            for query, fact, reused in batch:
                 result = fact["result"]
                 cost = research_cost([query])
                 query_count += cost

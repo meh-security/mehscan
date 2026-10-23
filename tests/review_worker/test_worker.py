@@ -970,6 +970,28 @@ else:
         self.assertEqual(json.loads((directory / "worker.json").read_text())["research_queries"], 2)
         self.assertTrue((directory / "journals" / (self.ids[0] + ".jsonl")).exists())
 
+    def test_query_batch_uses_one_post_fence_including_cache_hits(self):
+        self.research_reviewer('[{"tool":"references","review_id":task["review_ids"][0],'
+            '"arguments":{"symbol":"eval","limit":20}},'
+            '{"tool":"references","review_id":task["review_ids"][0],'
+            '"arguments":{"symbol":"handle","limit":20}},'
+            '{"tool":"references","review_id":task["review_ids"][0],'
+            '"arguments":{"symbol":"eval","limit":20}}]')
+        result = self.invoke(extra=["--phase", "native", "--query-workers", "2"])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        directory = self.base / "worker"
+        record = json.loads((directory / "worker.json").read_text())
+        operations = [item["operation"] for item in record["timings_ms"]]
+        turns = [index for index, operation in enumerate(operations) if operation == "reviewer/native_bundle"]
+        self.assertEqual(len(turns), 2)
+        # One provider post-check and one whole-batch post-check, independent
+        # of query count. Both precede the next model's consumption of facts.
+        self.assertEqual(operations[turns[0] + 1:turns[1]].count("state/work"), 2)
+        self.assertEqual(record["research_executions"], 2)
+        self.assertEqual(record["research_cache_hits"], 1)
+        self.assertEqual(len(json.loads((directory / "source-facts.json").read_text())["facts"]), 2)
+        self.assertEqual(len((directory / "research.jsonl").read_text().splitlines()), 3)
+
     def test_missing_source_returns_negative_lookup_then_discovers_and_reads_real_source(self):
         normal = self.base / "normal.py"
         normal.write_text(self.reviewer.read_text(), encoding="utf-8")
@@ -1245,7 +1267,9 @@ else:
     def test_source_changed_during_query_is_rejected_before_receipt_or_admission(self):
         from argparse import Namespace
         self.research_reviewer('[{"tool":"references","review_id":task["review_ids"][0],'
-                              '"arguments":{"symbol":"eval","limit":20}}]')
+                              '"arguments":{"symbol":"eval","limit":20}},'
+                              '{"tool":"references","review_id":task["review_ids"][0],'
+                              '"arguments":{"symbol":"handle","limit":20}}]')
         original = worker.execute
         queried = []
         def changing_query(command, *args, **kwargs):
@@ -1262,10 +1286,12 @@ else:
             research_rounds=None, research_queries=None, research_bytes=None)
         with patch.object(worker, "execute", side_effect=changing_query):
             record = worker.run(args)
-        self.assertEqual(queried, [True])
+        self.assertTrue(queried)
         self.assertEqual(record["status"], "incomplete")
         self.assertEqual(record["step"], "native/state/work")
         self.assertFalse((self.base / "query-drift/research.jsonl").exists())
+        facts_path = self.base / "query-drift/source-facts.json"
+        self.assertFalse(facts_path.exists() and json.loads(facts_path.read_text())["facts"])
         self.assert_no_decisions()
 
     def test_native_runtime_matches_python_package_and_rejects_worker_override(self):
