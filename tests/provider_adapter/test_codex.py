@@ -118,6 +118,26 @@ class Adapter(unittest.TestCase):
         self.task["review_role"] = "final_qa"
         self.assertNotIn("resolutions", protocol.build_schema(self.task)["properties"])
 
+    def test_native_routing_ids_do_not_constrain_prose_paths_or_queries(self):
+        self.task.update(kind="native_bundle", review_ids=["review-a", "review-b"])
+        schema = protocol.build_schema(self.task)
+        # Enumerations belong to identity/status fields. A shared string schema
+        # must not make actual paths and reasoning accept only review IDs.
+        def visit(value, path=()):
+            if isinstance(value, dict):
+                if value.get("enum") == self.task["review_ids"]:
+                    self.assertEqual(path[-1], "review_id", path)
+                for key, child in value.items():
+                    visit(child, (*path, key))
+            elif isinstance(value, list):
+                for index, child in enumerate(value):
+                    visit(child, (*path, index))
+        visit(schema)
+        properties = schema["properties"]["draft"]["anyOf"][0]["properties"]["results"]["items"]["properties"]
+        self.assertEqual(properties["summary"], {"type":"string"})
+        self.assertEqual(properties["evidence"]["items"]["properties"]["path"], {"type":"string"})
+        self.assertEqual(schema["properties"]["routing"]["items"]["properties"]["review_id"]["enum"], self.task["review_ids"])
+
     def test_expert_job_uses_only_its_bound_profile_and_role(self):
         primary = launcher.provider_contract(self.config)
         self.config["model"] = "gpt-6-sol"

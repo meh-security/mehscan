@@ -39,7 +39,7 @@ def build_schema(task, *, bound_handles=True):
     edge = object_schema({"edge":text,"status":{"type":"string","enum":["open","inspected","blocked"]},
         "cause":{"type":["string","null"],"enum":[None,"search_limited","not_found_in_scope","unsupported","external_required","human_required","budget_exhausted"]},
         "artifacts":artifacts})
-    routing = {"type":"array", "items":object_schema({"review_id":text,
+    routing = {"type":"array", "items":object_schema({"review_id":{"type":"string"},
         "reason":{"type":"string","enum":["reasoning_gap","control_applicability","conflicting_evidence",
             "risky_dismissal","external_required","human_required","budget_exhausted"]}})}
     if task["kind"] == "change_pass":
