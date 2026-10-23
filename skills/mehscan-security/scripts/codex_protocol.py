@@ -8,7 +8,8 @@ def object_schema(properties):
 
 def build_schema(task, *, bound_handles=True):
     text = {"type":"string"}
-    integer = {"type":"integer"}
+    integer = {"type":"integer", "minimum":1}
+    limit = {"type":"integer", "minimum":1, "maximum":100}
     strings = {"type":"array","items":text}
     source_ref = object_schema({"side":{"type":"string","enum":["current","base"]},"path":text,"start_line":integer,"end_line":integer})
     if task["kind"] == "change_pass":
@@ -30,9 +31,9 @@ def build_schema(task, *, bound_handles=True):
         if tool == "definition" and bound_handles and task["research"].get("queries_remaining", 2) < 2:
             continue
         props = ({"path":text,"start_line":integer,"end_line":integer} if tool in ("source","base_source") else
-                 {"name":text,"path":{"type":["string","null"]},"limit":integer} if tool in ("symbol", "definition") else
-                 {"symbol":text,"path":{"type":["string","null"]},"path_prefix":{"type":["string","null"]},"limit":integer} if tool == "references" else
-                 {"name":text,"limit":integer})
+                 {"name":text,"path":{"type":["string","null"]},"limit":limit} if tool in ("symbol", "definition") else
+                 {"symbol":text,"path":{"type":["string","null"]},"path_prefix":{"type":["string","null"]},"limit":limit} if tool == "references" else
+                 {"name":text,"limit":limit})
         query_variants.append(object_schema({"tool":{"type":"string","enum":[tool]},"review_id":query_id,
                                             "purpose":text,"arguments":object_schema(props)}))
     query = {"anyOf":query_variants}

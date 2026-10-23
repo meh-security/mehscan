@@ -179,6 +179,16 @@ class Adapter(unittest.TestCase):
         self.assertEqual(protocol.build_schema(self.task)["properties"]["research"]["maxItems"], 1)
         self.assertIn("definition", tools(protocol.build_schema(self.task, bound_handles=False)))
 
+    def test_native_lookup_numeric_domains_are_present_in_actual_wire_schema(self):
+        variants = protocol.build_schema(self.task)["properties"]["research"]["items"]["anyOf"]
+        for variant in variants:
+            arguments = variant["properties"]["arguments"]["properties"]
+            for name in ("start_line", "end_line", "limit"):
+                if name in arguments:
+                    self.assertEqual(arguments[name]["minimum"], 1)
+            if "limit" in arguments:
+                self.assertEqual(arguments["limit"]["maximum"], 100)
+
     def test_expert_job_uses_only_its_bound_profile_and_role(self):
         primary = launcher.provider_contract(self.config)
         self.config["model"] = "gpt-6-sol"
