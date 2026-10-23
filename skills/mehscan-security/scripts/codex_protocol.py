@@ -49,6 +49,10 @@ def build_schema(task, *, bound_handles=True):
     schema = object_schema({"action":{"type":"string","enum":["research","final"]},"research":{"type":"array","items":query},
         "draft":{"anyOf":[draft,{"type":"null"}]},"working_chain":text,"progress":{"type":"array","items":edge},
         "routing":routing})
+    if task.get("review_role") == "adjudication":
+        schema["properties"]["resolutions"] = {"type":"array", "items":object_schema({
+            "review_id":{"type":"string", "enum":task["adjudicate_ids"]}, "disputed_claim":text, "reason":text})}
+        schema["required"].append("resolutions")
     return schema
 
 
@@ -103,6 +107,8 @@ def envelope(response):
     out = {"working_chain": response["working_chain"], "progress": response["progress"]}
     if response.get("routing"):
         out["routing"] = response["routing"]
+    if "resolutions" in response:
+        out["resolutions"] = response["resolutions"]
     if response["action"] == "research" and response["draft"] is None and response["research"]:
         for value in response["research"]:
             value["arguments"] = {key: item for key, item in value["arguments"].items() if item is not None}

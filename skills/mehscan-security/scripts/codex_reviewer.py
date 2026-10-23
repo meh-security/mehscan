@@ -114,6 +114,12 @@ def run(config, task, launcher_factory=Launcher):
     expected = provider_contract(config)
     runtime = packet["work"]["runtime"]
     profile = task.get("profile", "routine")
+    role = task.get("review_role", "investigator")
+    quality = (runtime.get("orchestration") or {}).get("quality") or {}
+    if role not in ("investigator", "verification", "adjudication", "final_qa") or (
+            role in ("adjudication", "final_qa") and (profile != "expert" or not quality.get(
+                "adjudicate_disagreements" if role == "adjudication" else "final_qa"))):
+        raise ValueError("review role is not enabled by the native runtime")
     allowed = runtime.get("provider") if profile == "routine" else (runtime.get("orchestration") or {}).get("expert") if profile == "expert" else None
     if allowed != expected:
         raise ValueError("provider configuration differs from the native work binding")

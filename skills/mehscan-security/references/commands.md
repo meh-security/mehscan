@@ -168,6 +168,13 @@ typed routing, proposed issues and seeded closure audits select a second stage.
 Keep the normal primary descriptor on native work/record calls. Native tiered
 admission also requires the controller's `--review-execution FILE` and its
 `assessments/` artifacts. Do not hand-assemble execution receipts to bypass review.
-Contrary verdicts remain pending; inspect both source-backed assessments for
-adjudication. The Action's automatic single-profile setup does not configure this
+Optionally add `quality: {"adjudicate_disagreements": true, "final_qa": true}`
+to the orchestration JSON. Budget for up to four conversations per bundle plus
+their research turns. Adjudication retains the independent assessments and names
+the disputed claim and source resolution; unavailable external facts stay pending.
+Final QA can reopen exact IDs but cannot dismiss or promote a finding. It checks
+bounded bundles with a capped set of same-file peers, not a whole-run transcript;
+peer omissions remain explicit. Preserve `quality-summary.json` with the stage
+receipts. Without this policy, contrary verdicts remain pending for later review.
+The Action's automatic single-profile setup does not configure this
 local opt-in workflow. Preserve the run's checkpoints, receipts and stage files.

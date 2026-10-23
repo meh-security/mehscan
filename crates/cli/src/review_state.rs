@@ -1716,19 +1716,33 @@ fn validate_execution(
             .iter()
             .find(|r| r.response.review_id == case.review_id)
             .ok_or("execution receipt names an unrelated review")?;
-        if !seen.insert(&case.review_id) || !(1..=2).contains(&case.assessments.len()) {
+        if !seen.insert(&case.review_id) || !(1..=3).contains(&case.assessments.len()) {
             return Err("execution receipt contains duplicate or missing assessments".into());
         }
         let mut profiles = std::collections::BTreeSet::new();
         let mut jobs = std::collections::BTreeSet::new();
-        for assessment in &case.assessments {
+        for (index, assessment) in case
+            .assessments
+            .iter()
+            .chain(case.quality_review.iter())
+            .enumerate()
+        {
+            let expected_role = if index == case.assessments.len() {
+                "final_qa"
+            } else {
+                ["investigator", "verification", "adjudication"][index]
+            };
             let expected = match assessment.profile.as_str() {
                 "routine" => primary,
                 "expert" => &policy.expert,
                 _ => return Err("unknown execution provider profile".into()),
             };
             if &assessment.provider != expected
-                || !profiles.insert(&assessment.profile)
+                || assessment.role != expected_role
+                || (index < case.assessments.len()
+                    && index < 2
+                    && !profiles.insert(&assessment.profile))
+                || ((index >= 2 || expected_role == "final_qa") && assessment.profile != "expert")
                 || !digest(&assessment.job_id)
                 || !digest(&assessment.response_sha256)
                 || !jobs.insert(&assessment.job_id)
@@ -1775,25 +1789,99 @@ fn validate_execution(
         }
         let final_decision = record.response.decision;
         let first = case.assessments[0].decision;
-        if final_decision == Issue
-            && (case.assessments.len() != 2 || case.assessments.iter().any(|a| a.decision != Issue))
-        {
-            return Err("reported issue requires two independent bound assessments".into());
-        }
-        if final_decision != NeedsReview
-            && case
-                .assessments
+        let quality = policy.quality.as_ref();
+        let adjudicated = case.assessments.len() == 3;
+        let basis = if adjudicated {
+            if !quality.is_some_and(|q| q.adjudicate_disagreements) {
+                return Err("adjudication is not enabled by the native policy".into());
+            }
+            let resolution = case
+                .resolution
+                .as_ref()
+                .ok_or("adjudication requires an explicit source resolution")?;
+            if resolution.disputed_claim.trim().is_empty()
+                || resolution.disputed_claim.chars().count() > 300
+                || resolution.reason.trim().is_empty()
+                || resolution.reason.chars().count() > 500
+            {
+                return Err(
+                    "adjudication resolution must name a bounded disputed claim and reason".into(),
+                );
+            }
+            let assessment = &case.assessments[2];
+            let resolved = sources[&assessment.job_id]
+                .1
+                .results
                 .iter()
-                .any(|a| a.decision != final_decision)
-        {
+                .find(|r| r.review_id == case.review_id)
+                .unwrap();
+            let reason = resolution
+                .reason
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !resolved.investigation.as_ref().is_some_and(|trace| {
+                !trace.decisive_artifacts.is_empty()
+                    && trace.reviewer_inferences.iter().any(|i| i.claim == reason)
+            }) {
+                return Err("adjudication resolution is not bound to its source assessment".into());
+            }
+            let decision = assessment.decision;
+            if decision != NeedsReview
+                && !case.assessments[..2].iter().any(|a| a.decision == decision)
+            {
+                // A newly proposed verdict needs another independent assessment.
+                NeedsReview
+            } else {
+                decision
+            }
+        } else {
+            if case.resolution.is_some() {
+                return Err("resolution requires an adjudication assessment".into());
+            }
+            if case.assessments.iter().any(|a| a.decision != first) {
+                NeedsReview
+            } else {
+                first
+            }
+        };
+        if let Some(blocker) = &case.blocker {
+            if !matches!(
+                blocker.as_str(),
+                "external_required" | "human_required" | "budget_exhausted"
+            ) || final_decision != NeedsReview
+            {
+                return Err("unavailable facts must remain pending".into());
+            }
+        }
+        if final_decision == Issue && (case.assessments.len() < 2 || basis != Issue) {
+            return Err(
+                "reported issue requires two independent bound assessments and resolved evidence"
+                    .into(),
+            );
+        }
+        if final_decision != NeedsReview && final_decision != basis {
             return Err("conflicting assessments require explicit pending adjudication".into());
         }
         let sample = Sha256::digest(format!("{}:{}", policy.audit_seed, case.review_id).as_bytes());
         let sampled =
             u32::from_be_bytes(sample[..4].try_into().unwrap()) % 100 < policy.audit_percent as u32;
-        if final_decision == NotIssue && first == NotIssue && sampled && case.assessments.len() != 2
-        {
+        if final_decision == NotIssue && sampled && case.assessments.len() < 2 {
             return Err("sampled closure requires an independent assessment".into());
+        }
+        if quality.is_some_and(|q| q.final_qa) {
+            let qa = case
+                .quality_review
+                .as_ref()
+                .ok_or("native quality policy requires a final QA assessment")?;
+            if qa.decision != NeedsReview && qa.decision != basis {
+                return Err("final QA cannot change a verdict except to reopen it".into());
+            }
+            if final_decision != NeedsReview && qa.decision != final_decision {
+                return Err("final QA reopening must remain pending".into());
+            }
+        } else if case.quality_review.is_some() {
+            return Err("final QA is not enabled by the native policy".into());
         }
     }
     Ok(())

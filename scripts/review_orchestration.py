@@ -8,6 +8,7 @@ import time
 
 ROUTING_REASONS = {"reasoning_gap", "control_applicability", "conflicting_evidence", "risky_dismissal",
                    "external_required", "human_required", "budget_exhausted"}
+UNAVAILABLE = {"external_required", "human_required", "budget_exhausted"}
 
 
 class BudgetExhausted(RuntimeError):
@@ -141,9 +142,95 @@ def reconcile(primary, secondary, primary_profile, routing=()):
             question = ("Resolve the contrary assessments for this exact operation using their decisive source evidence."
                         if first["decision"] != second["decision"] else
                         "Resolve the independent assessor's remaining question for this exact operation.")
-            chosen["checks"] = list(dict.fromkeys([*chosen.get("checks", []), question]))
+            chosen["checks"] = list(dict.fromkeys([*first.get("checks", []), *second.get("checks", []), question]))
             chosen["investigation"]["blockers"] = list(dict.fromkeys([
-                *chosen["investigation"].get("blockers", []), question]))
+                *first["investigation"].get("blockers", []), *second["investigation"].get("blockers", []), question]))
         chosen["investigation"]["journal_summary"] = None
         result["results"][index] = chosen
     return result
+
+
+def adjudication_ids(stages):
+    reasons = {item["review_id"]: item["reason"] for stage in stages for item in stage["routing"]
+               if item["reason"] in UNAVAILABLE}
+    left, right = ({r["review_id"]: r for r in stage["response"]["results"]} for stage in stages)
+    routed = {item["review_id"] for stage in stages for item in stage["routing"]}
+    return sorted(identity for identity in left if identity not in reasons and (
+        left[identity]["decision"] != right[identity]["decision"] or identity in routed))
+
+
+def validate_resolutions(values, ids, draft):
+    if not isinstance(values, list) or {v.get("review_id") for v in values} != set(ids) or len(values) != len(ids):
+        raise ValueError("adjudication must resolve exactly its assigned IDs")
+    results = {r["review_id"]: r for r in draft["results"]}
+    for value in values:
+        if set(value) != {"review_id", "disputed_claim", "reason"} or any(
+                not isinstance(value[key], str) or not 1 <= len(value[key].strip()) <= limit
+                for key, limit in (("disputed_claim", 300), ("reason", 500))):
+            raise ValueError("adjudication requires a bounded disputed claim and source reason")
+        result = results[value["review_id"]]
+        if not result.get("evidence"):
+            raise ValueError("adjudication requires explicit source evidence")
+        # Pin the explanation into the ordinary source-cited native assessment.
+        result["reason"] = " ".join(value["reason"].split())
+    return values
+
+
+def apply_resolution(baseline, resolved, stages, ids):
+    result = copy.deepcopy(baseline)
+    by_id = {r["review_id"]: r for r in resolved["results"]}
+    for index, prior in enumerate(result["results"]):
+        identity = prior["review_id"]
+        if identity not in ids:
+            continue
+        chosen = copy.deepcopy(by_id[identity])
+        labels = {r["decision"] for stage in stages for r in stage["response"]["results"] if r["review_id"] == identity}
+        if chosen["decision"] != "needs_review" and chosen["decision"] not in labels:
+            chosen.update(decision="needs_review", confidence="low", diagnosis=None)
+            question = "Independently assess the new verdict proposed during adjudication."
+            chosen["checks"] = [question]
+            chosen["investigation"]["blockers"] = [question]
+        chosen["investigation"]["journal_summary"] = None
+        result["results"][index] = chosen
+    return result
+
+
+def apply_qa(baseline, checked):
+    result = copy.deepcopy(baseline)
+    checked_by_id = {r["review_id"]: r for r in checked["results"]}
+    if len(checked_by_id) != len(checked["results"]) or set(checked_by_id) != {r["review_id"] for r in baseline["results"]}:
+        raise ValueError("final QA differs from assigned review coverage")
+    for index, prior in enumerate(result["results"]):
+        candidate = checked_by_id[prior["review_id"]]
+        if candidate["decision"] not in (prior["decision"], "needs_review"):
+            raise ValueError("final QA can only preserve a verdict or reopen its exact ID")
+        if candidate["decision"] == "needs_review":
+            chosen = copy.deepcopy(candidate)
+            chosen["checks"] = list(dict.fromkeys([*prior.get("checks", []), *chosen.get("checks", [])]))
+            chosen["investigation"]["blockers"] = list(dict.fromkeys([
+                *prior["investigation"].get("blockers", []), *chosen["investigation"].get("blockers", [])]))
+            chosen["investigation"]["journal_summary"] = None
+            result["results"][index] = chosen
+    return result
+
+
+def index_peers(responses):
+    """Index source relationships once; QA jobs need not rescan every artifact."""
+    rows = {row["review_id"]:row for response in responses for row in response["results"]}
+    paths, by_path = {}, {}
+    for identity, row in rows.items():
+        paths[identity] = {a["location"]["path"] for a in (row.get("investigation") or {}).get("decisive_artifacts", [])}
+        for path in paths[identity]:
+            by_path.setdefault(path, set()).add(identity)
+    return rows, paths, by_path
+
+
+def peer_context(index, assigned, limit):
+    """Bound cross-bundle navigation by shared source files, not a run transcript."""
+    rows, paths, by_path = index
+    wanted = set().union(*(paths[identity] for identity in assigned))
+    peers = sorted(set().union(*(by_path[path] for path in wanted)) - assigned)
+    return {"related_reviews": [{"review_id":identity, "decision":rows[identity]["decision"],
+        "summary":rows[identity]["summary"], "paths":sorted(paths[identity]), "diagnosis":rows[identity].get("diagnosis")}
+        for identity in peers[:limit]], "omitted_related_reviews":max(0, len(peers) - limit),
+        "scope":"Navigation only; each peer has its own QA job. No global completeness claim."}

@@ -85,8 +85,10 @@ def sections(path, names):
 def compile_contract(skill_root, kind, entries, paths, playbooks=None, role="investigator"):
     core = skill_root / "references/runtime-review.md"
     result = [sections(core, ["common", kind] + (["guard_changes"] if kind == "change_pass" else []))]
-    if role == "verification":
-        result.append(sections(core, ["verification"]))
+    if role in ("verification", "adjudication", "final_qa"):
+        result.append(sections(core, [role]))
+    elif role != "investigator":
+        raise ValueError("unknown reviewer role")
     if any(entry.get("capability") == "html_output" for entry in entries) or any(
             Path(path).suffix.lower() in (".html", ".htm", ".vue", ".jsx", ".tsx") for path in paths):
         result.append(sections(skill_root / "references/html-output-review.md", ["chain", "frontend", "dom", "writers", "decisions"]))

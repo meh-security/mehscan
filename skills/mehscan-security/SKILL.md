@@ -13,6 +13,9 @@ For a configured tiered controller run, preserve the bound routine/expert
 profiles and shared budgets. Investigators return decisions and typed routing
 requests; independent assessors use the verification section of that contract.
 Let the controller reconcile assessments and account for sampled dismissals.
+When enabled, adjudication names and resolves a concrete source disagreement;
+final QA can reopen exact IDs, never silently discard findings. Both use the
+matching compiled role section and the same source tools and shared budgets.
 Do not resume a conversation under another model or replace unresolved conflicts
 with a confidence threshold. Local controller setup is in the installed
 [controller commands](references/commands.md#tiered-controller).

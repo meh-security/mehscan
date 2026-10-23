@@ -98,6 +98,26 @@ class Adapter(unittest.TestCase):
             self.assertEqual(json.loads(rows[0])["conversation_id"], letter * 64)
         self.assertFalse((self.public / "provider-metrics.jsonl").exists())
 
+    def test_quality_roles_require_explicit_policy_and_resolution_wire_contract(self):
+        primary = launcher.provider_contract(self.config)
+        self.config["model"] = "gpt-6-sol"
+        expert = launcher.provider_contract(self.config)
+        self.body["work"]["runtime"].update(provider=primary, orchestration={"expert":expert})
+        self.task.update(kind="native_bundle", review_ids=["id"], adjudicate_ids=["id"], profile="expert", review_role="adjudication")
+        self.body["job_binding"] = {"profile":"expert", "role":"adjudication", "provider":expert}
+        self.packet.write_text(json.dumps(self.body))
+        with self.assertRaisesRegex(ValueError, "not enabled"):
+            self.invoke()
+        self.assertEqual(self.calls, [])
+        schema = protocol.build_schema(self.task)
+        self.assertIn("resolutions", schema["required"])
+        self.assertEqual(schema["properties"]["resolutions"]["items"]["properties"]["review_id"]["enum"], ["id"])
+        resolutions = [{"review_id":"id", "disputed_claim":"Actual guard?", "reason":"The supplied source contains the effective check."}]
+        output = protocol.envelope({"action":"final", "research":[], "draft":{"results":[]}, "working_chain":"", "progress":[], "resolutions":resolutions})
+        self.assertEqual(output["resolutions"], resolutions)
+        self.task["review_role"] = "final_qa"
+        self.assertNotIn("resolutions", protocol.build_schema(self.task)["properties"])
+
     def test_expert_job_uses_only_its_bound_profile_and_role(self):
         primary = launcher.provider_contract(self.config)
         self.config["model"] = "gpt-6-sol"

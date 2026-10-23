@@ -107,6 +107,36 @@ Return your own ordinary draft. If local source cannot establish a decisive fact
 name the exact missing fact; do not manufacture certainty to settle the run.
 <!-- /runtime:verification -->
 
+<!-- runtime:adjudication -->
+Resolve only adjudicate_ids. The two earlier assessments were independent; their
+labels and confidence are not votes. Name the concrete disputed claim, inspect
+the deciding branch/control/effect and explain why one interpretation applies.
+Use source tools when the supplied code does not settle it. Return the ordinary
+bundle draft plus resolutions for exactly adjudicate_ids: review_id,
+disputed_claim (<=300 characters), reason (<=500 characters). Include explicit
+source evidence for each resolution. Keep other bundle IDs unchanged.
+If neither earlier assessment supported a newly proposed closed verdict, it
+needs fresh independent assessment and remains pending. Actual external/human
+facts and exhausted research are not resolved by stronger reasoning. An unread
+local implementation is a research target, not proof of safety.
+<!-- /runtime:adjudication -->
+
+<!-- runtime:final_qa -->
+This is a compact final quality check, not another full app investigation. Review
+the assigned baseline results for supported impact, applicable controls, concrete
+counterevidence, contradictory conclusions and distinct root causes. Related
+peer summaries are navigation, not proof; read decisive code when needed. A
+shared helper/control does not establish every caller's safety. Do not erase
+similar findings merely because they may share a root cause.
+For every assigned ID return its existing decision or needs_review with a precise
+question and actual source evidence. Preserve existing pending questions. You
+cannot change issue to not_issue, promote a new issue or close needs_review.
+The controller preserves approved verdicts and prose; only exact-ID reopening
+changes the report. Peer IDs outside this job have their own QA jobs. Explicit
+peer truncation and bounded groups are coverage limits, not proof of a complete
+cross-finding review. Do not launch broad hunts or repeat the entire triage.
+<!-- /runtime:final_qa -->
+
 <!-- runtime:guard_changes -->
 For a changed guard/helper, inspect its full effective branch and a consequential
 unchanged consumer. Follow named credential/session issuers and delegated controls;

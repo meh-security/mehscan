@@ -131,21 +131,23 @@ else:
             "--reviewer-label", "deterministic/medium", "--run", str(self.run), "--output", str(self.base / name), *extra],
             capture_output=True, text=True, encoding="utf-8", timeout=60)
 
-    def configure_tiered(self, run_calls=2):
+    def configure_tiered(self, run_calls=2, quality=False, research_rounds=0):
         from argparse import Namespace
         primary = {"schema_version":"1", "provider":"codex-cli", "executable_version":"fixture-1",
                    "model":"gpt-6-luna", "reasoning_effort":"medium"}
         expert = {**primary, "model":"gpt-6-sol"}
         provider = self.base / "provider.json"
         provider.write_text(json.dumps(primary))
-        limits = {"model_calls":2, "queries":0, "bytes":262144, "timeout_seconds":300}
+        limits = {"model_calls":run_calls if quality else 2, "queries":6 if research_rounds else 0, "bytes":262144, "timeout_seconds":300}
         policy = {"expert":expert, "case_limits":limits, "run_limits":{**limits, "model_calls":run_calls},
                   "max_reviews_per_job":5, "audit_percent":100, "audit_seed":"controller-test"}
+        if quality:
+            policy["quality"] = {"adjudicate_disagreements":True, "final_qa":True}
         policy_path = self.base / "orchestration.json"
         policy_path.write_text(json.dumps(policy))
         draft = self.native("state", "plan-template", "--inventory", str(self.inventory), "--source-root", str(self.root),
             "--policy", "comprehensive", "--skill-root", str(ROOT / "skills/mehscan-security"),
-            "--provider-contract", str(provider), "--review-orchestration", str(policy_path), "--research-rounds", "0")
+            "--provider-contract", str(provider), "--review-orchestration", str(policy_path), "--research-rounds", str(research_rounds))
         plan = self.base / "tiered-plan.json"
         plan.write_text(json.dumps(draft))
         parent = json.loads(self.package.read_text())["payload"]["plan_id"]
@@ -215,6 +217,104 @@ else:
                     stage.write_bytes(stage_bytes)
             return original(command, cwd, env, timeout, payload)
         return execute
+
+    def quality_provider(self, calls, reopen=False, interrupt_qa=False):
+        base = self.tiered_provider(calls, conflict=True)
+        original, qa_turns, interrupted = worker.execute, [], []
+        qa_id = worker.context.digest(["native_bundle", self.ids, "expert", "final_qa"])
+        def execute(command, cwd, env, timeout, payload=None):
+            if len(command) == 4 and command[1].endswith("codex_reviewer.py"):
+                task = json.loads(payload)
+                role = task["review_role"]
+                if role in ("investigator", "verification"):
+                    return base(command, cwd, env, timeout, payload)
+                calls.append((task["profile"], role))
+                packet = json.loads(Path(task["evidence_packet"]).read_text())
+                self.assertIn(role, [s for row in packet["contract"]["sources"] for s in row["sections"]])
+                if role == "final_qa" and interrupt_qa and not qa_turns:
+                    qa_turns.append(True)
+                    return {"research":[{"tool":"references", "review_id":task["review_ids"][0],
+                        "arguments":{"symbol":"eval", "limit":10}}]}
+                response = {"draft":{"results":[{"review_id":identity,
+                    "decision":"needs_review" if role == "final_qa" and reopen else "issue", "confidence":"medium",
+                    "summary":"Exact source question remains." if reopen and role == "final_qa" else "The request operand reaches evaluation.",
+                    "reason":"The handler directly evaluates the request operand without a rejection branch.",
+                    "checks":["Confirm whether this handler is reachable from the exposed application."] if reopen and role == "final_qa" else [],
+                    "blockers":[], "evidence":[{"path":"app.js", "start_line":1,"end_line":1}]}
+                    for identity in task["review_ids"]]}, "progress":[], "working_chain":"", "routing":[]}
+                if role == "adjudication":
+                    self.assertEqual(len(packet["stage_context"]["assessments"]), 2)
+                    response["resolutions"] = [{"review_id":identity,
+                        "disputed_claim":"Does a control reject the request operand before evaluation?",
+                        "reason":"The complete handler evaluates request.query.code without a control branch."}
+                        for identity in task["adjudicate_ids"]]
+                else:
+                    self.assertEqual(packet["stage_context"]["baseline"]["results"][0]["decision"], "issue")
+                    self.assertIn("related_reviews", packet["stage_context"])
+                return response
+            result = original(command, cwd, env, timeout, payload)
+            if interrupt_qa and command[1:3] == ["investigate", "review-bundle-finalize"] and not interrupted:
+                target = Path(command[command.index("--output") + 1])
+                if target.name == qa_id + ".json":
+                    interrupted.append(True)
+                    raise TimeoutError("QA draft completed, finalization response lost")
+            return result
+        return execute
+
+    def test_source_adjudication_and_final_qa_admit_a_resolved_issue_with_native_guards(self):
+        args = self.configure_tiered(run_calls=4, quality=True)
+        calls = []
+        provider = self.quality_provider(calls)
+        original = worker.execute
+        def guarded(command, cwd, env, timeout, payload=None):
+            if command[1:3] == ["state", "record"]:
+                path = Path(command[command.index("--review-execution") + 1])
+                saved = path.read_bytes()
+                for mutation, diagnostic in (("qa", "requires a final QA"), ("resolution", "not bound to its source"), ("role", "provider policy")):
+                    receipt = json.loads(saved)
+                    case = receipt["cases"][0]
+                    if mutation == "qa":
+                        case.pop("quality_review")
+                    elif mutation == "resolution":
+                        case["resolution"]["reason"] = "Invented explanation not present in the assessment."
+                    else:
+                        case["assessments"][2]["role"] = "verification"
+                    path.write_text(json.dumps(receipt))
+                    try:
+                        with self.assertRaises(worker.CommandFailure) as rejected:
+                            original(command, cwd, env, timeout, payload)
+                        self.assertIn(diagnostic, rejected.exception.stderr)
+                    finally:
+                        path.write_bytes(saved)
+            return provider(command, cwd, env, timeout, payload)
+        with patch.object(worker, "execute", guarded):
+            result = worker.run(args)
+        self.assertEqual(result["status"], "admitted", result)
+        self.assertEqual(calls, [("routine","investigator"), ("expert","verification"), ("expert","adjudication"), ("expert","final_qa")])
+        self.assertEqual(result["completion"]["issue_review_ids"], self.ids)
+        case = json.loads((Path(args.output) / "review-execution.json").read_text())["cases"][0]
+        self.assertEqual([r["decision"] for r in case["assessments"]], ["issue", "not_issue", "issue"])
+        self.assertEqual(case["quality_review"]["decision"], "issue")
+
+    def test_final_qa_reopens_exact_ids_and_recovers_research_without_repeating_models(self):
+        args = self.configure_tiered(run_calls=6, quality=True, research_rounds=1)
+        calls = []
+        provider = self.quality_provider(calls, reopen=True, interrupt_qa=True)
+        with patch.object(worker, "execute", provider):
+            first = worker.run(args)
+        self.assertEqual(first["status"], "incomplete", first)
+        self.assertEqual(len(calls), 5)
+        original = Path(args.output)
+        args.resume_from, args.output = str(original), str(self.base / "quality-resumed")
+        with patch.object(worker, "execute", provider):
+            result = worker.run(args)
+        self.assertEqual(result["status"], "admitted", result)
+        self.assertEqual(len(calls), 5)
+        self.assertEqual(result["completion"]["pending_review_ids"], self.ids)
+        summary = json.loads((Path(args.output) / "quality-summary.json").read_text())
+        self.assertEqual(summary["reopened_review_ids"], self.ids)
+        self.assertEqual(json.loads((Path(args.output) / "budget.json").read_text())["totals"]["model_calls"], 5)
+        self.assertEqual((original / "decisions" / next((original / "decisions").iterdir()).name).read_bytes(), next((Path(args.output) / "decisions").iterdir()).read_bytes())
 
     def test_tiered_blind_reviews_preserve_conflicts_as_native_pending_work(self):
         args = self.configure_tiered()

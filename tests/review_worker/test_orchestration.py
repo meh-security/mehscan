@@ -18,6 +18,53 @@ def policy(calls=4, run_calls=6):
 
 
 class Orchestration(unittest.TestCase):
+    def test_adjudication_does_not_retry_unavailable_facts_or_vote_on_new_verdicts(self):
+        def response(decision):
+            return {"results":[{"review_id":"id", "decision":decision, "checks":[],
+                "investigation":{"journal_summary":None,"blockers":[],"decisive_artifacts":[]}}]}
+        stages = [{"response":response("needs_review"), "routing":[{"review_id":"id", "reason":"external_required"}]},
+                  {"response":response("issue"), "routing":[]}]
+        self.assertEqual(flow.adjudication_ids(stages), [])
+        stages[0]["routing"] = []
+        self.assertEqual(flow.adjudication_ids(stages), ["id"])
+        stages[1]["response"] = response("needs_review")
+        result = flow.apply_resolution(response("needs_review"), response("issue"), stages, ["id"])
+        self.assertEqual(result["results"][0]["decision"], "needs_review")
+        self.assertIn("Independently assess", result["results"][0]["checks"][0])
+        stages[0]["response"] = response("issue")
+        self.assertEqual(flow.apply_resolution(response("needs_review"), response("issue"), stages, ["id"])["results"][0]["decision"], "issue")
+
+    def test_final_qa_preserves_approved_evidence_and_reopens_only_assigned_ids(self):
+        baseline = {"results":[{"review_id":"id", "decision":"issue", "summary":"original", "checks":[],
+            "investigation":{"journal_summary":{},"blockers":[],"decisive_artifacts":["original"]}}]}
+        qa = copy.deepcopy(baseline)
+        qa["results"][0]["summary"] = "Rewritten prose should not replace the verdict."
+        self.assertEqual(flow.apply_qa(baseline, qa), baseline)
+        qa["results"][0]["decision"] = "not_issue"
+        with self.assertRaisesRegex(ValueError, "only preserve"):
+            flow.apply_qa(baseline, qa)
+        qa["results"][0].update(decision="needs_review", checks=["Read the effective guard."])
+        self.assertEqual(flow.apply_qa(baseline, qa)["results"][0]["decision"], "needs_review")
+        qa["results"][0]["review_id"] = "unassigned"
+        with self.assertRaisesRegex(ValueError, "coverage"):
+            flow.apply_qa(baseline, qa)
+
+    def test_resolution_requires_source_and_peer_navigation_is_bounded(self):
+        draft = {"results":[{"review_id":"id", "decision":"issue", "evidence":[]}]}
+        resolution = [{"review_id":"id", "disputed_claim":"Is there a guard?", "reason":"No guard precedes this operation."}]
+        with self.assertRaisesRegex(ValueError, "explicit source"):
+            flow.validate_resolutions(resolution, ["id"], draft)
+        draft["results"][0]["evidence"] = [{"path":"app.ts", "start_line":1, "end_line":2}]
+        flow.validate_resolutions(resolution, ["id"], draft)
+        self.assertEqual(draft["results"][0]["reason"], resolution[0]["reason"])
+        def row(identity, path):
+            return {"review_id":identity,"decision":"issue","summary":"source question", "investigation":{
+                "decisive_artifacts":[{"location":{"path":path}}]}}
+        index = flow.index_peers([{"results":[row("id","app.ts"),row("same1","app.ts"),row("same2","app.ts"),row("other","other.ts")]}])
+        context = flow.peer_context(index, {"id"}, 1)
+        self.assertEqual([r["review_id"] for r in context["related_reviews"]], ["same1"])
+        self.assertEqual(context["omitted_related_reviews"], 1)
+
     def test_profiles_share_case_and_run_reservations_and_recovery_keeps_spend(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "budget.json"

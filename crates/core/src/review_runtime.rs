@@ -112,6 +112,15 @@ pub struct ReviewOrchestrationContract {
     pub max_reviews_per_job: usize,
     pub audit_percent: usize,
     pub audit_seed: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<ReviewQualityPolicy>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewQualityPolicy {
+    pub adjudicate_disagreements: bool,
+    pub final_qa: bool,
 }
 
 impl ReviewOrchestrationContract {
@@ -123,7 +132,7 @@ impl ReviewOrchestrationContract {
         }
         let case = &self.case_limits;
         let run = &self.run_limits;
-        if !(2..=22).contains(&case.model_calls)
+        if !(2..=44).contains(&case.model_calls)
             || case.queries > 200
             || !(1..=16 * 1024 * 1024).contains(&case.bytes)
             || !(1..=7200).contains(&case.timeout_seconds)
@@ -149,6 +158,7 @@ impl ReviewOrchestrationContract {
 pub struct ReviewAssessmentReceipt {
     pub job_id: String,
     pub profile: String,
+    pub role: String,
     pub provider: ReviewProviderContract,
     pub decision: crate::ReviewDecision,
     pub response_sha256: String,
@@ -159,6 +169,19 @@ pub struct ReviewAssessmentReceipt {
 pub struct ReviewCaseExecution {
     pub review_id: String,
     pub assessments: Vec<ReviewAssessmentReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<ReviewResolution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_review: Option<ReviewAssessmentReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewResolution {
+    pub disputed_claim: String,
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -285,6 +308,7 @@ mod tests {
             max_reviews_per_job: 5,
             audit_percent: 10,
             audit_seed: "fixed".into(),
+            quality: None,
         };
         assert!(policy.validate(Some(&primary)).is_err());
         policy.expert.model = "gpt-6-sol".into();

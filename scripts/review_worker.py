@@ -567,6 +567,7 @@ def run_locked(args):
                    "reviewer_configuration": reviewer_configuration,
                    "kind": task["kind"], "review_ids": task.get("review_ids", []),
                    "profile": task.get("profile", "routine"), "role": task.get("review_role", "investigator"),
+                   "stage_context_sha256": context.digest(task.get("stage_context")),
                    "bundle_sha256": digest_file(task["bundle"]) if task.get("bundle") else None}
         return JobCheckpoint(output / "jobs" / (identity + ".json"), binding,
                              recovery / "jobs" / (identity + ".json") if recovery else None)
@@ -634,6 +635,10 @@ def run_locked(args):
         if tiered_policy:
             packet["job_binding"] = {"profile": profile, "role": role,
                 "provider": tiered_policy["expert"] if profile == "expert" else bound_runtime["provider"]}
+        if task.get("stage_context") is not None:
+            packet["stage_context"] = task["stage_context"]
+        if role == "adjudication":
+            packet["adjudicate_ids"] = task["adjudicate_ids"]
         if role == "verification":
             # Neither current drafts nor historical verdicts belong in the blind
             # assessment. Source updates remain facts, with their original scope.
@@ -746,7 +751,7 @@ def run_locked(args):
             received_response = json.loads(json.dumps(value))
             try:
                 if isinstance(value, dict) and ("working_chain" in value or "progress" in value or "draft" in value or "routing" in value):
-                    if value.keys() - {"research", "draft", "working_chain", "progress", "routing"}:
+                    if value.keys() - {"research", "draft", "working_chain", "progress", "routing", "resolutions"}:
                         raise ValueError("review envelope contains unsupported fields")
                     routing = orchestration.validate_routing(value.get("routing", []), ids)
                     job.save(routing=routing)
@@ -778,6 +783,11 @@ def run_locked(args):
                         if any(item["reason"] in {"external_required", "human_required", "budget_exhausted"}
                                and decisions.get(item["review_id"]) != "needs_review" for item in routing):
                             raise ValueError("missing-fact routing requires a needs_review draft")
+                        if role == "adjudication":
+                            resolutions = orchestration.validate_resolutions(value.get("resolutions"), task["adjudicate_ids"], value["draft"])
+                            job.save(resolutions=resolutions)
+                        elif value.get("resolutions"):
+                            raise ValueError("only adjudication can return resolutions")
                         return job.complete(value["draft"])
                     value = {"research": value.get("research")}
                 if not isinstance(value, dict) or "research" not in value:
@@ -1037,6 +1047,8 @@ def run_locked(args):
             execution = batch["entries"][0]["options"].get("--review-execution")
             if execution:
                 write(output / "review-execution.json", read(execution))
+            if (original_run.parent / "quality-summary.json").is_file():
+                write(output / "quality-summary.json", read(original_run.parent / "quality-summary.json"))
             receipts = mutations.apply("admission")
             record["admission_sequence"] = receipts[0]["sequence"]
             record["recovered_admission"] = True
@@ -1122,7 +1134,52 @@ def run_locked(args):
                     raise ValueError("work changed before reviewer invocation")
                 failures, execution_cases = [], {}
                 ready = {"routine": deque(), "expert": deque()}
-                (output / "assessments").mkdir()
+                if recovery and (recovery / "assessments").is_dir():
+                    copy_review_files(recovery / "assessments", output / "assessments")
+                else:
+                    (output / "assessments").mkdir()
+                if recovery and (recovery / "decisions").is_dir():
+                    copy_review_files(recovery / "decisions", output / "decisions")
+                else:
+                    (output / "decisions").mkdir()
+                quality_policy = (tiered_policy or {}).get("quality") or {}
+
+                def finalize_stage(task, job, draft, request):
+                    assessment_path = output / "assessments" / (job.path.stem + ".json")
+                    if job.state.get("assessment_sha256"):
+                        if digest_file(assessment_path) != job.state["assessment_sha256"]:
+                            raise ValueError("recovered assessment bytes changed")
+                    else:
+                        draft_path = output / ("draft-" + job.path.stem + ".json")
+                        write(draft_path, draft)
+                        native(["investigate", "review-bundle-finalize", "--bundle", str(request), "--draft", str(draft_path),
+                                "--source-root", str(root), "--journal-dir", str(journals), "--output", str(assessment_path)])
+                        job.save(assessment_sha256=digest_file(assessment_path))
+                    with shared_lock:
+                        record["jobs"][job.path.stem]["status"] = "finalized"
+                    return {"response":read(assessment_path), "routing":job.state.get("routing", []),
+                        "receipt":{"job_id":job.path.stem, "profile":task["profile"], "role":task["review_role"],
+                            "provider":tiered_policy["expert"] if task["profile"] == "expert" else bound_runtime.get("provider"),
+                            "response_sha256":digest_file(assessment_path)}}
+
+                def finalize_combined(response, filename, request, job=None):
+                    destination = output / "decisions" / filename if job else response_dir / filename
+                    if job and job.state.get("combined_sha256"):
+                        if digest_file(destination) != job.state["combined_sha256"]:
+                            raise ValueError("recovered baseline bytes changed")
+                    elif job and job.state["binding"]["role"] == "investigator":
+                        import shutil
+                        shutil.copyfile(output / "assessments" / (job.path.stem + ".json"), destination)
+                    else:
+                        draft_path = output / ("combined-" + filename)
+                        write(draft_path, response)
+                        native(["investigate", "review-bundle-finalize", "--bundle", str(request), "--draft", str(draft_path),
+                                "--source-root", str(root), "--journal-dir", str(journals), "--output", str(destination)])
+                    if job:
+                        import shutil
+                        job.save(combined_sha256=digest_file(destination))
+                        shutil.copyfile(destination, response_dir / filename)
+
                 with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="mehscan-review") as pool, \
                         ThreadPoolExecutor(max_workers=expert_workers, thread_name_prefix="mehscan-expert") as experts:
                     pools, caps = {"routine": pool, "expert": experts}, {"routine": workers, "expert": expert_workers}
@@ -1148,41 +1205,43 @@ def run_locked(args):
                             active[profile] -= 1
                             try:
                                 draft = future.result()
-                                draft_path = output / ("draft-" + job.path.stem + ".json")
-                                write(draft_path, draft)
-                                assessment_path = output / "assessments" / (job.path.stem + ".json")
-                                native(["investigate", "review-bundle-finalize", "--bundle", str(request), "--draft", str(draft_path),
-                                        "--source-root", str(root), "--journal-dir", str(journals), "--output", str(assessment_path)])
-                                assessed = read(assessment_path)
-                                receipt = {"job_id": job.path.stem, "profile": profile,
-                                    "provider": tiered_policy["expert"] if profile == "expert" else bound_runtime.get("provider"),
-                                    "response_sha256": digest_file(assessment_path)}
-                                with shared_lock:
-                                    record["jobs"][job.path.stem]["status"] = "finalized"
-                                if tiered_policy and first is None and orchestration.needs_secondary(
-                                        assessed["results"], job.state.get("routing", []), tiered_policy, profile == "expert"):
+                                stage = finalize_stage(task, job, draft, request)
+                                history = [*(first or []), stage]
+                                assessed, receipt = stage["response"], stage["receipt"]
+                                role = task["review_role"]
+                                if tiered_policy and role == "investigator" and orchestration.needs_secondary(
+                                        assessed["results"], stage["routing"], tiered_policy, profile == "expert"):
                                     next_profile = "expert" if profile == "routine" else "routine"
                                     verify_task = {**task, "profile": next_profile, "review_role": "verification"}
-                                    ready[next_profile].appendleft((filename, request, verify_task, (assessed, receipt)))
+                                    ready[next_profile].appendleft((filename, request, verify_task, history))
                                     continue
-                                if first is not None:
-                                    first_response, first_receipt = first
-                                    combined = orchestration.reconcile(first_response, assessed, first_receipt["profile"],
-                                                                        job.state.get("routing", []))
-                                    write(draft_path, combined)
-                                    native(["investigate", "review-bundle-finalize", "--bundle", str(request), "--draft", str(draft_path),
-                                            "--source-root", str(root), "--journal-dir", str(journals), "--output", str(response_dir / filename)])
-                                    first_by_id = {r["review_id"]: r for r in first_response["results"]}
-                                    for result in assessed["results"]:
-                                        execution_cases[result["review_id"]] = {"review_id": result["review_id"], "assessments": [
-                                            {**first_receipt, "decision": first_by_id[result["review_id"]]["decision"]},
-                                            {**receipt, "decision": result["decision"]}]}
+                                if role == "verification":
+                                    combined = orchestration.reconcile(history[0]["response"], assessed, history[0]["receipt"]["profile"],
+                                        [item for previous in history for item in previous["routing"]])
+                                    targets = orchestration.adjudication_ids(history) if quality_policy.get("adjudicate_disagreements") else []
+                                    if targets:
+                                        next_task = {**task, "profile":"expert", "review_role":"adjudication", "adjudicate_ids":targets,
+                                            "stage_context":{"assessments":history, "baseline":combined}}
+                                        ready["expert"].appendleft((filename, request, next_task, history))
+                                        continue
+                                elif role == "adjudication":
+                                    combined = orchestration.apply_resolution(task["stage_context"]["baseline"], assessed, history[:2], task["adjudicate_ids"])
                                 else:
-                                    import shutil
-                                    shutil.copyfile(assessment_path, response_dir / filename)
-                                    for result in assessed["results"]:
-                                        execution_cases[result["review_id"]] = {"review_id": result["review_id"],
-                                            "assessments": [{**receipt, "decision": result["decision"]}]}
+                                    combined = assessed
+                                finalize_combined(combined, filename, request, job)
+                                resolutions = {r["review_id"]:r for r in job.state.get("resolutions", [])}
+                                for result in combined["results"]:
+                                    identity = result["review_id"]
+                                    selected = history if role != "adjudication" or identity in task["adjudicate_ids"] else history[:2]
+                                    execution_cases[identity] = {"review_id":identity, "assessments":[
+                                        {**previous["receipt"], "decision":next(r["decision"] for r in previous["response"]["results"] if r["review_id"] == identity)}
+                                        for previous in selected]}
+                                    if identity in resolutions:
+                                        execution_cases[identity]["resolution"] = {key:resolutions[identity][key] for key in ("disputed_claim", "reason")}
+                                    blockers = [r["reason"] for previous in history for r in previous["routing"]
+                                                if r["review_id"] == identity and r["reason"] in orchestration.UNAVAILABLE]
+                                    if blockers:
+                                        execution_cases[identity]["blocker"] = blockers[0]
                             except Exception as error:
                                 failures.append(error)
                                 with shared_lock:
@@ -1191,6 +1250,31 @@ def run_locked(args):
                     # Preserve completed drafts/responses; never fabricate the missing
                     # ones or admit a partial set as a complete native run.
                     raise failures[0]
+                if quality_policy.get("final_qa"):
+                    baselines = {filename:read(response_dir / filename) for filename, _, _ in requests}
+                    peer_index = orchestration.index_peers(baselines.values())
+                    with ThreadPoolExecutor(max_workers=expert_workers, thread_name_prefix="mehscan-qa") as qa_pool:
+                        qa_jobs = []
+                        for filename, request, data in requests:
+                            peers = orchestration.peer_context(peer_index, set(data["review_ids"]), tiered_policy["max_reviews_per_job"] * 2)
+                            task = {**task_base, "kind":"native_bundle", "bundle":str(request), "review_ids":data["review_ids"],
+                                "review_playbooks":data.get("review_playbooks", {}), "profile":"expert", "review_role":"final_qa",
+                                "stage_context":{"baseline":baselines[filename], **peers}}
+                            job = job_for(task)
+                            qa_jobs.append((filename, request, task, job, qa_pool.submit(execute_job, task, job)))
+                        for filename, request, task, job, future in qa_jobs:
+                            stage = finalize_stage(task, job, future.result(), request)
+                            combined = orchestration.apply_qa(baselines[filename], stage["response"])
+                            if combined != baselines[filename]:
+                                finalize_combined(combined, filename, request)
+                            for result in stage["response"]["results"]:
+                                execution_cases[result["review_id"]]["quality_review"] = {**stage["receipt"], "decision":result["decision"]}
+                    write(output / "quality-summary.json", {"package_id":package["package_id"], "selected_reviews":len(requested),
+                        "qa_reviews":sum("quality_review" in c for c in execution_cases.values()),
+                        "adjudicated_reviews":sum("resolution" in c for c in execution_cases.values()),
+                        "reopened_review_ids":[r["review_id"] for filename, _, _ in requests for r in read(response_dir / filename)["results"]
+                            if r["decision"] == "needs_review" and next(x["decision"] for x in baselines[filename]["results"] if x["review_id"] == r["review_id"]) != "needs_review"],
+                        "scope":"Bounded assigned bundles and same-file peers; no exhaustive cross-finding guarantee."})
                 # Report validates the completed response set before a state write.
                 report = native(["report", "--run", str(run_dir), "--responses", str(response_dir), "--source-root", str(root),
                                  "--reviewer", args.reviewer_label])

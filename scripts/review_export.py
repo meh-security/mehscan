@@ -101,6 +101,10 @@ def export_review(plan, directory, record, reviewer, execute, env):
         import shutil
         shutil.copyfile(execution, directory / "review-execution.json")
         files.append("review-execution.json")
+    quality = directory / "review/quality-summary.json"
+    if quality.is_file():
+        write(directory / "quality-summary.json", json.loads(quality.read_text(encoding="utf-8")))
+        files.append("quality-summary.json")
     return {"schema_version":"1", "snapshot_id":record["snapshot_id"], "native_findings":native_export,
         "scan_root":plan["scan_root"], "files":files,
         "publication":"artifact_only"}

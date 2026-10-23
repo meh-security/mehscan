@@ -373,8 +373,8 @@ with prior verdicts/confidence and change-pass conclusions withheld. It can
 research through the same broker. Same verdicts do not certify correctness;
 both assessments must satisfy the source-evidence contract. Conflicting verdicts
 or a remaining question from the second assessor produce `needs_review`, retain
-both stage artifacts and register native pending work. Source-backed adjudication
-is a later explicit step, not a majority vote.
+both stage artifacts and register native pending work unless optional source-backed
+adjudication resolves the exact disagreement.
 
 A case is one bounded bundle. Its call/query/byte/time limits span both profiles
 and explicit recovery attempts. Run call/query/byte limits span all cases; the
@@ -392,11 +392,35 @@ query journals. The receipt identifies each question's assessments, configured
 providers and artifact hashes. Tiered `state record` requires `--review-execution`
 and checks both stage artifacts against their original bundle and actual source.
 A reported issue needs two distinct configured-model assessments; sampled
-closures need a second assessment; contrary assessments cannot be admitted as
-closed. These are trusted-controller provenance assertions, not authenticated
+closures need a second assessment. Contrary assessments remain pending unless
+the explicit quality policy below admits a source-backed adjudication. These are trusted-controller provenance assertions, not authenticated
 proof that a remote provider ran or that its reasoning is correct. Canonical
 usage groups actual reported counters by provider and role.
 
-The automatic Action provider setup still configures its existing single-profile
-workflow. This local opt-in mode does not yet add Action inputs or automatic
-adjudication/final cross-finding QA.
+Add `"quality": {"adjudicate_disagreements": true, "final_qa": true}` to the
+orchestration policy to enable quality stages. Provision shared limits for the
+routine review, independent verification, optional expert adjudication and expert
+QA, including research turns. Each stage starts a fresh conversation; none resets
+the case/run budget. The default policy adds no quality-stage calls.
+
+Adjudication sees both prior assessments and resolves a named claim with cited
+source. Native admission checks that its explanation occurs in the pinned source
+assessment. It can resolve a contrary pair toward a verdict supported by one of
+the earlier assessments; a newly proposed verdict remains pending for independent
+assessment. This is explicit source resolution, not majority voting. External,
+human or exhausted-budget facts remain pending. Original assessments are retained.
+
+QA reviews the finalized baseline in bounded original bundles, with capped
+same-file peer summaries for navigation. It can preserve decisions or reopen
+exact assigned IDs. It cannot dismiss an issue, promote a new issue, close pending
+work or rewrite approved prose. Native admission requires every selected case's
+expert QA receipt when the policy enables it. `quality-summary.json` records QA,
+adjudication and reopening counts; omitted peer context remains a coverage limit.
+This is not an exhaustive comparison of every finding across the application.
+
+Validated stage responses and pre-QA baselines are frozen and hash checked during
+recovery. Interrupted research preserves its remaining budgets; completed quality
+drafts need no repeated model call. Native admission and canonical reports remain
+authoritative. The automatic Action setup still configures a single profile;
+automatic tiered Action configuration and live quality/efficiency acceptance
+remain separate.
