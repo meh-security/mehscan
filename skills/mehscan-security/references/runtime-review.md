@@ -82,6 +82,11 @@ remaining coverage/representation task; do not invent uncertainty in proven code
 The task review_ids and native_questions supply exact current native IDs. Do not
 carry a source-only tracking gap from the change pass into a represented native
 question. Decide that question directly from its evidence.
+Bind the verdict to the selected operation at the exact source anchor first.
+Shared files can contain both protected and unsafe callers of the same helper.
+A weakness in an adjacent route, caller or statement does not establish an issue
+for this ID; retain it under its own ID or as a separate lead. Recheck the
+selected caller's actual arguments and authority after reading shared source.
 Review only the supplied bundle IDs using its sweep/card facts and relevant parent
 decisions, questions and evidence updates. Return a brief results draft. Evidence
 is current-source path/start_line/end_line; usually small decisive windows.

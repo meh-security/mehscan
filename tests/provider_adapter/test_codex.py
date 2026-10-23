@@ -22,6 +22,15 @@ THREAD = "12345678-1234-1234-1234-123456789abc"
 
 
 class Adapter(unittest.TestCase):
+    def test_decision_focus_retains_selected_caller_when_shared_source_has_an_unsafe_neighbor(self):
+        packet = {"native_questions":[{"review_id":"safe-id","path":"app.ts","line":5},
+                                       {"review_id":"other-file","path":"missing.ts","line":5}],
+            "primary":{"windows":[{"path":"app.ts","start_line":4,
+                "text":"middleware();\napp.delete('/safe', safe);\napp.delete('/unsafe', unsafe);"}]}}
+        targets = protocol.decision_targets(packet)
+        self.assertEqual(targets[0]["selected_source_line"], "app.delete('/safe', safe);")
+        self.assertNotIn("selected_source_line",targets[1])
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="mehscan-provider-")
         self.addCleanup(self.tmp.cleanup)
