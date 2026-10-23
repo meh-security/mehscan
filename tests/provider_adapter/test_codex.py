@@ -160,7 +160,15 @@ class Adapter(unittest.TestCase):
                 self.assertEqual(schema["properties"]["action"]["enum"], ["final"])
                 self.assertEqual(schema["properties"]["research"]["maxItems"], 0)
                 self.assertIn("results", schema["properties"]["draft"]["properties"])
+                variants = schema["properties"]["progress"]["items"]["anyOf"]
+                self.assertEqual([v["properties"]["status"]["enum"] for v in variants], [["blocked"]])
+                self.assertNotIn(None, variants[0]["properties"]["cause"]["enum"])
                 self.assertEqual(protocol.build_schema(task, bound_handles=False), stable)
+        self.task["research"].update(rounds_remaining=0, artifact_handles={"source1":"source-hash"})
+        inspected = protocol.build_schema(self.task)["properties"]["progress"]["items"]["anyOf"][1]["properties"]
+        self.assertEqual(inspected["cause"], {"type":"null"})
+        self.assertEqual(inspected["artifacts"]["minItems"], 1)
+        self.assertEqual(inspected["artifacts"]["items"]["enum"], ["source1"])
 
     def test_expert_job_uses_only_its_bound_profile_and_role(self):
         primary = launcher.provider_contract(self.config)

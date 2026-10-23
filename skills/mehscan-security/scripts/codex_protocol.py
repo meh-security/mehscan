@@ -62,6 +62,14 @@ def build_schema(task, *, bound_handles=True):
         schema["properties"]["action"]["enum"] = ["final"]
         schema["properties"]["research"]["maxItems"] = 0
         schema["properties"]["draft"] = draft
+        properties = edge["properties"]
+        blocked = object_schema({**properties, "status":{"type":"string", "enum":["blocked"]},
+            "cause":{"type":"string", "enum":[value for value in properties["cause"]["enum"] if value is not None]}})
+        variants = [blocked]
+        if handles:
+            variants.append(object_schema({**properties, "status":{"type":"string", "enum":["inspected"]},
+                "cause":{"type":"null"}, "artifacts":{**artifacts, "minItems":1}}))
+        schema["properties"]["progress"]["items"] = {"anyOf":variants}
     return schema
 
 
@@ -110,7 +118,7 @@ def build_prompt(task, packet, facts, state):
     prompt += "\nAvailable artifact handles (exhaustive for this turn):\n" + json.dumps(list(task["research"]["artifact_handles"]))
     prompt += "\nCurrent research budget/progress:\n" + json.dumps(readable({key:value for key,value in task["research"].items() if key not in ("results", "artifact_handles")}))
     if any(task["research"].get(key, 1) <= 0 for key in ("rounds_remaining", "queries_remaining", "bytes_remaining")):
-        prompt += "\nThis turn is final-only. Return the complete draft. If decisive code remains unread, use needs_review with its exact remaining checks and an honest budget blocker; do not request another lookup or infer safety from exhaustion."
+        prompt += "\nThis turn is final-only. Return the complete draft. Progress can only be inspected with source handles, or blocked with a precise cause. If decisive code remains unread, use needs_review with its exact remaining checks and an honest budget blocker; do not leave open edges, request another lookup or infer safety from exhaustion."
     return prompt
 
 
