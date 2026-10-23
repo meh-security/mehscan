@@ -1721,17 +1721,34 @@ fn validate_execution(
         }
         let mut profiles = std::collections::BTreeSet::new();
         let mut jobs = std::collections::BTreeSet::new();
-        for (index, assessment) in case
-            .assessments
+        if let Some(revalidation) = &case.revalidation {
+            if revalidation.assessments.len() != 2
+                || revalidation.assessments[0].profile == revalidation.assessments[1].profile
+            {
+                return Err("revalidation requires a fresh distinct-profile pair".into());
+            }
+        }
+        let prior = case.assessments.iter().enumerate().map(|(index, a)| {
+            (
+                a,
+                ["investigator", "verification", "adjudication"][index],
+                index == 2,
+            )
+        });
+        let qa = case.quality_review.iter().map(|a| (a, "final_qa", true));
+        let fresh = case
+            .revalidation
             .iter()
-            .chain(case.quality_review.iter())
-            .enumerate()
+            .flat_map(|r| r.assessments.iter())
+            .map(|a| (a, "verification", false));
+        let fresh_qa = case
+            .revalidation
+            .iter()
+            .flat_map(|r| r.quality_review.iter())
+            .map(|a| (a, "final_qa", true));
+        for (index, (assessment, expected_role, expert_only)) in
+            prior.chain(qa).chain(fresh).chain(fresh_qa).enumerate()
         {
-            let expected_role = if index == case.assessments.len() {
-                "final_qa"
-            } else {
-                ["investigator", "verification", "adjudication"][index]
-            };
             let expected = match assessment.profile.as_str() {
                 "routine" => primary,
                 "expert" => &policy.expert,
@@ -1742,7 +1759,7 @@ fn validate_execution(
                 || (index < case.assessments.len()
                     && index < 2
                     && !profiles.insert(&assessment.profile))
-                || ((index >= 2 || expected_role == "final_qa") && assessment.profile != "expert")
+                || (expert_only && assessment.profile != "expert")
                 || !digest(&assessment.job_id)
                 || !digest(&assessment.response_sha256)
                 || !jobs.insert(&assessment.job_id)
@@ -1791,7 +1808,7 @@ fn validate_execution(
         let first = case.assessments[0].decision;
         let quality = policy.quality.as_ref();
         let adjudicated = case.assessments.len() == 3;
-        let basis = if adjudicated {
+        let mut basis = if adjudicated {
             if !quality.is_some_and(|q| q.adjudicate_disagreements) {
                 return Err("adjudication is not enabled by the native policy".into());
             }
@@ -1854,6 +1871,61 @@ fn validate_execution(
                 return Err("unavailable facts must remain pending".into());
             }
         }
+        let prior_basis = basis;
+        let check_qa = |qa: Option<&mehscan_core::ReviewAssessmentReceipt>,
+                        basis|
+         -> Result<(), String> {
+            if quality.is_some_and(|q| q.final_qa) {
+                if basis != NeedsReview && qa.is_none() {
+                    return Err("native quality policy requires a final QA assessment".into());
+                }
+                if let Some(qa) = qa {
+                    if qa.decision != NeedsReview && qa.decision != basis {
+                        return Err("final QA cannot change a verdict except to reopen it".into());
+                    }
+                }
+            } else if qa.is_some() {
+                return Err("final QA is not enabled by the native policy".into());
+            }
+            Ok(())
+        };
+        check_qa(case.quality_review.as_ref(), basis)?;
+        let mut final_qa = case.quality_review.as_ref();
+        if let Some(revalidation) = &case.revalidation {
+            let new_proposal = adjudicated
+                && prior_basis == NeedsReview
+                && case.assessments[2].decision != NeedsReview;
+            let reopened = prior_basis != NeedsReview
+                && case
+                    .quality_review
+                    .as_ref()
+                    .is_some_and(|qa| qa.decision == NeedsReview);
+            if case.blocker.is_some()
+                || !quality.is_some_and(|q| q.adjudicate_disagreements)
+                || !match revalidation.reason.as_str() {
+                    "new_source_verdict" => new_proposal,
+                    "quality_reopening" => reopened,
+                    _ => false,
+                }
+            {
+                return Err(
+                    "revalidation requires an available new proposal or QA reopening".into(),
+                );
+            }
+            basis = if revalidation.assessments[0].decision == revalidation.assessments[1].decision
+                && revalidation.assessments[0].decision
+                    == if new_proposal {
+                        case.assessments[2].decision
+                    } else {
+                        prior_basis
+                    } {
+                revalidation.assessments[0].decision
+            } else {
+                NeedsReview
+            };
+            check_qa(revalidation.quality_review.as_ref(), basis)?;
+            final_qa = revalidation.quality_review.as_ref();
+        }
         if final_decision == Issue && (case.assessments.len() < 2 || basis != Issue) {
             return Err(
                 "reported issue requires two independent bound assessments and resolved evidence"
@@ -1869,19 +1941,10 @@ fn validate_execution(
         if final_decision == NotIssue && sampled && case.assessments.len() < 2 {
             return Err("sampled closure requires an independent assessment".into());
         }
-        if quality.is_some_and(|q| q.final_qa) {
-            let qa = case
-                .quality_review
-                .as_ref()
-                .ok_or("native quality policy requires a final QA assessment")?;
-            if qa.decision != NeedsReview && qa.decision != basis {
-                return Err("final QA cannot change a verdict except to reopen it".into());
-            }
+        if let Some(qa) = final_qa {
             if final_decision != NeedsReview && qa.decision != final_decision {
                 return Err("final QA reopening must remain pending".into());
             }
-        } else if case.quality_review.is_some() {
-            return Err("final QA is not enabled by the native policy".into());
         }
     }
     Ok(())

@@ -174,7 +174,19 @@ pub struct ReviewCaseExecution {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quality_review: Option<ReviewAssessmentReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revalidation: Option<ReviewRevalidation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocker: Option<String>,
+}
+
+/// One bounded fresh pair over recovered source; prior assessments remain intact.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewRevalidation {
+    pub reason: String,
+    pub assessments: Vec<ReviewAssessmentReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_review: Option<ReviewAssessmentReceipt>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

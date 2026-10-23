@@ -18,6 +18,33 @@ def policy(calls=4, run_calls=6):
 
 
 class Orchestration(unittest.TestCase):
+    def test_revalidation_requires_new_proposal_or_qa_reopening_and_preserves_siblings(self):
+        for decisions, expected in ((["issue","issue"],"issue"),(["issue","not_issue"],"needs_review"),
+                (["needs_review","needs_review","issue"],"needs_review"),(["issue","not_issue","issue"],"issue")):
+            self.assertEqual(flow.assessment_basis([{"decision":d} for d in decisions]),expected)
+        def response(decision):
+            return {"results":[{"review_id":"id","decision":decision,"checks":[],
+                "investigation":{"journal_summary":None,"blockers":[]}}]}
+        stages = [{"response":response("needs_review"),"routing":[],"receipt":{"role":"adjudication"}}]
+        pending, issue = response("needs_review"), response("issue")
+        stages[0]["response"] = issue
+        self.assertEqual(flow.revalidation_targets(stages, pending, pending), {"id":"new_source_verdict"})
+        self.assertEqual(flow.revalidation_targets(stages, issue, pending), {"id":"quality_reopening"})
+        for reason in flow.UNAVAILABLE:
+            stages[0]["routing"] = [{"review_id":"id","reason":reason}]
+            self.assertEqual(flow.revalidation_targets(stages, pending, pending), {})
+        sibling = {"review_id":"sibling","decision":"not_issue","checks":[],"investigation":{"journal_summary":None,"blockers":[]}}
+        baseline, first, second = [copy.deepcopy(pending) for _ in range(3)]
+        for value in (baseline,first,second):value["results"].append(copy.deepcopy(sibling))
+        first["results"][0]["decision"] = second["results"][0]["decision"] = "issue"
+        second["results"][1]["decision"] = "issue"
+        chosen = flow.apply_revalidation(baseline, first, second, {"id":"issue"})
+        self.assertEqual([r["decision"] for r in chosen["results"]], ["issue","not_issue"])
+        second["results"][0]["decision"] = "not_issue"
+        self.assertEqual(flow.apply_revalidation(baseline,first,second,{"id":"issue"})["results"][0]["decision"], "needs_review")
+        first["results"][0]["decision"] = "not_issue"
+        self.assertEqual(flow.apply_revalidation(baseline,first,second,{"id":"issue"})["results"][0]["decision"], "needs_review")
+
     def test_local_exhaustion_hands_off_without_reclassifying_external_or_shared_limits(self):
         reported = [{"review_id":"id", "reason":"budget_exhausted"}]
         room = {"model_calls":5, "queries":4, "bytes":1000, "timeout_seconds":50}

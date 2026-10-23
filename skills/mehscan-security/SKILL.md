@@ -16,6 +16,9 @@ Let the controller reconcile assessments and account for sampled dismissals.
 When enabled, adjudication names and resolves a concrete source disagreement;
 final QA can reopen exact IDs, never silently discard findings. Both use the
 matching compiled role section and the same source tools and shared budgets.
+Recovered-source proposals and QA reopenings can enter one final-only fresh
+assessment pair within that budget. Earlier assessments remain in provenance;
+QA does not promote a pending verdict by itself.
 Do not resume a conversation under another model or replace unresolved conflicts
 with a confidence threshold. Local controller setup is in the installed
 [controller commands](references/commands.md#tiered-controller).

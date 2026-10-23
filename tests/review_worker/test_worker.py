@@ -330,6 +330,100 @@ else:
         self.assertEqual(investigator["reported_routing"][0]["reason"], "budget_exhausted")
         self.assertEqual(investigator["routing"][0]["reason"], "stage_budget_exhausted")
 
+    def run_revalidation_case(self, reopening=False, interrupt=False):
+        args = self.configure_tiered(run_calls=10, quality=True, research_rounds=1)
+        original, calls, interrupted = worker.execute, [], []
+        def provider(command, cwd, env, timeout, payload=None):
+            if len(command) == 4 and command[1].endswith("codex_reviewer.py"):
+                task = json.loads(payload)
+                role, fresh = task["review_role"], task.get("assessment_cycle") == "revalidation"
+                calls.append((task["profile"],role,fresh))
+                if fresh:
+                    self.assertEqual(task["research"]["rounds_remaining"], 0)
+                    if role == "verification":
+                        packet = json.loads(Path(task["evidence_packet"]).read_text())
+                        self.assertNotIn("stage_context", packet)
+                        self.assertEqual(packet["work"]["parent_decisions"], {})
+                        facts = json.loads(Path(task["shared_facts"]).read_text())["facts"]
+                        self.assertTrue(facts)
+                        self.assertTrue(all("purpose" not in f["query"] for f in facts))
+                if not fresh and (role == "adjudication" or reopening and role == "final_qa") and task["research"]["round"] == 0:
+                    return {"research":[{"tool":"definition","review_id":self.ids[0],"purpose":"Read decisive implementation.",
+                        "arguments":{"name":"handle","path":"app.js","limit":10}}]}
+                decision = "issue" if fresh or role == "adjudication" or reopening and role != "final_qa" else "needs_review"
+                draft = {"draft":{"results":[{"review_id":identity,"decision":decision,"confidence":"medium",
+                    "summary":"The reaching request operand is evaluated." if fresh else "A source question remains.",
+                    "reason":"The handler evaluates request.query.code.","checks":["Check the precise reaching condition."] if decision == "needs_review" else [],
+                    "blockers":[],"evidence":[{"path":"app.js","start_line":1,"end_line":1}]} for identity in self.ids]},
+                    "progress":[],"working_chain":"","routing":[{"review_id":identity,"reason":"reasoning_gap"}
+                        for identity in self.ids] if decision == "needs_review" else []}
+                if role == "adjudication":
+                    draft["resolutions"] = [{"review_id":identity,"disputed_claim":"Does the request operand reach eval?",
+                        "reason":"The handler evaluates request.query.code."} for identity in task["adjudicate_ids"]]
+                return draft
+            if command[1:3] == ["state","record"]:
+                path = Path(command[command.index("--review-execution")+1]); saved = path.read_bytes()
+                for mutation in ("same_profile","missing_qa","wrong_reason"):
+                    receipt = json.loads(saved); detail = receipt["cases"][0]["revalidation"]
+                    if mutation == "same_profile":detail["assessments"][0]["profile"] = detail["assessments"][1]["profile"]
+                    elif mutation == "missing_qa":detail.pop("quality_review")
+                    else:detail["reason"] = "new_source_verdict" if reopening else "quality_reopening"
+                    path.write_text(json.dumps(receipt))
+                    try:
+                        with self.assertRaises(worker.CommandFailure):original(command,cwd,env,timeout,payload)
+                    finally:path.write_bytes(saved)
+            result = original(command,cwd,env,timeout,payload)
+            if interrupt and not interrupted and command[1:3] == ["investigate","review-bundle-finalize"]:
+                expected = worker.context.digest(["native_bundle",self.ids,"expert","verification","revalidation"])
+                if Path(command[command.index("--output")+1]).name == expected+".json":
+                    interrupted.append(True)
+                    raise TimeoutError("Fresh assessment finalized, response lost")
+            return result
+        with patch.object(worker,"execute",side_effect=provider):result = worker.run(args)
+        if interrupt:
+            self.assertEqual(result["status"],"incomplete",result)
+            self.assertEqual(len(calls),6,result)
+            previous = args.output
+            args.resume_from,args.output = previous,str(self.base/"revalidated-resume")
+            with patch.object(worker,"execute",side_effect=provider):result = worker.run(args)
+        self.assertEqual(result["status"],"admitted",result)
+        directory = Path(args.output)
+        receipt = json.loads((directory/"review-execution.json").read_text())["cases"][0]
+        self.assertEqual(receipt["revalidation"]["reason"], "quality_reopening" if reopening else "new_source_verdict")
+        self.assertEqual([a["profile"] for a in receipt["revalidation"]["assessments"]],["routine","expert"])
+        self.assertEqual(receipt["revalidation"]["quality_review"]["decision"],"issue")
+        self.assertEqual(len(calls),7)
+        self.assertEqual(json.loads((directory/"budget.json").read_text())["totals"]["model_calls"],7)
+        self.assertEqual(result["completion"]["issue_review_ids"],self.ids)
+        if reopening:self.assertEqual(receipt["quality_review"]["decision"],"needs_review")
+        else:self.assertNotIn("quality_review",receipt)
+
+    def test_revalidation_recovers_new_source_verdict_once_with_native_guards_and_restart(self):
+        self.run_revalidation_case(interrupt=True)
+
+    def test_revalidation_repairs_a_qa_reopening_without_erasing_the_prior_assessment(self):
+        self.run_revalidation_case(reopening=True)
+
+    def test_pending_only_quality_skips_qa_without_fabricating_an_approval(self):
+        args = self.configure_tiered(run_calls=4, quality=True)
+        original, calls = worker.execute, []
+        def provider(command,cwd,env,timeout,payload=None):
+            if len(command) == 4 and command[1].endswith("codex_reviewer.py"):
+                task = json.loads(payload); calls.append(task["review_role"])
+                return {"draft":{"results":[{"review_id":identity,"decision":"needs_review","confidence":"low",
+                    "summary":"An external policy is unavailable.","reason":"The code does not establish the external authority.",
+                    "checks":["Confirm the external authority."],"blockers":[],
+                    "evidence":[{"path":"app.js","start_line":1,"end_line":1}]} for identity in self.ids]},
+                    "progress":[],"working_chain":"","routing":[{"review_id":identity,"reason":"external_required"} for identity in self.ids]}
+            return original(command,cwd,env,timeout,payload)
+        with patch.object(worker,"execute",side_effect=provider):result = worker.run(args)
+        self.assertEqual(result["status"],"admitted",result)
+        self.assertEqual(calls,["investigator"])
+        case = json.loads((Path(args.output)/"review-execution.json").read_text())["cases"][0]
+        self.assertNotIn("quality_review",case)
+        self.assertNotIn("revalidation",case)
+        self.assertEqual(case["blocker"],"external_required")
+
     def test_source_adjudication_and_final_qa_admit_a_resolved_issue_with_native_guards(self):
         args = self.configure_tiered(run_calls=4, quality=True)
         calls = []

@@ -111,6 +111,10 @@ Inspect the actual actor, input, branch, operation and effect. Reusable raw sour
 facts retain their provenance but do not inherit another reviewer's conclusion.
 Return your own ordinary draft. If local source cannot establish a decisive fact,
 name the exact missing fact; do not manufacture certainty to settle the run.
+An assessment_cycle of revalidation is a fresh final-only assessment of already
+recovered actual source. Its earlier verdict and proposed repair are withheld.
+Decide the shown chain and exact reaching conditions from those facts. If they
+do not settle it, name the remaining question; there is no new research loop.
 <!-- /runtime:verification -->
 
 <!-- runtime:adjudication -->
@@ -140,9 +144,15 @@ For every assigned ID return its existing decision or needs_review with a precis
 question and actual source evidence. Preserve existing pending questions. You
 cannot change issue to not_issue, promote a new issue or close needs_review.
 The controller preserves approved verdicts and prose; only exact-ID reopening
-changes the report. Peer IDs outside this job have their own QA jobs. Explicit
+changes this stage's report. A reopening may enter one separate bounded fresh
+assessment pair; it does not itself approve a repair. When assigned_ids is
+supplied, check those IDs and preserve other baseline entries unchanged.
+Peer IDs outside this job have their own QA jobs. Explicit
 peer truncation and bounded groups are coverage limits, not proof of a complete
 cross-finding review. Do not launch broad hunts or repeat the entire triage.
+When fresh assessments are supplied, compare their actors, inputs, reaching
+conditions and effects, not only verdict labels. A repair must address the
+original counterevidence without claiming unsupported conditions or impact.
 <!-- /runtime:final_qa -->
 
 <!-- runtime:guard_changes -->

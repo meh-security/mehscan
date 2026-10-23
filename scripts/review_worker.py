@@ -597,14 +597,18 @@ def run_locked(args):
         return native(["state", "work", *common, "--review-ids", ",".join(requested)])
 
     def job_for(task):
-        identity = context.digest([task["kind"], task.get("review_ids", []),
-                                   task.get("profile", "routine"), task.get("review_role", "investigator")])
+        identity_parts = [task["kind"], task.get("review_ids", []),
+                          task.get("profile", "routine"), task.get("review_role", "investigator")]
+        if task.get("assessment_cycle"):
+            identity_parts.append(task["assessment_cycle"])
+        identity = context.digest(identity_parts)
         binding = {"package_id": package["package_id"], "runtime": bound_runtime,
                    "reviewer_configuration": reviewer_configuration,
                    "kind": task["kind"], "review_ids": task.get("review_ids", []),
                    "profile": task.get("profile", "routine"), "role": task.get("review_role", "investigator"),
                    "stage_context_sha256": context.digest(task.get("stage_context")),
                    "source_handoff_sha256": context.digest(task.get("source_handoff")),
+                   "assessment_cycle":task.get("assessment_cycle"),
                    "bundle_sha256": digest_file(task["bundle"]) if task.get("bundle") else None}
         return JobCheckpoint(output / "jobs" / (identity + ".json"), binding,
                              recovery / "jobs" / (identity + ".json") if recovery else None)
@@ -661,7 +665,10 @@ def run_locked(args):
             raise orchestration.BudgetExhausted("shared received-byte budget already exceeded")
         # Recovery of an unfinished job is a fresh provider session with the
         # previous source results and remaining budget, not an unsafe replay.
-        conversation_id = context.digest([expected["package_id"], task["kind"], task.get("review_ids", []), profile, role, attempt_key])
+        conversation_parts = [expected["package_id"], task["kind"], task.get("review_ids", []), profile, role, attempt_key]
+        if task.get("assessment_cycle"):
+            conversation_parts.append(task["assessment_cycle"])
+        conversation_id = context.digest(conversation_parts)
         ids = task.get("review_ids", [])
         entries = [entry for entry in inventory_data["entries"] if entry["review_id"] in (ids or payload["planned_review_ids"])]
         packet = {"schema_version": "1", "package_id": expected["package_id"],
@@ -672,6 +679,8 @@ def run_locked(args):
         if tiered_policy:
             packet["job_binding"] = {"profile": profile, "role": role,
                 "provider": tiered_policy["expert"] if profile == "expert" else bound_runtime["provider"]}
+        if task.get("assessment_cycle"):
+            packet["assessment_cycle"] = task["assessment_cycle"]
         if task.get("stage_context") is not None:
             packet["stage_context"] = task["stage_context"]
         if task.get("source_handoff") is not None:
@@ -750,6 +759,8 @@ def run_locked(args):
 
         calls_left = args.research_rounds + 1 - job.state["calls"]
         calls_left = remaining_count("model_calls", calls_left)
+        if task.get("assessment_cycle") == "revalidation":
+            calls_left = min(calls_left, 1)  # Assess already recovered source, no new research loop.
         if calls_left <= 0:
             raise ValueError("recovery job has no remaining model turns")
         if byte_count > args.research_bytes or query_count > args.research_queries:
@@ -1222,7 +1233,8 @@ def run_locked(args):
                 else:
                     (output / "decisions").mkdir()
                 quality_policy = (tiered_policy or {}).get("quality") or {}
-                final_handoffs = {}
+                final_handoffs, final_histories = {}, {}
+                qa_reopened, repair_deferred = set(), set()
 
                 def finalize_stage(task, job, draft, request):
                     assessment_path = output / "assessments" / (job.path.stem + ".json")
@@ -1313,6 +1325,7 @@ def run_locked(args):
                                     combined = assessed
                                 finalize_combined(combined, filename, request, job)
                                 final_handoffs[filename] = orchestration.source_handoff(history, args.research_bytes)
+                                final_histories[filename] = history
                                 resolutions = {r["review_id"]:r for r in job.state.get("resolutions", [])}
                                 for result in combined["results"]:
                                     identity = result["review_id"]
@@ -1340,6 +1353,10 @@ def run_locked(args):
                     with ThreadPoolExecutor(max_workers=expert_workers, thread_name_prefix="mehscan-qa") as qa_pool:
                         qa_jobs = []
                         for filename, request, data in requests:
+                            if all(r["decision"] == "needs_review" and orchestration.assessment_basis(
+                                    execution_cases[r["review_id"]]["assessments"]) == "needs_review"
+                                    for r in baselines[filename]["results"]):
+                                continue  # QA has no authority to close these; preserve explicit pending work.
                             peers = orchestration.peer_context(peer_index, set(data["review_ids"]), tiered_policy["max_reviews_per_job"] * 2)
                             task = {**task_base, "kind":"native_bundle", "bundle":str(request), "review_ids":data["review_ids"],
                                 "review_playbooks":data.get("review_playbooks", {}), "profile":"expert", "review_role":"final_qa",
@@ -1349,16 +1366,90 @@ def run_locked(args):
                             qa_jobs.append((filename, request, task, job, qa_pool.submit(execute_job, task, job)))
                         for filename, request, task, job, future in qa_jobs:
                             stage = finalize_stage(task, job, future.result(), request)
+                            final_handoffs[filename] = orchestration.source_handoff([*final_histories[filename], stage], args.research_bytes)
                             combined = orchestration.apply_qa(baselines[filename], stage["response"])
+                            qa_reopened.update(r["review_id"] for r in combined["results"] if r["decision"] == "needs_review"
+                                and next(b["decision"] for b in baselines[filename]["results"] if b["review_id"] == r["review_id"]) != "needs_review")
                             if combined != baselines[filename]:
                                 finalize_combined(combined, filename, request)
                             for result in stage["response"]["results"]:
                                 execution_cases[result["review_id"]]["quality_review"] = {**stage["receipt"], "decision":result["decision"]}
+                if quality_policy.get("adjudicate_disagreements"):
+                    # One final-only fresh pair, plus QA for a closed result. Plan the
+                    # maximum spend before launching concurrent cases; no new query loop.
+                    repair_jobs, remaining_calls = [], tiered_policy["run_limits"]["model_calls"] - shared_budget.state["totals"]["model_calls"]
+                    required_calls = 3 if quality_policy.get("final_qa") else 2
+                    for filename, request, data in requests:
+                        baseline = read(response_dir / filename)
+                        original = read(output / "decisions" / filename)
+                        targets = orchestration.revalidation_targets(final_histories[filename], original, baseline)
+                        task = {**task_base, "kind":"native_bundle", "bundle":str(request), "review_ids":data["review_ids"],
+                            "review_playbooks":data.get("review_playbooks", {}), "assessment_cycle":"revalidation",
+                            "source_handoff":final_handoffs[filename]}
+                        case_id = case_identity(task)
+                        # A recovered completed cycle remains replayable without buying it again.
+                        recovered = bool(recovery and all((recovery / "jobs" / (context.digest([
+                            "native_bundle", data["review_ids"], profile, "verification", "revalidation"]) + ".json")).is_file()
+                            for profile in ("routine", "expert")))
+                        if targets and (recovered or (remaining_calls >= required_calls
+                                and shared_budget.remaining(case_id, "model_calls") >= required_calls
+                                and all(shared_budget.remaining(case_id, key) > 0 for key in ("queries", "bytes", "timeout_seconds")))):
+                            repair_jobs.append((filename, request, task, targets, baseline))
+                            remaining_calls -= required_calls
+                        else:
+                            repair_deferred.update(targets)
+
+                    def revalidate(item, experts):
+                        filename, request, base_task, targets, baseline = item
+                        stages = []
+                        for profile in ("routine", "expert"):
+                            task = {**base_task, "profile":profile, "review_role":"verification"}
+                            job = job_for(task)
+                            draft = (execute_job(task, job) if profile == "routine" else experts.submit(execute_job, task, job).result())
+                            stages.append(finalize_stage(task, job, draft, request))
+                        proposals = {identity:next(r["decision"] for r in (
+                            final_histories[filename][-1]["response"] if reason == "new_source_verdict" else read(output / "decisions" / filename))["results"]
+                            if r["review_id"] == identity) for identity,reason in targets.items()}
+                        combined = orchestration.apply_revalidation(baseline, stages[0]["response"], stages[1]["response"], proposals,
+                            [row for stage in stages for row in stage["routing"]])
+                        qa = None
+                        if quality_policy.get("final_qa") and any(r["decision"] != "needs_review" and r["review_id"] in targets for r in combined["results"]):
+                            task = {**base_task, "profile":"expert", "review_role":"final_qa",
+                                "stage_context":{"baseline":combined,"assigned_ids":sorted(targets),
+                                    "assessments":[{k:v for k,v in stage.items() if k != "source_facts"} for stage in stages],
+                                    "related_reviews":[],"omitted_related_reviews":0}}
+                            job = job_for(task)
+                            qa = finalize_stage(task, job, experts.submit(execute_job, task, job).result(), request)
+                            checked = orchestration.apply_qa(combined, qa["response"])
+                            with shared_lock:
+                                qa_reopened.update(r["review_id"] for r in checked["results"] if r["decision"] == "needs_review"
+                                    and next(b["decision"] for b in combined["results"] if b["review_id"] == r["review_id"]) != "needs_review")
+                            if any(a != b for a,b in zip(combined["results"], checked["results"]) if a["review_id"] not in targets):
+                                raise ValueError("revalidation QA changed an unassigned ID")
+                            combined = checked
+                        finalize_combined(combined, filename, request)
+                        for identity, reason in targets.items():
+                            def receipt(stage):
+                                return {**stage["receipt"],"decision":next(r["decision"] for r in stage["response"]["results"] if r["review_id"] == identity)}
+                            detail = {"reason":reason,"assessments":[receipt(stage) for stage in stages]}
+                            if qa:
+                                detail["quality_review"] = receipt(qa)
+                            execution_cases[identity]["revalidation"] = detail
+
+                    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="mehscan-revalidate") as repair_pool, \
+                            ThreadPoolExecutor(max_workers=expert_workers, thread_name_prefix="mehscan-revalidate-expert") as experts:
+                        repairs = [repair_pool.submit(revalidate, item, experts) for item in repair_jobs]
+                        for future in repairs:
+                            future.result()
+                if quality_policy:
                     write(output / "quality-summary.json", {"package_id":package["package_id"], "selected_reviews":len(requested),
-                        "qa_reviews":sum("quality_review" in c for c in execution_cases.values()),
+                        "qa_reviews":sum("quality_review" in c for c in execution_cases.values()) +
+                            sum("quality_review" in c.get("revalidation", {}) for c in execution_cases.values()),
+                        "revalidated_reviews":sum("revalidation" in c for c in execution_cases.values()),
+                        "qa_reopened_review_ids":sorted(qa_reopened), "revalidation_deferred_review_ids":sorted(repair_deferred),
                         "adjudicated_reviews":sum("resolution" in c for c in execution_cases.values()),
                         "reopened_review_ids":[r["review_id"] for filename, _, _ in requests for r in read(response_dir / filename)["results"]
-                            if r["decision"] == "needs_review" and next(x["decision"] for x in baselines[filename]["results"] if x["review_id"] == r["review_id"]) != "needs_review"],
+                            if r["decision"] == "needs_review" and next(x["decision"] for x in read(output / "decisions" / filename)["results"] if x["review_id"] == r["review_id"]) != "needs_review"],
                         "scope":"Bounded assigned bundles and same-file peers; no exhaustive cross-finding guarantee."})
                 # Report validates the completed response set before a state write.
                 report = native(["report", "--run", str(run_dir), "--responses", str(response_dir), "--source-root", str(root),

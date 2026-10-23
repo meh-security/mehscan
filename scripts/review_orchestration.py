@@ -247,6 +247,48 @@ def apply_qa(baseline, checked):
     return result
 
 
+def revalidation_targets(stages, baseline, checked):
+    """Revisit a new closed proposal or QA reopening, never an unavailable fact."""
+    unavailable = {row["review_id"] for stage in stages for row in stage["routing"]
+                   if row["reason"] in UNAVAILABLE}
+    before = {r["review_id"]:r for r in baseline["results"]}
+    proposed = {r["review_id"]:r for r in stages[-1]["response"]["results"]}
+    adjudicated = stages[-1]["receipt"]["role"] == "adjudication"
+    result = {}
+    for row in checked["results"]:
+        identity = row["review_id"]
+        if identity in unavailable or row["decision"] != "needs_review":
+            continue
+        if before[identity]["decision"] != "needs_review":
+            result[identity] = "quality_reopening"
+        elif adjudicated and proposed[identity]["decision"] != "needs_review":
+            result[identity] = "new_source_verdict"
+    return result
+
+
+def assessment_basis(assessments):
+    decisions = [a["decision"] for a in assessments]
+    if len(decisions) == 3:
+        return decisions[-1] if decisions[-1] in decisions[:2] else "needs_review"
+    return decisions[0] if len(set(decisions)) == 1 else "needs_review"
+
+
+def apply_revalidation(baseline, first, second, proposals, routing=()):
+    paired = reconcile(first, second, "routine", routing)
+    result = copy.deepcopy(baseline)
+    by_id = {r["review_id"]:r for r in paired["results"]}
+    for index, row in enumerate(result["results"]):
+        if row["review_id"] in proposals:
+            chosen = by_id[row["review_id"]]
+            if chosen["decision"] not in ("needs_review", proposals[row["review_id"]]):
+                chosen.update(decision="needs_review", confidence="low", diagnosis=None)
+                question = "Resolve the recovered-source proposal against the fresh assessments for this exact operation."
+                chosen["checks"] = [*chosen.get("checks", []), question]
+                chosen["investigation"]["blockers"] = [*chosen["investigation"].get("blockers", []), question]
+            result["results"][index] = chosen
+    return result
+
+
 def index_peers(responses):
     """Index source relationships once; QA jobs need not rescan every artifact."""
     rows = {row["review_id"]:row for response in responses for row in response["results"]}

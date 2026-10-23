@@ -413,9 +413,15 @@ human or exhausted-budget facts remain pending. Original assessments are retaine
 QA reviews the finalized baseline in bounded original bundles, with capped
 same-file peer summaries for navigation. It can preserve decisions or reopen
 exact assigned IDs. It cannot dismiss an issue, promote a new issue, close pending
-work or rewrite approved prose. Native admission requires every selected case's
-expert QA receipt when the policy enables it. `quality-summary.json` records QA,
-adjudication and reopening counts; omitted peer context remains a coverage limit.
+work or rewrite approved prose. Entirely pending bundles skip this stage; native
+admission requires a real expert QA receipt for a closed verdict when enabled.
+An available newly proposed verdict or QA reopening can enter one fresh blind
+routine/expert pair over recovered source. These are final-only calls, not a new
+research loop. Closed revalidated verdicts receive a new expert QA check. The
+controller keeps the original assessments and QA, does not reset shared spend,
+and leaves disagreements or insufficient capacity pending. No repair loop runs.
+`quality-summary.json` records QA, revalidation, adjudication and reopening
+counts; omitted peer context remains a coverage limit.
 This is not an exhaustive comparison of every finding across the application.
 
 Validated stage responses and pre-QA baselines are frozen and hash checked during
