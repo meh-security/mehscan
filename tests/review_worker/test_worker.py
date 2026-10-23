@@ -44,6 +44,23 @@ class ArtifactCopy(unittest.TestCase):
 
 
 class LookupFailures(unittest.TestCase):
+    def test_definition_body_is_only_read_for_an_unambiguous_bounded_native_range(self):
+        item = {"location":{"path":"helper.go","start":{"line":5},"end":{"line":15}}}
+        read_ranges = []
+        def source(values):
+            read_ranges.append(values)
+            return {"operation":"get_source", "truncated":False, "results":{"text":"actual implementation"}}
+        result = worker.definition_result({"results":[item],"truncated":False}, source)
+        self.assertTrue(result["source_complete"])
+        self.assertEqual(read_ranges, [{"path":"helper.go","start_line":5,"end_line":15}])
+        for discovery, limit in [({"results":[item],"truncated":True},"symbol_lookup_incomplete"),
+                ({"results":[item, {"location":{**item["location"],"path":"other.go"}}]},"ambiguous_declaration"),
+                ({"results":[]},"declaration_not_found"),
+                ({"results":[{"location":{**item["location"],"end":{"line":125}}}]},"declaration_exceeds_120_lines")]:
+            self.assertEqual(worker.definition_result(discovery, source)["limit"], limit)
+        self.assertEqual(len(read_ranges), 1)
+        self.assertEqual(worker.research_cost([{"tool":"definition"},{"tool":"source"}]), 3)
+
     def test_only_exact_current_source_not_found_is_recoverable(self):
         query = {"tool": "source", "arguments": {"path": "missing.ts"}}
         message = 'error: text file "missing.ts" was not found under the scan root\n'
@@ -260,6 +277,58 @@ else:
                     raise TimeoutError("QA draft completed, finalization response lost")
             return result
         return execute
+
+    def test_stage_exhaustion_reuses_raw_source_for_blind_verification_and_resolution(self):
+        args = self.configure_tiered(run_calls=6, quality=True, research_rounds=1)
+        original, calls = worker.execute, []
+        def provider(command, cwd, env, timeout, payload=None):
+            if len(command) != 4 or not command[1].endswith("codex_reviewer.py"):
+                return original(command, cwd, env, timeout, payload)
+            task = json.loads(payload)
+            role = task["review_role"]
+            calls.append((task["profile"], role))
+            if role == "investigator" and task["research"]["round"] == 0:
+                return {"research":[{"tool":"definition", "review_id":self.ids[0],
+                    "purpose":"Read the actual handler before deciding its input boundary.",
+                    "arguments":{"name":"handle","path":"app.js","limit":10}}]}
+            first = role == "investigator"
+            facts = json.loads(Path(task["shared_facts"]).read_text())["facts"]
+            self.assertTrue(facts[0]["result"]["source_complete"])
+            self.assertIn("eval(request.query.code)", json.dumps(facts))
+            if role == "verification":
+                self.assertEqual(task["research"]["results"], [])
+                self.assertNotIn("purpose", facts[0]["query"])
+                packet = json.loads(Path(task["evidence_packet"]).read_text())
+                self.assertNotIn("stage_context", packet)
+                self.assertEqual(packet["work"]["parent_decisions"], {})
+            response = {"draft":{"results":[{"review_id":identity,
+                "decision":"needs_review" if first else "issue", "confidence":"medium",
+                "summary":"The local source question remains." if first else "The request operand is evaluated.",
+                "reason":"The handler evaluates request.query.code without a guard.",
+                "checks":["Assess the request operand after the local stage limit."] if first else [],
+                "blockers":[], "evidence":[{"path":"app.js","start_line":1,"end_line":1}]}
+                for identity in self.ids]},"progress":[],"working_chain":"",
+                "routing":[{"review_id":identity,"reason":"budget_exhausted"} for identity in self.ids] if first else []}
+            if role == "adjudication":
+                response["resolutions"] = [{"review_id":identity,
+                    "disputed_claim":"Is the request operand passed to evaluation without a control?",
+                    "reason":"The handler directly evaluates request.query.code without a guard."} for identity in self.ids]
+            return response
+        with patch.object(worker, "execute", side_effect=provider):
+            result = worker.run(args)
+        self.assertEqual(result["status"], "admitted", result)
+        self.assertEqual(calls, [("routine","investigator"),("routine","investigator"),
+            ("expert","verification"),("expert","adjudication"),("expert","final_qa")])
+        directory = Path(args.output)
+        budget = json.loads((directory / "budget.json").read_text())
+        self.assertEqual(budget["totals"]["model_calls"], 5)
+        self.assertEqual(budget["totals"]["queries"], 2)
+        execution = json.loads((directory / "review-execution.json").read_text())
+        self.assertTrue(all("blocker" not in c for c in execution["cases"]))
+        investigator = next(json.loads(p.read_text()) for p in (directory / "jobs").glob("*.json")
+                            if json.loads(p.read_text())["binding"]["role"] == "investigator")
+        self.assertEqual(investigator["reported_routing"][0]["reason"], "budget_exhausted")
+        self.assertEqual(investigator["routing"][0]["reason"], "stage_budget_exhausted")
 
     def test_source_adjudication_and_final_qa_admit_a_resolved_issue_with_native_guards(self):
         args = self.configure_tiered(run_calls=4, quality=True)
@@ -780,6 +849,19 @@ else:
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         report = json.loads((self.base / "worker/findings.json").read_text())
         self.assertEqual(report["decision_records"][0]["response"]["investigation"]["journal_summary"]["query_count"], 1)
+
+    def test_definition_lookup_returns_actual_source_and_reserves_both_query_units(self):
+        self.research_reviewer('[{"tool":"definition", "review_id":task["review_ids"][0], '
+                              '"arguments":{"name":"handle","path":"app.js","limit":10}}]')
+        result = self.invoke(extra=["--phase", "native"])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        directory = self.base / "worker"
+        row = json.loads((directory / "research.jsonl").read_text().splitlines()[0])
+        self.assertTrue(row["result"]["source_complete"])
+        self.assertIn("eval(request.query.code)", json.dumps(row["result"]["source"]))
+        self.assertEqual(row["reserved_query_units"], 2)
+        self.assertEqual(json.loads((directory / "worker.json").read_text())["research_queries"], 2)
+        self.assertTrue((directory / "journals" / (self.ids[0] + ".jsonl")).exists())
 
     def test_missing_source_returns_negative_lookup_then_discovers_and_reads_real_source(self):
         normal = self.base / "normal.py"

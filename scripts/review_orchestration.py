@@ -7,7 +7,7 @@ import time
 
 
 ROUTING_REASONS = {"reasoning_gap", "control_applicability", "conflicting_evidence", "risky_dismissal",
-                   "external_required", "human_required", "budget_exhausted"}
+                   "external_required", "human_required", "budget_exhausted", "stage_budget_exhausted"}
 UNAVAILABLE = {"external_required", "human_required", "budget_exhausted"}
 
 
@@ -110,6 +110,39 @@ def validate_routing(value, review_ids):
     return value
 
 
+def scoped_budget_routing(routing, stage_exhausted, shared_remaining):
+    """A model's local stopping condition cannot declare a shared ledger spent."""
+    result = copy.deepcopy(routing)
+    for item in result:
+        if item["reason"] not in {"budget_exhausted", "stage_budget_exhausted"}:
+            continue
+        if shared_remaining is None or any(value <= 0 for value in shared_remaining.values()):
+            item["reason"] = "budget_exhausted"
+        else:
+            item["reason"] = "stage_budget_exhausted" if stage_exhausted else "reasoning_gap"
+    return result
+
+
+def source_handoff(stages, max_bytes):
+    """Carry bounded actual query results, without prior verdicts or query intent."""
+    facts, seen, omitted, size = [], set(), 0, 0
+    for stage in reversed(stages):
+        for row in reversed(stage.get("source_facts", [])):
+            if row["result_id"] in seen:
+                continue
+            seen.add(row["result_id"])
+            fact = {key:copy.deepcopy(row[key]) for key in
+                    ("result_id", "origin_package_id", "origin_review_id", "query", "result")}
+            fact["query"].pop("purpose", None)
+            count = len(json.dumps(fact, ensure_ascii=False).encode("utf-8"))
+            if size + count > max_bytes:
+                omitted += 1
+                continue
+            facts.append(fact)
+            size += count
+    return {"facts":facts, "omitted_facts":omitted}
+
+
 def needs_secondary(results, routing, policy, direct=False):
     reasons = {item["review_id"]: item["reason"] for item in routing}
     for result in results:
@@ -117,7 +150,7 @@ def needs_secondary(results, routing, policy, direct=False):
         reason = reasons.get(identity)
         if decision == "issue":
             return True
-        if reason in {"reasoning_gap", "control_applicability", "conflicting_evidence", "risky_dismissal"}:
+        if reason in {"reasoning_gap", "control_applicability", "conflicting_evidence", "risky_dismissal", "stage_budget_exhausted"}:
             return True
         if decision == "not_issue" and (direct or sampled(identity, policy)):
             return True

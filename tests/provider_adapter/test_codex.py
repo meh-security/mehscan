@@ -170,6 +170,14 @@ class Adapter(unittest.TestCase):
         self.assertEqual(inspected["artifacts"]["minItems"], 1)
         self.assertEqual(inspected["artifacts"]["items"]["enum"], ["source1"])
 
+    def test_definition_is_not_offered_when_its_two_query_reservations_do_not_fit(self):
+        self.task["research"]["queries_remaining"] = 1
+        def tools(schema):
+            return [v["properties"]["tool"]["enum"][0] for v in schema["properties"]["research"]["items"]["anyOf"]]
+        self.assertNotIn("definition", tools(protocol.build_schema(self.task)))
+        self.assertIn("source", tools(protocol.build_schema(self.task)))
+        self.assertIn("definition", tools(protocol.build_schema(self.task, bound_handles=False)))
+
     def test_expert_job_uses_only_its_bound_profile_and_role(self):
         primary = launcher.provider_contract(self.config)
         self.config["model"] = "gpt-6-sol"

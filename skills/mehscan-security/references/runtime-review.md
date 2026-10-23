@@ -28,6 +28,10 @@ are bounded; inspect their truncation/provenance and read named decisive source.
 Batch already-known independent lookups. Wait for discovery results before
 choosing dependent source reads; copy returned paths and line ranges rather than
 guessing them. A definition locator is navigation, not an inspected implementation.
+Use `definition` when the body is needed: it locates and reads one unambiguous
+declaration up to 120 lines for two reserved query units. Inspect its actual
+source and explicit completeness/limit; ambiguous or larger matches still need
+a scoped read. It does not resolve dispatch or follow callees recursively.
 
 Research is optional for an already settled chain. Give each query its missing-
 edge purpose. Known local consumers/helpers are available research, not missing
@@ -88,8 +92,10 @@ Routing is separate from the verdict. For each question needing another stage,
 use a typed routing reason: reasoning_gap, control_applicability,
 conflicting_evidence or risky_dismissal. Distinguish an actually unavailable
 external_required/human_required fact from difficulty reasoning over available
-code. Use budget_exhausted for an explicit remaining-work draft, not a safe
-closure. A dismissal based on unread delegated behavior, inferred ownership,
+code. Use stage_budget_exhausted when this conversation has no research left;
+the controller checks whether shared case/run capacity permits another stage.
+Use budget_exhausted for shared exhaustion. Both require a pending draft with
+the exact remaining question, never a safe closure. A dismissal based on unread delegated behavior, inferred ownership,
 neighboring controls or an incomplete search should request risky_dismissal
 review, not quietly treat absence of scanner evidence as safety. Ordinary clear
 cases need no routing entry. The controller owns model selection and audit policy.
@@ -117,7 +123,9 @@ disputed_claim (<=300 characters), reason (<=500 characters). Include explicit
 source evidence for each resolution. Keep other bundle IDs unchanged.
 If neither earlier assessment supported a newly proposed closed verdict, it
 needs fresh independent assessment and remains pending. Actual external/human
-facts and exhausted research are not resolved by stronger reasoning. An unread
+facts and exhausted shared budgets are not resolved by stronger reasoning.
+An earlier stage's local limit can be resolved by newly inspected source within
+the remaining shared budget; it is not affirmative contrary evidence. An unread
 local implementation is a research target, not proof of safety.
 <!-- /runtime:adjudication -->
 

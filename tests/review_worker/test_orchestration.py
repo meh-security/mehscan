@@ -18,6 +18,35 @@ def policy(calls=4, run_calls=6):
 
 
 class Orchestration(unittest.TestCase):
+    def test_local_exhaustion_hands_off_without_reclassifying_external_or_shared_limits(self):
+        reported = [{"review_id":"id", "reason":"budget_exhausted"}]
+        room = {"model_calls":5, "queries":4, "bytes":1000, "timeout_seconds":50}
+        local = flow.scoped_budget_routing(reported, True, room)
+        self.assertEqual(local[0]["reason"], "stage_budget_exhausted")
+        self.assertEqual(reported[0]["reason"], "budget_exhausted")
+        self.assertTrue(flow.needs_secondary([{"review_id":"id", "decision":"needs_review"}], local, policy()))
+        for key in room:
+            self.assertEqual(flow.scoped_budget_routing(local, True, {**room, key:0})[0]["reason"], "budget_exhausted")
+        self.assertEqual(flow.scoped_budget_routing(local, True, None)[0]["reason"], "budget_exhausted")
+        self.assertEqual(flow.scoped_budget_routing(reported, False, room)[0]["reason"], "reasoning_gap")
+        external = [{"review_id":"id", "reason":"external_required"}]
+        self.assertEqual(flow.scoped_budget_routing(external, True, room), external)
+
+    def test_source_handoff_is_bounded_deduplicated_and_blind_to_prior_intent(self):
+        def fact(key):
+            return {"result_id":key,"origin_package_id":"package","origin_review_id":"id",
+                    "query":{"tool":"source","purpose":"Prove my proposed issue.","arguments":{"path":"app.js"}},
+                    "result":{"text":"actual source"},"decision":"issue"}
+        original = fact("one")
+        stages = [{"source_facts":[original],"response":{"decision":"issue"}},
+                  {"source_facts":[original, fact("two")]}]
+        result = flow.source_handoff(stages, 10000)
+        self.assertEqual(len(result["facts"]), 2)
+        self.assertTrue(all("purpose" not in f["query"] and "decision" not in f for f in result["facts"]))
+        self.assertEqual(result["facts"][0]["origin_review_id"], "id")
+        self.assertIn("purpose", original["query"])
+        self.assertEqual(flow.source_handoff(stages, 0), {"facts":[],"omitted_facts":2})
+
     def test_adjudication_does_not_retry_unavailable_facts_or_vote_on_new_verdicts(self):
         def response(decision):
             return {"results":[{"review_id":"id", "decision":decision, "checks":[],

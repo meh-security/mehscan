@@ -329,6 +329,7 @@ def research_arguments(query, root, review_ids, journals):
     definitions = {"source": ({"path", "start_line", "end_line"}, set()),
                    "base_source": ({"path", "start_line", "end_line"}, set()),
                    "symbol": ({"name"}, {"path", "limit"}),
+                   "definition": ({"name"}, {"path", "limit"}),
                    "references": ({"symbol"}, {"path", "path_prefix", "limit"}),
                    "paths": ({"name"}, {"limit"})}
     if not isinstance(tool, str) or tool not in definitions or not isinstance(values, dict):
@@ -347,7 +348,7 @@ def research_arguments(query, root, review_ids, journals):
                 or any(part in ("", ".", "..", ".git") for part in path.split("/"))
                 or Path(path).is_absolute() or not (root / path).resolve().is_relative_to(root)):
             raise ValueError("research paths must stay relative to the authorized source")
-    if tool in ("symbol", "references") and "path" in values and (root / values["path"]).is_dir():
+    if tool in ("symbol", "definition", "references") and "path" in values and (root / values["path"]).is_dir():
         raise ValueError("research path filter must name a file; use path_prefix for a directory")
     if "path_prefix" in values and (root / values["path_prefix"]).is_file():
         raise ValueError("research path_prefix must name a directory")
@@ -363,7 +364,7 @@ def research_arguments(query, root, review_ids, journals):
         limit = values.setdefault("limit", 20)
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("research result limit must be 1 to 100")
-    arguments = ["investigate", tool, str(root)]
+    arguments = ["investigate", "symbol" if tool == "definition" else tool, str(root)]
     for key, value in sorted(values.items()):
         arguments += ["--" + key.replace("_", "-"), str(value)]
     if tool == "references":
@@ -374,6 +375,41 @@ def research_arguments(query, root, review_ids, journals):
             raise ValueError("research journal escapes its attempt directory")
         arguments += ["--journal", str(journal)]
     return arguments
+
+
+def research_cost(queries):
+    # Reserve the complete bounded operation before dispatch, including failed,
+    # cached or ambiguous lookups. No extra unaccounted source reads on recovery.
+    return sum(2 if query["tool"] == "definition" else 1 for query in queries)
+
+
+def definition_result(discovery, read_source):
+    """Read one native declaration range; never guess dispatch or pick an overload."""
+    result = {"operation":"get_definition", "symbol_lookup":discovery,
+              "source":None, "source_complete":False, "limit":None}
+    matches = discovery.get("results", [])
+    if discovery.get("truncated") or not isinstance(matches, list):
+        result["limit"] = "symbol_lookup_incomplete"
+        return result
+    unique = {json.dumps(item.get("location"), sort_keys=True):item for item in matches if isinstance(item, dict)}
+    if len(unique) != 1:
+        result["limit"] = "ambiguous_declaration" if unique else "declaration_not_found"
+        return result
+    location = next(iter(unique.values())).get("location") or {}
+    first, last = location.get("start", {}).get("line"), location.get("end", {}).get("line")
+    if (not isinstance(location.get("path"), str) or type(first) is not int or type(last) is not int
+            or first < 1 or last < first):
+        result["limit"] = "declaration_range_unavailable"
+        return result
+    if last - first >= 120:
+        result["limit"] = "declaration_exceeds_120_lines"
+        return result
+    source = read_source({"path":location["path"], "start_line":first, "end_line":last})
+    result["source"] = source
+    result["source_complete"] = not source.get("truncated", False) and source.get("operation") in ("get_source", "prepared_source")
+    if not result["source_complete"]:
+        result["limit"] = "source_incomplete"
+    return result
 
 
 def execute(command, cwd, env, timeout, payload=None):
@@ -568,6 +604,7 @@ def run_locked(args):
                    "kind": task["kind"], "review_ids": task.get("review_ids", []),
                    "profile": task.get("profile", "routine"), "role": task.get("review_role", "investigator"),
                    "stage_context_sha256": context.digest(task.get("stage_context")),
+                   "source_handoff_sha256": context.digest(task.get("source_handoff")),
                    "bundle_sha256": digest_file(task["bundle"]) if task.get("bundle") else None}
         return JobCheckpoint(output / "jobs" / (identity + ".json"), binding,
                              recovery / "jobs" / (identity + ".json") if recovery else None)
@@ -612,7 +649,7 @@ def run_locked(args):
         job_facts = list({entry["result_id"]: {
             "result_id": entry["result_id"], "origin_package_id": entry["origin_package_id"],
             "origin_review_id": entry["origin_review_id"], "query": entry["query"],
-            "result": entry["result"]} for entry in results}.values())
+            "result": entry["result"]} for entry in [*task.get("source_handoff", {}).get("facts", []), *results]}.values())
         expected = package
         profile = task.get("profile", "routine")
         role = task.get("review_role", "investigator")
@@ -637,6 +674,9 @@ def run_locked(args):
                 "provider": tiered_policy["expert"] if profile == "expert" else bound_runtime["provider"]}
         if task.get("stage_context") is not None:
             packet["stage_context"] = task["stage_context"]
+        if task.get("source_handoff") is not None:
+            packet["source_handoff"] = {"fact_count":len(task["source_handoff"]["facts"]),
+                                       "omitted_facts":task["source_handoff"]["omitted_facts"]}
         if role == "adjudication":
             packet["adjudicate_ids"] = task["adjudicate_ids"]
         if role == "verification":
@@ -698,6 +738,10 @@ def run_locked(args):
         def remaining_count(key, local):
             return max(0, min(local, shared_budget.remaining(case_id, key))) if shared_budget else local
 
+        def shared_remaining():
+            return {key:shared_budget.remaining(case_id, key) for key in
+                    ("model_calls", "queries", "bytes", "timeout_seconds")} if shared_budget else None
+
         def check_fresh():
             remaining()
             current = native(["state", "work", *common, "--review-ids", ",".join(requested)], remaining())
@@ -733,7 +777,8 @@ def run_locked(args):
                      "seconds_remaining": remaining(), "rounds_remaining": calls_left - round_index - 1,
                      "queries_remaining": remaining_count("queries", args.research_queries - query_count),
                      "bytes_remaining": remaining_count("bytes", args.research_bytes - byte_count),
-                     "tools": ["source", "base_source", "symbol", "references", "paths"],
+                     "shared_budget_remaining": shared_remaining(),
+                     "tools": ["source", "base_source", "symbol", "definition", "references", "paths"],
                      "semantics": {"references": "Bounded identifier text matches; navigation, not semantic binding. path_prefix must name a directory.",
                                    "paths": "Case-insensitive literal path substring, not a glob. Searches the native investigation index; absence does not prove runtime absence.",
                                    "source": "Current source only. Inspect truncation and native provenance before drawing conclusions."},
@@ -754,6 +799,11 @@ def run_locked(args):
                     if value.keys() - {"research", "draft", "working_chain", "progress", "routing", "resolutions"}:
                         raise ValueError("review envelope contains unsupported fields")
                     routing = orchestration.validate_routing(value.get("routing", []), ids)
+                    reported_routing = routing
+                    routing = orchestration.scoped_budget_routing(routing,
+                        round_index == calls_left - 1 or query_count >= args.research_queries or byte_count >= args.research_bytes,
+                        shared_remaining())
+                    job.save(reported_routing=reported_routing)
                     job.save(routing=routing)
                     working_chain = value.get("working_chain", working_chain)
                     progress = value.get("progress", progress)
@@ -780,8 +830,8 @@ def run_locked(args):
                         if "research" in value or any(edge["status"] == "open" for edge in progress):
                             raise ValueError("final draft cannot leave an available local edge open")
                         decisions = {item["review_id"]: item["decision"] for item in value["draft"].get("results", [])}
-                        if any(item["reason"] in {"external_required", "human_required", "budget_exhausted"}
-                               and decisions.get(item["review_id"]) != "needs_review" for item in routing):
+                        if any(item["reason"] in {"external_required", "human_required", "budget_exhausted", "stage_budget_exhausted"}
+                               and decisions.get(item["review_id"]) != "needs_review" for item in [*reported_routing, *routing]):
                             raise ValueError("missing-fact routing requires a needs_review draft")
                         if role == "adjudication":
                             resolutions = orchestration.validate_resolutions(value.get("resolutions"), task["adjudicate_ids"], value["draft"])
@@ -795,7 +845,7 @@ def run_locked(args):
                 queries = value["research"]
                 if set(value) != {"research"} or not isinstance(queries, list) or not queries:
                     raise ValueError("research response must be a nonempty query batch only")
-                if round_index == calls_left - 1 or query_count + len(queries) > args.research_queries:
+                if round_index == calls_left - 1 or query_count + research_cost(queries) > args.research_queries:
                     raise ValueError("reviewer exhausted its research budget without a final draft")
                 # Validate the entire batch before running any lookup.
                 commands = [research_arguments(query, root, task.get("review_ids", []), journals) for query in queries]
@@ -832,14 +882,15 @@ def run_locked(args):
             # Reserve the whole validated batch before execution so a failed or
             # interrupted batch does not gain free queries on recovery.
             if shared_budget:
-                shared_budget.reserve(case_id, "queries", len(queries))
-            job.save(queries=query_count + len(queries), active_since=time.time())
+                shared_budget.reserve(case_id, "queries", research_cost(queries))
+            job.save(queries=query_count + research_cost(queries), active_since=time.time())
 
             def lookup(pair):
                 query, arguments = pair
                 without_journal = arguments[:arguments.index("--journal")] if "--journal" in arguments else arguments
+                cache_arguments = ["definition", *without_journal] if query["tool"] == "definition" else without_journal
                 key = context.digest([scanner_hash, expected["payload"]["snapshot_id"],
-                                      expected["payload"]["inventory_input_fingerprint"], without_journal])
+                                      expected["payload"]["inventory_input_fingerprint"], cache_arguments])
 
                 def load():
                     prepared_result = source_lookup(query, remaining()) if query["tool"] in ("source", "base_source") else None
@@ -851,6 +902,24 @@ def run_locked(args):
                         result = missing_source_result(query, error)
                         if result is None:
                             raise
+                    native_queries = int(prepared_result is None)
+                    if query["tool"] == "definition":
+                        def read_definition(values):
+                            nonlocal native_queries
+                            child = {**query, "tool":"source", "arguments":values}
+                            child_args = research_arguments(child, root, ids, journals)
+                            prepared = source_lookup(child, remaining())
+                            if prepared is not None:
+                                return prepared
+                            native_queries += 1
+                            try:
+                                return native(child_args, remaining())
+                            except CommandFailure as error:
+                                missing = missing_source_result(child, error)
+                                if missing is None:
+                                    raise
+                                return missing
+                        result = definition_result(result, read_definition)
                     check_fresh()
                     origin_kind = "preparation" if result.get("operation") == "prepared_source" else "pinned_base" if result.get("operation") == "get_base_source" else task["kind"]
                     fact = {"result_id": "mehscanQueryFact/v1:" + context.digest([key, result]),
@@ -858,6 +927,8 @@ def run_locked(args):
                             "origin_kind": origin_kind,
                             "origin_review_id": None if prepared_result is not None else query["review_id"],
                             "origin_package_id": expected["package_id"], "query": query, "result": result}
+                    if query["tool"] == "definition":
+                        fact["native_query_count"] = native_queries
                     with shared_lock:
                         shared_facts.append(fact)
                         save_facts()
@@ -873,7 +944,8 @@ def run_locked(args):
             for future in lookups:
                 query, fact, reused = future.result(timeout=remaining())
                 result = fact["result"]
-                query_count += 1
+                cost = research_cost([query])
+                query_count += cost
                 result_bytes = len(json.dumps(result, ensure_ascii=False).encode("utf-8"))
                 if shared_budget:
                     shared_budget.reserve(case_id, "bytes", result_bytes)
@@ -882,13 +954,15 @@ def run_locked(args):
                          "package_id": expected["package_id"], "result_id": fact["result_id"],
                          "reused": reused, "origin_package_id": fact["origin_package_id"],
                          "origin_review_id": fact["origin_review_id"], "result": result}
+                if cost != 1:
+                    entry["reserved_query_units"] = cost
                 with shared_lock:
                     with (output / "research.jsonl").open("a", encoding="utf-8") as audit:
                         audit.write(json.dumps(entry, ensure_ascii=False) + "\n")
-                    record["research_queries"] = record.get("research_queries", 0) + 1
+                    record["research_queries"] = record.get("research_queries", 0) + cost
                     metric = ("research_cache_hits" if reused else "prepared_source_reads" if fact["origin_kind"] == "preparation"
                               else "base_source_reads" if fact["origin_kind"] == "pinned_base" else "research_executions")
-                    record[metric] = record.get(metric, 0) + 1
+                    record[metric] = record.get(metric, 0) + (fact.get("native_query_count", 1) if metric == "research_executions" else 1)
                 results.append(entry)
                 if fact["result_id"] not in {item["result_id"] for item in job_facts}:
                     job_facts.append(fact)
@@ -1143,6 +1217,7 @@ def run_locked(args):
                 else:
                     (output / "decisions").mkdir()
                 quality_policy = (tiered_policy or {}).get("quality") or {}
+                final_handoffs = {}
 
                 def finalize_stage(task, job, draft, request):
                     assessment_path = output / "assessments" / (job.path.stem + ".json")
@@ -1158,6 +1233,7 @@ def run_locked(args):
                     with shared_lock:
                         record["jobs"][job.path.stem]["status"] = "finalized"
                     return {"response":read(assessment_path), "routing":job.state.get("routing", []),
+                        "source_facts":job.state["results"],
                         "receipt":{"job_id":job.path.stem, "profile":task["profile"], "role":task["review_role"],
                             "provider":tiered_policy["expert"] if task["profile"] == "expert" else bound_runtime.get("provider"),
                             "response_sha256":digest_file(assessment_path)}}
@@ -1212,7 +1288,8 @@ def run_locked(args):
                                 if tiered_policy and role == "investigator" and orchestration.needs_secondary(
                                         assessed["results"], stage["routing"], tiered_policy, profile == "expert"):
                                     next_profile = "expert" if profile == "routine" else "routine"
-                                    verify_task = {**task, "profile": next_profile, "review_role": "verification"}
+                                    verify_task = {**task, "profile": next_profile, "review_role": "verification",
+                                        "source_handoff":orchestration.source_handoff(history, args.research_bytes)}
                                     ready[next_profile].appendleft((filename, request, verify_task, history))
                                     continue
                                 if role == "verification":
@@ -1221,7 +1298,8 @@ def run_locked(args):
                                     targets = orchestration.adjudication_ids(history) if quality_policy.get("adjudicate_disagreements") else []
                                     if targets:
                                         next_task = {**task, "profile":"expert", "review_role":"adjudication", "adjudicate_ids":targets,
-                                            "stage_context":{"assessments":history, "baseline":combined}}
+                                            "source_handoff":orchestration.source_handoff(history, args.research_bytes),
+                                            "stage_context":{"assessments":[{key:value for key,value in h.items() if key != "source_facts"} for h in history], "baseline":combined}}
                                         ready["expert"].appendleft((filename, request, next_task, history))
                                         continue
                                 elif role == "adjudication":
@@ -1229,6 +1307,7 @@ def run_locked(args):
                                 else:
                                     combined = assessed
                                 finalize_combined(combined, filename, request, job)
+                                final_handoffs[filename] = orchestration.source_handoff(history, args.research_bytes)
                                 resolutions = {r["review_id"]:r for r in job.state.get("resolutions", [])}
                                 for result in combined["results"]:
                                     identity = result["review_id"]
@@ -1259,6 +1338,7 @@ def run_locked(args):
                             peers = orchestration.peer_context(peer_index, set(data["review_ids"]), tiered_policy["max_reviews_per_job"] * 2)
                             task = {**task_base, "kind":"native_bundle", "bundle":str(request), "review_ids":data["review_ids"],
                                 "review_playbooks":data.get("review_playbooks", {}), "profile":"expert", "review_role":"final_qa",
+                                "source_handoff":final_handoffs[filename],
                                 "stage_context":{"baseline":baselines[filename], **peers}}
                             job = job_for(task)
                             qa_jobs.append((filename, request, task, job, qa_pool.submit(execute_job, task, job)))

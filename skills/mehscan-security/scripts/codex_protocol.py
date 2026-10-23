@@ -26,9 +26,11 @@ def build_schema(task, *, bound_handles=True):
         draft = object_schema({"results":{"type":"array","items":entry}})
     query_id = {"type":"null"} if task["kind"] == "change_pass" else {"type":"string","enum":task["review_ids"]}
     query_variants = []
-    for tool in ("source", "base_source", "symbol", "references", "paths"):
+    for tool in ("source", "base_source", "symbol", "definition", "references", "paths"):
+        if tool == "definition" and bound_handles and task["research"].get("queries_remaining", 2) < 2:
+            continue
         props = ({"path":text,"start_line":integer,"end_line":integer} if tool in ("source","base_source") else
-                 {"name":text,"path":{"type":["string","null"]},"limit":integer} if tool == "symbol" else
+                 {"name":text,"path":{"type":["string","null"]},"limit":integer} if tool in ("symbol", "definition") else
                  {"symbol":text,"path":{"type":["string","null"]},"path_prefix":{"type":["string","null"]},"limit":integer} if tool == "references" else
                  {"name":text,"limit":integer})
         query_variants.append(object_schema({"tool":{"type":"string","enum":[tool]},"review_id":query_id,
@@ -41,7 +43,7 @@ def build_schema(task, *, bound_handles=True):
         "artifacts":artifacts})
     routing = {"type":"array", "items":object_schema({"review_id":{"type":"string"},
         "reason":{"type":"string","enum":["reasoning_gap","control_applicability","conflicting_evidence",
-            "risky_dismissal","external_required","human_required","budget_exhausted"]}})}
+            "risky_dismissal","external_required","human_required","budget_exhausted","stage_budget_exhausted"]}})}
     if task["kind"] == "change_pass":
         routing["maxItems"] = 0
     else:
@@ -80,13 +82,14 @@ Use action=final, research=[] and the complete normal draft when each selected c
 working_chain is a concise hypothesis <=1500 characters. Each progress edge <=300 characters cites only handles in the supplied Available artifact handles list. If none applies, use artifacts=[] and keep the unread edge open or precisely blocked.
 Do not cite invented IDs. Mark available unread decisive code open, not blocked. Final output cannot leave an open edge.
 Inspected edges need artifacts; blocked edges need precise causes. No mandatory research when supplied evidence settles the chain.
-Queries: source(path,start_line,end_line) for CURRENT bytes; base_source(path,start_line,end_line) for the PINNED BASE; symbol(name, optional path/limit); references(symbol, optional path OR path_prefix/limit); paths(name, optional limit).
+Queries: source(path,start_line,end_line) for CURRENT bytes; base_source(path,start_line,end_line) for the PINNED BASE; definition(name, optional path/limit) locates and reads one unambiguous declaration up to 120 lines, reserving two query units; symbol(name, optional path/limit) locates only; references(symbol, optional path OR path_prefix/limit); paths(name, optional limit).
+Prefer definition when the helper's implementation decides the question. Its actual source is inspected evidence; ambiguous, truncated or large matches remain navigation. Check source_complete and limit, and scope path when already known. No recursive callees or receiver binding is inferred.
 Prepared windows are verified actual source, not model summaries. complete_file=true means the complete file is supplied. Do not reread supplied source to confirm it or populate journals; a covered query is served from preparation without a native query.
 Optional path filters are null when unused. Tool argument schemas are distinct; symbol takes name, references takes symbol. Each query has a purpose <=300 characters. Native queries use their exact prompting ID; change-pass uses null.
 References are textual navigation and their limits count occurrences. Inspect named code; two preview lines are not complete effect coverage.
 Paths use literal substrings, not globs. source windows <=400 lines; discovery limit <=100. Scope callers to the actual component first; widen for justified missing edges.
 Client entry/library bindings may be expressed through package exports, build or alias configuration and relative imports with built extensions. Search those named bindings rather than repeating the source-path spelling. A verified exported client entry can establish a conditional source weakness under normal binding; do not demand a deployed page or victim.
-Artifact handles remain stable throughout this conversation. Source facts are reusable source-bound outputs, not verdicts. Use their result_id and retain original attribution. Previously answered queries do not gain information by repetition.
+Artifact handles remain stable throughout this conversation. Source facts are reusable source-bound outputs, not verdicts. A stage may receive earlier raw query results without earlier verdicts or query purposes; reuse them under their original attribution. Previously answered queries do not gain information by repetition.
 When a changed guard reaches a state/credential issuer or named consumer, inspect that helper/effect before declaring it unavailable.
 Prefer one consequential actual chain plus honest remaining coverage over an all-routes search. In the CHANGE PASS, source-only effect tracking remains needs_review only when no supplied native ID covers that effect, even after a local defect is established: name remaining coverage/representation work, not an invented missing fact. In NATIVE BUNDLE review, the task review_ids and native_questions supply exact native IDs. Decide those questions directly; source-only tracking language from a previous change pass is not a blocker for a represented native finding.
 Native draft summaries/reasons are concise; summaries <=500 characters, checks <=300. issue/not_issue checks and blockers empty. needs_review requires at least one decisive remaining question in checks; blockers describe the obstacle, not a substitute for checks. Evidence uses actual path/inclusive lines, usually <=20 each.
