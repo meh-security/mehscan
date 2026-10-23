@@ -150,15 +150,18 @@ class Adapter(unittest.TestCase):
 
     def test_dependency_and_knowledge_have_separate_wire_actions_and_source_handles(self):
         task = {**self.task,"kind":"native_bundle","review_ids":["one"],"dependency_allowed":True}
-        task["research"] = {**task["research"],"artifact_handles":{"source1":"proof"},"rounds_remaining":0}
+        task["research"] = {**task["research"],"artifact_handles":{"source1":"proof","fact1":"navigation"},
+            "source_artifact_handles":["source1"],"rounds_remaining":0}
         schema = protocol.build_schema(task)
         self.assertEqual(schema["properties"]["action"]["enum"],["final","dependency"])
+        self.assertEqual(schema["properties"]["dependency"]["anyOf"][0]["properties"]["artifacts"]["items"]["enum"],["source1"])
         request = {"question":"What does this guard establish?","scope":"This receiver only.","artifacts":["source1"]}
         self.assertEqual(protocol.envelope({"action":"dependency","research":[],"draft":None,"dependency":request}),{"dependency":request})
         task.update(review_role="research",profile="expert",dependency_allowed=False)
         schema = protocol.build_schema(task)
         self.assertEqual(schema["properties"]["action"]["enum"],["knowledge"])
         self.assertNotIn("draft",schema["properties"])
+        self.assertEqual(schema["properties"]["knowledge"]["properties"]["artifacts"]["items"]["enum"],["source1"])
         note = {"claim":"Rejects missing membership.","conditions":"Caller supplies subject tenant.",
             "limits":"Tenant selection is not established.","status":"established","artifacts":["source1"]}
         self.assertEqual(protocol.envelope({"action":"knowledge","research":[],"knowledge":note}),{"knowledge":note})

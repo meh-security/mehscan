@@ -460,14 +460,12 @@ def definition_result(discovery, read_source):
             or first < 1 or last < first):
         result["limit"] = "declaration_range_unavailable"
         return result
-    if last - first >= 120:
-        result["limit"] = "declaration_exceeds_120_lines"
-        return result
-    source = read_source({"path":location["path"], "start_line":first, "end_line":last})
+    clipped = last - first >= 120
+    source = read_source({"path":location["path"], "start_line":first, "end_line":min(last,first + 119)})
     result["source"] = source
-    result["source_complete"] = not source.get("truncated", False) and source.get("operation") in ("get_source", "prepared_source")
+    result["source_complete"] = not clipped and not source.get("truncated", False) and source.get("operation") in ("get_source", "prepared_source")
     if not result["source_complete"]:
-        result["limit"] = "source_incomplete"
+        result["limit"] = "declaration_exceeds_120_lines" if clipped else "source_incomplete"
     return result
 
 
@@ -814,6 +812,13 @@ def run_locked(args):
             collect(payload.get("evidence_updates", []))
             return aliases
 
+        def grounded_artifact_ids():
+            return {f["result_id"] for f in [*job_facts,*sweep_facts] if f["result"].get("operation") in (
+                "get_source", "get_base_source", "prepared_source", "native_source_context") or (
+                f["result"].get("operation") == "get_definition" and
+                (f["result"].get("source") or {}).get("operation") in ("get_source","prepared_source"))} | {
+                w["artifact_id"] for w in packet["primary"]["windows"]}
+
         def remaining():
             seconds = deadline - time.monotonic()
             if shared_budget:
@@ -849,11 +854,20 @@ def run_locked(args):
             # Final-only; a second reserved turn permits citation repair or
             # recovery of an interrupted call, never another research loop.
             calls_left = min(calls_left, max(0, 2 - job.state["calls"]))
+        citation_repair = bool(job.state.get("citation_feedback"))
+        if citation_repair:
+            calls_left = remaining_count("model_calls",args.research_rounds + 1 - job.state["calls"])
+        repair_slot = int(bool(tiered_policy and profile == "routine" and not task.get("assessment_cycle")
+            and not citation_repair and remaining_count("model_calls",args.research_rounds + 1 - job.state["calls"]) > calls_left))
+        if citation_repair:
+            feedback, corrections = job.state["citation_feedback"], 1
         if calls_left <= 0:
             raise ValueError("recovery job has no remaining model turns")
         if byte_count > args.research_bytes or query_count > args.research_queries:
             raise ValueError("recovery job already exceeded its research budget")
-        for round_index in range(calls_left):
+        for round_index in range(calls_left + repair_slot):
+            if round_index >= calls_left and not job.state.get("citation_feedback"):
+                raise ValueError("extra routine turn is reserved for citation correction only")
             # Later turns follow a validated provider response or query batch.
             # That post-check also brackets the next operation; do not repeat
             # the full snapshot walk without an intervening source consumer.
@@ -862,6 +876,7 @@ def run_locked(args):
             with shared_lock:
                 record["step"] = "reviewer/" + task["kind"]
             aliases = artifact_handles()
+            source_handles = [alias for alias,identity in aliases.items() if identity in grounded_artifact_ids()]
             display_facts = json.loads(json.dumps(job_facts))
             if role == "verification":
                 for fact in display_facts:
@@ -869,12 +884,12 @@ def run_locked(args):
             write(facts_path, {"schema_version": "1", "scanner_sha256": scanner_hash,
                               "snapshot_id": payload["snapshot_id"], "facts": display_facts})
             frame = {**task, "artifact_root": str(artifact_root), "sensitive_paths": [str(store), str(claim_path), str(invocation)],
-                     "dependency_allowed":bool(tiered_policy and profile == "routine" and role == "investigator" and not task.get("assessment_cycle")),
+                     "dependency_allowed":bool(source_handles and tiered_policy and profile == "routine" and role == "investigator" and not task.get("assessment_cycle")),
                      "conversation_id": conversation_id, "evidence_packet": str(packet_path),
                      "provider_metrics": str(output / ("provider-metrics-" + conversation_id + ".jsonl")),
                      "shared_facts": str(facts_path),
                      "research": {"version": "2", "round": round_index,
-                     "seconds_remaining": remaining(), "rounds_remaining": calls_left - round_index - 1,
+                     "seconds_remaining": remaining(), "rounds_remaining": max(0,calls_left - round_index - 1),
                      "queries_remaining": remaining_count("queries", args.research_queries - query_count),
                      "bytes_remaining": remaining_count("bytes", args.research_bytes - byte_count),
                      "shared_budget_remaining": shared_remaining(),
@@ -882,8 +897,9 @@ def run_locked(args):
                      "semantics": {"references": "Bounded identifier text matches; navigation, not semantic binding. path_prefix must name a directory.",
                                    "paths": "Case-insensitive literal path substring, not a glob. Searches the native investigation index; absence does not prove runtime absence.",
                                    "source": "Current source only. Inspect truncation and native provenance before drawing conclusions."},
-                     "artifact_handles": aliases, "working_chain": working_chain, "progress": progress, "feedback": feedback, "results": results}}
-            if task.get("assessment_cycle") == "dependency_resume":
+                     "artifact_handles": aliases, "source_artifact_handles":source_handles,
+                     "working_chain": working_chain, "progress": progress, "feedback": feedback, "results": results}}
+            if task.get("assessment_cycle") == "dependency_resume" or job.state.get("citation_feedback") or round_index >= calls_left:
                 frame["research"].update(rounds_remaining=0, queries_remaining=0)
             started = time.monotonic()
             if shared_budget:
@@ -906,10 +922,7 @@ def run_locked(args):
                     if isinstance(note, dict) and isinstance(note.get("artifacts"), list):
                         note["artifacts"] = [aliases.get(a,a) if isinstance(a,str) else a for a in note["artifacts"]]
                     # Sweep/peer summaries are leads, not inspected source support.
-                    known = {f["result_id"] for f in [*job_facts,*sweep_facts] if f["result"].get("operation") in (
-                        "get_source", "get_base_source", "prepared_source", "native_source_context") or (
-                        f["result"].get("operation") == "get_definition" and f["result"].get("source_complete"))}
-                    known |= {w["artifact_id"] for w in packet["primary"]["windows"]}
+                    known = grounded_artifact_ids()
                     note = orchestration.grounded_note(note, known, dependency=field == "dependency")
                     support = [*job_facts, *(f for f in sweep_facts if f["result_id"] in note["artifacts"])]
                     for window in packet["primary"]["windows"]:
@@ -985,7 +998,7 @@ def run_locked(args):
                                     "--source-root", str(root), "--journal-dir", str(journals), "--output", str(assessment_path)], remaining())
                             except CommandFailure as error:
                                 message = citation_feedback(error, ids)
-                                if corrections or round_index == calls_left - 1 or message is None:
+                                if corrections or round_index == calls_left + repair_slot - 1 or message is None:
                                     raise
                                 corrections += 1
                                 job.state.pop("candidate_draft", None)
@@ -993,6 +1006,7 @@ def run_locked(args):
                                 job.save()
                                 feedback = {"reason":message,
                                     "instruction":"Correct only the rejected source citation using actual supplied ranges. The draft was not admitted; preserve honest uncertainty."}
+                                job.save(citation_feedback=feedback)
                                 continue
                             job.save(assessment_sha256=digest_file(assessment_path))
                         return job.complete(value["draft"])
@@ -1006,7 +1020,7 @@ def run_locked(args):
                     raise ValueError("dependency resumption cannot start another research loop")
                 if set(value) != {"research"} or not isinstance(queries, list) or not queries:
                     raise ValueError("research response must be a nonempty query batch only")
-                if round_index == calls_left - 1:
+                if round_index >= calls_left - 1 or job.state.get("citation_feedback"):
                     raise ValueError("reviewer exhausted its research budget without a final draft")
                 if research_cost(queries) > remaining_count("queries", args.research_queries - query_count):
                     raise ValueError("research batch exceeds remaining query units")

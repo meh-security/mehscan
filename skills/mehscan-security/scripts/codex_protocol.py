@@ -82,15 +82,19 @@ def build_schema(task, *, bound_handles=True):
         schema["properties"]["progress"]["items"] = {"anyOf":variants}
     if task.get("dependency_allowed"):
         bounded = {"type":"string","minLength":1,"maxLength":500}
+        proof_handles = task["research"].get("source_artifact_handles", handles)
+        proof_artifacts = {"type":"array","items":{"type":"string","enum":proof_handles}} if bound_handles else strings
         schema["properties"]["dependency"] = {"anyOf":[object_schema({"question":bounded,"scope":bounded,
-            "artifacts":{**artifacts,"minItems":1,"maxItems":8}}),{"type":"null"}]}
+            "artifacts":{**proof_artifacts,"minItems":1,"maxItems":8}}),{"type":"null"}]}
         schema["required"].append("dependency")
         schema["properties"]["action"]["enum"].append("dependency")
         schema["properties"]["draft"] = {"anyOf":[draft,{"type":"null"}]}
     if task.get("review_role") == "research":
         bounded = {"type":"string","minLength":1,"maxLength":700}
+        proof_handles = task["research"].get("source_artifact_handles", handles)
+        proof_artifacts = {"type":"array","items":{"type":"string","enum":proof_handles}} if bound_handles else strings
         note = object_schema({"claim":bounded,"conditions":bounded,"limits":bounded,
-            "status":{"type":"string","enum":["established","unresolved"]},"artifacts":{**artifacts,"minItems":1,"maxItems":8}})
+            "status":{"type":"string","enum":["established","unresolved"]},"artifacts":{**proof_artifacts,"minItems":1,"maxItems":8}})
         schema = object_schema({"action":{"type":"string","enum":["research","knowledge"]},
             "research":schema["properties"]["research"], "knowledge":{"anyOf":[note,{"type":"null"}]}})
         if bound_handles and any(remaining.get(key,1) <= 0 for key in ("rounds_remaining","queries_remaining","bytes_remaining")):
@@ -107,7 +111,7 @@ working_chain is a concise hypothesis <=1500 characters. Each progress edge <=30
 Do not cite invented IDs. Mark available unread decisive code open, not blocked. Final output cannot leave an open edge.
 Inspected edges need artifacts; blocked edges need precise causes. No mandatory research when supplied evidence settles the chain.
 Queries: source(path,start_line,end_line) for CURRENT bytes; base_source(path,start_line,end_line) for the PINNED BASE; definition(name, optional path/limit) locates and reads one unambiguous declaration up to 120 lines, reserving two query units; symbol(name, optional path/limit) locates only; references(symbol, optional path OR path_prefix/limit); paths(name, optional limit).
-Prefer definition when the helper's implementation decides the question. Its actual source is inspected evidence; ambiguous, truncated or large matches remain navigation. Check source_complete and limit, and scope path when already known. No recursive callees or receiver binding is inferred.
+Prefer definition when the helper's implementation decides the question. It returns at most the first 120 declaration lines. Actual partial source is inspected evidence only for the shown code; source_complete=false means the rest remains unread. Ambiguous matches are navigation only. Check source_complete and limit, and scope path when already known. No recursive callees or receiver binding is inferred.
 The batch's total query units must fit queries_remaining: two per definition, one per other query. Reuse a shared lookup across bundle IDs instead of requesting it once per ID.
 Prepared windows are verified actual source, not model summaries. complete_file=true means the complete file is supplied. Do not reread supplied source to confirm it or populate journals; a covered query is served from preparation without a native query.
 Optional path filters are null when unused. Tool argument schemas are distinct; symbol takes name, references takes symbol. Each query has a purpose <=300 characters. Native queries use their exact prompting ID; change-pass uses null.
@@ -153,6 +157,9 @@ Queries use the declared broker schema and exact prompting review ID. Check trun
     prompt += "\nQuery receipts (reused results retain original attribution):\n" + json.dumps(readable([
         {key:value for key,value in entry.items() if key != "result"} for entry in receipts]))
     prompt += "\nAvailable artifact handles (exhaustive for this turn):\n" + json.dumps(list(task["research"]["artifact_handles"]))
+    if task.get("dependency_allowed") or task.get("review_role") == "research":
+        prompt += "\nInspected source handles eligible for dependency/knowledge artifacts:\n" + json.dumps(task["research"].get("source_artifact_handles",[]))
+        prompt += "\nNavigation and locator-only definitions explain limits, not inspected implementation. A clipped declaration prefix proves only its shown code; unread remainder stays unresolved. Cite eligible source handles for the grounded note."
     prompt += "\nCurrent research budget/progress:\n" + json.dumps(readable({key:value for key,value in task["research"].items() if key not in ("results", "artifact_handles")}))
     if any(task["research"].get(key, 1) <= 0 for key in ("rounds_remaining", "queries_remaining", "bytes_remaining")):
         prompt += ("\nResearch is finished. Return the scoped knowledge result, including precise limits if unresolved." if task.get("review_role") == "research" else

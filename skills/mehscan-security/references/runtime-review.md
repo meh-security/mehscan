@@ -29,9 +29,10 @@ Batch already-known independent lookups. Wait for discovery results before
 choosing dependent source reads; copy returned paths and line ranges rather than
 guessing them. A definition locator is navigation, not an inspected implementation.
 Use `definition` when the body is needed: it locates and reads one unambiguous
-declaration up to 120 lines for two reserved query units. Inspect its actual
-source and explicit completeness/limit; ambiguous or larger matches still need
-a scoped read. It does not resolve dispatch or follow callees recursively.
+declaration prefix up to 120 lines for two reserved query units. Larger bodies
+return actual partial source with source_complete=false and a limit; unread
+remainder cannot prove absence of a control. Ambiguous matches remain locators.
+Inspect completeness and expand only the deciding remainder. No recursive dispatch.
 
 Research is optional for an already settled chain. Give each query its missing-
 edge purpose. Known local consumers/helpers are available research, not missing
@@ -116,6 +117,11 @@ affirmative issue/not_issue counterclaims are a real disagreement.
 <!-- runtime:dependency_research -->
 Resolve only stage_context.dependency: one named question and applicability
 boundary. The supplied source is reusable evidence, not a prior verdict.
+Ask and answer one reusable proposition about a shared control or producer,
+not an exhaustive certification of every controller/mutation API in a bundle.
+Locate the common check/helper; consumers own their individual caller bindings.
+Cite the shared implementation's source for that proposition; caller-specific
+scope and evidence belong to each consumer, not a global safe-label contract.
 Inspect the deciding implementation/control with one focused research batch if
 needed. Return knowledge with claim, conditions, limits, status and artifacts.
 Use status=established only for an interpretation supported in the stated scope;

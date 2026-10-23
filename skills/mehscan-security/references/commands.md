@@ -179,6 +179,10 @@ turn permits citation repair or interrupted-call recovery. All calls retain the
 original shared case/run ledger. Unresolved research is valid pending work, not
 a trigger to repeat the same expert investigation. Ordinary pending-to-resolved
 progress is terminal; affirmative contrary verdicts still need resolution.
+If a routine draft's citation fails after its last normal turn, one unused turn
+in the original runtime and shared budgets may correct citations only. It cannot
+start more research or expand the case budget. Source-note schemas expose only
+eligible inspected-source handles; navigation stays available for locating code.
 The controller batches adjacent pending-question registrations into native
 `state pending-batch` transactions (up to 256 exact questions per transaction),
 preserving source/ownership checks and idempotent recovery.

@@ -66,7 +66,11 @@ class LookupFailures(unittest.TestCase):
                 ({"results":[]},"declaration_not_found"),
                 ({"results":[{"location":{**item["location"],"end":{"line":125}}}]},"declaration_exceeds_120_lines")]:
             self.assertEqual(worker.definition_result(discovery, source)["limit"], limit)
-        self.assertEqual(len(read_ranges), 1)
+        self.assertEqual(len(read_ranges), 2)
+        self.assertEqual(read_ranges[-1],{"path":"helper.go","start_line":5,"end_line":124})
+        partial = worker.definition_result({"results":[{"location":{**item["location"],"end":{"line":200}}}]},source)
+        self.assertFalse(partial["source_complete"])
+        self.assertIsNotNone(partial["source"])
         self.assertEqual(worker.research_cost([{"tool":"definition"},{"tool":"source"}]), 3)
 
     def test_only_exact_current_source_not_found_is_recoverable(self):
@@ -430,27 +434,31 @@ else:
         self.assertEqual(len(json.loads((Path(args.output) / "review-execution.json").read_text())["cases"]),2)
 
     def test_native_citation_feedback_repairs_once_without_an_expert_or_budget_reset(self):
-        args = self.configure_tiered(run_calls=2,research_rounds=1,audit_percent=0)
+        args = self.configure_tiered(run_calls=3,quality=True,research_rounds=2,audit_percent=0,final_qa=False)
         original, calls = worker.execute, []
         def provider(command,cwd,env,timeout,payload=None):
             if len(command) != 4 or not command[1].endswith("codex_reviewer.py"):
                 return original(command,cwd,env,timeout,payload)
             task = json.loads(payload)
             calls.append(task["profile"])
-            if len(calls) == 2:
-                self.assertIn("past end",task["research"]["feedback"]["reason"])
+            if len(calls) == 1:
+                return {"research":[{"tool":"source","review_id":task["review_ids"][0],
+                    "arguments":{"path":"app.js","start_line":1,"end_line":1}}]}
+            if len(calls) == 3:
+                self.assertIn("1 to 400",task["research"]["feedback"]["reason"])
+                self.assertEqual(task["research"]["queries_remaining"],0)
             return {"draft":{"results":[{"review_id":identity,"decision":"needs_review","confidence":"medium",
                 "summary":"The handler evaluates the query operand; exposure is unresolved.",
                 "reason":"The local source does not establish deployment exposure.",
-                "evidence":[{"path":"app.js","start_line":1,"end_line":99 if len(calls) == 1 else 1}],
+                "evidence":[{"path":"app.js","start_line":1,"end_line":401 if len(calls) == 2 else 1}],
                 "checks":["Establish the deployed entrypoint for this handler."],"blockers":[]}
                 for identity in task["review_ids"]]},"working_chain":"","progress":[],
                 "routing":[{"review_id":identity,"reason":"external_required"} for identity in task["review_ids"]]}
         with patch.object(worker,"execute",side_effect=provider):
             result = worker.run(args)
         self.assertEqual(result["status"],"admitted",result)
-        self.assertEqual(calls,["routine","routine"])
-        self.assertEqual(json.loads((Path(args.output) / "budget.json").read_text())["totals"]["model_calls"],2)
+        self.assertEqual(calls,["routine","routine","routine"])
+        self.assertEqual(json.loads((Path(args.output) / "budget.json").read_text())["totals"]["model_calls"],3)
 
     def run_revalidation_case(self, reopening=False, interrupt=False):
         args = self.configure_tiered(run_calls=10, quality=True, research_rounds=1)
