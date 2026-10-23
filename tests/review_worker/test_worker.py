@@ -1403,6 +1403,38 @@ else:
         self.assertFalse((self.base / "worker/research.jsonl").exists())
         self.assert_no_decisions()
 
+    def test_plan_and_owner_changes_during_reviewer_fence_research_and_admission(self):
+        for mode in ("plan", "owner"):
+            with self.subTest(mode=mode):
+                current = self.native("state", "work", *self.common)
+                self.package.write_text(json.dumps(current))
+                if mode == "plan":
+                    draft = self.native("state", "plan-template", "--inventory", str(self.inventory),
+                        "--source-root", str(self.root), "--policy", "comprehensive",
+                        "--skill-root", str(ROOT / "skills/mehscan-security"), "--research-rounds", "2")
+                    path = self.base / "new-plan.json"
+                    path.write_text(json.dumps(draft))
+                    command = [str(self.scanner), "state", "plan", *self.common,
+                        "--input", str(path), "--expected-plan-id", current["payload"]["plan_id"],
+                        "--skill-root", str(ROOT / "skills/mehscan-security"), "--operation-key", "during-model-plan"]
+                else:
+                    command = [str(self.scanner), "state", "claim", "--store", str(self.store),
+                        "--stream", "local-review", "--inventory", str(self.inventory), "--source-root", str(self.root),
+                        "--attempt-id", "new-owner", "--expected-generation", "1", "--retry", "true",
+                        "--operation-key", "during-model-owner"]
+                marker = self.base / (mode + "-mutation-completed")
+                query = {"research":[{"tool":"source", "review_id":None,
+                    "arguments":{"path":"app.js", "start_line":1, "end_line":1}}]}
+                self.reviewer.write_text("import json,subprocess\nfrom pathlib import Path\n"
+                    + "subprocess.run(" + repr(command) + ",check=True,stdout=subprocess.DEVNULL)\n"
+                    + "Path(" + repr(str(marker)) + ").write_text('changed')\n"
+                    + "print(json.dumps(" + repr(query) + "))\n")
+                result = self.invoke(mode + "-drift")
+                self.assertTrue(marker.exists(), result.stderr)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.base / (mode + "-drift") / "research.jsonl").exists())
+                self.assert_no_decisions()
+
     def test_source_changed_during_query_is_rejected_before_receipt_or_admission(self):
         from argparse import Namespace
         self.research_reviewer('[{"tool":"references","review_id":task["review_ids"][0],'
