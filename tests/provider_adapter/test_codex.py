@@ -22,6 +22,20 @@ THREAD = "12345678-1234-1234-1234-123456789abc"
 
 
 class Adapter(unittest.TestCase):
+    def test_collection_protocol_has_no_verdict_and_only_inspected_source_handles(self):
+        task = {**self.task,"kind":"native_bundle","review_ids":["one"],"review_role":"collection"}
+        task["research"] = {**task["research"],"source_artifact_handles":["source1"],"rounds_remaining":0}
+        schema = protocol.build_schema(task)
+        self.assertEqual(schema["properties"]["action"]["enum"],["collection"])
+        self.assertNotIn("draft",schema["properties"])
+        self.assertNotIn("knowledge",schema["properties"])
+        self.assertEqual(schema["properties"]["collection"]["properties"]["artifacts"]["items"]["enum"],["source1"])
+        note = {"summary":"Retrieved implementation.","remaining":"Caller binding unread.",
+            "status":"incomplete","artifacts":["source1"]}
+        self.assertEqual(protocol.envelope({"action":"collection","research":[],"collection":note}),{"collection":note})
+        with self.assertRaises(ValueError):
+            protocol.envelope({"action":"collection","research":[{}],"collection":note})
+
     def test_decision_focus_retains_selected_caller_when_shared_source_has_an_unsafe_neighbor(self):
         packet = {"native_questions":[{"review_id":"safe-id","path":"app.ts","line":5},
                                        {"review_id":"other-file","path":"missing.ts","line":5}],

@@ -756,7 +756,7 @@ def run_locked(args):
             packet["work"]["parent_decisions"] = {}
             packet["work"]["change_pass"] = []
         sweep_facts = []
-        if role == "research":
+        if role in ("research", "collection"):
             packet["native_questions"] = []
             packet["work"]["parent_decisions"] = {}
             packet["work"]["change_pass"] = []
@@ -918,17 +918,18 @@ def run_locked(args):
             check_fresh()
             received_response = json.loads(json.dumps(value))
             try:
-                if isinstance(value, dict) and ("dependency" in value or "knowledge" in value):
-                    field = "dependency" if "dependency" in value else "knowledge"
+                if isinstance(value, dict) and any(key in value for key in ("dependency", "knowledge", "collection")):
+                    field = next(key for key in ("dependency", "knowledge", "collection") if key in value)
                     if set(value) != {field} or (field == "dependency" and not frame["dependency_allowed"]) or (
-                            field == "knowledge" and role != "research"):
+                            field == "knowledge" and role != "research") or (field == "collection" and role != "collection"):
                         raise ValueError("research handoff is not allowed for this task")
                     note = json.loads(json.dumps(value[field]))
                     if isinstance(note, dict) and isinstance(note.get("artifacts"), list):
                         note["artifacts"] = [aliases.get(a,a) if isinstance(a,str) else a for a in note["artifacts"]]
                     # Sweep/peer summaries are leads, not inspected source support.
                     known = grounded_artifact_ids()
-                    note = orchestration.grounded_note(note, known, dependency=field == "dependency")
+                    note = (orchestration.collected_note(note, known) if field == "collection" else
+                            orchestration.grounded_note(note, known, dependency=field == "dependency"))
                     if field == "dependency" and note.get("reuse_id") is not None and note["reuse_id"] not in {
                             row["dependency_id"] for row in dependency_catalog}:
                         raise ValueError("research reuse must select an offered dependency")
@@ -993,7 +994,7 @@ def run_locked(args):
                             job.save(resolutions=resolutions)
                         elif value.get("resolutions"):
                             raise ValueError("only adjudication can return resolutions")
-                        if role == "research":
+                        if role in ("research", "collection"):
                             raise ValueError("research tasks return scoped knowledge, not verdicts")
                         if task["kind"] == "native_bundle":
                             # Validate while a bounded repair turn is still possible.
@@ -1020,7 +1021,7 @@ def run_locked(args):
                         return job.complete(value["draft"])
                     value = {"research": value.get("research")}
                 if not isinstance(value, dict) or "research" not in value:
-                    if role == "research":
+                    if role in ("research", "collection"):
                         raise ValueError("research tasks return scoped knowledge, not verdicts")
                     return job.complete(value)  # Existing final-draft adapters remain compatible.
                 queries = value["research"]
@@ -1498,10 +1499,10 @@ def run_locked(args):
                             active[profile] -= 1
                             try:
                                 draft = future.result()
-                                if task["review_role"] == "research":
+                                if task["review_role"] in ("research", "collection"):
                                     key = task["dependency_key"]
                                     with shared_lock:
-                                        knowledge.resolve(key, draft["knowledge"], job.state["dependency_support"])
+                                        knowledge.resolve(key, draft["collection" if task["review_role"] == "collection" else "knowledge"], job.state["dependency_support"])
                                     researching.remove(key)
                                     for item in waiting.pop(key, []):
                                         resume_dependency(item, key)
@@ -1518,11 +1519,11 @@ def run_locked(args):
                                     else:
                                         waiting.setdefault(key, []).append(item)
                                         if key not in researching:
-                                            research_task = {**task, "profile":"expert", "review_role":"research",
+                                            research_task = {**task, "profile":"routine", "review_role":"collection",
                                                 "assessment_cycle":"dependency:" + key, "dependency_key":key,
                                                 "review_playbooks":{}, "source_handoff":support,
                                                 "stage_context":{"dependency":draft["dependency"]}}
-                                            ready["expert"].appendleft((filename, request, research_task, None))
+                                            ready["routine"].appendleft((filename, request, research_task, None))
                                             researching.add(key)
                                     continue
                                 stage = finalize_stage(task, job, draft, request)
@@ -1530,7 +1531,7 @@ def run_locked(args):
                                 assessed, receipt = stage["response"], stage["receipt"]
                                 role = task["review_role"]
                                 unresolved_dependency = (task.get("assessment_cycle") == "dependency_resume"
-                                    and task["stage_context"]["resolved_dependency"]["status"] == "unresolved"
+                                    and task["stage_context"]["resolved_dependency"]["status"] in ("unresolved", "incomplete")
                                     and all(r["decision"] == "needs_review" for r in assessed["results"]))
                                 if tiered_policy and role == "investigator" and not unresolved_dependency and orchestration.needs_secondary(
                                         assessed["results"], stage["routing"], tiered_policy, profile == "expert"):
@@ -1581,7 +1582,7 @@ def run_locked(args):
                 record["research_dependencies"] = {"questions":len(dependencies),
                     "consumers":sum(len(row["consumers"]) for row in dependencies.values()),
                     "shared_consumers":sum(max(0,len(row["consumers"]) - 1) for row in dependencies.values()),
-                    "unresolved_questions":sum(row.get("resolution",{}).get("status") == "unresolved" for row in dependencies.values()),
+                    "unresolved_questions":sum(row.get("resolution",{}).get("status") in ("unresolved", "incomplete") for row in dependencies.values()),
                     "waiting_questions":sum(row["status"] == "waiting" for row in dependencies.values())}
                 if waiting and not failures:
                     raise ValueError("research dependencies remain unresolved; no complete report can be admitted")

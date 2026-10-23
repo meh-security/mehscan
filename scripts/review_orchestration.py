@@ -38,6 +38,21 @@ def grounded_note(value, known, *, dependency=False):
     return result
 
 
+def collected_note(value, known):
+    """Source collection is navigation metadata, never a security verdict."""
+    if not isinstance(value, dict) or set(value) != {"summary", "remaining", "artifacts", "status"}:
+        raise ValueError("invalid source collection note")
+    for key in ("summary", "remaining"):
+        if not isinstance(value[key], str) or not 1 <= len(value[key].strip()) <= 700:
+            raise ValueError("source collection requires bounded summary and remaining work")
+    if value["status"] not in ("collected", "incomplete"):
+        raise ValueError("invalid source collection status")
+    refs = value["artifacts"]
+    if not isinstance(refs, list) or not 1 <= len(refs) <= 8 or any(not isinstance(a,str) or a not in known for a in refs):
+        raise ValueError("source collection requires inspected source handles")
+    return {**copy.deepcopy(value), "artifacts":sorted(set(refs))}
+
+
 class DependencyKnowledge:
     """Snapshot-bound research register. Controller owns scheduling, not verdicts.
 
@@ -105,7 +120,8 @@ class DependencyKnowledge:
             raise ValueError("cannot resume before dependency resolution")
         return {"dependency_id":key, "question":row["request"]["question"], "scope":row["request"]["scope"],
                 "consumer_request":copy.deepcopy(row.get("consumer_requests", {}).get(consumer)),
-                "assertion":"source-backed model interpretation; verify applicability to this caller",
+                "assertion":("source collection summary is navigation only; assess raw evidence and caller applicability"
+                    if "summary" in row["resolution"] else "source-backed model interpretation; verify applicability to this caller"),
                 **copy.deepcopy(row["resolution"])}
 
 

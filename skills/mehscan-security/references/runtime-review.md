@@ -109,6 +109,10 @@ cases need no routing entry. The controller owns model selection and audit polic
 For bounded routine investigation, finish clear local cases. When dependency_allowed
 is true, yield one precise shared implementation or security-contract question
 with its applicability scope and inspected source handles instead of a verdict.
+An unread local implementation, inherited member or authority binding belongs
+in this source-collection handoff, even after a lookup in the subclass is empty.
+Name the missing source edge; do not ask the collector to certify safety or
+send mere navigation difficulty to an expert as a reasoning problem.
 Do not start an exhaustive caller search, infer deployment policy or repeatedly
 try to resolve ambiguous ownership/dispatch. The controller schedules deeper
 research and resumes this case only after a new source-backed result arrives.
@@ -142,6 +146,25 @@ is acceptable where appropriate). Do not decide the original candidate queue,
 certify a framework, hunt all callers or spawn further dependencies. Consumers
 must separately verify caller binding. No findings or ordinary results draft.
 <!-- /runtime:dependency_research -->
+
+<!-- runtime:source_collection -->
+Collect raw source for stage_context.dependency. This is a navigation task,
+not a security assessment: do not return findings, safety conclusions or policy
+certification. Resolve a specific missing implementation and its relevant local
+binding. Follow explicit imports/base declarations with the existing source
+tools. If a method is absent in a subclass, inspect its named base declaration;
+do not repeat the same empty search. Prefer the requested member over a large
+class prefix. Copy returned paths/ranges; ambiguous runtime dispatch stays open.
+Retrieve the deciding method body, called check and rejection/effect ordering,
+plus authority/argument source needed to interpret its conditions. A validator
+name alone is not its implementation. Stop after the bounded missing edge,
+without auditing every method or recursively certifying all helper libraries.
+Return collection with summary, remaining, status and inspected source artifacts.
+status=collected means requested source is retrieved, never that code is safe.
+Use incomplete for unread decisive code; name the exact remaining locator or
+source edge. Your summary is navigation metadata only. The consumer receives
+the raw facts and makes its own verdict against its selected operation.
+<!-- /runtime:source_collection -->
 
 <!-- runtime:verification -->
 Make a fresh source-backed assessment of the exact supplied questions. This role

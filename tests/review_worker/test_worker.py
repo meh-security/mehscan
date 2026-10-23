@@ -381,17 +381,17 @@ else:
             packet = json.loads(Path(task["evidence_packet"]).read_text())
             role, resumed = task["review_role"], task.get("assessment_cycle") == "dependency_resume"
             calls.append((role,resumed,task["review_ids"][0]))
-            if role == "research":
+            if role == "collection":
                 research_started.set()
                 self.assertEqual(packet["native_questions"],[])
                 self.assertNotIn("sweep",packet)
                 self.assertFalse(task["dependency_allowed"])
                 source_id = packet["stage_context"]["dependency"]["artifacts"][0]
                 handle = next(k for k,v in task["research"]["artifact_handles"].items() if v == source_id)
-                return {"knowledge":{"claim":"allow checks that subject.admin is exactly true.",
-                    "conditions":"Requires a caller that invokes this function with the relevant subject.",
-                    "limits":"Does not establish route exposure or protection for callers that never invoke allow.",
-                    "status":"established","artifacts":[handle]}}
+                self.assertEqual(task["profile"],"routine")
+                return {"collection":{"summary":"Retrieved allow implementation source.",
+                    "remaining":"Does not establish route exposure or invocation by these callers.",
+                    "status":"collected","artifacts":[handle]}}
             if role == "investigator" and not resumed:
                 self.assertTrue(task["dependency_allowed"])
                 if task["research"]["round"] == 0:
@@ -416,7 +416,7 @@ else:
                 self.assertEqual(task["research"]["queries_remaining"],0)
                 self.assertEqual(task["research"]["rounds_remaining"],0)
                 note = packet["stage_context"]["resolved_dependency"]
-                self.assertIn("route exposure",note["limits"])
+                self.assertIn("route exposure",note["remaining"])
                 self.assertIn(task["review_ids"][0],note["consumer_request"]["scope"])
                 if not interrupted:
                     interrupted.append(True)
@@ -435,13 +435,13 @@ else:
         book = json.loads((first / "research-knowledge.json").read_text())
         self.assertEqual(len(book["dependencies"]),1,result)
         self.assertEqual(len(next(iter(book["dependencies"].values()))["consumers"]),2)
-        self.assertEqual(sum(role == "research" for role,_,_ in calls),1)
+        self.assertEqual(sum(role == "collection" for role,_,_ in calls),1)
         prior_calls = len(calls)
         args.resume_from, args.output = str(first), str(self.base / "shared-recovered")
         with patch.object(worker,"execute",side_effect=provider):
             result = worker.run(args)
         self.assertEqual(result["status"],"admitted",result)
-        self.assertEqual(sum(role == "research" for role,_,_ in calls),1)
+        self.assertEqual(sum(role == "collection" for role,_,_ in calls),1)
         self.assertEqual(len(calls)-prior_calls,2)  # Only interrupted caller and its independent verification.
         budget = json.loads((Path(args.output) / "budget.json").read_text())
         self.assertEqual(budget["totals"]["model_calls"],len(calls))

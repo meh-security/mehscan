@@ -116,7 +116,8 @@ def run(config, task, launcher_factory=Launcher):
     profile = task.get("profile", "routine")
     role = task.get("review_role", "investigator")
     quality = (runtime.get("orchestration") or {}).get("quality") or {}
-    if role not in ("investigator", "verification", "adjudication", "final_qa", "research") or (
+    if role not in ("investigator", "verification", "adjudication", "final_qa", "research", "collection") or (
+            role == "collection" and (profile != "routine" or not runtime.get("orchestration"))) or (
             role == "research" and (profile != "expert" or not runtime.get("orchestration"))) or (
             role in ("adjudication", "final_qa") and (profile != "expert" or not quality.get(
                 "adjudicate_disagreements" if role == "adjudication" else "final_qa"))):
