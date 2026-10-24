@@ -175,7 +175,6 @@ def run(config, task, launcher_factory=Launcher):
     (log / "events.jsonl").write_text(events, encoding="utf-8")
     (log / "stderr.txt").write_text(stderr, encoding="utf-8")
     thread, usage = parse_events(events, (state or {}).get("thread_id"))
-    result = envelope(response)
     delta, unknown = usage_delta(usage, state["reported_conversation_usage"] if state else None, state is not None)
     save(state_path, {"binding": binding, "round": round_index, "thread_id": thread,
                       "sent_facts": [fact["result_id"] for fact in facts], "sent_results": len(task["research"]["results"]),
@@ -187,7 +186,9 @@ def run(config, task, launcher_factory=Launcher):
               "reported_conversation_usage":usage, "unknown_delta_counters":unknown}
     with metrics_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(metric) + "\n")
-    return result
+    # A completed provider turn costs tokens even when its reply is rejected.
+    # Persist counters/continuation before admission; never admit the bad draft.
+    return envelope(response)
 
 
 def main():

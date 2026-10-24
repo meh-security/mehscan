@@ -134,6 +134,18 @@ class Adapter(unittest.TestCase):
             self.assertEqual(json.loads(rows[0])["conversation_id"], letter * 64)
         self.assertFalse((self.public / "provider-metrics.jsonl").exists())
 
+    def test_rejected_envelope_keeps_usage_and_resume_deltas_without_admitting_draft(self):
+        with patch.object(reviewer, "envelope", side_effect=ValueError("invalid reply")):
+            with self.assertRaisesRegex(ValueError, "invalid reply"):
+                self.invoke()
+        rows = [json.loads(line) for line in (self.public / "provider-metrics.jsonl").read_text().splitlines()]
+        self.assertEqual(rows[0]["usage"]["input_tokens"], 100)
+        self.task["research"]["round"] = 1
+        self.invoke()
+        rows = [json.loads(line) for line in (self.public / "provider-metrics.jsonl").read_text().splitlines()]
+        self.assertEqual([r["usage"]["input_tokens"] for r in rows], [100, 100])
+        self.assertEqual(self.calls[1][1], THREAD)
+
     def test_quality_roles_require_explicit_policy_and_resolution_wire_contract(self):
         primary = launcher.provider_contract(self.config)
         self.config["model"] = "gpt-6-sol"
