@@ -424,6 +424,9 @@ def revalidation_targets(stages, baseline, checked):
     before = {r["review_id"]:r for r in baseline["results"]}
     proposed = {r["review_id"]:r for r in stages[-1]["response"]["results"]}
     adjudicated = stages[-1]["receipt"]["role"] == "adjudication"
+    # Adjudication returns the whole bundle, but only assigned disputes count as
+    # new proposals. Unchanged siblings have no adjudication receipt natively.
+    adjudicated_ids = set(adjudication_ids(stages[:2])) if adjudicated and len(stages) >= 3 else set()
     result = {}
     for row in checked["results"]:
         identity = row["review_id"]
@@ -431,7 +434,7 @@ def revalidation_targets(stages, baseline, checked):
             continue
         if before[identity]["decision"] != "needs_review":
             result[identity] = "quality_reopening"
-        elif adjudicated and proposed[identity]["decision"] != "needs_review":
+        elif identity in adjudicated_ids and proposed[identity]["decision"] != "needs_review":
             result[identity] = "new_source_verdict"
     return result
 

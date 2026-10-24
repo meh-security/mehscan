@@ -59,13 +59,16 @@ class Orchestration(unittest.TestCase):
         def response(decision):
             return {"results":[{"review_id":"id","decision":decision,"checks":[],
                 "investigation":{"journal_summary":None,"blockers":[]}}]}
-        stages = [{"response":response("needs_review"),"routing":[],"receipt":{"role":"adjudication"}}]
+        stages = [
+            {"response":response("needs_review"),"routing":[{"review_id":"id","reason":"conflicting_evidence"}]},
+            {"response":response("needs_review"),"routing":[]},
+            {"response":response("needs_review"),"routing":[],"receipt":{"role":"adjudication"}}]
         pending, issue = response("needs_review"), response("issue")
-        stages[0]["response"] = issue
+        stages[-1]["response"] = issue
         self.assertEqual(flow.revalidation_targets(stages, pending, pending), {"id":"new_source_verdict"})
         self.assertEqual(flow.revalidation_targets(stages, issue, pending), {"id":"quality_reopening"})
         for reason in flow.UNAVAILABLE:
-            stages[0]["routing"] = [{"review_id":"id","reason":reason}]
+            stages[-1]["routing"] = [{"review_id":"id","reason":reason}]
             self.assertEqual(flow.revalidation_targets(stages, pending, pending), {})
         sibling = {"review_id":"sibling","decision":"not_issue","checks":[],"investigation":{"journal_summary":None,"blockers":[]}}
         baseline, first, second = [copy.deepcopy(pending) for _ in range(3)]
@@ -78,6 +81,17 @@ class Orchestration(unittest.TestCase):
         self.assertEqual(flow.apply_revalidation(baseline,first,second,{"id":"issue"})["results"][0]["decision"], "needs_review")
         first["results"][0]["decision"] = "not_issue"
         self.assertEqual(flow.apply_revalidation(baseline,first,second,{"id":"issue"})["results"][0]["decision"], "needs_review")
+
+    def test_adjudication_does_not_revalidate_undisputed_pending_siblings(self):
+        def response(dispute, sibling):
+            return {"results":[{"review_id":"dispute","decision":dispute},
+                               {"review_id":"sibling","decision":sibling}]}
+        stages = [
+            {"response":response("issue","not_issue"),"routing":[]},
+            {"response":response("not_issue","needs_review"),"routing":[]},
+            {"response":response("issue","not_issue"),"routing":[],"receipt":{"role":"adjudication"}}]
+        baseline = response("issue","needs_review")
+        self.assertEqual(flow.revalidation_targets(stages,baseline,baseline), {})
 
     def test_local_exhaustion_hands_off_without_reclassifying_external_or_shared_limits(self):
         reported = [{"review_id":"id", "reason":"budget_exhausted"}]
