@@ -1002,6 +1002,16 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
                 "confidence": "medium",
                 "summary": "The selected sink requires review of the source line.",
                 "reason": long_reason,
+                "source_leads": [{
+                    "question": "Does a separate lifecycle operation revoke this access?",
+                    "security_relevance": "Access may survive a later revocation event.",
+                    "distinct_from_review": "This asks about lifecycle behavior, not the selected sink invariant.",
+                    "evidence": {
+                        "path": location["path"],
+                        "start_line": location["start"]["line"],
+                        "end_line": location["start"]["line"]
+                    }
+                }],
                 "evidence": [{
                     "path": location["path"],
                     "start_line": location["start"]["line"],
@@ -1044,6 +1054,18 @@ fn writes_readable_semantic_bundle_files_and_validates_one_response() {
     let claims = brief_response["results"][0]["investigation"]["reviewer_inferences"]
         .as_array()
         .unwrap();
+    let trace = &brief_response["results"][0]["investigation"];
+    let lead = &trace["reviewer_origin_leads"][0];
+    assert_eq!(brief_response["results"][0]["decision"], "issue");
+    assert_eq!(lead["artifact_ids"][0], "review-source-2");
+    assert_eq!(lead["location"], trace["decisive_artifacts"][1]["location"]);
+    assert!(
+        trace["citations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["artifact_id"] == lead["artifact_ids"][0])
+    );
     assert!(claims.len() > 1);
     assert!(
         claims

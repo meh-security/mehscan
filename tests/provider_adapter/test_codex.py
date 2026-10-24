@@ -22,6 +22,19 @@ THREAD = "12345678-1234-1234-1234-123456789abc"
 
 
 class Adapter(unittest.TestCase):
+    def test_distinct_source_leads_survive_wire_without_changing_selected_verdict(self):
+        task = {**self.task, "kind":"native_bundle", "review_ids":["one"]}
+        schema = protocol.build_schema(task)
+        item = schema["properties"]["draft"]["anyOf"][0]["properties"]["results"]["items"]
+        self.assertEqual(item["properties"]["source_leads"]["maxItems"], 3)
+        lead = {"question":"Can delivery skip rejection?", "security_relevance":"External delivery.",
+                "distinct_from_review":"Separate from signing.",
+                "evidence":{"path":"app.ts","start_line":7,"end_line":9}}
+        draft = {"results":[{"review_id":"one","decision":"not_issue","source_leads":[lead]}]}
+        out = protocol.envelope({"action":"final","research":[],"draft":draft,
+                                 "working_chain":"Signing checked.","progress":[]})
+        self.assertEqual(out["draft"], draft)
+
     def test_collection_protocol_has_no_verdict_and_only_inspected_source_handles(self):
         task = {**self.task,"kind":"native_bundle","review_ids":["one"],"review_role":"collection"}
         task["research"] = {**task["research"],"source_artifact_handles":["source1"],"rounds_remaining":0}

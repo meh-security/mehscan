@@ -3886,6 +3886,17 @@ struct BriefReview {
     blockers: Vec<String>,
     #[serde(default)]
     reviewer_origin_leads: Vec<mehscan_core::ReviewerOriginLead>,
+    #[serde(default)]
+    source_leads: Vec<BriefSourceLead>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BriefSourceLead {
+    question: String,
+    security_relevance: String,
+    distinct_from_review: String,
+    evidence: BriefSourceRef,
 }
 
 #[derive(serde::Deserialize)]
@@ -3962,6 +3973,31 @@ fn expand_brief_reviews(
                 artifact_ids.push(artifact_id);
             }
         }
+        let mut reviewer_origin_leads = review.reviewer_origin_leads.clone();
+        if reviewer_origin_leads.len() + review.source_leads.len() > 3 {
+            return Err("brief review supports at most three separate source leads".into());
+        }
+        for lead in &review.source_leads {
+            let source = read_brief_source(source_root, &lead.evidence)?;
+            if source.len() != 1 {
+                return Err("brief source lead must select one bounded evidence window".into());
+            }
+            let (location, excerpt) = source.into_iter().next().expect("one source window");
+            let artifact_id = format!("review-source-{}", artifacts.len() + 1);
+            artifacts.push(mehscan_core::ReviewRetrievedArtifact {
+                artifact_id: artifact_id.clone(),
+                location: location.clone(),
+                excerpt,
+            });
+            artifact_ids.push(artifact_id.clone());
+            reviewer_origin_leads.push(mehscan_core::ReviewerOriginLead {
+                question: lead.question.clone(),
+                security_relevance: lead.security_relevance.clone(),
+                distinct_from_review: lead.distinct_from_review.clone(),
+                location,
+                artifact_ids: vec![artifact_id],
+            });
+        }
         let citations = artifact_ids
             .iter()
             .map(|artifact_id| mehscan_core::ReviewArtifactCitation {
@@ -3993,7 +4029,7 @@ fn expand_brief_reviews(
                 journal_summary: None,
                 citations,
                 reviewer_inferences,
-                reviewer_origin_leads: review.reviewer_origin_leads.clone(),
+                reviewer_origin_leads,
                 blockers: review.blockers.clone(),
             }),
         });

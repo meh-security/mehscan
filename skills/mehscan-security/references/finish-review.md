@@ -30,6 +30,13 @@ Stop when the chain is established,
    of confidence; do not copy detector defaults. Omit diagnosis or use null for
    not_issue/needs_review. Without an issue diagnosis, report classification and
    severity remain unassigned.
+   For a distinct consequential question discovered in inspected source, optionally
+   add `source_leads: [{"question":"...", "security_relevance":"...",
+   "distinct_from_review":"...", "evidence":{"path":"relative/file",
+   "start_line":10,"end_line":14}}]` to that result. Use at most three leads,
+   each with one small source window. The finalizer binds their source locations
+   and artifact IDs into `reviewer_origin_leads`; they remain unvalidated questions
+   separate from the selected verdict.
    If the caller explicitly requests a draft-only review, save this brief draft
    and journals, then stop. The caller must finalize, validate and report it;
    a draft-only result is not a completed validated review.

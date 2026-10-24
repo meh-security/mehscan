@@ -44,7 +44,12 @@ def build_schema(task, *, bound_handles=True):
             "decision":{"type":"string","enum":["issue","not_issue","needs_review"]},
             "confidence":{"type":"string","enum":["high","medium","low"]},"summary":text,"reason":text,
             "evidence":{"type":"array","items":object_schema({"path":text,"start_line":integer,"end_line":integer})},
-            "checks":strings,"blockers":strings,"diagnosis":{"anyOf":[diagnosis,{"type":"null"}]}})
+            "checks":strings,"blockers":strings,"diagnosis":{"anyOf":[diagnosis,{"type":"null"}]},
+            "source_leads":{"type":"array","maxItems":3,"items":object_schema({
+                "question":{"type":"string","maxLength":500},
+                "security_relevance":{"type":"string","maxLength":500},
+                "distinct_from_review":{"type":"string","maxLength":500},
+                "evidence":object_schema({"path":text,"start_line":integer,"end_line":integer})})}})
         draft = object_schema({"results":{"type":"array","items":entry}})
     query_id = {"type":"null"} if task["kind"] == "change_pass" else {"type":"string","enum":task["review_ids"]}
     query_variants = []
@@ -160,6 +165,7 @@ Artifact handles remain stable throughout this conversation. Source facts are re
 When a changed guard reaches a state/credential issuer or named consumer, inspect that helper/effect before declaring it unavailable.
 Prefer one consequential actual chain plus honest remaining coverage over an all-routes search. In the CHANGE PASS, source-only effect tracking remains needs_review only when no supplied native ID covers that effect, even after a local defect is established: name remaining coverage/representation work, not an invented missing fact. In NATIVE BUNDLE review, the task review_ids and native_questions supply exact native IDs. Decide those questions directly; source-only tracking language from a previous change pass is not a blocker for a represented native finding.
 Native draft summaries/reasons are concise; summaries <=500 characters, checks <=300. issue/not_issue checks and blockers empty. needs_review requires at least one decisive remaining question in checks; blockers describe the obstacle, not a substitute for checks. Evidence uses actual path/inclusive lines, usually <=20 each.
+source_leads=[] unless inspected source exposes a concrete consequential question distinct from this ID. Preserve at most three with question, security_relevance, distinct_from_review and one evidence window (path/start_line/end_line, <=20 lines). These are unvalidated leads, never this ID's verdict or certified findings. Use source already inspected; do not fabricate artifact IDs or conduct a speculative neighboring-code sweep.
 Change-pass drafts cover every changed path. Reviewed has questions=[]; needs_review requires concrete questions. Cite actual base/current primary windows as required, with independently mapped old/new lines.
 """
 
