@@ -29,12 +29,23 @@ class CommandFailure(RuntimeError):
 
 
 def missing_source_result(query, error):
-    """Recover only the native reader's exact missing-current-file outcome.
+    """Recover narrowly recognized missing-source or navigation-scope outcomes.
 
     Arguments and source scope have already been validated. Never forward raw
     subprocess diagnostics or treat other read/runtime failures as empty facts.
     """
-    if query["tool"] != "source" or error.returncode != 2:
+    if error.returncode != 2:
+        return None
+    if query["tool"] == "references" and "path_prefix" in query["arguments"]:
+        path = query["arguments"]["path_prefix"].rstrip("/")
+        prefix = 'error: cannot access query directory ' + json.dumps(path, ensure_ascii=False) + ': '
+        diagnostic = error.stderr.strip()
+        if diagnostic.startswith(prefix) and diagnostic.endswith("(os error 2)") and "\n" not in diagnostic:
+            return {"operation":"reference_lookup_error", "results":[], "error":{
+                "code":"scope_not_found", "path":path,
+                "message":"The requested query directory was not found. Discover the actual component path before retrying; this is not evidence that a symbol or control is absent."}}
+        return None
+    if query["tool"] != "source":
         return None
     path = query["arguments"]["path"]
     expected = 'error: text file ' + json.dumps(path, ensure_ascii=False) + ' was not found under the scan root'
@@ -400,6 +411,8 @@ def research_arguments(query, root, review_ids, journals):
         raise ValueError("unsupported research arguments")
     if "path" in values and "path_prefix" in values:
         raise ValueError("choose one research path filter")
+    if isinstance(values.get("path_prefix"), str) and not values["path_prefix"].startswith("/"):
+        values["path_prefix"] = values["path_prefix"].rstrip("/")
     for key in ("path", "path_prefix"):
         if key not in values:
             continue

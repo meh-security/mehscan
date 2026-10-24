@@ -42,9 +42,12 @@ def build_schema(task, *, bound_handles=True):
             "severity":{"type":"string","enum":["unknown","note","low","medium","high","critical"]},"impact":text,"remediation":text})
         entry = object_schema({"review_id":{"type":"string","enum":task["review_ids"]},
             "decision":{"type":"string","enum":["issue","not_issue","needs_review"]},
-            "confidence":{"type":"string","enum":["high","medium","low"]},"summary":text,"reason":text,
+            "confidence":{"type":"string","enum":["high","medium","low"]},
+            "summary":{"type":"string","minLength":1,"maxLength":500},"reason":text,
             "evidence":{"type":"array","items":object_schema({"path":text,"start_line":integer,"end_line":integer})},
-            "checks":strings,"blockers":strings,"diagnosis":{"anyOf":[diagnosis,{"type":"null"}]},
+            "checks":{"type":"array","maxItems":5,"items":{"type":"string","minLength":1,"maxLength":300}},
+            "blockers":{"type":"array","maxItems":5,"items":{"type":"string","minLength":1,"maxLength":300}},
+            "diagnosis":{"anyOf":[diagnosis,{"type":"null"}]},
             "source_leads":{"type":"array","maxItems":3,"items":object_schema({
                 "question":{"type":"string","maxLength":500},
                 "security_relevance":{"type":"string","maxLength":500},

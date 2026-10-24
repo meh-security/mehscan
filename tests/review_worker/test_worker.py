@@ -92,6 +92,15 @@ class LookupFailures(unittest.TestCase):
         self.assertIsNone(worker.missing_source_result(outside,worker.CommandFailure(2,
             "error: start line 1201 is outside app.ts (872 lines)\npermission denied")))
 
+    def test_missing_navigation_scope_is_a_bounded_non_source_receipt(self):
+        query={"tool":"references","arguments":{"symbol":"guard","path_prefix":"api/routes"}}
+        message='error: cannot access query directory "api/routes": No such file or directory (os error 2)'
+        result=worker.missing_source_result(query,worker.CommandFailure(2,message))
+        self.assertEqual(result["operation"],"reference_lookup_error")
+        self.assertEqual(result["error"]["code"],"scope_not_found")
+        for diagnostic in (message.replace("api/routes","outside"),message.replace("error 2","error 5"),message+'\nother failure'):
+            self.assertIsNone(worker.missing_source_result(query,worker.CommandFailure(2,diagnostic)))
+
 
 class Worker(unittest.TestCase):
     def setUp(self):
@@ -1525,6 +1534,13 @@ else:
         compiled = worker.research_arguments({"tool":"references","review_id":None,
             "arguments":{"symbol":"eval","path_prefix":"module"}}, self.root, [], self.base)
         self.assertIn("--path-prefix", compiled)
+        trailing = worker.research_arguments({"tool":"references","review_id":None,
+            "arguments":{"symbol":"eval","path_prefix":"module/"}}, self.root, [], self.base)
+        self.assertEqual(trailing,compiled)
+        for path in ("/module/", "module/../../", "module//nested/"):
+            with self.assertRaises(ValueError):
+                worker.research_arguments({"tool":"references","review_id":None,
+                    "arguments":{"symbol":"eval","path_prefix":path}},self.root,[],self.base)
 
     def test_research_rejects_symlink_escape_and_boolean_ranges(self):
         for arguments in ({"path":"app.js","start_line":True,"end_line":1},

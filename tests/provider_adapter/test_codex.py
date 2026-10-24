@@ -182,7 +182,9 @@ class Adapter(unittest.TestCase):
                     visit(child, (*path, index))
         visit(schema)
         properties = schema["properties"]["draft"]["anyOf"][0]["properties"]["results"]["items"]["properties"]
-        self.assertEqual(properties["summary"], {"type":"string"})
+        self.assertEqual(properties["summary"], {"type":"string","minLength":1,"maxLength":500})
+        self.assertEqual(properties["checks"]["maxItems"],5)
+        self.assertEqual(properties["checks"]["items"]["maxLength"],300)
         self.assertEqual(properties["evidence"]["items"]["properties"]["path"], {"type":"string"})
         self.assertEqual(schema["properties"]["routing"]["items"]["properties"]["review_id"]["enum"], self.task["review_ids"])
 
