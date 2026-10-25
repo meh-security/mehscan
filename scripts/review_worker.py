@@ -28,6 +28,10 @@ class CommandFailure(RuntimeError):
         self.stderr = stderr
 
 
+class ProviderFailure(CommandFailure):
+    """A failed provider subprocess, distinct from source/native validation."""
+
+
 def missing_source_result(query, error):
     """Recover narrowly recognized missing-source or navigation-scope outcomes.
 
@@ -132,6 +136,34 @@ def consolidate_metrics(directory, inherited=None):
                 rows[identity] = row
     if rows:
         write_text(directory / "provider-metrics.jsonl", "".join(json.dumps(row) + "\n" for row in rows.values()))
+    return list(rows.values())
+
+
+def provider_usage(rows):
+    """Observed receipt totals only. An unreported counter stays unknown."""
+    groups = {}
+    counters = ("input_tokens", "cached_input_tokens", "output_tokens", "cache_write_tokens")
+    for row in rows:
+        usage = row.get("usage") or {}
+        if not isinstance(usage, dict):
+            raise ValueError("provider usage must contain reported counters")
+        descriptor = {key: row.get(key) for key in ("provider", "profile", "role")}
+        key = context.digest(descriptor)
+        group = groups.setdefault(key, {**descriptor, "observed_calls":0, "provider_elapsed_ms":0,
+            "usage":{name:0 for name in counters}, "unknown_counters":[]})
+        group["observed_calls"] += 1
+        elapsed = row.get("elapsed_ms")
+        group["provider_elapsed_ms"] = (group["provider_elapsed_ms"] + elapsed
+            if group["provider_elapsed_ms"] is not None and type(elapsed) is int and elapsed >= 0 else None)
+        for name in counters:
+            value = usage.get(name)
+            if (name in row.get("unknown_delta_counters", []) or type(value) is not int or value < 0):
+                group["usage"][name] = None
+                if name not in group["unknown_counters"]:
+                    group["unknown_counters"].append(name)
+            elif group["usage"][name] is not None:
+                group["usage"][name] += value
+    return list(groups.values())
 
 
 @contextmanager
@@ -694,12 +726,29 @@ def run_locked(args):
         try:
             if shared_budget and not reused:
                 shared_budget.begin_case(case_identity(task))
-            draft = reviewer(task, job)
+            while True:
+                try:
+                    draft = reviewer(task, job)
+                    break
+                except ProviderFailure as error:
+                    job.fail(error)
+                    # One fresh provider conversation, using only the original
+                    # remaining budget. Never retry native/source failures or
+                    # invent another turn after the final allowed call.
+                    if (tiered_policy or job.state.get("provider_retries", 0) >= 1
+                            or job.state["calls"] >= args.research_rounds + 1
+                            or job.state["elapsed_seconds"] >= args.timeout
+                            or _cancelled):
+                        raise
+                    job.save(provider_retries=1)
+                    job.prior_elapsed = job.state["elapsed_seconds"]
+                    job.started = time.monotonic()
             with shared_lock:
                 record["jobs"][job.path.stem] = {"review_ids": task.get("review_ids", []), "kind": task["kind"],
                     "status": "drafted", "recovered_draft": reused,
                     "profile": task.get("profile", "routine"), "role": task.get("review_role", "investigator"),
-                    "elapsed_ms": round((time.monotonic() - started) * 1000)}
+                    "elapsed_ms": round((time.monotonic() - started) * 1000),
+                    "provider_retries":job.state.get("provider_retries", 0)}
             return draft
         except Exception as error:
             job.fail(error)
@@ -745,6 +794,8 @@ def run_locked(args):
         # Recovery of an unfinished job is a fresh provider session with the
         # previous source results and remaining budget, not an unsafe replay.
         conversation_parts = [expected["package_id"], task["kind"], task.get("review_ids", []), profile, role, attempt_key]
+        if job.state.get("provider_retries"):
+            conversation_parts.append(["provider_retry", job.state["provider_retries"]])
         if task.get("assessment_cycle"):
             conversation_parts.append(task["assessment_cycle"])
         conversation_id = context.digest(conversation_parts)
@@ -752,7 +803,7 @@ def run_locked(args):
         entries = [entry for entry in inventory_data["entries"] if entry["review_id"] in (ids or payload["planned_review_ids"])]
         packet = {"schema_version": "1", "package_id": expected["package_id"],
                   "source_binding": {"snapshot_id": payload["snapshot_id"], "inventory_input_fingerprint": payload["inventory_input_fingerprint"]},
-                  "contract": context.compile_contract(skill_root, task["kind"], entries, [item["path"] for item in (payload["impact_scope"] or {}).get("changed_files", [])], task.get("review_playbooks"), role=role),
+                  "contract": context.compile_contract(skill_root, task["kind"], entries, [item["path"] for item in (payload["impact_scope"] or {}).get("changed_files", [])], task.get("review_playbooks"), role=role, tiered=bool(tiered_policy)),
                   "work": context.compact_work(payload, ids or requested), "native_questions": entries,
                   "primary": prepared_changes}
         if tiered_policy:
@@ -905,6 +956,7 @@ def run_locked(args):
             write(facts_path, {"schema_version": "1", "scanner_sha256": scanner_hash,
                               "snapshot_id": payload["snapshot_id"], "facts": display_facts})
             frame = {**task, "artifact_root": str(artifact_root), "sensitive_paths": [str(store), str(claim_path), str(invocation)],
+                     "routing_allowed":bool(tiered_policy and task["kind"] == "native_bundle"),
                      "dependency_allowed":bool(source_handles and tiered_policy and profile == "routine" and role == "investigator" and not task.get("assessment_cycle")),
                      "conversation_id": conversation_id, "evidence_packet": str(packet_path),
                      "provider_metrics": str(output / ("provider-metrics-" + conversation_id + ".jsonl")),
@@ -930,11 +982,28 @@ def run_locked(args):
             if shared_budget:
                 shared_budget.reserve(case_id, "model_calls", 1)
             job.save(status="running", calls=job.state["calls"] + 1, model_inflight=True, active_since=time.time())
-            value = execute(worker_command, output, dict(os.environ), remaining(), json.dumps(frame))
+            succeeded = False
+            try:
+                value = execute(worker_command, output, dict(os.environ), remaining(), json.dumps(frame))
+                succeeded = True
+            except CommandFailure as error:
+                metrics_path = Path(frame["provider_metrics"])
+                if metrics_path.is_file() and metrics_path.stat().st_size <= 8 * 1024 * 1024:
+                    receipts = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines()]
+                    if any(row.get("conversation_id") == conversation_id and row.get("round") == round_index for row in receipts):
+                        # The provider completed and recorded usage, but its
+                        # adapter rejected the reply. This is not an unseen
+                        # interrupted call or an automatic infrastructure retry.
+                        job.save(model_inflight=False, active_since=time.time())
+                        raise
+                raise ProviderFailure(error.returncode, error.stderr) from error
+            finally:
+                with shared_lock:
+                    timings.append({"operation": "reviewer/" + task["kind"], "round": round_index,
+                        "job_id": job.path.stem, "profile":profile, "role":role,
+                        "provider":tiered_policy["expert"] if profile == "expert" else bound_runtime.get("provider"),
+                        "succeeded":succeeded, "elapsed_ms": round((time.monotonic() - started) * 1000)})
             job.save(model_inflight=False, active_since=time.time())
-            with shared_lock:
-                timings.append({"operation": "reviewer/" + task["kind"], "round": round_index,
-                                "job_id": job.path.stem, "elapsed_ms": round((time.monotonic() - started) * 1000)})
             check_fresh()
             received_response = json.loads(json.dumps(value))
             try:
@@ -969,6 +1038,8 @@ def run_locked(args):
                     if value.keys() - {"research", "draft", "working_chain", "progress", "routing", "resolutions", "qa_actions"}:
                         raise ValueError("review envelope contains unsupported fields")
                     routing = orchestration.validate_routing(value.get("routing", []), ids)
+                    if routing and not frame["routing_allowed"]:
+                        raise ValueError("routing requires an enabled native orchestration contract")
                     reported_routing = routing
                     routing = orchestration.scoped_budget_routing(routing,
                         round_index == calls_left - 1 or query_count >= args.research_queries or byte_count >= args.research_bytes,
@@ -1249,6 +1320,7 @@ def run_locked(args):
         elif getattr(args, "expert_command", None) or getattr(args, "expert_review_ids", None) or collection_profile:
             raise ValueError("expert work requires a native orchestration contract")
         record["runtime"] = bound_runtime
+        record["review_mode"] = "tiered" if tiered_policy else "single_model"
         all_commands = [*command, *(expert_command or [])]
         reviewer_configuration = context.digest([command, expert_command,
             [digest_file(value) for value in all_commands if Path(value).is_file()], collection_profile])
@@ -1780,7 +1852,15 @@ def run_locked(args):
     # Per-conversation append files have no concurrent writers. Consolidate
     # only after workers stop, retaining prior-attempt actual counters.
     try:
-        consolidate_metrics(output)
+        metrics = consolidate_metrics(output)
+        record["provider_usage"] = provider_usage(metrics)
+        record["cache_write_usage_complete"] = bool(metrics) and all(
+            "cache_write_tokens" not in row["unknown_counters"] for row in record["provider_usage"])
+        record["provider_retries"] = sum(job.get("provider_retries", 0) for job in checkpoints)
+        record["usage_complete"] = (record["unknown_provider_calls"] == 0
+            and len(metrics) == sum(job["calls"] for job in checkpoints)
+            and all(not set(row["unknown_counters"]) & {"input_tokens", "cached_input_tokens", "output_tokens"}
+                    for row in record["provider_usage"]))
     except (OSError, ValueError, KeyError, TypeError) as error:
         record.update(status="incomplete", usage_error=type(error).__name__)
     write(output / "worker.json", record)

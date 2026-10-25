@@ -11,6 +11,30 @@ from test_worker import worker
 
 
 class QueueBoundaries(unittest.TestCase):
+    def test_usage_summary_preserves_model_role_and_unknown_counters(self):
+        def receipt(model, role, usage):
+            return {"provider":{"model":model,"reasoning_effort":"medium"}, "profile":"routine",
+                    "role":role, "elapsed_ms":10, "usage":usage}
+        observed = {"input_tokens":100,"cached_input_tokens":20,"output_tokens":5}
+        rows = [receipt("sol", "investigator", observed), receipt("sol", "investigator", observed),
+                receipt("luna", "investigator", observed), receipt("sol", "verification", observed)]
+        groups = worker.provider_usage(rows)
+        self.assertEqual(len(groups), 3)
+        group = groups[0]
+        self.assertEqual(group["observed_calls"], 2)
+        self.assertEqual(group["usage"]["input_tokens"], 200)
+        self.assertEqual(group["usage"]["cached_input_tokens"], 40)
+        self.assertEqual(group["provider_elapsed_ms"], 20)
+        self.assertIsNone(group["usage"]["cache_write_tokens"])
+        self.assertEqual(group["unknown_counters"], ["cache_write_tokens"])
+        missing = receipt("sol", "investigator", {"output_tokens":2})
+        incomplete = worker.provider_usage([rows[0], missing])[0]
+        self.assertIsNone(incomplete["usage"]["input_tokens"])
+        self.assertIsNone(incomplete["usage"]["cached_input_tokens"])
+        self.assertEqual(incomplete["usage"]["output_tokens"], 7)
+        reset = {**rows[0], "unknown_delta_counters":["input_tokens"]}
+        self.assertIsNone(worker.provider_usage([rows[0], reset])[0]["usage"]["input_tokens"])
+
     def test_native_replay_binds_the_run_and_secondary_assessment_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)

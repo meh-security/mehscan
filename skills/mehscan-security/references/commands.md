@@ -149,6 +149,21 @@ bundled adapter configuration to match. Model/effort/client-version changes inva
 old work. Use provider descriptors; schema-1 execution needs a fresh plan.
 See the [BYOK adapter contract](../../../docs/codex-reviewer.md).
 
+Without an orchestration policy, the worker runs the selected model directly
+across its parallel job pool. It exposes research and final decisions without
+handoff or automatic verification instructions. A failed provider process with
+no completed-turn receipt can retry once in a fresh conversation using the same
+remaining job budget. Exhausted budgets, rejected completed replies and source
+validation failures do not receive that automatic retry. Recovery preserves
+completed jobs; use the existing `--resume-from` workflow for an incomplete attempt.
+
+`worker.json` reports the review mode, provider retries and observed token/time
+totals by provider/profile/role. Failed-call timings remain in `timings_ms`.
+Missing counters remain null, including cache writes when not exposed. Check
+`usage_complete`, `cache_write_usage_complete` and `unknown_provider_calls`
+before interpreting totals as complete. Native-only admission does not complete
+a separately required change pass.
+
 ## Tiered controller
 
 Opt in at `state runtime-template` or `state plan-template` with

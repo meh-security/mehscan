@@ -96,6 +96,19 @@ class Context(unittest.TestCase):
         self.assertTrue(native["contract_id"].startswith("mehscanRuntime/v1:"))
         self.assertEqual(native, context.compile_contract(skill, "native_bundle", [{"capability":"html_output"}], []))
 
+    def test_direct_contract_excludes_disabled_handoffs_but_keeps_source_review(self):
+        skill = PRODUCT / "skills/mehscan-security"
+        direct = context.compile_contract(skill, "native_bundle", [], [])
+        tiered = context.compile_contract(skill, "native_bundle", [], [], tiered=True)
+        self.assertEqual(direct["sources"][0]["sections"], ["common", "native_bundle"])
+        self.assertIn("tiered_routing", tiered["sources"][0]["sections"])
+        for word in ("dependency_allowed", "dependency_catalog", "stage_budget_exhausted"):
+            self.assertNotIn(word, direct["sources"][0]["text"])
+            self.assertIn(word, tiered["sources"][0]["text"])
+        self.assertIn("definition", direct["sources"][0]["text"])
+        self.assertIn("separate lead", direct["sources"][0]["text"])
+        self.assertNotEqual(direct["contract_id"], tiered["contract_id"])
+
     def test_source_coordinates_preserve_lone_cr_and_non_newline_separators(self):
         self.assertEqual(context.source_lines("a\r\nb\rc\vlast\r"), ["a", "b\rc\vlast\r"])
         self.assertEqual(context.source_lines("a\n\n"), ["a", ""])

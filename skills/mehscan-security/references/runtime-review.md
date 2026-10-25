@@ -94,6 +94,9 @@ The controller owns anchors, binding and journals. One actual query is attribute
 to its prompting ID; reused evidence keeps its original attribution. Do not
 fabricate a query for another ID. Preserve adjacent effects as separate leads.
 Read one matching trusted category guide when the exact question needs it.
+<!-- /runtime:native_bundle -->
+
+<!-- runtime:tiered_routing -->
 Routing is separate from the verdict. For each question needing another stage,
 use a typed routing reason: reasoning_gap, control_applicability,
 conflicting_evidence or risky_dismissal. Distinguish an actually unavailable
@@ -130,7 +133,7 @@ neither a collector's completion flag nor a named guard supplies that proof.
 Knowledge is a scoped model interpretation, not a certified fact or shared safe
 label. A needs_review-to-supported-verdict transition is ordinary progress;
 affirmative issue/not_issue counterclaims are a real disagreement.
-<!-- /runtime:native_bundle -->
+<!-- /runtime:tiered_routing -->
 
 <!-- runtime:dependency_research -->
 Resolve only stage_context.dependency: one named question and applicability

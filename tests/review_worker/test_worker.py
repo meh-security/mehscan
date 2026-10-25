@@ -734,7 +734,7 @@ id=task['review_ids'][0]
 round=task['research']['round']
 event=events/(task['conversation_id']+'-'+str(round)+'.json')
 started=time.time()
-if round==0:
+if not task['research']['results']:
     (events/(id+'.started')).touch()
     deadline=time.monotonic()+15
     while len(list(events.glob('*.started')))<2:
@@ -798,10 +798,10 @@ print(json.dumps(result))
         record = json.loads((recovered / "worker.json").read_text())
         self.assertEqual(sum(job["recovered_draft"] for job in record["jobs"].values()), 3)
         self.assertTrue(record["completion"]["review_work_complete"])
-        self.assertEqual(record["unknown_provider_calls"], 1)
+        self.assertEqual(record["unknown_provider_calls"], 2)
         events = [json.loads(path.read_text()) for path in (self.base / "events").glob("*.json")]
         after = {id: sum(event["id"] == id for event in events) for id in self.ids}
-        self.assertEqual({id: after[id]-before[id] for id in self.ids}, {id: 2 if id == self.ids[-1] else 0 for id in self.ids})
+        self.assertEqual({id: after[id]-before[id] for id in self.ids}, {id: 1 if id == self.ids[-1] else 0 for id in self.ids})
         self.assertEqual(len(json.loads((recovered / "source-facts.json").read_text())["facts"]), 1)
         self.assertEqual((recovered / "journals" / (origin + ".jsonl")).read_bytes(), (first / "journals" / (origin + ".jsonl")).read_bytes())
 
@@ -812,6 +812,88 @@ print(json.dumps(result))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("recovery requires", json.loads((self.base / "parallel-stale/worker.json").read_text())["detail"])
         self.assertEqual(len(list((self.base / "events").glob("*.json"))), len(events))
+
+    def test_direct_provider_failure_retries_once_without_resetting_budget(self):
+        original = self.reviewer.read_text()
+        self.reviewer.write_text(original.replace('package=json.loads', '''marker=Path(__file__).with_suffix('.failed')
+if not marker.exists():
+    marker.touch()
+    sys.exit(2)
+package=json.loads'''))
+        result = self.invoke("retry-once", ["--phase", "native"])
+        directory = self.base / "retry-once"
+        record = json.loads((directory / "worker.json").read_text())
+        self.assertEqual(result.returncode, 0, result.stderr + json.dumps(record))
+        self.assertEqual(record["review_mode"], "single_model")
+        self.assertEqual(record["review_capacity"], 3)
+        self.assertEqual(record["provider_retries"], 1)
+        self.assertEqual(record["unknown_provider_calls"], 1)
+        self.assertFalse(record["usage_complete"])
+        self.assertEqual(record["status"], "admitted")
+        report = json.loads((directory / "findings.json").read_text())
+        self.assertEqual(len(report["decision_records"]), len(self.ids))
+        # This run selects native review only, leaving the change pass explicit.
+        self.assertFalse(record["completion"]["review_work_complete"])
+        job = json.loads(next((directory / "jobs").glob('*.json')).read_text())
+        self.assertEqual(job["calls"], 2)
+        turns = [row for row in record["timings_ms"] if row["operation"] == "reviewer/native_bundle"]
+        self.assertEqual([row["succeeded"] for row in turns], [False, True])
+        contexts = [json.loads(path.read_text()) for path in directory.glob('context-*.json')]
+        self.assertEqual(len(contexts), 2)  # Fresh conversation after an uncertain failed turn.
+        self.assertTrue(all('tiered_routing' not in packet['contract']['sources'][0]['sections'] for packet in contexts))
+        self.assertTrue((directory / "findings.json").is_file())
+
+    def test_completed_but_rejected_provider_reply_is_not_automatically_retried(self):
+        self.reviewer.write_text('''import json,sys
+from pathlib import Path
+task=json.load(sys.stdin)
+row={'conversation_id':task['conversation_id'],'round':task['research']['round'],
+     'provider':None,'profile':'routine','role':'investigator','elapsed_ms':1,
+     'usage':{'input_tokens':10,'cached_input_tokens':0,'output_tokens':2}}
+with Path(task['provider_metrics']).open('a',encoding='utf-8') as handle:
+    handle.write(json.dumps(row)+'\\n')
+sys.exit(2)
+''')
+        result = self.invoke("rejected-provider", ["--phase", "native"])
+        directory = self.base / "rejected-provider"
+        record = json.loads((directory / "worker.json").read_text())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(record["provider_retries"], 0)
+        self.assertEqual(record["unknown_provider_calls"], 0)
+        self.assertTrue(record["usage_complete"])
+        self.assertFalse(record["cache_write_usage_complete"])
+        self.assertEqual(record["provider_usage"][0]["usage"]["input_tokens"], 10)
+        self.assertEqual(len([t for t in record['timings_ms'] if t['operation']=='reviewer/native_bundle']), 1)
+        self.assertFalse((directory / "findings.json").exists())
+
+    def test_final_allowed_provider_failure_cannot_buy_a_retry_on_recovery(self):
+        plan = self.native("state", "plan-template", "--inventory", str(self.inventory),
+            "--source-root", str(self.root), "--skill-root", str(ROOT / "skills/mehscan-security"),
+            "--policy", "comprehensive", "--research-rounds", "0")
+        plan_path = self.base / "zero-research-plan.json"
+        plan_path.write_text(json.dumps(plan))
+        parent = json.loads(self.package.read_text())["payload"]["plan_id"]
+        self.native("state", "plan", *self.common, "--input", str(plan_path),
+            "--expected-plan-id", parent, "--operation-key", "zero-research-plan")
+        self.package.write_text(json.dumps(self.native("state", "work", *self.common)))
+        self.reviewer.write_text('''import sys
+from pathlib import Path
+with Path(__file__).with_suffix('.calls').open('a') as handle:
+    handle.write('call\\n')
+sys.exit(2)
+''')
+        first = self.base / "exhausted-provider"
+        result = self.invoke(first.name, ["--phase", "native"])
+        self.assertNotEqual(result.returncode, 0)
+        record = json.loads((first / "worker.json").read_text())
+        self.assertEqual(record["provider_retries"], 0)
+        self.assertEqual(record["unknown_provider_calls"], 1)
+        result = self.invoke("exhausted-recovery", ["--phase", "native", "--resume-from", str(first)])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.reviewer.with_suffix('.calls').read_text(), 'call\n')
+        recovered = json.loads((self.base / "exhausted-recovery/worker.json").read_text())
+        self.assertIn("no remaining model turns", recovered["detail"])
+        self.assertEqual(recovered["unknown_provider_calls"], 1)
 
     def test_change_pass_native_finalization_and_state_admission_share_one_bound_workflow(self):
         result = self.invoke()

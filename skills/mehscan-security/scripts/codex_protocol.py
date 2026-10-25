@@ -75,9 +75,9 @@ def build_schema(task, *, bound_handles=True):
     routing = {"type":"array", "items":object_schema({"review_id":{"type":"string"},
         "reason":{"type":"string","enum":["reasoning_gap","control_applicability","conflicting_evidence",
             "risky_dismissal","external_required","human_required","budget_exhausted","stage_budget_exhausted"]}})}
-    if task["kind"] == "change_pass":
+    if task["kind"] == "change_pass" or not task.get("routing_allowed", False):
         routing["maxItems"] = 0
-    else:
+    if task["kind"] != "change_pass":
         routing["items"]["properties"]["review_id"]["enum"] = task["review_ids"]
     schema = object_schema({"action":{"type":"string","enum":["research","final"]},"research":{"type":"array","items":query},
         "draft":{"anyOf":[draft,{"type":"null"}]},"working_chain":text,"progress":{"type":"array","items":edge},
@@ -185,6 +185,8 @@ def build_prompt(task, packet, facts, state):
             return [readable(item) for item in value]
         return value
     instructions = INSTRUCTIONS
+    if not task.get("routing_allowed", False):
+        instructions += "\nThis is a single-model investigation. Use the source broker directly for missing evidence. No handoff or automatic second reviewer is enabled; routing=[]. Keep decisive unresolved facts in the final checks when the bounded investigation cannot settle them.\n"
     if task.get("dependency_allowed"):
         instructions += "\nBounded routine task: do the clear local work. When deciding requires an unread local implementation, inherited member or authority binding, use action=dependency, research=[], draft=null and dependency={question,scope,artifacts,reuse_id}. Name the precise source edge to retrieve and its caller scope. A cheap source collector will navigate and read it; do not ask it to certify safety. Yield even after a subclass member lookup is empty when an explicit base may implement it. Do not escalate missing local source as a reasoning problem or guess a verdict. Otherwise dependency=null.\n"
         instructions += "Select one operation or shared check, not certification of an entire service API. Set dependency.reuse_id=null for new research, or an offered dependency_id when that existing question covers the implementation evidence you need. Keep your own question, caller scope and source artifacts even when joining. A matching name is insufficient; different actions or authority arguments may need separate research. Joining does not establish caller applicability or a safe verdict.\n"

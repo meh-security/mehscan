@@ -22,6 +22,16 @@ THREAD = "12345678-1234-1234-1234-123456789abc"
 
 
 class Adapter(unittest.TestCase):
+    def test_direct_schema_disables_routing_without_disabling_research_or_decisions(self):
+        task = {**self.task, "kind":"native_bundle", "review_ids":["one"]}
+        direct = protocol.build_schema(task)
+        self.assertEqual(direct["properties"]["routing"]["maxItems"], 0)
+        self.assertEqual(direct["properties"]["action"]["enum"], ["research", "final"])
+        self.assertNotIn("dependency", direct["properties"])
+        tiered = protocol.build_schema({**task, "routing_allowed":True})
+        self.assertNotIn("maxItems", tiered["properties"]["routing"])
+        self.assertEqual(tiered["properties"]["routing"]["items"]["properties"]["review_id"]["enum"], ["one"])
+
     def test_distinct_source_leads_survive_wire_without_changing_selected_verdict(self):
         task = {**self.task, "kind":"native_bundle", "review_ids":["one"]}
         schema = protocol.build_schema(task)

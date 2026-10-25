@@ -82,9 +82,14 @@ def sections(path, names):
             "sections": names, "text": "\n\n".join(selected)}
 
 
-def compile_contract(skill_root, kind, entries, paths, playbooks=None, role="investigator"):
+def compile_contract(skill_root, kind, entries, paths, playbooks=None, role="investigator", *, tiered=False):
     core = skill_root / "references/runtime-review.md"
-    result = [sections(core, ["common", "source_collection" if role == "collection" else "dependency_research" if role == "research" else kind] + (["guard_changes"] if kind == "change_pass" else []))]
+    selected_sections = ["common", "source_collection" if role == "collection" else "dependency_research" if role == "research" else kind]
+    if tiered and kind == "native_bundle" and role not in ("research", "collection"):
+        selected_sections.append("tiered_routing")
+    if kind == "change_pass":
+        selected_sections.append("guard_changes")
+    result = [sections(core, selected_sections)]
     if role in ("verification", "adjudication", "final_qa"):
         result.append(sections(core, [role]))
     elif role not in ("investigator", "research", "collection"):
