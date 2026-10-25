@@ -101,6 +101,24 @@ class LookupFailures(unittest.TestCase):
         for diagnostic in (message.replace("api/routes","outside"),message.replace("error 2","error 5"),message+'\nother failure'):
             self.assertIsNone(worker.missing_source_result(query,worker.CommandFailure(2,diagnostic)))
 
+    def test_missing_file_navigation_recovers_only_the_exact_native_diagnostic(self):
+        message = 'error: scannable text file "api/controllers/index.ts" was not found under the scan root\n'
+        for tool, operation in [("references","reference_lookup_error"), ("symbol","symbol_lookup_error"),
+                                ("definition","symbol_lookup_error"), ("outline","outline_lookup_error")]:
+            query = {"tool":tool, "arguments":{"path":"api/controllers/index.ts"}}
+            with self.subTest(tool=tool):
+                result = worker.missing_source_result(query, worker.CommandFailure(2, message))
+                self.assertEqual(result["operation"], operation)
+                self.assertEqual(result["error"]["code"], "not_found")
+                self.assertEqual(result["results"], [])
+                for code, diagnostic in [(1,message), (2,message.replace("index.ts","other.ts")),
+                                         (2,message+'permission denied'), (2,'error: parser produced ERROR'),
+                                         (2,'error: permission denied')]:
+                    self.assertIsNone(worker.missing_source_result(query,worker.CommandFailure(code,diagnostic)))
+        for tool in ("source", "base_source"):
+            self.assertIsNone(worker.missing_source_result({"tool":tool,"arguments":{"path":"api/controllers/index.ts"}},
+                                                          worker.CommandFailure(2,message)))
+
 
 class Worker(unittest.TestCase):
     def setUp(self):

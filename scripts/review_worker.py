@@ -40,6 +40,15 @@ def missing_source_result(query, error):
     """
     if error.returncode != 2:
         return None
+    path = query["arguments"].get("path")
+    if query["tool"] in ("references", "symbol", "definition", "outline") and isinstance(path, str):
+        expected = 'error: scannable text file ' + json.dumps(path, ensure_ascii=False) + ' was not found under the scan root'
+        if error.stderr.strip() == expected:
+            operation = {"references":"reference_lookup_error", "symbol":"symbol_lookup_error",
+                         "definition":"symbol_lookup_error", "outline":"outline_lookup_error"}[query["tool"]]
+            return {"operation":operation, "results":[], "error":{
+                "code":"not_found", "path":path,
+                "message":"The requested source file was not found. Discover its actual path before retrying; no source was inspected and this does not establish that a symbol or control is absent."}}
     if query["tool"] == "references" and "path_prefix" in query["arguments"]:
         path = query["arguments"]["path_prefix"].rstrip("/")
         prefix = 'error: cannot access query directory ' + json.dumps(path, ensure_ascii=False) + ': '
