@@ -24,7 +24,12 @@ If you have only seen one side of a deciding relationship, use native lookup for
 the other side within the original budget. A concrete local counterexample must
 not be lost while investigating an unrelated external API.
 
-Build two small evidence tables, not an arbitrary illustrative test. controls
+Use these relationships to choose decisive lookups during the investigation.
+On research or handoff turns return boundary_checks=[]; keep the deciding unread
+relationship in the existing working_chain/progress, without emitting the tables.
+Complete the tables once on action=final, including when no research was needed.
+
+Build two small final evidence tables, not an arbitrary illustrative test. controls
 records the directly visible application prerequisites governing this effect:
 condition, where failure is enforced, and the actual result on a false or boundary
 case. Consider the shown alternative branches that can reach the same effect.
@@ -42,7 +47,7 @@ the operation invalidates. Resolve that application relationship before unrelate
 external protocol internals. Empty tables are valid when inapplicable; name a
 deciding unread relationship explicitly instead of assuming identity.
 
-Return boundary_checks before draft: one row per offered ID. effect is the actual
+On action=final, return boundary_checks before draft: one row per offered ID. effect is the actual
 effect (or null); requirement is its source-supported condition (or null); example
 is a concrete permitted/rejected case or the exact unavailable relationship;
 observation is what the shown code does, not a vulnerability label. status is

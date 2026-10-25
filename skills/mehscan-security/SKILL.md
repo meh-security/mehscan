@@ -57,7 +57,8 @@ Stop once the selected relationship is settled or its decisive gap is explicit.
 For authorization and token-generation worker tasks, the adapter includes
 [boundary checks](references/boundary-review.md): concrete prerequisite tests and
 producer/consumer value bindings within the same investigation. These observations
-remain unvalidated; distinct concerns use the existing source-lead channel.
+are emitted once with the final draft and remain unvalidated; research turns use
+the existing progress fields. Distinct concerns use the existing source-lead channel.
 
 Return `issue` for a shown weakness, `not_issue` for an affirmatively safe or
 inapplicable relationship, and `needs_review` for a decisive fact unavailable

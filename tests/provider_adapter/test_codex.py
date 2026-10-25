@@ -63,6 +63,8 @@ class Adapter(unittest.TestCase):
         self.assertEqual(initial,protocol.build_schema(later,bound_handles=False))
         schema = protocol.build_schema(later)
         self.assertEqual(schema["properties"]["action"]["enum"],["final"])
+        self.assertEqual(schema["properties"]["boundary_checks"]["minItems"],1)
+        self.assertEqual(protocol.build_schema(self.task)["properties"]["boundary_checks"]["minItems"],0)
         self.assertEqual(schema["properties"]["boundary_checks"]["items"]["properties"]["artifacts"]["items"]["enum"],
             ["source1","source2"])
 
@@ -76,6 +78,23 @@ class Adapter(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"exactly once"):
             boundary_review.review_envelope(response,self.task,self.body,protocol.envelope)
         self.assertEqual(list(self.public.glob("boundary-checks-*.json")),[])
+
+    def test_boundary_research_omits_tables_but_early_final_still_requires_complete_checks(self):
+        response = self.boundary_task()
+        final = copy.deepcopy(response)
+        query = {"tool":"source", "review_id":"one", "purpose":"Read the deciding control",
+                 "arguments":{"path":"app.ts", "start_line":1, "end_line":20}}
+        response.update(action="research", research=[query], draft=None, boundary_checks=[])
+        out = boundary_review.review_envelope(response,self.task,self.body,protocol.envelope)
+        self.assertEqual(out["research"],[query])
+        self.assertNotIn("boundary_checks",out)
+        self.assertEqual(list(self.public.glob("boundary-checks-*.json")),[])
+        response["boundary_checks"] = final["boundary_checks"]
+        with self.assertRaisesRegex(ValueError,"only to the final"):
+            boundary_review.review_envelope(response,self.task,self.body,protocol.envelope)
+        final["boundary_checks"] = []
+        with self.assertRaisesRegex(ValueError,"exactly once"):
+            boundary_review.review_envelope(final,self.task,self.body,protocol.envelope)
 
     def test_direct_schema_disables_routing_without_disabling_research_or_decisions(self):
         task = {**self.task, "kind":"native_bundle", "review_ids":["one"]}

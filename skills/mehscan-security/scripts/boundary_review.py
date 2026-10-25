@@ -44,8 +44,11 @@ def extend_schema(schema, task, *, bound_handles=True):
             "boundary_result":text,"artifacts":artifacts},6),
         "value_bindings":table({"origin":nullable,"presented_as":text,
             "effect_key":nullable,"remaining":nullable,"artifacts":artifacts},3)}
+    final_only = bound_handles and schema["properties"]["action"]["enum"] == ["final"]
     schema["properties"] = {"action":schema["properties"].pop("action"),
-        "boundary_checks":{"type":"array", "minItems":len(ids), "maxItems":len(ids),
+        "boundary_checks":{"type":"array",
+            "minItems":len(ids) if final_only else 0,
+            "maxItems":len(ids),
             "items":{"type":"object", "additionalProperties":False,
                 "properties":properties, "required":list(properties)}},
         **schema["properties"]}
@@ -58,7 +61,9 @@ def extend_prompt(prompt, task, packet, state):
     if ids:
         assignment = (Path(__file__).resolve().parent.parent / "references/boundary-review.md").read_text(encoding="utf-8")
         prompt += "\n" + (assignment if state is None else
-            "Update the source-bound boundary_checks using new evidence; retain the same application-effect scope, original ID verdicts and research budget.")
+            "Keep the same application-effect scope, original ID verdicts and research budget. "
+            "On research or handoff turns return boundary_checks=[]; use existing working_chain/progress for the deciding unread relationship. "
+            "On action=final, complete the source-bound boundary_checks once before draft.")
         prompt += "\nBoundary-check IDs: " + json.dumps(ids)
     return prompt
 
@@ -70,6 +75,10 @@ def review_envelope(response, task, packet, envelope):
             raise ValueError("Boundary checks are not enabled for this task")
         return envelope(response)
     rows = response.get("boundary_checks")
+    if response["action"] != "final":
+        if rows != []:
+            raise ValueError("Boundary checks belong only to the final response; use [] during research or handoff")
+        return envelope({k:v for k,v in response.items() if k != "boundary_checks"})
     if not isinstance(rows,list) or sorted(r.get("review_id", "") for r in rows) != sorted(ids):
         raise ValueError("Boundary checks must cover offered IDs exactly once")
     eligible = set(task["research"].get("source_artifact_handles", []))
