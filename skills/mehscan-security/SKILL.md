@@ -54,6 +54,10 @@ Prioritize the fact that decides the selected claim. An inspected complete contr
 can close that property; a named unread helper is a lookup target. For authority
 or state changes, bind the actual check to the same actor/object and effect.
 Stop once the selected relationship is settled or its decisive gap is explicit.
+For authorization and token-generation worker tasks, the adapter includes
+[boundary checks](references/boundary-review.md): concrete prerequisite tests and
+producer/consumer value bindings within the same investigation. These observations
+remain unvalidated; distinct concerns use the existing source-lead channel.
 
 Return `issue` for a shown weakness, `not_issue` for an affirmatively safe or
 inapplicable relationship, and `needs_review` for a decisive fact unavailable

@@ -1,5 +1,6 @@
 """Codex wire schema and compact continuation prompts. Queries are data for the native broker."""
 import json
+import boundary_review
 
 
 def object_schema(properties):
@@ -146,7 +147,7 @@ def build_schema(task, *, bound_handles=True):
         if bound_handles and any(remaining.get(key,1) <= 0 for key in ("rounds_remaining","queries_remaining","bytes_remaining")):
             schema["properties"]["action"]["enum"] = ["collection"]
             schema["properties"]["collection"] = note
-    return schema
+    return boundary_review.extend_schema(schema, task, bound_handles=bound_handles)
 
 
 INSTRUCTIONS = """Respond once with schema JSON only. No commentary, shell, tools, new tasks, edits or external access.
@@ -228,7 +229,7 @@ Use outline on a known class file to locate imports and relevant overrides witho
     if any(task["research"].get(key, 1) <= 0 for key in ("rounds_remaining", "queries_remaining", "bytes_remaining")):
         prompt += ("\nCollection is finished. Return retrieved source handles and exact remaining unread edges; no verdict." if task.get("review_role") == "collection" else "\nResearch is finished. Return the scoped knowledge result, including precise limits if unresolved." if task.get("review_role") == "research" else
             "\nThis turn has no further source queries. Return the complete draft or yield the permitted dependency. Unread decisive code remains pending; never infer safety from exhaustion.")
-    return prompt
+    return boundary_review.extend_prompt(prompt, task, packet, state)
 
 
 def envelope(response):

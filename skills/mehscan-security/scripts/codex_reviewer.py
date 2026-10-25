@@ -15,6 +15,7 @@ import uuid
 
 from codex_launcher import Launcher, cancel, file_digest, load_config, provider_contract
 from codex_protocol import build_prompt, build_schema, envelope
+from boundary_review import review_envelope
 
 
 def read(path):
@@ -188,7 +189,7 @@ def run(config, task, launcher_factory=Launcher):
         handle.write(json.dumps(metric) + "\n")
     # A completed provider turn costs tokens even when its reply is rejected.
     # Persist counters/continuation before admission; never admit the bad draft.
-    return envelope(response)
+    return review_envelope(response, task, packet, envelope)
 
 
 def main():

@@ -17,11 +17,66 @@ sys.path.insert(0, str(ROOT / "skills/mehscan-security/scripts"))
 import codex_launcher as launcher
 import codex_reviewer as reviewer
 import codex_protocol as protocol
+import boundary_review
 
 THREAD = "12345678-1234-1234-1234-123456789abc"
 
 
 class Adapter(unittest.TestCase):
+    def boundary_task(self):
+        self.body["native_questions"] = [{"review_id":"one","capability":"authorization"}]
+        self.packet.write_text(json.dumps(self.body))
+        self.task.update(kind="native_bundle",review_ids=["one"])
+        self.task["research"].update(artifact_handles={"source1":"actual-source-id","locator":"navigation-id"},
+            source_artifact_handles=["source1"])
+        return {"action":"final","research":[],"draft":{"results":[{"review_id":"one",
+            "decision":"not_issue","source_leads":[]}]},"working_chain":"The selected control applies.","progress":[],
+            "boundary_checks":[{"review_id":"one","effect":"Delete the selected record",
+                "requirement":"Actor owns that record","example":"A different actor fails the shown owner check",
+                "observation":"Rejection precedes deletion","status":"enforced","cause":None,
+                "artifacts":["source1"],"controls":[{"condition":"Owner matches actor",
+                    "failure_enforcement":"Throws before deletion","boundary_result":"Other owner rejected",
+                    "artifacts":["source1"]}],"value_bindings":[]}]}
+
+    def test_boundary_review_uses_bound_sources_without_rewriting_the_selected_verdict(self):
+        response = self.boundary_task()
+        native_draft = copy.deepcopy(response["draft"])
+        factory = self.factory
+        def provider(config, session):
+            client = factory(config, session)
+            original = client.review
+            def review(*args, **kwargs):
+                _, events, stderr = original(*args, **kwargs)
+                return response, events, stderr
+            client.review = review
+            return client
+        result = reviewer.run(self.config,self.task,provider)
+        self.assertEqual(result["draft"],native_draft)
+        self.assertNotIn("boundary_checks",result)
+        observation = json.loads(next(self.public.glob("boundary-checks-*.json")).read_text())
+        self.assertEqual(observation["source_artifacts"],{"source1":"actual-source-id"})
+        self.assertEqual(observation["interpretation"],"unvalidated_reviewer_observation")
+        initial = protocol.build_schema(self.task,bound_handles=False)
+        later = copy.deepcopy(self.task)
+        later["research"].update(rounds_remaining=0,queries_remaining=0,
+            artifact_handles={"source1":"actual-source-id","source2":"second"},source_artifact_handles=["source1","source2"])
+        self.assertEqual(initial,protocol.build_schema(later,bound_handles=False))
+        schema = protocol.build_schema(later)
+        self.assertEqual(schema["properties"]["action"]["enum"],["final"])
+        self.assertEqual(schema["properties"]["boundary_checks"]["items"]["properties"]["artifacts"]["items"]["enum"],
+            ["source1","source2"])
+
+    def test_boundary_review_rejects_duplicate_ids_and_locator_citations_in_nested_tables(self):
+        response = self.boundary_task()
+        response["boundary_checks"][0]["controls"][0]["artifacts"] = ["locator"]
+        with self.assertRaisesRegex(ValueError,"uninspected"):
+            boundary_review.review_envelope(response,self.task,self.body,protocol.envelope)
+        response = self.boundary_task()
+        response["boundary_checks"] *= 2
+        with self.assertRaisesRegex(ValueError,"exactly once"):
+            boundary_review.review_envelope(response,self.task,self.body,protocol.envelope)
+        self.assertEqual(list(self.public.glob("boundary-checks-*.json")),[])
+
     def test_direct_schema_disables_routing_without_disabling_research_or_decisions(self):
         task = {**self.task, "kind":"native_bundle", "review_ids":["one"]}
         direct = protocol.build_schema(task)
