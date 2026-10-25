@@ -29,16 +29,16 @@ One client's safe DOM insertion does not close a directly rendered HTML response
 
 <!-- runtime:frontend -->
 For frontend output, use supplied initializer/helper locations to pair the sink
-with its actual producer. A formatter/highlighter needs its implementation,
-version and effective options; its name or return type is not an escaping proof.
-When the repository names an exact external artifact, inspect that version with
-available read-only tools before calling the implementation unavailable. Treat
-deployment overrides as a blocker when evidence connects them to this chain;
-otherwise state the normal binding assumption. For an explicit framework trust
-bypass, a documented public API contract and verified import, input and consumer
-can establish the source weakness under that assumption. A missing lockfile or
-vendored implementation alone does not block it. Research versioned behavior
-when a patch, override or uncertain API semantics would change the decision.
+with its actual producer. Verify the import, relevant version, effective options,
+hooks and later transforms; a helper name or return type is not an escaping proof.
+Apply established documented API semantics under that binding, identifying contract
+knowledge as inference rather than locally inspected implementation. Missing
+vendored source or deployed-asset attestation alone does not block source review.
+Research versioned primary evidence when uncertain semantics, an override or a
+relevant security fix could change the decision. Unknown custom behavior stays
+unresolved. Treat deployment overrides as a blocker when evidence connects them
+to this chain; otherwise state the normal binding assumption. The same policy
+applies to an explicit framework trust bypass and to an output control.
 If dependency behavior is missing, inspect a matching supplied local record before
 external research. Reuse its exact-version contract under verified import/runtime
 binding; check each helper's options, hooks and later transformations separately.
@@ -146,8 +146,8 @@ Inspect available repository tests when they clarify a writer or control;
 distinguish an asserted implementation contract from a test actually executed.
 Do not label those local policies unavailable before checking
 them; distinguish a specific remaining deployment/dependency gap.
-Use source-visible tests or versioned dependency source when semantics are
-decisive. Do not invent behavior from a familiar name or a failed lookup.
+Use source-visible tests or versioned primary evidence for uncertain deciding
+semantics. Do not invent behavior from a familiar name or a failed lookup.
 <!-- /runtime:writers -->
 
 ## Get only the next missing fact

@@ -99,11 +99,13 @@ alone does not establish what a browser will execute.
   source, escaped data, or an engine option such as a layout path; a fixed
   view name alone does not settle what the engine reads. Use the template,
   framework contract, or repository tests when its interpretation is decisive.
-  When a dependency transform decides the result, locate its manifest or resource
-  registration and version. Inspect the versioned primary implementation or
-  contract before declaring it unavailable. Record external contract evidence
-  separately from Mehscan source artifacts; a declared version is not proof of
-  the actual deployed asset, and a familiar helper name alone is not a contract.
+  Apply the common dependency-contract policy: verify the actual parser or
+  transform binding and relevant version/options, including custom schemas and
+  hooks. Established default semantics can settle the selected property without
+  vendored implementation; custom or genuinely uncertain behavior needs its own
+  evidence. Record contract knowledge separately from inspected source. A parser
+  that excludes executable types does not establish resource safety or authorize
+  downstream mutations.
   For unconstrained HTML output, identify who can write the exact rendered field. An
   admin-only publisher of intentionally rich content does not establish XSS
   merely because the renderer uses raw HTML. If the writer's trust or content
