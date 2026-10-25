@@ -177,7 +177,8 @@ class Adapter(unittest.TestCase):
                 response = {"action":"final","research":[],"draft":{"change_pass":[]},"working_chain":"Inspected supplied facts.","progress":[]}
                 total = 2 if thread_id else 1
                 events = [{"type":"thread.started","thread_id":THREAD},{"type":"turn.completed",
-                    "usage":{"input_tokens":100*total,"cached_input_tokens":60*total,"output_tokens":20*total}}]
+                    "usage":{"input_tokens":100*total,"cached_input_tokens":60*total,"output_tokens":20*total,
+                             "cache_write_input_tokens":7*total,"reasoning_output_tokens":5*total}}]
                 return response, "\n".join(map(json.dumps, events)), "private diagnostics"
         return Fake()
 
@@ -197,6 +198,9 @@ class Adapter(unittest.TestCase):
         self.assertNotIn("private diagnostics", metrics)
         self.assertNotIn(str(self.auth), metrics)
         self.assertEqual(json.loads(metrics.splitlines()[1])["usage"]["cached_input_tokens"], 60)
+        self.assertEqual(json.loads(metrics.splitlines()[1])["usage"]["cache_write_tokens"], 7)
+        self.assertEqual(json.loads(metrics.splitlines()[1])["usage"]["reasoning_output_tokens"], 5)
+        self.assertEqual(json.loads(metrics.splitlines()[1])["usage"]["output_tokens"], 20)
         self.assertEqual(sum(json.loads(row)["usage"]["input_tokens"] for row in metrics.splitlines()), 200)
         self.assertEqual(json.loads(metrics.splitlines()[1])["reported_conversation_usage"]["input_tokens"], 200)
         self.assertFalse(Path(self.config["private_directory"]).is_relative_to(self.public))
@@ -413,6 +417,16 @@ class Adapter(unittest.TestCase):
         self.assertEqual(reviewer.usage_delta({"input_tokens":170},{"input_tokens":100},True), ({"input_tokens":70},[]))
         for prior in ({}, {"input_tokens":200}):
             self.assertEqual(reviewer.usage_delta({"input_tokens":100},prior,True), ({},["input_tokens"]))
+
+    def test_optional_usage_counters_are_not_invented_for_old_events_or_continuations(self):
+        events = [json.dumps({"type":"thread.started","thread_id":THREAD}),
+                  json.dumps({"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":20}})]
+        _, usage = reviewer.parse_events("\n".join(events))
+        self.assertNotIn("cache_write_tokens",usage)
+        self.assertNotIn("reasoning_output_tokens",usage)
+        delta, unknown = reviewer.usage_delta({**usage,"cache_write_tokens":7,"reasoning_output_tokens":5},usage,True)
+        self.assertEqual(delta,{"input_tokens":0,"output_tokens":0})
+        self.assertEqual(set(unknown),{"cache_write_tokens","reasoning_output_tokens"})
 
     def test_missing_session_never_uses_last_or_restarts(self):
         self.task["research"]["round"] = 1

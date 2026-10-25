@@ -38,7 +38,10 @@ def usage(path, runtime, unobserved_provider_calls=0):
         return sum(numbers) if numbers else None, len(numbers)
     counters = {}
     reporting = {}
-    for key in ("input_tokens", "cached_input_tokens", "output_tokens"):
+    core_counters = ("input_tokens", "cached_input_tokens", "output_tokens")
+    # Writes are an input subset and reasoning is an output subset; do not add
+    # either to its parent total. Missing optional counters remain unknown.
+    for key in (*core_counters, "cache_write_tokens", "reasoning_output_tokens"):
         counters[key], reporting[key] = counter([row.get("usage", {}) for row in rows], key)
     elapsed, _ = counter(rows, "elapsed_ms")
     prompt, _ = counter(rows, "prompt_bytes")
@@ -53,7 +56,8 @@ def usage(path, runtime, unobserved_provider_calls=0):
                 "counter_reporting_rounds":{key:counter([row.get("usage", {}) for row in selected], key)[1] for key in counters},
                 "stages":[{"role":role,"round_count":len(stage),
                     "provider_elapsed_ms":counter(stage,"elapsed_ms")[0],
-                    "reported_token_sums":{key:counter([row.get("usage",{}) for row in stage],key)[0] for key in counters}}
+                    "reported_token_sums":{key:counter([row.get("usage",{}) for row in stage],key)[0] for key in counters},
+                    "counter_reporting_rounds":{key:counter([row.get("usage",{}) for row in stage],key)[1] for key in counters}}
                     for role in sorted({row.get("role","investigator") for row in selected})
                     for stage in [[row for row in selected if row.get("role","investigator") == role]]],
                 "roles":{role:sum(row.get("role", "investigator") == role for row in selected)
@@ -64,7 +68,10 @@ def usage(path, runtime, unobserved_provider_calls=0):
         "provider_elapsed_ms":elapsed, "time_basis":"sum_provider_calls_not_wall_time", "prompt_bytes":prompt,
         "usage_available":bool(rows), "profiles":profiles, "unobserved_provider_calls":unobserved_provider_calls,
         "usage_complete":bool(rows) and unobserved_provider_calls == 0 and all(
-            reporting[key] == len(rows) for key in counters), "cost":None}
+            reporting[key] == len(rows) for key in core_counters),
+        "cache_write_usage_complete":bool(rows) and unobserved_provider_calls == 0 and reporting["cache_write_tokens"] == len(rows),
+        "reasoning_output_usage_complete":bool(rows) and unobserved_provider_calls == 0 and reporting["reasoning_output_tokens"] == len(rows),
+        "cost":None}
 
 
 def export_review(plan, directory, record, reviewer, execute, env):

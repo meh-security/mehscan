@@ -57,8 +57,11 @@ def parse_events(raw, old_thread=None):
                 raise ValueError("provider attempted a tool outside the native broker")
         elif kind == "turn.completed":
             completed = True
-            usage = {key: value for key, value in event.get("usage", {}).items()
-                     if key in ("input_tokens", "cached_input_tokens", "output_tokens")
+            names = {"input_tokens":"input_tokens", "cached_input_tokens":"cached_input_tokens",
+                     "output_tokens":"output_tokens", "cache_write_input_tokens":"cache_write_tokens",
+                     "reasoning_output_tokens":"reasoning_output_tokens"}
+            usage = {names[key]: value for key, value in event.get("usage", {}).items()
+                     if key in names
                      and type(value) is int and 0 <= value <= 2**63 - 1}
         elif kind in ("turn.failed", "error"):
             raise RuntimeError("provider turn failed")

@@ -45,6 +45,29 @@ class UsageTests(unittest.TestCase):
         self.assertFalse(partial["usage_complete"])
         self.assertEqual(partial["reported_token_sums"]["input_tokens"], 7)
 
+    def test_write_and_reasoning_subsets_are_reported_without_inflating_parent_totals(self):
+        first = self.row(usage={"input_tokens":100,"cached_input_tokens":20,"output_tokens":10,
+                                "cache_write_tokens":30,"reasoning_output_tokens":6})
+        second = self.row(1,usage={"input_tokens":50,"cached_input_tokens":10,"output_tokens":5,
+                                  "cache_write_tokens":0,"reasoning_output_tokens":2})
+        self.put(first,second)
+        result = export.usage(self.path,self.runtime)
+        self.assertEqual(result["reported_token_sums"],{"input_tokens":150,"cached_input_tokens":30,
+            "output_tokens":15,"cache_write_tokens":30,"reasoning_output_tokens":8})
+        self.assertTrue(result["cache_write_usage_complete"])
+        self.assertTrue(result["reasoning_output_usage_complete"])
+        stage = result["profiles"][0]["stages"][0]
+        self.assertEqual(stage["reported_token_sums"]["cache_write_tokens"],30)
+        self.assertEqual(stage["counter_reporting_rounds"]["reasoning_output_tokens"],2)
+        del second["usage"]["cache_write_tokens"]
+        self.put(first,second)
+        partial = export.usage(self.path,self.runtime)
+        self.assertEqual(partial["reported_token_sums"]["cache_write_tokens"],30)
+        self.assertEqual(partial["counter_reporting_rounds"]["cache_write_tokens"],1)
+        self.assertTrue(partial["usage_complete"])
+        self.assertFalse(partial["cache_write_usage_complete"])
+        self.assertFalse(export.usage(self.path,self.runtime,1)["reasoning_output_usage_complete"])
+
     def test_tiered_usage_keeps_actual_counters_by_bound_provider(self):
         expert = {"provider":"codex-cli", "model":"gpt-6-sol"}
         self.runtime["orchestration"] = {"expert":expert}
