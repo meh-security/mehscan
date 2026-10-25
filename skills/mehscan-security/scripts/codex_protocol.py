@@ -30,6 +30,7 @@ def decision_targets(packet):
 
 def build_schema(task, *, bound_handles=True):
     text = {"type":"string"}
+    lookup_name = {"type":"string", "minLength":1, "maxLength":200}
     integer = {"type":"integer", "minimum":1}
     limit = {"type":"integer", "minimum":1, "maximum":100}
     strings = {"type":"array","items":text}
@@ -62,9 +63,9 @@ def build_schema(task, *, bound_handles=True):
             continue
         props = ({"path":text,"start_line":integer,"end_line":integer} if tool in ("source","base_source") else
                  {"path":text} if tool == "outline" else
-                 {"name":text,"path":{"type":["string","null"]},"limit":limit} if tool in ("symbol", "definition") else
-                 {"symbol":text,"path":{"type":["string","null"]},"path_prefix":{"type":["string","null"]},"limit":limit} if tool == "references" else
-                 {"name":text,"limit":limit})
+                 {"name":lookup_name,"path":{"type":["string","null"]},"limit":limit} if tool in ("symbol", "definition") else
+                 {"symbol":lookup_name,"path":{"type":["string","null"]},"path_prefix":{"type":["string","null"]},"limit":limit} if tool == "references" else
+                 {"name":lookup_name,"limit":limit})
         query_variants.append(object_schema({"tool":{"type":"string","enum":[tool]},"review_id":query_id,
                                             "purpose":text,"arguments":object_schema(props)}))
     query = {"anyOf":query_variants}

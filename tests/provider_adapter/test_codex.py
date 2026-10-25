@@ -344,7 +344,7 @@ class Adapter(unittest.TestCase):
         self.assertEqual(protocol.build_schema(self.task)["properties"]["research"]["maxItems"], 1)
         self.assertIn("definition", tools(protocol.build_schema(self.task, bound_handles=False)))
 
-    def test_native_lookup_numeric_domains_are_present_in_actual_wire_schema(self):
+    def test_native_lookup_domains_are_present_in_actual_wire_schema(self):
         variants = protocol.build_schema(self.task)["properties"]["research"]["items"]["anyOf"]
         for variant in variants:
             arguments = variant["properties"]["arguments"]["properties"]
@@ -353,6 +353,10 @@ class Adapter(unittest.TestCase):
                     self.assertEqual(arguments[name]["minimum"], 1)
             if "limit" in arguments:
                 self.assertEqual(arguments["limit"]["maximum"], 100)
+            for name in ("name", "symbol"):
+                if name in arguments:
+                    self.assertEqual(arguments[name]["minLength"], 1)
+                    self.assertEqual(arguments[name]["maxLength"], 200)
 
     def test_qa_intent_survives_the_wire_even_with_the_same_verdict(self):
         self.task.update(kind="native_bundle",review_role="final_qa",review_ids=["id"])
