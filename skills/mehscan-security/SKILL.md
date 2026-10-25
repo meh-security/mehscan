@@ -9,24 +9,12 @@ For a source-bound worker task, use the compiled
 [runtime review contract](references/runtime-review.md). It applies the same
 scope, decision and evidence policy with controller-owned finalization; applicable
 category guidance remains available. Use the guides below for manual CLI work.
-For a configured tiered controller run, preserve the bound routine/expert
-profiles and shared budgets. Investigators return decisions and typed routing
-requests, or yield a scoped dependency when the controller permits it. Shared
-research returns scoped interpretations. Experimental source collection can
-instead use a configured bound profile to retrieve raw implementation/binding
-facts, with explicit unread edges and no verdict. Waiting cases resume on
-that new evidence and check their own caller binding. Knowledge is not a shared
-verdict. Independent assessors use the verification section of that contract.
-Let the controller reconcile assessments and account for sampled dismissals.
-When enabled, adjudication names and resolves a concrete source disagreement;
-final QA can reopen exact IDs, never silently discard findings. Both use the
-matching compiled role section and the same source tools and shared budgets.
-Recovered-source proposals and QA reopenings can enter one final-only fresh
-assessment pair within that budget. Earlier assessments remain in provenance;
-QA does not promote a pending verdict by itself.
-Do not resume a conversation under another model or replace unresolved conflicts
-with a confidence threshold. Local controller setup is in the installed
-[controller commands](references/commands.md#tiered-controller).
+The ordinary controller uses one configured model with direct source lookups.
+For an explicitly configured experimental tiered run, use the matching compiled
+role sections and [controller commands](references/commands.md#tiered-controller).
+Preserve bound profiles, shared budgets and assessment provenance. Never resume
+a conversation under another model or turn unresolved disagreement into a
+confidence threshold.
 
 Use the supplied executable, `mehscan` on `PATH`, or the executable in the
 current Mehscan checkout. Scan only the authorized source root. If the executable
@@ -62,6 +50,10 @@ another journal. Preserve consequential adjacent questions as separate
 unreviewed leads or existing inventory IDs.
 Batch already-known independent lookups in one tool turn, retaining each query's
 journal. Wait for results before choosing dependent queries; keep batches focused.
+Prioritize the fact that decides the selected claim. An inspected complete control
+can close that property; a named unread helper is a lookup target. For authority
+or state changes, bind the actual check to the same actor/object and effect.
+Stop once the selected relationship is settled or its decisive gap is explicit.
 
 Return `issue` for a shown weakness, `not_issue` for an affirmatively safe or
 inapplicable relationship, and `needs_review` for a decisive fact unavailable
