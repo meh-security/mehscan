@@ -527,6 +527,9 @@ class Adapter(unittest.TestCase):
         import tomllib
         filesystem = next(value for value in options if value.startswith("permissions.mehscan_review.filesystem="))
         self.assertEqual(tomllib.loads(filesystem)["permissions"]["mehscan_review"]["filesystem"][str(item.work)], "read")
+        instructions = next(value for value in options if value.startswith("model_instructions_file="))
+        self.assertEqual(Path(tomllib.loads(instructions)["model_instructions_file"]), launcher.REVIEWER_INSTRUCTIONS)
+        self.assertTrue(launcher.REVIEWER_INSTRUCTIONS.is_file())
 
     def test_process_environment_excludes_workflow_credentials_and_uses_private_home(self):
         with patch.dict(os.environ, {"GITHUB_TOKEN":"secret", "OPENAI_API_KEY":"secret", "PYTHONPATH":"injection"}):

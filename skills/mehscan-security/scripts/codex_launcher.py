@@ -11,6 +11,7 @@ import time
 # Disable specific research/execution surfaces, not every unknown client feature.
 REQUIRED_FEATURES = {"shell_tool", "multi_agent", "apps", "plugins", "hooks", "view_image"}
 OPTIONAL_TOOL_FEATURES = {"browser_use", "computer_use", "artifact", "code_mode", "code_mode_host", "shell_snapshot", "unified_exec"}
+REVIEWER_INSTRUCTIONS = Path(__file__).resolve().parent.parent / "references" / "reviewer-base.md"
 
 
 def file_digest(path):
@@ -140,6 +141,7 @@ class Launcher:
                 'permissions.mehscan_review.filesystem={' + ', '.join(json.dumps(key) + '=' + json.dumps(value) for key, value in filesystem.items()) + '}',
                 'permissions.mehscan_review.network.enabled=false', 'web_search="disabled"',
                 'project_doc_max_bytes=0', 'cli_auth_credentials_store="file"',
+                'model_instructions_file=' + json.dumps(str(REVIEWER_INSTRUCTIONS)),
                 'suppress_unstable_features_warning=true',
                 'model_reasoning_effort=' + json.dumps(self.config["reasoning_effort"])):
             options += ["-c", value]

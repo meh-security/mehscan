@@ -261,16 +261,20 @@ language: TypeScript
 role: item
 symbolType: constant
 rule:
-  pattern: 'export const $NAME = $VALUE;'
-name: $NAME
-isExported: true
----
-id: ts-export-const-typed
-language: TypeScript
-role: item
-symbolType: constant
-rule:
-  pattern: 'export const $NAME: $TYPE = $VALUE;'
+  all:
+    - kind: variable_declarator
+    - has:
+        field: name
+        kind: identifier
+        pattern: $NAME
+    - inside:
+        all:
+          - kind: lexical_declaration
+          - regex: '^const\b'
+          - inside:
+              kind: export_statement
+              stopBy: neighbor
+        stopBy: neighbor
 name: $NAME
 isExported: true
 ---
@@ -279,16 +283,20 @@ language: TypeScript
 role: item
 symbolType: variable
 rule:
-  pattern: 'export let $NAME = $VALUE;'
-name: $NAME
-isExported: true
----
-id: ts-export-let-typed
-language: TypeScript
-role: item
-symbolType: variable
-rule:
-  pattern: 'export let $NAME: $TYPE = $VALUE;'
+  all:
+    - kind: variable_declarator
+    - has:
+        field: name
+        kind: identifier
+        pattern: $NAME
+    - inside:
+        all:
+          - kind: lexical_declaration
+          - regex: '^let\b'
+          - inside:
+              kind: export_statement
+              stopBy: neighbor
+        stopBy: neighbor
 name: $NAME
 isExported: true
 ---

@@ -5,6 +5,30 @@ mod common;
 const JAVASCRIPT_RULES: &str = include_str!("../src/default_rules/javascript.yml");
 
 #[test]
+fn exported_bindings_do_not_depend_on_semicolons() {
+  common::assert_outline_snapshot(
+    SupportLang::JavaScript,
+    JAVASCRIPT_RULES,
+    r#"
+export const middleware = () => (request) => {
+  const callbackLocal = () => request;
+  return callbackLocal();
+}
+export const terminated = () => {};
+export const first = 1, second = () => 2
+export let state = 0
+"#,
+    r#"
+- Constant item exported middleware
+- Constant item exported terminated
+- Constant item exported first
+- Constant item exported second
+- Variable item exported state
+"#,
+  );
+}
+
+#[test]
 fn extracts_javascript_outline_from_es_module_code() {
   common::assert_outline_snapshot(
     SupportLang::JavaScript,

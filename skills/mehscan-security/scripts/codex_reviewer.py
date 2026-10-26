@@ -16,6 +16,7 @@ import uuid
 from codex_launcher import Launcher, cancel, file_digest, load_config, provider_contract
 from codex_protocol import build_prompt, build_schema, envelope
 from boundary_review import review_envelope
+import workspace_protocol
 
 
 def read(path):
@@ -156,14 +157,16 @@ def run(config, task, launcher_factory=Launcher):
     state_path = session / "conversation.json"
     state = read(state_path) if state_path.exists() else None
     packet_hash = file_digest(task["evidence_packet"])
-    schema = build_schema(task)
+    workspace_mode = workspace_protocol.enabled(task, packet)
+    schema_builder = workspace_protocol.schema if workspace_mode else build_schema
+    schema = schema_builder(task)
     round_index = task["research"]["round"]
     if type(round_index) is not int or not 0 <= round_index <= 10:
         raise ValueError("invalid native research round")
     # Source/query handles grow as the native broker returns inspected facts.
     # Pin the protocol and exact question IDs; constrain each turn's output to
     # its current handles without treating new evidence as a new conversation.
-    binding = {"packet_sha256": packet_hash, "provider": expected, "schema": build_schema(task, bound_handles=False)}
+    binding = {"packet_sha256": packet_hash, "provider": expected, "schema": schema_builder(task, bound_handles=False)}
     if state:
         if state["binding"] != binding or round_index != state["round"] + 1:
             raise ValueError("provider continuation is stale or incompatible")
@@ -172,7 +175,7 @@ def run(config, task, launcher_factory=Launcher):
         raise ValueError("cannot silently restart a missing provider continuation")
     log = session / ("round-" + str(round_index))
     log.mkdir(exist_ok=False)
-    prompt = build_prompt(task, packet, facts, state)
+    prompt = (workspace_protocol.prompt if workspace_mode else build_prompt)(task, packet, facts, state)
     (log / "prompt.txt").write_text(prompt, encoding="utf-8")
     launcher = launcher_factory(config, session)
     response, events, stderr = launcher.review(prompt, schema, (state or {}).get("thread_id"), timeout=task["research"].get("seconds_remaining", 600))
@@ -192,7 +195,7 @@ def run(config, task, launcher_factory=Launcher):
         handle.write(json.dumps(metric) + "\n")
     # A completed provider turn costs tokens even when its reply is rejected.
     # Persist counters/continuation before admission; never admit the bad draft.
-    return review_envelope(response, task, packet, envelope)
+    return workspace_protocol.envelope(response,task,packet) if workspace_mode else review_envelope(response, task, packet, envelope)
 
 
 def main():

@@ -1,0 +1,304 @@
+{
+  "schema_version": "mehscanWorkspacePilot/v1",
+  "status": "design_frozen_run_bindings_required",
+  "live_runs_started": false,
+  "question": "Can the compact workspace action contract retain supported mechanisms and actionable uncertainty while reducing repeated investigation?",
+  "reviewer_visibility": "Evaluator-only file. Never place expected assessments, basis, baseline answers or token targets in reviewer/planner context.",
+  "model": "gpt-6.1-sol",
+  "reasoning_effort": "medium",
+  "source_pin": {
+    "local_export": "C:\\dmitry\\orchestrator-corpus-20261022\\juice",
+    "git_commit": null,
+    "native_source_fingerprint": "review-sources-v1-2ec1637bf91924bd2f6e0d3b250529915961d6e9833b6ed7f6719bd33dd3ccd7",
+    "inventory_input_fingerprint": "990f2301b0ed78cb6d0eacc78ae6e42f9c4d7713917d7710608962c11450598b",
+    "inventory_sha256": "c3460f06f4afb6e3566e3e13aaa9ef6802cb9ef6130cebd12d1e57bda6577d57",
+    "native_repository_key": "evaluation:review-consolidation-juice"
+  },
+  "baseline": {
+    "directory_hint": "../scan-runs/single-model-juice-full-gate-20261025",
+    "arm": "treatment",
+    "artifact_sha256": {
+      "campaign-freeze.json": "7c56cb030256d921fc8d151e6fdaa99427fcccd4f7021dd672229a05bc86804c",
+      "source-audit.json": "27479848f82c00959bfc75633750ec3574f12f93fc85c2c0a17e25396f37ce86",
+      "final-results.json": "eee1a47c62cdbe0abe9f07a0d6b471b9ca63b3f22341bc55abeca4765b7e0a0e",
+      "input-amplification-audit.json": "2fde47d05fd06f270654087bd8c86b66c7e2a03a0b6c671591196113fc715fe8",
+      "treatment/derived-accounting/provider-metrics.jsonl": "2967f39e971ba5938f2bf7219d43a4efd697940ca3575d1adcd41a20c4fe37d5"
+    },
+    "authority": "Provisional evaluator source audit, not independent human truth. Source-visible tests were read, never executed; labels are withheld from reviewers.",
+    "core_counter_basis": "Saved provider deltas, optional counters reparsed offline; no new model calls.",
+    "selected_totals": {
+      "calls": 45,
+      "cumulative_model_call_ms": 1082154,
+      "input_tokens": 1267942,
+      "cached_input_tokens": 0,
+      "output_tokens": 24364
+    },
+    "per_claim": {
+      "review-8efee4242f8a9275": {
+        "conversation_id": "bde12d4dbdf2a1c1974443c9b9cec4cca9c0db5aaf82245e849691b3c547207c",
+        "context_sha256": "6363760c37fd03d986e8fbfbdc629063b47df3d39c14d48f24273a46b7e85a66",
+        "calls": 3,
+        "cumulative_model_call_ms": 94173,
+        "input_tokens": 65760,
+        "cached_input_tokens": 0,
+        "output_tokens": 1185
+      },
+      "review-9ae291af157d7bc6": {
+        "conversation_id": "9e810209d0315447e722840262f6de3c1480de301b68ad05434c2aca5457a52b",
+        "context_sha256": "ff97fd8627c902bef7cef3e091c9a2f84dc08c417113c8b93b305ce25195727b",
+        "calls": 4,
+        "cumulative_model_call_ms": 79713,
+        "input_tokens": 102043,
+        "cached_input_tokens": 0,
+        "output_tokens": 1720
+      },
+      "observation-review-ba583b9dd72566ed": {
+        "conversation_id": "dd32845d9272f30684b917b3cfe23b4ddd256873ac9a2898b3563c143fae034e",
+        "context_sha256": "85a7aee80bf51984cfcc94dd11a21cff9930a617ea935461aba17ba22490a6fd",
+        "calls": 4,
+        "cumulative_model_call_ms": 136492,
+        "input_tokens": 143035,
+        "cached_input_tokens": 0,
+        "output_tokens": 3515
+      },
+      "observation-review-9bdb9475c1030df9": {
+        "conversation_id": "138c0c1380b7232c22d04a9b10738cf840e4eabd64a6f3c0fa5a497d9d06ab27",
+        "context_sha256": "7f37497d53da5a8d84055021cdb08bfb401e0ca519aa7479ebee5ba3bbbbbf27",
+        "calls": 4,
+        "cumulative_model_call_ms": 102649,
+        "input_tokens": 109018,
+        "cached_input_tokens": 0,
+        "output_tokens": 2370
+      },
+      "observation-review-d3ddaeb3c0f97e31": {
+        "conversation_id": "beadc0a96aee8e31614e5e2a5eb8912515f1262a7d4efdaa1ea6a5fcf3f24c13",
+        "context_sha256": "c3720abd418211fd2ba2357ca67bb9d28396a6aad58ee9cd7b12d0694024ea3a",
+        "calls": 4,
+        "cumulative_model_call_ms": 81403,
+        "input_tokens": 112691,
+        "cached_input_tokens": 0,
+        "output_tokens": 1856
+      },
+      "observation-review-30694846a0f13032": {
+        "conversation_id": "0ae08f773ca1fa8edbbcc1df377ea16e4a9c92a53b3affb5f7abad724618d00e",
+        "context_sha256": "38f03396497e1d953f853d345a05f21c346d3a2313840934bcc9e63b7067c278",
+        "calls": 4,
+        "cumulative_model_call_ms": 88715,
+        "input_tokens": 114642,
+        "cached_input_tokens": 0,
+        "output_tokens": 2125
+      },
+      "observation-review-dc73320f27cb9ba3": {
+        "conversation_id": "c28b6f51662183b2cf6df6fb345799c166c99fc8257b08db1cef1fe731264661",
+        "context_sha256": "0a8baf477084a65705a6268892fc7aa2882e4f8b49a858ccc8ccebf0c44efdb2",
+        "calls": 4,
+        "cumulative_model_call_ms": 107714,
+        "input_tokens": 120540,
+        "cached_input_tokens": 0,
+        "output_tokens": 2357
+      },
+      "observation-review-c28db98bf846f822": {
+        "conversation_id": "f6e9fdbd04f23d661d6f489069631c82cfbc8f56c465328b71e0bd5d5a9fa574",
+        "context_sha256": "2545e0409e1145934e050aea5d4fb337a955d54c227393c5ad9fd8164ca194cc",
+        "calls": 4,
+        "cumulative_model_call_ms": 88331,
+        "input_tokens": 114901,
+        "cached_input_tokens": 0,
+        "output_tokens": 2074
+      },
+      "observation-review-8b646b5eb87d733e": {
+        "conversation_id": "f6947158d05093d9b01299a92fc335aaca56dd8573e4b5bc901b26dd5334ae2c",
+        "context_sha256": "22deea9c8da6c97262f5f347f289d1c9ab6ab9a6da1897e04c00d5f326c721c2",
+        "calls": 4,
+        "cumulative_model_call_ms": 100203,
+        "input_tokens": 109116,
+        "cached_input_tokens": 0,
+        "output_tokens": 1775
+      },
+      "observation-review-262317b675829863": {
+        "conversation_id": "5c68cb9ad18224628e34e8f95481dedba5b4fe351687ecda409613c756077ec1",
+        "context_sha256": "8e47b7e104ff835f37eae45984b3bc52a4f7bef12ddac9f80eee2f0e874932eb",
+        "calls": 4,
+        "cumulative_model_call_ms": 97284,
+        "input_tokens": 126453,
+        "cached_input_tokens": 0,
+        "output_tokens": 2462
+      },
+      "review-52e1cba60d2a9610": {
+        "conversation_id": "2cc6c8beaacba9278459b8a8aae0bf57dae6776f2a82fe14075f5a7a803b5a71",
+        "context_sha256": "e83586a46160e1f7d38e854369c0c9d2cdfb4e317caad26d9d324312fae35fe0",
+        "calls": 2,
+        "cumulative_model_call_ms": 36052,
+        "input_tokens": 41157,
+        "cached_input_tokens": 0,
+        "output_tokens": 785
+      },
+      "observation-review-26fdb36787840417": {
+        "conversation_id": "a3ec84ea25eda66fa53c13320d23f60348dd82cc937074f3559b1e36d576c35e",
+        "context_sha256": "cf1b384c6b038abbc4fc7f45eb8271a4d7791e392838d34ebd489375c4694272",
+        "calls": 4,
+        "cumulative_model_call_ms": 69425,
+        "input_tokens": 108586,
+        "cached_input_tokens": 0,
+        "output_tokens": 2140
+      }
+    }
+  },
+  "selected_review_ids": [
+    "review-8efee4242f8a9275",
+    "review-9ae291af157d7bc6",
+    "observation-review-ba583b9dd72566ed",
+    "observation-review-9bdb9475c1030df9",
+    "observation-review-d3ddaeb3c0f97e31",
+    "observation-review-30694846a0f13032",
+    "observation-review-dc73320f27cb9ba3",
+    "observation-review-c28db98bf846f822",
+    "observation-review-8b646b5eb87d733e",
+    "observation-review-262317b675829863",
+    "review-52e1cba60d2a9610",
+    "observation-review-26fdb36787840417"
+  ],
+  "families": [
+    {
+      "id": "sql_interpolation",
+      "review_ids": [
+        "review-8efee4242f8a9275",
+        "review-9ae291af157d7bc6"
+      ],
+      "evaluator_assessment": "positive",
+      "evaluator_basis": "Request values are interpolated into raw SQL grammar. Search length truncation and login password hashing do not protect the q/email grammar positions."
+    },
+    {
+      "id": "basket_item_update_owner_missing",
+      "review_ids": [
+        "observation-review-ba583b9dd72566ed",
+        "observation-review-9bdb9475c1030df9"
+      ],
+      "evaluator_assessment": "positive",
+      "evaluator_basis": "PUT BasketItems authenticates and binds body.UserId, then loads the item by caller-selected ID and checks stock/quantity only. Neither this lookup nor quantityCheck constrains item basket owner. Generated API follows after next. Supplying an allowed quantity does not establish permission to update another user's item."
+    },
+    {
+      "id": "owner_scoped_wallet_address_card",
+      "review_ids": [
+        "observation-review-d3ddaeb3c0f97e31",
+        "observation-review-30694846a0f13032"
+      ],
+      "evaluator_assessment": "negative",
+      "evaluator_basis": "Registered appendUserId replaces body.UserId with the authenticated token-map subject and rejects failed binding. Wallet/card/address queries bind this owner; selected address/card delete also constrains object ID. Separate token-expiry or payment-integrity concerns do not establish cross-user access here."
+    },
+    {
+      "id": "deluxe_payment_fallthrough",
+      "review_ids": [
+        "observation-review-dc73320f27cb9ba3",
+        "observation-review-c28db98bf846f822",
+        "observation-review-8b646b5eb87d733e"
+      ],
+      "evaluator_assessment": "positive",
+      "evaluator_basis": "Wallet/card checks run only when paymentMode equals those strings. Any other mode reaches the role upgrade and token issuance. Owner subject is bound by middleware; this is same-user paid privilege without its prerequisite, not cross-user ownership bypass."
+    },
+    {
+      "id": "generated_api_per_instance",
+      "review_ids": [
+        "observation-review-262317b675829863"
+      ],
+      "evaluator_assessment": "unresolved",
+      "evaluator_basis": "One loop registers multiple generated resources with different routes, guards and exclusions. It cannot safely inherit a single whole-loop ownership verdict. Account creation/privileged fields, public products and owner-scoped records require specific operations; generic endpoint presence is not enough."
+    },
+    {
+      "id": "known_fix_key_gates_file",
+      "review_ids": [
+        "review-52e1cba60d2a9610",
+        "observation-review-26fdb36787840417"
+      ],
+      "evaluator_assessment": "negative",
+      "evaluator_basis": "readFixes enumerates fixed repository filenames and only returns nonempty fixes for matching key prefixes; arbitrary traversal keys do not match. checkCorrectFix reaches the info-file read only after a nonempty result. YAML bytes therefore come from the gated repository file in this selected flow."
+    }
+  ],
+  "arms": [
+    {
+      "id": "ordinary_singletons",
+      "profile": "Current ordinary direct reviewer with lookup API",
+      "bundle_max_reviews": 1,
+      "knowledge_reuse": false
+    },
+    {
+      "id": "workspace_singletons",
+      "profile": "workspace-actions-v1",
+      "initial_work_items": "One per selected claim",
+      "knowledge_reuse": true,
+      "claim_order": [
+        "review-8efee4242f8a9275",
+        "review-9ae291af157d7bc6",
+        "observation-review-ba583b9dd72566ed",
+        "observation-review-9bdb9475c1030df9",
+        "observation-review-d3ddaeb3c0f97e31",
+        "observation-review-30694846a0f13032",
+        "observation-review-dc73320f27cb9ba3",
+        "observation-review-c28db98bf846f822",
+        "observation-review-8b646b5eb87d733e",
+        "observation-review-262317b675829863",
+        "review-52e1cba60d2a9610",
+        "observation-review-26fdb36787840417"
+      ]
+    }
+  ],
+  "matched_conditions": [
+    "Exact same selected claims and source snapshot",
+    "Same engine, helper fixes, inherited base instructions, model and effort",
+    "Same initial prepared source windows per claim; verify byte equality before launch",
+    "Same aggregate call/query/token/time ceilings; reconcile source and received-result byte accounting explicitly",
+    "Concurrency 1 in both arms; preparation, native fencing and all protocol/repair costs included",
+    "Fresh independent native state/work and provider session stores per arm",
+    "No evaluator labels, expected exploit paths or old answers in reviewer input"
+  ],
+  "per_arm_limits": {
+    "model_calls": 48,
+    "queries": 144,
+    "source_bytes": 1572864
+  },
+  "per_arm_experiment": {
+    "max_input_tokens": 1500000,
+    "max_output_tokens": 60000,
+    "max_elapsed_seconds": 1800,
+    "context_max_bytes": 65536
+  },
+  "run_binding_requirements": [
+    "Fresh native source/inventory fingerprints and exact selected ID membership",
+    "Engine, skill, controller/action module and provider configuration digests",
+    "Exact per-claim initial evidence equality receipt",
+    "Provider executable version, model and effort contract",
+    "Private session/accounting paths outside exports",
+    "A separate immutable run manifest binding this design hash before the first model call",
+    "Byte-accounting compatibility receipt: ordinary research counts received result JSON while workspace source_bytes counts unique captured source; align the effective constraints or label this a package comparison and require both arms to remain below them"
+  ],
+  "quality_gates": {
+    "supported_mechanisms": "No loss of the seven source-audited positive sites; judge mechanisms and conditions, not copied verdict wording",
+    "clean_controls": "Four selected local clean sites must not acquire unsupported findings or inherit adjacent weaknesses",
+    "uncertainty": "Preserve the generated-resource per-instance question with actionable scope; do not force a whole-loop dismissal",
+    "audit": "Provisional source/primary-contract review with labels withheld from both arms; disagreement requires source adjudication"
+  },
+  "efficiency_gates": {
+    "promising_input_reduction_percent": 30,
+    "strong_input_reduction_percent": 50,
+    "insufficient_input_reduction_percent": 10,
+    "material_regression": "More than 10 percent increase in total output or end-to-end time requires trace review before expansion",
+    "historical_reference_only": true,
+    "causal_comparison": "Fresh matched ordinary versus workspace singleton packages, not old release efficiency"
+  },
+  "stop_rules": [
+    "Stop expansion for any supported mechanism lost or wrong dismissal attributable to workspace behavior",
+    "Stop dispatch at aggregate allowance or unknown provider usage; preserve gaps and actual overspend",
+    "At most one targeted correction and one repeat of affected claims, sharing a further whole-experiment ceiling of 120 total model calls",
+    "No grouping arm until the singleton workspace meets quality and the promising efficiency gate",
+    "No full-app rerun until this pilot and a reserved held-out slice pass"
+  ],
+  "conditional_grouping_followup": {
+    "status": "deferred",
+    "notes": "Independent SQL constructions may be compared as a batch; shared middleware transfers implementation facts only. Validate compatible caller contexts before joining other families."
+  },
+  "known_differences": [
+    "This compares the combined review contract/state/session package; it does not isolate memory from prompt simplification.",
+    "The ordinary profile retains conversation history and initially supplied guidance; the action profile rebuilds fresh views and loads category guidance on demand.",
+    "Source-byte and result-byte measurements have different meanings in the current controllers. Numeric equality alone is not matched budget enforcement; resolve this in run binding before launch."
+  ]
+}

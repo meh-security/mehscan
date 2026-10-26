@@ -65,6 +65,9 @@ for Linux integration testing, not an additional security prerequisite.
 Every start/resume uses Codex's supported analysis-only tool controls, a private
 working directory, disabled project/user instructions and rules, strict config,
 structured output and upstream permissions denying generated writes/network.
+The packaged `reviewer-base.md` replaces the client's built-in coding-agent
+instructions through `model_instructions_file` on both starts and continuations.
+The runtime contract and requested category guidance supply review-specific detail.
 Shell, apps, plugins, hooks, delegation and applicable browser/computer tools are
 disabled. Only the small required set of tool controls is checked; unrelated new
 client features are not automatically disabled. Incompatible CLI versions fail

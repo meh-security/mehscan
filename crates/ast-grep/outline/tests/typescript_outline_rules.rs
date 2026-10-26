@@ -5,6 +5,32 @@ mod common;
 const TYPESCRIPT_RULES: &str = include_str!("../src/default_rules/typescript.yml");
 
 #[test]
+fn exported_bindings_do_not_depend_on_semicolons_or_type_annotations() {
+  common::assert_outline_snapshot(
+    SupportLang::TypeScript,
+    TYPESCRIPT_RULES,
+    r#"
+export const middleware = () => (request: Request) => {
+  const callbackLocal = () => request;
+  return callbackLocal();
+}
+export const terminated = () => {};
+export const typed: () => void = () => {}
+export const first = 1, second = () => 2
+export let state: number = 0
+"#,
+    r#"
+- Constant item exported middleware
+- Constant item exported terminated
+- Constant item exported typed
+- Constant item exported first
+- Constant item exported second
+- Variable item exported state
+"#,
+  );
+}
+
+#[test]
 fn extracts_typescript_outline_from_realistic_vscode_style_code() {
   common::assert_outline_snapshot(
     SupportLang::TypeScript,
