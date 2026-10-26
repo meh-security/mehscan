@@ -199,7 +199,8 @@ def prepare(args):
                     "evidence_ids":sorted(set(evidence)),"proposition_ids":[]})
                 # Preserve K's effective research allowance. These are nominal
                 # fixed-profile preparation units, not fabricated native calls.
-                bridge.apply("profile-units:"+wid,{"kind":"reserve_queries","queries":work["preparation_queries"]})
+                if work["preparation_queries"]:
+                    bridge.apply("profile-units:"+wid,{"kind":"reserve_queries","queries":work["preparation_queries"]})
                 actual = bridge.workspace.view(wid,max_bytes=131072)
                 if pilot.canonical_windows(actual["evidence"].values()) != pilot.canonical_windows(expected):
                     raise ValueError("working source differs from frozen complete profile")
