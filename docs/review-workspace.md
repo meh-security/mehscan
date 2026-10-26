@@ -576,3 +576,12 @@ worker scheduling is unchanged. See the [offline implementation check](experimen
 for source-binding, abstention and rollback validation. A held-out live reviewer
 test, dependency-fact reuse and independent operation mechanism records remain
 outstanding.
+
+The next opt-in slice is [shared deciding evidence](review-workspace-evidence.md):
+`prepare-evidence` supplies exact helper windows and root-local package metadata
+receipts before a fresh reviewer context. Source and dependency records are
+stored once with separate consumer questions, source freshness and absent-file
+revalidation. The [offline check](experiments/review-workspace-evidence-results.md)
+does not establish live savings or dependency effect contracts. Automatic
+relevance selection, operation-mechanism records and interactive state navigation
+remain outstanding.

@@ -17,6 +17,21 @@ on a held-out mixed slice, shared dependency evidence and independent operation
 mechanism records remain outstanding. No new savings result or ordinary-worker
 integration is claimed.
 
+Shared-evidence update: [question-linked source/dependency preparation](review-workspace-evidence.md)
+now supplies existing helper source and bounded local metadata observations
+before dispatch, with atomic persistence, separate consumer questions and stale
+absence rejection. The [offline check](experiments/review-workspace-evidence-results.md)
+stores one helper definition and one dependency observation for three consumer
+contexts, with no model calls. Automatic relevance selection, dependency effect
+contracts and live savings from this delivery path remain unproven.
+
+Red flag clarified: missing root lockfiles or an installed package manifest do
+not prove that dependency source is unavailable everywhere, and a declared range
+does not establish deployed behavior. Reuse the bounded observation; pursue a
+concrete alternate source/version relationship when available, otherwise retain
+the exact unresolved effect. Do not substitute an absence receipt for a contract
+or transfer an ownership verdict between callers.
+
 The earlier [pilot](experiments/review-workspace-pilot-results.md) and [first notebook producer](experiments/review-workspace-notebook-results.md) remain failed/incomplete experiments. Receipt preservation, route-source preparation and controller rendering of outstanding checks were subsequently verified. Their paid costs and the older unknown provider turn remain in the accounting; the successful local producer does not erase them.
 
 The earlier two-consumer result showed that avoiding a helper read can fail to

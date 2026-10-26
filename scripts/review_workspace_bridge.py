@@ -50,7 +50,7 @@ def implementation():
     directory = Path(__file__).resolve().parent
     return {name:worker.digest_file(directory / name) for name in (
         "review_workspace_bridge.py", "review_workspace.py", "review_workspace_actions.py",
-        "review_workspace_planner.py", "review_worker.py", "review_context.py")}
+        "review_workspace_planner.py", "review_workspace_evidence.py", "review_worker.py", "review_context.py")}
 
 
 class NativeWorkspace:
@@ -463,7 +463,7 @@ class NativeWorkspace:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command",choices=("init","check","plan","prepare","review","recover-usage","finalize"))
+    parser.add_argument("command",choices=("init","check","plan","prepare-evidence","prepare","review","recover-usage","finalize"))
     for name in ("scanner","source-root","inventory","store","stream","claim","work-package","directory"):
         parser.add_argument("--" + name,required=True)
     parser.add_argument("--skill-root",default=str(Path(__file__).resolve().parents[1] / "skills/mehscan-security"))
@@ -476,6 +476,7 @@ def main():
     parser.add_argument("--session-id")
     parser.add_argument("--bundle-id")
     parser.add_argument("--plan",help="source-bound deterministic work plan; for plan command")
+    parser.add_argument("--evidence-request",help="question-linked source/dependency preparation JSON")
     args = parser.parse_args()
     if args.command == "init":
         if not args.experiment:
@@ -498,6 +499,12 @@ def main():
             if not args.config or not args.operation_key:
                 parser.error("prepare requires --config and --operation-key")
             result = bridge.prepare(args.work_id,args.config,args.operation_key,args.parent_session)
+        elif args.command == "prepare-evidence":
+            if not args.evidence_request or not args.operation_key:
+                parser.error("prepare-evidence requires --evidence-request and --operation-key")
+            from review_workspace_evidence import prepare
+            with bridge.guarded():
+                result = prepare(bridge.workspace,read(args.evidence_request),args.operation_key)
         elif args.command == "review":
             if not args.config or not args.session_id:
                 parser.error("review requires --config and --session-id")

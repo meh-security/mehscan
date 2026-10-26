@@ -196,6 +196,9 @@ class Workspace:
                 raise ValueError("cited source changed; create a newly bound workspace")
 
     def _action(self, state, action, operation_key):
+        if isinstance(action, dict) and action.get("kind") == "prepare_evidence":
+            import review_workspace_evidence
+            return review_workspace_evidence.apply(state, self, action, operation_key)
         if not isinstance(action, dict):
             raise ValueError("action must be an object")
         kind = action.get("kind")
@@ -206,7 +209,7 @@ class Workspace:
             if maximum > 128*1024:
                 raise ValueError("planned context exceeds 128 KiB")
             if (set(state["work"]) != {"initial"} or state["sessions"] or state["calls"] or
-                    state["questions"] or state["propositions"] or state["lookups"] or
+                    state["questions"] or state["propositions"] or state["lookups"] or state.get("deciding_evidence") or
                     any(c["draft"] for c in state["claims"].values())):
                 raise ValueError("planning requires a fresh unassigned workspace")
             specs = action["work"]
@@ -363,6 +366,8 @@ class Workspace:
             parent["claims"] = [c for c in parent["claims"] if c not in action["review_ids"]]
             if action["work_id"] in state.get("preparation_limits",{}):
                 state["preparation_limits"][key] = copy.deepcopy(state["preparation_limits"][action["work_id"]])
+            if action["work_id"] in state.get("deciding_evidence",{}):
+                state["deciding_evidence"][key] = copy.deepcopy(state["deciding_evidence"][action["work_id"]])
             return {"work_id":key}
         if kind == "preparation_limits":
             shape(action,("kind","work_id","preparation_id","origin","limits"))
@@ -585,6 +590,8 @@ class Workspace:
         self._current_session(self.snapshot(), session_id)
 
     def _view(self, state, work_id, max_bytes):
+        import review_workspace_evidence
+        deciding = review_workspace_evidence.visible(state, work_id)
         number(max_bytes, positive=True)
         ids = [c for c in state["work"][work_id]["claims"] if state["claims"][c]["draft"] is None or state["claims"][c]["reconsideration"]]
         applies = {k:a for k,a in state["applicability"].items() if a["review_id"] in ids}
@@ -593,6 +600,7 @@ class Workspace:
         evidence_ids = set(e for p in propositions.values() for e in p["evidence"])
         evidence_ids.update(e for a in applies.values() for e in a["evidence"])
         evidence_ids.update(state["work"][work_id]["evidence_ids"])
+        evidence_ids.update(e for record in deciding.values() for e in record["evidence_ids"])
         self._evidence(state, sorted(evidence_ids)) if evidence_ids else None
         packet = {"version":VERSION, "binding":state["binding"], "selection_id":state["selection_id"],
                   "work_id":work_id, "strategy":state["work"][work_id]["strategy"],
@@ -600,6 +608,7 @@ class Workspace:
                   "evidence":{e:state["evidence"][e] for e in sorted(evidence_ids)},
                   "questions":{k:q for k,q in state["questions"].items() if set(q["review_ids"]) & set(ids) and q["status"] != "answered"},
                   "lookups":{}, "guidance":{},
+                  "deciding_evidence":deciding,
                   "preparation_limits":[{"preparation_id":key,"origin":record["origin"],"reason":reason}
                       for key,record in sorted(state.get("preparation_limits",{}).get(work_id,{}).items())
                       for reason in record["limits"]],
