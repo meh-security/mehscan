@@ -41,6 +41,29 @@ Zero-query selections do not fabricate a native journal. Content identities
 and source/inventory/engine/planner-code bindings provide integrity/freshness checks, not
 authentication of third-party grouping claims.
 
+Add `--prepare-helpers` to select source for explicit references in an already
+identified registration chain. Direct relative named/namespace imports resolve
+through native symbols to bounded exported function/const declarations. This
+includes arrow-function constants; their initializer semantics remain for review.
+The selected handler itself is not duplicated as helper evidence. Call arguments,
+wrapper syntax, import and registration source stay visible. No helper's name is
+treated as evidence that it enforces authorization.
+
+Selection considers at most twelve static references per work, retains at most
+four helper declarations, eight windows and 8 KiB per target, and creates at most
+sixteen targets. Native query caching shares definition lookup across groups;
+the existing 96-attempt/180-second preparation ceiling still applies. Missing,
+ambiguous, oversized, truncated, shadowed or explicitly reassigned references
+produce visible limits, not new caller searches. Incompatible/unresolved callers
+receive no automatic helper target. SQL work does not gain caller exploration.
+There is no recursive inspection of helper dependencies or automatic dependency
+contract retrieval. This small syntax recognizer does not prove runtime binding.
+
+The generated plan stores helper selections, limits and source hashes. Applying
+it includes [deciding evidence](review-workspace-evidence.md) in the same atomic
+transaction as work preparation. A late helper failure rolls back grouping too.
+The default without this flag remains grouping/source preparation only.
+
 ## Apply to a fresh experimental workspace
 
 Initialize a native-bound workspace with the existing bridge (use the
@@ -56,7 +79,7 @@ native guard, the command checks coverage, current source hashes and the native
 binding, saves the plan, and applies one replayable `prepare_work` transaction.
 
 Application requires fresh unassigned state: no sessions, calls, questions,
-propositions, lookups or drafts. It preserves every claim/bundle identity and
+propositions, lookups, deciding-evidence receipts or drafts. It preserves every claim/bundle identity and
 supplies the members' initial evidence plus bounded implementation, registration
 and import source. Contained snippets are removed from the focused view. No
 verdict or caller applicability is inferred. Source capture consumes the existing

@@ -177,6 +177,86 @@ class WorkPlannerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"source changed"):
             planner.validate(p,self.root,self.inventory,self.engine)
 
+    def helper_fixture(self, registration="app.post('/x', guards.owner('strict'), wrap(change()))\n"):
+        self.handler()
+        self.file("guards.ts","export function owner(mode: string) {\n return (req: any) => req.body.UserId;\n}\n")
+        self.file("wrapper.ts","export function wrap(handler: any) {\n return handler;\n}\n")
+        self.file("server.ts","import { change } from './handlers'\n"
+                  "import * as guards from './guards'\nimport { wrap } from './wrapper'\n"+registration)
+
+    def test_opt_in_helpers_select_bound_definitions_arguments_and_wrapper(self):
+        self.helper_fixture()
+        self.assertIsNone(self.plan()["helper_evidence"])
+        p = self.plan(prepare_helpers=True)
+        helpers = p["helper_evidence"]
+        self.assertEqual(len(helpers["targets"]),1)
+        self.assertEqual([s["reference"] for s in helpers["traces"][0]["selected"]],["guards.owner","wrap"])
+        frames = helpers["targets"][0]["windows"]
+        self.assertEqual({f["path"] for f in frames},{"server.ts","guards.ts","wrapper.ts"})
+        self.assertIn("guards.owner('strict')",p["work"][0]["caller"]["chain"])
+        self.assertEqual(helpers["targets"][0]["packages"],[])
+        planner.validate(p,self.root,self.inventory,self.engine)
+
+    def test_helpers_reuse_native_queries_across_different_operation_groups(self):
+        self.helper_fixture()
+        self.file("other.ts","export function other(req: any) {\n third(req.body.id);\n}\n")
+        self.file("server.ts",(self.root/"server.ts").read_text()+
+                  "import { other } from './other'\napp.post('/other', guards.owner('other'), other())\n")
+        self.claim("other.ts",2,"other")
+        queries = []
+        def observed(op,*args):
+            queries.append((op,*args)); return self.native(op,*args)
+        p = self.plan(native=observed,prepare_helpers=True)
+        self.assertEqual(len(p["helper_evidence"]["targets"]),2)
+        owner_queries = [q for q in queries if q[:3]==("symbol","--name","owner")]
+        self.assertEqual(len(owner_queries),1)
+        self.assertEqual(len({t["work_id"] for t in p["helper_evidence"]["targets"]}),2)
+
+    def test_unknown_helper_import_does_not_expand_investigation(self):
+        self.helper_fixture("app.post('/x', externalGuard(), change())\n")
+        p = self.plan(prepare_helpers=True)
+        self.assertEqual(p["helper_evidence"]["targets"],[])
+        self.assertIn("externalGuard",str(p["helper_evidence"]["traces"][0]["limits"]))
+
+    def test_exported_arrow_helpers_are_declarations_without_broadening_grouping(self):
+        self.helper_fixture("app.post('/x', guards.owner('strict'), change())\n")
+        self.file("guards.ts","export const owner = (mode: string) => {\n return (req: any) => req.body.UserId;\n}\n")
+        p = self.plan(prepare_helpers=True)
+        selected = p["helper_evidence"]["traces"][0]["selected"]
+        self.assertEqual([s["reference"] for s in selected],["guards.owner"])
+        self.assertEqual(selected[0]["unit"]["frame"]["end_line"],3)
+        # A private declaration exported through a list is outside this resolver.
+        self.file("guards.ts","const owner = (mode: string) => {\n return (req: any) => req.body.UserId;\n}\nexport { owner }\n")
+        p = self.plan(prepare_helpers=True)
+        self.assertEqual(p["helper_evidence"]["targets"],[])
+
+    def test_reassigned_namespace_helper_is_not_selected(self):
+        self.helper_fixture("guards.owner = replacement\napp.post('/x', guards.owner('strict'), change())\n")
+        p = self.plan(prepare_helpers=True)
+        self.assertEqual(p["helper_evidence"]["targets"],[])
+        self.assertIn("member write",str(p["helper_evidence"]["traces"]))
+
+    def test_helper_truncation_or_oversize_keeps_claims_and_reports_gap(self):
+        self.helper_fixture("app.post('/x', guards.owner('strict'), change())\n")
+        def truncated(op,*args):
+            answer = self.native(op,*args)
+            if op=="symbol" and "owner" in args: answer["truncated"] = True
+            return answer
+        p = self.plan(native=truncated,prepare_helpers=True)
+        self.assertEqual(p["helper_evidence"]["targets"],[])
+        self.assertEqual(len(p["selected_review_ids"]),2)
+        self.assertIn("truncated",str(p["helper_evidence"]["traces"]))
+        self.file("guards.ts","export function owner(mode: string) {\n"+" // details\n"*405+"}\n")
+        p = self.plan(prepare_helpers=True)
+        self.assertEqual(p["helper_evidence"]["targets"],[])
+        self.assertIn("400 lines",str(p["helper_evidence"]["traces"]))
+
+    def test_incompatible_callers_do_not_receive_automatic_helpers(self):
+        self.helper_fixture("app.post('/x', guards.owner('strict'), change())\napp.post('/open', change())\n")
+        p = self.plan(prepare_helpers=True)
+        self.assertTrue(all(w["kind"]=="singleton" for w in p["work"]))
+        self.assertEqual(p["helper_evidence"],{"targets":[],"traces":[]})
+
 
 class AtomicPlanningTests(unittest.TestCase):
     def setUp(self):
@@ -226,6 +306,16 @@ class AtomicPlanningTests(unittest.TestCase):
             self.workspace.apply("too-late",before["revision"],self.action())
         self.assertEqual(self.workspace.snapshot(),before)
 
+    def test_late_helper_failure_rolls_back_grouping_and_all_source(self):
+        action = self.action()
+        action["deciding_targets"] = [{"work_id":"together", "question":"Does this helper constrain the effect?",
+            "windows":[{"path":"a.js","start_line":1,"end_line":3,"file_sha256":"stale"}],"packages":[]}]
+        before = self.workspace.snapshot()
+        with self.assertRaisesRegex(ValueError,"stale"):
+            self.workspace.apply("helpers",before["revision"],action)
+        self.assertEqual(self.workspace.snapshot(),before)
+        self.assertIsNone(self.workspace.operation("helpers"))
+
 
 class NativePlanApplicationTests(unittest.TestCase):
     def test_native_bound_grouping_applies_once_without_model_or_verdicts(self):
@@ -238,15 +328,17 @@ class NativePlanApplicationTests(unittest.TestCase):
                 " const user = await UserModel.findOne({ where: { id: req.params.id } })\n"
                 " const card = await CardModel.findOne({ where: { id: req.body.cardId } })\n"
                 " res.json({ user, card })\n }\n}\n",
-            "server.ts":"import { change } from './handlers'\n"
-                "app.post('/change', auth(), change())\n"}
+            "guard.ts":"export function guard() {\n return (_req: any, _res: any, next: any) => next();\n}\n",
+            "server.ts":"import { change } from './handlers'\nimport { guard } from './guard'\n"
+                "app.post('/change', guard(), change())\n"}
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
         bridge = fixture.create()
         inventory = worker.read(fixture.inventory/"inventory.json")
         ids = list(bridge.workspace.snapshot()["claims"])
         native = lambda op,*values:fixture.native("investigate",op,str(fixture.root),*values)
-        plan = planner.build(fixture.root,inventory,ids,native,worker.digest_file(fixture.scanner))
+        plan = planner.build(fixture.root,inventory,ids,native,worker.digest_file(fixture.scanner),prepare_helpers=True)
+        original = copy.deepcopy(plan)
         shared = [w for w in plan["work"] if w["kind"]=="shared_operation"]
         self.assertEqual(len(shared),1)
         self.assertEqual(len(shared[0]["review_ids"]),2)
@@ -256,6 +348,7 @@ class NativePlanApplicationTests(unittest.TestCase):
             self.assertEqual(planner.apply_plan(bridge,plan),first)
         state = bridge.workspace.snapshot()
         self.assertEqual(state["revision"],revision)
+        self.assertEqual(plan,original)
         self.assertFalse(state["sessions"])
         self.assertFalse(state["calls"])
         self.assertTrue(all(c["draft"] is None for c in state["claims"].values()))
@@ -264,7 +357,11 @@ class NativePlanApplicationTests(unittest.TestCase):
         self.assertEqual(len(view["claims"]),2)
         self.assertTrue(any(e["path"]=="handlers.ts" and e["start_line"]==2 and e["end_line"]==8
                             for e in view["evidence"].values()))
-        self.assertTrue(any(e["path"]=="server.ts" and e["start_line"]==2 for e in view["evidence"].values()))
+        self.assertTrue(any(e["path"]=="server.ts" and e["start_line"]==3 for e in view["evidence"].values()))
+        self.assertTrue(any(e["path"]=="guard.ts" and e["start_line"]==1 for e in view["evidence"].values()))
+        self.assertEqual(len(view["deciding_evidence"]),1)
+        self.assertEqual(view["applicability"],{})
+        self.assertEqual(view["propositions"],{})
 
 
 if __name__ == "__main__":

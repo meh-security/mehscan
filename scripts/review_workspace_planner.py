@@ -179,6 +179,20 @@ class Discovery:
         return {"name":symbol["name"], "frame":frame,"direct_export":exported,
                 "id":identity([symbol["name"],frame])}
 
+    def helper_unit(self, symbol):
+        # The native outline labels exported arrow-function declarations as
+        # constants. Preserve the full AST declaration instead of guessing the
+        # initializer's semantics or broadening operation grouping.
+        if symbol and symbol.get("symbol_type") == "constant":
+            loc = symbol["location"]
+            frame = self.frame(loc["path"],loc["start"]["line"],loc["end"]["line"])
+            first = self.read(loc["path"])[0][loc["start"]["line"]-1]
+            direct = bool(symbol.get("is_exported")) and bool(re.match(
+                r"^\s*export\s+const\s+"+re.escape(symbol["name"])+r"\s*(?::[^=]+)?=",first))
+            return {"name":symbol["name"],"frame":frame,"direct_export":direct,
+                    "id":identity([symbol["name"],frame])}
+        return self.unit(symbol)
+
     def imports(self, path):
         lines, masked = self.read(path)
         result = {}
@@ -422,7 +436,76 @@ def form_work(claims, max_group_size=4, max_source_bytes=32768):
     return sorted(work,key=lambda w:min(order[rid] for rid in w["review_ids"]))
 
 
-def build(root, inventory, selected_ids, native, engine_sha256, **limits):
+def helper_evidence(discovery, claims, work):
+    """Select bounded direct registration references, never security interpretations."""
+    by_id = {c["entry"]["review_id"]:c for c in claims}
+    targets, traces = [], []
+    for item in work:
+        infos = [by_id[rid] for rid in item["review_ids"]]
+        callers = {info["caller"]["id"]:info["caller"] for info in infos if info["caller"] and not info["abstention"]}
+        if len(callers) != 1 or any(info["abstention"] for info in infos):
+            continue
+        caller = next(iter(callers.values()))
+        trace = {"work_id":item["id"], "caller_id":caller["id"], "selected":[], "limits":[]}
+        if len(targets) >= 16:
+            trace["limits"].append("Automatic evidence target limit reached.")
+            traces.append(trace); continue
+        path, line = caller["frame"]["path"], caller["frame"]["start_line"]
+        implementation_ids = {info["unit"]["id"] for info in infos if info["unit"]}
+        windows = {}
+        def frame_key(frame):
+            return frame["path"], frame["start_line"], frame["end_line"]
+        def call_names(value):
+            node = expression(value)
+            if node is None:
+                return []
+            name, args = node
+            return [name] + [name for arg in (args or []) for name in call_names(arg)]
+        names = list(dict.fromkeys(name for value in caller["chain"] for name in call_names(value)))
+        if len(names) > 12:
+            trace["limits"].append("Only the first twelve static registration references were considered.")
+        for name in names[:12]:
+            binding = discovery.binding(path, name)
+            if not binding:
+                trace["limits"].append("No supported direct relative import for " + name)
+                continue
+            try:
+                symbols = discovery.query("symbol", "--name",binding[1],"--path",binding[0],"--limit","8")
+                if symbols.get("truncated") or len(symbols.get("results",[])) != 1:
+                    raise ValueError("helper definition is ambiguous or truncated")
+                unit = discovery.helper_unit(symbols["results"][0])
+                if unit["name"] != binding[1]:
+                    raise ValueError("helper symbol name differs from import")
+                if unit["id"] in implementation_ids:
+                    continue
+                if not unit["direct_export"] or not discovery.scope_valid(path,line,name,unit):
+                    raise ValueError("helper binding is not a direct unshadowed export")
+                # A namespace member can be reassigned without rebinding its root.
+                masked = "\n".join(discovery.read(path)[1])
+                if re.search(r"\b"+re.escape(name)+r"\s*(?:=(?!=|>)|\+\+|--|\+=|-=|\?\?=|\|\|=|&&=)",masked):
+                    raise ValueError("helper reference has an explicit member write")
+                proposed = dict(windows)
+                frames = [caller["frame"], *binding[2], unit["frame"]]
+                for frame in frames:
+                    proposed[frame_key(frame)] = frame
+                if len(trace["selected"]) >= 4 or len(proposed) > 8 or sum(f["bytes"] for f in proposed.values()) > 8192:
+                    raise ValueError("automatic helper evidence limit exceeded")
+                windows = proposed
+                trace["selected"].append({"reference":name,"unit":unit,"binding_frames":binding[2]})
+            except (ValueError, OSError, IndexError) as error:
+                trace["limits"].append(name + ": " + str(error))
+        if windows:
+            targets.append({"work_id":item["id"],
+                "question":"What do the explicitly referenced registration helpers do with the supplied arguments, "
+                           "and does their caller-specific check constrain the selected effect? Source selection "
+                           "does not establish dispatch transparency, runtime binding or authorization.",
+                "windows":[{k:frame[k] for k in ("path","start_line","end_line","file_sha256")}
+                           for _,frame in sorted(windows.items())],"packages":[]})
+        traces.append(trace)
+    return {"targets":targets, "traces":traces}
+
+
+def build(root, inventory, selected_ids, native, engine_sha256, *, prepare_helpers=False, **limits):
     entries = {e["review_id"]:e for e in inventory["entries"]}
     if not selected_ids or len(selected_ids)>32 or len(set(selected_ids)) != len(selected_ids) or not set(selected_ids)<=entries.keys():
         raise ValueError("select 1..32 distinct inventory claim IDs")
@@ -430,10 +513,12 @@ def build(root, inventory, selected_ids, native, engine_sha256, **limits):
     discovery = Discovery(root,native)
     claims = [discovery.claim(entries[rid]) for rid in selected_ids]
     work = form_work(claims,**limits)
+    helpers = helper_evidence(discovery,claims,work) if prepare_helpers else None
     plan = {"schema_version":VERSION,"binding":{"source_fingerprint":inventory["identity_catalog"]["source_fingerprint"],
         "inventory_input_fingerprint":inventory["input_fingerprint"],"engine_sha256":engine_sha256,
         "planner_sha256":worker.digest_file(__file__)},
         "selected_review_ids":selected_ids,"claims":claims,"work":work,"files":discovery.files,
+        "helper_evidence":helpers,
         "settings":{"max_group_size":limits.get("max_group_size",4),"max_source_bytes":limits.get("max_source_bytes",32768)},
         "planning":{"native_queries":len(discovery.cache),"elapsed_ms":round((time.monotonic()-started)*1000)},
         "authority":"Controller grouping proposal; no verdict, caller completeness, effect or authorization proof.",
@@ -464,6 +549,22 @@ def validate(plan, root, inventory, engine_sha256):
     for path,digest in plan["files"].items():
         if hashlib.sha256(source(Path(root),path)).hexdigest() != digest:
             raise ValueError("planner source changed: "+path)
+    helpers = plan.get("helper_evidence")
+    if helpers is not None:
+        from review_workspace import shape
+        shape(helpers,("targets","traces"))
+        works = {w["id"]:w for w in plan["work"]}
+        target_ids = [t["work_id"] for t in helpers["targets"]]
+        if len(target_ids)>16 or len(set(target_ids)) != len(target_ids) or not set(target_ids)<=works.keys():
+            raise ValueError("helper evidence work selection differs")
+        for target in helpers["targets"]:
+            shape(target,("work_id","question","windows","packages"))
+            if target["packages"] or not 1 <= len(target["windows"]) <= 8:
+                raise ValueError("automatic helper target must contain only bounded source")
+            for frame in target["windows"]:
+                shape(frame,("path","start_line","end_line","file_sha256"))
+                if plan["files"].get(frame["path"]) != frame["file_sha256"]:
+                    raise ValueError("helper source binding differs")
 
 
 def apply_plan(bridge, plan):
@@ -487,9 +588,17 @@ def apply_plan(bridge, plan):
         work.append({"work_id":item["id"],"review_ids":item["review_ids"],"strategy":item["kind"]+": "+item["reason"],
             "evidence_ids":sorted({eid for rid in item["review_ids"] for eid in bridge.metadata["initial_evidence"][rid]}),
             "windows":[{k:v for k,v in frame.items() if k != "bytes"} for frame in frames],
-            "limits":item["limits"]})
+            "limits":list(item["limits"])})
     action = {"kind":"prepare_work","planning_id":plan["plan_id"],"work":work,
               "max_context_bytes":bridge.metadata["experiment"]["context_max_bytes"]}
+    if plan.get("helper_evidence"):
+        helpers = plan["helper_evidence"]
+        for spec in work:
+            for trace in helpers["traces"]:
+                if trace["work_id"] == spec["work_id"]:
+                    spec["limits"].extend(("Helper selection: " + reason) for reason in trace["limits"])
+        if helpers["targets"]:
+            action["deciding_targets"] = helpers["targets"]
     artifact = bridge.directory / ("plan-"+plan["plan_id"]+".json")
     if artifact.exists() and worker.read(artifact) != plan:
         raise ValueError("saved planning artifact changed")
@@ -503,6 +612,7 @@ def main():
     for name in ("scanner","source-root","inventory","review-ids","output"):
         parser.add_argument("--"+name,required=True)
     parser.add_argument("--max-group-size",type=int,default=4)
+    parser.add_argument("--prepare-helpers",action="store_true",help="select direct registration helper source before review")
     args = parser.parse_args()
     root = Path(args.source_root).resolve(strict=True)
     output = worker.outside(args.output,root,existing=False)
@@ -523,7 +633,7 @@ def main():
         return worker.execute([scanner,"investigate",operation,str(root),*values,"--journal",str(journal)],
                               output.parent,env,remaining)
     plan = build(root,worker.read(Path(args.inventory)/"inventory.json"),args.review_ids.split(","),native,
-                 worker.digest_file(scanner),max_group_size=args.max_group_size)
+                 worker.digest_file(scanner),max_group_size=args.max_group_size,prepare_helpers=args.prepare_helpers)
     plan["planning"].update(attempted_native_queries=calls,
                            journal_sha256=worker.digest_file(journal) if journal.exists() else None)
     plan["plan_id"] = identity({k:v for k,v in plan.items() if k != "plan_id"})

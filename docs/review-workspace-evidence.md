@@ -33,10 +33,11 @@ actual source-bound values:
 ```
 
 Each target needs a deciding question and at least one source window or package.
-The controller chooses exact targets; there is no semantic retrieval, automatic
-helper/caller matching or model grouping pass. Native AST/source receipts can
-identify a helper window; a filename or shared category alone is not sufficient
-to establish its relevance. Existing propositions/notebooks remain the path for
+The controller chooses exact targets. The [planner's `--prepare-helpers` option](review-workspace-planner.md)
+can now generate them from explicit registration references and direct relative
+imports, then apply them atomically with grouping. There is no semantic retrieval
+or model grouping pass. A filename or shared category alone is not sufficient
+to establish relevance. Existing propositions/notebooks remain the path for
 source-backed interpretations with conditions and exclusions.
 
 Source is captured once in SQLite, against the supplied whole-file hash, and
@@ -90,3 +91,7 @@ field. Keep that question separate from what the helper does.
 The [offline check](experiments/review-workspace-evidence-results.md) validates
 delivery, provenance, freshness and rollback. Live savings and security quality
 remain untested for this new path.
+
+The subsequent [automatic-selection check](experiments/review-workspace-auto-evidence-results.md)
+verifies helper delivery without a hand-written target list, including its added
+preparation and packet costs. Automatic dependency contracts remain outstanding.

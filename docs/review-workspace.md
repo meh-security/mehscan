@@ -585,3 +585,10 @@ revalidation. The [offline check](experiments/review-workspace-evidence-results.
 does not establish live savings or dependency effect contracts. Automatic
 relevance selection, operation-mechanism records and interactive state navigation
 remain outstanding.
+
+The [automatic helper selection milestone](experiments/review-workspace-auto-evidence-results.md)
+now connects planner `--prepare-helpers` to atomic deciding-evidence delivery.
+It follows explicit relative imports in known registration chains, preserves
+arguments/wrapper source and reports unsupported bindings. Offline matched
+preparation measures the added source/context and lookup costs; no new live
+savings or dependency contract is claimed.

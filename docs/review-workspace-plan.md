@@ -32,6 +32,15 @@ concrete alternate source/version relationship when available, otherwise retain
 the exact unresolved effect. Do not substitute an absence receipt for a contract
 or transfer an ownership verdict between callers.
 
+Automatic helper selection is now [implemented and checked offline](experiments/review-workspace-auto-evidence-results.md)
+through the planner's opt-in `--prepare-helpers` path. Explicit registration
+references supply native definition/import/call-site source; grouping and
+delivery commit atomically. This removes manual helper-target preparation for
+supported bindings. It adds source and packet bytes and has no new live savings
+result. Do not repeat the closed helper-only memory test to demonstrate a benefit
+it previously failed to show; the next decisive package needs a dependency effect
+contract or independently assessed operation mechanism.
+
 The earlier [pilot](experiments/review-workspace-pilot-results.md) and [first notebook producer](experiments/review-workspace-notebook-results.md) remain failed/incomplete experiments. Receipt preservation, route-source preparation and controller rendering of outstanding checks were subsequently verified. Their paid costs and the older unknown provider turn remain in the accounting; the successful local producer does not erase them.
 
 The earlier two-consumer result showed that avoiding a helper read can fail to

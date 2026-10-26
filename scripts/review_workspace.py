@@ -203,7 +203,7 @@ class Workspace:
             raise ValueError("action must be an object")
         kind = action.get("kind")
         if kind == "prepare_work":
-            shape(action,("kind","planning_id","work","max_context_bytes"))
+            shape(action,("kind","planning_id","work","max_context_bytes"),("deciding_targets",))
             label(action["planning_id"])
             maximum = number(action["max_context_bytes"],positive=True)
             if maximum > 128*1024:
@@ -251,6 +251,8 @@ class Workspace:
                 self._action(state,{"kind":"preparation_limits","work_id":wid,
                     "preparation_id":action["planning_id"],"origin":"source-bound deterministic work planner",
                     "limits":spec["limits"]},operation_key)
+            if action.get("deciding_targets"):
+                self._action(state,{"kind":"prepare_evidence","targets":action["deciding_targets"]},operation_key)
             for wid in work_ids:
                 self._view(state,wid,maximum)  # Late overflow rolls back the entire preparation.
             return {"planning_id":action["planning_id"],"work_ids":work_ids,"native_admission":False}
