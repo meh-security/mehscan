@@ -103,7 +103,7 @@ def prepare(args):
     package = root / "package"
     (package / "scripts").mkdir(parents=True)
     product = Path(__file__).resolve().parents[1]
-    for name in ("review_workspace_pilot.py","review_workspace_bridge.py","review_workspace_actions.py","review_workspace.py","review_workspace_notebook.py","review_workspace_routes.py",
+    for name in ("review_workspace_pilot.py","review_workspace_bridge.py","review_workspace_actions.py","review_workspace.py","review_workspace_notebook.py","review_workspace_routes.py","review_workspace_planner.py",
                  "review_worker.py","review_context.py","review_orchestration.py","review_trace.py","review_export.py"):
         shutil.copyfile(product / "scripts" / name,package / "scripts" / name)
     shutil.copytree(product / "skills/mehscan-security",package / "skills/mehscan-security",

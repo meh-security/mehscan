@@ -199,6 +199,58 @@ class Workspace:
         if not isinstance(action, dict):
             raise ValueError("action must be an object")
         kind = action.get("kind")
+        if kind == "prepare_work":
+            shape(action,("kind","planning_id","work","max_context_bytes"))
+            label(action["planning_id"])
+            maximum = number(action["max_context_bytes"],positive=True)
+            if maximum > 128*1024:
+                raise ValueError("planned context exceeds 128 KiB")
+            if (set(state["work"]) != {"initial"} or state["sessions"] or state["calls"] or
+                    state["questions"] or state["propositions"] or state["lookups"] or
+                    any(c["draft"] for c in state["claims"].values())):
+                raise ValueError("planning requires a fresh unassigned workspace")
+            specs = action["work"]
+            if not isinstance(specs,list) or not 1 <= len(specs) <= 32:
+                raise ValueError("expected 1..32 planned work items")
+            covered,work_ids = [],[]
+            for spec in specs:
+                shape(spec,("work_id","review_ids","strategy","evidence_ids","windows","limits"))
+                covered.extend(spec["review_ids"])
+                work_ids.append(spec["work_id"])
+            references(covered,state["claims"])
+            if set(covered) != set(state["claims"]) or len(set(work_ids)) != len(work_ids):
+                raise ValueError("plan must cover every claim exactly once with distinct work IDs")
+            for spec in specs:
+                wid = spec["work_id"]
+                self._action(state,{"kind":"split","work_id":"initial","new_work_id":wid,
+                    "review_ids":spec["review_ids"],"strategy":spec["strategy"]},operation_key)
+                references(spec["evidence_ids"],state["evidence"],nonempty=False)
+                evidence = set(spec["evidence_ids"])
+                if not isinstance(spec["windows"],list) or len(spec["windows"]) > 128:
+                    raise ValueError("too many planned source windows")
+                for window in spec["windows"]:
+                    shape(window,("path","start_line","end_line","review_id","file_sha256"))
+                    references([window["review_id"]],spec["review_ids"])
+                    capture = {k:v for k,v in window.items() if k != "file_sha256"}
+                    eid = self._action(state,{"kind":"source",**capture},operation_key)["evidence_id"]
+                    if state["evidence"][eid]["file_sha256"] != window["file_sha256"]:
+                        raise ValueError("planned source changed")
+                    evidence.add(eid)
+                # Full supplied source subsumes a contained AST fragment/window.
+                evidence = sorted(eid for eid in evidence if not any(other != eid and
+                    not state["evidence"][other].get("fragment") and
+                    state["evidence"][other]["path"] == state["evidence"][eid]["path"] and
+                    state["evidence"][other]["start_line"] <= state["evidence"][eid]["start_line"] and
+                    state["evidence"][eid]["end_line"] <= state["evidence"][other]["end_line"]
+                    for other in evidence))
+                self._action(state,{"kind":"focus","work_id":wid,"evidence_ids":evidence,
+                                   "proposition_ids":[]},operation_key)
+                self._action(state,{"kind":"preparation_limits","work_id":wid,
+                    "preparation_id":action["planning_id"],"origin":"source-bound deterministic work planner",
+                    "limits":spec["limits"]},operation_key)
+            for wid in work_ids:
+                self._view(state,wid,maximum)  # Late overflow rolls back the entire preparation.
+            return {"planning_id":action["planning_id"],"work_ids":work_ids,"native_admission":False}
         if kind == "source":
             shape(action, ("kind", "path", "start_line", "end_line", "review_id"), ("origin","excerpt"))
             references([action["review_id"]], state["claims"])

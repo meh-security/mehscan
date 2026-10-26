@@ -7,6 +7,16 @@ remains development evidence: 121 calls and 48 source-validated dispositions,
 including controller repairs. The confirmation used fresh state and the same
 complete source profiles. It adds a clean result without erasing earlier costs.
 
+Implementation update: the [deterministic planner](review-workspace-planner.md)
+now recognizes local SQL batches and source-bound same-operation groups, and
+applies them atomically to fresh experimental state. The [offline check](experiments/review-workspace-planner-results.md)
+recovers eight work items for all twelve existing claims with zero model calls.
+Adversarial native-source tests cover incompatible callers, aliases, shadowing,
+truncation and rollback. This is planning/preparation evidence; live validation
+on a held-out mixed slice, shared dependency evidence and independent operation
+mechanism records remain outstanding. No new savings result or ordinary-worker
+integration is claimed.
+
 The earlier [pilot](experiments/review-workspace-pilot-results.md) and [first notebook producer](experiments/review-workspace-notebook-results.md) remain failed/incomplete experiments. Receipt preservation, route-source preparation and controller rendering of outstanding checks were subsequently verified. Their paid costs and the older unknown provider turn remain in the accounting; the successful local producer does not erase them.
 
 The earlier two-consumer result showed that avoiding a helper read can fail to

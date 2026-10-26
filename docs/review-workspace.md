@@ -567,3 +567,12 @@ operation findings. The report records that distinction, severity variation,
 actual time/usage and the next dependency/mechanism/interactive-CLI work. The
 reusable runner is `scripts/review_workspace_comparison.py`; ordinary scheduling
 and native bundle defaults remain unchanged.
+
+An opt-in [deterministic work planner](review-workspace-planner.md) now creates
+local SQL batches and source-bound same-operation groups from native inventory
+and AST/reference evidence. The bridge's `plan` command applies them atomically
+to fresh unassigned state. It produces no verdict and invokes no model; ordinary
+worker scheduling is unchanged. See the [offline implementation check](experiments/review-workspace-planner-results.md)
+for source-binding, abstention and rollback validation. A held-out live reviewer
+test, dependency-fact reuse and independent operation mechanism records remain
+outstanding.

@@ -49,7 +49,8 @@ def read(path):
 def implementation():
     directory = Path(__file__).resolve().parent
     return {name:worker.digest_file(directory / name) for name in (
-        "review_workspace_bridge.py", "review_workspace.py", "review_workspace_actions.py", "review_worker.py", "review_context.py")}
+        "review_workspace_bridge.py", "review_workspace.py", "review_workspace_actions.py",
+        "review_workspace_planner.py", "review_worker.py", "review_context.py")}
 
 
 class NativeWorkspace:
@@ -462,7 +463,7 @@ class NativeWorkspace:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command",choices=("init","check","prepare","review","recover-usage","finalize"))
+    parser.add_argument("command",choices=("init","check","plan","prepare","review","recover-usage","finalize"))
     for name in ("scanner","source-root","inventory","store","stream","claim","work-package","directory"):
         parser.add_argument("--" + name,required=True)
     parser.add_argument("--skill-root",default=str(Path(__file__).resolve().parents[1] / "skills/mehscan-security"))
@@ -474,6 +475,7 @@ def main():
     parser.add_argument("--parent-session")
     parser.add_argument("--session-id")
     parser.add_argument("--bundle-id")
+    parser.add_argument("--plan",help="source-bound deterministic work plan; for plan command")
     args = parser.parse_args()
     if args.command == "init":
         if not args.experiment:
@@ -486,6 +488,12 @@ def main():
         if args.command == "check":
             with bridge.guarded():
                 result = {"current":True,"native_admission":False}
+        elif args.command == "plan":
+            if not args.plan:
+                parser.error("plan requires --plan")
+            from review_workspace_planner import apply_plan
+            with bridge.guarded():
+                result = apply_plan(bridge,read(args.plan))
         elif args.command == "prepare":
             if not args.config or not args.operation_key:
                 parser.error("prepare requires --config and --operation-key")
