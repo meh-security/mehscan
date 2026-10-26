@@ -10,6 +10,31 @@ MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_WINDOWS = 8
 
 
+def research_api(skill_root):
+    return json.loads((skill_root / "references/review-api.json").read_text(encoding="utf-8"))
+
+
+def guidance_catalog(skill_root):
+    return json.loads((skill_root / "references/guidance-index.json").read_text(encoding="utf-8"))
+
+
+def load_guidance(skill_root, name):
+    catalog = guidance_catalog(skill_root)
+    if name not in catalog:
+        raise ValueError("unknown review guidance; select an offered catalog name")
+    reference_root = (skill_root / "references").resolve(strict=True)
+    path = reference_root / catalog[name]["path"]
+    if path.is_symlink() or not path.resolve(strict=True).is_relative_to(reference_root):
+        raise ValueError("review guidance escapes trusted references")
+    raw = path.read_bytes()
+    if len(raw) > 65536:
+        raise ValueError("review guidance exceeds 64 KiB")
+    return {"operation":"review_guidance", "name":name, "path":catalog[name]["path"],
+            "sha256":hashlib.sha256(raw).hexdigest(),
+            "text":sections(path, catalog[name]["sections"])["text"] if catalog[name].get("sections") else raw.decode("utf-8"),
+            "authority":"trusted_skill_guidance_not_application_evidence"}
+
+
 def skill_bundle_id(root):
     rows, entries, byte_count = [], 0, 0
     def visit(directory):
@@ -109,7 +134,8 @@ def compile_contract(skill_root, kind, entries, paths, playbooks=None, role="inv
         result.append({"path": str(guide), "sha256": hashlib.sha256(guide.read_bytes()).hexdigest(),
                        "sections": ["complete"], "text": guide.read_text(encoding="utf-8")})
     router = skill_root / "SKILL.md"
-    value = {"version": "1", "router_sha256": hashlib.sha256(router.read_bytes()).hexdigest(), "sources": result}
+    value = {"version": "1", "router_sha256": hashlib.sha256(router.read_bytes()).hexdigest(),
+             "sources": result, "guidance_catalog":guidance_catalog(skill_root)}
     value["contract_id"] = "mehscanRuntime/v1:" + digest(value)
     return value
 

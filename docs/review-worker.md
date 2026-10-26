@@ -101,9 +101,11 @@ bundle; change-pass queries use `review_id: null` and are audited separately.
 The controller journals newly executed native queries under that ID for finalization. Shared
 facts can inform sibling IDs without fabricating a query for each one.
 
-Allowed tools are `source` and `base_source` (`path`, `start_line`, `end_line`), `symbol` (`name`,
-optional `path`, `limit`), `references` (`symbol`, optional `path` or `path_prefix`,
-`limit`) and `paths` (`name`, optional `limit`). Paths use relative forward-slash
+The [worker API reference](../skills/mehscan-security/references/worker-api.md)
+is generated from the same catalog as the runtime schema and argument validator.
+Available tools are `source`, `base_source`, `outline`, `symbol`, `definition`,
+`references`, `paths` and `guidance`. The last loads an allowlisted trusted category
+guide when needed; it never supplies application evidence. Paths use relative forward-slash
 syntax within the authorized root; traversal, Git metadata and symlink escapes
 are rejected. Source windows are at most 400 lines and discovery limits at most
 100 results. `source` reads current bytes; `base_source` reads the pinned merge base or direct
@@ -134,6 +136,14 @@ evidence handles, tool argument shapes or progress. `research.feedback` identifi
 the rejection; `review-feedback.jsonl` preserves it. The draft is not admitted.
 Repeated errors, exhausted budgets and freshness failures remain incomplete.
 Legacy plain final-draft adapters stay compatible.
+
+Inspect execution with `python TRUSTED/scripts/review_trace.py --run ATTEMPT`
+(optionally `--review-id ID` or `--format json`). New attempts retain per-turn
+responses/progress in `review-trace.jsonl`; older attempts reconstruct the available
+query/checkpoint history and explicitly report its limits. Progress checkpoints
+survive recovery. See [trace interpretation](../skills/mehscan-security/references/execution-trace.md)
+for mechanical completion, disappearing relationships, ineffective lookups and
+semantic review. Flags identify work to inspect; they never certify or change a verdict.
 
 ## Parallel execution and recovery
 

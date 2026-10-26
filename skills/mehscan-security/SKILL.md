@@ -10,6 +10,10 @@ For a source-bound worker task, use the compiled
 scope, decision and evidence policy with controller-owned finalization; applicable
 category guidance remains available. Use the guides below for manual CLI work.
 The ordinary controller uses one configured model with direct source lookups.
+The worker's [research API](references/worker-api.md) exposes exact tool arguments,
+costs and limits. It differs from the [operator CLI](references/commands.md):
+the controller owns scans, state writes, finalization and reports. In manual mode,
+use the corresponding native commands and preserve actual query journals.
 For an explicitly configured experimental tiered run, use the matching compiled
 role sections and [controller commands](references/commands.md#tiered-controller).
 Preserve bound profiles, shared budgets and assessment provenance. Never resume
@@ -67,6 +71,36 @@ scanner facts. Load [finalize and report](references/finish-review.md) when
 ready to write decisions. Consult [commands](references/commands.md) only for
 an operation not covered by these guides. A supplied subset remains a scoped
 review, not a complete application assessment.
+
+## Load guidance for the actual question
+
+Start with the common workflow and the bundle's bucket. Load additional guidance
+when the actual operation needs a different relationship; the category is not
+limited to the scanner's CWE or bucket. A safe primitive can coexist with a
+separate authority/state question. Keep those claims distinct.
+
+| Question encountered | Additional reference / worker guidance name |
+| --- | --- |
+| SQL text, bound values, dynamic identifiers, wrappers | [SQL query](references/categories/sql-query.md), `sql-query` |
+| Operator objects, NoSQL selectors, executable predicates | [Structured queries](references/categories/structured-query.md), `structured-query` |
+| Process launch, shell text, dynamic evaluation | [Process and code](references/categories/process-code.md), `process-code` |
+| Files, archives, SSRF, redirects, template paths | [Files and network](references/categories/file-network.md), `file-network` |
+| Server policy, ownership, tenancy, delegated authority | [Authorization](references/buckets/authorization.md), `authorization` |
+| Issuance, recovery, expiry, rotation, revocation | [Credential lifecycle](references/categories/credential-lifecycle.md), `credential-lifecycle` |
+| Generic updates, generated CRUD, sensitive writable fields | [Mass assignment](references/categories/mass-assignment.md), `mass-assignment` |
+| Ordering, alternate branches, quotas, payment, repetition | [Workflow and state](references/categories/workflow-state.md), `workflow-state` |
+| Stored/reflected/DOM interpretation and trust bypasses | [HTML output](references/html-output-review.md), `html-output` |
+| Angular pipes, inputs, dialogs and trust-marking handoffs | [Angular output](references/angular-output-review.md), `angular-output` |
+| XML, YAML, deserialization, expansion and resource bounds | [Parser/resource effects](references/categories/parser-resource.md), `parser-resource` |
+| Crypto, hashing, randomness, cookies, CORS | [Crypto/configuration](references/buckets/crypto-configuration.md), `crypto-configuration` |
+| C/C++ bounds, lifetime and ownership | [Native memory](references/buckets/native-memory.md), `native-memory` |
+
+In worker mode, the initial contract already contains relevant shared/bucket
+guidance. Use `guidance` with the exact catalog name for a needed additional guide;
+do not request every reference or reread a supplied one. Guides are trusted
+instructions, not application evidence. Record actual source and unresolved facts
+normally. The [execution trace guide](references/execution-trace.md) explains how
+to inspect review progress and separate mechanical completion from review quality.
 
 ## New scan or repository-wide review
 

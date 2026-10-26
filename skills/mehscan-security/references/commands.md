@@ -1,5 +1,10 @@
 # Mehscan commands
 
+These are operator/manual CLI commands. For the controller's typed source tools,
+costs, limits and on-demand category guides, use [the worker API](worker-api.md).
+`definition` and `guidance` are broker operations, not native CLI subcommands.
+For execution diagnosis, use [the trace guide](execution-trace.md).
+
 Use the executable and root supplied for the task. `ROOT` is the source
 repository, not the directory containing a saved bundle.
 Regenerate older inventories with this executable: current admission uses

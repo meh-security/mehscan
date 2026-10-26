@@ -23,6 +23,21 @@ THREAD = "12345678-1234-1234-1234-123456789abc"
 
 
 class Adapter(unittest.TestCase):
+    def test_on_demand_guidance_has_typed_names_and_is_not_presented_as_source(self):
+        schema = protocol.build_schema(self.task)
+        variant = next(v for v in schema["properties"]["research"]["items"]["anyOf"]
+                       if v["properties"]["tool"]["enum"] == ["guidance"])
+        names = variant["properties"]["arguments"]["properties"]["name"]["enum"]
+        self.assertIn("mass-assignment", names)
+        self.assertNotIn("../../source/AGENTS.md", names)
+        facts = [{"result_id":"guide1", "result":{"operation":"review_guidance", "name":"mass-assignment",
+                  "text":"Inspect sensitive writable fields and actual persistence."}}]
+        prompt = protocol.build_prompt(self.task, self.body, facts, None)
+        before, after = prompt.split("Additional trusted skill guidance", 1)
+        self.assertNotIn("Inspect sensitive writable fields", before)
+        self.assertIn("Inspect sensitive writable fields", after)
+        self.assertNotIn("guide1", self.task["research"]["artifact_handles"])
+
     def boundary_task(self):
         self.body["native_questions"] = [{"review_id":"one","capability":"authorization"}]
         self.packet.write_text(json.dumps(self.body))

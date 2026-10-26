@@ -1,6 +1,11 @@
 """Codex wire schema and compact continuation prompts. Queries are data for the native broker."""
 import json
+from pathlib import Path
 import boundary_review
+
+REFERENCES = Path(__file__).resolve().parent.parent / "references"
+API = json.loads((REFERENCES / "review-api.json").read_text(encoding="utf-8"))
+GUIDANCE = json.loads((REFERENCES / "guidance-index.json").read_text(encoding="utf-8"))
 
 
 def object_schema(properties):
@@ -30,9 +35,7 @@ def decision_targets(packet):
 
 def build_schema(task, *, bound_handles=True):
     text = {"type":"string"}
-    lookup_name = {"type":"string", "minLength":1, "maxLength":200}
     integer = {"type":"integer", "minimum":1}
-    limit = {"type":"integer", "minimum":1, "maximum":100}
     strings = {"type":"array","items":text}
     source_ref = object_schema({"side":{"type":"string","enum":["current","base"]},"path":text,"start_line":integer,"end_line":integer})
     if task["kind"] == "change_pass":
@@ -58,14 +61,16 @@ def build_schema(task, *, bound_handles=True):
         draft = object_schema({"results":{"type":"array","items":entry}})
     query_id = {"type":"null"} if task["kind"] == "change_pass" else {"type":"string","enum":task["review_ids"]}
     query_variants = []
-    for tool in ("source", "base_source", "outline", "symbol", "definition", "references", "paths"):
-        if tool == "definition" and bound_handles and task["research"].get("queries_remaining", 2) < 2:
+    for descriptor in API["tools"]:
+        tool = descriptor["name"]
+        if bound_handles and 0 < task["research"].get("queries_remaining", 100) < descriptor["query_units"]:
             continue
-        props = ({"path":text,"start_line":integer,"end_line":integer} if tool in ("source","base_source") else
-                 {"path":text} if tool == "outline" else
-                 {"name":lookup_name,"path":{"type":["string","null"]},"limit":limit} if tool in ("symbol", "definition") else
-                 {"symbol":lookup_name,"path":{"type":["string","null"]},"path_prefix":{"type":["string","null"]},"limit":limit} if tool == "references" else
-                 {"name":lookup_name,"limit":limit})
+        props = {name:dict(API["arguments"][name]) for name in descriptor["required"] + descriptor["optional"]}
+        for name in ("path", "path_prefix"):
+            if name in descriptor["optional"]:
+                props[name] = {"type":["string","null"]}
+        if tool == "guidance":
+            props["name"] = {**props["name"], "enum":list(GUIDANCE)}
         query_variants.append(object_schema({"tool":{"type":"string","enum":[tool]},"review_id":query_id,
                                             "purpose":text,"arguments":object_schema(props)}))
     query = {"anyOf":query_variants}
@@ -158,7 +163,7 @@ Use action=final, research=[] and the complete normal draft when each selected c
 working_chain is a concise hypothesis <=1500 characters. Each progress edge <=300 characters cites only handles in the supplied Available artifact handles list. If none applies, use artifacts=[] and keep the unread edge open or precisely blocked.
 Do not cite invented IDs. Mark available unread decisive code open, not blocked. Final output cannot leave an open edge.
 Inspected edges need artifacts; blocked edges need precise causes. No mandatory research when supplied evidence settles the chain.
-Queries: source(path,start_line,end_line) for CURRENT bytes; base_source(path,start_line,end_line) for the PINNED BASE; definition(name, optional path/limit) locates and reads one unambiguous declaration up to 120 lines, reserving two query units; symbol(name, optional path/limit) locates only; references(symbol, optional path OR path_prefix/limit); paths(name, optional limit).
+Use the supplied research API catalog and typed schema. outline locates current-file declarations/imports. definition locates and reads one unambiguous declaration; it is a broker operation, not a native CLI subcommand.
 Prefer definition when the helper's implementation decides the question. It returns at most the first 120 declaration lines. Actual partial source is inspected evidence only for the shown code; source_complete=false means the rest remains unread. Ambiguous matches are navigation only. Check source_complete and limit, and scope path when already known. No recursive callees or receiver binding is inferred.
 The batch's total query units must fit queries_remaining: two per definition, one per other query. Reuse a shared lookup across bundle IDs instead of requesting it once per ID.
 Prepared windows are verified actual source, not model summaries. complete_file=true means the complete file is supplied. Do not reread supplied source to confirm it or populate journals; a covered query is served from preparation without a native query.
@@ -177,6 +182,8 @@ Change-pass drafts cover every changed path. Reviewed has questions=[]; needs_re
 
 def build_prompt(task, packet, facts, state):
     new_facts = [value for value in facts if value["result_id"] not in (state or {}).get("sent_facts", [])]
+    new_guidance = [value["result"] for value in new_facts if value.get("result", {}).get("operation") == "review_guidance"]
+    new_facts = [value for value in new_facts if value.get("result", {}).get("operation") != "review_guidance"]
     handle_by_id = {value:key for key,value in task["research"]["artifact_handles"].items()}
     def readable(value):
         if isinstance(value, str):
@@ -212,8 +219,12 @@ Use outline on a known class file to locate imports and relevant overrides witho
         body = {key:value for key,value in packet.items() if key != "contract"}
         phase = {"kind":task["kind"],"available_native_questions":[{key:value.get(key) for key in ("review_id","path","line","capability","rule_id")} for value in packet["native_questions"]]}
         prompt = instructions + "\nCurrent phase and available native coverage (inspect before claiming a source-only gap):\n" + json.dumps(phase) + "\nTrusted runtime contract:\n" + trusted + "\nBound source evidence:\n" + json.dumps(readable(body)) + "\nPrior inspected source facts:\n" + json.dumps(readable(new_facts))
+        prompt += "\nResearch API (tool arguments, costs and semantics):\n" + json.dumps(API)
+        prompt += "\nAdditional trusted guidance catalog (load only the relevant missing guide using guidance):\n" + json.dumps(GUIDANCE)
     else:
         prompt = "Continue the same bound review using the unchanged contract/schema. Return schema JSON only.\nNew actual source facts:\n" + json.dumps(readable(new_facts))
+    if new_guidance:
+        prompt += "\nAdditional trusted skill guidance (instructions, not application evidence):\n" + json.dumps(new_guidance)
     receipts = task["research"]["results"][(state or {}).get("sent_results", 0):]
     prompt += "\nQuery receipts (reused results retain original attribution):\n" + json.dumps(readable([
         {key:value for key,value in entry.items() if key != "result"} for entry in receipts]))

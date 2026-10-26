@@ -53,6 +53,22 @@ class ArtifactCopy(unittest.TestCase):
 
 
 class LookupFailures(unittest.TestCase):
+    def test_guidance_is_an_allowlisted_skill_read_not_a_source_command(self):
+        import review_context as context
+        guide = {"tool":"guidance", "review_id":"id", "arguments":{"name":"mass-assignment"}}
+        self.assertEqual(worker.research_arguments(guide, ROOT, ["id"], ROOT), [])
+        self.assertEqual(worker.research_cost([guide]), 1)
+        result = context.load_guidance(ROOT / "skills/mehscan-security", "mass-assignment")
+        self.assertEqual(result["authority"], "trusted_skill_guidance_not_application_evidence")
+        self.assertIn("sensitive fields", result["text"])
+        html = context.load_guidance(ROOT / "skills/mehscan-security", "html-output")
+        self.assertIn("URLSearchParams", html["text"])
+        self.assertNotIn("finalize and report", html["text"])
+        self.assertNotIn("mehscan investigate source", html["text"])
+        guide["arguments"]["name"] = "../../AGENTS.md"
+        with self.assertRaisesRegex(ValueError, "unknown review guidance"):
+            worker.research_arguments(guide, ROOT, ["id"], ROOT)
+
     def test_definition_body_is_only_read_for_an_unambiguous_bounded_native_range(self):
         item = {"location":{"path":"helper.go","start":{"line":5},"end":{"line":15}}}
         read_ranges = []
@@ -121,6 +137,34 @@ class LookupFailures(unittest.TestCase):
 
 
 class Worker(unittest.TestCase):
+    def test_on_demand_guides_flow_through_worker_without_becoming_source_proof(self):
+        normal = self.base / "normal.py"
+        normal.write_text(self.reviewer.read_text())
+        self.reviewer.write_text('import json,sys,subprocess\nfrom pathlib import Path\ntask=json.load(sys.stdin)\n'
+            'if task["research"]["round"] == 0:\n'
+            ' print(json.dumps({"research":[{"tool":"guidance","review_id":task["review_ids"][0],'
+            '"purpose":"Load the relevant interpreter review contract","arguments":{"name":name}} '
+            'for name in ["process-code","structured-query"]],"working_chain":"Check exact interpretation",'
+            '"progress":[{"edge":"Deciding interpreter relationship","status":"open","cause":None,"artifacts":[]}]}))\n'
+            'else:\n'
+            ' facts=json.loads(Path(task["shared_facts"]).read_text())["facts"]\n'
+            ' guides=[f for f in facts if f["result"].get("operation")=="review_guidance"]\n'
+            ' assert {f["result"]["name"] for f in guides}=={"process-code","structured-query"}\n'
+            ' assert not ({f["result_id"] for f in guides} & set(task["research"]["artifact_handles"].values()))\n'
+            ' draft=json.loads(subprocess.check_output([sys.executable,' + repr(str(normal)) + '],input=json.dumps(task),text=True))\n'
+            ' print(json.dumps({"draft":draft,"working_chain":"Selected source evaluated.","progress":[]}))\n')
+        result = self.invoke(extra=["--phase","native"])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        from review_trace import summarize
+        trace = summarize(self.base / "worker", self.ids[0])
+        self.assertEqual(trace["mechanical_assessment"], "admitted")
+        self.assertEqual(trace["attention_counts"]["open_relationship_disappeared"], 1)
+        checkpoint = next((self.base / "worker/jobs").glob("*.json"))
+        self.assertIn("progress", json.loads(checkpoint.read_text()))
+        queries = [r for r in trace["jobs"][0]["queries"] if r["query"]["tool"] == "guidance"]
+        self.assertEqual(len(queries), 2)
+        self.assertEqual(len({r["result_id"] for r in queries}), 2)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="mehscan-worker-")
         self.addCleanup(self.temp.cleanup)

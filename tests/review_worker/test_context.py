@@ -13,6 +13,18 @@ import review_context as context
 
 
 class Context(unittest.TestCase):
+    def test_worker_api_docs_and_all_guidance_modules_ship_with_the_release(self):
+        from review_api_docs import render
+        skill = PRODUCT / "skills/mehscan-security"
+        self.assertEqual((skill / "references/worker-api.md").read_text(encoding="utf-8"), render(skill))
+        payload = json.loads((PRODUCT / "scripts/release-files.json").read_text())
+        tools = context.research_api(skill)["tools"]
+        self.assertEqual(len({tool["name"] for tool in tools}), len(tools))
+        for name, guide in context.guidance_catalog(skill).items():
+            with self.subTest(name=name):
+                self.assertTrue(context.load_guidance(skill, name)["text"].strip())
+                self.assertIn("skills/mehscan-security/references/" + guide["path"], payload)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="mehscan-context-")
         self.addCleanup(self.temp.cleanup)

@@ -17,6 +17,7 @@ import threading
 import time
 import review_context as context
 import review_orchestration as orchestration
+from review_trace import ReviewTrace
 
 _cancelled = False
 
@@ -424,7 +425,7 @@ class NativeWrites:
         return receipts
 
 
-def research_arguments(query, root, review_ids, journals):
+def research_arguments(query, root, review_ids, journals, *, api=None, guidance=None):
     """Compile typed requests, never model-supplied argv or shell commands."""
     if not isinstance(query, dict) or not {"tool", "review_id", "arguments"} <= query.keys() or query.keys() - {"tool", "review_id", "arguments", "purpose"}:
         raise ValueError("research request must contain tool, review_id and arguments")
@@ -437,19 +438,20 @@ def research_arguments(query, root, review_ids, journals):
     elif review_id is not None:
         raise ValueError("change-pass research has no native journal attribution")
     tool, values = query["tool"], query["arguments"]
-    definitions = {"source": ({"path", "start_line", "end_line"}, set()),
-                   "base_source": ({"path", "start_line", "end_line"}, set()),
-                   "outline": ({"path"}, set()),
-                   "symbol": ({"name"}, {"path", "limit"}),
-                   "definition": ({"name"}, {"path", "limit"}),
-                   "references": ({"symbol"}, {"path", "path_prefix", "limit"}),
-                   "paths": ({"name"}, {"limit"})}
+    skill = Path(__file__).resolve().parents[1] / "skills/mehscan-security"
+    api = api if api is not None else context.research_api(skill)
+    definitions = {item["name"]:(set(item["required"]),set(item["optional"])) for item in api["tools"]}
     if not isinstance(tool, str) or tool not in definitions or not isinstance(values, dict):
         raise ValueError("unsupported research tool")
     values = values.copy()
     required, optional = definitions[tool]
     if not required <= values.keys() or values.keys() - required - optional:
         raise ValueError("unsupported research arguments")
+    if tool == "guidance":
+        catalog = guidance if guidance is not None else context.guidance_catalog(skill)
+        if not isinstance(values["name"], str) or values["name"] not in catalog:
+            raise ValueError("unknown review guidance; select an offered catalog name")
+        return []  # Trusted skill lookup, never a native source query/journal.
     if "path" in values and "path_prefix" in values:
         raise ValueError("choose one research path filter")
     if isinstance(values.get("path_prefix"), str) and not values["path_prefix"].startswith("/"):
@@ -494,7 +496,9 @@ def research_arguments(query, root, review_ids, journals):
 def research_cost(queries):
     # Reserve the complete bounded operation before dispatch, including failed,
     # cached or ambiguous lookups. No extra unaccounted source reads on recovery.
-    return sum(2 if query["tool"] == "definition" else 1 for query in queries)
+    units = {item["name"]:item["query_units"] for item in context.research_api(
+        Path(__file__).resolve().parents[1] / "skills/mehscan-security")["tools"]}
+    return sum(units[query["tool"]] for query in queries)
 
 
 def definition_result(discovery, read_source):
@@ -635,6 +639,7 @@ def run_locked(args):
             raise ValueError("review provider changed; prepare a new native contract and plan")
     common = ["--store", str(store), "--stream", args.stream, "--inventory", str(inventory),
               "--source-root", str(root), "--generation", str(generation), "--owner", owner]
+    execution_trace = ReviewTrace(output / "review-trace.jsonl")
 
     def native(arguments, timeout=None):
         if arguments[:2] in (["state", "work"], ["state", "plan"], ["state", "record"]):
@@ -647,8 +652,18 @@ def run_locked(args):
         if digest_file(scanner) != scanner_hash:
             raise ValueError("trusted scanner changed during review")
         started = time.monotonic()
+        operation = "/".join(arguments[:2])
+        trace_subject = {}
+        if "--draft" in arguments:
+            draft_name = Path(arguments[arguments.index("--draft") + 1]).stem
+            trace_subject = {"draft":draft_name, "job_id":draft_name.removeprefix("draft-")}
+        execution_trace.emit("native_started", operation=operation, **trace_subject)
         try:
             value = execute([str(scanner), *arguments], output, native_env, args.timeout if timeout is None else timeout)
+            execution_trace.emit("native_completed", operation=operation, **trace_subject)
+        except Exception as error:
+            execution_trace.emit("native_failed", operation=operation, error=type(error).__name__, **trace_subject)
+            raise
         finally:
             with shared_lock:
                 timings.append({"operation": "/".join(arguments[:2]), "elapsed_ms": round((time.monotonic() - started) * 1000)})
@@ -732,6 +747,9 @@ def run_locked(args):
         started = time.monotonic()
         job.started = started
         reused = job.state["status"] == "drafted"
+        execution_trace.emit("job_started", job_id=job.path.stem, review_ids=task.get("review_ids", []),
+            profile=task.get("profile", "routine"), role=task.get("review_role", "investigator"),
+            recovered_draft=reused)
         try:
             if shared_budget and not reused:
                 shared_budget.begin_case(case_identity(task))
@@ -760,6 +778,7 @@ def run_locked(args):
                     "provider_retries":job.state.get("provider_retries", 0)}
             return draft
         except Exception as error:
+            execution_trace.emit("job_failed", job_id=job.path.stem, error=type(error).__name__)
             job.fail(error)
             with shared_lock:
                 record["jobs"][job.path.stem] = {"review_ids": task.get("review_ids", []), "kind": task["kind"],
@@ -863,14 +882,15 @@ def run_locked(args):
             record.setdefault("prepared_contexts", []).append({"conversation_id": conversation_id, "bytes": packet_path.stat().st_size,
                                                               "contract_id": packet["contract"]["contract_id"]})
         facts_path = output / ("facts-" + conversation_id + ".json")
-        working_chain, progress, feedback, corrections = "", [], None, 0
+        working_chain, progress, feedback, corrections = job.state.get("working_chain", ""), job.state.get("progress", []), None, 0
 
         def artifact_handles():
             aliases = {}
             for index, item in enumerate(packet["primary"]["windows"], 1):
                 aliases["source" + str(index)] = item["artifact_id"]
             for index, item in enumerate(job_facts, 1):
-                aliases["fact" + str(index)] = item["result_id"]
+                if item["result"].get("operation") != "review_guidance":
+                    aliases["fact" + str(index)] = item["result_id"]
             for index, item in enumerate(sweep_facts, 1):
                 aliases["context" + str(index)] = item["result_id"]
             if "sweep_artifact_id" in packet:
@@ -975,12 +995,8 @@ def run_locked(args):
                      "queries_remaining": remaining_count("queries", args.research_queries - query_count),
                      "bytes_remaining": remaining_count("bytes", args.research_bytes - byte_count),
                      "shared_budget_remaining": shared_remaining(),
-                     "tools": ["source", "base_source", "outline", "symbol", "definition", "references", "paths"],
-                     "semantics": {"references": "Bounded identifier text matches; navigation, not semantic binding. path_prefix must name a directory.",
-                                   "outline": "Current-file AST declarations/imports, including member locations. Navigation only; inspect bodies and explicit overrides. No inherited dispatch resolution.",
-                                   "definition": "Finds declared names, not a compiler resolver. Use native-reported names; Class.member spelling does not resolve members. path filters the declaration file, not the caller/import site. Follow imports explicitly or omit path for bounded discovery.",
-                                   "paths": "Case-insensitive literal path substring, not a glob. Searches the native investigation index; absence does not prove runtime absence.",
-                                   "source": "Current source only. Inspect truncation and native provenance before drawing conclusions."},
+                     "tools": [item["name"] for item in context.research_api(skill_root)["tools"]],
+                     "semantics": {item["name"]:item["semantics"] for item in context.research_api(skill_root)["tools"]},
                      "artifact_handles": aliases, "source_artifact_handles":source_handles,
                      "dependency_catalog":dependency_catalog,
                      "evidence_agenda":orchestration.evidence_agenda(task, display_facts),
@@ -988,6 +1004,8 @@ def run_locked(args):
             if task.get("assessment_cycle") == "dependency_resume" or job.state.get("citation_feedback") or round_index >= calls_left:
                 frame["research"].update(rounds_remaining=0, queries_remaining=0)
             started = time.monotonic()
+            execution_trace.emit("provider_started", job_id=job.path.stem, conversation_id=conversation_id,
+                round=round_index, calls_remaining=calls_left-round_index, queries_remaining=frame["research"]["queries_remaining"])
             if shared_budget:
                 shared_budget.reserve(case_id, "model_calls", 1)
             job.save(status="running", calls=job.state["calls"] + 1, model_inflight=True, active_since=time.time())
@@ -1015,6 +1033,8 @@ def run_locked(args):
             job.save(model_inflight=False, active_since=time.time())
             check_fresh()
             received_response = json.loads(json.dumps(value))
+            execution_trace.emit("reviewer_response", job_id=job.path.stem, conversation_id=conversation_id,
+                round=round_index, response=received_response)
             try:
                 if isinstance(value, dict) and any(key in value for key in ("dependency", "knowledge", "collection")):
                     field = next(key for key in ("dependency", "knowledge", "collection") if key in value)
@@ -1076,6 +1096,12 @@ def run_locked(args):
                             raise ValueError("inspected edge requires source/query proof")
                     write(output / ("progress-" + conversation_id + ".json"), {"package_id": expected["package_id"],
                           "working_chain": working_chain, "edges": progress, "assertion": "reviewer_hypothesis"})
+                    current_edges = {edge["edge"] for edge in progress}
+                    dropped = [edge["edge"] for edge in job.state.get("progress", [])
+                               if edge["status"] == "open" and edge["edge"] not in current_edges]
+                    execution_trace.emit("progress_changed", job_id=job.path.stem, conversation_id=conversation_id,
+                        round=round_index, working_chain=working_chain, edges=progress, dropped_open_edges=dropped)
+                    job.save(working_chain=working_chain, progress=progress)
                     if "draft" in value:
                         if "research" in value or any(edge["status"] == "open" for edge in progress):
                             raise ValueError("final draft cannot leave an available local edge open")
@@ -1134,7 +1160,8 @@ def run_locked(args):
                 if research_cost(queries) > remaining_count("queries", args.research_queries - query_count):
                     raise ValueError("research batch exceeds remaining query units")
                 # Validate the entire batch before running any lookup.
-                commands = [research_arguments(query, root, task.get("review_ids", []), journals) for query in queries]
+                commands = [research_arguments(query, root, task.get("review_ids", []), journals,
+                    api=context.research_api(skill_root), guidance=context.guidance_catalog(skill_root)) for query in queries]
             except ValueError as error:
                 if (corrections >= 1 or round_index == calls_left - 1
                         or str(error) not in ("review progress must cite current inspected artifacts",
@@ -1177,11 +1204,17 @@ def run_locked(args):
             def lookup(pair):
                 query, arguments = pair
                 without_journal = arguments[:arguments.index("--journal")] if "--journal" in arguments else arguments
-                cache_arguments = ["definition", *without_journal] if query["tool"] == "definition" else without_journal
+                cache_arguments = (["guidance", query["arguments"]["name"]] if query["tool"] == "guidance" else
+                    ["definition", *without_journal] if query["tool"] == "definition" else without_journal)
                 key = context.digest([scanner_hash, expected["payload"]["snapshot_id"],
                                       expected["payload"]["inventory_input_fingerprint"], cache_arguments])
 
                 def load():
+                    if query["tool"] == "guidance":
+                        result = context.load_guidance(skill_root, query["arguments"]["name"])
+                        return {"result_id":"mehscanGuidance/v1:" + context.digest(result),
+                            "cache_key":key, "origin_kind":"trusted_guidance", "origin_review_id":None,
+                            "origin_package_id":expected["package_id"], "query":query, "result":result}
                     prepared_result = source_lookup(query, remaining()) if query["tool"] in ("source", "base_source") else None
                     # Native journal appends already hold an OS lock around the
                     # complete record; independent reads need no controller lock.
@@ -1249,13 +1282,16 @@ def run_locked(args):
                          "package_id": expected["package_id"], "result_id": fact["result_id"],
                          "reused": reused, "origin_package_id": fact["origin_package_id"],
                          "origin_review_id": fact["origin_review_id"], "result": result}
+                execution_trace.emit("query_completed", job_id=job.path.stem, conversation_id=conversation_id,
+                    round=round_index, query=query, result_id=fact["result_id"], reused=reused,
+                    result_operation=result.get("operation"))
                 if cost != 1:
                     entry["reserved_query_units"] = cost
                 with shared_lock:
                     with (output / "research.jsonl").open("a", encoding="utf-8") as audit:
                         audit.write(json.dumps(entry, ensure_ascii=False) + "\n")
                     record["research_queries"] = record.get("research_queries", 0) + cost
-                    metric = ("research_cache_hits" if reused else "prepared_source_reads" if fact["origin_kind"] == "preparation"
+                    metric = ("research_cache_hits" if reused else "guidance_reads" if fact["origin_kind"] == "trusted_guidance" else "prepared_source_reads" if fact["origin_kind"] == "preparation"
                               else "base_source_reads" if fact["origin_kind"] == "pinned_base" else "research_executions")
                     record[metric] = record.get(metric, 0) + (fact.get("native_query_count", 1) if metric == "research_executions" else 1)
                 results.append(entry)
@@ -1873,6 +1909,7 @@ def run_locked(args):
     except (OSError, ValueError, KeyError, TypeError) as error:
         record.update(status="incomplete", usage_error=type(error).__name__)
     write(output / "worker.json", record)
+    execution_trace.emit("attempt_completed", status=record["status"], elapsed_ms=record["elapsed_ms"])
     return record
 
 

@@ -1,0 +1,15 @@
+{
+  "sql-query":{"path":"categories/sql-query.md","when":"SQL text, bound parameters, query wrappers or identifiers"},
+  "structured-query":{"path":"categories/structured-query.md","when":"NoSQL/BSON operators, executable predicates, search filters or selector objects"},
+  "process-code":{"path":"categories/process-code.md","when":"Process launch, shell text, dynamic evaluation or attacker-selected executable"},
+  "file-network":{"path":"categories/file-network.md","when":"File containment, archive writes, SSRF, redirects or template-selected files"},
+  "authorization":{"path":"buckets/authorization.md","when":"Effective server policy, object ownership, tenancy or delegated authority"},
+  "credential-lifecycle":{"path":"categories/credential-lifecycle.md","when":"Issuance, acceptance, recovery, rotation, expiry, consumption or revocation"},
+  "mass-assignment":{"path":"categories/mass-assignment.md","when":"Generic body binding, generated CRUD, privileged fields or sensitive object updates"},
+  "workflow-state":{"path":"categories/workflow-state.md","when":"Ordering, alternate branches, payment/approval, quotas, repetition or concurrency"},
+  "html-output":{"path":"html-output-review.md","sections":["chain","frontend","dom","writers","decisions"],"when":"Browser interpretation, HTML trust bypass, stored markup, templates or DOM output"},
+  "angular-output":{"path":"angular-output-review.md","when":"Angular trust bypasses, pipes, component/template inputs, dialogs or signal bindings"},
+  "parser-resource":{"path":"categories/parser-resource.md","when":"Deserialization, XML entities, YAML aliases, archive expansion or parser resource limits"},
+  "crypto-configuration":{"path":"buckets/crypto-configuration.md","when":"Signing/encryption, password hashing, randomness, cookie or CORS settings"},
+  "native-memory":{"path":"buckets/native-memory.md","when":"C/C++ bounds, lifetime, ownership or native parser state"}
+}
