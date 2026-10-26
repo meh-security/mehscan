@@ -4088,29 +4088,36 @@ fn read_brief_source(
         )
     })?;
     let lines = source.split_inclusive('\n').collect::<Vec<_>>();
-    if source_ref.end_line > lines.len() {
+    // A trailing newline exposes an empty EOF position at the following line,
+    // also used by source Location.end. It contributes no bytes to an excerpt.
+    let eof_position = source.ends_with('\n') && source_ref.end_line == lines.len() + 1;
+    if source_ref.end_line > lines.len() && !eof_position {
         return Err(format!(
             "brief evidence line is past end of {:?}",
             source_ref.path
         ));
     }
+    let selected_end = source_ref.end_line.min(lines.len());
+    if source_ref.start_line > selected_end {
+        return Err("brief evidence excerpt is empty or exceeds 64 KiB".to_string());
+    }
     let mut start_offset = lines[..source_ref.start_line - 1]
         .iter()
         .map(|line| line.len())
         .sum();
-    let excerpt = lines[source_ref.start_line - 1..source_ref.end_line].concat();
+    let excerpt = lines[source_ref.start_line - 1..selected_end].concat();
     if excerpt.trim().is_empty() || excerpt.len() > 64 * 1024 {
         return Err("brief evidence excerpt is empty or exceeds 64 KiB".to_string());
     }
     // Validate the entire selected range above. Retain nonblank chunks at their
     // original offsets; whitespace-only chunks carry no evidence. Do not repair
-    // paths, accept nonexistent lines, or change verdicts to normalize citations.
+    // paths, accept positions beyond EOF, or change verdicts to normalize citations.
     let mut artifacts = Vec::new();
     let mut start = source_ref.start_line - 1;
-    while start < source_ref.end_line {
+    while start < selected_end {
         let mut end = start;
         let mut characters = 0;
-        while end < source_ref.end_line && end - start < 40 {
+        while end < selected_end && end - start < 40 {
             let count = lines[end].chars().count();
             if count > 4000 {
                 return Err(format!(
@@ -4688,6 +4695,25 @@ mod tests {
                 .contains("could not resolve")
         );
 
+        // Accept only the empty EOF position exposed by a trailing LF/CRLF.
+        // Excerpts and their locations must still describe exact existing bytes.
+        for newline in ["\n", "\r\n"] {
+            let source = format!("first{newline}second{newline}third{newline}");
+            std::fs::write(directory.join("source.ts"), &source).unwrap();
+            let artifacts = read_brief_source(&directory, &range(4)).unwrap();
+            assert_eq!(artifacts.len(), 1);
+            assert_eq!(artifacts[0].1, source);
+            assert_eq!(artifacts[0].0.end.line, 4);
+            assert_eq!(artifacts[0].0.end.column, 1);
+            assert_eq!(artifacts[0].0.end.byte_offset, source.len());
+            assert!(read_brief_source(&directory, &range(5)).is_err());
+            let mut empty_eof = range(4);
+            empty_eof.start_line = 4;
+            assert!(read_brief_source(&directory, &empty_eof).is_err());
+            std::fs::write(directory.join("source.ts"), source.trim_end()).unwrap();
+            assert!(read_brief_source(&directory, &range(4)).is_err());
+        }
+
         // Character limits differ from byte offsets for Unicode. Keep CRLF,
         // a non-first starting line, and the final line without a newline exact.
         let long_line = format!("{}\r\n", "é".repeat(2100));
@@ -4740,8 +4766,12 @@ mod tests {
             artifacts[1].0.start.byte_offset,
             padded.find("const y").unwrap()
         );
+        assert_eq!(
+            read_brief_source(&directory, &range(83)).unwrap(),
+            artifacts
+        );
         assert!(
-            read_brief_source(&directory, &range(83))
+            read_brief_source(&directory, &range(84))
                 .unwrap_err()
                 .contains("past end")
         );
