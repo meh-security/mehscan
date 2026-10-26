@@ -7,6 +7,22 @@ The advisory Action defaults to native preparation; its optional Value/Comprehen
 mode prepares an active private [review handoff](github-action.md#active-review-handoff-local-integration-preview).
 No automatic model launch is enabled in the composite Action.
 
+## Ordinary review profile
+
+Use one configured capable model with direct source lookups and native
+finalization. Start with `--workers 4 --query-workers 2` and small source-bound
+jobs. An orchestration policy, collection agent or automatic second review is
+not required. Group claims only when they share the actual operation and
+implementation; a shared file or CWE alone is insufficient.
+
+For operation-level Value review, a tested starting profile sets
+`--research-rounds 3 --research-queries 12 --research-bytes 131072 --timeout 600`
+on `state plan-template`. These override the conservative native defaults below;
+they are ceilings, not instructions to spend the entire allowance. Finish settled
+relationships early. An essential unresolved fact remains pending. Request a
+separate claim challenge only for a specific material assumption, rather than
+routinely repeating the investigation or routing by a confidence threshold.
+
 ## Prepare review work
 
 Keep source, trusted tools and review artifacts in separate directories. Create
