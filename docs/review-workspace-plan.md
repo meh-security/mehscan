@@ -1,6 +1,11 @@
 # Persistent review workspace implementation plan
 
-Status: the [expanded comparison is complete](experiments/review-workspace-expanded-results.md): four approaches, twelve claims each, 121 observed calls and 48 native source-validated dispositions. Grouped investigations used 21 calls versus 35/36 for singleton alternatives and 29 with a seed, including repairs. SQL/deluxe grouping helped; the code-fix pair did not improve, and basket/generated dependency uncertainty still matters. These repair-affected results do not establish a clean savings estimate or a universal winner. Review quality, supported mechanisms, actionable uncertainty and time govern selection; historical token-percentage gates are retired. Ordinary scheduling/default bundle size is unchanged; no full-app rerun is underway.
+Status: the [fresh fixed-controller confirmation is complete](experiments/review-workspace-confirmation-results.md): 31 singleton calls versus 21 grouped calls, 612 versus 439 seconds active execution, matching twelve claim verdicts, and zero controller errors/unknown usage. SQL/deluxe provide an uncapped five-call benefit; the other five-call difference is basket review reaching its shared cap. Both packages leave three security relationships unresolved and retain the payment bypass as an unvalidated lead, not a classified finding. Proceed with concrete groups while fixing shared dependency evidence and operation-mechanism status. Token-percentage gates remain retired; native defaults are unchanged and no full-app rerun is underway.
+
+The earlier [expanded four-arm comparison](experiments/review-workspace-expanded-results.md)
+remains development evidence: 121 calls and 48 source-validated dispositions,
+including controller repairs. The confirmation used fresh state and the same
+complete source profiles. It adds a clean result without erasing earlier costs.
 
 The earlier [pilot](experiments/review-workspace-pilot-results.md) and [first notebook producer](experiments/review-workspace-notebook-results.md) remain failed/incomplete experiments. Receipt preservation, route-source preparation and controller rendering of outstanding checks were subsequently verified. Their paid costs and the older unknown provider turn remain in the accounting; the successful local producer does not erase them.
 
@@ -19,13 +24,13 @@ The objective is a **persistent review workspace with bounded model contexts**, 
 
 ## 0. Execution correction after the first live pilot
 
-The architecture below remains the target. The completed [expanded comparison
-and corrected next steps](experiments/review-workspace-expanded-results.md) now
-govern execution: confirm complete singletons versus groups under the fixed
-controller; resolve shared dependency availability/contracts once; expose state
-through a small interactive CLI; compare compact AI grouping with deterministic
-groups; then use held-out mixed cases. None of those follow-up live experiments
-has run yet. The
+The architecture below remains the target. The [fixed-controller confirmation
+and corrected next steps](experiments/review-workspace-confirmation-results.md)
+now govern execution. Confirmation is complete. Next resolve shared dependency
+availability/contracts, separate independently assessed operation mechanisms
+from native claim closure and unvalidated leads, expose state through a small
+interactive CLI, compare compact AI grouping with deterministic groups, and use
+held-out mixed cases. Those later experiments have not run. The
 [earlier diagnostic and reuse plan](experiments/review-workspace-next-plan.md)
 remains the historical record of the closed smoke/producer/consumer phases;
 its small-sample stop decision and percentage gates do not govern this expansion.

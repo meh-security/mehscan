@@ -1,5 +1,10 @@
 # Fixed-controller confirmation
 
+Status: [completed results](review-workspace-confirmation-results.md). The pair
+used 31 versus 21 calls with no controller errors. The basket group reached its
+six-call cap, so its contribution is budget-confounded; SQL/deluxe provide the
+clear uncapped benefit. The design below is preserved as the executed plan.
+
 Compare complete-operation singletons with concrete shared investigations on
 the same twelve claims as the [expanded comparison](review-workspace-expanded-results.md).
 The earlier 35/36/21/29-call results include controller repairs. This fresh pair

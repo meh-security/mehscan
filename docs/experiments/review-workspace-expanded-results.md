@@ -1,5 +1,10 @@
 # Expanded workspace comparison — 2026-10-26
 
+Follow-up: the [fresh fixed-controller confirmation](review-workspace-confirmation-results.md)
+is complete: 31 versus 21 calls, no controller errors and matching claim verdicts.
+Its report qualifies the basket cap and distinguishes unvalidated leads from
+classified findings. The repair-affected measurements below remain unchanged.
+
 Status: **completed**. Four approaches reviewed the same twelve native claims.
 All 48 final dispositions passed native source validation; none was admitted to
 native state. There are no unassessed cases or unknown provider counters left in
@@ -139,7 +144,8 @@ query and effect. They do not certify payment correctness. Every package retains
 the deluxe unsupported/omitted-payment-mode bypass, either as a finding or an
 adjacent lead. B/D attach the workflow finding to the broader user-selection
 claim; A/C close cross-account selection and retain the payment lead separately.
-That is a scope/placement difference, not a lost mechanism. D additionally keeps
+That retains the concern, but an unvalidated lead is not a classified finding;
+the follow-up report makes that workflow gap explicit. D additionally keeps
 a useful wallet credit-amount/payment-settlement lead.
 
 The file/YAML negatives use the actual filename-prefix prerequisite and local
@@ -225,7 +231,8 @@ delivery. C had only 6,528 cache-hit tokens; provider caching is not the explana
    raw and repaired K as development evidence. Freeze at most 48 calls/arm,
    six/work and 2,400 seconds active/arm; stop an affected arm on unknown usage.
    Do not repeat A/D merely to obtain prettier numbers. This clean confirmation
-   precedes any quantitative savings claim; it has not run yet.
+   precedes a quantitative savings claim. The subsequent [confirmation](review-workspace-confirmation-results.md)
+   has now run; its measurements and qualifications are separate from K above.
 2. **Close the shared dependency gap once.** Add controller-owned observations
    for absent source and a version/provenance-aware dependency-reference path.
    Distinguish declared range, resolved version, fetched source and observed

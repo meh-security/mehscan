@@ -557,3 +557,13 @@ binding: an earlier workspace cannot silently resume under changed code. The
 expanded experiment's controller-only repair uses an explicit isolated runtime
 fork, preserves original artifacts and costs, and verifies the deciding context
 before replaying an unchanged paid answer; this is not a general migration API.
+
+The subsequent [fresh fixed-controller comparison](experiments/review-workspace-confirmation-results.md)
+completed without repairs: 31 singleton versus 21 grouped calls, 24 source-validated
+dispositions and no unknown usage/controller errors. SQL/deluxe show uncapped
+sharing benefits; basket hit the shared work cap. Both arms retain three unresolved
+relationships. Their source leads remain unvalidated questions, not classified
+operation findings. The report records that distinction, severity variation,
+actual time/usage and the next dependency/mechanism/interactive-CLI work. The
+reusable runner is `scripts/review_workspace_comparison.py`; ordinary scheduling
+and native bundle defaults remain unchanged.
