@@ -1,36 +1,89 @@
 # Persistent review workspace implementation plan
 
-Status: the [broader comparison stopped at its failed safety gate](experiments/review-workspace-batch-results.md).
-Native control retained five findings/three scoped negatives; workspace retained
-four findings/three negatives/one unresolved question. All 62 calls have observed
-usage. Workspace input is lower but active execution is slower. The sixteen
-prepared main claims and eight reserved claims remain unreviewed. A common
-API-semantic policy was omitted by the compact prompt; an offline canonical
-delivery fix is tested, but no live recovery is claimed. Next verify that
-correction with unsafe/unknown controls and address measured duplicate native
-validation (255 state/work calls / 91.641 seconds), then refreeze mixed batches.
-Do not resume the closed study or run a full application.
+Status: the [fresh shared-policy regression](experiments/review-workspace-recovery-results.md)
+is closed with **partial recovery**. In five paired claims/26 observed calls, both
+arms retain three findings, one scoped negative and one actionable unknown. The
+workspace now emits the conditional SDK finding, but does not read its authority
+binding; native verifies it. Matching verdicts therefore do not pass the frozen
+full source-quality gate. Workspace remains slower: 270.133 versus 237.113 active
+seconds, despite twelve versus fourteen calls. No paid repair or unknown usage.
+
+Next complete two independent tasks: make local mechanism versus required caller
+applicability explicit in review state, and consolidate duplicate native validation
+through an equivalent freshness/publication boundary. Do not add another generic
+prompt patch or buy an unmodified SDK retry; test compatible/incompatible bindings
+and stale-source/owner/paid-answer behavior offline first. The new run reproduces
+the overhead: 107 state/work checks take 47.887 seconds. Greater budgets, generic
+memory or a CLI do not resolve these measured gaps. Ordinary native review remains
+the operational reference; no broader workspace acceptance is claimed.
+
+The [broader comparison's failed safety gate](experiments/review-workspace-batch-results.md)
+also remains closed: five native versus four workspace findings across eight paired
+claims/62 calls. Its omitted API-policy paragraph is restored from the same bound
+source and now tested live, with the limits above. The sixteen prepared main claims
+and eight reserved claims remain unreviewed. A genuinely changed mixed package
+needs a fresh freeze after the quality/execution tasks, not either closed study's
+unused allowance. Do not run a full application.
+
+### Next implementation milestones and stopping rules
+
+**A. Preserve closure scope, not just a final label.** Inspect the existing claim,
+question and proposition-applicability records in `review_workspace.py`, their
+provider rendering in `review_workspace_bridge.py`, and final decision conversion
+in `review_workspace_actions.py`. Reuse those records before adding another state
+subsystem. A completed local contract must remain distinguishable from its
+application authority binding; show the exact remaining relationship without a
+running checklist or requiring all callers. Keep reviewer interpretations distinct
+from controller-validated source/binding receipts. The controller cannot certify
+semantic correctness merely because a question was marked answered.
+
+Verify source-bound packet/state behavior with compatible and incompatible callers
+of the same implementation, missing registry binding, custom/unknown dependency
+contracts, and a complete local SQL control that needs no wider caller discovery.
+Preserve independent verdicts and actual source assumptions. Fake-provider tests
+prove persistence and enforcement only; the next live check must contain diverse
+boundary cases before any quality-recovery claim. Stop this implementation if it
+only adds bookkeeping, universally requires caller discovery, or merely changes the
+previous SDK wording. Do not repeat the unchanged SDK case as another policy trial.
+
+**B. Consolidate validation at an equivalent publication boundary.** Use the saved
+R/S native traces as the baseline. Follow `guarded`, `prepare`, `review`, `check`
+and `_lookup` through source capture and receipt persistence. Specify which fresh
+state/source/runtime/owner check protects each externally visible publication and
+paid dispatch before removing a call. Keep paid usage and actual query spending
+durable even when a stale answer or receipt is rejected. Avoid a cross-turn cache
+or an unrelated SQLite redesign.
+
+Adversarial tests must change source during inference and lookup/capture, supersede
+owner/generation, alter provider/skill/packet bindings, and exercise incomplete paid
+usage plus replay. Stale source/answers must not become usable by another model
+turn or native finalization. Then measure actual native-check counts and elapsed
+time on identical offline fixtures/source roots. Stop or revert an optimization
+that only hides checks, loses costs, weakens rejection, or does not reduce the
+measured overhead. Neither task authorizes paid repairs of R/S. Refreeze the still
+unreviewed mixed package only after these milestones have reviewable evidence.
 
 The [cross-app work-formation diagnostic](experiments/review-work-formation-results.md)
 is complete: eight operations/twelve claims outside workspace tuning, three AI
 calls and source-adjudicated operation/dependency proposals. Useful relationships
 extend beyond the deterministic path, but six proposed research containers are
-not six verified operation groups or demonstrated savings. The next step is the
+not six verified operation groups or demonstrated savings. It led to the
 roughly 24-claim native-default versus batch-first workspace package comparison,
-with eight reserved confirmation claims. That attempted package's safety wave is
-now closed as above. A separate AI planner remains optional.
+with eight reserved confirmation claims. That attempted package's safety wave and
+the subsequent targeted recovery are now closed as above. A separate AI planner
+remains optional.
 
 The [breadth reassessment](experiments/review-workspace-breadth-reassessment.md)
 governs that wider validation; dependency contracts and a
 richer state interface are not prerequisites. A new zero-model-call structural
 audit groups 11 of 116 saved Juice Shop candidates and none of 138 Directus
 candidates. This exposes narrow work-formation coverage and the need to compare
-fallback with native 20-review batching. Next assess six to eight diverse real
-operations (now completed), then freeze the cross-app package comparison. No
-vulnerability-review package or full-app review has run in this new phase.
+fallback with native 20-review batching. Its operation diagnostic and initial
+package safety comparison have now run, followed by targeted policy recovery.
+The mixed main wave and full-app review have not run.
 
 The [fresh fixed-controller confirmation](experiments/review-workspace-confirmation-results.md)
-remains the latest live workspace result: 31 singleton versus 21 grouped calls,
+remains the clean manual-grouping result: 31 singleton versus 21 grouped calls,
 612 versus 439 seconds active execution, matching twelve claim verdicts and zero
 controller errors/unknown usage. SQL/deluxe provide an uncapped five-call benefit;
 the other five-call difference is basket review reaching its shared cap. Both

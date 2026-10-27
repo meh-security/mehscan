@@ -1,7 +1,10 @@
 # Shared API policy recovery check
 
-Status: planned; fresh study S, separate from the closed failed study R. This is
-a targeted regression check, not confirmation of whole-app efficiency.
+Status: [closed with partial recovery](review-workspace-recovery-results.md);
+five paired claims/26 observed calls. Verdicts recover, but workspace's SDK authority
+binding remains unsupported by its inspected source and active execution remains
+slower. The full frozen gate does not pass. Fresh study S is separate from closed
+study R; neither study may resume. The original plan follows.
 
 The compact workspace prompt now receives the same established-API semantics as
 the ordinary reviewer. Test that correction before changing validation, navigation,

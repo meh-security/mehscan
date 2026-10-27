@@ -601,3 +601,14 @@ unreviewed. A lost common API-policy delivery paragraph is restored from the sam
 bound semantic source and tested offline; live recovery remains unproven.
 Trace data also identifies repeated native state/work validation as substantial
 controller overhead. The failed study stays closed; native defaults are unchanged.
+
+The [fresh shared-policy regression](experiments/review-workspace-recovery-results.md)
+now records partial recovery: five paired claims, 26 observed calls, matching three
+findings/one scoped negative/one unknown in each arm. Unsafe and unknown controls
+are retained. Workspace emits the conditional SDK finding but omits the caller
+binding that native verifies; the full source gate therefore remains unmet. Its
+twelve calls take 270.133 active seconds versus native's fourteen/237.113, with
+107 state/work validations costing 47.887 seconds. No controller failure, unknown
+usage or paid repair occurred. Next address explicit mechanism/applicability state
+and equivalent validation boundaries, rather than further unmodified prompt trials.
+The sixteen mixed main claims remain unreviewed; both studies are closed.
