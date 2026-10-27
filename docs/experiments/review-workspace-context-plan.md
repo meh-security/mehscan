@@ -1,7 +1,21 @@
 # Restored context quality comparison, with Terra replication
 
-Status: planned live development comparison following the offline context/state
-and publication checks. New study V; closed R/S/T/U stores are not resumed.
+Status: V stopped after a rejected Sol workspace lookup: a directory was supplied
+to the symbol tool's file filter. Native Sol completed three Directus claims in
+ten calls; workspace used three observed calls and produced no verdicts. The frozen
+stop rule closed V before Terra or other datasets ran. No runtime fix, retry or paid
+repair is applied. The original frozen design follows.
+
+To fulfil the explicitly requested additional Terra run, a separate fresh study VT
+uses the same six cases, unchanged controller/skill, Terra 6.1 medium and the same
+per-bundle limits. It prepares independent native stores/packages before dispatch;
+V's unused Terra states are not resumed. VT has four bundles/24 calls maximum if
+membership remains the same, runs Directus/owner-control/HTML-controls serially,
+and stops on a controller/tool failure or unknown usage. It is supplementary model
+evidence, not a repaired Sol comparison or proof of isolated workflow improvement.
+
+This live development comparison follows the offline context/state
+and publication checks. Closed R/S/T/U stores are not resumed.
 The user requested an additional Terra 6.1 medium run in this turn.
 
 ## Arms
