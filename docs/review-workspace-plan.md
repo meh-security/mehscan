@@ -16,7 +16,26 @@ cases only when the change can affect their source basis or behavior. This repla
 the previous requirement to repeat the whole four-case package as the next step;
 it does not change X's original frozen gate or claim broader acceptance.
 
-Latest live result: the [aligned four-claim feedback comparison X](experiments/review-workspace-feedback-results.md)
+Latest live result: [Directus surgical follow-up Z](experiments/review-workspace-directus-followup-results.md)
+completes the shared-configuration check in both models and live directory-error
+recovery in Terra. Terra returns the missing scoped negative in five calls; Sol
+completes an explicitly assisted open question in three calls with carried source
+and no source-query reread of that composable. All eight calls have observed usage;
+no new runtime/guidance patch or paid repair was needed. The three supported X cases
+remain retained. Neither reviewer reads the root version catalog, so the original
+full source profile remains incomplete; preserve this qualification separately.
+
+Next use a small new related-claim contrast (safe control, material unsafe shared
+hook, unresolved binding) with actual native properties and available source
+metadata prepared once. Match and label any assistance in a workflow comparison.
+Test reuse across compatible/incompatible bindings and useful deciding questions;
+do not repeat the unchanged Directus case to collect one omitted catalog lookup.
+Keep current bounded feedback/state behavior. No additional generic prompt patch
+or state subsystem is warranted by Z. Autonomous Sol question discovery, broader
+work-formation coverage and controller overhead remain open measurements. Preserve
+the original mixed main/reserved and full-app scope as separate later decisions.
+
+Previous live result: the [aligned four-claim feedback comparison X](experiments/review-workspace-feedback-results.md)
 is closed with partial confirmation, not package acceptance. All 34 calls have
 observed usage, including the requested Terra 6.1 medium arm. Sol native completes
 four source-supported dispositions in twelve calls; Sol workspace returns the same
@@ -32,18 +51,12 @@ not applied to X or used to buy a repair. Feedback preserves the original questi
 query and spending without source authority or automatic scope changes. Source,
 ownership, unsupported arguments/limits and unknown paid usage remain fatal.
 
-Next use a bounded Directus-only recovery follow-up for the committed filter fix,
-and a separately labeled Sol proof-completion follow-up for the effective shared
-configuration. The common API contract already mentions hooks; category omission
-is a possible delivery issue, not an established reason to add another warning.
-Existing question/source records can preserve the local proof while only its
-missing qualification is investigated. A native-bound regression now checks
-one-claim reopening with sibling drafts/local facts/costs retained and feedback
-corrected within the original budget. No production state change was needed.
-If semantic guidance changes later, use a small relevant contrast set rather than
-automatically repeating all successful cases. Keep X/V/VT immutable and distinguish
-fresh targeted recovery, assisted completion and whole-package comparison. Retain
-Terra medium as requested. Main/full-app dispatch is still outside this correction.
+That led to the Directus-only Z follow-ups above. Existing question/source records
+preserve the local proof while its missing qualification is investigated. The
+native-bound regression checks one-claim reopening with sibling drafts/local facts/
+costs retained and feedback corrected within the original budget. Keep X/V/VT/Z
+immutable and distinguish targeted recovery, assisted completion and whole-package
+comparison. Retain Terra medium as requested.
 
 Historical result: [V and the requested Terra 6.1 medium run](experiments/review-workspace-context-results.md)
 are closed after file/directory lookup-filter errors. Sol native completes three

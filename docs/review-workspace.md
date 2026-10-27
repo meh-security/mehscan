@@ -95,8 +95,14 @@ The [surgical correction plan](experiments/review-workspace-surgical-plan.md) re
 the three supported cases and local Directus evidence. Existing state can reopen
 one claim while preserving sibling drafts, answered local facts, source and paid
 work; a native-bound regression checks that path through feedback and correction.
-The next evaluation targets Directus recovery/configuration completion rather than
-automatically repeating the entire package. X's original gate remains unchanged.
+The [Directus follow-up Z](experiments/review-workspace-directus-followup-results.md)
+now completes directory-error recovery in Terra and assisted shared-configuration
+closure in Sol, with eight observed calls and no new runtime/guidance change. The
+root version catalog remains uninspected by those reviewers; the full original
+profile is not retroactively passed. Retain the completed mechanisms and other
+three cases. Next test a small new related-claim contrast with available source
+metadata, rather than repeating the unchanged Directus case. X's original gate
+remains unchanged.
 
 ## Initialize outside the source root
 

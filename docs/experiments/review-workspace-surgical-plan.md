@@ -5,6 +5,13 @@ not a reset of the workflow or all completed reviews. This updates the next-step
 policy in the [workspace plan](../review-workspace-plan.md). X's frozen expectations,
 actual costs and incomplete whole-package gate remain unchanged.
 
+Follow-up status: [Z has now run](review-workspace-directus-followup-results.md).
+Terra completes directory-error recovery in five calls; Sol completes the supplied
+configuration question in three assisted calls using carried source. Both inspect
+the actual shared hook. The remaining root-catalog profile item is retained
+separately. The steps below record the correction policy and intervention design;
+Z closes without another unchanged Directus rerun.
+
 ## What remains useful
 
 | Selected case | Retained evidence from X | Remaining work |

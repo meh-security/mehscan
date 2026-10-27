@@ -1,6 +1,12 @@
 # Directus-only surgical follow-up Z
 
-Status: design frozen before paid dispatch, following `df66e57` and the
+Status: **closed after eight observed calls**. The
+[results](review-workspace-directus-followup-results.md) retain the successful
+directory-error recovery and shared-configuration check, with the uninspected root
+version catalog reported separately. No paid repair follows. The design below is
+preserved as written before dispatch.
+
+Original status: design frozen before paid dispatch, following `df66e57` and the
 [surgical correction plan](review-workspace-surgical-plan.md). Keep X's supported
 cases, source audit, original costs and incomplete package status. No runtime or
 guidance change is proposed in Z; its runtime includes `cf519d3` filter feedback.
