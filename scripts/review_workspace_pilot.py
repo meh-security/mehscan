@@ -13,6 +13,7 @@ import sys
 import time
 
 import review_context as context
+import review_source_profile as source_profiles
 import review_worker as worker
 from review_workspace import encoded, identity
 from review_workspace_bridge import NativeWorkspace, provider_environment
@@ -22,14 +23,33 @@ def read(path):
     return worker.read(path)
 
 
+def window_lines(window):
+    text = window.get("text",window.get("excerpt"))
+    lines = context.source_lines(text)
+    span = window.get("line_range")
+    if span is None and "file_sha256" in window:
+        span = {"start_line":window["start_line"],"end_line":window["end_line"],"inclusive":True}
+    if span is not None:
+        if (not isinstance(span,dict) or span.get("inclusive") is not True
+                or type(span.get("start_line")) is not int or type(span.get("end_line")) is not int):
+            raise ValueError("invalid explicit source line range")
+        count = span["end_line"] - span["start_line"] + 1
+        if count == len(lines) + 1 and text.endswith("\n"):
+            lines.append("")
+        if count != len(lines) or count < 1:
+            raise ValueError("source line range differs from delivered text")
+    return lines
+
+
 def canonical_windows(windows):
     result = {}
     for window in windows:
         location = window.get("location",window)
-        text = window.get("text",window.get("excerpt"))
-        lines = context.source_lines(text)
+        lines = window_lines(window)
         value = {"path":location["path"],"start_line":location["start_line"],
                  "end_line":location["start_line"] + len(lines) - 1,"text":"\n".join(lines)}
+        if lines[-1] == "":
+            value["line_range"] = {"start_line":value["start_line"],"end_line":value["end_line"],"inclusive":True}
         key = identity(value)
         result[key] = value
     return sorted(result.values(),key=lambda w:(w["path"],w["start_line"],w["end_line"],w["text"]))
@@ -46,11 +66,9 @@ def source_coverage(root, required, delivered):
     root = Path(root).resolve(strict=True)
     files, available = {}, {}
     for window in canonical_windows(delivered):
-        for offset, line in enumerate(context.source_lines(window["text"])):
+        for offset, line in enumerate(window_lines(window)):
             key = (window["path"], window["start_line"] + offset)
-            if key in available and available[key] != line:
-                raise ValueError("conflicting delivered source lines")
-            available[key] = line
+            available.setdefault(key,set()).add(line)
     rows = []
     for window in required:
         if not isinstance(window, dict) or set(window) != {"path", "start_line", "end_line", "file_sha256"}:
@@ -72,10 +90,11 @@ def source_coverage(root, required, delivered):
         missing = []
         for line in range(first, last + 1):
             key = (path, line)
-            if key not in available:
+            values = available.get(key,set())
+            if any(value not in lines[line - 1] for value in values):
+                raise ValueError("conflicting delivered source lines differ from required initial source")
+            if lines[line - 1] not in values:
                 missing.append(line)
-            elif available[key] != lines[line - 1]:
-                raise ValueError("required initial source differs from delivered text")
         rows.append({**window, "complete":not missing, "missing_lines":missing})
     return {"complete":all(row["complete"] for row in rows), "windows":rows,
             "authority":"Source delivery coverage only; no caller applicability or security conclusion."}
@@ -147,7 +166,7 @@ def prepare(args):
     (package / "scripts").mkdir(parents=True)
     product = Path(__file__).resolve().parents[1]
     for name in ("review_workspace_pilot.py","review_workspace_batch_comparison.py","review_workspace_bridge.py","review_workspace_actions.py","review_workspace.py","review_workspace_notebook.py","review_workspace_routes.py","review_workspace_planner.py","review_workspace_evidence.py",
-                 "review_worker.py","review_context.py","review_orchestration.py","review_trace.py","review_export.py"):
+                 "review_worker.py","review_context.py","review_source_profile.py","review_orchestration.py","review_trace.py","review_export.py"):
         shutil.copyfile(product / "scripts" / name,package / "scripts" / name)
     shutil.copytree(product / "skills/mehscan-security",package / "skills/mehscan-security",
                     ignore=shutil.ignore_patterns("__pycache__",".git"))
@@ -172,6 +191,7 @@ def prepare(args):
         raise ValueError("current native inventory lost frozen claim IDs; do not silently remap")
     setup = {"source_root":str(source),"scanner":str(scanner),"inventory":str(inventory),"skill_root":str(skill),
              "provider_contract":str(root / "provider-contract.json"),"arms":{}}
+    profile = design.get("source_profile")
     for arm in ("control","treatment"):
         output, secret = root / arm, private / arm
         output.mkdir(); secret.mkdir()
@@ -198,9 +218,14 @@ def prepare(args):
         native("state","plan",*common,"--input",str(output / "plan.json"),"--operation-key","plan")
         work = native("state","work",*common,"--review-ids",",".join(selected))
         worker.write(output / "work.json",work)
+        if profile is not None:
+            source_profiles.validate(profile, work["payload"])
+            worker.write(root / "source-profile.json",profile)
         opts = {**{k:setup[k] for k in ("scanner","source_root","inventory","skill_root","provider_contract")},
                 "store":str(store),"stream":"pilot","claim":str(secret / "claim.json"),"work_package":str(output / "work.json"),
                 "directory":str(output / "workspace"),"config":str(secret / "config.json"),"command":str(secret / "command.json")}
+        if profile is not None:
+            opts["source_profile"] = str(root / "source-profile.json")
         setup["arms"][arm] = opts
         if arm == "control":
             bundle_options = [] if batch_mode else ["--max-reviews","1"]
@@ -228,7 +253,8 @@ def prepare(args):
         claim_id = bundle["bundle_fingerprint"] if batch_mode else bundle["review_ids"][0]
         sweep = native("investigate","review-sweep","--bundle",str(control_run / "requests" / bundle["filename"]))
         app = context.prepare_application(source,sweep,{},bridge.payload["snapshot_id"])
-        expected = canonical_windows([*sweep["source_contexts"],*app["windows"]])
+        explicit = source_profiles.prepare(source,profile,bundle["review_ids"],bridge.payload["snapshot_id"])
+        expected = canonical_windows([*sweep["source_contexts"],*app["windows"],*explicit["windows"]])
         evidence = bridge.workspace.snapshot()["evidence"]
         expected_ids = sorted({eid for rid in bundle["review_ids"] for eid in bridge.metadata["initial_evidence"][rid]})
         actual = canonical_windows([evidence[k] for k in expected_ids])
@@ -241,6 +267,17 @@ def prepare(args):
         raise ValueError("required initial source refers to an unknown comparison bundle")
     coverage = {key:source_coverage(source, windows, parity[key]["windows"])
                 for key, windows in requirements.items()}
+    for target in (profile or {}).get("targets", []):
+        matches = [key for key,row in parity.items() if set(row["review_ids"]) == set(target["review_ids"])]
+        if len(matches) != 1:
+            raise ValueError("explicit source target differs from native bundle membership")
+        key = matches[0]
+        receipt = source_coverage(source,target["windows"],parity[key]["windows"])
+        if key in coverage:
+            coverage[key]["complete"] = coverage[key]["complete"] and receipt["complete"]
+            coverage[key]["windows"].extend(w for w in receipt["windows"] if w not in coverage[key]["windows"])
+        else:
+            coverage[key] = receipt
     worker.write(root / "initial-source-coverage.json",coverage)
     if any(not receipt["complete"] for receipt in coverage.values()):
         raise ValueError("initial source profile was not fully delivered; no inference permitted")
@@ -265,6 +302,9 @@ def prepare(args):
                "case_policy":("Matched native bundle membership/default maximum 20; 6 calls, 24 query units and 512KiB received JSON per bundle in both arms. Global limits remain binding."
                               if batch_mode else "Maximum 4 calls and 12 query units per claim; same native runtime. Global limits remain binding."),"selected_claims":selected}
     worker.write(root / "run-binding.json",binding)
+    if profile is not None:
+        binding["source_profile_sha256"] = worker.digest_file(root / "source-profile.json")
+        worker.write(root / "run-binding.json",binding)
     return {"prepared":True,"directory":str(root),"claims":len(selected),"model_calls":0,"provider":descriptor}
 
 
@@ -276,6 +316,8 @@ def load_run(root):
     if ("initial_source_coverage_sha256" in binding and
             worker.digest_file(root / "initial-source-coverage.json") != binding["initial_source_coverage_sha256"]):
         raise ValueError("frozen initial source coverage changed")
+    if "source_profile_sha256" in binding and worker.digest_file(root / "source-profile.json") != binding["source_profile_sha256"]:
+        raise ValueError("frozen explicit source profile changed")
     for name,digest in binding["files"].items():
         if worker.digest_file(root / name) != digest: raise ValueError("frozen package changed")
     return root,read(root / "design.json"),read(root / "setup.json")
@@ -329,7 +371,8 @@ def run_control(root):
     args = Namespace(**{k:opts[k] for k in ("scanner","source_root","inventory","store","stream","claim","work_package","skill_root","provider_contract")},
         reviewer_command=opts["command"],reviewer_label="pilot-ordinary",run=str(root / "control/bundles"),output=str(output),
         phase="native",supersede=False,artifact_root=None,resume_from=None,timeout=None,research_rounds=None,research_queries=None,research_bytes=None,
-        workers=1,query_workers=1,expert_workers=1,expert_command=None,expert_review_ids=None,source_collector_profile=None)
+        workers=1,query_workers=1,expert_workers=1,expert_command=None,expert_review_ids=None,source_collector_profile=None,
+        source_profile=opts.get("source_profile"))
     worker.execute = execute
     started = time.monotonic()
     try:

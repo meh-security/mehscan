@@ -14,6 +14,7 @@ import sys
 import time
 
 import review_context as context
+import review_source_profile as source_profiles
 import review_worker as worker
 from review_workspace import Workspace, encoded, identity, number, references, shape
 import review_workspace_actions as actions
@@ -50,7 +51,8 @@ def implementation():
     directory = Path(__file__).resolve().parent
     return {name:worker.digest_file(directory / name) for name in (
         "review_workspace_bridge.py", "review_workspace.py", "review_workspace_actions.py",
-        "review_workspace_planner.py", "review_workspace_evidence.py", "review_worker.py", "review_context.py")}
+        "review_workspace_planner.py", "review_workspace_evidence.py", "review_worker.py", "review_context.py",
+        "review_source_profile.py")}
 
 
 class NativeWorkspace:
@@ -81,6 +83,12 @@ class NativeWorkspace:
         if not self.payload["review_ids"]:
             raise ValueError("workspace checkpoint requires selected native claims")
         self.metadata = None if creating else read(self.directory / "native-binding.json")
+        self.source_profile = (source_profiles.load(worker.outside(args.source_profile, self.root), self.payload)
+                               if creating and getattr(args, "source_profile", None) else
+                               self.metadata.get("source_profile") if self.metadata else None)
+        if self.source_profile is not None:
+            source_profiles.validate(self.source_profile, self.payload)
+        self.profile_id = None if self.source_profile is None else identity(self.source_profile)
         self.catalog_id = None if creating else self.metadata.get("catalog_id")
         if not creating and self.catalog_id is None:
             raise ValueError("native context catalog binding missing; create a fresh workspace")
@@ -89,7 +97,8 @@ class NativeWorkspace:
 
     def binding(self):
         return {"snapshot_id":self.payload["snapshot_id"], "plan_id":self.payload["plan_id"],
-                "runtime_id":identity([self.package["package_id"], self.runtime, implementation(), self.experiment_binding,self.catalog_id])}
+                "runtime_id":identity([self.package["package_id"], self.runtime, implementation(), self.experiment_binding,self.catalog_id,
+                                      *([self.profile_id] if self.profile_id else [])])}
 
     def native(self, arguments, timeout=None):
         if arguments[:2] == ["state", "work"]:
@@ -127,6 +136,8 @@ class NativeWorkspace:
         if current != self.package:
             raise ValueError("native work package is stale or altered")
         if self.metadata:
+            if (None if self.metadata.get("source_profile") is None else identity(self.metadata["source_profile"])) != self.profile_id:
+                raise ValueError("workspace explicit source profile changed")
             expected = {"version":VERSION, "package":self.package, "source_root":str(self.root),
                         "implementation":implementation(),"catalog_id":self.catalog_id}
             if any(self.metadata.get(k) != v for k,v in expected.items()):
@@ -194,6 +205,7 @@ class NativeWorkspace:
                 bundle_args += ["--max-reviews",str(experiment["bundle_max_reviews"])]
             bridge.native(bundle_args)
             manifest = read(bridge.directory / "run/manifest.json")
+            source_profiles.check_bundles(bridge.source_profile, [b["review_ids"] for b in manifest["bundles"]])
             claims, catalog, prepared, selected = [], {}, [], []
             initial = {}
             for bundle in manifest["bundles"]:
@@ -228,7 +240,9 @@ class NativeWorkspace:
                                                          "contracts":sweep.get("contracts",[])}
                 for window in sweep["source_contexts"]:
                     consumers = [c["review_id"] for c in sweep["reviews"] if window["id"] in c["source_context_ids"]]
-                    if len(bundle["review_ids"]) == 1:
+                    # Native supplies some helper windows only at bundle scope.
+                    # Sharing source does not establish applicability to a claim.
+                    if not consumers:
                         consumers = bundle["review_ids"]
                     if consumers:
                         prepared.append((window, consumers))
@@ -236,6 +250,10 @@ class NativeWorkspace:
                     application = context.prepare_application(bridge.root,sweep,{},bridge.payload["snapshot_id"])
                     for window in application["windows"]:
                         prepared.append(({"location":{k:window[k] for k in ("path","start_line","end_line")}},bundle["review_ids"]))
+                explicit = source_profiles.prepare(bridge.root, bridge.source_profile, bundle["review_ids"], bridge.payload["snapshot_id"])
+                for window in explicit["windows"]:
+                    prepared.append(({"location":{k:window[k] for k in ("path","start_line","end_line")},
+                                      "excerpt":window["text"]}, bundle["review_ids"]))
             references(selected, bridge.payload["review_ids"])
             if set(selected) != set(bridge.payload["review_ids"]):
                 raise ValueError("native generation dropped selected claims")
@@ -258,7 +276,7 @@ class NativeWorkspace:
                         "start_line":first,"end_line":min(first + 399, last),"review_id":consumers[0]}
                     if "excerpt" in window:
                         offset = first - location["start_line"]
-                        action["excerpt"] = "\n".join(context.source_lines(window["excerpt"])[offset:offset+400])
+                        action["excerpt"] = "\n".join(context.source_lines(window["excerpt"])[offset:offset+400]) + "\n"
                     result = bridge.apply(f"prepare:{i}:{first}",action)
                     evidence_ids.append(result["evidence_id"])
                     for claim_id in consumers:
@@ -272,6 +290,7 @@ class NativeWorkspace:
                                "implementation":implementation(),"artifacts":artifacts,"bundles":catalog,"catalog_id":bridge.catalog_id,
                                "selection_id":bridge.workspace.snapshot()["selection_id"],"limits":limits,"experiment":experiment,
                                "initial_evidence":{k:sorted(set(v)) for k,v in initial.items()}}
+            bridge.metadata["source_profile"] = bridge.source_profile
             # Check the complete native source/runtime/owner binding again before publication.
             bridge.check()
             worker.write(bridge.directory / "native-binding.json", bridge.metadata)
@@ -318,6 +337,8 @@ class NativeWorkspace:
             windows = [{"artifact_id":k, **{field:e[field] for field in
                         ("path","start_line","end_line","text","complete_file")}, "clipped":e.get("fragment",False)}
                        for k,e in view["evidence"].items()]
+            for window in windows:
+                window["line_range"] = {"start_line":window["start_line"],"end_line":window["end_line"],"inclusive":True}
             packet = {"schema_version":"1","package_id":self.package["package_id"],
                       "source_binding":{"snapshot_id":self.payload["snapshot_id"],
                                         "inventory_input_fingerprint":self.payload["inventory_input_fingerprint"]},
@@ -487,6 +508,7 @@ def main():
         parser.add_argument("--" + name,required=True)
     parser.add_argument("--skill-root",default=str(Path(__file__).resolve().parents[1] / "skills/mehscan-security"))
     parser.add_argument("--provider-contract")
+    parser.add_argument("--source-profile", help="source-only profile at initialization; stored in the workspace binding")
     parser.add_argument("--experiment",help="frozen JSON containing limits and experiment ceilings; required for init")
     parser.add_argument("--config")
     parser.add_argument("--work-id",default="initial")
@@ -504,6 +526,8 @@ def main():
         bridge = NativeWorkspace.create(args,experiment["limits"],experiment["experiment"])
         result = {"selection_id":bridge.workspace.snapshot()["selection_id"],"native_admission":False}
     else:
+        if args.source_profile:
+            parser.error("source-profile is supplied only at initialization")
         bridge = NativeWorkspace(args)
         if args.command == "check":
             with bridge.guarded():

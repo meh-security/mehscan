@@ -14,6 +14,31 @@ import review_workspace_pilot as pilot
 
 
 class PilotTests(unittest.TestCase):
+    def test_native_fragment_can_coexist_with_full_source_but_cannot_supply_a_full_line(self):
+        with tempfile.TemporaryDirectory() as name:
+            root=Path(name);file=root/'a.ts';file.write_text('  const value = input;\n')
+            required=[{'path':'a.ts','start_line':1,'end_line':1,
+                       'file_sha256':hashlib.sha256(file.read_bytes()).hexdigest()}]
+            fragment={'path':'a.ts','start_line':1,'text':'value = input'}
+            self.assertFalse(pilot.source_coverage(root,required,[fragment])['complete'])
+            full={'path':'a.ts','start_line':1,'text':'  const value = input;'}
+            self.assertTrue(pilot.source_coverage(root,required,[fragment,full])['complete'])
+            with self.assertRaisesRegex(ValueError,'conflicting'):
+                pilot.source_coverage(root,required,[full,{**fragment,'text':'invented'}])
+
+    def test_blank_ending_explicit_window_keeps_coverage_after_repeated_normalization(self):
+        with tempfile.TemporaryDirectory() as name:
+            root=Path(name);file=root/'a.ts';file.write_text('one\n\nthree\n')
+            required=[{'path':'a.ts','start_line':1,'end_line':2,
+                       'file_sha256':hashlib.sha256(file.read_bytes()).hexdigest()}]
+            delivered=[{'path':'a.ts','start_line':1,'end_line':2,'text':'one\n\n',
+                        'line_range':{'start_line':1,'end_line':2,'inclusive':True}}]
+            canonical=pilot.canonical_windows(delivered)
+            self.assertEqual(canonical,pilot.canonical_windows(canonical))
+            self.assertTrue(pilot.source_coverage(root,required,canonical)['complete'])
+            with self.assertRaisesRegex(ValueError,'differs'):
+                pilot.canonical_windows([{**delivered[0],'text':'one'}])
+
     def test_equal_packets_can_still_omit_required_source(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
@@ -28,7 +53,7 @@ class PilotTests(unittest.TestCase):
             delivered.append({"path":"a.ts", "start_line":4, "text":"four\n"})
             self.assertTrue(pilot.source_coverage(root,required,delivered)["complete"])
             delivered[-1]["text"] = "invented"
-            with self.assertRaisesRegex(ValueError,"differs"):
+            with self.assertRaisesRegex(ValueError,"differ"):
                 pilot.source_coverage(root,required,delivered)
             (root / "a.ts").write_text("changed\n")
             with self.assertRaisesRegex(ValueError,"stale"):

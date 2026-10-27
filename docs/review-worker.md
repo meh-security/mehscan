@@ -331,6 +331,49 @@ This increment does not add full Razor/C# parsing, cross-revision verdict reuse,
 or a token-saving guarantee. Corpus and live model acceptance are separate from
 deterministic evidence/preparation tests.
 
+## Explicit source profiles
+
+`--source-profile RUN/source-profile.json` supplies already selected source through
+a channel separate from automatic policy leads. Keep the JSON outside the source
+root. It contains source locations and hashes, not conclusions or instructions:
+
+```json
+{
+  "schema_version": "mehscanSourceProfile/v1",
+  "repository": {"repository_key": "EXACT_KEY", "path_prefix": ""},
+  "inventory_input_fingerprint": "EXACT_WORK_PACKAGE_FINGERPRINT",
+  "targets": [{
+    "review_ids": ["EXACT_NATIVE_BUNDLE_REVIEW_ID"],
+    "windows": [{
+      "path": "src/handler.ts",
+      "start_line": 1,
+      "end_line": 80,
+      "file_sha256": "EXACT_64_CHARACTER_LOWERCASE_SHA256"
+    }]
+  }]
+}
+```
+
+Copy the repository and inventory fields from the exported work package. Each
+target must match an entire generated native bundle, with no overlapping target
+IDs. Unprofiled bundles retain ordinary preparation. A target permits eight
+windows of up to 400 inclusive lines each, 16 KiB per window and 64 KiB total.
+Out-of-range, stale, oversized or mismatched input is rejected rather than clipped.
+The automatic policy-lead limit remains four windows; native batching remains 20
+by default. The profile adds no model calls or research allowance.
+
+Both reviewer paths use the same reader. Workspace initialization accepts the same
+`--source-profile` option and freezes the manifest in its binding; supply a changed
+profile to fresh state. The ordinary worker checks the manifest during review and
+includes its digest in recovery configuration. Source/runtime drift still rejects
+stale results while retaining attempted model usage. Exact duplicate source is
+reused, including prepared-source lookups; pinned-base source stays separate.
+
+Profiles do not establish caller applicability or authorize an effect. Their
+selection and acquisition costs belong in a comparison. The experimental paired
+preparer accepts the manifest as `source_profile` in its design, derives required
+coverage automatically and checks actual source equality before dispatch.
+
 ## Bound provider adapter
 
 The [BYOK Codex adapter](codex-reviewer.md) supplies a provider descriptor via

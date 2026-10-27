@@ -74,6 +74,27 @@ class NativeBridgeTests(unittest.TestCase):
         self.bridge = NativeWorkspace.create(self.args,self.limits,self.experiment)
         return self.bridge
 
+    def test_unassigned_native_helper_source_remains_available_at_bundle_scope(self):
+        self.doCleanups()
+        self.extra_source={'helper.ts':'export const helper = true;\n'}
+        self.setUp()
+        original=NativeWorkspace.native
+        def native(bridge,arguments,timeout=None):
+            value=original(bridge,arguments,timeout)
+            if arguments[:2]==['investigate','review-sweep']:
+                value['source_contexts'].append({'id':'bundle-only-helper',
+                    'location':{'path':'helper.ts','start_line':1,'end_line':1},
+                    'excerpt':'export const helper = true;\n'})
+            return value
+        with patch.object(NativeWorkspace,'native',native):
+            bridge=self.create()
+        state=bridge.workspace.snapshot()
+        for ids in bridge.metadata['initial_evidence'].values():
+            self.assertIn('helper.ts',{state['evidence'][i]['path'] for i in ids})
+        self.assertFalse(state['calls'])
+        self.assertFalse(state['applicability'])
+        self.assertTrue(all(c['draft'] is None for c in state['claims'].values()))
+
     def provider(self,calls, *, alter=None, invalid=False):
         config = self.config
         def invoke(task):

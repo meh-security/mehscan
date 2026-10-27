@@ -16,6 +16,7 @@ import tempfile
 import threading
 import time
 import review_context as context
+import review_source_profile as source_profiles
 import review_orchestration as orchestration
 from review_trace import ReviewTrace
 
@@ -635,9 +636,13 @@ def run_locked(args):
     inventory = outside(args.inventory, root)
     skill_root = outside(args.skill_root, root)
     provider_path = outside(args.provider_contract, root) if args.provider_contract else None
+    source_profile_path = outside(args.source_profile, root) if getattr(args, "source_profile", None) else None
+    source_profile_digest = digest_file(source_profile_path) if source_profile_path else None
+    source_profile = None
     claim = read(claim_path)
     generation, owner = claim["result"]["generation"], claim["result"]["owner"]
     scanner_hash = digest_file(scanner)
+    source_profile_implementation = digest_file(source_profiles.__file__)
     attempt_key = hashlib.sha256(str(output).encode()).hexdigest()
     native_env = {key: value for key, value in os.environ.items() if key not in ("GH_TOKEN", "GITHUB_TOKEN")
                   and not key.startswith("GIT_CONFIG_") and not key.endswith("_API_KEY")}
@@ -655,6 +660,10 @@ def run_locked(args):
     expert_path = None
 
     def check_runtime():
+        if digest_file(source_profiles.__file__) != source_profile_implementation:
+            raise ValueError("explicit source profile implementation changed during review")
+        if source_profile_path and digest_file(source_profile_path) != source_profile_digest:
+            raise ValueError("explicit source profile changed during review")
         if bound_runtime is not None and (
                 bound_runtime["engine_sha256"] != scanner_hash
                 or bound_runtime["skill_bundle_id"] != context.skill_bundle_id(skill_root)):
@@ -886,9 +895,12 @@ def run_locked(args):
             packet["sweep_artifact_id"] = "mehscanPreparedSweep/v1:" + context.digest(packet["sweep"])
             with shared_lock:
                 application = context.prepare_application(root, packet["sweep"], application_cache, payload["snapshot_id"])
+                explicit = source_profiles.prepare(root, source_profile, ids, payload["snapshot_id"])
+                for window in explicit["windows"]:
+                    application_cache[(payload["snapshot_id"], "explicit", window["artifact_id"])] = window
                 write(output / "prepared-application.json", {"snapshot_id": payload["snapshot_id"], "windows": list(application_cache.values())})
             packet["primary"] = {**prepared_changes,
-                "windows": [*prepared_changes["windows"], *application["windows"]],
+                "windows": source_profiles.combine(prepared_changes["windows"], explicit["windows"], application["windows"]),
                 "limits": [*prepared_changes["limits"], *application["limits"]]}
             for source in packet["sweep"].get("source_contexts", []):
                 fact = {"result_id":"mehscanSweepSource/v1:" + context.digest([payload["snapshot_id"], source]),
@@ -1351,6 +1363,10 @@ def run_locked(args):
                 raise ValueError("recovery requires the same current source, runtime and scope")
         write(package_path, package)
         payload = package["payload"]
+        if source_profile_path:
+            if args.phase == "change-pass":
+                raise ValueError("explicit source profiles require native review work")
+            source_profile = source_profiles.load(source_profile_path, payload)
         bound_runtime = payload.get("runtime")
         if bound_runtime is None:
             raise ValueError("AI worker requires a native runtime-bound plan; use plan-template --skill-root")
@@ -1397,7 +1413,8 @@ def run_locked(args):
         record["review_mode"] = "tiered" if tiered_policy else "single_model"
         all_commands = [*command, *(expert_command or [])]
         reviewer_configuration = context.digest([command, expert_command,
-            [digest_file(value) for value in all_commands if Path(value).is_file()], collection_profile])
+            [digest_file(value) for value in all_commands if Path(value).is_file()], collection_profile,
+            *([source_profile_digest] if source_profile_path else [])])
         direct_ids = set(filter(None, (getattr(args, "expert_review_ids", None) or "").split(",")))
         if not direct_ids <= set(requested):
             raise ValueError("direct expert IDs must belong to this exact work package")
@@ -1405,6 +1422,7 @@ def run_locked(args):
         if args.phase in ("all", "native") and requested:
             selected_run = outside(args.run, root)
             selected_manifest = read(selected_run / "manifest.json")
+            source_profiles.check_bundles(source_profile, [b["review_ids"] for b in selected_manifest["bundles"]])
             bundle_files = []
             for entry in selected_manifest["bundles"]:
                 filename = entry["filename"]
@@ -1414,6 +1432,7 @@ def run_locked(args):
             bundle_binding = context.digest([digest_file(selected_run / "manifest.json"), bundle_files,
                 digest_file(selected_run / "input-binding.json") if (selected_run / "input-binding.json").exists() else None])
         recovery_binding = {"schema_version": "1", "package_id": package["package_id"],
+                            "source_profile_implementation_sha256":source_profile_implementation,
                             "supplied_work_digest": context.digest(supplied),
                             "reviewer_configuration": reviewer_configuration, "reviewer_label": args.reviewer_label,
                             "stream": args.stream, "store": str(store), "supersede": args.supersede,
@@ -1948,6 +1967,7 @@ def main():
         parser.add_argument("--" + option, required=True)
     parser.add_argument("--run")
     parser.add_argument("--provider-contract")
+    parser.add_argument("--source-profile", help="source-only JSON bound to this repository, inventory and native bundle membership")
     parser.add_argument("--artifact-root")
     parser.add_argument("--phase", choices=("all", "change-pass", "native"), default="all")
     parser.add_argument("--supersede", action="store_true")

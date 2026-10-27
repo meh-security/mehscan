@@ -1,5 +1,6 @@
 """Matched native batch membership and complete workspace report; fake inference."""
 import copy
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -17,8 +18,10 @@ import codex_reviewer
 
 
 class BatchComparisonTests(unittest.TestCase):
-    def prepare(self):
+    def prepare(self,explicit=False):
         f=fixtures.NativeBridgeTests(methodName="test_rejected_completed_reply_still_records_usage")
+        if explicit:
+            f.extra_source={f"profile{i}.ts":f"export const p{i} = true;\n" + ("\n" if i == 0 else "") for i in range(8)}
         f.setUp();self.addCleanup(f.doCleanups)
         inv=fixtures.read(f.inventory/"inventory.json")
         design={"batch_mode":True,"source_pin":{"local_export":str(f.root),"native_repository_key":"evaluation:workspace-bridge",
@@ -26,6 +29,12 @@ class BatchComparisonTests(unittest.TestCase):
             "reasoning_effort":f.config["reasoning_effort"],"selected_review_ids":f.package["payload"]["review_ids"],
             "per_arm_limits":f.limits,"per_arm_experiment":f.experiment,
             "native_case_limits":{"rounds":5,"queries":24,"bytes":524288,"timeout_seconds":900}}
+        if explicit:
+            design["source_profile"]={"schema_version":"mehscanSourceProfile/v1",
+                **{k:f.package['payload'][k] for k in ('repository','inventory_input_fingerprint')},
+                "targets":[{"review_ids":design['selected_review_ids'],"windows":[{
+                    "path":name,"start_line":1,"end_line":2 if name == "profile0.ts" else 1,
+                    "file_sha256":hashlib.sha256((f.root/name).read_bytes()).hexdigest()} for name in f.extra_source]}]}
         path=f.base/"design.json";path.write_text(json.dumps(design))
         args=copy.copy(f.args)
         args.design,args.output,args.private=str(path),str(f.base/"batch"),str(f.base/"batch-private")
@@ -33,6 +42,47 @@ class BatchComparisonTests(unittest.TestCase):
         with patch.object(pilot.subprocess,"check_output",return_value="codex-cli fixture-1\n"),patch("codex_launcher.Launcher"):
             pilot.prepare(args)
         return f,Path(args.output)
+
+    def test_explicit_eight_window_channel_reaches_both_actual_reviewers_and_stays_bound(self):
+        f,root=self.prepare(explicit=True)
+        _,_,setup=pilot.load_run(root)
+        entries={e['review_id']:e for e in fixtures.read(f.inventory/'inventory.json')['entries']}
+        command_to_arm={tuple(fixtures.read(opts['command'])):arm for arm,opts in setup['arms'].items()}
+        original=worker.execute;packets={}
+        def execute(argv,cwd,env,timeout,payload=None):
+            arm=command_to_arm.get(tuple(argv))
+            if arm is None:return original(argv,cwd,env,timeout,payload)
+            task=json.loads(payload);packet=fixtures.read(task['evidence_packet']);packets[arm]=packet
+            paths={w['path'] for w in packet['primary']['windows']}
+            self.assertTrue(set(f.extra_source)<=paths)
+            class Fake:
+                def review(instance,prompt,schema,thread_id=None,timeout=600):
+                    decisions=[action_fixtures.WorkspaceActionTests.decision(entries[rid]) for rid in task['review_ids']]
+                    if not task.get('workspace_protocol'):
+                        decisions=[{**d,'checks':[],'blockers':[]} for d in decisions]
+                    answer=({'updates':[],'lookups':[],'decisions':decisions} if task.get('workspace_protocol') else
+                        {'action':'final','research':[],'draft':{'results':decisions},'working_chain':'','progress':[],'routing':[]})
+                    events=[{'type':'thread.started','thread_id':str(uuid.uuid4())},
+                            {'type':'turn.completed','usage':{'input_tokens':100,'cached_input_tokens':0,'output_tokens':30}}]
+                    return answer,'\n'.join(json.dumps(e) for e in events),''
+            opts=setup['arms'][arm]
+            return codex_reviewer.run(fixtures.read(opts['config']),task,lambda c,s:Fake())
+        with patch.object(worker,'execute',side_effect=execute):
+            native=pilot.run_control(root)
+            workspace=batch.run_treatment(root)
+        self.assertEqual(native['status'],'admitted',native)
+        self.assertEqual(workspace['status'],'source_validated',workspace)
+        self.assertEqual(pilot.ordinary_windows(packets['control']),pilot.canonical_windows(packets['treatment']['primary']['windows']))
+        coverage=fixtures.read(root/'initial-source-coverage.json')
+        self.assertTrue(next(iter(coverage.values()))['complete'])
+        self.assertEqual(len(next(iter(coverage.values()))['windows']),8)
+        opts=setup['arms']['treatment'];bridge=fixtures.NativeWorkspace(fixtures.Namespace(**opts))
+        bridge.metadata['source_profile']['targets'][0]['windows'][0]['file_sha256']='0'*64
+        with self.assertRaisesRegex(ValueError,'profile changed'):
+            bridge.check()
+        with (root/'source-profile.json').open('a') as stream:stream.write(' ')
+        with self.assertRaisesRegex(ValueError,'profile changed'):
+            pilot.load_run(root)
 
     def test_default_native_bucket_retains_two_claims_and_matches_workspace_source(self):
         f,root=self.prepare()

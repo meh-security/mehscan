@@ -1242,6 +1242,53 @@ else:
         trace = report["decision_records"][0]["response"]["investigation"]
         self.assertEqual(trace["journal_summary"]["query_count"], 0)
 
+    def source_profile(self):
+        import hashlib
+        payload=json.loads(self.package.read_text())['payload']
+        manifest=json.loads((self.run/'manifest.json').read_text())
+        profile={'schema_version':'mehscanSourceProfile/v1',
+            **{k:payload[k] for k in ('repository','inventory_input_fingerprint')},
+            'targets':[{'review_ids':b['review_ids'],'windows':[{'path':'app.js','start_line':1,'end_line':1,
+                'file_sha256':hashlib.sha256((self.root/'app.js').read_bytes()).hexdigest()}]} for b in manifest['bundles']]}
+        path=self.base/'explicit-source.json';path.write_text(json.dumps(profile),encoding='utf-8')
+        return path
+
+    def test_profile_changed_during_provider_keeps_attempt_but_rejects_admission(self):
+        profile=self.source_profile()
+        normal=self.base/'normal.py';normal.write_text(self.reviewer.read_text())
+        self.reviewer.write_text('import json,sys,subprocess\nfrom pathlib import Path\ntask=json.load(sys.stdin)\n'
+            'p=Path('+repr(str(profile))+')\np.write_text(p.read_text()+" ")\n'
+            'print(subprocess.check_output([sys.executable,'+repr(str(normal))+'],input=json.dumps(task),text=True))\n')
+        result=self.invoke(extra=['--phase','native','--source-profile',str(profile)])
+        self.assertNotEqual(result.returncode,0)
+        record=json.loads((self.base/'worker/worker.json').read_text())
+        self.assertIn('source profile changed',record['detail'])
+        job=json.loads(next((self.base/'worker/jobs').glob('*.json')).read_text())
+        self.assertEqual(job['calls'],1)
+        self.assert_no_decisions()
+
+    def test_profile_change_cannot_resume_an_old_failed_attempt(self):
+        profile=self.source_profile()
+        self.reviewer.write_text('raise SystemExit(1)\n')
+        first=self.invoke('profile-first',extra=['--phase','native','--source-profile',str(profile)])
+        self.assertNotEqual(first.returncode,0)
+        profile.write_text(profile.read_text()+' ')
+        result=self.invoke('profile-resume',extra=['--phase','native','--source-profile',str(profile),
+            '--resume-from',str(self.base/'profile-first')])
+        self.assertNotEqual(result.returncode,0)
+        record=json.loads((self.base/'profile-resume/worker.json').read_text())
+        self.assertIn('reviewer configuration',record['detail'])
+        self.assertFalse(list((self.base/'profile-resume').glob('context-*.json')))
+        self.assert_no_decisions()
+
+    def test_profile_for_foreign_claim_is_rejected_before_a_provider_attempt(self):
+        profile=self.source_profile();value=json.loads(profile.read_text())
+        value['targets'][0]['review_ids']=['foreign'];profile.write_text(json.dumps(value))
+        result=self.invoke(extra=['--phase','native','--source-profile',str(profile)])
+        self.assertNotEqual(result.returncode,0)
+        self.assertFalse(list((self.base/'worker/jobs').glob('*.json')))
+        self.assert_no_decisions()
+
     def test_first_native_query_is_executed_and_journaled_without_fabricating_sibling_activity(self):
         self.research_reviewer('[{"tool":"references", "review_id":task["review_ids"][0], '
                               '"arguments":{"symbol":"eval","limit":20}}]')
