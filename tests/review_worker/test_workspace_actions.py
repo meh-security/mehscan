@@ -203,6 +203,70 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertEqual(counts[third["review_id"]],0)
         self.assertEqual(self.bridge.workspace.usage()["totals"]["input_tokens"],400)
 
+    def test_surgical_reopening_keeps_sibling_decisions_local_proof_and_paid_work(self):
+        claims = sorted(self.bridge.workspace.snapshot()["claims"].values(),key=lambda c:c["line"])
+        first,affected,third = claims
+        def settled(task,packet):
+            return {"updates":[
+                {"kind":"question","question_id":"local-effect","review_ids":[affected["review_id"]],
+                 "question":"Does the selected call interpret the argument as code?"},
+                {"kind":"answer","question_id":"local-effect","status":"answered",
+                 "reason":"The shown selected call invokes eval on its argument.",
+                 "evidence":[self.handle(task,packet,"app.js")]}],
+                "lookups":[],"decisions":[self.decision(c) for c in claims]}
+        self.turn("settled",settled)
+        baseline = self.bridge.workspace.snapshot()
+        self.bridge.apply("missing-qualification",{"kind":"question","question_id":"helper-contract",
+            "review_ids":[affected["review_id"]],"question":"Does the actual normalizer constrain executable grammar?"})
+        reopened = self.bridge.workspace.snapshot()
+        for sibling in (first,third):
+            self.assertEqual(reopened["claims"][sibling["review_id"]],baseline["claims"][sibling["review_id"]])
+        self.assertEqual(reopened["evidence"],baseline["evidence"])
+        self.assertEqual(reopened["calls"],baseline["calls"])
+        self.assertEqual(reopened["used"],baseline["used"])
+        with self.assertRaisesRegex(ValueError,"reconsideration|unanswered"):
+            self.bridge.finalize(affected["bundle_id"])
+
+        def lookup(query):
+            def reply(task,packet):
+                self.assertEqual(task["review_ids"],[affected["review_id"]])
+                self.assertEqual(packet["workspace_evidence"]["questions"]["local-effect"]["status"],"answered")
+                self.assertTrue(any(w["path"]=="app.js" for w in packet["primary"]["windows"]))
+                return {"updates":[],"decisions":[],"lookups":[{
+                    "question_id":"helper-contract","review_ids":[affected["review_id"]],
+                    "question":"Does the actual normalizer constrain executable grammar?","queries":[query]}]}
+            return reply
+        self.turn("filter-feedback",lookup({"tool":"references","review_id":affected["review_id"],
+            "purpose":"Find the normalizer's uses","arguments":{"symbol":"normalize","path_prefix":"helper.js","limit":20}}))
+        after_feedback = self.bridge.workspace.snapshot()
+        self.assertEqual(after_feedback["evidence"],baseline["evidence"])
+        receipt = next(iter(after_feedback["lookups"].values()))
+        self.assertEqual(receipt["result"]["code"],"directory_filter_is_file")
+        self.assertEqual(receipt["native_query_count"],0)
+        self.turn("read-helper",lookup({"tool":"source","review_id":affected["review_id"],
+            "purpose":"Inspect the known normalizer implementation","arguments":{"path":"helper.js","start_line":1,"end_line":1}}))
+        def correct(task,packet):
+            self.assertEqual(task["review_ids"],[affected["review_id"]])
+            return {"updates":[{"kind":"answer","question_id":"helper-contract","status":"answered",
+                "reason":"The imported helper only converts input to String; executable grammar is preserved.",
+                "evidence":[self.handle(task,packet,"helper.js")]}],
+                "lookups":[],"decisions":[self.decision(affected)]}
+        self.turn("complete-only-affected",correct)
+        final = self.bridge.workspace.snapshot()
+        for sibling in (first,third):
+            self.assertEqual(final["claims"][sibling["review_id"]],baseline["claims"][sibling["review_id"]])
+        for eid,evidence in baseline["evidence"].items():
+            self.assertEqual(final["evidence"][eid],evidence)
+        self.assertEqual(final["questions"]["local-effect"],baseline["questions"]["local-effect"])
+        self.assertEqual(final["questions"]["helper-contract"]["status"],"answered")
+        self.assertEqual(self.bridge.workspace.usage()["calls"],4)
+        self.assertEqual(self.bridge.workspace.usage()["totals"]["input_tokens"],400)
+        self.assertEqual(final["used"]["queries"],2)
+        self.assertGreater(final["received_query_bytes"],receipt["received_bytes"])
+        validated = self.bridge.finalize(affected["bundle_id"])
+        results = fixtures.read(validated["response"])["results"]
+        self.assertEqual({r["review_id"] for r in results},{c["review_id"] for c in claims})
+
     def test_invalid_later_lookup_executes_no_query_and_saves_no_earlier_decision(self):
         claims = list(self.bridge.workspace.snapshot()["claims"].values())
         def invalid(task,packet):

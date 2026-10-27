@@ -6,6 +6,16 @@ abandon it. The subsequent "Next" resumes implementation and bounded offline
 experiments. Ordinary native review remains the current operational path; preserve
 all raw results and use a fresh freeze for any later mixed-batch comparison.
 
+Current correction policy: [retain supported work and correct the affected boundary](experiments/review-workspace-surgical-plan.md).
+Mixed package results do not invalidate independently supported cases or useful
+implementation slices. Keep X's three source-complete cases across all arms,
+Sol's inspected Directus local mechanism and Terra's partial research. Revisit only
+the missing configuration qualification and failed filter recovery. Start with
+targeted follow-ups, preserve their costs/interventions separately, and rerun other
+cases only when the change can affect their source basis or behavior. This replaces
+the previous requirement to repeat the whole four-case package as the next step;
+it does not change X's original frozen gate or claim broader acceptance.
+
 Latest live result: the [aligned four-claim feedback comparison X](experiments/review-workspace-feedback-results.md)
 is closed with partial confirmation, not package acceptance. All 34 calls have
 observed usage, including the requested Terra 6.1 medium arm. Sol native completes
@@ -22,17 +32,18 @@ not applied to X or used to buy a repair. Feedback preserves the original questi
 query and spending without source authority or automatic scope changes. Source,
 ownership, unsupported arguments/limits and unknown paid usage remain fatal.
 
-Next address the two measured gaps before a fresh small confirmation: cover routine
-filter validation as a family, and preserve a deciding question about an imported
-protection's effective application configuration when mutable shared state can
-change the selected control. Reuse existing question/source records and category
-guidance; do not add a global checklist, require every caller, or infer semantic
-proof from an answered flag. Test direct default protection, a material unsafe
-shared hook and an unresolved binding before freezing another live comparison.
-Keep the four-case quality gate unchanged and retain Terra as supplementary model
-evidence. Stop adding scaffolding if the change only increases bookkeeping or
-demands unrelated application exploration. Do not run more paid repairs of X,
-reuse its unused ceilings, or dispatch the mixed main/full-app package yet.
+Next use a bounded Directus-only recovery follow-up for the committed filter fix,
+and a separately labeled Sol proof-completion follow-up for the effective shared
+configuration. The common API contract already mentions hooks; category omission
+is a possible delivery issue, not an established reason to add another warning.
+Existing question/source records can preserve the local proof while only its
+missing qualification is investigated. A native-bound regression now checks
+one-claim reopening with sibling drafts/local facts/costs retained and feedback
+corrected within the original budget. No production state change was needed.
+If semantic guidance changes later, use a small relevant contrast set rather than
+automatically repeating all successful cases. Keep X/V/VT immutable and distinguish
+fresh targeted recovery, assisted completion and whole-package comparison. Retain
+Terra medium as requested. Main/full-app dispatch is still outside this correction.
 
 Historical result: [V and the requested Terra 6.1 medium run](experiments/review-workspace-context-results.md)
 are closed after file/directory lookup-filter errors. Sol native completes three

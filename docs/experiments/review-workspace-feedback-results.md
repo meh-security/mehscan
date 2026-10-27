@@ -152,6 +152,13 @@ work; successful recovery of the whole case is not demonstrated.
 
 ## Post-study correction and next stopping rules
 
+Subsequent user direction changes the **next evaluation scope**:
+[retain supported work and correct only the affected boundary](review-workspace-surgical-plan.md).
+The three non-Directus cases and useful partial Directus evidence remain retained.
+Use targeted recovery/proof-completion follow-ups before another mixed comparison;
+the earlier four-case-repeat recommendation below is superseded. This does not
+change X's frozen expectations, costs, source audit or incomplete package gate.
+
 After X closed, the common validator was extended offline to classify safe
 conflicting filters as `conflicting_path_filters`. It asks the reviewer to choose
 one explicitly; it never chooses or broadens scope. Both paths' lexical scope,
@@ -180,8 +187,10 @@ The next two practical directions remain narrow:
    add a universal package/caller checklist or accept an `answered` flag as semantic
    proof. Stop if this only adds procedural records or unrelated exploration.
 
-Keep X's four-case full source gate for a fresh confirmation with new frozen state
-and the supplementary Terra medium arm. No more paid calls were made after closure.
+The original recommendation was to keep X's four-case full source gate for a fresh
+confirmation with new frozen state and the supplementary Terra medium arm; the
+targeted follow-up policy linked above now governs the next step. No more paid
+calls were made after X's closure in this implementation turn.
 Only consider wider experiments once all selected mechanisms/negatives/uncertainty
 pass and routine tool errors recover within unchanged budgets. Generic memory,
 an interactive CLI, a planning-model pass or wider grouping is not the next fix for

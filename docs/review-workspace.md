@@ -91,6 +91,13 @@ whole-package savings. The subsequent conflict-feedback extension is offline onl
 X remains closed. Current offline checks cover 129 workspace tests plus seven
 common-validator checks. No mixed main wave or full-app review has run.
 
+The [surgical correction plan](experiments/review-workspace-surgical-plan.md) retains
+the three supported cases and local Directus evidence. Existing state can reopen
+one claim while preserving sibling drafts, answered local facts, source and paid
+work; a native-bound regression checks that path through feedback and correction.
+The next evaluation targets Directus recovery/configuration completion rather than
+automatically repeating the entire package. X's original gate remains unchanged.
+
 ## Initialize outside the source root
 
 Save a trusted experimental seed as `RUN/seed.json`:
