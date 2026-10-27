@@ -28,6 +28,12 @@ bounded action. These are controller changes; the model action schema and native
 admission policy are unchanged. This does not resolve the remaining review-quality
 or caller-applicability gap.
 
+The [offline publication comparison](experiments/review-workspace-publication-results.md)
+now verifies this slice on the pinned Directus source: two fresh pairs, 22 versus
+18 native checks, mean two-turn execution 13.309 versus 11.202 seconds, identical
+captured source/lookups/query spending, and zero real model calls. All 109 workspace
+tests pass. This is a controller timing result, not a live review-quality recovery.
+
 ## Initialize outside the source root
 
 Save a trusted experimental seed as `RUN/seed.json`:

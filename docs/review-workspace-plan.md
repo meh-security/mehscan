@@ -2,10 +2,18 @@
 
 User direction after the recovery comparison: retain workspace as a promising
 experimental approach for later work. The incomplete gate is not a decision to
-abandon it. Defer further runs for now; preserve the implementation, raw results
-and the two resume milestones below. Ordinary native review remains the current
-operational path. Resume with bounded quality and overhead experiments, then a
-fresh mixed-batch comparison; no new model run is part of this status update.
+abandon it. The subsequent "Next" resumes implementation and bounded offline
+experiments. Ordinary native review remains the current operational path; preserve
+all raw results and use a fresh freeze for any later mixed-batch comparison.
+
+Latest implementation: [atomic source/receipt publication](experiments/review-workspace-publication-results.md)
+removes one duplicate full native check per newly fetched result while preserving
+freshness at publication and durable spending for rejected results. All 109 workspace
+tests pass; the zero-model Directus benchmark reduces 22 checks to 18 and mean
+two-turn controller execution from 13.309 to 11.202 seconds with exact source/lookup
+and cost parity. This is a targeted overhead improvement, not live model savings or
+full quality recovery. Caller-applicability work remains the next quality milestone;
+many preparation/inference checks remain in place.
 
 Status: the [fresh shared-policy regression](experiments/review-workspace-recovery-results.md)
 is closed with **partial recovery**. In five paired claims/26 observed calls, both
@@ -15,9 +23,10 @@ binding; native verifies it. Matching verdicts therefore do not pass the frozen
 full source-quality gate. Workspace remains slower: 270.133 versus 237.113 active
 seconds, despite twelve versus fourteen calls. No paid repair or unknown usage.
 
-Next complete two independent tasks: make local mechanism versus required caller
+The two independent tasks are to make local mechanism versus required caller
 applicability explicit in review state, and consolidate duplicate native validation
-through an equivalent freshness/publication boundary. Do not add another generic
+through an equivalent freshness/publication boundary. The first publication slice
+of the second task is complete offline as above. Do not add another generic
 prompt patch or buy an unmodified SDK retry; test compatible/incompatible bindings
 and stale-source/owner/paid-answer behavior offline first. The new run reproduces
 the overhead: 107 state/work checks take 47.887 seconds. Greater budgets, generic
@@ -53,7 +62,10 @@ boundary cases before any quality-recovery claim. Stop this implementation if it
 only adds bookkeeping, universally requires caller discovery, or merely changes the
 previous SDK wording. Do not repeat the unchanged SDK case as another policy trial.
 
-**B. Consolidate validation at an equivalent publication boundary.** Use the saved
+**B. Consolidate validation at an equivalent publication boundary.** The first
+lookup-publication slice is implemented and measured offline at `c08a300`; preparation
+and paid-inference checks are unchanged. Further consolidation must justify its
+own equivalence and measured benefit. Use the saved
 R/S native traces as the baseline. Follow `guarded`, `prepare`, `review`, `check`
 and `_lookup` through source capture and receipt persistence. Specify which fresh
 state/source/runtime/owner check protects each externally visible publication and
