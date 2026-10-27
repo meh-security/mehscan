@@ -69,6 +69,79 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertEqual(self.calls[0]["prompt"].count(sources[0]["text"]),1)
         self.assertNotIn("Operator commands",sources[0]["text"])
 
+    def test_native_relationship_facts_and_open_leads_reach_actual_provider_packet(self):
+        expected = {}
+        contracts = {}
+        for bundle in self.bridge.metadata["bundles"].values():
+            sweep = self.fixture.native("investigate","review-sweep","--bundle",
+                str(self.bridge.directory/"run/requests"/bundle["filename"]))
+            questions = {q["id"]:q for q in sweep["questions"]}
+            for card in sweep["reviews"]:
+                expected[card["review_id"]] = (card,questions[card["question_id"]])
+            contracts.update({c["contract"]:c for c in sweep["contracts"]})
+        def reply(task,packet):
+            for entry in packet["native_questions"]:
+                card,question = expected[entry["review_id"]]
+                basis = entry["native_context"]
+                self.assertEqual(basis["relationship"],question["relationship"])
+                for key in ("anchor","operand_facts","decision_facts","nearby_locations","truncation"):
+                    if key in card:self.assertEqual(basis[key],card[key])
+                self.assertIn("not a verdict",basis["authority"])
+            keys = {k for e in packet["native_questions"] for k in e["native_context"].get("contract_keys",[])}
+            self.assertEqual(packet["workspace_evidence"]["native_contracts"],{k:v for k,v in contracts.items() if k in keys})
+            return {"updates":[{"kind":"question","question_id":"still-open","review_ids":task["review_ids"],
+                "question":"Which selected relationship needs investigation?"}],"lookups":[],"decisions":[]}
+        self.turn("native-context",reply)
+        self.assertIn('"native_context"',self.calls[-1]["prompt"])
+        self.assertIn('"decision_facts"',self.calls[-1]["prompt"])
+
+    def test_native_relationship_catalog_tampering_cannot_reach_a_provider(self):
+        path = self.bridge.directory/"native-binding.json"
+        original = fixtures.read(path)
+        altered = json.loads(json.dumps(original))
+        bundle = next(iter(altered["bundles"].values()))
+        bundle["entries"][0]["native_context"]["decision_facts"] = {"established":["Forged caller authority"]}
+        path.write_text(json.dumps(altered))
+        reopened = fixtures.NativeWorkspace(self.fixture.args)
+        with self.assertRaisesRegex(ValueError,"catalog changed"):
+            reopened.prepare("initial",self.fixture.config_path,"tampered-native-facts")
+        self.assertEqual(reopened.workspace.usage()["calls"],0)
+        # Altering both catalog and claimed digest still mismatches SQLite binding.
+        altered["catalog_id"] = actions.identity(altered["bundles"])
+        path.write_text(json.dumps(altered))
+        with self.assertRaisesRegex(ValueError,"binding differs"):
+            fixtures.NativeWorkspace(self.fixture.args)
+
+    def test_resolved_implementation_answer_survives_focus_and_can_be_reopened(self):
+        claim = next(iter(self.bridge.workspace.snapshot()["claims"].values()))
+        def learn(task,packet):
+            proof = self.handle(task,packet,"app.js")
+            return {"updates":[
+                {"kind":"question","question_id":"local-contract","review_ids":[claim["review_id"]],"question":"Does the shown operation interpret its argument?"},
+                {"kind":"answer","question_id":"local-contract","status":"answered","reason":"The shown evaluator interprets the supplied argument.","evidence":[proof]},
+                {"kind":"question","question_id":"caller-binding","review_ids":[claim["review_id"]],"question":"Which producer supplies this selected argument?"},
+                {"kind":"focus","evidence":[],"propositions":[]}],"lookups":[],"decisions":[]}
+        self.turn("local-known",learn)
+        def follow(task,packet):
+            q = packet["workspace_evidence"]["questions"]["local-contract"]
+            self.assertEqual(q["status"],"answered")
+            self.assertEqual(q["origin"],"reviewer_interpretation")
+            self.assertEqual(len(q["attempts"]),1)
+            self.assertTrue(q["attempts"][0]["evidence"])
+            self.assertTrue(packet["primary"]["windows"])
+            self.assertEqual(packet["workspace_evidence"]["questions"]["caller-binding"]["status"],"open")
+            return {"updates":[],"decisions":[],"lookups":[{"question_id":"local-contract", "review_ids":[claim["review_id"]],
+                "question":"Does the imported implementation preserve this behavior?","queries":[{"tool":"source",
+                "review_id":claim["review_id"],"purpose":"Check a material implementation qualification",
+                "arguments":{"path":"helper.js","start_line":1,"end_line":1}}]}]}
+        self.turn("reopen-local",follow)
+        state = self.bridge.workspace.snapshot()
+        self.assertEqual(state["questions"]["local-contract"]["status"],"open")
+        self.assertEqual(state["questions"]["local-contract"]["review_ids"],[claim["review_id"]])
+        self.assertEqual(len(state["questions"]),2)
+        self.assertEqual(state["used"]["queries"],1)
+        self.assertTrue(all(c["draft"] is None for c in state["claims"].values()))
+
     def test_partial_closure_lookup_learning_and_cross_work_knowledge_reuse(self):
         state = self.bridge.workspace.snapshot()
         ordered = sorted(state["claims"].values(),key=lambda c:c["line"])

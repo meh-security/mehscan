@@ -34,6 +34,24 @@ now verifies this slice on the pinned Directus source: two fresh pairs, 22 versu
 captured source/lookups/query spending, and zero real model calls. All 109 workspace
 tests pass. This is a controller timing result, not a live review-quality recovery.
 
+Native provider packets now retain the selected card's operand facts, explicit
+relationship, observed/open decision facts, nearby/application locations and
+truncation information. Related native contracts are included once for the active
+claims. These scanner observations remain leads, not verified caller applicability
+or a mandatory checklist. The native catalog digest is part of the workspace
+runtime binding, so altered catalog data is rejected; use fresh workspaces rather
+than resuming older experimental stores under this code.
+
+An answered deciding question now keeps its latest conclusion and cited source
+visible while its own claim remains active. Full attempts/lookup history stay in
+storage, and answers do not transfer to another caller merely through shared
+implementation. No extra proposition action or new model fields are required.
+Changing an answer reactivates its drafted consumers; a new deciding lookup also
+reopens a resolved question without refunding prior spending. Native bundle closure
+cannot use an older settled verdict while its deciding question is open. This
+preserves known facts and unresolved relationships separately, but still relies on
+the reviewer to establish that a cited fact actually answers the question.
+
 ## Initialize outside the source root
 
 Save a trusted experimental seed as `RUN/seed.json`:

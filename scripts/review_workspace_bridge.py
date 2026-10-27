@@ -81,12 +81,15 @@ class NativeWorkspace:
         if not self.payload["review_ids"]:
             raise ValueError("workspace checkpoint requires selected native claims")
         self.metadata = None if creating else read(self.directory / "native-binding.json")
+        self.catalog_id = None if creating else self.metadata.get("catalog_id")
+        if not creating and self.catalog_id is None:
+            raise ValueError("native context catalog binding missing; create a fresh workspace")
         self.experiment_binding = None if creating else {k:self.metadata[k] for k in ("limits","experiment")}
         self.workspace = None if creating else Workspace(self.directory / "workspace.sqlite", self.binding())
 
     def binding(self):
         return {"snapshot_id":self.payload["snapshot_id"], "plan_id":self.payload["plan_id"],
-                "runtime_id":identity([self.package["package_id"], self.runtime, implementation(), self.experiment_binding])}
+                "runtime_id":identity([self.package["package_id"], self.runtime, implementation(), self.experiment_binding,self.catalog_id])}
 
     def native(self, arguments, timeout=None):
         if arguments[:2] == ["state", "work"]:
@@ -125,9 +128,11 @@ class NativeWorkspace:
             raise ValueError("native work package is stale or altered")
         if self.metadata:
             expected = {"version":VERSION, "package":self.package, "source_root":str(self.root),
-                        "implementation":implementation()}
+                        "implementation":implementation(),"catalog_id":self.catalog_id}
             if any(self.metadata.get(k) != v for k,v in expected.items()):
                 raise ValueError("workspace native/implementation binding differs")
+            if identity(self.metadata["bundles"]) != self.catalog_id:
+                raise ValueError("native context catalog changed")
             for name, digest in self.metadata["artifacts"].items():
                 if worker.digest_file(self.directory / name) != digest:
                     raise ValueError("bound workspace artifact changed: " + name)
@@ -208,12 +213,19 @@ class NativeWorkspace:
                              "path":anchor["location"]["path"],"line":anchor["location"]["start_line"],
                              "bundle_id":bundle["bundle_fingerprint"]}
                     claims.append(claim)
-                    entries.append({**claim,"capability":anchor["capability"],"rule_id":anchor["rule_id"]})
+                    native_context = {key:card[key] for key in (
+                        "anchor","operand_facts","decision_facts","nearby_locations","application_context",
+                        "frontend_context","truncation","contract_keys") if key in card}
+                    native_context.update(relationship=question["relationship"],
+                        authority="Native observations and open leads; not a verdict, caller-applicability proof or mandatory investigation checklist.")
+                    entries.append({**claim,"capability":anchor["capability"],"rule_id":anchor["rule_id"],
+                                    "native_context":native_context})
                     selected.append(claim["review_id"])
                 if set(request["review_ids"]) != {e["review_id"] for e in entries}:
                     raise ValueError("native sweep dropped bundle members")
                 catalog[bundle["bundle_fingerprint"]] = {"filename":name, "review_ids":bundle["review_ids"],
-                                                         "entries":entries,"playbooks":request["review_playbooks"]}
+                                                         "entries":entries,"playbooks":request["review_playbooks"],
+                                                         "contracts":sweep.get("contracts",[])}
                 for window in sweep["source_contexts"]:
                     consumers = [c["review_id"] for c in sweep["reviews"] if window["id"] in c["source_context_ids"]]
                     if len(bundle["review_ids"]) == 1:
@@ -227,6 +239,7 @@ class NativeWorkspace:
             references(selected, bridge.payload["review_ids"])
             if set(selected) != set(bridge.payload["review_ids"]):
                 raise ValueError("native generation dropped selected claims")
+            bridge.catalog_id = identity(catalog)
             bridge.workspace = Workspace.create(bridge.directory / "workspace.sqlite", bridge.root, bridge.binding(), claims, limits)
             worker.write(bridge.directory / "seed.json",{"source_root":str(bridge.root),"binding":bridge.binding(),"claims":claims,"limits":limits})
             evidence_ids = []
@@ -256,7 +269,7 @@ class NativeWorkspace:
                          for p in (bridge.directory / "run").rglob("*.json") if "responses" not in p.parts}
             artifacts["seed.json"] = worker.digest_file(bridge.directory / "seed.json")
             bridge.metadata = {"version":VERSION,"package":bridge.package,"source_root":str(bridge.root),
-                               "implementation":implementation(),"artifacts":artifacts,"bundles":catalog,
+                               "implementation":implementation(),"artifacts":artifacts,"bundles":catalog,"catalog_id":bridge.catalog_id,
                                "selection_id":bridge.workspace.snapshot()["selection_id"],"limits":limits,"experiment":experiment,
                                "initial_evidence":{k:sorted(set(v)) for k,v in initial.items()}}
             # Check the complete native source/runtime/owner binding again before publication.
@@ -299,6 +312,9 @@ class NativeWorkspace:
             ids = [c["review_id"] for c in view["claims"]]
             entries = [entry for b in self.metadata["bundles"].values() for entry in b["entries"] if entry["review_id"] in ids]
             playbooks = {k:v for b in self.metadata["bundles"].values() for k,v in b["playbooks"].items() if k in ids}
+            contract_keys = {key for entry in entries for key in entry["native_context"].get("contract_keys",[])}
+            native_contracts = {c["contract"]:c for b in self.metadata["bundles"].values()
+                                for c in b["contracts"] if c["contract"] in contract_keys}
             windows = [{"artifact_id":k, **{field:e[field] for field in
                         ("path","start_line","end_line","text","complete_file")}, "clipped":e.get("fragment",False)}
                        for k,e in view["evidence"].items()]
@@ -309,6 +325,7 @@ class NativeWorkspace:
                       "work":context.compact_work(self.payload,ids),"native_questions":entries,
                       "primary":{"windows":windows,"limits":view["preparation_limits"]},
                       "workspace_evidence":{"propositions":view["propositions"],"applicability":view["applicability"],
+                                            "native_contracts":native_contracts,
                                             "deciding_evidence":view["deciding_evidence"],
                                             "questions":view["questions"],"authority":view["authority"]}}
             mode = self.metadata["experiment"].get("protocol","checkpoint")

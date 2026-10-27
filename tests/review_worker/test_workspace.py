@@ -375,6 +375,96 @@ class WorkspaceTests(unittest.TestCase):
         self.apply("answer",question_id="q",status="answered",reason="Caller and guard source inspected",evidence=[proof])
         self.assertEqual(self.workspace.view("initial")["lookups"],{})
 
+    def test_answered_local_fact_stays_visible_without_settling_caller_binding(self):
+        helper = self.capture()
+        self.apply("split",work_id="initial",new_work_id="other",review_ids=["unsafe"],strategy="different caller")
+        self.apply("question",question_id="local",review_ids=["safe"],question="What does the shared helper assign?")
+        self.apply("answer",question_id="local",status="open",reason="Read the body",evidence=[])
+        self.apply("answer",question_id="local",status="answered",reason="The helper assigns authenticated identity to body.UserId.",evidence=[helper])
+        self.apply("question",question_id="binding",review_ids=["safe"],question="Does this selected effect consume that bound value?")
+        self.apply("focus",work_id="initial",evidence_ids=[],proposition_ids=[])
+        view = self.workspace.view("initial")
+        self.assertIn(helper,view["evidence"])
+        self.assertEqual(view["questions"]["local"]["origin"],"reviewer_interpretation")
+        self.assertEqual(len(view["questions"]["local"]["attempts"]),1)
+        self.assertEqual(len(self.workspace.snapshot()["questions"]["local"]["attempts"]),2)
+        self.assertEqual(view["questions"]["binding"]["status"],"open")
+        self.assertEqual(self.workspace.view("other")["questions"],{})
+        with self.assertRaisesRegex(ValueError,"unanswered"):
+            self.draft("safe","not_issue",1)
+        self.draft("safe","needs_review",1,checks=["Does the selected effect consume body.UserId?"])
+        self.assertNotIn("local",self.workspace.view("initial")["questions"])
+
+    def test_reopening_or_revising_answer_invalidates_its_settled_consumers(self):
+        proof = self.capture(1,4)
+        self.apply("question",question_id="binding",review_ids=["safe"],question="Which identity reaches this effect?")
+        self.apply("answer",question_id="binding",status="answered",reason="The selected binding was inspected",evidence=[proof])
+        for claim,line in (("safe",2),("unsafe",3),("unknown",4)):
+            self.draft(claim,"not_issue",line)
+        self.workspace.bundle_draft("bundle-1")
+        self.apply("answer",question_id="binding",status="blocked",reason="A different effect argument remains unresolved",evidence=[])
+        state = self.workspace.snapshot()
+        self.assertEqual(state["claims"]["safe"]["reconsideration"],["question:binding"])
+        self.assertEqual(state["claims"]["unsafe"]["reconsideration"],[])
+        with self.assertRaisesRegex(ValueError,"reconsideration"):
+            self.workspace.bundle_draft("bundle-1")
+        with self.assertRaisesRegex(ValueError,"unanswered"):
+            self.draft("safe","issue",2)
+        self.apply("answer",question_id="binding",status="answered",reason="Exact argument confirmed",evidence=[proof])
+        self.draft("safe","not_issue",2)
+        self.workspace.bundle_draft("bundle-1")
+        self.apply("answer",question_id="binding",status="answered",reason="Revised binding interpretation",evidence=[proof])
+        self.assertTrue(self.workspace.snapshot()["claims"]["safe"]["reconsideration"])
+
+    def test_new_deciding_lookup_reopens_a_resolved_relationship_without_refunding_cost(self):
+        proof = self.capture()
+        self.apply("question",question_id="q",review_ids=["safe"],question="Which binding applies?")
+        self.apply("answer",question_id="q",status="answered",reason="First binding interpretation",evidence=[proof])
+        self.draft("safe","not_issue",1)
+        query = {"tool":"references","review_id":"safe","arguments":{"symbol":"bind"}}
+        self.apply("lookup_request",lookup_id="again",question_id="q",query=query,units=1)
+        state = self.workspace.snapshot()
+        self.assertEqual(state["questions"]["q"]["status"],"open")
+        self.assertEqual(state["questions"]["q"]["attempts"][-1]["origin"],"controller_lookup_reservation")
+        self.assertEqual(state["used"]["queries"],1)
+        self.assertTrue(state["claims"]["safe"]["reconsideration"])
+
+    def test_resolving_a_previously_missing_binding_reactivates_its_pending_claim(self):
+        proof = self.capture(1,2)
+        self.apply("question",question_id="registry",review_ids=["safe"],question="Which invocation binds the helper to the effect?")
+        self.apply("answer",question_id="registry",status="blocked",reason="Registry binding has not been supplied",evidence=[])
+        self.draft("safe","needs_review",2,checks=["Which invocation reaches the selected effect?"])
+        self.assertNotIn("safe",[c["review_id"] for c in self.workspace.view("initial")["claims"]])
+        self.apply("answer",question_id="registry",status="answered",reason="The selected registration supplies the verified binding",evidence=[proof])
+        self.assertIn("safe",[c["review_id"] for c in self.workspace.view("initial")["claims"]])
+        self.assertTrue(self.workspace.snapshot()["claims"]["safe"]["reconsideration"])
+        self.draft("safe","not_issue",2)
+        self.assertEqual(self.workspace.snapshot()["claims"]["safe"]["reconsideration"],[])
+
+    def test_retained_answer_proof_is_stale_even_after_focus_omits_its_source(self):
+        proof = self.capture()
+        self.apply("question",question_id="local",review_ids=["safe"],question="What does the helper do?")
+        self.apply("answer",question_id="local",status="answered",reason="Assigns the current identity",evidence=[proof])
+        self.apply("focus",work_id="initial",evidence_ids=[],proposition_ids=[])
+        self.code.write_text("changed source\n")
+        with self.assertRaisesRegex(ValueError,"source changed"):
+            self.workspace.view("initial")
+
+    def test_complete_parameterized_local_sql_needs_no_caller_question(self):
+        code = self.root/"query.py"
+        code.write_text("import sqlite3\ndb = sqlite3.connect(':memory:')\n"
+                        "def search(user):\n    return db.execute('SELECT name FROM users WHERE id = ?', (user,))\n")
+        # State-only test: this seed is not an asserted native candidate/admission.
+        claim = {"review_id":"local-sql","property":"Can user become SQL grammar?","path":"query.py","line":4,"bundle_id":"sql"}
+        workspace = Workspace.create(self.directory/"sql.sqlite",self.root,self.binding,[claim],self.limits)
+        workspace.apply("source",0,{"kind":"source","path":"query.py","start_line":1,"end_line":4,"review_id":"local-sql"})
+        result = {"review_id":"local-sql","decision":"not_issue","confidence":"high","summary":"User value remains a bound SQLite parameter.",
+            "reason":"The complete sqlite3 execute call binds a separate value tuple.","checks":[],"blockers":[],"source_leads":[],"diagnosis":None,
+            "evidence":[{"path":"query.py","start_line":1,"end_line":4}]}
+        workspace.apply("close",1,{"kind":"draft","result":result,"applicability":[]})
+        self.assertEqual(workspace.snapshot()["questions"],{})
+        self.assertEqual(workspace.bundle_draft("sql")["results"][0]["decision"],"not_issue")
+
     def test_stale_source_blocks_reuse_and_assembled_draft(self):
         helper, caller = self.capture(), self.capture(2,4)
         self.proposition(helper)

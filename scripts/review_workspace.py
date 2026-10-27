@@ -362,7 +362,10 @@ class Workspace:
             if action["evidence"]:
                 self._evidence(state, action["evidence"])
             question = state["questions"][action["question_id"]]
-            question["attempts"].append({k:v for k,v in action.items() if k not in ("kind", "question_id")})
+            answer = {k:v for k,v in action.items() if k not in ("kind","question_id")}
+            if not question["attempts"] or answer != question["attempts"][-1]:
+                self._reopen_question(state,action["question_id"])
+            question["attempts"].append(answer)
             question["status"] = action["status"]
             return {"question_id":action["question_id"]}
         if kind == "split":
@@ -531,6 +534,11 @@ class Workspace:
             if "requested_question" in action:
                 label(action["requested_question"])
             self._spend(state,{"queries":number(action["units"],positive=True)})
+            if state["questions"][action["question_id"]]["status"] == "answered":
+                self._reopen_question(state,action["question_id"])
+                state["questions"][action["question_id"]]["attempts"].append({
+                    "status":"open","reason":"A deciding lookup reopened this relationship.","evidence":[],
+                    "origin":"controller_lookup_reservation"})
             state["lookups"][key] = {"question_id":action["question_id"],"query":action["query"],"status":"reserved",
                 "result":None,"evidence":[],"native_query_count":None,"reused_from":None,"sequence":state["revision"] + 1}
             if "requested_question" in action:
@@ -576,6 +584,16 @@ class Workspace:
             claim["reconsideration"] = []
             return {"review_id":result["review_id"], "status":"drafted"}
         raise ValueError("unknown workspace action")
+
+    @staticmethod
+    def _reopen_question(state, question_id):
+        question = state["questions"][question_id]
+        question["status"] = "open"
+        for rid in question["review_ids"]:
+            claim = state["claims"][rid]
+            marker = "question:" + question_id
+            if claim["draft"] is not None and marker not in claim["reconsideration"]:
+                claim["reconsideration"].append(marker)
 
     @staticmethod
     def _invalidate(state, proposition_id):
@@ -649,16 +667,27 @@ class Workspace:
         applies = {k:a for k,a in state["applicability"].items() if a["review_id"] in ids}
         prop_ids = set(state["work"][work_id]["proposition_ids"]) | {a["proposition_id"] for a in applies.values()}
         propositions = {key:state["propositions"][key][-1] for key in sorted(prop_ids)}
+        questions = {}
+        for key,question in state["questions"].items():
+            if not set(question["review_ids"]) & set(ids):
+                continue
+            questions[key] = copy.deepcopy(question)
+            questions[key]["origin"] = "reviewer_interpretation"
+            if question["status"] == "answered":
+                # Keep the conclusion/proof for this claim without replaying its
+                # full investigation or requiring a separate proposition action.
+                questions[key]["attempts"] = [copy.deepcopy(question["attempts"][-1])]
         evidence_ids = set(e for p in propositions.values() for e in p["evidence"])
         evidence_ids.update(e for a in applies.values() for e in a["evidence"])
         evidence_ids.update(state["work"][work_id]["evidence_ids"])
         evidence_ids.update(e for record in deciding.values() for e in record["evidence_ids"])
+        evidence_ids.update(e for q in questions.values() if q["status"] == "answered" for e in q["attempts"][-1]["evidence"])
         self._evidence(state, sorted(evidence_ids)) if evidence_ids else None
         packet = {"version":VERSION, "binding":state["binding"], "selection_id":state["selection_id"],
                   "work_id":work_id, "strategy":state["work"][work_id]["strategy"],
                   "claims":[state["claims"][c] for c in ids], "propositions":propositions, "applicability":applies,
                   "evidence":{e:state["evidence"][e] for e in sorted(evidence_ids)},
-                  "questions":{k:q for k,q in state["questions"].items() if set(q["review_ids"]) & set(ids) and q["status"] != "answered"},
+                  "questions":questions,
                   "lookups":{}, "guidance":{},
                   "deciding_evidence":deciding,
                   "preparation_limits":[{"preparation_id":key,"origin":record["origin"],"reason":reason}
@@ -671,7 +700,7 @@ class Workspace:
             if lookup["query"]["tool"] == "guidance" and lookup["status"] == "complete":
                 if lookup["query"]["review_id"] in state["work"][work_id]["claims"]:
                     packet["guidance"][result["name"]] = result
-            elif lookup["question_id"] in packet["questions"]:
+            elif lookup["question_id"] in packet["questions"] and packet["questions"][lookup["question_id"]]["status"] != "answered":
                 # Several independent queries may answer one question. Preserve
                 # every receipt until the question closes; replacing by question
                 # ID can hide an earlier navigation answer before it is seen.
@@ -712,6 +741,9 @@ class Workspace:
         if not claims or any(c["draft"] is None or c["reconsideration"] for c in claims):
             raise ValueError("bundle working draft is incomplete or requires reconsideration")
         for claim in claims:
+            if claim["draft"]["result"]["decision"] != "needs_review" and any(
+                    claim["review_id"] in q["review_ids"] and q["status"] != "answered" for q in state["questions"].values()):
+                raise ValueError("unanswered deciding question prevents bundle closure")
             self._draft_evidence(state, claim["draft"]["result"])
             self._proposition_dependencies(state, claim["draft"].get("propositions", []))
             for key in claim["draft"]["applicability"]:
