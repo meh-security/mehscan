@@ -239,8 +239,7 @@ def apply_response(bridge, session_id, task, packet, response):
             # the question's ownership and every query's native attribution do not.
             if not set(old["review_ids"]) & set(question["review_ids"]):
                 raise ValueError("question ID already has another scope")
-            if lookup["question_id"] in state["questions"]:
-                continuations.setdefault(lookup["question_id"],set()).update(lookup["review_ids"])
+            continuations.setdefault(lookup["question_id"],set()).update(lookup["review_ids"])
             # A follow-up lookup can narrow the fact being sought. Keep the
             # original deciding question open; record the requested wording on
             # each receipt rather than replacing that question or its answers.
@@ -294,8 +293,8 @@ def apply_response(bridge, session_id, task, packet, response):
                    a["proposition_revision"] == preview["propositions"][a["proposition_id"]][-1]["revision"]]
         draft = {"kind":"draft","result":result,"applicability":applies,"propositions":dependencies}
         resolved = [qid for qid,beneficiaries in continuations.items() if result["decision"] != "needs_review" and
-                    result["review_id"] in state["questions"][qid]["review_ids"] and
-                    state["questions"][qid]["status"] != "answered" and result["review_id"] not in beneficiaries]
+                    result["review_id"] in preview["questions"][qid]["review_ids"] and
+                    preview["questions"][qid]["status"] != "answered" and result["review_id"] not in beneficiaries]
         if resolved:
             # The explicit, source-cited verdict settles only this claim's part
             # of a shared question whose follow-up now targets other claims.

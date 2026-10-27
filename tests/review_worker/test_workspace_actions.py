@@ -372,6 +372,27 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertTrue(all(c["draft"] is None for c in state["claims"].values()))
         self.assertNotIn("settled_review_ids",self.bridge.workspace.view("initial")["questions"]["shared"])
 
+    def test_new_shared_question_can_settle_only_a_source_cited_first_turn_decision(self):
+        first,second,third=sorted(self.bridge.workspace.snapshot()["claims"].values(),key=lambda c:c["line"])
+        ids=[first["review_id"],second["review_id"]]
+        self.turn("first-turn-partial",lambda task,packet:{
+            "updates":[{"kind":"question","question_id":"shared","review_ids":ids,
+                        "question":"Which selected evaluators receive unconstrained input?"}],
+            "lookups":[{"question_id":"shared","review_ids":[second["review_id"]],
+                "question":"Does the remaining caller's normalizer constrain grammar?",
+                "queries":[{"tool":"source","review_id":second["review_id"],"purpose":"Read the remaining normalizer",
+                            "arguments":{"path":"helper.js","start_line":1,"end_line":1}}]}],
+            "decisions":[self.decision(first),self.decision(third)]})
+        state=self.bridge.workspace.snapshot()
+        self.assertEqual(state["questions"]["shared"]["review_ids"],ids)
+        self.assertEqual(state["questions"]["shared"]["status"],"open")
+        self.assertEqual(state["claims"][first["review_id"]]["draft"]["resolved_questions"],["shared"])
+        self.assertIsNone(state["claims"][second["review_id"]]["draft"])
+        view=self.bridge.workspace.view("initial")
+        self.assertEqual([c["review_id"] for c in view["claims"]],[second["review_id"]])
+        self.assertEqual(view["questions"]["shared"]["settled_review_ids"],[first["review_id"]])
+        self.assertEqual(state["used"]["queries"],1)
+
     def test_explicit_partial_decision_keeps_shared_question_open_and_reopens_on_changed_answer(self):
         claims=sorted(self.bridge.workspace.snapshot()["claims"].values(),key=lambda c:c["line"])
         first,second,third=claims
