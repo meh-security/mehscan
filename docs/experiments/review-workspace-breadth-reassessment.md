@@ -6,6 +6,13 @@ not establish a balanced general review workflow. Do not make a dependency
 resolver, operation-record implementation or richer CLI a prerequisite for
 testing generalization. Do not launch a full-app model review yet.
 
+Follow-up: the [eight-operation work-formation diagnostic](review-work-formation-results.md)
+is complete. A three-call source-assisted AI pass identifies useful shared
+dependency work beyond the deterministic planner, with distinct caller checks.
+Its six research containers are not six verified operations or saved review
+calls. The next broader comparison should retain batch-first review and make
+the separate planner optional, counting its complete cost if used.
+
 ## What the evidence establishes
 
 The [clean live comparison](review-workspace-confirmation-results.md) is still

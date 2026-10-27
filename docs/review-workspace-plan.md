@@ -1,13 +1,21 @@
 # Persistent review workspace implementation plan
 
-Status: [breadth reassessment and corrected experiments](experiments/review-workspace-breadth-reassessment.md)
-now govern execution. Wider validation is needed; dependency contracts and a
+Status: the [cross-app work-formation diagnostic](experiments/review-work-formation-results.md)
+is complete: eight operations/twelve claims outside workspace tuning, three AI
+calls and source-adjudicated operation/dependency proposals. Useful relationships
+extend beyond the deterministic path, but six proposed research containers are
+not six verified operation groups or demonstrated savings. The next step is the
+roughly 24-claim native-default versus batch-first workspace package comparison,
+with eight reserved confirmation claims. A separate AI planner remains optional.
+
+The [breadth reassessment](experiments/review-workspace-breadth-reassessment.md)
+governs that wider validation; dependency contracts and a
 richer state interface are not prerequisites. A new zero-model-call structural
 audit groups 11 of 116 saved Juice Shop candidates and none of 138 Directus
 candidates. This exposes narrow work-formation coverage and the need to compare
 fallback with native 20-review batching. Next assess six to eight diverse real
-operations, then freeze a roughly 24-claim cross-app package comparison with
-eight reserved confirmation claims. No paid run or full-app review is launched.
+operations (now completed), then freeze the cross-app package comparison. No
+vulnerability-review package or full-app review has run in this new phase.
 
 The [fresh fixed-controller confirmation](experiments/review-workspace-confirmation-results.md)
 remains the latest live workspace result: 31 singleton versus 21 grouped calls,
