@@ -11,6 +11,23 @@ drafts, work splitting, bounded context views, explicit session replacement, cal
 reservations and usage records. It uses Python's standard-library SQLite support;
 no additional dependency is required.
 
+The [common source-channel slice AF](experiments/review-workspace-source-channel-results.md)
+adds `--source-profile` to native review and workspace initialization. The same
+source-only manifest binds exact bundle IDs, inventory/repository, file hashes and
+ranges, with eight explicit windows/64 KiB per target. It remains separate from
+the ordinary four-window automatic policy-lead default. See
+[worker usage and schema](review-worker.md). Profiles do not transfer judgments or
+caller applicability; native review maximum stays 20.
+
+Actual packets pass coverage/equality across Directus deletion, Juice Shop checkout
+and SQL. The subsequent 17-call live study remains incomplete: workspace Sol and
+Terra each return two unknowns; native's filter correction works, followed by a
+bounded query-batch rejection. Terra retains the storage/hook condition; Sol saves
+it in a proposition but omits it from final answers. This establishes transport,
+not faster or source-complete review. The
+[current plan](review-workspace-plan.md) targets qualification retention and reuse
+of substantive permission-evaluation work with explicit caller conditions.
+
 Lookup results now use atomic source/receipt publication. The controller stages
 captured source and its native receipt in one SQLite transaction, checks the bound
 source/runtime/owner before commit, then publishes both together. This replaces
@@ -41,9 +58,10 @@ turn retains its paid usage. It creates no additional model slots or automatic
 provider retry. Question closure still requires source proof. Path escapes,
 unsupported arguments/limits, source/runtime/owner changes and unknown paid usage
 remain outside this narrow recovery path and are checked before classifying a
-recoverable filter conflict. Ordinary worker execution remains fatal
-on these rejected filters; the common validator exposes a typed error, and only
-workspace turns it into a bounded receipt.
+recoverable filter conflict. Ordinary review now recognizes the same typed error
+through its existing single protocol-correction path. Its rejected batch executes
+no sibling lookup; a repeated mistake still stops. This differs from workspace's
+per-query feedback receipts and grants no extra model or query allowance.
 
 The [offline publication comparison](experiments/review-workspace-publication-results.md)
 now verifies this slice on the pinned Directus source: two fresh pairs, 22 versus

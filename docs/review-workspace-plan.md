@@ -16,7 +16,65 @@ cases only when the change can affect their source basis or behavior. This repla
 the previous requirement to repeat the whole four-case package as the next step;
 it does not change X's original frozen gate or claim broader acceptance.
 
-Latest offline result: [source-profile audit AE](experiments/review-workspace-source-profile-audit-results.md)
+Latest completed slice: [common explicit source channel AF](experiments/review-workspace-source-channel-results.md).
+`c2b06c7` implements the same hash/scope-bound source-only profile in ordinary
+review, workspace, comparison preparation, recovery and installed packages.
+Actual packets pass requested coverage and source equality for Directus deletion,
+Juice Shop checkout and unprofiled SQL; Terra gets the same Directus source.
+Automatic policy leads stay at four windows and native maximum reviews at 20.
+The profile is manually assisted, not an automatic selector or a memory result.
+
+AF's frozen live comparison uses 17 observed calls: Sol workspace six/122.284
+active seconds, native five/72.050, Terra medium workspace six/106.098. Both
+workspace arms return two `needs_review`; native recovers its structured filter
+error, then rejects an oversized query batch before execution and emits no final
+decisions. Raw native summary marks incomplete usage after that rejection;
+all five adapter receipts reconcile it without another call. Keep this operational
+failure separate from semantic results. No efficiency or model ranking follows.
+
+The key new diagnosis is narrower than “need more memory.” Sol stores the
+original-storage/post-hook-database-key distinction in a proposition, then omits
+it from both final answers. Terra retains it. Neither workspace reads the actual
+router service import; permission-case enforcement remains a local deciding
+question. Both reach their six-turn limit with query units left (Sol 18/24,
+Terra 22/24). Successful initial source delivery moves the investigation deeper
+but does not finish it. Actual source lookups do not reread the initial profile;
+serial helper discovery and final qualification loss remain concrete problems.
+
+**Next complete implementation/offline slice, with no unchanged paid retry:**
+
+1. Trace exact proposition revision/applicability through draft/export, preserving
+   attributed conditions, exclusions and source in the per-claim review package.
+   Reproduce the Sol omission using saved artifacts; cover stale revisions,
+   incompatible callers and native output compatibility. Existing model packets
+   already deliver propositions. Do not treat another reminder, automatic prose
+   copying into blockers or a new fact store as a semantic fix.
+2. Prepare one shared permission-evaluation contract using existing questions and
+   propositions. Distinguish local collection/action/key-filter enforcement from
+   caller binding and external hook state. Offline compatible/incompatible
+   consumers must establish actual import/receiver/actor/key relationships, retain
+   original storage-target qualifications and invalidate changed source. No claim
+   inherits a verdict from sharing an implementation.
+
+The producer's source investigation, selection and preparation are real costs.
+Earlier helper notebook trials avoided definition requests without avoiding whole
+review turns; this proposal targets the deeper deciding dependency, with no
+assumed saving. A later fresh bounded producer/consumer comparison needs a
+predeclared quality gate, total work/time including producer/controller costs,
+native maximum 20 and the requested Terra medium arm. Stop paid expansion on lost
+qualifications, unsafe applicability or unobserved usage. If the contract merely
+moves a full investigation upstream or consumers repeat it, narrow or stop that
+variant. Do not add generic prompt rules, larger limits or an unchanged AF run.
+
+AF keeps superseded preparation failures and all historical acquisition costs.
+Final offline matrix/packet preparation alone costs 93.863 seconds; earlier failed
+preparations and source audit time are additional and incompletely timed. Main
+review-worker verification has 254 outcomes (one skip), supplemented by the pilot
+and helper-boundary checks; Action 61 passes and installed smoke passes. AF closes
+without paid checkout/SQL, the twelve other R-main IDs, eight reserves or full-app
+dispatch. Retain the capability and mixed semantic outcomes separately.
+
+Previous offline result: [source-profile audit AE](experiments/review-workspace-source-profile-audit-results.md)
 finds a concrete transport gap: the original eight-window proposal becomes only
 four additions through ordinary application preparation. Native/workspace source
 parity still passes. A new optional, hash-bound requested-source coverage gate
@@ -30,7 +88,7 @@ fresh preparation and native packet construction add 31.670 seconds. Keep that
 cost and the manual intervention choice explicit. All eleven relevant pilot/batch
 tests pass. Full review quality, automatic selection and savings remain untested.
 
-Latest live result: [Directus file deletion AD](experiments/review-workspace-file-delete-results.md)
+Previous live result: [Directus file deletion AD](experiments/review-workspace-file-delete-results.md)
 retains useful uncertainty but does not complete the HTTP authorization proof.
 Sol native stops after four observed calls on a directory passed as a definition
 file filter. Terra and Sol workspace each use six calls and return two independent
@@ -50,13 +108,14 @@ AD is closed before a narrow offline correction: native's existing one-correctio
 path now recognizes structured `ResearchFilterError`, replacing stale string
 matches. Rejected batches execute no sibling lookup, corrected definitions retain
 two-unit accounting, repeated mistakes stop, and path escapes remain fatal. The
-original run stays unchanged; no paid repair demonstrates the fix yet.
+original run stays unchanged. AF subsequently exercises the correction successfully
+before its separate aggregate-query failure; no AD paid repair is performed.
 Post-closure verification covers 243 distinct checks: 242 pass and one is skipped.
 The aggregate run is interrupted after a stall; the isolated case passes on frozen
 and corrected runtimes, and a bounded remaining segment passes. Keep that segmented
 verification explicit rather than claiming one uninterrupted suite pass.
 
-Next implement a common explicit source-profile channel for native and workspace,
+The AE next step, now implemented and tested in AF, was a common explicit source-profile channel for native and workspace,
 with matching source/scope binding and full requested coverage. Ordinary automatic
 policy-lead defaults remain separate. AE's four-window caller control is not a
 replacement for carrying shared permission/effect source; preserve the intended
@@ -66,7 +125,7 @@ AE's app continuation does not contain that import. The storage/post-hook-key
 condition and deployed-hook uncertainty
 still require review. AE closes without a paid run or a new live allowance.
 
-Then audit selection/acquisition cost using prior receipts and named deciding reads.
+Selection/acquisition cost still needs audit using prior receipts and named deciding reads.
 The hand-selected profile is an assisted control, not automatic selection. Stop if
 construction repeats a full investigation per claim; count upstream work instead
 of advertising only cheaper reviewer turns. Do not add generic prompt warnings,

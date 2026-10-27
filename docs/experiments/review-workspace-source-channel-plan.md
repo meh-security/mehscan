@@ -1,5 +1,11 @@
 # Common explicit source channel AF
 
+**Closed:** implementation `c2b06c7`, actual packet equality/coverage across three
+operation families, regression and installed checks, then 17 observed live calls.
+See [results and corrected next slice](review-workspace-source-channel-results.md).
+Transport succeeds; complete review quality and efficiency remain unestablished.
+The raw pre-dispatch plan remains unchanged in the frozen study directory.
+
 Deliver one complete capability: shared source-only profiles in the ordinary
 worker, workspace, CLI, comparison preparer, recovery bindings and installed
 package. Keep automatic policy leads at their existing four-window default.
