@@ -520,6 +520,8 @@ class Workspace:
                 state["lookups"][key]["received_bytes"] = observed
             if previous and "requested_question" in previous:
                 state["lookups"][key]["requested_question"] = previous["requested_question"]
+            if previous and "review_ids" in previous:
+                state["lookups"][key]["review_ids"] = previous["review_ids"]
             state["lookups"][key].update(status="complete",sequence=state["revision"] + 1)
             # Match ordinary worker accounting: every received/reused result JSON
             # counts, separately from unique captured source and actual native I/O.
@@ -527,14 +529,23 @@ class Workspace:
                 state["received_query_bytes"] += size
             return {"lookup_id":key}
         if kind == "lookup_request":
-            shape(action,("kind","lookup_id","question_id","query","units"),("requested_question",))
+            shape(action,("kind","lookup_id","question_id","query","units"),("requested_question","review_ids"))
             key = label(action["lookup_id"])
             if key in state["lookups"] or action["question_id"] not in state["questions"]:
                 raise ValueError("lookup reservation needs a new ID and known question")
             if "requested_question" in action:
                 label(action["requested_question"])
+            question = state["questions"][action["question_id"]]
+            beneficiaries = action.get("review_ids",question["review_ids"])
+            references(beneficiaries,state["claims"])
+            if (action["query"]["review_id"] not in question["review_ids"] or
+                    action["query"]["review_id"] not in beneficiaries):
+                raise ValueError("lookup attribution belongs to another question scope")
             self._spend(state,{"queries":number(action["units"],positive=True)})
-            if state["questions"][action["question_id"]]["status"] == "answered":
+            settled = any(state["claims"][rid]["draft"] and action["question_id"] in
+                          state["claims"][rid]["draft"].get("resolved_questions",[])
+                          for rid in set(beneficiaries) & set(question["review_ids"]))
+            if question["status"] == "answered" or settled:
                 self._reopen_question(state,action["question_id"])
                 state["questions"][action["question_id"]]["attempts"].append({
                     "status":"open","reason":"A deciding lookup reopened this relationship.","evidence":[],
@@ -543,6 +554,7 @@ class Workspace:
                 "result":None,"evidence":[],"native_query_count":None,"reused_from":None,"sequence":state["revision"] + 1}
             if "requested_question" in action:
                 state["lookups"][key]["requested_question"] = action["requested_question"]
+            state["lookups"][key]["review_ids"] = list(beneficiaries)
             return {"lookup_id":key}
         if kind == "draft_batch":
             shape(action, ("kind", "drafts"))
@@ -552,7 +564,7 @@ class Workspace:
             references([d["result"]["review_id"] for d in drafts], state["claims"])
             return [self._action(state, {**d, "kind":"draft"}, operation_key) for d in drafts]
         if kind == "draft":
-            shape(action, ("kind", "result", "applicability"), ("propositions",))
+            shape(action, ("kind", "result", "applicability"), ("propositions","resolved_questions"))
             result = action["result"]
             if not isinstance(result, dict):
                 raise ValueError("draft result must be an object")
@@ -566,7 +578,13 @@ class Workspace:
                 raise ValueError("draft requires explicit checks")
             if bool(checks) != (result["decision"] == "needs_review"):
                 raise ValueError("only needs_review retains deciding checks")
-            pending = [q for q in state["questions"].values() if result["review_id"] in q["review_ids"] and q["status"] != "answered"]
+            resolved = action.get("resolved_questions",[])
+            references(resolved,state["questions"],nonempty=False)
+            if resolved and (result["decision"] == "needs_review" or any(
+                    result["review_id"] not in state["questions"][qid]["review_ids"] for qid in resolved)):
+                raise ValueError("question resolution requires a settled decision for that claim")
+            pending = [q for qid,q in state["questions"].items() if result["review_id"] in q["review_ids"] and
+                       q["status"] != "answered" and qid not in resolved]
             if pending and result["decision"] != "needs_review":
                 raise ValueError("unanswered deciding question prevents closure")
             references(action["applicability"], state["applicability"], nonempty=False)
@@ -581,6 +599,10 @@ class Workspace:
             if claim["draft"] is not None:
                 claim["draft_history"].append(claim["draft"])
             claim["draft"] = {"result":result, "applicability":action["applicability"], "propositions":dependencies}
+            if resolved:
+                # Per-claim reviewer interpretation, backed by this draft's
+                # source. The shared question and other claims stay open.
+                claim["draft"]["resolved_questions"] = list(resolved)
             claim["reconsideration"] = []
             return {"review_id":result["review_id"], "status":"drafted"}
         raise ValueError("unknown workspace action")
@@ -640,6 +662,7 @@ class Workspace:
             ids.append(candidates[0])
         if ids:
             self._evidence(state, sorted(set(ids)))
+        return sorted(set(ids))
 
     def view(self, work_id, max_bytes=32768):
         return self._view(self.snapshot(), work_id, max_bytes)
@@ -668,11 +691,19 @@ class Workspace:
         prop_ids = set(state["work"][work_id]["proposition_ids"]) | {a["proposition_id"] for a in applies.values()}
         propositions = {key:state["propositions"][key][-1] for key in sorted(prop_ids)}
         questions = {}
+        settled_evidence = set()
         for key,question in state["questions"].items():
             if not set(question["review_ids"]) & set(ids):
                 continue
             questions[key] = copy.deepcopy(question)
             questions[key]["origin"] = "reviewer_interpretation"
+            settled = [rid for rid in question["review_ids"] if state["claims"][rid]["draft"] and
+                       not state["claims"][rid]["reconsideration"] and
+                       key in state["claims"][rid]["draft"].get("resolved_questions",[])]
+            if settled:
+                questions[key]["settled_review_ids"] = settled
+                for rid in settled:
+                    settled_evidence.update(self._draft_evidence(state,state["claims"][rid]["draft"]["result"]))
             if question["status"] == "answered":
                 # Keep the conclusion/proof for this claim without replaying its
                 # full investigation or requiring a separate proposition action.
@@ -680,6 +711,7 @@ class Workspace:
         evidence_ids = set(e for p in propositions.values() for e in p["evidence"])
         evidence_ids.update(e for a in applies.values() for e in a["evidence"])
         evidence_ids.update(state["work"][work_id]["evidence_ids"])
+        evidence_ids.update(settled_evidence)
         evidence_ids.update(e for record in deciding.values() for e in record["evidence_ids"])
         evidence_ids.update(e for q in questions.values() if q["status"] == "answered" for e in q["attempts"][-1]["evidence"])
         self._evidence(state, sorted(evidence_ids)) if evidence_ids else None
@@ -711,6 +743,8 @@ class Workspace:
                     "evidence":lookup["evidence"],"native_query_count":lookup["native_query_count"],"reused_from":lookup["reused_from"]}
                 if "requested_question" in lookup:
                     packet["lookups"][key]["requested_question"] = lookup["requested_question"]
+                if "review_ids" in lookup:
+                    packet["lookups"][key]["review_ids"] = lookup["review_ids"]
         # Closed draft histories remain in storage, not in a replacement context.
         packet = copy.deepcopy(packet)
         for claim in packet["claims"]:
@@ -742,7 +776,8 @@ class Workspace:
             raise ValueError("bundle working draft is incomplete or requires reconsideration")
         for claim in claims:
             if claim["draft"]["result"]["decision"] != "needs_review" and any(
-                    claim["review_id"] in q["review_ids"] and q["status"] != "answered" for q in state["questions"].values()):
+                    claim["review_id"] in q["review_ids"] and q["status"] != "answered" and
+                    qid not in claim["draft"].get("resolved_questions",[]) for qid,q in state["questions"].items()):
                 raise ValueError("unanswered deciding question prevents bundle closure")
             self._draft_evidence(state, claim["draft"]["result"])
             self._proposition_dependencies(state, claim["draft"].get("propositions", []))

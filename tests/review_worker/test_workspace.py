@@ -429,6 +429,42 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(state["used"]["queries"],1)
         self.assertTrue(state["claims"]["safe"]["reconsideration"])
 
+    def test_claim_scoped_resolution_retains_source_and_shared_lookup_reopens_it(self):
+        self.capture(1,4)
+        self.apply("question",question_id="shared",review_ids=["safe","unsafe"],question="Which effect uses the verified owner?")
+        result={"review_id":"safe","decision":"not_issue","summary":"The selected owner is bound",
+                "reason":"The inspected middleware binds the selected body owner.",
+                "evidence":[{"path":"routes.ts","start_line":2,"end_line":2}],"checks":[]}
+        self.apply("draft",result=result,applicability=[],resolved_questions=["shared"])
+        self.apply("focus",work_id="initial",evidence_ids=[],proposition_ids=[])
+        view=self.workspace.view("initial")
+        self.assertEqual(view["questions"]["shared"]["status"],"open")
+        self.assertEqual(view["questions"]["shared"]["settled_review_ids"],["safe"])
+        self.assertTrue(view["evidence"])
+        original=self.code.read_text()
+        self.code.write_text("changed source\n")
+        with self.assertRaisesRegex(ValueError,"source changed"):
+            self.workspace.view("initial")
+        self.code.write_text(original)
+        query={"tool":"references","review_id":"unsafe","arguments":{"symbol":"bind"}}
+        self.apply("lookup_request",lookup_id="shared-followup",question_id="shared",query=query,units=1,
+                   review_ids=["safe","unsafe"])
+        state=self.workspace.snapshot()
+        self.assertEqual(state["claims"]["safe"]["reconsideration"],["question:shared"])
+        self.assertEqual(state["used"]["queries"],1)
+        self.assertEqual(state["questions"]["shared"]["review_ids"],["safe","unsafe"])
+        self.assertNotIn("settled_review_ids",self.workspace.view("initial")["questions"]["shared"])
+
+    def test_question_resolution_cannot_settle_another_claims_scope(self):
+        self.capture(1,4)
+        self.apply("question",question_id="q",review_ids=["safe"],question="Which identity reaches this effect?")
+        result={"review_id":"unsafe","decision":"not_issue","summary":"An unsupported scope transfer",
+                "reason":"A sibling's resolution cannot apply here.",
+                "evidence":[{"path":"routes.ts","start_line":3,"end_line":3}],"checks":[]}
+        with self.assertRaisesRegex(ValueError,"for that claim"):
+            self.apply("draft",result=result,applicability=[],resolved_questions=["q"])
+        self.assertTrue(all(c["draft"] is None for c in self.workspace.snapshot()["claims"].values()))
+
     def test_resolving_a_previously_missing_binding_reactivates_its_pending_claim(self):
         proof = self.capture(1,2)
         self.apply("question",question_id="registry",review_ids=["safe"],question="Which invocation binds the helper to the effect?")

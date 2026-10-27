@@ -222,7 +222,7 @@ def apply_response(bridge, session_id, task, packet, response):
     api, guidance = context.research_api(bridge.skill),context.guidance_catalog(bridge.skill)
     tools = {t["name"]:t for t in api["tools"] if t["name"] != "base_source"}
     tools["knowledge"] = {"query_units":1}
-    queries, requested, questions = [],set(),[]
+    queries, requested, questions, continuations = [],set(),[],{}
     for lookup in response["lookups"]:
         shape(lookup,("question_id","review_ids","question","queries"))
         label(lookup["question_id"])
@@ -235,8 +235,12 @@ def apply_response(bridge, session_id, task, packet, response):
         if old:
             if lookup["question_id"] not in set(view["questions"]) | set(declared_questions):
                 raise ValueError("reviewer cannot continue an unseen question")
-            if set(old["review_ids"]) != set(question["review_ids"]):
+            # Retrieval beneficiaries may change within this visible work item;
+            # the question's ownership and every query's native attribution do not.
+            if not set(old["review_ids"]) & set(question["review_ids"]):
                 raise ValueError("question ID already has another scope")
+            if lookup["question_id"] in state["questions"]:
+                continuations.setdefault(lookup["question_id"],set()).update(lookup["review_ids"])
             # A follow-up lookup can narrow the fact being sought. Keep the
             # original deciding question open; record the requested wording on
             # each receipt rather than replacing that question or its answers.
@@ -247,6 +251,8 @@ def apply_response(bridge, session_id, task, packet, response):
             if query["tool"] not in tools:
                 raise ValueError("unsupported workspace lookup")
             references([query["review_id"]],lookup["review_ids"])
+            if old and query["review_id"] not in old["review_ids"]:
+                raise ValueError("question ID already has another scope")
             feedback = None
             if query["tool"] == "knowledge":
                 shape(query,("tool","review_id","purpose","arguments"))
@@ -259,7 +265,7 @@ def apply_response(bridge, session_id, task, packet, response):
                     arguments = worker.research_arguments(query,bridge.root,task["review_ids"],journals,api=api,guidance=guidance)
                 except worker.ResearchFilterError as error:
                     arguments,feedback = None,error.result
-            queries.append((lookup["question_id"],query,arguments,tools[query["tool"]]["query_units"],lookup["question"],feedback))
+            queries.append((lookup["question_id"],query,arguments,tools[query["tool"]]["query_units"],lookup["question"],feedback,lookup["review_ids"]))
     if sum(q[3] for q in queries) > state["limits"]["queries"] - state["used"]["queries"]:
         raise ValueError("workspace lookup batch exceeds aggregate query allowance")
     decided = [r["review_id"] for r in response["decisions"]]
@@ -286,15 +292,23 @@ def apply_response(bridge, session_id, task, packet, response):
         applies = [k for k,a in preview["applicability"].items() if a["review_id"] == result["review_id"] and
                    a["proposition_id"] in {p["proposition_id"] for p in dependencies} and
                    a["proposition_revision"] == preview["propositions"][a["proposition_id"]][-1]["revision"]]
-        transaction["updates"].append({"kind":"draft","result":result,"applicability":applies,"propositions":dependencies})
+        draft = {"kind":"draft","result":result,"applicability":applies,"propositions":dependencies}
+        resolved = [qid for qid,beneficiaries in continuations.items() if result["decision"] != "needs_review" and
+                    result["review_id"] in state["questions"][qid]["review_ids"] and
+                    state["questions"][qid]["status"] != "answered" and result["review_id"] not in beneficiaries]
+        if resolved:
+            # The explicit, source-cited verdict settles only this claim's part
+            # of a shared question whose follow-up now targets other claims.
+            draft["resolved_questions"] = sorted(resolved)
+        transaction["updates"].append(draft)
     bridge.workspace.preview(transaction)  # Invalid later actions cannot leave earlier judgments saved.
     accepted = bridge.apply("actions:" + session_id,transaction)
     receipts = []
-    for index,(qid,query,arguments,units,requested_question,feedback) in enumerate(queries):
+    for index,(qid,query,arguments,units,requested_question,feedback,beneficiaries) in enumerate(queries):
         bridge._remaining_seconds()
         key = session_id + ":" + str(index)
         bridge.apply("reserve:" + key,{"kind":"lookup_request","lookup_id":key,"question_id":qid,"query":query,"units":units,
-                                       "requested_question":requested_question})
+                                       "requested_question":requested_question,"review_ids":beneficiaries})
         started = time.monotonic()
         if feedback is None:
             result,evidence,count,reused = _lookup(bridge,query,arguments,key)

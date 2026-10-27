@@ -327,6 +327,105 @@ class WorkspaceActionTests(unittest.TestCase):
             self.turn("scope-change",invalid)
         self.assertFalse(self.bridge.workspace.snapshot()["lookups"])
 
+    def test_shared_question_can_retrieve_for_more_claims_without_transferring_answers(self):
+        first,second,*_ = list(self.bridge.workspace.snapshot()["claims"])
+        self.bridge.apply("first-question",{"kind":"question","question_id":"first-effect",
+            "review_ids":[first],"question":"What protects the first selected effect?"})
+        self.bridge.apply("second-question",{"kind":"question","question_id":"second-effect",
+            "review_ids":[second],"question":"What protects the second selected effect?"})
+        self.turn("shared-retrieval",lambda task,packet:{"updates":[],"decisions":[],"lookups":[{
+            "question_id":"first-effect","review_ids":[first,second],"question":"Inspect a common helper for both callers.",
+            "queries":[{"tool":"source","review_id":first,"purpose":"Read the shared implementation",
+                        "arguments":{"path":"helper.js","start_line":1,"end_line":1}}]}]})
+        state=self.bridge.workspace.snapshot()
+        self.assertEqual(state["questions"]["first-effect"]["review_ids"],[first])
+        self.assertEqual(state["questions"]["second-effect"]["status"],"open")
+        self.assertEqual(next(iter(state["lookups"].values()))["review_ids"],[first,second])
+        self.assertTrue(all(c["draft"] is None for c in state["claims"].values()))
+        self.assertEqual(state["used"]["queries"],1)
+
+    def test_wider_lookup_beneficiaries_do_not_change_prompting_question_attribution(self):
+        first,second,*_ = list(self.bridge.workspace.snapshot()["claims"])
+        self.bridge.apply("question",{"kind":"question","question_id":"first-effect",
+            "review_ids":[first],"question":"What protects the first selected effect?"})
+        with self.assertRaisesRegex(ValueError,"another scope"):
+            self.turn("foreign-prompt",lambda task,packet:{"updates":[],"decisions":[],"lookups":[{
+                "question_id":"first-effect","review_ids":[first,second],"question":"Reuse a lookup across callers.",
+                "queries":[{"tool":"source","review_id":second,"purpose":"An attribution outside the original question",
+                            "arguments":{"path":"helper.js","start_line":1,"end_line":1}}]}]})
+        state=self.bridge.workspace.snapshot()
+        self.assertFalse(state["lookups"])
+        self.assertEqual(state["used"]["queries"],0)
+        self.assertEqual(self.bridge.workspace.usage()["calls"],1)
+
+    def test_narrow_lookup_alone_does_not_settle_other_claims(self):
+        first,second,*_ = list(self.bridge.workspace.snapshot()["claims"])
+        self.bridge.apply("question",{"kind":"question","question_id":"shared",
+            "review_ids":[first,second],"question":"Which callers have a complete control?"})
+        self.turn("narrow-retrieval",lambda task,packet:{"updates":[],"decisions":[],"lookups":[{
+            "question_id":"shared","review_ids":[second],"question":"Inspect the second caller's helper.",
+            "queries":[{"tool":"source","review_id":second,"purpose":"Read the remaining implementation",
+                        "arguments":{"path":"helper.js","start_line":1,"end_line":1}}]}]})
+        state=self.bridge.workspace.snapshot()
+        self.assertEqual(state["questions"]["shared"]["review_ids"],[first,second])
+        self.assertEqual(state["questions"]["shared"]["status"],"open")
+        self.assertTrue(all(c["draft"] is None for c in state["claims"].values()))
+        self.assertNotIn("settled_review_ids",self.bridge.workspace.view("initial")["questions"]["shared"])
+
+    def test_explicit_partial_decision_keeps_shared_question_open_and_reopens_on_changed_answer(self):
+        claims=sorted(self.bridge.workspace.snapshot()["claims"].values(),key=lambda c:c["line"])
+        first,second,third=claims
+        ids=[first["review_id"],second["review_id"]]
+        self.turn("shared-start",lambda task,packet:{"updates":[{"kind":"question","question_id":"shared",
+            "review_ids":ids,"question":"Which selected callers have unconstrained evaluation?"}],
+            "lookups":[],"decisions":[self.decision(third)]})
+        third_before=self.bridge.workspace.snapshot()["claims"][third["review_id"]]
+        def partial(task,packet):
+            return {"updates":[{"kind":"answer","question_id":"shared","status":"open",
+                "reason":"The first evaluator is established; the second normalizer contract remains unknown.",
+                "evidence":[self.handle(task,packet,"app.js")]}],
+                "decisions":[self.decision(first)],"lookups":[{"question_id":"shared","review_ids":[second["review_id"]],
+                    "question":"Which selected callers have unconstrained evaluation?",
+                    "queries":[{"tool":"source","review_id":second["review_id"],"purpose":"Inspect the remaining caller's helper",
+                                "arguments":{"path":"helper.js","start_line":1,"end_line":1}}]}]}
+        self.turn("partial",partial)
+        state=self.bridge.workspace.snapshot()
+        self.assertEqual(state["questions"]["shared"]["status"],"open")
+        self.assertEqual(state["questions"]["shared"]["review_ids"],ids)
+        self.assertEqual(state["claims"][first["review_id"]]["draft"]["resolved_questions"],["shared"])
+        self.assertIsNone(state["claims"][second["review_id"]]["draft"])
+        self.assertEqual(state["claims"][third["review_id"]],third_before)
+        def finish_second(task,packet):
+            self.assertEqual(task["review_ids"],[second["review_id"]])
+            self.assertEqual(packet["workspace_evidence"]["questions"]["shared"]["settled_review_ids"],[first["review_id"]])
+            return {"updates":[{"kind":"answer","question_id":"shared","status":"answered",
+                "reason":"String conversion preserves executable grammar in the remaining caller.",
+                "evidence":[self.handle(task,packet,"helper.js")]}],"lookups":[],"decisions":[self.decision(second)]}
+        self.turn("finish-second",finish_second)
+        self.assertTrue(self.bridge.workspace.snapshot()["claims"][first["review_id"]]["reconsideration"])
+        with self.assertRaisesRegex(ValueError,"reconsideration"):
+            self.bridge.finalize(first["bundle_id"])
+        self.turn("confirm-first",lambda task,packet:{"updates":[],"lookups":[],"decisions":[self.decision(first)]})
+        self.assertTrue(self.bridge.finalize(first["bundle_id"])["native_validated"])
+        self.assertEqual(self.bridge.workspace.usage()["calls"],4)
+        self.assertEqual(self.bridge.workspace.snapshot()["used"]["queries"],1)
+
+    def test_partial_resolution_without_source_cannot_commit_or_execute_lookup(self):
+        first,second,*_=list(self.bridge.workspace.snapshot()["claims"].values())
+        self.bridge.apply("question",{"kind":"question","question_id":"shared",
+            "review_ids":[first["review_id"],second["review_id"]],"question":"Which selected effect is constrained?"})
+        decision=self.decision(first);decision["evidence"]=[]
+        with self.assertRaisesRegex(ValueError,"source evidence"):
+            self.turn("unproved-partial",lambda task,packet:{"updates":[],"decisions":[decision],"lookups":[{
+                "question_id":"shared","review_ids":[second["review_id"]],"question":"Inspect the remaining helper.",
+                "queries":[{"tool":"source","review_id":second["review_id"],"purpose":"Read the helper",
+                            "arguments":{"path":"helper.js","start_line":1,"end_line":1}}]}]})
+        state=self.bridge.workspace.snapshot()
+        self.assertFalse(state["lookups"])
+        self.assertEqual(state["used"]["queries"],0)
+        self.assertTrue(all(c["draft"] is None for c in state["claims"].values()))
+        self.assertEqual(self.bridge.workspace.usage()["calls"],1)
+
     def test_independent_work_question_name_collision_is_scoped_without_transferring_answers(self):
         claims = list(self.bridge.workspace.snapshot()["claims"])
         self.bridge.apply("split",{"kind":"split","work_id":"initial","new_work_id":"other",
