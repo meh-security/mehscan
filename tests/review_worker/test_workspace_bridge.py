@@ -30,6 +30,7 @@ class NativeBridgeTests(unittest.TestCase):
         (self.root / "app.js").write_text("export function first(request) { return eval(request.query.code); }\n"
                                           "export function second(request) { return eval(request.body.code); }\n",encoding="utf-8")
         for path,text in getattr(self,"extra_source",{}).items():
+            (self.root / path).parent.mkdir(parents=True,exist_ok=True)
             (self.root / path).write_text(text,encoding="utf-8")
         self.scanner = Path(os.environ.get("MEHSCAN_TEST_SCANNER",PRODUCT / "target/debug" / ("mehscan.exe" if os.name == "nt" else "mehscan")))
         self.skill = PRODUCT / "skills/mehscan-security"

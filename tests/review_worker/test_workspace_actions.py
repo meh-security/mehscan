@@ -18,7 +18,8 @@ class WorkspaceActionTests(unittest.TestCase):
             "export function first(request) { return eval(request.query.code); }\n"
             "export function second(request) { return eval(normalize(request.body.code)); }\n"
             "export function third(request) { return eval(normalize(request.query.extra)); }\n",
-            "helper.js":"export function normalize(input) { return String(input); }\n"}
+            "helper.js":"export function normalize(input) { return String(input); }\n",
+            **getattr(self,"extra_source",{})}
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
         self.fixture.experiment["protocol"] = "workspace-actions-v2"

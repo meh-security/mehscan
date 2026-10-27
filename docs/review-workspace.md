@@ -28,6 +28,21 @@ bounded action. These are controller changes; the model action schema and native
 admission policy are unchanged. This does not resolve the remaining review-quality
 or caller-applicability gap.
 
+Routine file/directory filter mistakes now return `lookup_feedback` receipts in
+the experimental workspace. The original query and deciding question are retained;
+the rejected query executes no native command and supplies no source evidence.
+Corrections list only arguments actually offered by that tool. The reviewer must
+explicitly correct its next request; no filter is silently broadened or renamed.
+Valid independent requests in the same fully prevalidated batch still execute.
+
+Feedback consumes the offered query units and received JSON bytes, and each model
+turn retains its paid usage. It creates no additional model slots or automatic
+provider retry. Question closure still requires source proof. Path escapes,
+unsupported arguments/limits, source/runtime/owner changes and unknown paid usage
+remain outside this narrow recovery path. Ordinary worker execution remains fatal
+on these rejected filters; the common validator exposes a typed error, and only
+workspace turns it into a bounded receipt.
+
 The [offline publication comparison](experiments/review-workspace-publication-results.md)
 now verifies this slice on the pinned Directus source: two fresh pairs, 22 versus
 18 native checks, mean two-turn execution 13.309 versus 11.202 seconds, identical

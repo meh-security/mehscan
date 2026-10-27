@@ -33,6 +33,20 @@ class ProviderFailure(CommandFailure):
     """A failed provider subprocess, distinct from source/native validation."""
 
 
+class ResearchFilterError(ValueError):
+    """A validated in-root query uses the wrong file/directory filter kind.
+
+    Workspace callers may return this narrow error as tool feedback. Other
+    validation/native/ownership exceptions must not enter that recovery path.
+    """
+    def __init__(self, tool, code, message, required, optional):
+        super().__init__(message)
+        self.result = {"operation":"lookup_feedback","code":code,"tool":tool,"message":message,
+                       "allowed_arguments":{"required":sorted(required),"optional":sorted(optional)},
+                       "native_query_executed":False,
+                       "authority":"Controller API feedback, not source evidence; no source or absence of protection is established."}
+
+
 def missing_source_result(query, error):
     """Recover narrowly recognized missing-source or navigation-scope outcomes.
 
@@ -464,10 +478,6 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
                 or any(part in ("", ".", "..", ".git") for part in path.split("/"))
                 or Path(path).is_absolute() or not (root / path).resolve().is_relative_to(root)):
             raise ValueError("research paths must stay relative to the authorized source")
-    if tool in ("outline", "symbol", "definition", "references") and "path" in values and (root / values["path"]).is_dir():
-        raise ValueError("research path filter must name a file; use path_prefix for a directory")
-    if "path_prefix" in values and (root / values["path_prefix"]).is_file():
-        raise ValueError("research path_prefix must name a directory")
     for key in ("name", "symbol"):
         if key in values and (not isinstance(values[key], str) or not values[key].strip()
                               or len(values[key]) > 200 or "\0" in values[key]):
@@ -490,6 +500,19 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
         if not journal.resolve().is_relative_to(journals.resolve()):
             raise ValueError("research journal escapes its attempt directory")
         arguments += ["--journal", str(journal)]
+    # Validate scope, shape, names, limits and journal binding before classifying
+    # this recoverable filter mistake. Never suggest an unoffered argument.
+    if tool in ("source", "outline", "symbol", "definition", "references") and "path" in values and (root / values["path"]).is_dir():
+        if "path_prefix" in optional:
+            correction = "Use path_prefix for the directory, or path for a known file."
+        elif "path" in optional:
+            correction = "Use path for a known declaration file, or explicitly omit path to locate declarations. This tool has no directory filter."
+        else:
+            correction = "Use a known file path; locate the file with paths or directory-scoped references first."
+        raise ResearchFilterError(tool,"file_filter_is_directory","The path filter must name a file. " + correction,required,optional)
+    if "path_prefix" in values and (root / values["path_prefix"]).is_file():
+        raise ResearchFilterError(tool,"directory_filter_is_file",
+            "The path_prefix filter must name a directory. Use path for the known file.",required,optional)
     return arguments
 
 

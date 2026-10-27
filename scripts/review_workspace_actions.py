@@ -89,7 +89,9 @@ def _source_capture(query, result, native_count):
 def _lookup(bridge, query, arguments, key):
     state = bridge.workspace.snapshot()
     for old_id, old in state["lookups"].items():
-        if query["tool"] != "knowledge" and old["status"] == "complete" and (old["query"]["tool"],old["query"]["arguments"]) == (query["tool"],query["arguments"]):
+        if (query["tool"] != "knowledge" and old["status"] == "complete" and
+                (old["result"] or {}).get("operation") != "lookup_feedback" and
+                (old["query"]["tool"],old["query"]["arguments"]) == (query["tool"],query["arguments"])):
             if old["evidence"]:
                 bridge.workspace._evidence(state,old["evidence"])
             return old["result"],old["evidence"],0,old_id
@@ -245,6 +247,7 @@ def apply_response(bridge, session_id, task, packet, response):
             if query["tool"] not in tools:
                 raise ValueError("unsupported workspace lookup")
             references([query["review_id"]],lookup["review_ids"])
+            feedback = None
             if query["tool"] == "knowledge":
                 shape(query,("tool","review_id","purpose","arguments"))
                 shape(query["arguments"],("name",))
@@ -252,8 +255,11 @@ def apply_response(bridge, session_id, task, packet, response):
                 label(query["arguments"]["name"])
                 arguments = []
             else:
-                arguments = worker.research_arguments(query,bridge.root,task["review_ids"],journals,api=api,guidance=guidance)
-            queries.append((lookup["question_id"],query,arguments,tools[query["tool"]]["query_units"],lookup["question"]))
+                try:
+                    arguments = worker.research_arguments(query,bridge.root,task["review_ids"],journals,api=api,guidance=guidance)
+                except worker.ResearchFilterError as error:
+                    arguments,feedback = None,error.result
+            queries.append((lookup["question_id"],query,arguments,tools[query["tool"]]["query_units"],lookup["question"],feedback))
     if sum(q[3] for q in queries) > state["limits"]["queries"] - state["used"]["queries"]:
         raise ValueError("workspace lookup batch exceeds aggregate query allowance")
     decided = [r["review_id"] for r in response["decisions"]]
@@ -284,13 +290,16 @@ def apply_response(bridge, session_id, task, packet, response):
     bridge.workspace.preview(transaction)  # Invalid later actions cannot leave earlier judgments saved.
     accepted = bridge.apply("actions:" + session_id,transaction)
     receipts = []
-    for index,(qid,query,arguments,units,requested_question) in enumerate(queries):
+    for index,(qid,query,arguments,units,requested_question,feedback) in enumerate(queries):
         bridge._remaining_seconds()
         key = session_id + ":" + str(index)
         bridge.apply("reserve:" + key,{"kind":"lookup_request","lookup_id":key,"question_id":qid,"query":query,"units":units,
                                        "requested_question":requested_question})
         started = time.monotonic()
-        result,evidence,count,reused = _lookup(bridge,query,arguments,key)
+        if feedback is None:
+            result,evidence,count,reused = _lookup(bridge,query,arguments,key)
+        else:
+            result,evidence,count,reused = feedback,[],0,None
         bridge.apply("observed:" + key,{"kind":"lookup_observed","lookup_id":key,
             "received_bytes":len(json.dumps(result,ensure_ascii=False).encode("utf-8"))})
         if bridge.workspace.snapshot()["received_query_bytes"] > bridge.metadata["experiment"].get("max_received_query_bytes",2**63):
@@ -306,7 +315,8 @@ def apply_response(bridge, session_id, task, packet, response):
             "evidence_ids":sorted(set(current["evidence_ids"]) | set(evidence)),
             "proposition_ids":sorted(set(current["proposition_ids"]) | set(props))})
         bridge.trace("deciding_lookup",question_id=qid,lookup_id=key,tool=query["tool"],native_query_count=count,
-                     reused_from=reused,elapsed_ms=round((time.monotonic()-started)*1000))
+                     reused_from=reused,feedback_code=feedback["code"] if feedback else None,
+                     elapsed_ms=round((time.monotonic()-started)*1000))
         receipts.append(key)
     if projections:
         bridge.trace("citation_projection",session_id=session_id,projections=projections)
