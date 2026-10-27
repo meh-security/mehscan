@@ -1,6 +1,12 @@
 # Checkout carried-source completion AC
 
-Status: pre-dispatch design after [AB](review-workspace-checkout-results.md).
+Status: **closed after three observed calls**. The
+[results](review-workspace-checkout-completion-results.md) retain both Sol mechanism
+reviews and Terra's wallet proof, with Terra's uninspected basket-policy basis and
+Sol's citation-coordinate issue recorded separately. No paid repair follows. The
+design below is preserved as frozen before dispatch.
+
+Original status: pre-dispatch design after [AB](review-workspace-checkout-results.md).
 Complete only its two workspace reviews with fresh runtime-bound state and verified
 retrieved source. Retain AB's failed paid attempts and source-complete native
 reference. No native model rerun, earlier-control rerun or wider dispatch.

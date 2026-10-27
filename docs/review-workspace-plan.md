@@ -16,7 +16,34 @@ cases only when the change can affect their source basis or behavior. This repla
 the previous requirement to repeat the whole four-case package as the next step;
 it does not change X's original frozen gate or claim broader acceptance.
 
-Latest live result: [real checkout contrast AB](experiments/review-workspace-checkout-results.md)
+Latest live result: [carried-source checkout completion AC](experiments/review-workspace-checkout-completion-results.md)
+finishes both workspace reviews without controller failure: Sol two calls, Terra
+medium one, all observed. Sol retrieves the remaining basket ownership/policy
+evidence and supports both mechanisms. Terra supports wallet ownership but assumes
+the basket policy without the required source inspection. Keep those outcomes
+separately; fewer calls do not imply better quality. An audited evidence map also
+corrects a Sol prefix pointer without changing its original answer.
+
+AC uses matching verified source assistance, not a clean autonomous/native latency
+comparison. Neither run naturally exercises the exact shared-question scope paths;
+their direct proof remains deterministic tests. First-turn shared declaration and
+partial closure are now covered at `ef3d416`, with all 138 workspace tests passing.
+AB remains closed and all earlier retrieval/failure costs remain recorded.
+
+The carry profile missed relevant source already fetched by the native arm. An
+unrun eight-window extension combines native/workspace source observations with
+whole-file hashes/provenance, dropping metadata request duplicates already prepared.
+Reuse the existing source API across the same claims/binding; keep judgments and
+caller applicability separate. Do not rerun unchanged checkout simply to collect
+one omitted fact, or automatically preload every previously fetched file.
+
+Next pre-audit the Directus single/batch file-delete pair as a new small real shared
+operation: actual route/accountability, service permission and effect bindings
+must justify the selection. No safe verdict follows merely from a service name.
+The other fourteen R-main IDs/eight reserves remain outside live dispatch in this
+comparison sequence, until independently selected; full-app scope remains separate.
+
+Previous live result: [real checkout contrast AB](experiments/review-workspace-checkout-results.md)
 retains the native basket-cleanup finding and scoped wallet negative. Both workspace
 arms stop at question-scope equality, with no saved final decisions: Sol uses four
 calls, native five and Terra medium two; all eleven have observed usage. One response
@@ -29,16 +56,13 @@ Post-closure fix `ddfd867` separates lookup beneficiaries, immutable question ow
 and claim-specific settlement. It needs no new model fields. Explicit source-cited
 decisions can settle their part while other claims remain open; narrowing alone
 cannot. Original source/scope/owner/spending protections remain. All 137 workspace
-tests pass. This correction has no live confirmation yet; AB stays closed.
+tests pass at that closure. AC subsequently uses the runtime but does not exercise
+the exact shared-scope paths; AB stays closed.
 
-Next complete just the two workspace reviews with fresh runtime-bound state and the
-eight verified retrieved-source windows staged in `carry-source-proposal.json`.
-Label carried-source assistance and match it between Sol/Terra; reuse the saved
-native reference. Preserve all old costs and do not present assisted completion as
-an autonomous same-input comparison. No unchanged native/control rerun is needed.
-The two deferred R-main IDs now have native AB results and incomplete workspace
-attempts; fourteen other main IDs/eight reserves remain undispatched in this
-comparison sequence. Original R execution/full-app scope remains unchanged.
+That source-assisted continuation is AC above, using fresh state and the saved
+native reference. The two deferred R-main IDs now have native AB results and four
+formal workspace dispositions in AC, with the source qualifications above. Original
+R execution/full-app scope remains unchanged; its failed attempts were not resumed.
 
 Previous live result: [shared-policy contrast AA](experiments/review-workspace-policy-contrast-results.md)
 retains six supported local case/arm outcomes. Native Sol uses four calls; Sol and

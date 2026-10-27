@@ -117,8 +117,18 @@ then exposes a question-scope guard failure in both workspace models. The offlin
 correction separates query beneficiaries from immutable question ownership and
 permits source-cited per-claim settlement during a narrowed continuation. The
 shared question remains open for other claims, and changed answers/lookups/source
-still require reconsideration. All 137 workspace tests pass; no live run yet uses
-this fix. The original study remains closed with its native results and paid traces.
+still require reconsideration. All 137 workspace tests pass at that closure. The
+original study remains closed with its native results and paid traces; AC below
+subsequently uses the corrected runtime.
+
+The [carried-source completion AC](experiments/review-workspace-checkout-completion-results.md)
+then finishes in two Sol calls/one Terra medium call without errors. Sol verifies
+the remaining ownership/policy evidence; Terra's wallet proof is supported while
+its basket-policy basis is incomplete. Exact repaired shared-scope paths are not
+exercised live in AC. The first-turn boundary is covered before dispatch, with all
+138 workspace tests passing. An audited source map and an unrun source-only profile
+extension retain the useful work without silently repairing model answers or
+discarding earlier costs.
 
 ## Initialize outside the source root
 
