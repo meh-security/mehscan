@@ -18,8 +18,10 @@ import codex_reviewer
 
 
 class BatchComparisonTests(unittest.TestCase):
-    def prepare(self,explicit=False):
+    def prepare(self,explicit=False,extra_source=None):
         f=fixtures.NativeBridgeTests(methodName="test_rejected_completed_reply_still_records_usage")
+        if extra_source:
+            f.extra_source=extra_source
         if explicit:
             f.extra_source={f"profile{i}.ts":f"export const p{i} = true;\n" + ("\n" if i == 0 else "") for i in range(8)}
         f.setUp();self.addCleanup(f.doCleanups)
@@ -42,6 +44,46 @@ class BatchComparisonTests(unittest.TestCase):
         with patch.object(pilot.subprocess,"check_output",return_value="codex-cli fixture-1\n"),patch("codex_launcher.Launcher"):
             pilot.prepare(args)
         return f,Path(args.output)
+
+    def test_native_sees_global_query_remainder_after_rejected_batch(self):
+        f,root=self.prepare(extra_source={'helpers/policy.ts':'export function policy() { return true; }\n'})
+        _,_,setup=pilot.load_run(root);opts=setup['arms']['control']
+        config=fixtures.read(opts['config']);command=fixtures.read(opts['command'])
+        entries={e['review_id']:e for e in fixtures.read(f.inventory/'inventory.json')['entries']}
+        original=worker.execute;calls=[]
+        def execute(argv,cwd,env,timeout,payload=None):
+            if argv!=command:return original(argv,cwd,env,timeout,payload)
+            task=json.loads(payload);calls.append(task)
+            rid=task['review_ids'][0]
+            if len(calls)==1:
+                queries=[{'tool':'definition','review_id':rid,'purpose':'Inspect the policy implementation.',
+                          'arguments':{'name':'policy','path':'helpers','limit':1}}]
+            elif len(calls)==2:
+                queries=[{'tool':'source','review_id':rid,'purpose':'Inspect the selected evaluator.',
+                          'arguments':{'path':'app.js','start_line':line,'end_line':line}} for line in (1,2)]
+            else:queries=[]
+            class Fake:
+                def review(instance,prompt,schema,thread_id=None,timeout=600):
+                    results=[] if queries else [{**action_fixtures.WorkspaceActionTests.decision(entries[r]),
+                                                 'checks':[],'blockers':[]} for r in task['review_ids']]
+                    answer={'action':'research' if queries else 'final','research':queries,'draft':None if queries else {'results':results},
+                            'working_chain':'Inspect the selected evaluator with the offered remaining allowance.',
+                            'progress':[],'routing':[]}
+                    events=[{'type':'thread.started','thread_id':thread_id or str(uuid.uuid4())},
+                            {'type':'turn.completed','usage':{'input_tokens':100,'cached_input_tokens':0,'output_tokens':30}}]
+                    return answer,'\n'.join(json.dumps(e) for e in events),''
+            return codex_reviewer.run(config,task,lambda c,s:Fake())
+        with patch.object(worker,'execute',side_effect=execute):result=pilot.run_control(root)
+        self.assertEqual(result['status'],'admitted',(result,fixtures.read(root/'control/worker/worker.json').get('detail')))
+        self.assertEqual([c['research']['queries_remaining'] for c in calls],[4,2,0])
+        self.assertEqual(result['usage']['observed_calls'],3)
+        self.assertEqual(result['usage']['unobserved_calls'],0)
+        self.assertEqual(fixtures.read(root/'control/budget.json')['queries'],4)
+        job=fixtures.read(next((root/'control/worker/jobs').glob('*.json')))
+        self.assertEqual(job['queries'],2)  # Rejected definition remains charged only in the outer ledger.
+        receipts=[json.loads(s) for s in (root/'control/worker/research.jsonl').read_text().splitlines()]
+        self.assertEqual([r['query']['tool'] for r in receipts],['source','source'])
+        self.assertEqual(fixtures.read(root/'control/worker/worker.json')['protocol_corrections'],1)
 
     def test_explicit_eight_window_channel_reaches_both_actual_reviewers_and_stays_bound(self):
         f,root=self.prepare(explicit=True)

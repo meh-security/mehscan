@@ -358,10 +358,15 @@ def run_control(root):
         received = sum(len(json.dumps(r["result"],ensure_ascii=False).encode()) for r in rows)
         if received >= design["per_arm_limits"]["source_bytes"]:
             raise ValueError("ordinary aggregate received-byte ceiling reached")
+        # The outer ledger charges offered batches even when worker validation
+        # rejects them before execution. Never advertise that spent allowance
+        # again through the worker's successful-query-only local remainder.
+        task["research"]["queries_remaining"] = min(task["research"]["queries_remaining"],
+            max(0,design["per_arm_limits"]["queries"] - budget["queries"]))
         budget["reserved_calls"] += 1
         budget["bundle_calls"][batch_key] = budget["bundle_calls"].get(batch_key,0)+1
         worker.write(root / "control/budget.json",{**budget,"usage":usage,"received_query_bytes":received})
-        value = original(argv,cwd,env,min(timeout,remaining),payload)
+        value = original(argv,cwd,env,min(timeout,remaining),json.dumps(task))
         units = worker.research_cost(value.get("research",[]))
         if budget["queries"] + units > design["per_arm_limits"]["queries"]:
             raise ValueError("ordinary aggregate query ceiling reached")
