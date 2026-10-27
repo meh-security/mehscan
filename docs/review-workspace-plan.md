@@ -1,5 +1,12 @@
 # Persistent review workspace implementation plan
 
+User direction after the recovery comparison: retain workspace as a promising
+experimental approach for later work. The incomplete gate is not a decision to
+abandon it. Defer further runs for now; preserve the implementation, raw results
+and the two resume milestones below. Ordinary native review remains the current
+operational path. Resume with bounded quality and overhead experiments, then a
+fresh mixed-batch comparison; no new model run is part of this status update.
+
 Status: the [fresh shared-policy regression](experiments/review-workspace-recovery-results.md)
 is closed with **partial recovery**. In five paired claims/26 observed calls, both
 arms retain three findings, one scoped negative and one actionable unknown. The
