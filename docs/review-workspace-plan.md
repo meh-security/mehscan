@@ -6,14 +6,26 @@ abandon it. The subsequent "Next" resumes implementation and bounded offline
 experiments. Ordinary native review remains the current operational path; preserve
 all raw results and use a fresh freeze for any later mixed-batch comparison.
 
-Latest implementation: [atomic source/receipt publication](experiments/review-workspace-publication-results.md)
+Latest implementation: [native relationship context and retained conclusions](experiments/review-workspace-basis-results.md)
+restores selected native operand/open-decision facts that the compact packet had
+discarded. Answered conclusions and source now survive for active claims without a
+second proposition action; changed answers/reactivated lookups invalidate their
+draft consumers. A known local mechanism does not close a separate binding question.
+All 118 workspace tests pass. A fresh six-claim packet audit has exact initial-source
+parity and zero real model calls; live quality recovery is still unproven. No new
+model fields or generic prompt paragraph was added.
+
+The earlier [atomic source/receipt publication](experiments/review-workspace-publication-results.md)
 removes one duplicate full native check per newly fetched result while preserving
 freshness at publication and durable spending for rejected results. All 109 workspace
 tests pass; the zero-model Directus benchmark reduces 22 checks to 18 and mean
 two-turn controller execution from 13.309 to 11.202 seconds with exact source/lookup
 and cost parity. This is a targeted overhead improvement, not live model savings or
-full quality recovery. Caller-applicability work remains the next quality milestone;
-many preparation/inference checks remain in place.
+full quality recovery. Many preparation/inference checks remain in place. With both
+initial implementation slices checked offline, the next milestone is a fresh small
+quality comparison against native defaults. Stop adding generic scaffolding before
+that check; confirm and freeze diverse actual native cases rather than repeating
+the unchanged SDK example. The linked context report describes the proposed roles.
 
 Status: the [fresh shared-policy regression](experiments/review-workspace-recovery-results.md)
 is closed with **partial recovery**. In five paired claims/26 observed calls, both
@@ -26,7 +38,8 @@ seconds, despite twelve versus fourteen calls. No paid repair or unknown usage.
 The two independent tasks are to make local mechanism versus required caller
 applicability explicit in review state, and consolidate duplicate native validation
 through an equivalent freshness/publication boundary. The first publication slice
-of the second task is complete offline as above. Do not add another generic
+of the second task and the first context/state slice of the first task are complete
+offline as above. Do not add another generic
 prompt patch or buy an unmodified SDK retry; test compatible/incompatible bindings
 and stale-source/owner/paid-answer behavior offline first. The new run reproduces
 the overhead: 107 state/work checks take 47.887 seconds. Greater budgets, generic
@@ -43,7 +56,10 @@ unused allowance. Do not run a full application.
 
 ### Next implementation milestones and stopping rules
 
-**A. Preserve closure scope, not just a final label.** Inspect the existing claim,
+**A. Preserve closure scope, not just a final label.** The native-context and scoped
+answer-retention slice is implemented at `360529a`, with source-bound packet/state
+tests and the six-claim offline audit. Live model behavior remains the deciding test.
+The implementation uses the existing claim,
 question and proposition-applicability records in `review_workspace.py`, their
 provider rendering in `review_workspace_bridge.py`, and final decision conversion
 in `review_workspace_actions.py`. Reuse those records before adding another state

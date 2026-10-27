@@ -52,6 +52,12 @@ cannot use an older settled verdict while its deciding question is open. This
 preserves known facts and unresolved relationships separately, but still relies on
 the reviewer to establish that a cited fact actually answers the question.
 
+The [context/state verification](experiments/review-workspace-basis-results.md)
+passes 118 workspace tests and a fresh six-claim native-packet audit with identical
+initial source and zero real provider calls. These are delivery/state guarantees;
+the next step is a diverse bounded live quality comparison before more scaffolding
+or the still-unreviewed mixed main wave.
+
 ## Initialize outside the source root
 
 Save a trusted experimental seed as `RUN/seed.json`:
