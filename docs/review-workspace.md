@@ -104,6 +104,14 @@ three cases. Next test a small new related-claim contrast with available source
 metadata, rather than repeating the unchanged Directus case. X's original gate
 remains unchanged.
 
+The [shared-policy contrast AA](experiments/review-workspace-policy-contrast-results.md)
+has now run: both workspace models retrieve shared helpers once, keep configuration
+conditions explicit, close two local claims independently and continue only the
+external claim. Six local case/arm outcomes have supported mechanisms. The external
+fixture has a binding defect and is corrected only in an unrun offline copy; neither
+matching labels nor stable native IDs erase that limitation. Preserve the working
+state behavior and successful cases for a small real-application comparison.
+
 ## Initialize outside the source root
 
 Save a trusted experimental seed as `RUN/seed.json`:

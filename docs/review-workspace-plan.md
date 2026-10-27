@@ -16,7 +16,30 @@ cases only when the change can affect their source basis or behavior. This repla
 the previous requirement to repeat the whole four-case package as the next step;
 it does not change X's original frozen gate or claim broader acceptance.
 
-Latest live result: [Directus surgical follow-up Z](experiments/review-workspace-directus-followup-results.md)
+Latest live result: [shared-policy contrast AA](experiments/review-workspace-policy-contrast-results.md)
+retains six supported local case/arm outcomes. Native Sol uses four calls; Sol and
+Terra medium workspace each use three. Both workspace arms inspect shared helpers
+once, preserve a conditional fact, independently close safe/unsafe configurations
+and continue with only the external claim active. All ten calls have observed
+usage; no controller failure or new runtime/guidance patch occurs. This is a small
+constructed contrast, not a causal grouping win over native's existing shared bundle.
+
+AA's external fixture is unsuitable as a runtime-uncertainty oracle: its literal
+browser entry imports an unmapped bare package. Retain the useful contract question
+without counting agreement as proof of runtime applicability. A separate offline
+copy changes only that entry's import map, with stable native claim IDs and zero
+new model calls. The original study remains immutable; the two local successes
+and X/Z results are not reset. Stable native fingerprints do not cover this ignored
+HTML binding, so keep explicit entry/metadata file hashes in later scope checks.
+
+Next source-audit that exact external binding before using the corrected control,
+and test only the affected case if needed. Move broader evaluation toward a small
+related real-application sample with comparable source assurance. Preserve successful
+cases rather than repeat them automatically. Conditional shared facts and partial
+closure are now supported development behavior; whole-app coverage, mixed-rule
+generalization and controller overhead at real application size remain open.
+
+Previous live result: [Directus surgical follow-up Z](experiments/review-workspace-directus-followup-results.md)
 completes the shared-configuration check in both models and live directory-error
 recovery in Terra. Terra returns the missing scoped negative in five calls; Sol
 completes an explicitly assisted open question in three calls with carried source
@@ -25,15 +48,11 @@ no new runtime/guidance patch or paid repair was needed. The three supported X c
 remain retained. Neither reviewer reads the root version catalog, so the original
 full source profile remains incomplete; preserve this qualification separately.
 
-Next use a small new related-claim contrast (safe control, material unsafe shared
-hook, unresolved binding) with actual native properties and available source
-metadata prepared once. Match and label any assistance in a workflow comparison.
-Test reuse across compatible/incompatible bindings and useful deciding questions;
-do not repeat the unchanged Directus case to collect one omitted catalog lookup.
-Keep current bounded feedback/state behavior. No additional generic prompt patch
-or state subsystem is warranted by Z. Autonomous Sol question discovery, broader
-work-formation coverage and controller overhead remain open measurements. Preserve
-the original mixed main/reserved and full-app scope as separate later decisions.
+That led to AA's new shared-policy contrast above. Its questions are model-generated
+with matched initial metadata and no carried answer/assistance question. Keep the
+current bounded feedback/state behavior. Do not repeat unchanged Directus to collect
+one omitted catalog lookup. Preserve mixed main/reserved and full-app scope as
+separate later decisions.
 
 Previous live result: the [aligned four-claim feedback comparison X](experiments/review-workspace-feedback-results.md)
 is closed with partial confirmation, not package acceptance. All 34 calls have

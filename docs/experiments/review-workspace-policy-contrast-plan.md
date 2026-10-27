@@ -1,6 +1,13 @@
 # Shared policy contrast AA
 
-Status: pre-dispatch design, following the retained results and targeted corrections
+Status: **closed after ten observed calls**. The
+[results](review-workspace-policy-contrast-results.md) retain six supported local
+case/arm outcomes and shared-fact/partial-closure behavior. All nine labels match,
+but the external entrypoint's unmapped bare import invalidates it as a clean
+runtime-uncertainty control. A separate offline copy corrects only that binding;
+no paid repair follows. The design below is preserved as frozen before dispatch.
+
+Original status: pre-dispatch design, following the retained results and targeted corrections
 in [X/Z](review-workspace-directus-followup-results.md). This is a new, deliberately
 constructed source contrast, not unseen application accuracy or whole-app coverage.
 It tests independent verdicts when a common implementation has incompatible
