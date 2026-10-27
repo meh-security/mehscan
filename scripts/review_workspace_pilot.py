@@ -94,6 +94,7 @@ def native_case_limits(design):
 
 def prepare(args):
     design = read(args.design)
+    batch_mode = design.get("batch_mode",False)
     root, private = Path(args.output).resolve(),Path(args.private).resolve()
     source = Path(design["source_pin"]["local_export"]).resolve(strict=True)
     if root.is_relative_to(source) or private.is_relative_to(source) or private.is_relative_to(root):
@@ -103,7 +104,7 @@ def prepare(args):
     package = root / "package"
     (package / "scripts").mkdir(parents=True)
     product = Path(__file__).resolve().parents[1]
-    for name in ("review_workspace_pilot.py","review_workspace_bridge.py","review_workspace_actions.py","review_workspace.py","review_workspace_notebook.py","review_workspace_routes.py","review_workspace_planner.py","review_workspace_evidence.py",
+    for name in ("review_workspace_pilot.py","review_workspace_batch_comparison.py","review_workspace_bridge.py","review_workspace_actions.py","review_workspace.py","review_workspace_notebook.py","review_workspace_routes.py","review_workspace_planner.py","review_workspace_evidence.py",
                  "review_worker.py","review_context.py","review_orchestration.py","review_trace.py","review_export.py"):
         shutil.copyfile(product / "scripts" / name,package / "scripts" / name)
     shutil.copytree(product / "skills/mehscan-security",package / "skills/mehscan-security",
@@ -150,7 +151,7 @@ def prepare(args):
                       "--research-rounds",str(case["rounds"]),"--research-queries",str(case["queries"]),
                       "--research-bytes",str(case["bytes"]),"--timeout",str(case["timeout_seconds"]))
         plan["selected_review_ids"] = selected
-        plan["deferred_review_ids"] = {e["review_id"]:"Outside the frozen 12-claim workspace pilot" for e in inv["entries"] if e["review_id"] not in selected}
+        plan["deferred_review_ids"] = {e["review_id"]:"Outside the frozen workspace comparison selection" for e in inv["entries"] if e["review_id"] not in selected}
         worker.write(output / "plan.json",plan)
         native("state","plan",*common,"--input",str(output / "plan.json"),"--operation-key","plan")
         work = native("state","work",*common,"--review-ids",",".join(selected))
@@ -160,33 +161,38 @@ def prepare(args):
                 "directory":str(output / "workspace"),"config":str(secret / "config.json"),"command":str(secret / "command.json")}
         setup["arms"][arm] = opts
         if arm == "control":
+            bundle_options = [] if batch_mode else ["--max-reviews","1"]
             native("investigate","review-bundles",str(source),"--inventory",str(inventory),"--review-ids",",".join(selected),
-                   "--max-reviews","1","--output",str(output / "bundles"))
+                   *bundle_options,"--output",str(output / "bundles"))
         else:
-            exp = {**design["per_arm_experiment"],"protocol":"workspace-actions-v2","bundle_max_reviews":1,
+            exp = {**design["per_arm_experiment"],"protocol":"workspace-actions-v2",
                    "prepare_application":True,"max_received_query_bytes":design["per_arm_limits"]["source_bytes"]}
+            if not batch_mode:
+                exp["bundle_max_reviews"] = 1
             bridge = NativeWorkspace.create(Namespace(**opts),design["per_arm_limits"],exp)
-            ids = list(selected)
-            for i,claim_id in enumerate(ids):
-                work_id = "claim-" + str(i)
-                bridge.apply("split:" + claim_id,{"kind":"split","work_id":"initial","new_work_id":work_id,
-                    "review_ids":[claim_id],"strategy":"selected-relationship"})
-                bridge.apply("focus:" + claim_id,{"kind":"focus","work_id":work_id,
-                    "evidence_ids":bridge.metadata["initial_evidence"][claim_id],"proposition_ids":[]})
+            groups = ([{"id":"bundle-"+key,"review_ids":bundle["review_ids"]} for key,bundle in bridge.metadata["bundles"].items()]
+                      if batch_mode else [{"id":"claim-"+str(i),"review_ids":[rid]} for i,rid in enumerate(selected)])
+            for group in groups:
+                work_id,ids = group["id"],group["review_ids"]
+                bridge.apply("split:" + work_id,{"kind":"split","work_id":"initial","new_work_id":work_id,
+                    "review_ids":ids,"strategy":"native-bundle batch; independent claims" if batch_mode else "selected-relationship"})
+                bridge.apply("focus:" + work_id,{"kind":"focus","work_id":work_id,
+                    "evidence_ids":sorted({eid for rid in ids for eid in bridge.metadata["initial_evidence"][rid]}),"proposition_ids":[]})
     # Verify actual line content, including native application-policy preparation.
     parity = {}
     control_run = root / "control/bundles"
     manifest = read(control_run / "manifest.json")
     for bundle in manifest["bundles"]:
-        claim_id = bundle["review_ids"][0]
+        claim_id = bundle["bundle_fingerprint"] if batch_mode else bundle["review_ids"][0]
         sweep = native("investigate","review-sweep","--bundle",str(control_run / "requests" / bundle["filename"]))
         app = context.prepare_application(source,sweep,{},bridge.payload["snapshot_id"])
         expected = canonical_windows([*sweep["source_contexts"],*app["windows"]])
         evidence = bridge.workspace.snapshot()["evidence"]
-        actual = canonical_windows([evidence[k] for k in bridge.metadata["initial_evidence"][claim_id]])
+        expected_ids = sorted({eid for rid in bundle["review_ids"] for eid in bridge.metadata["initial_evidence"][rid]})
+        actual = canonical_windows([evidence[k] for k in expected_ids])
         if actual != expected:
             raise ValueError("initial source parity failed for " + claim_id)
-        parity[claim_id] = {"windows":expected,"sha256":identity(expected),"bytes":sum(len(w["text"].encode()) for w in expected)}
+        parity[claim_id] = {"windows":expected,"sha256":identity(expected),"bytes":sum(len(w["text"].encode()) for w in expected),"review_ids":bundle["review_ids"]}
     worker.write(root / "initial-evidence.json",parity)
     worker.write(root / "setup.json",setup)
     worker.write(root / "design.json",design)
@@ -203,8 +209,10 @@ def prepare(args):
                "source_fingerprint":inv["identity_catalog"]["source_fingerprint"],"inventory_input_fingerprint":inv["input_fingerprint"],
                "files":{str(p.relative_to(root)).replace("\\","/"):worker.digest_file(p) for p in files},
                "source_parity":"Same returned line ranges and canonical UTF-8 line bytes; CRLF and reader terminal newline normalized. Source-table AST endpoints are not treated as extra source lines. Packet formatting differs.",
-               "byte_policy":"Both arms count every received/reused result JSON using ensure_ascii=False, including guidance/navigation. Global 1.5MiB and native per-claim 128KiB. Unique source bytes additionally tracked in workspace.",
-               "case_policy":"Maximum 4 calls and 12 query units per claim; same native runtime. Global limits remain binding.","selected_claims":selected}
+               "byte_policy":("Both arms count every received/reused result JSON with ensure_ascii=False; 512KiB per matched bundle, configured aggregate source/received-byte ceiling. Workspace additionally tracks unique captured source."
+                              if batch_mode else "Both arms count every received/reused result JSON using ensure_ascii=False, including guidance/navigation. Global 1.5MiB and native per-claim 128KiB. Unique source bytes additionally tracked in workspace."),
+               "case_policy":("Matched native bundle membership/default maximum 20; 6 calls, 24 query units and 512KiB received JSON per bundle in both arms. Global limits remain binding."
+                              if batch_mode else "Maximum 4 calls and 12 query units per claim; same native runtime. Global limits remain binding."),"selected_claims":selected}
     worker.write(root / "run-binding.json",binding)
     return {"prepared":True,"directory":str(root),"claims":len(selected),"model_calls":0,"provider":descriptor}
 
@@ -224,7 +232,7 @@ def run_control(root):
     execution = begin_execution(root,"control")
     opts = setup["arms"]["control"]
     output = root / "control/worker"
-    budget = {"reserved_calls":0,"queries":0,"started_epoch":execution["started_epoch"]}
+    budget = {"reserved_calls":0,"queries":0,"started_epoch":execution["started_epoch"],"bundle_calls":{}}
     command = read(opts["command"])
     original = worker.execute
     parity = read(root / "initial-evidence.json")
@@ -241,15 +249,21 @@ def run_control(root):
         remaining = design["per_arm_experiment"]["max_elapsed_seconds"] - elapsed
         if remaining <= 0: raise ValueError("ordinary pilot deadline reached")
         task = json.loads(payload)
+        batch_key = "|".join(sorted(task["review_ids"]))
+        if design.get("batch_mode") and budget["bundle_calls"].get(batch_key,0)>=6:
+            raise ValueError("ordinary matched six-call bundle allowance reached")
         if task["research"]["round"] == 0:
             packet = read(task["evidence_packet"])
-            if len(task["review_ids"]) != 1 or identity(ordinary_windows(packet)) != parity[task["review_ids"][0]]["sha256"]:
+            matches = [p for p in parity.values() if set(p.get("review_ids",[]))==set(task["review_ids"])]
+            expected = matches[0] if design.get("batch_mode") and len(matches)==1 else parity.get(task["review_ids"][0])
+            if not expected or identity(ordinary_windows(packet)) != expected["sha256"]:
                 raise ValueError("actual ordinary context differs from frozen source parity receipt")
         rows = [json.loads(s) for s in (output / "research.jsonl").read_text().splitlines()] if (output / "research.jsonl").exists() else []
         received = sum(len(json.dumps(r["result"],ensure_ascii=False).encode()) for r in rows)
         if received >= design["per_arm_limits"]["source_bytes"]:
             raise ValueError("ordinary aggregate received-byte ceiling reached")
         budget["reserved_calls"] += 1
+        budget["bundle_calls"][batch_key] = budget["bundle_calls"].get(batch_key,0)+1
         worker.write(root / "control/budget.json",{**budget,"usage":usage,"received_query_bytes":received})
         value = original(argv,cwd,env,min(timeout,remaining),payload)
         units = worker.research_cost(value.get("research",[]))

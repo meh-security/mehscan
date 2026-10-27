@@ -189,6 +189,10 @@ class NativeEvidencePreparationTests(unittest.TestCase):
         self.assertEqual(len(view["deciding_evidence"]), 1)
         self.assertEqual(recovered.workspace.snapshot()["calls"], {})
         self.assertEqual(recovered.workspace.snapshot()["sessions"], {})
+        session = recovered.prepare("initial",fixture.config_path,"evidence-context")["session_id"]
+        packet = fixtures.read(recovered.directory/"sessions"/session/"context.json")
+        self.assertEqual(packet["workspace_evidence"]["deciding_evidence"],view["deciding_evidence"])
+        self.assertEqual(recovered.workspace.snapshot()["calls"], {})
 
 
 if __name__ == "__main__":

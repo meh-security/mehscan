@@ -309,6 +309,7 @@ class NativeWorkspace:
                       "work":context.compact_work(self.payload,ids),"native_questions":entries,
                       "primary":{"windows":windows,"limits":view["preparation_limits"]},
                       "workspace_evidence":{"propositions":view["propositions"],"applicability":view["applicability"],
+                                            "deciding_evidence":view["deciding_evidence"],
                                             "questions":view["questions"],"authority":view["authority"]}}
             mode = self.metadata["experiment"].get("protocol","checkpoint")
             if mode == actions.VERSION:
