@@ -313,7 +313,8 @@ class NativeWorkspace:
                                             "questions":view["questions"],"authority":view["authority"]}}
             mode = self.metadata["experiment"].get("protocol","checkpoint")
             if mode == actions.VERSION:
-                packet.update(workspace_protocol=mode,contract={"version":mode,"sources":[]},
+                packet.update(workspace_protocol=mode,contract={"version":mode,"sources":[
+                    context.sections(self.skill / "references/runtime-review.md",["api_semantics"])]},
                               work={"runtime":self.runtime,"review_ids":ids,"policy":self.payload["policy"]})
                 packet["workspace_evidence"]["lookups"] = view["lookups"]
                 packet["workspace_guidance"] = list(view["guidance"].values())

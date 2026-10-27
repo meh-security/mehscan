@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import sys
 import unittest
+import tempfile
+from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import test_codex as fixtures
@@ -58,6 +60,28 @@ class WorkspaceProtocolTests(unittest.TestCase):
             "decisions":[{"review_id":"one","decision":"not_issue"}]}
         result = self.run_reply(response)["workspace_actions"]
         self.assertNotIn("path",result["lookups"][0]["queries"][0]["arguments"])
+
+    def test_compact_prompt_preserves_canonical_api_policy_without_procedural_envelope(self):
+        response={"updates":[{"kind":"question","question_id":"q","review_ids":["one"],"question":"Which contract applies?"}],"lookups":[],"decisions":[]}
+        self.run_reply(response)
+        prompt=self.fixture.calls[0][0]
+        policy=workspace.shared_api_semantics()
+        raw=(workspace.ordinary.REFERENCES/"runtime-review.md").read_text(encoding="utf-8")
+        common=raw.split("<!-- runtime:common -->",1)[1].split("<!-- /runtime:common -->",1)[0]
+        self.assertIn(policy,common)
+        self.assertEqual(prompt.count(policy),1)
+        self.assertIn("actual import, relevant",policy)
+        self.assertIn("custom schemas/hooks",policy)
+        self.assertIn("genuinely unknown deciding contract unresolved",policy)
+        self.assertNotIn("OLD PROCEDURAL BOOKKEEPING SENTINEL",prompt)
+
+    def test_missing_or_duplicate_bound_policy_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"runtime-review.md"
+            for text in ("missing", "<!-- runtime:api_semantics -->x<!-- runtime:api_semantics --><!-- /runtime:api_semantics -->"):
+                path.write_text(text,encoding="utf-8")
+                with patch.object(workspace.ordinary,"REFERENCES",Path(directory)),self.assertRaises(ValueError):
+                    workspace.shared_api_semantics()
 
     def test_privileged_updates_unknown_proof_and_same_claim_lookup_decision_are_rejected(self):
         base = {"updates":[],"lookups":[],"decisions":[]}

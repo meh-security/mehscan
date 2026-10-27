@@ -1,8 +1,10 @@
 # Native buckets versus persistent batches — frozen comparison
 
-Status: prepared for the eight-claim safety wave. The sixteen remaining claims
-are prepared but gated on its source-quality audit. Eight further claims are
-reserved and receive no review in this study. This is the broader package test
+Status: [closed after the safety wave failed its source-quality gate](review-workspace-batch-results.md).
+Eight paired claims completed in 62 observed provider calls. The sixteen main
+claims and eight reserved claims received no model review. The original design
+below is preserved; its unused allowance is not an automatic recovery budget.
+This is the broader package test
 following the [work-formation diagnostic](review-work-formation-results.md), not
 another helper-only or singleton/group-count comparison.
 

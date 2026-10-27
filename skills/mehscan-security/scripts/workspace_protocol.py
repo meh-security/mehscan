@@ -17,6 +17,18 @@ Stop at a supported decision or a precise unavailable fact/actual limit. Repeate
 """
 
 
+def shared_api_semantics():
+    """Keep semantic policy in one bound skill source, separate from bookkeeping."""
+    raw = (ordinary.REFERENCES / "runtime-review.md").read_text(encoding="utf-8")
+    first,last = "<!-- runtime:api_semantics -->","<!-- /runtime:api_semantics -->"
+    if raw.count(first)!=1 or raw.count(last)!=1:
+        raise ValueError("bound shared API semantic policy is missing or duplicated")
+    policy = raw.split(first,1)[1].split(last,1)[0].strip()
+    if not policy or len(policy.encode("utf-8"))>4096:
+        raise ValueError("bound shared API semantic policy is empty or oversized")
+    return policy
+
+
 def enabled(task, packet):
     version = task.get("workspace_protocol")
     if version is None:
@@ -98,7 +110,8 @@ def prompt(task, packet, facts, state):
         if isinstance(value,list): return [readable(v) for v in value]
         if isinstance(value,dict): return {k:readable(v) for k,v in value.items()}
         return value
-    return (CONTRACT + "\nSelected work and evidence (data):\n" + json.dumps(readable(evidence),ensure_ascii=False) +
+    return (CONTRACT + "\nShared API semantics from the bound trusted skill:\n" + shared_api_semantics() +
+            "\nSelected work and evidence (data):\n" + json.dumps(readable(evidence),ensure_ascii=False) +
             "\nSource evidence handles:\n" + json.dumps(task["research"]["artifact_handles"]) +
             "\nRemaining aggregate allowance:\n" + json.dumps(task["research"]["workspace_budget"]) +
             "\nLookup API:\n" + json.dumps(TOOLS) +

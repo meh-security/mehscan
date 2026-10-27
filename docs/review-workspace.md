@@ -592,3 +592,12 @@ It follows explicit relative imports in known registration chains, preserves
 arguments/wrapper source and reports unsupported bindings. Offline matched
 preparation measures the added source/context and lookup costs; no new live
 savings or dependency contract is claimed.
+
+The subsequent [matched native-bucket comparison](experiments/review-workspace-batch-results.md)
+completed only its eight-claim safety wave: 32 native versus 30 workspace calls,
+with one supported conditional finding unresolved in workspace and slower active
+execution despite lower input. The main sixteen/reserved eight claims remain
+unreviewed. A lost common API-policy delivery paragraph is restored from the same
+bound semantic source and tested offline; live recovery remains unproven.
+Trace data also identifies repeated native state/work validation as substantial
+controller overhead. The failed study stays closed; native defaults are unchanged.

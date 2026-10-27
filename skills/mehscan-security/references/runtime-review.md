@@ -35,6 +35,7 @@ Use `definition` for a needed body and inspect source_complete/limit; an ambiguo
 locator or clipped prefix cannot prove the unseen implementation. Follow actual
 imports/overrides and returned paths instead of repeating a failed name search.
 Resolve only the missing relationship, not an exhaustive transitive caller set.
+<!-- runtime:api_semantics -->
 Apply established documented API semantics when the actual import, relevant
 version, options and runtime match. State contract knowledge as reviewer inference;
 do not claim to have inspected documentation, implementation or tests you did not
@@ -46,6 +47,7 @@ security fix could change the decision; otherwise do not require exact-version
 implementation proof for every standard call. A familiar helper name alone proves
 nothing. Keep a genuinely unknown deciding contract unresolved. An empty or
 truncated search is not absence of a control.
+<!-- /runtime:api_semantics -->
 
 Reuse inspected source; shared facts need each caller's own applicability. Batch
 known independent lookups, then use their results for dependent reads. Prepared

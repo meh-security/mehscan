@@ -1,12 +1,24 @@
 # Persistent review workspace implementation plan
 
-Status: the [cross-app work-formation diagnostic](experiments/review-work-formation-results.md)
+Status: the [broader comparison stopped at its failed safety gate](experiments/review-workspace-batch-results.md).
+Native control retained five findings/three scoped negatives; workspace retained
+four findings/three negatives/one unresolved question. All 62 calls have observed
+usage. Workspace input is lower but active execution is slower. The sixteen
+prepared main claims and eight reserved claims remain unreviewed. A common
+API-semantic policy was omitted by the compact prompt; an offline canonical
+delivery fix is tested, but no live recovery is claimed. Next verify that
+correction with unsafe/unknown controls and address measured duplicate native
+validation (255 state/work calls / 91.641 seconds), then refreeze mixed batches.
+Do not resume the closed study or run a full application.
+
+The [cross-app work-formation diagnostic](experiments/review-work-formation-results.md)
 is complete: eight operations/twelve claims outside workspace tuning, three AI
 calls and source-adjudicated operation/dependency proposals. Useful relationships
 extend beyond the deterministic path, but six proposed research containers are
 not six verified operation groups or demonstrated savings. The next step is the
 roughly 24-claim native-default versus batch-first workspace package comparison,
-with eight reserved confirmation claims. A separate AI planner remains optional.
+with eight reserved confirmation claims. That attempted package's safety wave is
+now closed as above. A separate AI planner remains optional.
 
 The [breadth reassessment](experiments/review-workspace-breadth-reassessment.md)
 governs that wider validation; dependency contracts and a

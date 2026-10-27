@@ -57,6 +57,18 @@ class WorkspaceActionTests(unittest.TestCase):
         eid = next(w["artifact_id"] for w in packet["primary"]["windows"] if w["path"] == path)
         return next(k for k,v in task["research"]["artifact_handles"].items() if v == eid)
 
+    def test_v2_provider_packet_delivers_bound_common_api_policy_without_bookkeeping(self):
+        ids=list(self.bridge.workspace.snapshot()["claims"])
+        self.turn("semantic-policy",lambda task,packet:{"updates":[{"kind":"question","question_id":"selected-question",
+            "review_ids":ids,"question":"Which selected relationship remains to be established?"}],"lookups":[],"decisions":[]})
+        packet=self.calls[0]["packet"]
+        sources=packet["contract"]["sources"]
+        self.assertEqual(len(sources),1)
+        self.assertEqual(sources[0]["sections"],["api_semantics"])
+        self.assertIn("Apply established documented API semantics",sources[0]["text"])
+        self.assertEqual(self.calls[0]["prompt"].count(sources[0]["text"]),1)
+        self.assertNotIn("Operator commands",sources[0]["text"])
+
     def test_partial_closure_lookup_learning_and_cross_work_knowledge_reuse(self):
         state = self.bridge.workspace.snapshot()
         ordered = sorted(state["claims"].values(),key=lambda c:c["line"])
