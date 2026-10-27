@@ -58,6 +58,15 @@ initial source and zero real provider calls. These are delivery/state guarantees
 the next step is a diverse bounded live quality comparison before more scaffolding
 or the still-unreviewed mixed main wave.
 
+The [subsequent live comparison and Terra 6.1 medium run](experiments/review-workspace-context-results.md)
+used twenty observed calls but both workspace studies stopped on invalid directory
+values in file filters. Terra finalized canonical logout as a scoped negative and
+kept SAML authorization unresolved, with a separate local-revocation lead. The
+frozen expected SAML issue has a claim-scope ambiguity and cannot establish a model
+ranking from verdict agreement. Both studies remain closed; next address bounded
+lookup-error feedback and oracle alignment before a fresh comparison. The state
+and publication unit tests remain valid offline evidence, not live quality acceptance.
+
 ## Initialize outside the source root
 
 Save a trusted experimental seed as `RUN/seed.json`:

@@ -6,7 +6,28 @@ abandon it. The subsequent "Next" resumes implementation and bounded offline
 experiments. Ordinary native review remains the current operational path; preserve
 all raw results and use a fresh freeze for any later mixed-batch comparison.
 
-Latest implementation: [native relationship context and retained conclusions](experiments/review-workspace-basis-results.md)
+Latest live result: [V and the requested Terra 6.1 medium run](experiments/review-workspace-context-results.md)
+are closed after file/directory lookup-filter errors. Sol native completes three
+Directus claims in ten calls; Sol workspace stops after three calls/no dispositions.
+An independent fresh Terra run uses seven calls and finalizes two dispositions
+before its YAML lookup fails. All twenty paid calls have observed usage; no runtime
+repair/retry occurred. Neither comparison completes the six-case package.
+
+Source audit also finds a SAML oracle/claim-scope ambiguity: the expected local
+credential-revocation issue is attached to an authorization marker highlighting
+IdP request construction. Terra retains that authorization uncertainty and a
+separate unreviewed revocation lead. Do not score it as a proven authorization
+false negative or treat native verdict agreement as ground truth; an unreviewed
+lead is also not a classified finding. Original expectations/costs remain preserved.
+
+Next implement bounded lookup-error feedback with unchanged source/ownership and
+spending guarantees, and re-audit native claim/property alignment before another
+fresh small quality comparison. Do not append more generic prompt warnings or
+silently convert an unsupported filter. Retain the requested Terra medium variant
+as supplementary model evidence, separate from the primary same-model comparison.
+V/VT unused ceilings do not authorize repairs or broader dispatch.
+
+The latest implementation, [native relationship context and retained conclusions](experiments/review-workspace-basis-results.md),
 restores selected native operand/open-decision facts that the compact packet had
 discarded. Answered conclusions and source now survive for active claims without a
 second proposition action; changed answers/reactivated lookups invalidate their
@@ -27,7 +48,7 @@ quality comparison against native defaults. Stop adding generic scaffolding befo
 that check; confirm and freeze diverse actual native cases rather than repeating
 the unchanged SDK example. The linked context report describes the proposed roles.
 
-Status: the [fresh shared-policy regression](experiments/review-workspace-recovery-results.md)
+Earlier live status: the [fresh shared-policy regression](experiments/review-workspace-recovery-results.md)
 is closed with **partial recovery**. In five paired claims/26 observed calls, both
 arms retain three findings, one scoped negative and one actionable unknown. The
 workspace now emits the conditional SDK finding, but does not read its authority

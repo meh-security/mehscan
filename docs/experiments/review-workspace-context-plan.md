@@ -11,8 +11,12 @@ uses the same six cases, unchanged controller/skill, Terra 6.1 medium and the sa
 per-bundle limits. It prepares independent native stores/packages before dispatch;
 V's unused Terra states are not resumed. VT has four bundles/24 calls maximum if
 membership remains the same, runs Directus/owner-control/HTML-controls serially,
-and stops on a controller/tool failure or unknown usage. It is supplementary model
-evidence, not a repaired Sol comparison or proof of isolated workflow improvement.
+and stops on a controller/tool failure or unknown usage. VT is now also closed:
+seven observed Terra calls, two finalized logout dispositions, then a rejected YAML
+directory filter. Source audit identifies a SAML oracle/claim-scope ambiguity; the
+original expectations below remain preserved rather than silently rescored. See
+the [combined results](review-workspace-context-results.md). This is supplementary
+model evidence, not a repaired Sol comparison or proof of isolated workflow improvement.
 
 This live development comparison follows the offline context/state
 and publication checks. Closed R/S/T/U stores are not resumed.
