@@ -148,10 +148,10 @@ class NativeWorkspace:
             if fresh:
                 self.check()
 
-    def apply(self, key, action):
+    def apply(self, key, action, *, before_commit=None):
         previous = self.workspace.operation(key)
         revision = previous["request"]["revision"] if previous else self.workspace.snapshot()["revision"]
-        return self.workspace.apply(key, revision, action)["result"]
+        return self.workspace.apply(key, revision, action, before_commit=before_commit)["result"]
 
     @classmethod
     def create(cls, args, limits, experiment):

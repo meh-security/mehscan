@@ -159,18 +159,71 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(state["used"]["source_bytes"], len(state["evidence"][key]["text"].encode()))
 
     def test_native_source_import_never_expands_truncated_or_mismatched_receipts(self):
-        outer = self
-        class Bridge:
-            workspace = outer.workspace
-            def apply(self,key,action):
-                return outer.workspace.apply(key,outer.workspace.snapshot()["revision"],action)["result"]
-        query = {"review_id":"safe"}
+        query = {"tool":"source","review_id":"safe","arguments":{}}
         result = {"operation":"get_source","results":{"location":{"path":"routes.ts"},
                   "line_range":{"start_line":1,"end_line":1},"text":"shorter than the actual source"}}
+        self.assertIsNone(actions._source_capture(query,{**result,"truncated":True},1))
+        self.apply("question",question_id="q",review_ids=["safe"],question="What source decides this?")
+        self.apply("lookup_request",lookup_id="q0",question_id="q",query=query,units=1)
         before = self.workspace.snapshot()
-        self.assertEqual(actions._source(Bridge(),query,{**result,"truncated":True},"truncated",1),[])
         with self.assertRaisesRegex(ValueError,"does not match"):
-            actions._source(Bridge(),query,result,"mismatch",1)
+            self.apply("lookup_capture",capture=actions._source_capture(query,result,1),receipt={
+                "kind":"lookup_result","lookup_id":"q0","question_id":"q","query":query,
+                "result":result,"evidence":[],"native_query_count":1,"reused_from":None})
+        self.assertEqual(self.workspace.snapshot(),before)
+
+    def test_lookup_publication_fence_rolls_back_source_but_retains_observed_cost(self):
+        query = {"tool":"source","review_id":"safe","arguments":{}}
+        result = {"operation":"get_source","results":{"location":{"path":"routes.ts"},
+                  "line_range":{"start_line":1,"end_line":1},"text":self.code.read_text().splitlines()[0]}}
+        self.apply("question",question_id="q",review_ids=["safe"],question="What source decides this?")
+        self.apply("lookup_request",lookup_id="q0",question_id="q",query=query,units=1)
+        size = len(json.dumps(result,ensure_ascii=False).encode("utf-8"))
+        self.apply("lookup_observed",lookup_id="q0",received_bytes=size)
+        # A second accounting receipt cannot charge the same observation again.
+        self.apply("lookup_observed",lookup_id="q0",received_bytes=size)
+        before = self.workspace.snapshot()
+        action = {"kind":"lookup_capture","capture":actions._source_capture(query,result,1),"receipt":{
+            "kind":"lookup_result","lookup_id":"q0","question_id":"q","query":query,
+            "result":result,"evidence":[],"native_query_count":1,"reused_from":None}}
+        fences = []
+        def stale():
+            # Other readers see neither staged evidence nor a completed receipt.
+            self.assertEqual(self.workspace.snapshot(),before)
+            raise ValueError("native owner/source changed")
+        with self.assertRaisesRegex(ValueError,"owner/source changed"):
+            self.workspace.apply("publish",before["revision"],action,before_commit=stale)
+        self.assertEqual(self.workspace.snapshot(),before)
+        self.assertIsNone(self.workspace.operation("publish"))
+        self.assertEqual(before["received_query_bytes"],size)
+        self.assertEqual(before["used"]["queries"],1)
+        def fresh():
+            self.assertEqual(self.workspace.snapshot(),before)
+            fences.append("fresh")
+        published = self.workspace.apply("publish",before["revision"],action,before_commit=fresh)
+        after = self.workspace.snapshot()
+        self.assertEqual(len(after["evidence"]),1)
+        self.assertEqual(after["lookups"]["q0"]["status"],"complete")
+        self.assertEqual(after["received_query_bytes"],size)
+        self.assertEqual(after["lookups"]["q0"]["evidence"],published["result"]["evidence"])
+        self.workspace.apply("publish",before["revision"],action,before_commit=lambda:fences.append("replay"))
+        self.assertEqual(fences,["fresh","replay"])
+        with self.assertRaisesRegex(ValueError,"replay stale"):
+            self.workspace.apply("publish",before["revision"],action,
+                before_commit=lambda:(_ for _ in ()).throw(ValueError("replay stale")))
+        self.assertEqual(self.workspace.snapshot(),after)
+
+    def test_lookup_observation_cannot_be_revised_or_mismatched_by_publication(self):
+        query = {"tool":"paths","review_id":"safe","arguments":{}}
+        self.apply("question",question_id="q",review_ids=["safe"],question="Which source decides this?")
+        self.apply("lookup_request",lookup_id="q0",question_id="q",query=query,units=1)
+        self.apply("lookup_observed",lookup_id="q0",received_bytes=4)
+        before = self.workspace.snapshot()
+        with self.assertRaisesRegex(ValueError,"differs from recorded"):
+            self.apply("lookup_observed",lookup_id="q0",received_bytes=5)
+        with self.assertRaisesRegex(ValueError,"differs from observed"):
+            self.apply("lookup_result",lookup_id="q0",question_id="q",query=query,result={},
+                       evidence=[],native_query_count=1,reused_from=None)
         self.assertEqual(self.workspace.snapshot(),before)
 
     def test_known_safe_and_unsafe_callers_reuse_implementation_without_shared_verdict(self):

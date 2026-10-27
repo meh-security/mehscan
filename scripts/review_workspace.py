@@ -143,7 +143,13 @@ class Workspace:
             row = db.execute("SELECT request, response FROM receipts WHERE key=?", (operation_key,)).fetchone()
             return None if row is None else {"request":json.loads(row[0]),"response":json.loads(row[1])}
 
-    def apply(self, operation_key, expected_revision, action):
+    def apply(self, operation_key, expected_revision, action, *, before_commit=None):
+        """Optionally fence staged state before publication, including receipt replay.
+
+        The trusted controller supplies the callback, never model action data.
+        It may read committed workspace state but must not write this workspace.
+        A failed fence rolls back interpretations, not separately reserved costs.
+        """
         label(operation_key)
         number(expected_revision)
         request = encoded({"revision":expected_revision, "action":action})
@@ -156,6 +162,8 @@ class Workspace:
             if old:
                 if old[0] != request:
                     raise ValueError("operation key reused for different input")
+                if before_commit is not None:
+                    before_commit()
                 return {**json.loads(old[1]), "replayed":True}
             if expected_revision != state["revision"]:
                 raise ValueError("stale workspace revision")
@@ -163,6 +171,8 @@ class Workspace:
             state["revision"] += 1
             receipt = {"revision":state["revision"], "result":result, "replayed":False,
                        "native_admission":False}
+            if before_commit is not None:
+                before_commit()
             db.execute("UPDATE workspace SET body=? WHERE id=1", (encoded(state),))
             db.execute("INSERT INTO receipts VALUES (?, ?, ?)", (operation_key, request, encoded(receipt)))
             return receipt
@@ -451,6 +461,39 @@ class Workspace:
             if any(not isinstance(a,dict) or a.get("kind") not in permitted for a in action["updates"]):
                 raise ValueError("interpretation updates cannot invoke privileged workspace operations")
             return [self._action(state,a,operation_key) for a in action["updates"]]
+        if kind == "lookup_observed":
+            shape(action,("kind","lookup_id","received_bytes"))
+            previous = state["lookups"][label(action["lookup_id"])]
+            size = number(action["received_bytes"])
+            if "received_bytes" in previous:
+                if previous["received_bytes"] != size:
+                    raise ValueError("lookup observation differs from recorded spending")
+            elif previous["status"] != "reserved":
+                raise ValueError("lookup observation requires a reserved query")
+            else:
+                previous["received_bytes"] = size
+                state["received_query_bytes"] += size
+            return {"lookup_id":action["lookup_id"],"received_bytes":size}
+        if kind == "lookup_capture":
+            shape(action,("kind","receipt","capture"))
+            receipt = copy.deepcopy(action["receipt"])
+            if receipt.get("kind") != "lookup_result":
+                raise ValueError("lookup capture requires a result receipt")
+            if action["capture"] is not None:
+                capture = action["capture"]
+                shape(capture,("action","text_sha256"))
+                if (capture["action"].get("kind") != "source" or receipt["evidence"] or
+                        receipt["reused_from"] is not None or
+                        capture["action"].get("review_id") != receipt["query"]["review_id"]):
+                    raise ValueError("invalid lookup source capture")
+                evidence = self._action(state,capture["action"],operation_key)["evidence_id"]
+                if hashlib.sha256(state["evidence"][evidence]["text"].encode("utf-8")).hexdigest() != capture["text_sha256"]:
+                    raise ValueError("native source receipt does not match captured bytes")
+                receipt["evidence"] = [evidence]
+            if receipt["evidence"]:
+                self._evidence(state,receipt["evidence"])
+            self._action(state,receipt,operation_key)
+            return {"lookup_id":receipt["lookup_id"],"evidence":receipt["evidence"]}
         if kind == "lookup_result":
             shape(action, ("kind","lookup_id","question_id","query","result","evidence","native_query_count","reused_from"))
             key = label(action["lookup_id"])
@@ -465,13 +508,20 @@ class Workspace:
             number(action["native_query_count"])
             if action["reused_from"] is not None and action["reused_from"] not in state["lookups"]:
                 raise ValueError("unknown lookup reuse origin")
+            size = len(json.dumps(action["result"],ensure_ascii=False).encode("utf-8"))
+            observed = previous.get("received_bytes") if previous else None
+            if observed is not None and observed != size:
+                raise ValueError("lookup receipt differs from observed byte spending")
             state["lookups"][key] = {k:v for k,v in action.items() if k not in ("kind","lookup_id")}
+            if observed is not None:
+                state["lookups"][key]["received_bytes"] = observed
             if previous and "requested_question" in previous:
                 state["lookups"][key]["requested_question"] = previous["requested_question"]
             state["lookups"][key].update(status="complete",sequence=state["revision"] + 1)
             # Match ordinary worker accounting: every received/reused result JSON
             # counts, separately from unique captured source and actual native I/O.
-            state["received_query_bytes"] += len(json.dumps(action["result"],ensure_ascii=False).encode("utf-8"))
+            if observed is None:
+                state["received_query_bytes"] += size
             return {"lookup_id":key}
         if kind == "lookup_request":
             shape(action,("kind","lookup_id","question_id","query","units"),("requested_question",))

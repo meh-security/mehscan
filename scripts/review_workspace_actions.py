@@ -1,5 +1,7 @@
 """Controller execution of compact reviewer changes and deciding lookups."""
 import copy
+import hashlib
+import json
 import time
 
 import review_context as context
@@ -69,23 +71,19 @@ def native_decision(result, state):
     return {**result,"checks":checks,"blockers":blockers}
 
 
-def _source(bridge, query, result, key, native_count):
+def _source_capture(query, result, native_count):
+    """Stage a source expectation; read/publish only in the fenced transaction."""
     value = result.get("source") if result.get("operation") == "get_definition" else result
     if not value or value.get("operation") not in ("get_source","prepared_source") or value.get("truncated"):
-        return []
+        return None
     body = value["results"]
     lines, path = body["line_range"], body["location"]["path"]
     action = {"kind":"source","path":path,
         "start_line":lines["start_line"],"end_line":lines["end_line"],"review_id":query["review_id"],
         "origin":{"kind":"native_lookup" if native_count else "workspace_preparation",
                   "review_id":query["review_id"],"native_query_count":native_count}}
-    preview = bridge.workspace.preview(action)
-    captured = next(e for e in preview["evidence"].values() if e["path"] == path and
-                    e["start_line"] == lines["start_line"] and e["end_line"] == lines["end_line"] and not e.get("fragment"))
-    if captured["text"] != "\n".join(context.source_lines(body["text"])):
-        raise ValueError("native source receipt does not match captured bytes")
-    evidence = bridge.apply("source:" + key,action)["evidence_id"]
-    return [evidence]
+    text = "\n".join(context.source_lines(body["text"]))
+    return {"action":action,"text_sha256":hashlib.sha256(text.encode("utf-8")).hexdigest()}
 
 
 def _lookup(bridge, query, arguments, key):
@@ -135,8 +133,8 @@ def _lookup(bridge, query, arguments, key):
                 api=context.research_api(bridge.skill),guidance=context.guidance_catalog(bridge.skill))
             return execute(child,args)
         result = worker.definition_result(result,read_source)
-    bridge.check()  # A native receipt cannot cross a source/plan/owner change.
-    return result,_source(bridge,query,result,key,count),count,None
+    # Publication owns the freshness fence after transactional source capture.
+    return result,[],count,None
 
 
 def apply_response(bridge, session_id, task, packet, response):
@@ -293,12 +291,15 @@ def apply_response(bridge, session_id, task, packet, response):
                                        "requested_question":requested_question})
         started = time.monotonic()
         result,evidence,count,reused = _lookup(bridge,query,arguments,key)
-        bridge.check()
-        receipt = {"kind":"lookup_result","lookup_id":key,"question_id":qid,"query":query,"result":result,
-                   "evidence":evidence,"native_query_count":count,"reused_from":reused}
-        bridge.apply("receipt:" + key,receipt)
+        bridge.apply("observed:" + key,{"kind":"lookup_observed","lookup_id":key,
+            "received_bytes":len(json.dumps(result,ensure_ascii=False).encode("utf-8"))})
         if bridge.workspace.snapshot()["received_query_bytes"] > bridge.metadata["experiment"].get("max_received_query_bytes",2**63):
             raise ValueError("experiment received-query byte ceiling exceeded; observed overspend retained")
+        receipt = {"kind":"lookup_result","lookup_id":key,"question_id":qid,"query":query,"result":result,
+                   "evidence":evidence,"native_query_count":count,"reused_from":reused}
+        published = bridge.apply("receipt:" + key,{"kind":"lookup_capture","receipt":receipt,
+            "capture":_source_capture(query,result,count) if count else None},before_commit=bridge.check)
+        evidence = published["evidence"]
         current = bridge.workspace.snapshot()["work"][view["work_id"]]
         props = list(result.get("propositions",{})) if result.get("operation") == "workspace_knowledge" else []
         bridge.apply("focus:" + key,{"kind":"focus","work_id":view["work_id"],

@@ -11,6 +11,23 @@ drafts, work splitting, bounded context views, explicit session replacement, cal
 reservations and usage records. It uses Python's standard-library SQLite support;
 no additional dependency is required.
 
+Lookup results now use atomic source/receipt publication. The controller stages
+captured source and its native receipt in one SQLite transaction, checks the bound
+source/runtime/owner before commit, then publishes both together. This replaces
+the two full native checks around separately persisted source and receipt. The
+freshness callback also runs on idempotent publication replay. Other controller
+and paid-inference freshness checks remain in place; no cross-turn freshness cache
+is introduced.
+
+Query reservations and received-result byte observations commit separately before
+publication. A stale/invalid result leaves its query units and observed bytes
+charged, without making its new evidence or completed receipt available. Successful
+publication does not charge those bytes again; reuse still counts each received
+result. Hashing the staged source expectation avoids duplicating its text in the
+bounded action. These are controller changes; the model action schema and native
+admission policy are unchanged. This does not resolve the remaining review-quality
+or caller-applicability gap.
+
 ## Initialize outside the source root
 
 Save a trusted experimental seed as `RUN/seed.json`:
