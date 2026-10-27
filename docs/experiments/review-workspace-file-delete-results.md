@@ -183,6 +183,11 @@ binding discovery and account for that work. If assembling the profile requires
 another full security investigation per claim, stop calling it a practical saving;
 retain it only as a diagnostic of what context was missing.
 
+The subsequent [offline audit AE](review-workspace-source-profile-audit-results.md) finds that
+ordinary preparation drops four of its eight windows despite matching arm inputs.
+It adds a requested-source coverage gate and separately verifies a caller-only
+four-window control, without a paid model run. The original proposal stays intact.
+
 Do not rerun the same pair merely to collect an omitted app read, increase budgets,
 or expand on the strength of matching unresolved labels. The next action is an
 offline profile/readiness audit; then select a small diverse package only if its

@@ -141,6 +141,16 @@ seconds, with no repeated source lines across lookup results within an arm
 existing single protocol correction recognize the typed filter error. Original
 paid results remain closed; source selection and controller overhead remain open.
 
+The [offline source-profile audit AE](experiments/review-workspace-source-profile-audit-results.md)
+finds that ordinary preparation drops four of the original eight requested windows
+even while cross-arm parity passes. Experiment designs can now declare optional
+`required_initial_source` windows by comparison bundle/claim key, with exact ranges
+and whole-file hashes. Preparation rejects incomplete delivery and binds its
+coverage receipt to the run. This gate supplements parity; it does not establish
+caller applicability or security truth. A distinct four-window caller-source
+control passes actual packet delivery with zero model attempts. A common explicit
+source channel and selection-cost audit remain the next implementation work.
+
 ## Initialize outside the source root
 
 Save a trusted experimental seed as `RUN/seed.json`:

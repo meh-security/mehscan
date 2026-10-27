@@ -16,6 +16,20 @@ cases only when the change can affect their source basis or behavior. This repla
 the previous requirement to repeat the whole four-case package as the next step;
 it does not change X's original frozen gate or claim broader acceptance.
 
+Latest offline result: [source-profile audit AE](experiments/review-workspace-source-profile-audit-results.md)
+finds a concrete transport gap: the original eight-window proposal becomes only
+four additions through ordinary application preparation. Native/workspace source
+parity still passes. A new optional, hash-bound requested-source coverage gate
+rejects that incomplete intervention before inference; it does not change prompts,
+review limits or the ordinary four-window preparation default.
+
+A distinct caller-source control fully delivers four windows in actual native and
+workspace packets: 9,247 bytes including native snippets, zero model attempts or
+unknown usage. Three identified queries/four native commands take 169 ms; successful
+fresh preparation and native packet construction add 31.670 seconds. Keep that
+cost and the manual intervention choice explicit. All eleven relevant pilot/batch
+tests pass. Full review quality, automatic selection and savings remain untested.
+
 Latest live result: [Directus file deletion AD](experiments/review-workspace-file-delete-results.md)
 retains useful uncertainty but does not complete the HTTP authorization proof.
 Sol native stops after four observed calls on a directory passed as a definition
@@ -42,17 +56,23 @@ The aggregate run is interrupted after a stall; the isolated case passes on froz
 and corrected runtimes, and a bounded remaining segment passes. Keep that segmented
 verification explicit rather than claiming one uninterrupted suite pass.
 
-Next audit a source-only preparation profile using the existing API and verified
-native/workspace observations. For authorization, pair actual caller binding with
-shared permission/effect source before inference; retain distinct operands and
-key transformations. Measure preparation and inspect the actual delivered packet.
-The staged hand-selected profile is an assisted control, not automatic selection;
-trace acquisition work and stop if construction repeats a full investigation per
-claim. Count that work rather than advertising only cheaper reviewer turns.
-Do not add a generic prompt warning, import conclusions, preload every fetched
-file, increase budgets, or buy an unchanged file-delete retry for an omitted read.
-Only then select a small diverse package if readiness supports it. Twelve other
-R-main IDs/eight reserves and full-app scope remain separate.
+Next implement a common explicit source-profile channel for native and workspace,
+with matching source/scope binding and full requested coverage. Ordinary automatic
+policy-lead defaults remain separate. AE's four-window caller control is not a
+replacement for carrying shared permission/effect source; preserve the intended
+eight-window intervention rather than truncate it or increase model/query
+allowances. Retain the actual app import binding already returned to AD native;
+AE's app continuation does not contain that import. The storage/post-hook-key
+condition and deployed-hook uncertainty
+still require review. AE closes without a paid run or a new live allowance.
+
+Then audit selection/acquisition cost using prior receipts and named deciding reads.
+The hand-selected profile is an assisted control, not automatic selection. Stop if
+construction repeats a full investigation per claim; count upstream work instead
+of advertising only cheaper reviewer turns. Do not add generic prompt warnings,
+import conclusions, preload every fetched file, or buy an unchanged AD retry.
+Choose a small diverse package only after these boundaries are reviewable. Twelve
+other R-main IDs/eight reserves and full-app scope remain separate.
 
 Previous live result: [carried-source checkout completion AC](experiments/review-workspace-checkout-completion-results.md)
 finishes both workspace reviews without controller failure: Sol two calls, Terra

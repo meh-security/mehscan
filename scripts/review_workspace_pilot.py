@@ -39,6 +39,48 @@ def ordinary_windows(packet):
     return canonical_windows([*packet["primary"]["windows"],*packet["sweep"]["source_contexts"]])
 
 
+def source_coverage(root, required, delivered):
+    """Check requested source delivery independently of agreement between arms."""
+    if not isinstance(required, list) or not 1 <= len(required) <= 8:
+        raise ValueError("expected one to eight required initial source windows")
+    root = Path(root).resolve(strict=True)
+    files, available = {}, {}
+    for window in canonical_windows(delivered):
+        for offset, line in enumerate(context.source_lines(window["text"])):
+            key = (window["path"], window["start_line"] + offset)
+            if key in available and available[key] != line:
+                raise ValueError("conflicting delivered source lines")
+            available[key] = line
+    rows = []
+    for window in required:
+        if not isinstance(window, dict) or set(window) != {"path", "start_line", "end_line", "file_sha256"}:
+            raise ValueError("invalid required initial source window")
+        path, first, last = window["path"], window["start_line"], window["end_line"]
+        if type(first) is not int or type(last) is not int or first < 1 or last < first or last - first >= 400:
+            raise ValueError("invalid required initial source coordinates")
+        if path not in files:
+            file = context.relative_file(root, path)
+            if file.stat().st_size > context.MAX_FILE_BYTES:
+                raise ValueError("required initial source file exceeds preparation bound")
+            data = file.read_bytes()
+            files[path] = (hashlib.sha256(data).hexdigest(), context.source_lines(data.decode("utf-8")))
+        digest, lines = files[path]
+        if digest != window["file_sha256"]:
+            raise ValueError("required initial source is stale")
+        if last > len(lines):
+            raise ValueError("required initial source exceeds actual source")
+        missing = []
+        for line in range(first, last + 1):
+            key = (path, line)
+            if key not in available:
+                missing.append(line)
+            elif available[key] != lines[line - 1]:
+                raise ValueError("required initial source differs from delivered text")
+        rows.append({**window, "complete":not missing, "missing_lines":missing})
+    return {"complete":all(row["complete"] for row in rows), "windows":rows,
+            "authority":"Source delivery coverage only; no caller applicability or security conclusion."}
+
+
 def metrics(directory, attempted_calls=None):
     rows = {}
     for path in Path(directory).rglob("provider-metrics*.jsonl"):
@@ -194,6 +236,14 @@ def prepare(args):
             raise ValueError("initial source parity failed for " + claim_id)
         parity[claim_id] = {"windows":expected,"sha256":identity(expected),"bytes":sum(len(w["text"].encode()) for w in expected),"review_ids":bundle["review_ids"]}
     worker.write(root / "initial-evidence.json",parity)
+    requirements = design.get("required_initial_source", {})
+    if not isinstance(requirements, dict) or set(requirements) - set(parity):
+        raise ValueError("required initial source refers to an unknown comparison bundle")
+    coverage = {key:source_coverage(source, windows, parity[key]["windows"])
+                for key, windows in requirements.items()}
+    worker.write(root / "initial-source-coverage.json",coverage)
+    if any(not receipt["complete"] for receipt in coverage.values()):
+        raise ValueError("initial source profile was not fully delivered; no inference permitted")
     worker.write(root / "setup.json",setup)
     worker.write(root / "design.json",design)
     # Offline launcher capability check; no inference call or evaluator labels.
@@ -205,6 +255,7 @@ def prepare(args):
     files = [p for p in package.rglob("*") if p.is_file() and "__pycache__" not in p.parts]
     binding = {"schema_version":"mehscanWorkspacePilotRun/v1","created_epoch_ms":round(time.time()*1000),
                "design_sha256":worker.digest_file(root / "design.json"),"initial_evidence_sha256":worker.digest_file(root / "initial-evidence.json"),
+               "initial_source_coverage_sha256":worker.digest_file(root / "initial-source-coverage.json"),
                "setup_sha256":worker.digest_file(root / "setup.json"),"provider":descriptor,
                "source_fingerprint":inv["identity_catalog"]["source_fingerprint"],"inventory_input_fingerprint":inv["input_fingerprint"],
                "files":{str(p.relative_to(root)).replace("\\","/"):worker.digest_file(p) for p in files},
@@ -222,6 +273,9 @@ def load_run(root):
     binding = read(root / "run-binding.json")
     for name,key in (("design.json","design_sha256"),("initial-evidence.json","initial_evidence_sha256"),("setup.json","setup_sha256")):
         if worker.digest_file(root / name) != binding[key]: raise ValueError("frozen pilot input changed")
+    if ("initial_source_coverage_sha256" in binding and
+            worker.digest_file(root / "initial-source-coverage.json") != binding["initial_source_coverage_sha256"]):
+        raise ValueError("frozen initial source coverage changed")
     for name,digest in binding["files"].items():
         if worker.digest_file(root / name) != digest: raise ValueError("frozen package changed")
     return root,read(root / "design.json"),read(root / "setup.json")
