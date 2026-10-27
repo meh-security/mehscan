@@ -1,5 +1,11 @@
 # Automatic registration-helper evidence
 
+Follow-up: the [breadth reassessment](review-workspace-breadth-reassessment.md)
+finds narrow coverage beyond the development slice and no groups in the saved
+Directus inventory. Its cross-app work-formation/fallback comparison now takes
+priority. The dependency/operation-record prerequisite proposed at the end of
+this historical milestone is superseded; its offline measurements are unchanged.
+
 The planner now supports opt-in `--prepare-helpers`. It follows direct relative
 imports for explicit registration references and supplies bounded definition,
 import and call-site source before review. Definitions can be reused across work

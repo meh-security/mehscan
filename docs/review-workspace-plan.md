@@ -1,6 +1,22 @@
 # Persistent review workspace implementation plan
 
-Status: the [fresh fixed-controller confirmation is complete](experiments/review-workspace-confirmation-results.md): 31 singleton calls versus 21 grouped calls, 612 versus 439 seconds active execution, matching twelve claim verdicts, and zero controller errors/unknown usage. SQL/deluxe provide an uncapped five-call benefit; the other five-call difference is basket review reaching its shared cap. Both packages leave three security relationships unresolved and retain the payment bypass as an unvalidated lead, not a classified finding. Proceed with concrete groups while fixing shared dependency evidence and operation-mechanism status. Token-percentage gates remain retired; native defaults are unchanged and no full-app rerun is underway.
+Status: [breadth reassessment and corrected experiments](experiments/review-workspace-breadth-reassessment.md)
+now govern execution. Wider validation is needed; dependency contracts and a
+richer state interface are not prerequisites. A new zero-model-call structural
+audit groups 11 of 116 saved Juice Shop candidates and none of 138 Directus
+candidates. This exposes narrow work-formation coverage and the need to compare
+fallback with native 20-review batching. Next assess six to eight diverse real
+operations, then freeze a roughly 24-claim cross-app package comparison with
+eight reserved confirmation claims. No paid run or full-app review is launched.
+
+The [fresh fixed-controller confirmation](experiments/review-workspace-confirmation-results.md)
+remains the latest live workspace result: 31 singleton versus 21 grouped calls,
+612 versus 439 seconds active execution, matching twelve claim verdicts and zero
+controller errors/unknown usage. SQL/deluxe provide an uncapped five-call benefit;
+the other five-call difference is basket review reaching its shared cap. Both
+packages leave three relationships unresolved and retain payment bypass as an
+unvalidated lead rather than a classified finding. This supports a selective
+optimization, not whole-app acceptance. Token-percentage gates are retired.
 
 The earlier [expanded four-arm comparison](experiments/review-workspace-expanded-results.md)
 remains development evidence: 121 calls and 48 source-validated dispositions,
@@ -38,8 +54,9 @@ references supply native definition/import/call-site source; grouping and
 delivery commit atomically. This removes manual helper-target preparation for
 supported bindings. It adds source and packet bytes and has no new live savings
 result. Do not repeat the closed helper-only memory test to demonstrate a benefit
-it previously failed to show; the next decisive package needs a dependency effect
-contract or independently assessed operation mechanism.
+it previously failed to show. The subsequent breadth audit corrects the proposed
+dependency/operation-record prerequisite: validate generalization now, while
+tracking those specific quality gaps independently.
 
 The earlier [pilot](experiments/review-workspace-pilot-results.md) and [first notebook producer](experiments/review-workspace-notebook-results.md) remain failed/incomplete experiments. Receipt preservation, route-source preparation and controller rendering of outstanding checks were subsequently verified. Their paid costs and the older unknown provider turn remain in the accounting; the successful local producer does not erase them.
 
@@ -58,13 +75,12 @@ The objective is a **persistent review workspace with bounded model contexts**, 
 
 ## 0. Execution correction after the first live pilot
 
-The architecture below remains the target. The [fixed-controller confirmation
-and corrected next steps](experiments/review-workspace-confirmation-results.md)
-now govern execution. Confirmation is complete. Next resolve shared dependency
-availability/contracts, separate independently assessed operation mechanisms
-from native claim closure and unvalidated leads, expose state through a small
-interactive CLI, compare compact AI grouping with deterministic groups, and use
-held-out mixed cases. Those later experiments have not run. The
+The architecture below remains the target. This section preserves the historical
+pilot correction; its listed smoke/producer/consumer sequence is completed or
+closed, not the active next-work queue. The [breadth reassessment](experiments/review-workspace-breadth-reassessment.md)
+now governs execution. Confirmation is complete. Work formation, fallback and
+cross-app package evaluation take priority over more helper/dependency/CLI
+infrastructure. Independent operation records remain a visible quality gap. The
 [earlier diagnostic and reuse plan](experiments/review-workspace-next-plan.md)
 remains the historical record of the closed smoke/producer/consumer phases;
 its small-sample stop decision and percentage gates do not govern this expansion.
@@ -331,8 +347,11 @@ Deferral inside a selected investigation uses `needs_review`; omission from the 
 
 ## 9. Evaluate in stages
 
-Begin with the diagnostic and three-claim reuse comparison in section 0. For the
-later mixed/held-out gates, freeze approximately 16–24 claims containing simple
+The diagnostic and three-claim reuse phases in section 0 are historical. Follow
+the [current breadth plan](experiments/review-workspace-breadth-reassessment.md):
+first assess six to eight diverse operations, then freeze approximately 24 real
+claims across at least two pinned applications and eight reserved confirmation
+claims. Include simple
 SQL positives and clean constructions, shared wrappers with different arguments,
 authorization positives and clean ownership controls, a complex
 registration/credential mechanism, unresolved questions, useful shared facts,
@@ -350,14 +369,14 @@ Select from saved baselines where available. If Juice Shop lacks a needed clean 
 
 Stage A combines changes and cannot establish the contribution of each. Match category guidance and prepared evidence where possible; add a narrow ablation only when attribution affects the next implementation decision. Do not run a full factorial experiment.
 
-These stages identify comparisons, not an unconditional sequence. The first
-live Stage A failed to complete. First isolate bounded completion, then run the
-small Stage C producer/consumer test. A narrow Stage B SQL comparison can follow
-reliable execution without a 30% singleton-efficiency prerequisite. Stage D
-still waits for useful deterministic groups, and full-app expansion still waits
-for mixed-package and held-out quality/cost gates. The original experiment's
-frozen stop rules remain historical records; this correction does not reopen its
-exhausted repeat allowance.
+These stages identify questions, not an unconditional sequence or a full
+factorial. Execution reliability and the narrow grouping comparison have been
+tested. The new coverage failure justifies a small compact-AI versus deterministic
+work-formation diagnostic now. The main wider comparison includes the current
+native workflow's 20-review default; singleton experiments are not a substitute
+for that baseline. Dependency contracts and an interactive CLI do not gate the
+generalization test. Full-app expansion still waits for broader package quality
+and reserved confirmation. Closed experiment allowances remain closed.
 
 Start with a small feasibility subset after the state/action/context vertical slice, before completing all strategies or the CLI. Stop losing variants early. Repeat only promising or ambiguous results within the frozen experiment ceiling. Reserve held-out cases before tuning and do not repeatedly tune against them.
 
@@ -376,15 +395,28 @@ Adjudicate disagreements from source. Do not grade solely on matching old verdic
 
 ## 10. Decide whether to continue investing
 
-These are proposed engineering gates, frozen before running, not achieved savings or statistical guarantees:
+The old percentage input gates are retired. Use these criteria, with operational
+limits frozen before running; they are not achieved savings or statistical guarantees:
 
-- **Immediate block:** a lost supported mechanism or wrong dismissal attributable to memory, grouping or context replacement. Diagnose and rerun affected cases before expansion. Report unrelated new regressions as well; do not hide them through attribution.
-- **Promising:** at least 30% less total input on the pilot, preserved quality, actionable uncertainty retained, and no material output/time regression. Proceed to held-out evaluation.
-- **Strong:** approximately 50% less input with useful savings across simple and complex cases. Consider a larger application slice after held-out success.
-- **Ambiguous:** 10–30% savings, or gains concentrated in easy cases. Inspect traces and test one specific suspected cause within the remaining experiment allowance.
-- **Insufficient:** less than 10% savings after one targeted correction, or repeated regressions. Stop that variant instead of accumulating more procedural instructions.
+- **Immediate block:** wrong dismissal, unsafe applicability transfer, lost
+  supported mechanism or unknown usage. Stop affected paid expansion, preserve
+  costs and diagnose. A mechanism retained only as an unvalidated lead has not
+  passed a required classified-finding check.
+- **Promising:** supported mechanisms and actionable uncertainty survive, with
+  useful reductions in deciding work, repetition or total time across more than
+  one favorable family, including preparation/planner costs. Confirm on reserved
+  cases before expanding.
+- **Ambiguous:** benefits are confined to known SQL/duplicate-observation cases,
+  are offset by fallback/planning overhead, or coincide with different caps.
+  Report by family and test one concrete cause; do not claim broad efficiency.
+- **Insufficient:** no useful sharing beyond development cases, singleton
+  fallback worsens the package, or a targeted correction repeats quality
+  regressions. Narrow or stop that variant rather than add procedural prompts.
 
-Define what counts as a material output/time regression and confirm comparable concurrency before the run. Review absolute cost alongside percentages: a tiny subset cannot establish full-app economics. Small samples demonstrate feasibility; they do not establish whole-app recall or precision.
+Match concurrency and aggregate investigation allowances. Identify censored
+cap-affected outcomes separately. Measure actual input/output/cached input and
+absolute time/cost without treating a larger useful input as failure. Small
+samples do not establish whole-app recall or precision.
 
 No full-app rerun until the combined workflow passes the pilot and a held-out slice. Context resets, new work items and planner retries share the same frozen allowance. An experiment reaching its ceiling ends with evidence, partial results and a reason; it does not silently extend itself.
 
@@ -412,5 +444,8 @@ The architecture and original ten stages are retained. The following are concret
 | Only the last lookup per question is presented | Multiple navigation answers can be stored but disappear from the next fresh context before the reviewer sees them | Preserve the complete newly returned batch and distinct unresolved facts within the context bound |
 | A retrieval index is required before testing a three-claim notebook | This adds product machinery before demonstrating that consumers benefit from a supplied scoped fact | Use existing bounded focus/proposition delivery first; generalize retrieval after useful reuse |
 | Avoided helper lookup is equated with avoided model work | The live notebook removed definition requests, but unique handler/effect reads still required the same turns and input increased | Select reuse/grouping by the deciding-work dependency and measure complete input/output/time, not query count |
+| Dependency contracts or operation-record implementation gate every wider test | This defers external validation while repeatedly improving infrastructure on twelve development cases | Run work-formation/fallback and cross-app tests now; keep those quality gaps explicit |
+| Singleton comparisons stand in for native defaults | Native bundles default to 20 reviews; experimental singleton fallback can itself recreate excessive conversations | Include the current native workflow and measure the unsupported population |
+| Multiline callback support is assumed to create groups | Directus often has one marker per route; useful reuse may instead concern a service contract across distinct caller policies | Audit actual shared deciding work before extending syntax or choosing AI grouping |
 
 Two operational safeguards are also explicit: saved model interpretations remain untrusted evidence rather than instructions, and scope deferral remains subject to native Value/Comprehensive plan policy.
