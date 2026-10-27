@@ -16,7 +16,52 @@ cases only when the change can affect their source basis or behavior. This repla
 the previous requirement to repeat the whole four-case package as the next step;
 it does not change X's original frozen gate or claim broader acceptance.
 
-Latest completed slice: [common explicit source channel AF](experiments/review-workspace-source-channel-results.md).
+Latest assessment: [offline retrieval diagnostic AG](experiments/review-workspace-retrieval-diagnostic-results.md).
+Fourteen historical work items/arms, including all seven L2 groups, are replayed
+without a model call. Completing bounded declarations pre-covers four later tail
+reads but no entire lookup turn. Generic one-hop expansion pre-covers ten source
+receipts, all confined to Directus deletion, while adding substantial lookup work.
+Cheap extra source alone is not a failure; the deciding problem is that lexical
+selection fetches incidental helpers and still misses relevant permission code.
+No general retrieval implementation or paid retry follows from this diagnostic.
+
+AG also corrects two causal interpretations. Sol creates the qualified proposition
+in its final response, alongside the answers that omit it; no earlier Sol context
+contained it. This is same-response inconsistency, not demonstrated loss of an
+earlier persisted fact. Native's final six-unit request fits its advertised eight,
+but the outer harness has only two units left because it charged a rejected batch
+that the local worker did not execute. The previous “oversized model request”
+description was wrong. All AF calls, costs and immutable artifacts stay preserved.
+
+The measured execution correction clamps the native task's offered query units
+to the smaller local/global remainder. Rejected batches stay charged, execute no
+sibling requests, and grant no extra call. An offline native/adapter regression
+reproduces the original discrepancy and checks exhausted-global finalization.
+This is comparison reliability, not a model-quality or speed improvement.
+
+**Current order after analysis:**
+
+1. Complete the narrow allowance regression and matching pilot/batch checks before
+   any new live comparison. Do not repeat AF merely to repair its control result.
+2. Define the reviewer-visible claim package from existing exact proposition
+   revisions, applicability and questions. Preserve attributed qualifications
+   beside decisions; do not turn every exclusion into a blocker or silently
+   rewrite verdicts. Diagnose the saved Sol same-response case separately from
+   genuine persisted-state loss. This is fidelity work, not an efficiency claim.
+3. For efficiency, retain selective SQL/shared-operation investigations and test
+   practical batch fallback against native maximum 20 on a small diverse package.
+   A deeper permission contract needs actual compatible/incompatible consumers
+   and counted producer cost; do not make it a new prerequisite for broader
+   evaluation. Keep complete declarations as a narrow usability candidate, not
+   another promised workflow solution.
+
+Stop generic expansion if useful evidence is confined to one tuned chain, if the
+selector still misses deciding relationships, or if construction repeats a full
+investigation upstream. Higher query/input volume alone is not the stop criterion.
+No main/reserve/full-app dispatch occurs in AG. The existing broader quality and
+scope gates remain; supported old cases and partial evidence remain useful.
+
+Previous completed implementation slice: [common explicit source channel AF](experiments/review-workspace-source-channel-results.md).
 `c2b06c7` implements the same hash/scope-bound source-only profile in ordinary
 review, workspace, comparison preparation, recovery and installed packages.
 Actual packets pass requested coverage and source equality for Directus deletion,
@@ -27,8 +72,9 @@ The profile is manually assisted, not an automatic selector or a memory result.
 AF's frozen live comparison uses 17 observed calls: Sol workspace six/122.284
 active seconds, native five/72.050, Terra medium workspace six/106.098. Both
 workspace arms return two `needs_review`; native recovers its structured filter
-error, then rejects an oversized query batch before execution and emits no final
-decisions. Raw native summary marks incomplete usage after that rejection;
+error, then the outer harness rejects a six-unit query batch despite advertising
+eight units (AG reconciliation above), and no final decisions are emitted.
+Raw native summary marks incomplete usage after that rejection;
 all five adapter receipts reconcile it without another call. Keep this operational
 failure separate from semantic results. No efficiency or model ranking follows.
 
@@ -41,7 +87,7 @@ Terra 22/24). Successful initial source delivery moves the investigation deeper
 but does not finish it. Actual source lookups do not reread the initial profile;
 serial helper discovery and final qualification loss remain concrete problems.
 
-**Next complete implementation/offline slice, with no unchanged paid retry:**
+**AF's initial next-slice proposal, reordered by AG above; no unchanged paid retry:**
 
 1. Trace exact proposition revision/applicability through draft/export, preserving
    attributed conditions, exclusions and source in the per-claim review package.

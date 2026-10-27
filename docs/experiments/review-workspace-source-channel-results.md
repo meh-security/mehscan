@@ -7,6 +7,9 @@ Keep the successful implementation, Terra's retained uncertainty, Sol's lost fin
 qualification and native's bounded failure as separate results.
 
 Code: `c2b06c7`. [Frozen plan](review-workspace-source-channel-plan.md).
+The later [AG diagnostic](review-workspace-retrieval-diagnostic-results.md) corrects
+the native budget-failure interpretation and dates Sol's proposition to its final
+response. Raw AF evidence, closure and all measured costs remain unchanged.
 Raw artifacts: `C:/dmitry/scan-runs/workspace-source-channel-20261027-af`, with the
 completed matrix/live study in `matrix-final`. Freeze
 `3be9737279ef1dd78c688ae3a72ab9340ac8140d908c10f6e82d06ad695b7572` preceded
@@ -108,14 +111,17 @@ additional; the earlier paid costs are not erased by source assistance.
 | Arm | Requested fact → evidence → remaining question | Outcome |
 | --- | --- | --- |
 | Sol workspace | Delete guard → key-count evaluator → AST cases → DB query → filter composition. Each step exposes the next local helper; `getCases` and `joinFilterWithCases` remain unread. | Two independent `needs_review`; final reasons omit the storage/key qualification already saved in its proposition. |
-| Sol native | Actual router import and guard → corrected evaluator lookup → evaluator tail, AST/root-field query; also follows accepted-token verification. | No final dispositions. One filter correction works; fifth response asks for a batch exceeding remaining aggregate units, rejected before execution. |
+| Sol native | Actual router import and guard → corrected evaluator lookup → evaluator tail, AST/root-field query; also follows accepted-token verification. | No final dispositions. One filter correction works; fifth response requests six units against eight advertised, but the outer harness has only two left and rejects it. AG identifies a ledger-visibility defect. |
 | Terra workspace | Guard/evaluator/query plus a separate hook question → emitter, registration and reference evidence. Permission enforcement is incomplete; installed key-changing hooks remain unestablished. | Two independent `needs_review`, retaining both local evaluator and storage/key/deployment uncertainty. Two filter-feedback receipts are corrected within the existing budget. |
 
 Workspace Sol charges 18/24 query units and Terra 22/24 (19 native commands plus
 three units for two feedbacks). Native retains 16/24 charged units after the
 oversized final batch is rejected. Neither workspace naturally exhausts all 24
-units: the sixth turn is final-only and offers zero new lookups. Native has eight
-units left but requests more than eight. These are distinct stopping boundaries.
+units: the sixth turn is final-only and offers zero new lookups. Native's worker
+has eight units left, while the outer harness has two because it additionally
+charged the rejected six-unit batch. The final request costs six, so it fits the
+offered allowance. The earlier oversized-request diagnosis was wrong; these
+separate ledgers were not correctly communicated to the reviewer.
 
 Native reads the controller header and actual service import. Neither workspace
 does; matching service names and supplied app/constructor source do not close
@@ -128,7 +134,10 @@ policy-case correctness and distinguishes original storage keys from post-hook
 database keys. Both final answers omit the latter. The useful fact exists in
 state: the failure is retention into the claim-level review package, not failure
 to store it. Terra's `file-delete-dispatch` proposition and final blockers retain
-that distinction. Existing proposition/applicability support remains useful;
+that distinction. AG verifies that Sol creates its proposition on turn six in
+the same response as these answers, with no earlier packet carrying it. This
+does not demonstrate loss of an earlier persisted fact across contexts.
+Existing proposition/applicability support remains useful;
 neither arm establishes reuse in a separate consumer investigation.
 
 ## Source audit and limits
@@ -179,6 +188,10 @@ not a speed win, regression estimate or model ranking.
   using the installed worker with inference disabled.
 
 ## Corrected next slice
+
+This was AF's initial proposal. The later [AG assessment](review-workspace-retrieval-diagnostic-results.md)
+puts the verified harness correction first, rejects blanket retrieval expansion,
+and keeps deeper contract production conditional on actual consumer opportunities.
 
 1. **Preserve learned qualifications into the review package.** Audit the path
    from exact proposition revision/applicability through draft and export. Retain

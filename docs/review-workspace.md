@@ -22,11 +22,16 @@ caller applicability; native review maximum stays 20.
 Actual packets pass coverage/equality across Directus deletion, Juice Shop checkout
 and SQL. The subsequent 17-call live study remains incomplete: workspace Sol and
 Terra each return two unknowns; native's filter correction works, followed by a
-bounded query-batch rejection. Terra retains the storage/hook condition; Sol saves
+query-batch rejection later traced to inconsistent advertised versus aggregate
+allowances. The experimental comparison harness now clamps the offered query
+units to both ledgers without refunding rejected batches. See the
+[AG diagnostic](experiments/review-workspace-retrieval-diagnostic-results.md).
+Terra retains the storage/hook condition; Sol saves
 it in a proposition but omits it from final answers. This establishes transport,
 not faster or source-complete review. The
-[current plan](review-workspace-plan.md) targets qualification retention and reuse
-of substantive permission-evaluation work with explicit caller conditions.
+[current plan](review-workspace-plan.md) targets package fidelity and selective
+shared investigation; deeper contract reuse still needs a demonstrated consumer
+population. AG does not justify automatic helper expansion across all reviews.
 
 Lookup results now use atomic source/receipt publication. The controller stages
 captured source and its native receipt in one SQLite transaction, checks the bound
