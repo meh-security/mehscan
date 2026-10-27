@@ -130,6 +130,17 @@ exercised live in AC. The first-turn boundary is covered before dispatch, with a
 extension retain the useful work without silently repairing model answers or
 discarding earlier costs.
 
+The [Directus deletion comparison AD](experiments/review-workspace-file-delete-results.md)
+then retains four unresolved workspace decisions across Sol/Terra medium, while
+native stops on a structured file/directory filter error. Both models inspect the
+shared deletion control but leave actual HTTP accountability unread; Terra also
+preserves the original-storage/post-hook-key condition. Matching uncertainty is
+not a completed authorization package. Sixteen observed calls cost 296.335 active
+seconds, with no repeated source lines across lookup results within an arm
+(excluding prompt replay/navigation). A narrow post-closure fix lets native's
+existing single protocol correction recognize the typed filter error. Original
+paid results remain closed; source selection and controller overhead remain open.
+
 ## Initialize outside the source root
 
 Save a trusted experimental seed as `RUN/seed.json`:

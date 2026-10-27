@@ -36,7 +36,7 @@ class ProviderFailure(CommandFailure):
 class ResearchFilterError(ValueError):
     """A validated in-root query uses the wrong file/directory filter kind.
 
-    Workspace callers may return this narrow error as tool feedback. Other
+    Callers may return this narrow error as controller feedback. Other
     validation/native/ownership exceptions must not enter that recovery path.
     """
     def __init__(self, tool, code, message, required, optional):
@@ -1187,17 +1187,15 @@ def run_locked(args):
                 commands = [research_arguments(query, root, task.get("review_ids", []), journals,
                     api=context.research_api(skill_root), guidance=context.guidance_catalog(skill_root)) for query in queries]
             except ValueError as error:
-                if (corrections >= 1 or round_index == calls_left - 1
-                        or str(error) not in ("review progress must cite current inspected artifacts",
+                recoverable = isinstance(error, ResearchFilterError) or str(error) in (
+                            "review progress must cite current inspected artifacts",
                             "final draft cannot leave an available local edge open", "unsupported research arguments",
                             "blocked edge needs a precise cause", "open/inspected edges cannot claim a blocker",
                                     "inspected edge requires source/query proof", "missing-fact routing requires a needs_review draft",
-                            "research path filter must name a file; use path_prefix for a directory",
-                            "research path_prefix must name a directory",
-                            "choose one research path filter",
                             "research source window must contain 1 to 400 lines",
                             "research batch exceeds remaining query units",
-                            "research result limit must be 1 to 100")):
+                            "research result limit must be 1 to 100")
+                if corrections >= 1 or round_index == calls_left - 1 or not recoverable:
                     raise
                 corrections += 1
                 feedback = {"reason": str(error), "instruction":
@@ -1210,6 +1208,13 @@ def run_locked(args):
                     "Research available decisive open edges or record an honest "
                     "precise blocker. The rejected draft was not admitted. Do not invent proof or change "
                     "a verdict just to pass validation."}
+                if isinstance(error, ResearchFilterError):
+                    feedback["lookup_feedback"] = error.result
+                    feedback["instruction"] = (
+                        "Correct the rejected query using the allowed arguments in lookup_feedback. "
+                        "No query in this rejected batch executed. Retain inspected source facts; "
+                        "this API feedback establishes no source or security conclusion. "
+                        "The rejected draft was not admitted.")
                 with shared_lock:
                     with (output / "review-feedback.jsonl").open("a", encoding="utf-8") as audit:
                         audit.write(json.dumps({"conversation_id": conversation_id, "round": round_index,

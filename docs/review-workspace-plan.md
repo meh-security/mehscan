@@ -16,7 +16,45 @@ cases only when the change can affect their source basis or behavior. This repla
 the previous requirement to repeat the whole four-case package as the next step;
 it does not change X's original frozen gate or claim broader acceptance.
 
-Latest live result: [carried-source checkout completion AC](experiments/review-workspace-checkout-completion-results.md)
+Latest live result: [Directus file deletion AD](experiments/review-workspace-file-delete-results.md)
+retains useful uncertainty but does not complete the HTTP authorization proof.
+Sol native stops after four observed calls on a directory passed as a definition
+file filter. Terra and Sol workspace each use six calls and return two independent
+`needs_review` decisions. Terra preserves the original-storage/post-hook-key
+condition; Sol's final answers omit it. Both leave actual caller initialization
+unread. Preserve these local controls and gaps separately, without claiming package
+acceptance, a clean-control pair or an execution saving.
+
+All sixteen calls have observed usage: 296.335 active seconds. Initial source is
+matched at 789 bytes with one native two-claim bundle/default maximum 20. Actual
+source lookup results repeat no lines within an arm; this excludes prompt replay
+and navigation previews. The measured problems are serial discovery, late deciding
+reads, filter handling and 51.865 seconds of workspace state/work checks. Generic
+memory or a larger query ceiling would not resolve Sol's six-turn/13-unit result.
+
+AD is closed before a narrow offline correction: native's existing one-correction
+path now recognizes structured `ResearchFilterError`, replacing stale string
+matches. Rejected batches execute no sibling lookup, corrected definitions retain
+two-unit accounting, repeated mistakes stop, and path escapes remain fatal. The
+original run stays unchanged; no paid repair demonstrates the fix yet.
+Post-closure verification covers 243 distinct checks: 242 pass and one is skipped.
+The aggregate run is interrupted after a stall; the isolated case passes on frozen
+and corrected runtimes, and a bounded remaining segment passes. Keep that segmented
+verification explicit rather than claiming one uninterrupted suite pass.
+
+Next audit a source-only preparation profile using the existing API and verified
+native/workspace observations. For authorization, pair actual caller binding with
+shared permission/effect source before inference; retain distinct operands and
+key transformations. Measure preparation and inspect the actual delivered packet.
+The staged hand-selected profile is an assisted control, not automatic selection;
+trace acquisition work and stop if construction repeats a full investigation per
+claim. Count that work rather than advertising only cheaper reviewer turns.
+Do not add a generic prompt warning, import conclusions, preload every fetched
+file, increase budgets, or buy an unchanged file-delete retry for an omitted read.
+Only then select a small diverse package if readiness supports it. Twelve other
+R-main IDs/eight reserves and full-app scope remain separate.
+
+Previous live result: [carried-source checkout completion AC](experiments/review-workspace-checkout-completion-results.md)
 finishes both workspace reviews without controller failure: Sol two calls, Terra
 medium one, all observed. Sol retrieves the remaining basket ownership/policy
 evidence and supports both mechanisms. Terra supports wallet ownership but assumes
@@ -37,11 +75,11 @@ Reuse the existing source API across the same claims/binding; keep judgments and
 caller applicability separate. Do not rerun unchanged checkout simply to collect
 one omitted fact, or automatically preload every previously fetched file.
 
-Next pre-audit the Directus single/batch file-delete pair as a new small real shared
-operation: actual route/accountability, service permission and effect bindings
-must justify the selection. No safe verdict follows merely from a service name.
-The other fourteen R-main IDs/eight reserves remain outside live dispatch in this
-comparison sequence, until independently selected; full-app scope remains separate.
+AD subsequently selects the Directus single/batch file-delete pair. Its pre-audit
+finds the hook key-set qualification before dispatch and rejects a clean-negative
+oracle; no safe verdict follows merely from a service name. At AC closure fourteen
+other R-main IDs were outside dispatch; after AD twelve remain, with all eight
+reserves still separate. R's original execution remains closed.
 
 Previous live result: [real checkout contrast AB](experiments/review-workspace-checkout-results.md)
 retains the native basket-cleanup finding and scoped wallet negative. Both workspace

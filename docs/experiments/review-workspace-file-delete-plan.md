@@ -1,6 +1,12 @@
 # Directus file deletion AD: shared enforcement, separate scope
 
-Status: pre-dispatch design after [checkout completion AC](review-workspace-checkout-completion-results.md).
+Status: [closed after sixteen observed calls](review-workspace-file-delete-results.md).
+Both workspace models retain two unresolved verdicts; native stops on filter
+validation. The native correction follows closure offline, without a paid repair.
+The original pre-dispatch design below is preserved; the frozen artifact copy
+remains unchanged.
+
+Original status: pre-dispatch design after [checkout completion AC](review-workspace-checkout-completion-results.md).
 This is a fresh two-claim comparison on another real implementation. It does not
 resume R or spend any unused prior allowance. Runtime, reviewer guidance and action
 schema stay unchanged. Preserve all supported earlier cases and costs.

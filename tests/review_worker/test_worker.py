@@ -1413,8 +1413,10 @@ else:
             '{"tool":"references","review_id":id,'
             '"arguments":{"symbol":"eval","path":"app.js","path_prefix":"src"}}]}))\n'
             'elif round == 1:\n'
-            ' assert task["research"]["feedback"]["reason"] == "choose one research path filter"\n'
-            ' assert "never both" in task["research"]["feedback"]["instruction"]\n'
+            ' feedback=task["research"]["feedback"]\n'
+            ' assert feedback["lookup_feedback"]["code"] == "conflicting_path_filters"\n'
+            ' assert "not both" in feedback["reason"]\n'
+            ' assert feedback["lookup_feedback"]["native_query_executed"] is False\n'
             ' assert not task["research"]["results"]\n'
             ' print(json.dumps({"research":[{"tool":"references","review_id":id,'
             '"arguments":{"symbol":"eval","path":"app.js"}}]}))\n'
@@ -1432,6 +1434,64 @@ else:
         self.assertEqual(record["protocol_corrections"], 1)
         self.assertEqual(record["research_queries"], 1)
         self.assertEqual(record["status"], "admitted")
+
+    def test_directory_definition_feedback_is_bounded_and_preserves_batch_atomicity(self):
+        (self.root / "module").mkdir()
+        normal = self.base / "normal.py"
+        normal.write_text(self.reviewer.read_text(), encoding="utf-8")
+        for name, repair in (("repeated-directory", False), ("corrected-directory", True)):
+            self.reviewer.write_text('import json,sys,subprocess\ntask=json.load(sys.stdin)\n'
+                'round=task["research"]["round"]\nid=task["review_ids"][0]\n'
+                'if not ' + repr(repair) + ' or round == 0:\n'
+                ' print(json.dumps({"research":[{"tool":"source","review_id":id,'
+                '"arguments":{"path":"app.js","start_line":1,"end_line":1}},'
+                '{"tool":"definition","review_id":id,'
+                '"arguments":{"name":"handle","path":"module"}}]}))\n'
+                'elif round == 1:\n'
+                ' feedback=task["research"]["feedback"]["lookup_feedback"]\n'
+                ' assert feedback["code"] == "file_filter_is_directory"\n'
+                ' assert feedback["tool"] == "definition"\n'
+                ' assert "path_prefix" not in feedback["allowed_arguments"]["optional"]\n'
+                ' assert feedback["native_query_executed"] is False\n'
+                ' assert "not source evidence" in feedback["authority"]\n'
+                ' assert not task["research"]["results"]\n'
+                ' print(json.dumps({"research":[{"tool":"definition","review_id":id,'
+                '"arguments":{"name":"handle","path":"app.js"}}]}))\n'
+                'else:\n'
+                ' assert len(task["research"]["results"]) == 1\n'
+                ' assert task["research"]["results"][0]["result"]["source_complete"]\n'
+                ' print(subprocess.check_output([sys.executable,' + repr(str(normal)) + '],input=json.dumps(task),text=True))\n',
+                encoding="utf-8")
+            result = self.invoke(name, extra=["--phase", "native"])
+            directory = self.base / name
+            record = json.loads((directory / "worker.json").read_text())
+            self.assertEqual(record["protocol_corrections"], 1)
+            job = json.loads(next((directory / "jobs").glob("*.json")).read_text())
+            self.assertEqual(job["calls"], 3 if repair else 2)
+            self.assertEqual(job["queries"], 2 if repair else 0)
+            if repair:
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                rows = [json.loads(line) for line in (directory / "research.jsonl").read_text().splitlines()]
+                self.assertEqual([row["query"]["tool"] for row in rows], ["definition"])
+                self.assertEqual(record["status"], "admitted")
+            else:
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((directory / "research.jsonl").exists())
+                self.assert_no_decisions()
+
+    def test_escaping_definition_path_cannot_enter_filter_feedback(self):
+        self.research_reviewer('[{"tool":"definition","review_id":task["review_ids"][0],'
+                              '"arguments":{"name":"handle","path":"../module"}}]')
+        result = self.invoke(extra=["--phase", "native"])
+        self.assertNotEqual(result.returncode, 0)
+        directory = self.base / "worker"
+        record = json.loads((directory / "worker.json").read_text())
+        self.assertEqual(record.get("protocol_corrections", 0), 0)
+        job = json.loads(next((directory / "jobs").glob("*.json")).read_text())
+        self.assertEqual(job["calls"], 1)
+        self.assertEqual(job["queries"], 0)
+        self.assertFalse((directory / "research.jsonl").exists())
+        self.assert_no_decisions()
 
     def test_reviewed_diagnosis_survives_brief_finalization_and_native_report(self):
         normal = self.base / "normal.py"
