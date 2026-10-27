@@ -8,6 +8,7 @@ import time
 import review_workspace_pilot as pilot
 import review_worker as worker
 from review_workspace_bridge import NativeWorkspace, provider_environment
+from review_workspace import render_review_package
 
 
 def run_treatment(root):
@@ -72,8 +73,17 @@ def run_treatment(root):
         with bridge.guarded():
             report = bridge.native(["report","--run",str(bridge.directory/"run"),"--responses",str(responses),
                 "--source-root",str(bridge.root),"--reviewer","batch-workspace-study"])
+            review = bridge.workspace.review_package(list(bridge.metadata["bundles"]))
+            finalized_ids = {w["bundle"]:pilot.read(w["validated"]["review_package"])["bundles"][0]["draft_id"]
+                             for w in work_results}
+            if any(finalized_ids[b["bundle_id"]] != b["draft_id"] for b in review["bundles"]):
+                raise ValueError("review package differs from the finalized native drafts")
+            worker.write(root/"treatment/review-package.json",review)
+            worker.write_text(root/"treatment/review-package.md",render_review_package(review))
         worker.write(root/"treatment/findings.json",report)
         summary["status"]="source_validated"
+        summary["review_package"]=str(root/"treatment/review-package.json")
+        summary["review_markdown"]=str(root/"treatment/review-package.md")
     except Exception as error:
         summary.update(status="incomplete",error={"type":type(error).__name__,"message":str(error) if isinstance(error,(ValueError,TimeoutError)) else "execution failed; inspect preserved artifacts"})
     finally:

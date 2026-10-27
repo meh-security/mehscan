@@ -166,6 +166,11 @@ class BatchComparisonTests(unittest.TestCase):
         self.assertTrue(all(c["decision"]=="issue" for c in result["claims"].values()))
         self.assertFalse(result["native_admission"])
         self.assertEqual(len(fixtures.read(root/"treatment/findings.json")["decision_records"]),2)
+        package=fixtures.read(result['review_package'])
+        self.assertEqual(len(package['claims']),2)
+        self.assertFalse(package['omitted_review_ids'])
+        self.assertTrue(all(c['result']['decision']=='issue' for c in package['claims']))
+        self.assertTrue(Path(result['review_markdown']).is_file())
         with self.assertRaises((ValueError,FileExistsError)):
             batch.run_treatment(root)
 

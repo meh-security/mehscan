@@ -363,6 +363,51 @@ It preserves proposition history and old working drafts. Clearing a flag require
 a new draft; stale or foreign applicability cannot support it. Native history
 and supersession remain the responsibility of the existing state commands.
 
+### Reviewer-visible package
+
+The read-only `review-package` command projects complete original bundles into
+`mehscanWorkspaceReviewPackage/v1`. It contains each unchanged claim result and
+property, exact linked proposition revisions with conditions/exclusions, recorded
+applicability, current deciding questions and one shared captured-source catalog.
+
+```powershell
+python scripts/review_workspace.py review-package --workspace RUN/workspace.sqlite --seed RUN/seed.json
+python scripts/review_workspace.py review-package --workspace RUN/workspace.sqlite --seed RUN/seed.json --format markdown
+```
+
+By default all selected bundles must be complete. `--bundle-id EXACT_BUNDLE_ID`
+exports that complete bundle and explicitly lists omitted workspace claim IDs.
+This never permits exporting only part of a native bundle. JSON retains the
+standard `native_admission: false` / `result` CLI wrapper; Markdown is a human
+view of the same package. The package is not a native finalizer input.
+
+Each note link says either `caller_applicability_recorded` or `context_only`.
+The former records a reviewer judgment, not controller-certified applicability;
+the latter records context exposure without asserting applicability. Unlinked
+propositions are excluded. A note's exclusions do not automatically become native
+checks or blockers and do not change the verdict. A question resolved only for one
+claim remains visibly distinct from its global/shared status.
+
+Export checks source hashes, dependencies and reconsideration; stale/disputed
+propositions or incomplete bundles are rejected. It reads one workspace revision
+without changing draft history, usage or reservations. Source appears once in a
+shared catalog, with IDs and whole-file hashes; the Markdown view links note and
+question evidence to those excerpts. Literal reviewer/source text is fenced.
+No new inference, navigation, stored fact or model action is required.
+
+Native-bound `finalize` writes `review-package.json` and `review-package.md`
+beside the original `draft.json` and `response.json`. `validated.json` binds their
+hashes alongside the native response. Only the brief native results are passed
+to the finalizer. The experimental batch comparison also writes an aggregate pair
+beside `treatment/findings.json`, checks its draft identities against the finalized
+bundles and returns the package paths in its result.
+
+The standalone command verifies the supplied stored binding and cited source; it
+does not perform the bridge's full native owner/runtime checks. An export made
+from archival state is a newly derived view, not runtime resumption, new native
+validation or a repaired security conclusion. The package preserves judgments and
+qualifications; it does not establish that they are true or complete.
+
 ## Native-bound checkpoint bridge
 
 `scripts/review_workspace_bridge.py` connects the workspace to the current native

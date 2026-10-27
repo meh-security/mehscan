@@ -515,7 +515,14 @@ class WorkspaceActionTests(unittest.TestCase):
         obstacle = "The caller identity implementation is not available in this source scope."
         def defer(task,packet):
             uncertain = {**self.decision(claims[0]),"decision":"needs_review","diagnosis":None}
-            return {"updates":[{"kind":"question","question_id":"identity","review_ids":[claims[0]["review_id"]],"question":question},
+            proof=self.handle(task,packet,'app.js')
+            return {"updates":[{"kind":"proposition","proposition_id":"local-effect",
+                    "statement":"The selected evaluator call is shown.","scope":"Selected evaluator implementation",
+                    "conditions":"The selected caller reaches this implementation.","exclusions":"Caller authorization is not established.",
+                    "evidence":[proof]},
+                    {"kind":"applicability","review_id":claims[0]['review_id'],'proposition_id':'local-effect',
+                     'proposition_revision':1,'evidence':[proof],'reason':'The selected caller contains this evaluator.'},
+                    {"kind":"question","question_id":"identity","review_ids":[claims[0]["review_id"]],"question":question},
                     {"kind":"answer","question_id":"identity","status":"blocked","reason":obstacle,"evidence":[]}],
                     "lookups":[],"decisions":[uncertain,*[self.decision(c) for c in claims[1:]]]}
         self.turn("defer",defer)
@@ -523,10 +530,24 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertEqual(draft["checks"],[question])
         self.assertEqual(draft["blockers"],[obstacle])
         self.assertNotIn('checks',self.calls[0]['schema']['properties']['decisions']['items']['anyOf'][0]['properties'])
-        response = fixtures.read(self.bridge.finalize(claims[0]["bundle_id"])["response"])
+        before=self.bridge.workspace.snapshot()
+        finalized=self.bridge.finalize(claims[0]["bundle_id"])
+        response = fixtures.read(finalized["response"])
         native = next(r for r in response['results'] if r['review_id']==claims[0]['review_id'])
         self.assertEqual(native['checks'],[question])
         self.assertEqual(native['investigation']['blockers'],[obstacle])
+        package=fixtures.read(finalized['review_package'])
+        rendered=Path(finalized['review_markdown']).read_text(encoding='utf-8')
+        self.assertEqual([c['result'] for c in package['claims']],[c['draft']['result'] for c in before['claims'].values()])
+        by_id={c['review_id']:c for c in package['claims']}
+        self.assertEqual(by_id[claims[0]['review_id']]['reviewer_notes'][0]['relationship'],'caller_applicability_recorded')
+        self.assertTrue(all(by_id[c['review_id']]['reviewer_notes'][0]['relationship']=='context_only' for c in claims[1:]))
+        self.assertIn('Caller authorization is not established.',rendered)
+        self.assertNotIn('Caller authorization is not established.',native['investigation']['blockers'])
+        receipt=fixtures.read(Path(finalized['response']).parent/'validated.json')
+        self.assertEqual(receipt['review_package_sha256'],actions.worker.digest_file(finalized['review_package']))
+        self.assertEqual(receipt['review_markdown_sha256'],actions.worker.digest_file(finalized['review_markdown']))
+        self.assertEqual(before,self.bridge.workspace.snapshot())
 
     def test_needs_review_without_saved_question_is_rejected_with_paid_usage_retained(self):
         claim = next(iter(self.bridge.workspace.snapshot()["claims"].values()))

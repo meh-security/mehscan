@@ -16,7 +16,32 @@ cases only when the change can affect their source basis or behavior. This repla
 the previous requirement to repeat the whole four-case package as the next step;
 it does not change X's original frozen gate or claim broader acceptance.
 
-Latest assessment: [offline retrieval diagnostic AG](experiments/review-workspace-retrieval-diagnostic-results.md).
+Latest implemented slice: [review-package fidelity AH](experiments/review-workspace-review-package-results.md).
+The existing workspace CLI, native-bound finalizer and batch report now export
+JSON/Markdown packages retaining exact linked proposition revisions, conditions,
+exclusions, recorded applicability, deciding questions and shared captured source.
+Context-only exposure is distinct from caller applicability; neither is certified
+by the exporter. Native brief results/checks/blockers stay unchanged. Stale source,
+disputed/revised dependencies, reconsideration and incomplete bundles still block
+current export. Explicit bundle selection discloses omitted workspace claim IDs.
+
+Archive-derived checks project nine saved workspaces/28 unchanged claim results,
+including AF Sol/Terra, checkout, HTML, conditional controls and all L2 groups.
+Sol's stored storage/key qualification is now visible alongside its uncertainty;
+this does not repair the final reasoning or establish that an earlier fact was
+forgotten. No linked note is invented where none exists. Original DBs, source,
+decisions and closure receipts remain unchanged, with no new model call. These
+are newly derived views, not old-runtime resumption or new native validation.
+
+This completes the planned export-boundary correction without a summarizer or
+new state/action schema. It is fidelity work, not an efficiency claim. Preserve
+the semantic gaps independently; a visible caveat does not make a wrong dismissal
+acceptable. Stop this feature here and return to the selective-investigation and
+native-batch fallback comparison, with a fresh small diverse design/readiness
+freeze before any model dispatch. Deeper contract production remains conditional
+on actual compatible/incompatible consumers and counted producer work.
+
+Previous assessment: [offline retrieval diagnostic AG](experiments/review-workspace-retrieval-diagnostic-results.md).
 Fourteen historical work items/arms, including all seven L2 groups, are replayed
 without a model call. Completing bounded declarations pre-covers four later tail
 reads but no entire lookup turn. Generic one-hop expansion pre-covers ten source
@@ -41,9 +66,9 @@ This is comparison reliability, not a model-quality or speed improvement.
 
 **Current order after analysis:**
 
-1. Complete the narrow allowance regression and matching pilot/batch checks before
+1. Completed in AG: the narrow allowance regression and matching pilot/batch checks before
    any new live comparison. Do not repeat AF merely to repair its control result.
-2. Define the reviewer-visible claim package from existing exact proposition
+2. Implemented/checked in AH: the reviewer-visible claim package from existing exact proposition
    revisions, applicability and questions. Preserve attributed qualifications
    beside decisions; do not turn every exclusion into a blocker or silently
    rewrite verdicts. Diagnose the saved Sol same-response case separately from

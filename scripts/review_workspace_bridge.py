@@ -16,7 +16,7 @@ import time
 import review_context as context
 import review_source_profile as source_profiles
 import review_worker as worker
-from review_workspace import Workspace, encoded, identity, number, references, shape
+from review_workspace import Workspace, encoded, identity, number, references, shape, render_review_package
 import review_workspace_actions as actions
 
 
@@ -484,10 +484,11 @@ class NativeWorkspace:
     def finalize(self, bundle_id):
         with self.guarded():
             bundle = self.metadata["bundles"][bundle_id]
-            draft = self.workspace.bundle_draft(bundle_id)
+            review = self.workspace.review_package([bundle_id])
+            draft = {"results":[c["result"] for c in review["claims"]]}
             if {r["review_id"] for r in draft["results"]} != set(bundle["review_ids"]):
                 raise ValueError("workspace draft does not cover the original native bundle")
-            directory = self.directory / "finalizations" / identity([bundle_id,draft,self.workspace.snapshot()["revision"]])
+            directory = self.directory / "finalizations" / identity([bundle_id,draft,review["workspace_revision"]])
             directory.mkdir(parents=True,exist_ok=False)
             worker.write(directory / "draft.json",draft)
             journals = self.directory / "journals"
@@ -496,9 +497,17 @@ class NativeWorkspace:
                                    "--draft",str(directory / "draft.json"),"--source-root",str(self.root),
                                    "--journal-dir",str(journals),"--output",str(directory / "response.json")])
             self.check()
+            if self.workspace.snapshot()["revision"] != review["workspace_revision"]:
+                raise ValueError("workspace changed during finalization")
+            worker.write(directory / "review-package.json",review)
+            worker.write_text(directory / "review-package.md",render_review_package(review))
             worker.write(directory / "validated.json",{"bundle_id":bundle_id,"package_id":self.package["package_id"],
-                         "response_sha256":worker.digest_file(directory / "response.json"),"native_admission":False})
-            return {"response":str(directory / "response.json"),"native_validated":True,"native_admission":False}
+                         "response_sha256":worker.digest_file(directory / "response.json"),"native_admission":False,
+                         "review_package_id":review["package_id"],
+                         "review_package_sha256":worker.digest_file(directory / "review-package.json"),
+                         "review_markdown_sha256":worker.digest_file(directory / "review-package.md")})
+            return {"response":str(directory / "response.json"),"native_validated":True,"native_admission":False,
+                    "review_package":str(directory / "review-package.json"),"review_markdown":str(directory / "review-package.md")}
 
 
 def main():

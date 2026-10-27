@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import tempfile
 import time
@@ -771,26 +772,136 @@ class Workspace:
 
     def bundle_draft(self, bundle_id):
         state = self.snapshot()
+        claims, _ = self._bundle_claims(state, bundle_id)
+        return {"results":[c["draft"]["result"] for c in claims]}
+
+    def _bundle_claims(self, state, bundle_id):
         claims = [c for c in state["claims"].values() if c["bundle_id"] == bundle_id]
         if not claims or any(c["draft"] is None or c["reconsideration"] for c in claims):
             raise ValueError("bundle working draft is incomplete or requires reconsideration")
+        evidence = set()
         for claim in claims:
             if claim["draft"]["result"]["decision"] != "needs_review" and any(
                     claim["review_id"] in q["review_ids"] and q["status"] != "answered" and
                     qid not in claim["draft"].get("resolved_questions",[]) for qid,q in state["questions"].items()):
                 raise ValueError("unanswered deciding question prevents bundle closure")
-            self._draft_evidence(state, claim["draft"]["result"])
+            evidence.update(self._draft_evidence(state, claim["draft"]["result"]))
             self._proposition_dependencies(state, claim["draft"].get("propositions", []))
+            for dependency in claim["draft"].get("propositions", []):
+                evidence.update(state["propositions"][dependency["proposition_id"]][-1]["evidence"])
             for key in claim["draft"]["applicability"]:
                 applies = state["applicability"][key]
                 prop = state["propositions"][applies["proposition_id"]][-1]
+                if (applies["review_id"] != claim["review_id"] or prop["status"] != "available" or
+                        applies["proposition_revision"] != prop["revision"]):
+                    raise ValueError("draft relies on foreign or stale applicability")
                 self._evidence(state, sorted(set([*applies["evidence"], *prop["evidence"]])))
-        return {"results":[c["draft"]["result"] for c in claims]}
+                evidence.update([*applies["evidence"], *prop["evidence"]])
+        return claims, evidence
+
+    def review_package(self, bundle_ids=None):
+        """Project existing judgments; do not infer applicability or new blockers."""
+        state = self.snapshot()
+        known = {c["bundle_id"] for c in state["claims"].values()}
+        bundle_ids = sorted(known) if bundle_ids is None else bundle_ids
+        references(bundle_ids, known)
+        claims, bundles, evidence_ids = [], [], set()
+        for bundle_id in sorted(bundle_ids):
+            members, evidence = self._bundle_claims(state, bundle_id)
+            claims.extend(members); evidence_ids.update(evidence)
+            bundles.append({"bundle_id":bundle_id,"review_ids":[c["review_id"] for c in members],
+                            "draft_id":identity({"results":[c["draft"]["result"] for c in members]})})
+        notes, applicability, questions, projected = {}, {}, {}, []
+        for claim in claims:
+            draft = claim["draft"]
+            applies = {key:state["applicability"][key] for key in draft["applicability"]}
+            ids = {p["proposition_id"] for p in draft.get("propositions", [])}
+            ids.update(a["proposition_id"] for a in applies.values())
+            linked = []
+            for pid in sorted(ids):
+                prop = state["propositions"][pid][-1]
+                nid = identity([pid,prop["revision"]])
+                notes[nid] = {"proposition_id":pid, **copy.deepcopy(prop)}
+                aids = sorted(k for k,a in applies.items() if a["proposition_id"] == pid)
+                linked.append({"note_id":nid,"relationship":"caller_applicability_recorded" if aids else "context_only",
+                               "applicability_ids":aids})
+            applicability.update(copy.deepcopy(applies))
+            linked_questions = []
+            for qid, question in sorted(state["questions"].items()):
+                if claim["review_id"] not in question["review_ids"]:
+                    continue
+                last = copy.deepcopy(question["attempts"][-1]) if question["attempts"] else None
+                if last:
+                    evidence_ids.update(last.get("evidence", []))
+                questions[qid] = {"question":question["question"],"review_ids":question["review_ids"],
+                                  "status":question["status"],"last_attempt":last,
+                                  "attempt_count":len(question["attempts"]),"origin":"reviewer_interpretation"}
+                linked_questions.append({"question_id":qid,
+                    "resolved_for_claim":qid in draft.get("resolved_questions", [])})
+            projected.append({**{k:claim[k] for k in ("review_id","property","path","line","bundle_id")},
+                              "result":copy.deepcopy(draft["result"]),"reviewer_notes":linked,"questions":linked_questions})
+        if evidence_ids:
+            self._evidence(state, sorted(evidence_ids))
+        package = {"schema_version":"mehscanWorkspaceReviewPackage/v1", "binding":state["binding"],
+                   "selection_id":state["selection_id"],"workspace_revision":state["revision"],
+                   "native_admission":False,
+                   "authority":"Results are unchanged workspace drafts. Notes, applicability and questions are reviewer interpretations, not certified facts or additional verdict blockers. Source hashes are checked; native validation is separate.",
+                   "bundles":bundles,"claims":projected,"notes":notes,"applicability":applicability,"questions":questions,
+                   "omitted_review_ids":sorted(set(state["claims"]) - {c["review_id"] for c in claims}),
+                   "evidence":{key:copy.deepcopy(state["evidence"][key]) for key in sorted(evidence_ids)}}
+        package["package_id"] = identity(package)
+        return package
+
+
+def render_review_package(package):
+    """Human view of the same attributed records, with no prose interpretation."""
+    def block(value):
+        text = str(value)
+        fence = "`" * max(3, max((len(m[0])+1 for m in re.finditer(r'`+',text)),default=0))
+        return fence + "text\n" + text + "\n" + fence
+    evidence_numbers = {key:i for i,key in enumerate(package["evidence"],1)}
+    def links(ids):
+        return ", ".join(f"[Source {evidence_numbers[key]}](#source-{evidence_numbers[key]})" for key in ids)
+    lines = ["# Workspace review package", "", package["authority"], "",
+             "Package: `" + package["package_id"] + "`", "",
+             f"Included claims: {len(package['claims'])}; omitted claims: {len(package['omitted_review_ids'])}.", ""]
+    if package["omitted_review_ids"]:
+        lines.extend(["Omitted claim IDs:", block("\n".join(package["omitted_review_ids"])), ""])
+    for index,claim in enumerate(package["claims"],1):
+        result = claim["result"]
+        lines.extend([f"## Claim {index}", "", block(claim["review_id"]),
+                      block(f"{claim['path']}:{claim['line']}\n{claim['property']}"), "",
+                      "Decision: " + result["decision"], block(result["summary"]), block(result["reason"]), ""])
+        # Preserve every remaining native result field, including diagnosis,
+        # outstanding checks, blockers and adjacent source leads.
+        details = {k:v for k,v in result.items() if k not in ("review_id","decision","summary","reason")}
+        lines.extend(["Claim result details:",block(json.dumps(details,ensure_ascii=False,indent=2)),""])
+        for link in claim["reviewer_notes"]:
+            note = package["notes"][link["note_id"]]
+            lines.extend(["### Reviewer note: " + ("caller applicability recorded" if link["applicability_ids"] else "context only; applicability not recorded"), "",
+                          block(f"{note['proposition_id']} (revision {note['revision']})\nScope: {note['scope']}\nStatement: {note['statement']}\nConditions: {note['conditions']}\nExclusions: {note['exclusions']}"),
+                          links(note["evidence"]), ""])
+            for aid in link["applicability_ids"]:
+                applies = package["applicability"][aid]
+                lines.extend(["Caller applicability (reviewer interpretation):", block(applies["reason"]),links(applies["evidence"]),""])
+        for link in claim["questions"]:
+            question = package["questions"][link["question_id"]]
+            status = "resolved for this claim" if link["resolved_for_claim"] else question["status"]
+            last = question["last_attempt"]
+            lines.extend(["### Deciding question", "", block(question["question"]), "Status: " + status,
+                          block(last["reason"]) if last else "No answer recorded.",
+                          links(last.get("evidence",[])) if last else "", ""])
+    lines.extend(["## Captured source", "", "Shared source is listed once. Notes do not certify caller applicability.", ""])
+    for key,evidence in package["evidence"].items():
+        lines.extend([f"### Source {evidence_numbers[key]}", "",
+            block(f"{evidence['path']}:{evidence['start_line']}-{evidence['end_line']}\nSHA-256: {evidence['file_sha256']}"),
+            block(evidence["text"]), ""])
+    return "\n".join(lines)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("init", "status", "apply", "view", "knowledge", "bundle-draft"))
+    parser.add_argument("command", choices=("init", "status", "apply", "view", "knowledge", "bundle-draft", "review-package"))
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--seed", required=True, help="trusted experimental binding/claim/limit JSON; not a native admission")
     parser.add_argument("--action", help="JSON action file for apply")
@@ -800,7 +911,10 @@ def main():
     parser.add_argument("--max-bytes", type=int, default=32768)
     parser.add_argument("--proposition-id")
     parser.add_argument("--bundle-id")
+    parser.add_argument("--format", choices=("json","markdown"), default="json", help="review-package output format")
     args = parser.parse_args()
+    if args.format == "markdown" and args.command != "review-package":
+        parser.error("markdown format requires review-package")
     seed = json.loads(Path(args.seed).read_text(encoding="utf-8"))
     if args.command == "init":
         workspace = Workspace.create(args.workspace, seed["source_root"], seed["binding"], seed["claims"], seed["limits"])
@@ -819,8 +933,13 @@ def main():
         result = workspace.view(args.work_id, args.max_bytes)
     elif args.command == "knowledge":
         result = workspace.knowledge(args.proposition_id)
+    elif args.command == "review-package":
+        result = workspace.review_package([args.bundle_id] if args.bundle_id else None)
     else:
         result = workspace.bundle_draft(args.bundle_id)
+    if args.format == "markdown":
+        print(render_review_package(result))
+        return
     print(json.dumps({"native_admission":False, "result":result}, ensure_ascii=False))
 
 
