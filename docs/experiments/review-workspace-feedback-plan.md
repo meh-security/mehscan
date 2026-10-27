@@ -1,6 +1,14 @@
 # Bounded lookup feedback — aligned four-claim confirmation
 
-Status: fresh study X, following implementation `1cf16b1`. Workspace feedback has
+Status: **closed with partial confirmation, not package acceptance**. The
+[results and corrected next steps](review-workspace-feedback-results.md) account
+for all 34 observed calls, including Terra medium. Sol workspace returns four
+matching verdicts but misses the predeclared shared-sanitizer configuration check;
+Terra completes three cases and stops on conflicting filters. No paid repair or
+resume follows. The design below is preserved as frozen before dispatch; the later
+offline conflict-feedback extension was not part of X.
+
+Original pre-dispatch status: fresh study X, following implementation `1cf16b1`. Workspace feedback has
 127 passing workspace tests, the adapter suite (46 tests, one existing skip), seven
 common-validator checks and an offline replay of the two rejected query shapes.
 The offline regression invokes no model/native query and imports no paid answer or

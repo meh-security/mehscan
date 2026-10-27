@@ -28,7 +28,8 @@ bounded action. These are controller changes; the model action schema and native
 admission policy are unchanged. This does not resolve the remaining review-quality
 or caller-applicability gap.
 
-Routine file/directory filter mistakes now return `lookup_feedback` receipts in
+Routine file/directory mismatches and conflicting `path`/`path_prefix` filters now
+return `lookup_feedback` receipts in
 the experimental workspace. The original query and deciding question are retained;
 the rejected query executes no native command and supplies no source evidence.
 Corrections list only arguments actually offered by that tool. The reviewer must
@@ -39,7 +40,8 @@ Feedback consumes the offered query units and received JSON bytes, and each mode
 turn retains its paid usage. It creates no additional model slots or automatic
 provider retry. Question closure still requires source proof. Path escapes,
 unsupported arguments/limits, source/runtime/owner changes and unknown paid usage
-remain outside this narrow recovery path. Ordinary worker execution remains fatal
+remain outside this narrow recovery path and are checked before classifying a
+recoverable filter conflict. Ordinary worker execution remains fatal
 on these rejected filters; the common validator exposes a typed error, and only
 workspace turns it into a bounded receipt.
 
@@ -73,14 +75,21 @@ initial source and zero real provider calls. These are delivery/state guarantees
 the next step is a diverse bounded live quality comparison before more scaffolding
 or the still-unreviewed mixed main wave.
 
-The [subsequent live comparison and Terra 6.1 medium run](experiments/review-workspace-context-results.md)
+The [earlier live comparison and Terra 6.1 medium run](experiments/review-workspace-context-results.md)
 used twenty observed calls but both workspace studies stopped on invalid directory
 values in file filters. Terra finalized canonical logout as a scoped negative and
 kept SAML authorization unresolved, with a separate local-revocation lead. The
 frozen expected SAML issue has a claim-scope ambiguity and cannot establish a model
-ranking from verdict agreement. Both studies remain closed; next address bounded
-lookup-error feedback and oracle alignment before a fresh comparison. The state
-and publication unit tests remain valid offline evidence, not live quality acceptance.
+ranking from verdict agreement. Both studies remain closed.
+
+The [aligned feedback comparison X](experiments/review-workspace-feedback-results.md)
+has since run: 34 observed calls, four Sol workspace verdicts and three Terra
+workspace verdicts. Sol omits the predeclared effective sanitizer-configuration
+check; Terra stops on conflicting filters after two delivered feedback receipts.
+This is partial confirmation, not full source-quality acceptance or demonstrated
+whole-package savings. The subsequent conflict-feedback extension is offline only;
+X remains closed. Current offline checks cover 129 workspace tests plus seven
+common-validator checks. No mixed main wave or full-app review has run.
 
 ## Initialize outside the source root
 

@@ -466,8 +466,6 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
         if not isinstance(values["name"], str) or values["name"] not in catalog:
             raise ValueError("unknown review guidance; select an offered catalog name")
         return []  # Trusted skill lookup, never a native source query/journal.
-    if "path" in values and "path_prefix" in values:
-        raise ValueError("choose one research path filter")
     if isinstance(values.get("path_prefix"), str) and not values["path_prefix"].startswith("/"):
         values["path_prefix"] = values["path_prefix"].rstrip("/")
     for key in ("path", "path_prefix"):
@@ -502,6 +500,9 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
         arguments += ["--journal", str(journal)]
     # Validate scope, shape, names, limits and journal binding before classifying
     # this recoverable filter mistake. Never suggest an unoffered argument.
+    if "path" in values and "path_prefix" in values:
+        raise ResearchFilterError(tool,"conflicting_path_filters",
+            "Choose one research path filter: path for a file OR path_prefix for a directory, not both. No filter was applied.",required,optional)
     if tool in ("source", "outline", "symbol", "definition", "references") and "path" in values and (root / values["path"]).is_dir():
         if "path_prefix" in optional:
             correction = "Use path_prefix for the directory, or path for a known file."

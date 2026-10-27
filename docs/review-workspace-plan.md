@@ -6,7 +6,35 @@ abandon it. The subsequent "Next" resumes implementation and bounded offline
 experiments. Ordinary native review remains the current operational path; preserve
 all raw results and use a fresh freeze for any later mixed-batch comparison.
 
-Latest live result: [V and the requested Terra 6.1 medium run](experiments/review-workspace-context-results.md)
+Latest live result: the [aligned four-claim feedback comparison X](experiments/review-workspace-feedback-results.md)
+is closed with partial confirmation, not package acceptance. All 34 calls have
+observed usage, including the requested Terra 6.1 medium arm. Sol native completes
+four source-supported dispositions in twelve calls; Sol workspace returns the same
+four verdicts in ten calls but omits the predeclared shared-sanitizer configuration
+check. This is not an identified wrong dismissal, but it fails the full source gate.
+Terra completes three dispositions in twelve calls and stops on conflicting lookup
+filters. Two earlier directory-filter errors correctly return bounded feedback;
+successful recovery of the whole case is not demonstrated.
+
+Bounded feedback is implemented for file/directory mismatches and conflicting safe
+filters. The conflict extension was made and tested offline after X closed; it was
+not applied to X or used to buy a repair. Feedback preserves the original question,
+query and spending without source authority or automatic scope changes. Source,
+ownership, unsupported arguments/limits and unknown paid usage remain fatal.
+
+Next address the two measured gaps before a fresh small confirmation: cover routine
+filter validation as a family, and preserve a deciding question about an imported
+protection's effective application configuration when mutable shared state can
+change the selected control. Reuse existing question/source records and category
+guidance; do not add a global checklist, require every caller, or infer semantic
+proof from an answered flag. Test direct default protection, a material unsafe
+shared hook and an unresolved binding before freezing another live comparison.
+Keep the four-case quality gate unchanged and retain Terra as supplementary model
+evidence. Stop adding scaffolding if the change only increases bookkeeping or
+demands unrelated application exploration. Do not run more paid repairs of X,
+reuse its unused ceilings, or dispatch the mixed main/full-app package yet.
+
+Historical result: [V and the requested Terra 6.1 medium run](experiments/review-workspace-context-results.md)
 are closed after file/directory lookup-filter errors. Sol native completes three
 Directus claims in ten calls; Sol workspace stops after three calls/no dispositions.
 An independent fresh Terra run uses seven calls and finalizes two dispositions
@@ -20,14 +48,11 @@ separate unreviewed revocation lead. Do not score it as a proven authorization
 false negative or treat native verdict agreement as ground truth; an unreviewed
 lead is also not a classified finding. Original expectations/costs remain preserved.
 
-Next implement bounded lookup-error feedback with unchanged source/ownership and
-spending guarantees, and re-audit native claim/property alignment before another
-fresh small quality comparison. Do not append more generic prompt warnings or
-silently convert an unsupported filter. Retain the requested Terra medium variant
-as supplementary model evidence, separate from the primary same-model comparison.
-V/VT unused ceilings do not authorize repairs or broader dispatch.
+That result led to bounded lookup-error feedback and the native claim/property
+alignment audit used for X. The SAML case was excluded rather than silently
+rescored. V/VT unused ceilings still do not authorize repairs or broader dispatch.
 
-The latest implementation, [native relationship context and retained conclusions](experiments/review-workspace-basis-results.md),
+The earlier implementation, [native relationship context and retained conclusions](experiments/review-workspace-basis-results.md),
 restores selected native operand/open-decision facts that the compact packet had
 discarded. Answered conclusions and source now survive for active claims without a
 second proposition action; changed answers/reactivated lookups invalidate their

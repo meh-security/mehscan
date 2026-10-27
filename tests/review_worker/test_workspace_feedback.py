@@ -76,6 +76,33 @@ class LookupFeedbackTests(unittest.TestCase):
         self.assertNotIn("omit path",rows[1]["result"]["message"])
         self.assertTrue(all(r["native_query_count"]==0 and not r["evidence"] for r in rows))
 
+    def test_conflicting_filters_return_feedback_without_choosing_or_executing_scope(self):
+        query = self.query("references",symbol="marker",path="nested/code.js",path_prefix="nested",limit=20)
+        self.fx.turn("conflicting",lambda task,packet:self.reply([query]))
+        state = self.bridge.workspace.snapshot()
+        row = next(iter(state["lookups"].values()))
+        self.assertEqual(row["query"],query)
+        self.assertEqual(row["result"]["code"],"conflicting_path_filters")
+        self.assertEqual(row["native_query_count"],0)
+        self.assertEqual(row["evidence"],[])
+        self.assertEqual(state["used"]["queries"],1)
+        def corrected(task,packet):
+            self.assertIn("conflicting_path_filters",json.dumps(packet["workspace_evidence"]["lookups"]))
+            return self.reply([self.query("references",symbol="marker",path_prefix="nested",limit=20)])
+        self.fx.turn("explicit-directory",corrected)
+        rows = sorted(self.bridge.workspace.snapshot()["lookups"].values(),key=lambda r:r["sequence"])
+        self.assertEqual(rows[-1]["query"]["arguments"],{"symbol":"marker","path_prefix":"nested","limit":20})
+        self.assertEqual(rows[-1]["native_query_count"],1)
+        self.assertEqual(self.bridge.workspace.usage()["calls"],2)
+
+    def test_conflicting_filters_do_not_mask_path_escape_or_invalid_limits(self):
+        for args in ({"symbol":"marker","path":"../outside","path_prefix":"nested","limit":20},
+                     {"symbol":"marker","path":"nested/code.js","path_prefix":"../outside","limit":20},
+                     {"symbol":"marker","path":"nested/code.js","path_prefix":"nested","limit":101}):
+            with self.subTest(args=args),self.assertRaises(ValueError) as caught:
+                worker.research_arguments(self.query("references",**args),self.bridge.root,[self.rid],self.bridge.directory/"journals")
+            self.assertNotIsInstance(caught.exception,worker.ResearchFilterError)
+
     def test_feedback_cannot_answer_a_question_without_source_proof(self):
         self.fx.turn("invalid",lambda task,packet:self.reply([self.query()]))
         with self.assertRaisesRegex(ValueError,"known references"):
