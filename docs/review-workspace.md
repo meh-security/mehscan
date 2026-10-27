@@ -112,6 +112,14 @@ fixture has a binding defect and is corrected only in an unrun offline copy; nei
 matching labels nor stable native IDs erase that limitation. Preserve the working
 state behavior and successful cases for a small real-application comparison.
 
+The [real checkout comparison AB](experiments/review-workspace-checkout-results.md)
+then exposes a question-scope guard failure in both workspace models. The offline
+correction separates query beneficiaries from immutable question ownership and
+permits source-cited per-claim settlement during a narrowed continuation. The
+shared question remains open for other claims, and changed answers/lookups/source
+still require reconsideration. All 137 workspace tests pass; no live run yet uses
+this fix. The original study remains closed with its native results and paid traces.
+
 ## Initialize outside the source root
 
 Save a trusted experimental seed as `RUN/seed.json`:
@@ -212,7 +220,7 @@ Draft results retain the native brief-result payload for later finalization.
 | `start_call` | `session_id` | Reserve one aggregate model call before dispatch; return `call_id` |
 | `finish_call` | `call_id`, `usage` | Record observed counters once for that call |
 | `reserve_queries` | `queries` | Reserve positive query units before external lookup dispatch |
-| `draft` | `result`, `applicability`; optional `propositions` | Save one claim's working brief result and dependency revisions |
+| `draft` | `result`, `applicability`; optional `propositions`, controller-derived `resolved_questions` | Save one claim's working brief result, dependency revisions and source-backed resolution scope |
 | `draft_batch` | `drafts` | Apply an array of draft actions atomically |
 
 `evidence`, `evidence_ids`, `proposition_ids`, `review_ids` and `applicability` are
@@ -221,9 +229,16 @@ applicability are required and bounded. Express an empty condition explicitly,
 for example `"none established"`; absence of a condition is not inferred safety.
 
 An answered question requires source evidence. Retrieval alone leaves its status
-unchanged. A blocked or open deciding question prevents an `issue`/`not_issue`
-draft; use `needs_review` with explicit checks. Source binding does not certify
-the truth of an answer, proposition, applicability judgment or verdict.
+unchanged. An unanswered deciding relationship for that claim prevents an
+`issue`/`not_issue` draft; use `needs_review` with explicit checks. In v2 the
+controller can derive per-claim `resolved_questions` when a source-cited settled
+decision accompanies a shared question's continuation for other claims. It does
+not mark the entire question answered or settle any other owner. The model action
+schema is unchanged; this is controller bookkeeping. `settled_review_ids` exposes
+that scope in the provider view and retains its source proof through focus changes.
+Other open questions still block closure, and shared answer revisions or deciding
+lookups involving settled claims reactivate affected drafts. Source binding does
+not certify the truth of an answer, proposition, applicability judgment or verdict.
 
 `usage` contains `input_tokens`, `cached_input_tokens`, `output_tokens` and
 `elapsed_ms`. Each is a nonnegative integer or `null` when unavailable. Cached

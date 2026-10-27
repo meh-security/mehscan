@@ -16,7 +16,31 @@ cases only when the change can affect their source basis or behavior. This repla
 the previous requirement to repeat the whole four-case package as the next step;
 it does not change X's original frozen gate or claim broader acceptance.
 
-Latest live result: [shared-policy contrast AA](experiments/review-workspace-policy-contrast-results.md)
+Latest live result: [real checkout contrast AB](experiments/review-workspace-checkout-results.md)
+retains the native basket-cleanup finding and scoped wallet negative. Both workspace
+arms stop at question-scope equality, with no saved final decisions: Sol uses four
+calls, native five and Terra medium two; all eleven have observed usage. One response
+narrows a shared question while proposing partial closure; the other widens shared
+retrieval beneficiaries without moving query attribution. No source/oracle dispute
+was identified for the native judgments. These are controller defects to correct,
+not grounds to discard supported AA/X/Z behavior or the newly retrieved source.
+
+Post-closure fix `ddfd867` separates lookup beneficiaries, immutable question owners
+and claim-specific settlement. It needs no new model fields. Explicit source-cited
+decisions can settle their part while other claims remain open; narrowing alone
+cannot. Original source/scope/owner/spending protections remain. All 137 workspace
+tests pass. This correction has no live confirmation yet; AB stays closed.
+
+Next complete just the two workspace reviews with fresh runtime-bound state and the
+eight verified retrieved-source windows staged in `carry-source-proposal.json`.
+Label carried-source assistance and match it between Sol/Terra; reuse the saved
+native reference. Preserve all old costs and do not present assisted completion as
+an autonomous same-input comparison. No unchanged native/control rerun is needed.
+The two deferred R-main IDs now have native AB results and incomplete workspace
+attempts; fourteen other main IDs/eight reserves remain undispatched in this
+comparison sequence. Original R execution/full-app scope remains unchanged.
+
+Previous live result: [shared-policy contrast AA](experiments/review-workspace-policy-contrast-results.md)
 retains six supported local case/arm outcomes. Native Sol uses four calls; Sol and
 Terra medium workspace each use three. Both workspace arms inspect shared helpers
 once, preserve a conditional fact, independently close safe/unsafe configurations
@@ -32,9 +56,9 @@ new model calls. The original study remains immutable; the two local successes
 and X/Z results are not reset. Stable native fingerprints do not cover this ignored
 HTML binding, so keep explicit entry/metadata file hashes in later scope checks.
 
-Next source-audit that exact external binding before using the corrected control,
-and test only the affected case if needed. Move broader evaluation toward a small
-related real-application sample with comparable source assurance. Preserve successful
+Separately source-audit that exact external binding before using the corrected control,
+and test only the affected case if needed. AB is the subsequent small
+related real-application sample. Preserve successful
 cases rather than repeat them automatically. Conditional shared facts and partial
 closure are now supported development behavior; whole-app coverage, mixed-rule
 generalization and controller overhead at real application size remain open.

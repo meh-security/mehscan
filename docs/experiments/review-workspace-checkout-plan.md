@@ -1,6 +1,12 @@
 # Real checkout ownership contrast AB
 
-Status: pre-dispatch design after [AA](review-workspace-policy-contrast-results.md).
+Status: **closed after eleven observed calls**. The
+[results](review-workspace-checkout-results.md) retain two source-supported native
+judgments and workspace research, while both workspace arms stop on question-scope
+equality. The narrow controller correction is implemented/tested offline after
+closure, not applied to this run. The design below is preserved as frozen.
+
+Original status: pre-dispatch design after [AA](review-workspace-policy-contrast-results.md).
 Retain AA's supported local cases and X/Z corrections. AB is a fresh, small
 real-application comparison, not a restart of the closed main wave or a full-app
 review. No production code, reviewer guidance or action schema changes.
