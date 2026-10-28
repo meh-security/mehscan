@@ -11,13 +11,25 @@ drafts, work splitting, bounded context views, explicit session replacement, cal
 reservations and usage records. It uses Python's standard-library SQLite support;
 no additional dependency is required.
 
+For concrete claims, CLI output and stopping decisions, start with the
+[worked examples](review-worked-examples.md): native SQL, separate safe/unsafe/
+external-policy outcomes, scoped ownership with a payment lead, and inherited
+comment deletion. Six views are checked on saved database copies; no new model
+calls or findings are introduced.
+
+Current live boundary: [AX](experiments/review-comments-comparison-results.md)
+completes the finite frozen-candidate comparison. Keep native local SQL/API review
+and optional workspace for prepared inherited relationships, preserving proof-depth
+differences and uncertainty. The feature set remains frozen at `a0feb12`; no
+automatic paid repeat or production-default promotion follows.
+
 Latest implementation [AU](experiments/review-turn-audit-results.md) adds a
 read-only saved-turn audit: what was offered, deciding lookups and returned
 evidence, committed judgments, observed reopened work and actual recorded credit.
 It uses existing sessions/receipts without historical controller execution or
 new model calls. See [saved-turn inspection](#inspect-saved-review-turns).
 
-Latest [fresh completion observation AT](experiments/review-consumer-completion-results.md):
+Earlier [fresh completion observation AT](experiments/review-consumer-completion-results.md):
 Terra raw finalizes six claims in four known calls with the conditional package
 preserved. All four cookie claims close together, so AS's consumer transition is
 unobserved; no forced repeat follows. Raw checkout citation selection still

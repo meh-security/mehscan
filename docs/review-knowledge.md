@@ -14,6 +14,15 @@ workspace for this prepared inherited relationship, native local SQL/API default
 and useful uncertainty. Retain the `a0feb12` freeze and stop this paid series;
 twelve unused slots are retired. No universal routing or production promotion.
 
+[AY's worked examples](review-worked-examples.md) now make six saved outcomes
+inspectable through the existing CLI on database copies. The policy trace closes
+two local claims in turn 1 and offers only the external claim thereafter; native
+also shares evidence and was faster in that historical package. AY corrects AL's
+documentation assertion of hook severity agreement: Sol native high, Sol workspace
+medium, Terra workspace high. Original diagnoses, archives and frozen code remain
+unchanged. This is provenance/presentation verification with zero new paid calls,
+not a new accuracy or efficiency result.
+
 Historical preparation and freeze: [AV](review-workflow-freeze-and-validation.md).
 The experimental implementation is pinned at `a0feb12` across 68 workflow/skill
 files. Six additional read-only saved-workspace checks cover eighteen historical

@@ -76,8 +76,11 @@ Implementation-agent audit, not independent human gold or executed exploits:
   downstream guarantees. The local safe policy and unsafe post-escape hook stay
   separate. The external case retains output-contract and runtime-availability
   uncertainty without inheriting local escaping or proving universal non-loading.
-- Severity agrees here: SQL/hook high, cookies medium. This does not resolve AI's
-  separate role/basket severity differences.
+- Severity does not fully agree: the hook is high in Sol native and Terra hybrid,
+  but medium in Sol hybrid. SQL is high and cookies medium. AY's read-only example
+  audit corrects the earlier documentation assertion of hook agreement; original
+  diagnoses remain unchanged. This also leaves AI's separate role/basket severity
+  differences unresolved. See the [worked examples](../review-worked-examples.md).
 
 All retain a deluxe payment-mode lead. Both hybrids additionally retain the
 wallet amount/payment lead; Terra adds card-payment and wallet-state/concurrency
