@@ -6,6 +6,17 @@ grouping or memory behavior between observations. This is not a production
 workspace default, release approval or claim that the original application-wide
 cost problem is solved.
 
+**Current status after AX:** the finite comparison below is complete. The
+[four-arm comments result](experiments/review-comments-comparison-results.md)
+uses twelve known calls: both workspace arms close four scoped negatives in one
+response; Terra native closes them in four, while Sol native reaches its six-call
+cap with four actionable uncertainties. Proof depth differs. Keep optional
+workspace for this prepared inherited relationship, retain native local SQL/API
+defaults and stop this paid series. No persistent-memory or avoided-context saving
+is established. The candidate remains unchanged; twelve unused AX slots and AW's
+consumed preparation are retired. Further live work needs a distinct question,
+and production promotion still needs independent mixed-quality validation.
+
 The practical configuration is rule-specific: ordinary native maximum-20 batching
 for complete local SQL/parser/API questions; workspace for selected compatible
 relationships and partial closure; independent verdicts throughout. Use addressed
@@ -37,6 +48,7 @@ native state admission or historical-run resumption occurs.
 | Human and model evidence presentation | AP preserves 52 package results; AQ round-trips 57 prompts. AR addressed source cites all four selected registrations versus one of four raw sets; Terra policy is slightly worse | Keep focused package views and addressed source. Accurate evidence selection is useful even without universal time/input improvement |
 | Shared-answer consumer eligibility | AR's final task cannot decide two consumers its answer reopens. AS exposes same-work consumers with exact judgments and explicit confirmation; final-call fixture passes | Freeze the correction and invalidation guards. Fresh 144 KiB is explicit, with no extra paid credit. No automatic draft confirmation |
 | Fresh completion and trace inspection | AT completes six claims in four calls but never offers a consumer; AU reconstructs the distinct AR/AS/AT situations read-only | Keep the completion and tool; do not attribute savings to an unexercised transition or buy a repeat to force it |
+| Frozen new-family comparison | AX: Sol native/workspace six/one calls, Terra native/workspace four/one; Sol native remains unresolved, Terra labels agree at different proof depths | Keep compact workspace closure for prepared inherited relationships and useful native uncertainty; no universal route, memory attribution or automatic repeat |
 
 Key sources: [L2](experiments/review-workspace-confirmation-results.md),
 [notebook consumers](experiments/review-workspace-consumer-results.md),
@@ -48,7 +60,8 @@ Key sources: [L2](experiments/review-workspace-confirmation-results.md),
 [AR](experiments/review-addressed-pair-results.md),
 [AS](experiments/review-answer-consumer-results.md),
 [AT](experiments/review-consumer-completion-results.md),
-[AU](experiments/review-turn-audit-results.md).
+[AU](experiments/review-turn-audit-results.md),
+[AX](experiments/review-comments-comparison-results.md).
 
 Do not add all these heterogeneous studies into one aggregate speed score.
 Selections, source completeness, caps, controller revisions and proof depth
@@ -156,6 +169,10 @@ proposal is preferable because its actual inherited dispatch can already be
 identified without an application-wide investigation.
 
 ## Finite validation and stopping decision
+
+**Completed by AX.** These steps retain the pre-execution decision criteria, not
+an available repeat allowance. Read the result and current status above before
+using the historical proposal below. AW preparation has been consumed.
 
 1. **Keep implementation fixed.** Complete source/packet preparation for the
    four comments claims. Inspect the relevant inherited policy chain, actual

@@ -1,16 +1,20 @@
 # Review closure and evidence: implementation and validation
 
-Current direction: **freeze the implemented feature set at `a0feb12` as an
-experimental candidate**, and test it without adding another workflow mechanism.
+Current direction: **keep the implemented feature set frozen at `a0feb12` and
+close the finite development experiment series**. Retain native local SQL/API
+review and optional workspace for prepared shared relationships; no new workflow
+mechanism or automatic paid continuation follows.
 [AV's consolidation and finite validation plan](review-workflow-freeze-and-validation.md)
 summarizes what worked, what remains unproved and what should stay parked.
 Six additional read-only workspace replays cover eighteen historical turns with
-unchanged records. The next source-bound proposal is four Directus comment
-mutations with inherited policy/dispatch, compared against one ordinary native
-packet. [AW's actual packet readiness](experiments/review-comments-readiness-results.md)
-now passes for native/workspace in both models, with equal source and unchanged
-undispatched stores. A separate execution freeze is still required. No full-app run or generic memory/grouping
-implementation follows automatically.
+unchanged records. [AX's frozen comparison](experiments/review-comments-comparison-results.md)
+now completes the four Directus comment mutations in both models: twelve known
+calls, twelve scoped negatives and four actionable native uncertainties. Workspace
+closes each four-claim packet in one call; Terra native takes four, and Sol native
+is cap-censored at six. The packages differ in proof depth. Keep this prepared
+inherited-policy use without attributing the difference to persistent memory or
+avoided contexts. AW's stores are consumed and twelve unused AX calls retired.
+No full-app run or generic memory/grouping implementation follows automatically.
 
 [AR's live comparison](experiments/review-addressed-pair-results.md) is now closed:
 seven finalized arms, one known-cost cap-censored partial, 40 observed calls and
@@ -394,6 +398,10 @@ generic grouping engine, new fact store or budget increase is automatic.
 
 ### After AV: validate the frozen candidate
 
+This finite sequence is now completed by [AX](experiments/review-comments-comparison-results.md).
+The following proposal is retained as design history; its old undispatched stores
+and allowances are no longer available. See the family-specific decision below.
+
 [AW preparation](experiments/review-comments-readiness-results.md) now completes
 the actual source/packet-readiness step without provider reservations or calls.
 All four packets contain the same 1,643 physical source-line keys. Both workspace
@@ -431,6 +439,30 @@ even if it does not win everywhere. A subsequent paid test needs a new material
 question. Default/production promotion still requires independent mixed-quality
 adjudication and realistic source-selection/preparation costs, not another
 unchanged Juice trajectory or a forced consumer transition.
+
+### After AX: retain the useful family-specific result and stop
+
+Both workspace arms preserve selected dispatch and exact check-to-effect proofs,
+with separate verdicts and qualified shared propositions, in their first response.
+Terra native reaches the same scoped negative labels after deeper accountability
+and permission reads. Sol native preserves concrete available-but-unread helper
+questions after six calls and 24 charged query units. Its costs cannot stand for
+equal completed assurance. The bounded evaluator source audit demonstrates no
+wrong dismissal, while leaving API/configuration assumptions explicit.
+
+Keep workspace for this pre-scoped inherited relationship and native for complete
+local SQL/parser/API work. There is no later-context fact reuse in AX, and grouping
+avoids no existing native packet. Do not add memory features, universal rule routing
+or a new prompt paragraph from the call-count difference. Keep useful uncertainty
+and the `a0feb12` candidate unchanged. A conservative 25-byte Windows receipt-count
+inflation is documented; any later UTF-8 accounting correction needs only a new
+revision and focused offline verification, not paid study repair.
+
+The finite comparison decision is complete. Further paid work needs a distinct
+consequential question and fresh source/configuration bindings. Promotion would
+require an independently adjudicated mixed package with complex positives, clean
+controls and genuinely unresolved cases, plus preparation costs. Neither another
+unchanged comments run nor a full-app speed run supplies that evidence.
 
 ## Keep, narrow or stop
 

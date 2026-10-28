@@ -4,22 +4,32 @@ The practical direction is a hybrid selected by deciding work, with packet
 placement chosen separately from logical investigation. No whole-app efficiency
 or quality win has been established.
 
-Current decision: [AV freezes the feature set and changes the testing strategy](review-workflow-freeze-and-validation.md).
+Current decision: [AX completes the finite frozen-candidate comparison](experiments/review-comments-comparison-results.md).
+Both prepared comment-policy workspace arms close four scoped negatives in one
+response. Terra native takes four calls; Sol native reaches six with four concrete
+unresolved helper questions. All twelve calls have known usage, sixteen formal
+dispositions and 86 physically exact excerpts. Proof depth differs, so matching
+labels and call counts are not equal-assurance or causal-memory evidence. Keep
+workspace for this prepared inherited relationship, native local SQL/API defaults
+and useful uncertainty. Retain the `a0feb12` freeze and stop this paid series;
+twelve unused slots are retired. No universal routing or production promotion.
+
+Historical preparation and freeze: [AV](review-workflow-freeze-and-validation.md).
 The experimental implementation is pinned at `a0feb12` across 68 workflow/skill
 files. Six additional read-only saved-workspace checks cover eighteen historical
-turns and leave all 209 files within those directories unchanged. No new reviewer
-behavior, native query or paid call is introduced. Next prepare the four Directus
+turns and leave all 209 files within those directories unchanged. AV introduced no
+new reviewer behavior, native query or paid call. It proposed the four Directus
 comment-mutation claims as an inherited-policy quality/state comparison against
-one native packet; do not claim avoided conversations or add features before that
-bounded validation. This is not a production workspace-default promotion.
+one native packet. AX now executes that proposal, with no avoided-conversation
+claim; it is not an available repeat allowance or a production-default promotion.
 
 [AW's actual packet preparation](experiments/review-comments-readiness-results.md)
 now passes for the four comment claims in Sol/Terra native/workspace. All four
 packets share 1,643 physical source-line keys; workspace packets are 72,950/72,954
 compact bytes and fit the explicit 144 KiB limit. No reviewer behavior changes,
-provider reservations or model calls occur. Real stores remain undispatched;
-the next bounded comparison needs a separate execution freeze, not another feature
-or unchanged preparation cycle. Recorded preparation/capture is 125.839 seconds,
+provider reservations or model calls occurred during AW. AX subsequently consumed
+the stores under its separate freeze; the original readiness receipt retains its
+historical undispatched boundary. Recorded preparation/capture is 125.839 seconds,
 with manual source inspection and verification additional.
 
 Latest implementation: [AU's read-only turn audit](experiments/review-turn-audit-results.md)
@@ -30,7 +40,7 @@ Fourteen checks pass, including fresh deterministic native-bound confirmation;
 all closed archives remain unchanged. There are no paid calls or new savings
 claims. Missing old schemas and observation boundaries stay explicit.
 
-Latest live observation: [AT](experiments/review-consumer-completion-results.md)
+Earlier live observation: [AT](experiments/review-consumer-completion-results.md)
 finalizes the six-claim Terra raw workspace in four calls: 149,860 input tokens,
 3,712 output tokens, 56.667 provider seconds and 71.567 active seconds. It retains
 the two authorization mechanisms and four conditional cookie findings, but closes
@@ -98,6 +108,7 @@ remains offline rather than being confused with AL's ownership negatives.
 
 | New knowledge | Evidence | Consequence |
 | --- | --- | --- |
+| Compact relationship closure can be useful without persistent reuse | AX workspace closes in one response per model with scoped propositions and four applicability records; native explores deeper permission/accountability helpers | Keep this prepared inherited-policy use; preserve native uncertainty and API assumptions, and do not attribute a first-response result to memory or avoided contexts |
 | Useful grouping exists, but singleton comparisons overstate its advantage over native defaults | L2 saves five uncapped calls on SQL/deluxe; both arms are workspace. Native already defaults to 20 reviews | Keep those shared mechanisms; use ordinary native batching as the actual comparator |
 | Uniform workspace is not a demonstrated faster replacement | AI: Sol native ten calls/186.130 active seconds, workspace eleven/216.744 | Route local SQL/API work natively and select workspace where retained relational state helps |
 | Matching verdicts can hide different proof depth | AI native reads the role-to-signed-credential chain; workspace stops earlier; severity differs | Audit mechanisms, conditions, caller proof and severity separately from labels |
