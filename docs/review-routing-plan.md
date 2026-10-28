@@ -22,10 +22,17 @@ repairing AL's historical model evidence. All 254 saved claims map to 38 buckets
 The next candidate includes fifteen claims from three complete Juice buckets:
 six workspace claims plus nine native peers, giving two hybrid packets. Both
 Sol/Terra source and per-claim question checks pass offline; zero model calls.
-Freeze all fifteen proof requirements before a fresh targeted live comparison.
-Count remaining peers explicitly, preserve compatible scope and aggregate credit,
-and qualify unit caps separately. Native-path redundancy and unavailable-fact
-stopping remain separate diagnostics. No unchanged paid rerun or universal switch.
+The [AN live comparison](experiments/review-cross-bucket-results.md) now completes
+that package: Sol native seven calls/276.257 active seconds versus hybrid
+eleven/318.419. Both retain eight issue mechanisms, three negatives and four CSRF
+uncertainties; Terra leaves additional qualified cases. Both hybrids encounter
+bounds. Keep the useful partial state and correct the deciding-question boundary:
+two related CSRF peers remain native and repeat cookie investigation. Eight
+workspace plus seven native claims now pass complete source parity offline.
+Pair the next package test with a separately verified narrow directory-filter API
+adaptation; Terra repeats eight invalid filter requests despite retained feedback.
+Count peers, bounds and caller/citation proof explicitly. No unchanged paid retry,
+universal switch or added generic instruction layer.
 
 First slice completed: [route inspector and CLI](review-routing.md), with the
 [22-claim offline check AJ](experiments/review-routing-inspection-results.md).
@@ -121,7 +128,10 @@ universal routing by category or independent human accuracy.
    the complete fifteen-claim affected package, three native packets versus two
    hybrid packets. The narrower six-claim slice would omit nine native peers and
    exaggerate the full-population unit saving. Preserve native controls and their
-   proof requirements when testing the selected shared handler.
+   proof requirements when testing the selected shared handler. AN now completes
+   this test with mixed results above; its next source-checked placement is eight
+   workspace/seven native, keeping the common cookie question together without
+   transferring caller verdicts or dropping the independent native mechanisms.
 4. **Fix only the failing route or boundary.** The NoSQL evidence-navigation
    question remains useful for a targeted offline diagnostic; it is not a global
    prerequisite for the hybrid slice. Qualification loss, stale facts or missing

@@ -4,19 +4,21 @@ The practical direction is a hybrid selected by deciding work, with packet
 placement chosen separately from logical investigation. No whole-app efficiency
 or quality win has been established.
 
-Latest: [AL's fresh twelve-claim hybrid comparison](experiments/review-hybrid-packet-results.md)
-is closed at 23 calls/36 dispositions, with no unknown usage or paid controller
-failure. Sol native/hybrid each use eight calls, but hybrid takes 208.675 versus
-169.387 active seconds. Keep its useful state and extra workflow leads; no
-same-model speed win is established.
+Latest: [AN's complete fifteen-claim comparison](experiments/review-cross-bucket-results.md)
+closes at 27 calls/45 dispositions, zero unknown usage and no paid repair. Three
+native packets become two hybrid packets, but Sol hybrid takes eleven calls and
+318.419 active seconds versus native seven/276.257. Both retain eight issue
+mechanisms, three scoped negatives and four CSRF uncertainties. Terra hybrid
+takes nine/160.125 with three additional unresolved cases; proof/scope differs
+and both hybrids hit bounds. Preserve useful state and supported mechanisms.
 
-Latest offline: [AM's native-boundary audit and fresh packet checks](experiments/review-native-boundary-audit-results.md).
-All 254 saved claims map to 38 actual native buckets. A complete fifteen-claim
-affected package prepares as three native versus two hybrid packets, with equal
-source and exact per-claim questions in Sol and Terra. Thirty actual first packets
-are checked, including AL's corrected wrapper. Zero new model calls; no live
-savings or accuracy result. Freeze quality requirements for all fifteen before
-the targeted comparison.
+The next concrete corrections are eight workspace claims plus seven native peers
+to keep the compatible cookie question together, and a narrow directory-filter
+API adaptation. The corrected placement passes fresh source/coverage checks
+offline; API replay locates the actual cookie producer after explicit correction.
+Neither has a new live savings result. Avoid unchanged retries or universal
+engine decisions. [AM](experiments/review-native-boundary-audit-results.md) and
+[AL](experiments/review-hybrid-packet-results.md) remain closed supporting evidence.
 
 | New knowledge | Evidence | Consequence |
 | --- | --- | --- |
@@ -34,6 +36,9 @@ the targeted comparison.
 | Equal source is not proof of relevant source completeness | AL profiles match, yet all omit custom asyncHandler; evaluator confirms actual transparent dispatch; AM verifies its fresh delivery | Preserve supported outcomes and AL's historical caller-proof qualification; corrected packets alone do not establish a live improvement |
 | Cross-bucket grouping can hide peers left behind | AM's four profile-image claims appear to reduce three selected packets to one, but leave two native buckets active: full Juice count stays 25 | Include the two redirect peers and the nine remaining native peers in a complete fifteen-claim comparison: three packets become two |
 | Shared-service affinity is not an avoided native context | AM maps all four Q2 Directus service markers to one existing sixteen-claim native bucket; the address pair touches buckets requiring twenty-eight claims to empty both | Preserve the relationship knowledge, but do not buy these as context-saving experiments |
+| Emptying buckets does not guarantee coherent deciding work | AN's six-plus-nine split makes workspace and native independently locate cookie issuance for four CSRF claims | Keep the complete fifteen-claim package; eight-plus-seven placement passes source parity offline with separate caller checks |
+| Retained feedback alone does not prevent an API repair loop | Terra repeats invalid directory filters despite explicit receipts in subsequent contexts; eight charged units execute no native query | Test narrow unambiguous directory adaptation and preserve argument/scope/accounting receipts; do not infer a missing memory subsystem |
+| Useful uncertainty can coexist with missed local closure or scope expansion | Terra retains cookie uncertainty, but coupon format has an available local helper and JSONP delivery is stronger than the selected field-to-JSON question | Keep mechanisms and honest uncertainty; adjudicate and correct each deciding boundary rather than discarding all mixed results |
 | Workspace preserves extra useful uncertainty without classifying new findings | Both AL hybrids retain the wallet payment/amount lead absent from native; all preserve external-policy uncertainty | Keep the useful leads and qualifications; do not inflate finding counts or claim complete operation review |
 
 Native is the practical initial choice for complete SQL constructions, cookie
@@ -48,14 +53,13 @@ provider calls, output, actual model/active time and assembly all count. Input
 reduction, shorter responses, fewer groups and lower configured ceilings are not
 success criteria. Saved implementation-agent audits are not independent human gold.
 
-AL completes the live comparison with Sol primary and Terra medium supplementary.
-AM now verifies the corrected wrapper in fresh actual packets without changing
-AL's historical proof qualification. Its fifteen-claim package is the next concrete
-cross-bucket candidate; include all native peers and freeze their proof requirements
-before inference. Each unit's six-call cap remains distinct from eighteen aggregate
-slots, so capped outcomes cannot establish savings. Inspect native-path redundancy
-and unavailable-fact stopping separately using saved traces. Do not buy another
-unchanged trial or discard supported cases. No retired allowance resumes.
+AN completes the fifteen-claim live package with Sol primary and Terra medium
+supplementary. Useful partial closure survives: only the two workspace CSRF claims
+remain active after local closures. Correct shared-question placement and lookup
+ergonomics before another paid test; keep scoped caller checks and diagnose bounds
+without discarding supported partial results. Several short caller citations are
+imprecise despite physically correct source; preserve underlying mechanism support
+and audit the exported map separately. No retired allowance resumes.
 
 Details: [L2](experiments/review-workspace-confirmation-results.md),
 [AA](experiments/review-workspace-policy-contrast-results.md),

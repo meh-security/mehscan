@@ -71,6 +71,20 @@ before a fresh live study; distinguish eighteen aggregate slots from each unit's
 six-call cap. The address and Directus service candidates do not demonstrate
 avoided native contexts. Do not repeat already-one-call packets just to test the
 workspace label again or silently omit the peers left in a split bucket.
+
+[AN now completes that fifteen-claim live package](experiments/review-cross-bucket-results.md)
+at 27 calls/45 dispositions with no unknown usage or paid repair. Sol hybrid is
+42.162 active seconds slower and uses eleven versus seven calls, while retaining
+the same eight issue mechanisms, three scoped negatives and four CSRF uncertainties.
+Terra hybrid takes nine calls with three additional unresolved cases. Both hybrids
+hit bounds; retain useful qualified state/partial closure rather than reject the
+approach wholesale. Correct the repeated cookie investigation with eight workspace
+claims/seven native peers; fresh source parity passes offline. The other concrete
+correction is unambiguous directory-filter adaptation: eight Terra feedback-only
+queries execute no native query despite retained corrective receipts. Explicit
+offline correction locates the actual login cookie producer. Verify the API
+adaptation and per-claim scope/citation behavior before another bounded package
+test; no paid repair, retired-slot resumption or whole-app rerun.
 Separately inspect the 28 already-captured native import citations and request-identity
 differences before any native pass-through optimization. Use saved external-policy
 traces to identify the last deciding fact before bounded uncertainty. Do not add
