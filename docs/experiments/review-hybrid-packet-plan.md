@@ -1,5 +1,12 @@
 # Hybrid packet comparison AL
 
+**Closed:** 23 observed calls/36 dispositions, no unknown usage or paid controller
+failure. Sol native/hybrid each use eight calls; hybrid is 39.288 active seconds
+longer. Qualified state and extra workflow leads survive. Caller proof is qualified
+by a custom wrapper omitted from all ownership packets; a narrow source-profile
+correction is prepared offline without paid repair. See [results](review-hybrid-packet-results.md).
+The raw pre-dispatch plan remains unchanged.
+
 Fresh bounded experiment following [the evidence summary](../review-knowledge.md).
 Test selective native/workspace review with explicit packet co-location, rather
 than assigning one model conversation to each logical investigation. This is

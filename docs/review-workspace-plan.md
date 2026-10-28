@@ -26,8 +26,9 @@ with ordinary native-worker validation-only review, workspace state and one
 connected allowance ledger. The 22 saved claims retain sixty proposed slots,
 not seventy-two for their twelve units. End-to-end deterministic-provider
 fixtures preserve native drafts and workspace qualifications without admission.
-Next is fresh actual-packet readiness and a bounded live hybrid comparison;
-these offline checks are not savings or model-quality evidence.
+AL below completes fresh actual-packet checks and the first bounded live hybrid
+comparison. AK's offline checks themselves remain integration evidence, not
+savings or model-quality evidence.
 NoSQL navigation remains a targeted correction candidate, rather than a
 prerequisite for every family. Preserve successful native and workspace lanes.
 
@@ -41,7 +42,36 @@ cases only when the change can affect their source basis or behavior. This repla
 the previous requirement to repeat the whole four-case package as the next step;
 it does not change X's original frozen gate or claim broader acceptance.
 
-Latest completed comparison: [mixed native-bucket fallback AI](experiments/review-workspace-mixed-fallback-results.md),
+Latest live result: [hybrid packet comparison AL](experiments/review-hybrid-packet-results.md),
+consolidated in [current knowledge](review-knowledge.md). Twelve claims produce
+36 dispositions in 23 observed calls, with no unknown usage or paid controller
+failure. Sol native/hybrid each use eight calls; hybrid takes 208.675 versus
+169.387 active seconds. All arms retain five classified mechanisms, six scoped
+negatives and one external-contract uncertainty. Qualified workspace state and
+extra wallet/payment leads are useful, but are not additional classified findings
+or proof of model-work savings. YAML's one-versus-two calls are both native paths.
+
+Five original packets remain five hybrid units. Actual source/profile/metadata
+checks pass, yet every ownership packet omits custom asyncHandler at utils:229–231.
+The evaluator confirms transparent dispatch in the actual source; this supports
+the outcomes without retroactively giving that evidence to the reviewers. A
+targeted common-profile extension is prepared offline, not paid-rerun or packet
+acceptance evidence. Keep AL closed and all 67 unused slots retired.
+
+Next verify the corrected custom-intermediary source in fresh actual packets.
+AL's workspace packets already fit native's existing buckets, so it has not tested
+avoiding conversations across those boundaries. Audit existing related
+registration/check/effect traces first; one targeted new test needs compatible
+scope, no stranded peer fragments, counted preparation and equal aggregate credit.
+Do not repeat already-one-call packets just to test the workspace label again.
+Separately inspect the 28 already-captured native import citations and request-identity
+differences before any native pass-through optimization. Use saved external-policy
+traces to identify the last deciding fact before bounded uncertainty. Do not add
+generic helper/metadata expansion, another memory subsystem, higher budgets or
+an unchanged whole-package retry. Such controller improvements cannot by themselves
+explain AL's 29.725-second model-call-time difference.
+
+Earlier completed comparison: [mixed native-bucket fallback AI](experiments/review-workspace-mixed-fallback-results.md),
 using the [frozen eight-claim plan](experiments/review-workspace-mixed-fallback-plan.md).
 All 31 paid calls are observed and all 24 dispositions complete, without a
 controller failure or paid repair. Each arm retains five classified mechanisms

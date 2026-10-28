@@ -11,7 +11,15 @@ drafts, work splitting, bounded context views, explicit session replacement, cal
 reservations and usage records. It uses Python's standard-library SQLite support;
 no additional dependency is required.
 
-The latest [mixed fallback comparison AI](experiments/review-workspace-mixed-fallback-results.md)
+Latest [live hybrid packet result AL](experiments/review-hybrid-packet-results.md):
+23 calls/36 dispositions, no unknown usage or paid controller failure. Sol
+native/hybrid each use eight calls, with hybrid slower in this run. Explicit
+packet co-location preserves qualified state and extra workflow leads without
+adding native fragments. A shared omitted-wrapper proof gap is corrected only
+in an offline profile candidate; no old packet or verdict is retroactively
+recertified. See [current knowledge and next corrections](review-knowledge.md).
+
+The earlier [mixed fallback comparison AI](experiments/review-workspace-mixed-fallback-results.md)
 closes eight claims across native Sol, workspace Sol and workspace Terra medium:
 31 observed calls, 24 dispositions and no controller failure. Core mechanisms
 survive, but source-assurance depth and severity differ. Sol workspace takes
@@ -25,8 +33,8 @@ this proposal visible; its [22-claim check](experiments/review-routing-inspectio
 also exposes two additional potential dispatch units. The
 [hybrid dispatcher AK](experiments/review-hybrid-dispatch-results.md) now implements
 mixed execution/result assembly with combined original-bundle allowances and
-deterministic-provider/native checks; a fresh actual-packet
-readiness freeze and live comparison remain. NoSQL
+deterministic-provider/native checks; AL now completes the subsequent actual-packet
+freeze and live comparison, with the source-proof qualification above. NoSQL
 navigation is a separate targeted improvement. No automatic dispatcher is
 released as the default, and no full-app expansion or unchanged paid retry follows.
 

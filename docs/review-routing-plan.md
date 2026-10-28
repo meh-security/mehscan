@@ -13,6 +13,18 @@ can retain independent local claims beside a workspace subgroup without adding
 native fragments or assuming shared authorization. It replaces a fragmented
 trial design, while preserving AJ/AK's original results and budget safeguards.
 
+AL is now [closed at 23 calls/36 dispositions](experiments/review-hybrid-packet-results.md).
+Sol native/hybrid each use eight calls; hybrid takes 39.288 more active seconds.
+Packet co-location works, state qualifications/extra workflow leads remain useful,
+and all arms retain the selected mechanisms. Reviewer-established caller proof is
+qualified by an omitted custom wrapper; its actual transparent body is inspected
+by the evaluator and a targeted profile correction is prepared offline. Next
+verify that corrected boundary in fresh packets, then audit existing related work
+split across native buckets; AL's workspace groups already fit native packets.
+Require compatible scope, no stranded fragments and equal aggregate credit before
+one targeted new test. Native-path redundancy and unavailable-fact stopping remain
+separate supporting diagnostics. No unchanged paid rerun or universal engine switch.
+
 First slice completed: [route inspector and CLI](review-routing.md), with the
 [22-claim offline check AJ](experiments/review-routing-inspection-results.md).
 Fifteen claims stay native and seven select workspace. The proposal exposes
@@ -23,8 +35,8 @@ aggregate allowances across split/connected bundles are now
 the same 22 claims compile to nine budget components and sixty proposed call
 slots, rather than seventy-two from treating all twelve units independently.
 Deterministic-provider fixtures complete both paths and preserve original native
-results/workspace qualifications. No live efficiency result follows. Next is a
-fresh mixed comparison with actual packet readiness and proof criteria frozen.
+results/workspace qualifications. AK itself establishes no live efficiency result;
+AL above completes the subsequent mixed comparison and records its proof gap.
 
 ## Initial routing policy
 
@@ -101,6 +113,9 @@ universal routing by category or independent human accuracy.
    sending every authorization anchor to workspace. Freeze selection/source,
    per-investigation allowances and evaluator proof requirements before calls.
    Count route preparation, both execution lanes and package assembly together.
+   AL completes the first such live comparison, with no same-model speed win and
+   the wrapper proof qualification above. Do not repeat the successful packet
+   siblings to chase a favorable aggregate.
 4. **Fix only the failing route or boundary.** The NoSQL evidence-navigation
    question remains useful for a targeted offline diagnostic; it is not a global
    prerequisite for the hybrid slice. Qualification loss, stale facts or missing
