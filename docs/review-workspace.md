@@ -19,6 +19,12 @@ findings and uncertainty survive. The subsequent [offline reviewer view AP](expe
 checks 52 unchanged results across six saved packages. No old packet or verdict
 is retroactively recertified. See [current knowledge and next corrections](review-knowledge.md).
 
+[AQ's addressed-input slice](experiments/review-addressed-input-results.md) now
+adds a separate opt-in provider view for actual source windows and new facts.
+All 57 saved prompts reconstruct exactly in raw mode; addressed source round-trips
+without changing qualifications or handles. This is offline input validation,
+not a new live citation, closure or speed result.
+
 The earlier [mixed fallback comparison AI](experiments/review-workspace-mixed-fallback-results.md)
 closes eight claims across native Sol, workspace Sol and workspace Terra medium:
 31 observed calls, 24 dispositions and no controller failure. Core mechanisms
@@ -440,7 +446,8 @@ are explicitly marked and acquire no missing prefix, columns or whole-line
 authority; terminal EOF positions are not padded. The entire package source
 catalog remains available in a focused view. This is human navigation, not a
 smaller model context or a fix to earlier model-selected caller citations. The
-provider prompt and source broker remain unchanged. CLI output is UTF-8.
+human renderer does not select the provider's separate opt-in addressed-input
+mode. The source broker is unchanged. CLI output is UTF-8.
 
 Native-bound `finalize` writes `review-package.json` and `review-package.md`
 beside the original `draft.json` and `response.json`. `validated.json` binds their

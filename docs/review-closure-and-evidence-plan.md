@@ -75,6 +75,12 @@ correct previously chosen short citations. Existing native and workspace provide
 paths serialize packets and new facts separately; a change only to this Markdown
 renderer cannot affect either reviewer's source selection.
 
+[AQ](experiments/review-addressed-input-results.md) now implements the separate
+opt-in provider projection. All 57 saved AO/AL turns reconstruct exactly in raw
+mode and preserve their source/metadata under addressed projection. The replay
+caught and corrected exclusive byte-range endpoints before any paid test. This
+completes the offline implementation, not model citation/closure validation.
+
 Use the actual AO/AN basket-item and checkout examples. A physically correct
 excerpt can still be the wrong caller evidence. Inspect what source was visible
 when the model selected those ranges before choosing a fix.
@@ -100,6 +106,13 @@ input and actual time. Do not repeat all fifteen claims simply to chase a faster
 aggregate; no full-app run, old-budget resumption or reserved follow-up.
 
 ## Next bounded slice after AP
+
+Steps 1–3 are complete in AQ for the saved source shapes: 57 prompts, 579 displayed
+source records, 30,973 addressed rows, with 242,787 extra UTF-8 bytes (7.47%). These
+are prompt bytes, not token estimates or unique source counts. Native continuation
+filtering and workspace fresh-context semantics remain. No local negative gains
+a mandatory caller question. Step 4 is the next live question; preserve raw versus
+addressed input as its one experimental factor.
 
 1. Inspect the actual native `codex_protocol.build_prompt` and workspace
    `workspace_protocol` initial/continuation source shapes. Inventory physical
@@ -131,6 +144,44 @@ boundary. Do not add a generic reminder, new fact engine or force a common verdi
 as a substitute for that diagnosis. If the source view already allows accurate
 selection and errors persist, investigate targeted evidence-handle selection
 before expanding source or budgets.
+
+### Concrete paired-test preparation
+
+Use the actual basket-item and checkout caller-proof cases as the primary targets,
+plus the four related cookie-authenticated mutations to retain shared qualified
+state. Add one complete bound SQL negative, one fixed profile redirect negative
+and the genuinely unavailable external-policy control: nine selected claims,
+with the policy fixture kept in its own application/source binding. Select the
+SQL control by inspecting its complete current construction, not its label.
+
+Compare raw versus addressed presentation within the same chosen engine/placement
+and source preparation. Keep SQL/local redirect work native and the coherent
+cookie relationship in workspace; keep caller results separate. Do not add a
+native-versus-hybrid routing comparison or reintroduce singleton defaults. Include
+Sol medium and Terra 6.1 medium as separate paired observations, not substitutes
+for each other. No evaluator annotations or desired verdicts enter model input.
+
+Before paying, create a fresh selection, source/config/implementation freeze and
+an explicit reachable allowance for every unit. Bind both formats to equal raw
+source, questions and effective aggregate credit; do not give splits extra credit.
+Verify the actual addressed initial/continuation payloads and the new mode binding
+through the reusable runner. The two relationship implementations need distinct
+caller questions even when co-located; sharing a file does not merge their proof.
+
+Measure each final caller citation against the registration it claims to show,
+selected-mechanism support, preserved conditions/uncertainty, actual queries/calls,
+input/output, model time and controller/preparation time. Do not require equal
+issue/needs-review labels when closure levels differ honestly. More input is
+acceptable if the resulting evidence package is more accurate and useful.
+
+Stop the affected arm on unsupported projection, changed source/binding, unknown
+usage or repeated identical source retrieval without a deciding question. Preserve
+the other completed arms and successful cases; no hidden repair, retired allowance
+resumption, automatic reserve wave or full-app run follows. If citations improve
+without a speed win, keep that useful correction and investigate the remaining
+closure gap separately. If neither improves, retain the human view and narrow
+the model-side correction to source-handle selection rather than another broad
+prompt or larger unchanged slice.
 
 ## Keep, narrow or stop
 

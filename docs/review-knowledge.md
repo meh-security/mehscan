@@ -29,8 +29,16 @@ that first step: 52 original results in six packages retain exact JSON identitie
 with shared questions/notes once, claim-focused CLI navigation and addressed
 captured source. No schema extension or model pass is required. It makes
 qualifications inspectable; it does not resolve missing applicability, supply an
-omitted API-contract assumption, or change provider citation behavior. Next inspect
-actual provider source shapes before a narrow addressed-input experiment.
+omitted API-contract assumption, or change provider citation behavior.
+
+[AQ](experiments/review-addressed-input-results.md) now adds a separate opt-in
+addressed source format to native initial/new-fact prompts and workspace captured
+windows. Raw prompts reconstruct exactly for all 57 saved turns. Physical checks
+caught the exclusive next-line endpoint of native byte excerpts; the correction
+preserves partial columns and terminal delimiters. The format adds 7.47% in prompt
+bytes in this replay, with no live token/time or quality conclusion. Next prepare
+a fresh, small raw-versus-addressed paired test on caller proof and qualified
+closure, preserving local and unavailable-policy controls.
 
 | New knowledge | Evidence | Consequence |
 | --- | --- | --- |
@@ -54,6 +62,7 @@ actual provider source shapes before a narrow addressed-input experiment.
 | Coherent sharing can improve the package without a time win | AO uses one cookie question for four CSRF claims and eliminates producer discovery in the native fragment; both observed pairs remain slower in active time | Keep the corrected eight-plus-seven placement; investigate closure/remaining-work boundaries rather than discard state |
 | Closure level changes labels without erasing shared source evidence | Sol leaves browser applicability unresolved; Terra hybrid reports the local CSRF mechanisms with explicit delivery conditions | Present selected mechanism, applicability and stronger impact questions distinctly; do not force all uncertainty into issues or all source findings into runtime investigations |
 | Existing state suffices for a useful reviewer view | AP preserves 52 results and identities across six saved packages, with shared records linked once and 4,128 source rows addressed | Keep the read-only view without another schema or model pass; model-input citation correction remains a separate bounded slice |
+| Source text shapes need different coordinate semantics | AQ's saved native byte excerpt ends at the next line's column 1; generic joined-line treatment invents a blank source line | Preserve exclusive byte endpoints and partial columns; all 57 corrected prompt projections recover exact source and retain metadata |
 | Useful uncertainty can coexist with missed local closure or scope expansion | Terra retains cookie uncertainty, but coupon format has an available local helper and JSONP delivery is stronger than the selected field-to-JSON question | Keep mechanisms and honest uncertainty; adjudicate and correct each deciding boundary rather than discarding all mixed results |
 | Workspace preserves extra useful uncertainty without classifying new findings | Both AL hybrids retain the wallet payment/amount lead absent from native; all preserve external-policy uncertainty | Keep the useful leads and qualifications; do not inflate finding counts or claim complete operation review |
 
@@ -73,10 +82,11 @@ AO completes both model pairs on the same fifteen claims, with useful partial
 closure and shared four-claim cookie questions. AP now puts exact selected
 questions, current reasons and conditional facts together for a human reviewer.
 All 210 AO exported excerpts are physically correct, yet selected caller examples
-still miss bindings. Human source addresses do not change model prompts. Next
-target actual provider source presentation with offline checks; keep locally
-decisive negatives free of mandatory caller investigations. No unchanged speed
-rerun, full-app review or retired allowance resumes.
+still miss bindings. Human source addresses do not change model prompts. AQ now
+implements and checks the separate provider format offline; next compare it on a
+fresh bounded caller/closure slice. Keep locally decisive negatives free of
+mandatory caller investigations. No unchanged speed rerun, full-app review or
+retired allowance resumes.
 
 Details: [L2](experiments/review-workspace-confirmation-results.md),
 [AA](experiments/review-workspace-policy-contrast-results.md),

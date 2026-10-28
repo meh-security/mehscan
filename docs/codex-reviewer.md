@@ -32,6 +32,35 @@ file into its private Codex home and preserves refreshed authentication on resum
 Create the parent of `private_directory`; the adapter creates and marks its own
 store. It refuses arbitrary existing directories or incompatible stores.
 
+An experimental, optional configuration field selects addressed source input:
+
+```json
+"source_presentation": "line-addressed-v1"
+```
+
+Omit it, or use `"raw"`, for the original prompt presentation. The opt-in view
+replaces text only in explicit, bound source windows/contexts and source-query
+results with `L<number> | ...` rows. It does not recursively number arbitrary text,
+guidance, discovery previews, signatures or reviewer interpretations. Raw artifacts,
+source hashes, handles, physical ranges, source completeness, query/cache receipts
+and budgets remain authoritative. Partial columns and clipped excerpts remain
+qualified; a byte-range endpoint at the next line's column 1 is not a blank line.
+Unsupported source shapes fail before inference rather than receive guessed labels.
+
+Native initial prompts and new continuation facts support this mode. Workspace
+replacement contexts address their captured `primary.windows`; their saved facts,
+questions, conditions and exclusions remain literal. Existing native continuation
+filtering still sends only new facts. The mode is pinned to the private conversation
+binding: switching between raw and addressed presentation requires a fresh
+conversation. It is also recorded in provider metrics alongside actual prompt bytes
+and usage. The provider descriptor below is unchanged; the worker's full reviewer
+configuration fingerprint and the adapter's conversation binding retain the mode.
+
+[AQ's offline replay](experiments/review-addressed-input-results.md) checks 57 saved
+prompts and physical source recovery. It measures extra displayed bytes, not token
+or time savings or improved model citation selection. The mode remains opt-in;
+native batching and rule-specific review placement are unchanged.
+
 Export the provider descriptor:
 
 ```text

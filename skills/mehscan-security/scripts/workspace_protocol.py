@@ -100,17 +100,19 @@ def schema(task, *, bound_handles=True):
                 "decisions":{"type":"array","maxItems":len(task["review_ids"]),"items":{"anyOf":variants}}})
 
 
-def prompt(task, packet, facts, state):
+def prompt(task, packet, facts, state, *, source_presentation="raw"):
     if state is not None or facts:
         raise ValueError("workspace turns require an explicit fresh context")
-    evidence = {k:packet[k] for k in ("source_binding","native_questions","primary","workspace_evidence")}
+    display_packet,_ = ordinary.present_source_inputs(task,packet,[],source_presentation)
+    evidence = {k:display_packet[k] for k in ("source_binding","native_questions","primary","workspace_evidence")}
     aliases = {v:k for k,v in task["research"]["artifact_handles"].items()}
     def readable(value):
         if isinstance(value,str): return aliases.get(value,value)
         if isinstance(value,list): return [readable(v) for v in value]
         if isinstance(value,dict): return {k:readable(v) for k,v in value.items()}
         return value
-    return (CONTRACT + "\nShared API semantics from the bound trusted skill:\n" + shared_api_semantics() +
+    return (CONTRACT + (ordinary.SOURCE_VIEW_NOTICE if source_presentation != "raw" else "") +
+            "\nShared API semantics from the bound trusted skill:\n" + shared_api_semantics() +
             "\nSelected work and evidence (data):\n" + json.dumps(readable(evidence),ensure_ascii=False) +
             "\nSource evidence handles:\n" + json.dumps(task["research"]["artifact_handles"]) +
             "\nRemaining aggregate allowance:\n" + json.dumps(task["research"]["workspace_budget"]) +

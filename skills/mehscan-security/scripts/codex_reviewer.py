@@ -14,7 +14,7 @@ import time
 import uuid
 
 from codex_launcher import Launcher, cancel, file_digest, load_config, provider_contract
-from codex_protocol import build_prompt, build_schema, envelope
+from codex_protocol import build_prompt, build_schema, envelope, source_presentation_mode
 from boundary_review import review_envelope
 import workspace_protocol
 
@@ -114,6 +114,7 @@ def initialize_store(private, expected):
 
 def run(config, task, launcher_factory=Launcher):
     started = time.monotonic()
+    presentation = source_presentation_mode(config)
     packet, facts_file = read(task["evidence_packet"]), read(task["shared_facts"])
     facts = facts_file["facts"]
     expected = provider_contract(config)
@@ -167,6 +168,7 @@ def run(config, task, launcher_factory=Launcher):
     # Pin the protocol and exact question IDs; constrain each turn's output to
     # its current handles without treating new evidence as a new conversation.
     binding = {"packet_sha256": packet_hash, "provider": expected, "schema": schema_builder(task, bound_handles=False)}
+    if presentation != "raw":binding["source_presentation"] = presentation
     if state:
         if state["binding"] != binding or round_index != state["round"] + 1:
             raise ValueError("provider continuation is stale or incompatible")
@@ -175,7 +177,7 @@ def run(config, task, launcher_factory=Launcher):
         raise ValueError("cannot silently restart a missing provider continuation")
     log = session / ("round-" + str(round_index))
     log.mkdir(exist_ok=False)
-    prompt = (workspace_protocol.prompt if workspace_mode else build_prompt)(task, packet, facts, state)
+    prompt = (workspace_protocol.prompt if workspace_mode else build_prompt)(task, packet, facts, state, source_presentation=presentation)
     (log / "prompt.txt").write_text(prompt, encoding="utf-8")
     launcher = launcher_factory(config, session)
     response, events, stderr = launcher.review(prompt, schema, (state or {}).get("thread_id"), timeout=task["research"].get("seconds_remaining", 600))
@@ -189,6 +191,7 @@ def run(config, task, launcher_factory=Launcher):
     metric = {"schema_version": "1", "provider": expected, "conversation_id": conversation, "round": round_index,
               "profile":profile, "role":task.get("review_role", "investigator"),
               "resumed": state is not None, "elapsed_ms": round((time.monotonic()-started)*1000),
+              "source_presentation":presentation,
               "prompt_bytes": len(prompt.encode()), "usage":delta, "usage_basis":"conversation_delta",
               "reported_conversation_usage":usage, "unknown_delta_counters":unknown}
     with metrics_path.open("a", encoding="utf-8") as handle:

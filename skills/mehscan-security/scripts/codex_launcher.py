@@ -23,7 +23,8 @@ def load_config(path):
     config = json.loads(Path(path).read_text(encoding="utf-8"))
     expected = {"schema_version", "executable", "executable_version", "model", "reasoning_effort",
                 "auth_file", "private_directory"}
-    if not isinstance(config, dict) or set(config) != expected or config["schema_version"] != "1":
+    if (not isinstance(config, dict) or set(config)-{"source_presentation"} != expected or config["schema_version"] != "1"
+            or config.get("source_presentation","raw") not in ("raw","line-addressed-v1")):
         raise ValueError("unsupported Codex BYOK configuration")
     for key in ("executable", "auth_file", "private_directory"):
         if not isinstance(config[key], str) or not Path(config[key]).is_absolute():
