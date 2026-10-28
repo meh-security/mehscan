@@ -1,13 +1,25 @@
-# Next implementation: closure and reviewer evidence
+# Review closure and evidence: implementation and validation
+
+Current direction: **freeze the implemented feature set at `a0feb12` as an
+experimental candidate**, and test it without adding another workflow mechanism.
+[AV's consolidation and finite validation plan](review-workflow-freeze-and-validation.md)
+summarizes what worked, what remains unproved and what should stay parked.
+Six additional read-only workspace replays cover eighteen historical turns with
+unchanged records. The next source-bound proposal is four Directus comment
+mutations with inherited policy/dispatch, compared against one ordinary native
+packet. It has no avoided-context claim and is not ready for paid dispatch until
+actual source/packet preparation passes. No full-app run or generic memory/grouping
+implementation follows automatically.
 
 [AR's live comparison](experiments/review-addressed-pair-results.md) is now closed:
 seven finalized arms, one known-cost cap-censored partial, 40 observed calls and
 zero paid repairs. Keep addressed source input: all four selected caller excerpt
 sets include their actual registration, versus one of four raw sets. Completed
 Sol pairs improve; Terra policy is slightly slower/larger, and raw Terra Juice
-cannot be treated as a completed efficiency baseline. The next implementation is
-the [shared-answer consumer projection](#next-implementation-after-ar), not another
-unchanged format/speed run or full-app expansion.
+cannot be treated as a completed efficiency baseline. The resulting
+[shared-answer consumer projection](#next-implementation-after-ar) and later
+read-only turn audit are implemented; the sections below retain their diagnosis
+and verification history.
 
 [AO](experiments/review-cookie-scope-results.md) supports keeping workspace's
 qualified state, eight-plus-seven placement and the directory-filter repair.
@@ -378,6 +390,37 @@ use the proven addressed format for relationship evidence. Stop selection if it
 would merge incompatible authority, require exhaustive application reconstruction,
 hide a clean control or merely repeat the Juice Shop trajectory. No paid run,
 generic grouping engine, new fact store or budget increase is automatic.
+
+### After AV: validate the frozen candidate
+
+Offline selection is now complete enough to propose a different family:
+Directus bulk/single comment PATCH and DELETE. The four admitted markers ask
+about the exact inherited action/resource controls, so their source-bound question
+matches the intended proof. The inspected concrete-class fork and overridden
+single/query-to-many dispatch make shared investigation plausible without merging
+update/delete permissions. Source hashes and original questions are recorded.
+
+All four already share one eighteen-claim native bucket. Moving only them to
+workspace adds a full-population context; selected native/workspace arms must each
+use one four-claim packet. This is a quality/state-reuse test, not a dispatch-count
+win. SAML logout is rejected as an unseen candidate because V/VT already ran it
+and recorded an oracle/claim mismatch. The asset ZIP pair is not source-bounded
+enough for paid preparation in this assessment.
+
+Follow [AV's finite sequence](review-workflow-freeze-and-validation.md#finite-validation-and-stopping-decision):
+complete actual source/packet readiness, then at most one separately frozen
+same-model native/workspace comparison per Sol/Terra medium. Proposed maximum is
+24 reachable calls total with the existing six-call/24-query/512-KiB/900-second
+unit allowances. Use addressed source, independent verdicts and explicit context
+configuration. No model calls occur in AV, and the proposal is not a runnable
+experiment freeze.
+
+Stop feature development while testing this candidate. Retain native for a family
+if it is equally useful and cheaper; keep workspace's useful qualified behavior
+even if it does not win everywhere. A subsequent paid test needs a new material
+question. Default/production promotion still requires independent mixed-quality
+adjudication and realistic source-selection/preparation costs, not another
+unchanged Juice trajectory or a forced consumer transition.
 
 ## Keep, narrow or stop
 

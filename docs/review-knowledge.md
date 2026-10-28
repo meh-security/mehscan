@@ -4,6 +4,15 @@ The practical direction is a hybrid selected by deciding work, with packet
 placement chosen separately from logical investigation. No whole-app efficiency
 or quality win has been established.
 
+Current decision: [AV freezes the feature set and changes the testing strategy](review-workflow-freeze-and-validation.md).
+The experimental implementation is pinned at `a0feb12` across 68 workflow/skill
+files. Six additional read-only saved-workspace checks cover eighteen historical
+turns and leave all 209 files within those directories unchanged. No new reviewer
+behavior, native query or paid call is introduced. Next prepare the four Directus
+comment-mutation claims as an inherited-policy quality/state comparison against
+one native packet; do not claim avoided conversations or add features before that
+bounded validation. This is not a production workspace-default promotion.
+
 Latest implementation: [AU's read-only turn audit](experiments/review-turn-audit-results.md)
 joins saved offered IDs, prior judgments, deciding lookups/evidence, committed
 answers, observed remaining work and recorded dispatch credit. It reproduces AR's
@@ -107,6 +116,7 @@ remains offline rather than being confused with AL's ownership negatives.
 | The shared-answer eligibility gap has a concrete bounded correction | AS's actual projection is 135,731 bytes with all four affected IDs and exact previous judgments; a fresh native-bound fixture confirms them on its final allowed call | Keep active-only termination, same-work scope, explicit reconfirmation and original paid limits; live reviewer behavior and savings remain untested |
 | Ordinary completion can improve without testing the intended correction | AT closes six claims in four calls but never offers a consumer; its largest packet also fits the old context bound | Keep the useful package and AS correction without a causal savings claim or forced rerun; expose deciding transitions through existing controller records |
 | Controller records can explain progress without another model diary | AU joins AR/AS/AT tasks and receipts read-only, preserving distinct authority, exact judgments and dispatch offers | Use this operator audit; missing schemas or later observation boundaries must remain explicit rather than reconstructed as historical facts |
+| We can freeze useful implementation without claiming the architecture has won | AV pins 68 source/skill files and audits six more saved workspaces; the next comments family already shares one native bucket | Test a fixed candidate for inherited caller-policy quality and repeated work; park new grouping/memory features and keep native defaults |
 | Useful uncertainty can coexist with missed local closure or scope expansion | Terra retains cookie uncertainty, but coupon format has an available local helper and JSONP delivery is stronger than the selected field-to-JSON question | Keep mechanisms and honest uncertainty; adjudicate and correct each deciding boundary rather than discarding all mixed results |
 | Workspace preserves extra useful uncertainty without classifying new findings | Both AL hybrids retain the wallet payment/amount lead absent from native; all preserve external-policy uncertainty | Keep the useful leads and qualifications; do not inflate finding counts or claim complete operation review |
 
@@ -131,7 +141,7 @@ implements and checks the separate provider format offline; AR retains a live
 citation improvement and reveals a shared-answer completion defect. AS corrects
 that defect offline without changing the closed result. AT completes a fresh
 ordinary review without exercising that transition. Next follow the
-[offline selection and wider-experiment boundary](review-closure-and-evidence-plan.md#after-au).
+[frozen-candidate validation boundary](review-closure-and-evidence-plan.md#after-av-validate-the-frozen-candidate).
 Keep locally decisive negatives free of mandatory caller investigations. No
 unchanged speed rerun, full-app review or retired allowance resumes.
 
