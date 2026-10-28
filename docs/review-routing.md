@@ -62,7 +62,7 @@ captured-file freshness, not the entire inventory snapshot or native ownership.
 
 Each selection contains `review_ids`, `route`, `kind`, `deciding_question`,
 `reason`, `caller_checks`, `evidence_windows` and `limits`. Workspace kinds are
-`shared_operation`, `shared_dependency` and single-claim `relationship`.
+`shared_operation`, `shared_dependency`, `packet_batch` and single-claim `relationship`.
 Shared kinds need at least two claims. Every workspace member needs its own
 caller/check question, keyed by claim ID. These are questions, not inherited facts
 or verdicts. Windows contain `path`, `start_line`, `end_line`, `file_sha256`;
@@ -76,6 +76,13 @@ The whole inspection reads at most 16 MiB of source. An oversized automatic
 operation proposal stays native with a visible limit. Explicit exceptions split
 automatic groups; remaining compatible peers can still share. Invalid explicit
 source is rejected rather than silently broadening its scope.
+
+`packet_batch` is explicit co-location, not a claim that all members share an
+implementation or caller policy. Give each member its own deciding check and
+state which subgroup may share a qualified fact. The inspector adds that scope
+warning automatically. This can keep a locally decisive peer in an already
+selected workspace packet instead of adding a separate native conversation.
+It does not change native SQL defaults or automatically merge unrelated claims.
 
 Explicit selection labor is reported as unmetered, not zero. Content hashes
 provide integrity, not authentication or semantic certification of the proposal.

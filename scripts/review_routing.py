@@ -14,7 +14,7 @@ from review_workspace import identity, label, references, shape, source
 
 VERSION = "mehscanReviewRouting/experimental-v1"
 SELECTION_VERSION = "mehscanReviewRoutingSelections/experimental-v1"
-WORKSPACE_KINDS = {"shared_operation", "shared_dependency", "relationship"}
+WORKSPACE_KINDS = {"shared_operation", "shared_dependency", "relationship", "packet_batch"}
 MAX_CLAIMS = 128
 
 
@@ -157,6 +157,8 @@ def build(root, inventory, manifest, *, planner_plan=None, selections=None, engi
         if not isinstance(limits,list) or not limits:
             raise ValueError("routing selection must retain limits")
         for limit in limits: label(limit)
+        if kind == "packet_batch":
+            limits = [*limits,"Packet co-location only: members may have different implementations and caller policies. Reuse facts only for explicitly applicable consumers; keep every verdict separate."]
         value = {"route":route,"kind":kind,"review_ids":ids,"deciding_question":question,
                  "reason":reason,"caller_checks":checks,"evidence_windows":evidence,
                  "limits":limits,"origin":origin}

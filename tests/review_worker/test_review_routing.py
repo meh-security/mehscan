@@ -136,6 +136,19 @@ class ReviewRoutingTests(unittest.TestCase):
         p=self.build(selections=self.selections(self.spec(["target"],kind="relationship")))
         self.assertEqual([r["route"] for r in p["claims"]],["workspace","native"])
 
+    def test_packet_batch_co_locates_independent_claims_without_shared_applicability(self):
+        self.entry("related-a");self.entry("related-b");self.entry("local-peer")
+        self.bundle("related-a","related-b","local-peer")
+        spec=self.spec(["related-a","related-b","local-peer"],kind="packet_batch")
+        spec["deciding_question"]="Review the related pair's chain and the local peer's separate selector."
+        p=self.build(selections=self.selections(spec))
+        self.assertEqual(p["native_packets"],[])
+        self.assertEqual(p["investigations"][0]["kind"],"packet_batch")
+        self.assertIn("Packet co-location only",p["investigations"][0]["limits"][-1])
+        self.assertEqual(p["dispatch_effects"]["dispatch_unit_delta"],0)
+        self.assertEqual(set(p["investigations"][0]["caller_checks"]),set(p["selected_review_ids"]))
+        self.assertNotIn('"applicability":',json.dumps(p))
+
     def test_oversized_operation_proposal_retains_native_with_visible_limit(self):
         (self.root/"handlers.ts").write_text("call();\n"*401,encoding="utf-8")
         self.entry("a");self.entry("b");self.bundle("a","b")

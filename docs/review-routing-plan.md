@@ -6,6 +6,13 @@ does not decide which path every rule should use. This corrects the overly broad
 next-step interpretation of [AI](experiments/review-workspace-mixed-fallback-results.md),
 without changing its results or reopening its budget.
 
+Current consolidation: [new knowledge and decisions](review-knowledge.md).
+The [fresh AL packet comparison](experiments/review-hybrid-packet-plan.md) separates
+logical shared investigations from context placement. Explicit `packet_batch`
+can retain independent local claims beside a workspace subgroup without adding
+native fragments or assuming shared authorization. It replaces a fragmented
+trial design, while preserving AJ/AK's original results and budget safeguards.
+
 First slice completed: [route inspector and CLI](review-routing.md), with the
 [22-claim offline check AJ](experiments/review-routing-inspection-results.md).
 Fifteen claims stay native and seven select workspace. The proposal exposes
