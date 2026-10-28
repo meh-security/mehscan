@@ -13,6 +13,15 @@ comment-mutation claims as an inherited-policy quality/state comparison against
 one native packet; do not claim avoided conversations or add features before that
 bounded validation. This is not a production workspace-default promotion.
 
+[AW's actual packet preparation](experiments/review-comments-readiness-results.md)
+now passes for the four comment claims in Sol/Terra native/workspace. All four
+packets share 1,643 physical source-line keys; workspace packets are 72,950/72,954
+compact bytes and fit the explicit 144 KiB limit. No reviewer behavior changes,
+provider reservations or model calls occur. Real stores remain undispatched;
+the next bounded comparison needs a separate execution freeze, not another feature
+or unchanged preparation cycle. Recorded preparation/capture is 125.839 seconds,
+with manual source inspection and verification additional.
+
 Latest implementation: [AU's read-only turn audit](experiments/review-turn-audit-results.md)
 joins saved offered IDs, prior judgments, deciding lookups/evidence, committed
 answers, observed remaining work and recorded dispatch credit. It reproduces AR's

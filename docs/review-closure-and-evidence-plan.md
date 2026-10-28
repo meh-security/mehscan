@@ -7,8 +7,9 @@ summarizes what worked, what remains unproved and what should stay parked.
 Six additional read-only workspace replays cover eighteen historical turns with
 unchanged records. The next source-bound proposal is four Directus comment
 mutations with inherited policy/dispatch, compared against one ordinary native
-packet. It has no avoided-context claim and is not ready for paid dispatch until
-actual source/packet preparation passes. No full-app run or generic memory/grouping
+packet. [AW's actual packet readiness](experiments/review-comments-readiness-results.md)
+now passes for native/workspace in both models, with equal source and unchanged
+undispatched stores. A separate execution freeze is still required. No full-app run or generic memory/grouping
 implementation follows automatically.
 
 [AR's live comparison](experiments/review-addressed-pair-results.md) is now closed:
@@ -392,6 +393,15 @@ hide a clean control or merely repeat the Juice Shop trajectory. No paid run,
 generic grouping engine, new fact store or budget increase is automatic.
 
 ### After AV: validate the frozen candidate
+
+[AW preparation](experiments/review-comments-readiness-results.md) now completes
+the actual source/packet-readiness step without provider reservations or calls.
+All four packets contain the same 1,643 physical source-line keys. Both workspace
+packets fit 144 KiB, and raw/addressed projection preserves source/metadata exactly.
+The candidate and real prepared states remain unchanged. Reuse those undispatched
+stores under their existing bindings only after a separate live freeze rechecks
+the recorded hashes/state identities; there is no reason to repeat unchanged
+preparation or alter the protocol.
 
 Offline selection is now complete enough to propose a different family:
 Directus bulk/single comment PATCH and DELETE. The four admitted markers ask
