@@ -85,6 +85,19 @@ queries execute no native query despite retained corrective receipts. Explicit
 offline correction locates the actual login cookie producer. Verify the API
 adaptation and per-claim scope/citation behavior before another bounded package
 test; no paid repair, retired-slot resumption or whole-app rerun.
+
+[AO completes the corrected placement and repaired API](experiments/review-cookie-scope-results.md)
+with both native/hybrid model pairs: 34 calls/60 dispositions, no unknown usage or
+paid repair. The directory-filter change is committed in `2718f6d`; historical
+request replay and 63 controller checks pass. No live request needs normalization,
+so do not attribute a live saving to that branch. Eight workspace/seven native
+keeps the four CSRF questions together and eliminates native-fragment cookie
+discovery, while neither observed model pair has a package time win. Keep these
+useful parts. The [next closure/evidence plan](review-closure-and-evidence-plan.md)
+uses existing qualifications to distinguish selected source mechanisms from
+browser applicability and stronger impact chains, then targets imprecise caller
+citations. Both views should improve without another generic instruction layer,
+mandatory model bookkeeping or an unchanged fifteen-claim performance retry.
 Separately inspect the 28 already-captured native import citations and request-identity
 differences before any native pass-through optimization. Use saved external-policy
 traces to identify the last deciding fact before bounded uncertainty. Do not add

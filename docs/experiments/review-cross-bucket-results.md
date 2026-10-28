@@ -1,5 +1,9 @@
 # Complete cross-bucket comparison AN: retain the useful parts
 
+Subsequent [AO](review-cookie-scope-results.md) implements the filter repair and
+completes both native/hybrid model pairs on the corrected eight-plus-seven
+placement. The AN results and pre-dispatch artifacts below remain unchanged.
+
 Completed on 2026-10-28 under the [frozen fifteen-claim plan](review-cross-bucket-plan.md).
 **27 observed calls, 45 dispositions, zero unknown usage and no paid repair.**
 The complete package does move from three native packets to two hybrid packets,

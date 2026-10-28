@@ -34,6 +34,16 @@ adaptation; Terra repeats eight invalid filter requests despite retained feedbac
 Count peers, bounds and caller/citation proof explicitly. No unchanged paid retry,
 universal switch or added generic instruction layer.
 
+[AO now implements the lookup adaptation and runs both model pairs](experiments/review-cookie-scope-results.md).
+The corrected eight-plus-seven placement uses one shared cookie question for four
+claims and avoids new cookie-producer discovery in the native fragment. Neither
+observed pair has an active-time win; keep the coherent state and tested repair.
+Sol retains four applicability uncertainties while Terra hybrid reports the
+mechanisms conditionally, so finding labels alone are not comparable quality.
+Next use the existing qualified state for the [closure/evidence view](review-closure-and-evidence-plan.md)
+and improve imprecise caller citations. Stop unchanged grouping/speed reruns until
+that package is reviewable; no universal engine switch or expanded full-app run.
+
 First slice completed: [route inspector and CLI](review-routing.md), with the
 [22-claim offline check AJ](experiments/review-routing-inspection-results.md).
 Fifteen claims stay native and seven select workspace. The proposal exposes
@@ -132,6 +142,8 @@ universal routing by category or independent human accuracy.
    this test with mixed results above; its next source-checked placement is eight
    workspace/seven native, keeping the common cookie question together without
    transferring caller verdicts or dropping the independent native mechanisms.
+   AO completes that follow-up with four arms; the next correction is the
+   closure/evidence presentation boundary above, not another unchanged package.
 4. **Fix only the failing route or boundary.** The NoSQL evidence-navigation
    question remains useful for a targeted offline diagnostic; it is not a global
    prerequisite for the hybrid slice. Qualification loss, stale facts or missing

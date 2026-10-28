@@ -4,21 +4,25 @@ The practical direction is a hybrid selected by deciding work, with packet
 placement chosen separately from logical investigation. No whole-app efficiency
 or quality win has been established.
 
-Latest: [AN's complete fifteen-claim comparison](experiments/review-cross-bucket-results.md)
-closes at 27 calls/45 dispositions, zero unknown usage and no paid repair. Three
-native packets become two hybrid packets, but Sol hybrid takes eleven calls and
-318.419 active seconds versus native seven/276.257. Both retain eight issue
-mechanisms, three scoped negatives and four CSRF uncertainties. Terra hybrid
-takes nine/160.125 with three additional unresolved cases; proof/scope differs
-and both hybrids hit bounds. Preserve useful state and supported mechanisms.
+Latest: [AO's four-arm comparison](experiments/review-cookie-scope-results.md)
+closes at 34 calls/60 dispositions, zero unknown usage and no paid repair. The
+directory-filter repair is implemented in `2718f6d`, with 63 checks and replay of
+eight historical failures. Live arms emit no malformed directory filters, so
+replay/acceptance establishes robustness, not a demonstrated live call saving.
 
-The next concrete corrections are eight workspace claims plus seven native peers
-to keep the compatible cookie question together, and a narrow directory-filter
-API adaptation. The corrected placement passes fresh source/coverage checks
-offline; API replay locates the actual cookie producer after explicit correction.
-Neither has a new live savings result. Avoid unchanged retries or universal
-engine decisions. [AM](experiments/review-native-boundary-audit-results.md) and
-[AL](experiments/review-hybrid-packet-results.md) remain closed supporting evidence.
+The eight-workspace/seven-native placement keeps the four CSRF questions together;
+neither native fragment repeats cookie-producer discovery. Sol native/hybrid use
+ten/nine calls and 897.376/1,052.336 active seconds; Terra native/hybrid use
+seven/eight and 114.924/146.307. Bounds and large provider-call durations limit
+efficiency conclusions. Both Sol packages retain eight issues/three negatives/four
+uncertainties; Terra hybrid's twelve issue labels include conditional CSRF and
+an API-contract inference. Preserve qualifications rather than count five new
+confirmed findings over Terra native's seven issues/five uncertainties.
+
+Keep the useful state, repaired API and coherent placement. Next follow the
+[closure and evidence presentation plan](review-closure-and-evidence-plan.md),
+using the qualified information already present before another unchanged paid
+package test or more routing expansion. Native local-rule defaults remain.
 
 | New knowledge | Evidence | Consequence |
 | --- | --- | --- |
@@ -38,6 +42,9 @@ engine decisions. [AM](experiments/review-native-boundary-audit-results.md) and
 | Shared-service affinity is not an avoided native context | AM maps all four Q2 Directus service markers to one existing sixteen-claim native bucket; the address pair touches buckets requiring twenty-eight claims to empty both | Preserve the relationship knowledge, but do not buy these as context-saving experiments |
 | Emptying buckets does not guarantee coherent deciding work | AN's six-plus-nine split makes workspace and native independently locate cookie issuance for four CSRF claims | Keep the complete fifteen-claim package; eight-plus-seven placement passes source parity offline with separate caller checks |
 | Retained feedback alone does not prevent an API repair loop | Terra repeats invalid directory filters despite explicit receipts in subsequent contexts; eight charged units execute no native query | Test narrow unambiguous directory adaptation and preserve argument/scope/accounting receipts; do not infer a missing memory subsystem |
+| The API repair is concrete but not a measured live savings result | AO's compiled repair returns the same results as four explicit native queries for eight historical requests; all live requests use valid filters | Keep the tested repair and avoid another paid run merely to elicit malformed arguments |
+| Coherent sharing can improve the package without a time win | AO uses one cookie question for four CSRF claims and eliminates producer discovery in the native fragment; both observed pairs remain slower in active time | Keep the corrected eight-plus-seven placement; investigate closure/remaining-work boundaries rather than discard state |
+| Closure level changes labels without erasing shared source evidence | Sol leaves browser applicability unresolved; Terra hybrid reports the local CSRF mechanisms with explicit delivery conditions | Present selected mechanism, applicability and stronger impact questions distinctly; do not force all uncertainty into issues or all source findings into runtime investigations |
 | Useful uncertainty can coexist with missed local closure or scope expansion | Terra retains cookie uncertainty, but coupon format has an available local helper and JSONP delivery is stronger than the selected field-to-JSON question | Keep mechanisms and honest uncertainty; adjudicate and correct each deciding boundary rather than discarding all mixed results |
 | Workspace preserves extra useful uncertainty without classifying new findings | Both AL hybrids retain the wallet payment/amount lead absent from native; all preserve external-policy uncertainty | Keep the useful leads and qualifications; do not inflate finding counts or claim complete operation review |
 
@@ -53,13 +60,13 @@ provider calls, output, actual model/active time and assembly all count. Input
 reduction, shorter responses, fewer groups and lower configured ceilings are not
 success criteria. Saved implementation-agent audits are not independent human gold.
 
-AN completes the fifteen-claim live package with Sol primary and Terra medium
-supplementary. Useful partial closure survives: only the two workspace CSRF claims
-remain active after local closures. Correct shared-question placement and lookup
-ergonomics before another paid test; keep scoped caller checks and diagnose bounds
-without discarding supported partial results. Several short caller citations are
-imprecise despite physically correct source; preserve underlying mechanism support
-and audit the exported map separately. No retired allowance resumes.
+AO completes both model pairs on the same fifteen claims, with useful partial
+closure and shared four-claim cookie questions. The next view should put exact
+selected questions, current remaining reasons and conditional facts together.
+All 210 exported excerpts are physically correct, yet selected caller examples
+still miss bindings. Improve source-handle/line presentation with offline checks;
+keep locally decisive negatives free of mandatory caller investigations. No
+unchanged speed rerun, full-app review or retired allowance resumes.
 
 Details: [L2](experiments/review-workspace-confirmation-results.md),
 [AA](experiments/review-workspace-policy-contrast-results.md),
