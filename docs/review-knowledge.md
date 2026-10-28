@@ -1,8 +1,19 @@
 # Review workflow: current evidence and decisions
 
 The practical direction is a hybrid selected by deciding work, with packet
-placement chosen separately from logical investigation. No whole-app efficiency
-or quality win has been established.
+placement chosen separately from logical investigation. **Quality and total price
+are primary; latency is secondary.** No whole-app quality or total-price win has
+been established.
+
+[AZ's quality/price reassessment](review-quality-and-price-assessment.md) reconciles
+100 saved calls without new dispatch: Sol workspace/hybrid model-price equivalents
+are 22.4% lower in AI, 8.3% in AL and 23.8% in AO, despite slower observed execution.
+Terra AO is 7.4% more expensive; AX Terra is 79.3% lower with different proof depth.
+AX Sol is censored and not an equal-closure saving. These use current published
+Standard rate equivalents, not invoices. Supported mechanisms and useful state
+remain, but caller/authority proof, severity and preparation/follow-up costs need
+explicit evaluation. Keep the selective candidate; do not equate slower with worse
+or matching labels with equal quality.
 
 Current decision: [AX completes the finite frozen-candidate comparison](experiments/review-comments-comparison-results.md).
 Both prepared comment-policy workspace arms close four scoped negatives in one

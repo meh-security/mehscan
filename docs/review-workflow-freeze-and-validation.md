@@ -1,5 +1,11 @@
 # Review workflow consolidation and freeze AV
 
+Current evaluation priority, clarified after AY: **quality and total price first;
+speed second**. The [saved-result reassessment](review-quality-and-price-assessment.md)
+prices six within-study pairs and preserves their quality differences. Sol's
+slower mixed/hybrid packages can be cheaper; they are not rejected for latency.
+This does not establish total operational cost or reopen the completed sequence.
+
 Freeze the current review-workflow feature set at **`a0feb12`** as an experimental
 candidate. Continue testing that candidate; do not keep changing its contract,
 grouping or memory behavior between observations. This is not a production

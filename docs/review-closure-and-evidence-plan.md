@@ -1,5 +1,13 @@
 # Review closure and evidence: implementation and validation
 
+Evaluation priority: **review-package quality and total price**, with latency
+secondary. The [quality/price reassessment](review-quality-and-price-assessment.md)
+finds lower model-price equivalents in several slower Sol workspace/hybrid
+packages; they remain useful candidates. Missing proof, source assumptions and
+unmetered preparation/adjudication costs prevent an equal-quality total-price
+claim. Historical criteria below remain the record of those studies; current
+selection must not reject adequate cheaper work merely because it is slower.
+
 Current direction: **keep the implemented feature set frozen at `a0feb12` and
 close the finite development experiment series**. Retain native local SQL/API
 review and optional workspace for prepared shared relationships; no new workflow
