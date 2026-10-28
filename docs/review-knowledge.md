@@ -4,7 +4,16 @@ The practical direction is a hybrid selected by deciding work, with packet
 placement chosen separately from logical investigation. No whole-app efficiency
 or quality win has been established.
 
-Latest: [AO's four-arm comparison](experiments/review-cookie-scope-results.md)
+Latest: [AR's format comparison](experiments/review-addressed-pair-results.md)
+closes with 40 known calls, 25 aggregate finalized dispositions in seven arms and
+seven preserved draft answers in one capped partial arm. Addressed input includes
+the correct registration in four of four selected caller sets versus one of four
+raw sets. Both completed Sol comparisons improve, while Terra policy is slightly
+slower/larger and raw Terra Juice is not a completed efficiency baseline. Keep the
+format and useful partial state; fix the shared-question consumer/action-scope
+gap offline before wider runs. All 32 unused slots are retired; no paid repairs.
+
+Earlier: [AO's four-arm comparison](experiments/review-cookie-scope-results.md)
 closes at 34 calls/60 dispositions, zero unknown usage and no paid repair. The
 directory-filter repair is implemented in `2718f6d`, with 63 checks and replay of
 eight historical failures. Live arms emit no malformed directory filters, so
@@ -36,9 +45,10 @@ addressed source format to native initial/new-fact prompts and workspace capture
 windows. Raw prompts reconstruct exactly for all 57 saved turns. Physical checks
 caught the exclusive next-line endpoint of native byte excerpts; the correction
 preserves partial columns and terminal delimiters. The format adds 7.47% in prompt
-bytes in this replay, with no live token/time or quality conclusion. Next prepare
-a fresh, small raw-versus-addressed paired test on caller proof and qualified
-closure, preserving local and unavailable-policy controls.
+bytes in this replay. AR now supplies the bounded live observations above; its
+cases retain conditional browser scope and genuine policy uncertainty. The saved
+Juice inventory has no safe parameterized SQL candidate; that source/state control
+remains offline rather than being confused with AL's ownership negatives.
 
 | New knowledge | Evidence | Consequence |
 | --- | --- | --- |
@@ -63,6 +73,9 @@ closure, preserving local and unavailable-policy controls.
 | Closure level changes labels without erasing shared source evidence | Sol leaves browser applicability unresolved; Terra hybrid reports the local CSRF mechanisms with explicit delivery conditions | Present selected mechanism, applicability and stronger impact questions distinctly; do not force all uncertainty into issues or all source findings into runtime investigations |
 | Existing state suffices for a useful reviewer view | AP preserves 52 results and identities across six saved packages, with shared records linked once and 4,128 source rows addressed | Keep the read-only view without another schema or model pass; model-input citation correction remains a separate bounded slice |
 | Source text shapes need different coordinate semantics | AQ's saved native byte excerpt ends at the next line's column 1; generic joined-line treatment invents a blank source line | Preserve exclusive byte endpoints and partial columns; all 57 corrected prompt projections recover exact source and retain metadata |
+| Concrete source presentation can improve the evidence map | AR addressed quotes all four selected caller registrations; raw quotes one. Sol Juice is seven versus nine calls with the same supported conditional package | Keep the option without requiring universal time/input improvement; Terra's policy pair is slightly worse and its raw Juice efficiency baseline is censored |
+| Retained state can expose a decision that the model is not authorized to update | AR's final raw Terra prompt names settled shared-question consumers but offers only profile/erasure; the answer reopens both hidden image drafts after the sixth call | Make affected same-work consumers and exact prior results actionable together; retain invalidation, source guards and paid limits |
+| More input can be the balanced choice | AR's full affected-consumer projection is 135,628 bytes versus a 131,072-byte cap; simple bookkeeping compression still misses the cap | Test a bounded projection and modest fresh context allowance before semantic truncation or another investigation; never repair the retired run |
 | Useful uncertainty can coexist with missed local closure or scope expansion | Terra retains cookie uncertainty, but coupon format has an available local helper and JSONP delivery is stronger than the selected field-to-JSON question | Keep mechanisms and honest uncertainty; adjudicate and correct each deciding boundary rather than discarding all mixed results |
 | Workspace preserves extra useful uncertainty without classifying new findings | Both AL hybrids retain the wallet payment/amount lead absent from native; all preserve external-policy uncertainty | Keep the useful leads and qualifications; do not inflate finding counts or claim complete operation review |
 
@@ -83,10 +96,11 @@ closure and shared four-claim cookie questions. AP now puts exact selected
 questions, current reasons and conditional facts together for a human reviewer.
 All 210 AO exported excerpts are physically correct, yet selected caller examples
 still miss bindings. Human source addresses do not change model prompts. AQ now
-implements and checks the separate provider format offline; next compare it on a
-fresh bounded caller/closure slice. Keep locally decisive negatives free of
-mandatory caller investigations. No unchanged speed rerun, full-app review or
-retired allowance resumes.
+implements and checks the separate provider format offline; AR now retains a live
+citation improvement and reveals a shared-answer completion defect. Next follow
+the [bounded consumer-projection correction](review-closure-and-evidence-plan.md#next-implementation-after-ar).
+Keep locally decisive negatives free of mandatory caller investigations. No
+unchanged speed rerun, full-app review or retired allowance resumes.
 
 Details: [L2](experiments/review-workspace-confirmation-results.md),
 [AA](experiments/review-workspace-policy-contrast-results.md),

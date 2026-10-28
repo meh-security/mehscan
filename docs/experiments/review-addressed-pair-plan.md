@@ -1,5 +1,11 @@
 # Raw versus addressed input AR
 
+Closed: [results and corrected continuation](review-addressed-pair-results.md).
+Forty calls have known usage; seven arms finalize 25 aggregate dispositions, and
+one capped arm preserves seven draft answers with two requiring renewed review.
+No paid repair occurs. All 32 unused reachable slots are retired. The planned
+32 result objects exist, but they are not 32 aggregate finalized dispositions.
+
 Compare source presentation within fixed selective execution, for Sol medium and
 Terra 6.1 medium. This tests whether physical line addresses improve caller
 citations and selected-question closure. It is not another native-versus-workspace

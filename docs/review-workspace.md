@@ -11,7 +11,14 @@ drafts, work splitting, bounded context views, explicit session replacement, cal
 reservations and usage records. It uses Python's standard-library SQLite support;
 no additional dependency is required.
 
-Latest [live comparison AO](experiments/review-cookie-scope-results.md): 34 calls/
+Latest [live format comparison AR](experiments/review-addressed-pair-results.md):
+seven arms finalize, one raw Terra arm remains cap-censored with two reopened
+consumers. Forty calls have known usage, no paid repair occurs, and all unused
+slots are retired. Addressed source fixes the four selected caller citation sets.
+The next correction is making shared-answer consumers actionable in the same
+turn, while preserving source/dependency guards and separate judgments.
+
+Earlier [live comparison AO](experiments/review-cookie-scope-results.md): 34 calls/
 60 dispositions across Sol and Terra native/hybrid pairs. Eight workspace claims
 share the cookie investigation while seven local peers stay native. Both hybrid
 packages remain slower in observed active time; useful mechanisms, conditional
@@ -23,7 +30,8 @@ is retroactively recertified. See [current knowledge and next corrections](revie
 adds a separate opt-in provider view for actual source windows and new facts.
 All 57 saved prompts reconstruct exactly in raw mode; addressed source round-trips
 without changing qualifications or handles. This is offline input validation,
-not a new live citation, closure or speed result.
+not itself a live citation, closure or speed result. AR supplies the later live
+observations and their completion/uncertainty qualifications above.
 
 The earlier [mixed fallback comparison AI](experiments/review-workspace-mixed-fallback-results.md)
 closes eight claims across native Sol, workspace Sol and workspace Terra medium:

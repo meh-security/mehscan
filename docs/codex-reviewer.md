@@ -61,6 +61,13 @@ prompts and physical source recovery. It measures extra displayed bytes, not tok
 or time savings or improved model citation selection. The mode remains opt-in;
 native batching and rule-specific review placement are unchanged.
 
+The later [AR comparison](experiments/review-addressed-pair-results.md) retains
+the option: addressed input fixes four selected caller-citation examples, and
+completed Sol pairs use fewer calls. Terra's policy pair is slightly slower/larger;
+raw Terra Juice is cap-censored by a shared-answer completion gap. These bounded
+observations do not establish a whole-app speed win or change the default. The
+next controller fix must preserve the source and invalidation guards.
+
 Export the provider descriptor:
 
 ```text

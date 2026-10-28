@@ -1,5 +1,14 @@
 # Next implementation: closure and reviewer evidence
 
+[AR's live comparison](experiments/review-addressed-pair-results.md) is now closed:
+seven finalized arms, one known-cost cap-censored partial, 40 observed calls and
+zero paid repairs. Keep addressed source input: all four selected caller excerpt
+sets include their actual registration, versus one of four raw sets. Completed
+Sol pairs improve; Terra policy is slightly slower/larger, and raw Terra Juice
+cannot be treated as a completed efficiency baseline. The next implementation is
+the [shared-answer consumer projection](#next-implementation-after-ar), not another
+unchanged format/speed run or full-app expansion.
+
 [AO](experiments/review-cookie-scope-results.md) supports keeping workspace's
 qualified state, eight-plus-seven placement and the directory-filter repair.
 Neither same-model package is faster in observed active time. The new deciding
@@ -111,8 +120,8 @@ Steps 1–3 are complete in AQ for the saved source shapes: 57 prompts, 579 disp
 source records, 30,973 addressed rows, with 242,787 extra UTF-8 bytes (7.47%). These
 are prompt bytes, not token estimates or unique source counts. Native continuation
 filtering and workspace fresh-context semantics remain. No local negative gains
-a mandatory caller question. Step 4 is the next live question; preserve raw versus
-addressed input as its one experimental factor.
+a mandatory caller question. Step 4 has now been tested in AR with source format
+as its one experimental factor. Its remaining controller completion gap is below.
 
 1. Inspect the actual native `codex_protocol.build_prompt` and workspace
    `workspace_protocol` initial/continuation source shapes. Inventory physical
@@ -146,6 +155,9 @@ selection and errors persist, investigate targeted evidence-handle selection
 before expanding source or budgets.
 
 ### Concrete paired-test preparation
+
+This design is now a closed experiment. Retain its source/allowance rules as a
+record, and use the AR results rather than dispatching it again unchanged.
 
 [AR's concrete plan](experiments/review-addressed-pair-plan.md) corrects one red
 flag in the proposal below: the saved Juice inventory has no safe parameterized
@@ -193,6 +205,59 @@ without a speed win, keep that useful correction and investigate the remaining
 closure gap separately. If neither improves, retain the human view and narrow
 the model-side correction to source-handle selection rather than another broad
 prompt or larger unchanged slice.
+
+## Next implementation after AR
+
+Terra raw's last workspace prompt offered profile and erasure only. Its open
+shared question already named two settled image consumers, but the output schema
+could not decide those IDs. Answering the question then correctly reopened both
+old drafts, after the final allowed call. This is a controller/view/action-scope
+problem with known evidence, not a reason to disable invalidation or add another
+generic model reminder. The raw arm stays closed and partial.
+
+1. Preserve the recorded six-turn transition and reproduce the eligibility gap
+   on fresh deterministic fixtures. Join actual offered IDs, question scope,
+   `settled_review_ids`, last answer, resulting flags and remaining allowance.
+   Verify that the original final schema excludes exactly the two reopened IDs.
+2. Compute a bounded set of same-work consumers that a presented shared answer
+   can invalidate. Make their exact selected questions and previous results
+   available and actionable in the same turn. Keep separate verdicts and label
+   prior results as reviewer judgments requiring confirmation where affected.
+   Prefer existing state/result fields; no new fact engine, verdict action or
+   progress diary is needed. Do not bring all settled claims into every turn or
+   silently expand into other work units/caller authorities.
+3. Keep native source, proposition/applicability revisions, dispute, session and
+   unknown-usage guards. A changed answer must still reopen affected judgments;
+   the reviewer must explicitly confirm or revise them. Do not replay old paid
+   answers into the closed run, declare the old drafts valid automatically, or
+   transfer a sibling's verdict.
+4. Budget the actual model projection. In the recorded case, affected questions
+   plus exact prior results need 135,628 compact bytes versus 128,968 before and
+   a frozen cap of 131,072. Latest untruncated attempts plus counts and removal
+   of only exact duplicate question/lookup-ID strings still need 131,757 bytes.
+   Preserve all raw history and lookup evidence. Compare a bounded projection
+   with a modest explicit fresh context allowance, for example 144 KiB if needed;
+   do not truncate qualifications or spend substantial effort chasing a byte
+   target when the added input avoids reconstruction. Any new bound must be
+   configured and tested, not silently applied to historical state. Grant no
+   extra calls, queries or source credit.
+5. Verify the whole path: view/session identity, native question projection,
+   schema eligibility, exact previous-result delivery, source handles and budget
+   ceilings. Include a final-call fixture that explicitly reconfirms affected
+   consumers, a contradictory-answer case, an unrelated local SQL/redirect case,
+   foreign-work isolation and all-settled termination. Showing a consumer name
+   without permitting its decision is insufficient; permitting it without the
+   relevant old judgment/source is also insufficient.
+6. Stop offline if scope, session freshness, uncertainty or input bounds cannot
+   be preserved. Diagnose that boundary before another paid turn. After those
+   checks pass, decide whether a small fresh completion confirmation adds useful
+   evidence. Keep engine placement and existing call/query credit fixed; do not
+   automatically repeat all eight AR arms or resume retired slots.
+
+Retain the independently useful format, native local defaults and qualified state.
+The hypothetical projections in AR are diagnostics only; no controller fix or
+new live savings is implemented by this plan. A successful fresh projection would
+make confirmation possible, not prove that a model will choose it or finish faster.
 
 ## Keep, narrow or stop
 
