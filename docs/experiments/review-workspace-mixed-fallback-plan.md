@@ -1,5 +1,11 @@
 # Mixed native-bucket fallback comparison AI
 
+**Closed:** 31 observed calls/24 dispositions, no controller failure or unknown
+usage. Core mechanisms are retained; source-assurance/severity differences remain.
+Sol workspace uses eleven calls/216.744 active seconds versus native's ten/186.130.
+See [results and practical direction](review-workspace-mixed-fallback-results.md).
+The raw pre-dispatch plan and all original studies remain unchanged.
+
 Prepare and, only after readiness passes, run eight real claims on two pinned
 applications. This is a fresh selected package, not resumption of R's main wave,
 AF repair, a reserved confirmation or a full-app run. Preserve all old results.

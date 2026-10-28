@@ -16,7 +16,36 @@ cases only when the change can affect their source basis or behavior. This repla
 the previous requirement to repeat the whole four-case package as the next step;
 it does not change X's original frozen gate or claim broader acceptance.
 
-Latest implemented slice: [review-package fidelity AH](experiments/review-workspace-review-package-results.md).
+Latest completed comparison: [mixed native-bucket fallback AI](experiments/review-workspace-mixed-fallback-results.md),
+using the [frozen eight-claim plan](experiments/review-workspace-mixed-fallback-plan.md).
+All 31 paid calls are observed and all 24 dispositions complete, without a
+controller failure or paid repair. Each arm retains five classified mechanisms
+and three scoped negatives. Native Sol takes ten calls/186.130 active seconds,
+workspace Sol eleven/216.744, and workspace Terra medium ten/112.216. This does
+not establish a same-model efficiency win or a model ranking. Native inspects a
+deeper role-to-credential chain; severity and caller-source assurance differ.
+Matching dispositions do not establish equal proof depth.
+
+The four actual native buckets already share the YAML and cookie investigations;
+workspace uses identical memberships. All eight actual initial packets pass
+source equality. Manually assisted preparation/capture adds 145.992 seconds,
+excluding incompletely metered selection/audit labor. The comparison includes
+neither SQL nor a genuinely unavailable external-implementation control. It is
+not broad acceptance, an automatic grouping test or a held-out evaluation.
+
+The most useful new diagnosis is NoSQL evidence navigation: native reaches the
+deciding test in four calls; both workspaces take six, with query units remaining.
+One follows a misleading related test; the other tries unmatched paths/empty
+knowledge and recovers a reference filter. No previously learned fact is shown
+being forgotten, and no repeated returned source lines explain the excess.
+Keep workspace state and package fidelity; investigate earlier discovery of
+deciding evidence before adding more memory or generic helper expansion.
+
+AI is closed, with all 41 unused call slots retired. Four remaining R-main IDs,
+eight reserves and full-app execution remain outside dispatch. No runtime change,
+old-study resumption or paid repair is justified by this result.
+
+Latest implemented slice remains [review-package fidelity AH](experiments/review-workspace-review-package-results.md).
 The existing workspace CLI, native-bound finalizer and batch report now export
 JSON/Markdown packages retaining exact linked proposition revisions, conditions,
 exclusions, recorded applicability, deciding questions and shared captured source.
@@ -36,10 +65,10 @@ are newly derived views, not old-runtime resumption or new native validation.
 This completes the planned export-boundary correction without a summarizer or
 new state/action schema. It is fidelity work, not an efficiency claim. Preserve
 the semantic gaps independently; a visible caveat does not make a wrong dismissal
-acceptable. Stop this feature here and return to the selective-investigation and
-native-batch fallback comparison, with a fresh small diverse design/readiness
-freeze before any model dispatch. Deeper contract production remains conditional
-on actual compatible/incompatible consumers and counted producer work.
+acceptable. Stop this feature here. The subsequent AI comparison above completes
+the planned small mixed native-batch fallback check, without establishing a
+same-model efficiency benefit. Deeper contract production remains conditional on
+actual compatible/incompatible consumers and counted producer work.
 
 Previous assessment: [offline retrieval diagnostic AG](experiments/review-workspace-retrieval-diagnostic-results.md).
 Fourteen historical work items/arms, including all seven L2 groups, are replayed
@@ -73,18 +102,33 @@ This is comparison reliability, not a model-quality or speed improvement.
    beside decisions; do not turn every exclusion into a blocker or silently
    rewrite verdicts. Diagnose the saved Sol same-response case separately from
    genuine persisted-state loss. This is fidelity work, not an efficiency claim.
-3. For efficiency, retain selective SQL/shared-operation investigations and test
-   practical batch fallback against native maximum 20 on a small diverse package.
-   A deeper permission contract needs actual compatible/incompatible consumers
-   and counted producer cost; do not make it a new prerequisite for broader
-   evaluation. Keep complete declarations as a narrow usability candidate, not
-   another promised workflow solution.
+3. Completed in AI: compare practical batch fallback against native maximum 20
+   on eight real mixed claims, including Terra medium. Keep the retained
+   mechanisms and source-assurance differences; do not count native's existing
+   batching as work avoided only by workspace. Preserve selective SQL/shared
+   investigation as earlier supported work, not a result of AI's non-SQL slice.
+4. Next, audit deciding-evidence navigation offline across several saved families.
+   Trace the stated deciding question, available path/reference results, selected
+   source, remaining caller proof and decision. Include misleading test names
+   and cases with no useful test evidence. Count candidate noise and preparation
+   work; source pre-coverage alone does not predict a saved model turn. This
+   diagnostic must precede a test selector, prompt change or new paid comparison.
+
+Proceed to a narrow implementation only if existing lookup results expose useful
+deciding evidence across distinct families without reconstructing the full review
+upstream, and controls keep unrelated tests from being treated as proof. Stop or
+change direction if benefit is confined to this tuned NoSQL chain, if relationships
+remain undiscovered, or if preparation duplicates the investigation. A later paid
+test needs a fresh freeze and matched proof/qualification criteria; it does not
+inherit AI's retired budget. More memory, higher budgets and an unchanged retry
+are not the current next step.
 
 Stop generic expansion if useful evidence is confined to one tuned chain, if the
 selector still misses deciding relationships, or if construction repeats a full
 investigation upstream. Higher query/input volume alone is not the stop criterion.
-No main/reserve/full-app dispatch occurs in AG. The existing broader quality and
-scope gates remain; supported old cases and partial evidence remain useful.
+No main/reserve/full-app dispatch occurs in AG; AI's separate selected dispatch
+does not resume the closed R study. The existing broader quality and scope gates
+remain; supported old cases and partial evidence remain useful.
 
 Previous completed implementation slice: [common explicit source channel AF](experiments/review-workspace-source-channel-results.md).
 `c2b06c7` implements the same hash/scope-bound source-only profile in ordinary

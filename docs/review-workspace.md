@@ -11,6 +11,16 @@ drafts, work splitting, bounded context views, explicit session replacement, cal
 reservations and usage records. It uses Python's standard-library SQLite support;
 no additional dependency is required.
 
+The latest [mixed fallback comparison AI](experiments/review-workspace-mixed-fallback-results.md)
+closes eight claims across native Sol, workspace Sol and workspace Terra medium:
+31 observed calls, 24 dispositions and no controller failure. Core mechanisms
+survive, but source-assurance depth and severity differ. Sol workspace takes
+eleven calls/216.744 active seconds versus native's ten/186.130; this does not
+establish an efficiency win. Native already batches the shared YAML/cookie work.
+Keep workspace state and [review-package fidelity AH](experiments/review-workspace-review-package-results.md)
+as experimental infrastructure. The next diagnostic examines deciding-evidence
+navigation offline; no full-app expansion or unchanged paid retry follows.
+
 The [common source-channel slice AF](experiments/review-workspace-source-channel-results.md)
 adds `--source-profile` to native review and workspace initialization. The same
 source-only manifest binds exact bundle IDs, inventory/repository, file hashes and
@@ -29,9 +39,11 @@ units to both ledgers without refunding rejected batches. See the
 Terra retains the storage/hook condition; Sol saves
 it in a proposition but omits it from final answers. This establishes transport,
 not faster or source-complete review. The
-[current plan](review-workspace-plan.md) targets package fidelity and selective
-shared investigation; deeper contract reuse still needs a demonstrated consumer
-population. AG does not justify automatic helper expansion across all reviews.
+[current plan](review-workspace-plan.md) records package fidelity as implemented
+and the subsequent mixed-batch comparison as complete. Deciding-evidence
+navigation is the next offline question; deeper contract reuse still needs a
+demonstrated consumer population. AG does not justify automatic helper expansion
+across all reviews.
 
 Lookup results now use atomic source/receipt publication. The controller stages
 captured source and its native receipt in one SQLite transaction, checks the bound
