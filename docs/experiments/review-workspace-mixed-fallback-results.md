@@ -192,6 +192,13 @@ One additional read-only native source probe diagnoses this post-processing erro
 
 ## Practical direction
 
+**Correction after review:** the aggregate result below does not choose one
+engine for every family. The [selective-routing plan](../review-routing-plan.md)
+now governs next work: native local SQL/API batches, selected workspace
+shared/relational investigations, and separate per-route corrections. AI did not
+test that hybrid. The navigation diagnostic is relevant to its NoSQL route,
+not a gate that all other families must pass before routing work proceeds.
+
 1. **Retain ordinary native batching as the operational baseline.** Preserve
    source preparation, separate verdicts, qualified API use and the successful
    shared-investigation cases. Do not replace every unsupported native bucket

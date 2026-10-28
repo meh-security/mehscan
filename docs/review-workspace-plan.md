@@ -6,6 +6,22 @@ abandon it. The subsequent "Next" resumes implementation and bounded offline
 experiments. Ordinary native review remains the current operational path; preserve
 all raw results and use a fresh freeze for any later mixed-batch comparison.
 
+**Current direction: selective routing, not one engine for all claims.** Follow
+the [native/workspace routing plan](review-routing-plan.md). Put complete local
+SQL constructions and other locally decisive API/configuration work into native
+batches. Use workspace for selected shared check-to-effect investigations,
+conditional facts with different caller contexts and partial relational work.
+Keep simple authorization local when its deciding relationship is already
+complete. Native is also the initial route for AI's NoSQL case. This is a proposed
+dispatch policy, not an implemented automatic router or a measured SQL engine win.
+
+The previous aggregate recommendation gave too much weight to whether workspace
+won the entire AI package. That experiment tested uniform packages; it did not
+test a selective hybrid. The next implementation slice makes per-claim route
+selection inspectable, then wires experimental mixed dispatch and evaluates the
+whole hybrid package. NoSQL navigation is a targeted correction candidate, not
+a prerequisite for every family. Preserve successful native and workspace lanes.
+
 Current correction policy: [retain supported work and correct the affected boundary](experiments/review-workspace-surgical-plan.md).
 Mixed package results do not invalidate independently supported cases or useful
 implementation slices. Keep X's three source-complete cases across all arms,
@@ -38,12 +54,15 @@ deciding test in four calls; both workspaces take six, with query units remainin
 One follows a misleading related test; the other tries unmatched paths/empty
 knowledge and recovers a reference filter. No previously learned fact is shown
 being forgotten, and no repeated returned source lines explain the excess.
-Keep workspace state and package fidelity; investigate earlier discovery of
-deciding evidence before adding more memory or generic helper expansion.
+Keep workspace state and package fidelity. Investigate earlier discovery of
+deciding evidence in that affected route; do not generalize it into a prerequisite
+for selecting useful workspace investigations elsewhere.
 
 AI is closed, with all 41 unused call slots retired. Four remaining R-main IDs,
 eight reserves and full-app execution remain outside dispatch. No runtime change,
-old-study resumption or paid repair is justified by this result.
+old-study resumption or paid repair was part of this comparison. Its results alone
+do not choose a universal execution path; the selective-routing correction above
+governs the next slice.
 
 Latest implemented slice remains [review-package fidelity AH](experiments/review-workspace-review-package-results.md).
 The existing workspace CLI, native-bound finalizer and batch report now export
@@ -107,21 +126,26 @@ This is comparison reliability, not a model-quality or speed improvement.
    mechanisms and source-assurance differences; do not count native's existing
    batching as work avoided only by workspace. Preserve selective SQL/shared
    investigation as earlier supported work, not a result of AI's non-SQL slice.
-4. Next, audit deciding-evidence navigation offline across several saved families.
-   Trace the stated deciding question, available path/reference results, selected
-   source, remaining caller proof and decision. Include misleading test names
-   and cases with no useful test evidence. Count candidate noise and preparation
-   work; source pre-coverage alone does not predict a saved model turn. This
-   diagnostic must precede a test selector, prompt change or new paid comparison.
+4. Next, implement the inspectable route-selection slice in the
+   [selective-routing plan](review-routing-plan.md), using saved cases before
+   dispatch. Preserve native local batches and selected workspace relationships,
+   exact claim coverage and separate verdicts. Then add experimental mixed
+   dispatch and evaluate the combined package against native maximum 20.
+5. Diagnose NoSQL evidence navigation only as an affected-route improvement.
+   Trace the deciding question, available path/reference results, selected source
+   and remaining proof. Include misleading names/no-useful-test controls before
+   implementing a selector. This does not block unrelated routing work or require
+   every rule family to use the same retrieval policy.
 
-Proceed to a narrow implementation only if existing lookup results expose useful
+For an evidence-navigation change, proceed only if existing lookup results expose useful
 deciding evidence across distinct families without reconstructing the full review
 upstream, and controls keep unrelated tests from being treated as proof. Stop or
 change direction if benefit is confined to this tuned NoSQL chain, if relationships
 remain undiscovered, or if preparation duplicates the investigation. A later paid
 test needs a fresh freeze and matched proof/qualification criteria; it does not
 inherit AI's retired budget. More memory, higher budgets and an unchanged retry
-are not the current next step.
+are not the current next step. These are retrieval-change gates, not reasons to
+defer the selective native/workspace routing slice.
 
 Stop generic expansion if useful evidence is confined to one tuned chain, if the
 selector still misses deciding relationships, or if construction repeats a full

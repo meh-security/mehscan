@@ -18,8 +18,11 @@ survive, but source-assurance depth and severity differ. Sol workspace takes
 eleven calls/216.744 active seconds versus native's ten/186.130; this does not
 establish an efficiency win. Native already batches the shared YAML/cookie work.
 Keep workspace state and [review-package fidelity AH](experiments/review-workspace-review-package-results.md)
-as experimental infrastructure. The next diagnostic examines deciding-evidence
-navigation offline; no full-app expansion or unchanged paid retry follows.
+as experimental infrastructure. The [selective-routing plan](review-routing-plan.md)
+now puts local SQL/API work into native batches and selected shared/relational
+investigations into workspace. The next slice makes this routing inspectable;
+NoSQL navigation is a separate targeted improvement. No automatic router is
+released yet, and no full-app expansion or unchanged paid retry follows.
 
 The [common source-channel slice AF](experiments/review-workspace-source-channel-results.md)
 adds `--source-profile` to native review and workspace initialization. The same
@@ -40,8 +43,8 @@ Terra retains the storage/hook condition; Sol saves
 it in a proposition but omits it from final answers. This establishes transport,
 not faster or source-complete review. The
 [current plan](review-workspace-plan.md) records package fidelity as implemented
-and the subsequent mixed-batch comparison as complete. Deciding-evidence
-navigation is the next offline question; deeper contract reuse still needs a
+and the subsequent mixed-batch comparison as complete. Selective routing is the
+next slice; deeper contract reuse still needs a
 demonstrated consumer population. AG does not justify automatic helper expansion
 across all reviews.
 
