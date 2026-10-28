@@ -322,8 +322,15 @@ judgments, explicit conditions and addressed source recommended for these
 relationship reviews. This is a practical rule-specific configuration, not a
 universal engine or format performance claim.
 
-Next implement a reusable read-only turn audit from existing saved sessions and
-controller receipts. Join offered active/consumer IDs, exact prior-result identity,
+This step is now implemented and checked by [AU](experiments/review-turn-audit-results.md).
+It reads old tasks and receipts without running historical controllers. AR's
+hidden consumers, AS's diagnostic-only eligibility and AT's absent transition
+remain distinct. Fourteen checks pass, including fresh explicit confirmation
+through a deterministic native-bound fixture. All three closed archives remain
+unchanged; no paid review follows from this implementation.
+
+The implemented read-only turn audit uses existing saved sessions and
+controller receipts. It joins offered active/consumer IDs, exact prior-result identity,
 schema eligibility, requested deciding fact, returned evidence, answer change,
 explicit decisions, reconsideration flags and remaining credit. The operator
 should see why work remains or closes without reconstructing an application or
@@ -331,10 +338,10 @@ asking the model to maintain a progress diary. Preserve historical, diagnostic
 and native-bound authority separately; do not project current eligibility back
 onto an old session as if it had been offered then.
 
-Replay the closed AR failure, AS diagnostic projection/fresh deterministic fixture
-and AT's no-consumer completion. State when a transition is absent, source is
-stale or receipts cannot establish an exact link. Keep original judgments and
-qualified uncertainty unchanged. Correct the harness boundary by distinguishing
+Verification replays the closed AR failure, AS diagnostic projection/fresh
+deterministic fixture and AT's no-consumer completion. The audit states when a
+transition is absent, source is stale or receipts cannot establish an exact link.
+It keeps original judgments and qualified uncertainty unchanged. It distinguishes
 immutable source/configuration/package inputs from append-only runtime traces;
 AT's post-run trace assertion is preserved and audited, not repaired by a paid
 rerun. This implementation needs no new model calls or target execution.
@@ -348,6 +355,29 @@ uncertainty beyond these cases. Stop preparation if the proposed grouping merely
 repeats this study, hides incompatible authority or requires application-wide
 reconstruction. No automatic AI grouping, larger budget or memory subsystem is
 justified by AT.
+
+### After AU
+
+Use the audit to inspect observed work; do not add model bookkeeping or repeat
+the consumer-confirmation run to make its target transition appear. Its recorded
+dispatch offers and boundary flags now supply concrete failure diagnostics.
+Missing old schemas remain explicit gaps, and copied AS counters never become
+fresh authority. The audit is an operator tool, not an efficiency result.
+
+Next perform offline selection from available inventories for one genuinely
+different rule/caller family. The deciding question is whether retained shared
+implementation facts can serve different caller policies while preserving both
+supported mechanisms and clean/inapplicable outcomes. Inspect actual source and
+ordinary native maximum-20 packets first. Produce a reviewable source-bound slice
+and fair allowance, or record why no coherent eligible slice exists. A shared
+file or an already single native packet is not an avoided conversation.
+
+Keep complete local SQL/parser/API closure native. Select workspace only where
+compatible question state and caller-specific applicability have concrete value;
+use the proven addressed format for relationship evidence. Stop selection if it
+would merge incompatible authority, require exhaustive application reconstruction,
+hide a clean control or merely repeat the Juice Shop trajectory. No paid run,
+generic grouping engine, new fact store or budget increase is automatic.
 
 ## Keep, narrow or stop
 

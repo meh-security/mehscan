@@ -4,6 +4,14 @@ The practical direction is a hybrid selected by deciding work, with packet
 placement chosen separately from logical investigation. No whole-app efficiency
 or quality win has been established.
 
+Latest implementation: [AU's read-only turn audit](experiments/review-turn-audit-results.md)
+joins saved offered IDs, prior judgments, deciding lookups/evidence, committed
+answers, observed remaining work and recorded dispatch credit. It reproduces AR's
+two hidden consumers, labels AS diagnostic-only and shows AT's absent transition.
+Fourteen checks pass, including fresh deterministic native-bound confirmation;
+all closed archives remain unchanged. There are no paid calls or new savings
+claims. Missing old schemas and observation boundaries stay explicit.
+
 Latest live observation: [AT](experiments/review-consumer-completion-results.md)
 finalizes the six-claim Terra raw workspace in four calls: 149,860 input tokens,
 3,712 output tokens, 56.667 provider seconds and 71.567 active seconds. It retains
@@ -98,6 +106,7 @@ remains offline rather than being confused with AL's ownership negatives.
 | More input can be the balanced choice | AR's full affected-consumer projection is 135,628 bytes versus a 131,072-byte cap; simple bookkeeping compression still misses the cap | Test a bounded projection and modest fresh context allowance before semantic truncation or another investigation; never repair the retired run |
 | The shared-answer eligibility gap has a concrete bounded correction | AS's actual projection is 135,731 bytes with all four affected IDs and exact previous judgments; a fresh native-bound fixture confirms them on its final allowed call | Keep active-only termination, same-work scope, explicit reconfirmation and original paid limits; live reviewer behavior and savings remain untested |
 | Ordinary completion can improve without testing the intended correction | AT closes six claims in four calls but never offers a consumer; its largest packet also fits the old context bound | Keep the useful package and AS correction without a causal savings claim or forced rerun; expose deciding transitions through existing controller records |
+| Controller records can explain progress without another model diary | AU joins AR/AS/AT tasks and receipts read-only, preserving distinct authority, exact judgments and dispatch offers | Use this operator audit; missing schemas or later observation boundaries must remain explicit rather than reconstructed as historical facts |
 | Useful uncertainty can coexist with missed local closure or scope expansion | Terra retains cookie uncertainty, but coupon format has an available local helper and JSONP delivery is stronger than the selected field-to-JSON question | Keep mechanisms and honest uncertainty; adjudicate and correct each deciding boundary rather than discarding all mixed results |
 | Workspace preserves extra useful uncertainty without classifying new findings | Both AL hybrids retain the wallet payment/amount lead absent from native; all preserve external-policy uncertainty | Keep the useful leads and qualifications; do not inflate finding counts or claim complete operation review |
 
@@ -122,7 +131,7 @@ implements and checks the separate provider format offline; AR retains a live
 citation improvement and reveals a shared-answer completion defect. AS corrects
 that defect offline without changing the closed result. AT completes a fresh
 ordinary review without exercising that transition. Next follow the
-[read-only turn audit and wider-experiment boundary](review-closure-and-evidence-plan.md#after-at).
+[offline selection and wider-experiment boundary](review-closure-and-evidence-plan.md#after-au).
 Keep locally decisive negatives free of mandatory caller investigations. No
 unchanged speed rerun, full-app review or retired allowance resumes.
 

@@ -11,6 +11,12 @@ drafts, work splitting, bounded context views, explicit session replacement, cal
 reservations and usage records. It uses Python's standard-library SQLite support;
 no additional dependency is required.
 
+Latest implementation [AU](experiments/review-turn-audit-results.md) adds a
+read-only saved-turn audit: what was offered, deciding lookups and returned
+evidence, committed judgments, observed reopened work and actual recorded credit.
+It uses existing sessions/receipts without historical controller execution or
+new model calls. See [saved-turn inspection](#inspect-saved-review-turns).
+
 Latest [fresh completion observation AT](experiments/review-consumer-completion-results.md):
 Terra raw finalizes six claims in four known calls with the conditional package
 preserved. All four cookie claims close together, so AS's consumer transition is
@@ -358,6 +364,49 @@ spend, wall-time or per-work-item ceilings, and does not observe provider calls
 itself. The native bridge below adds bounded provider dispatch and observed-token
 and elapsed-time gates. Session creation alone neither dispatches nor charges a
 model call.
+
+## Inspect saved review turns
+
+Use the standalone audit without a live controller, provider configuration, seed
+or owner credential:
+
+```powershell
+python scripts/review_workspace_audit.py --directory RUN/treatment/workspace
+python scripts/review_workspace_audit.py --directory RUN/treatment/workspace --session-id EXACT_SAVED_SESSION_ID --format json
+```
+
+The default Markdown starts with turn counts and source locations. Session focus
+retains the original turn number; final-state and captured-source checks still
+cover the workspace. JSON retains detailed receipt/evidence links. Source text is
+not recopied into returned source facts: source ranges, hashes and evidence IDs
+link to the retained captured evidence. Navigation, limitations, feedback and
+reviewer qualifications remain recorded data.
+
+The audit distinguishes active claims, offered settled consumers and hidden
+consumers; previous results delivered to the model versus recovered later from
+receipts; committed decisions versus uncommitted answer files; and prepared
+aggregate limits versus recorded dispatch credit. Later observed flags are
+explicitly labeled as a next-preparation or final-state boundary, with intervening
+receipts. Missing schemas, usage, dispatch offers or links remain visible gaps.
+Old task IDs are not presented as a recovered historical output-schema enum.
+
+The AS-style offline projection has a separate entry point:
+
+```powershell
+python scripts/review_workspace_audit.py --projection-directory SAVED_AS_DIRECTORY
+```
+
+It checks the saved diagnostic schema against the projected IDs and exact prior
+results, and labels the output diagnostic only. Copied historical counters are
+neither new spending nor usable call credit. No bound session or resulting
+reviewer decision is invented.
+
+SQLite is opened read-only. Attached task/context/fact hashes and stored view
+digests are checked; runtime trace appends are outside that immutable-input
+boundary. Current captured-file hashes are checked without executing source.
+Stale or missing source does not remove historical judgments. This tool performs
+no runtime/provider revalidation, native admission, dispatch or archive mutation.
+See [AU's results and limits](experiments/review-turn-audit-results.md).
 
 ## Reuse knowledge in a bounded fresh context
 
