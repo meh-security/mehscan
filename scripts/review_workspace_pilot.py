@@ -156,6 +156,8 @@ def native_case_limits(design):
 def prepare(args):
     design = read(args.design)
     batch_mode = design.get("batch_mode",False)
+    if design.get("hybrid_mode") and not batch_mode:
+        raise ValueError("hybrid preparation requires native batch mode")
     root, private = Path(args.output).resolve(),Path(args.private).resolve()
     source = Path(design["source_pin"]["local_export"]).resolve(strict=True)
     if root.is_relative_to(source) or private.is_relative_to(source) or private.is_relative_to(root):
@@ -165,7 +167,7 @@ def prepare(args):
     package = root / "package"
     (package / "scripts").mkdir(parents=True)
     product = Path(__file__).resolve().parents[1]
-    for name in ("review_workspace_pilot.py","review_workspace_batch_comparison.py","review_workspace_bridge.py","review_workspace_actions.py","review_workspace.py","review_workspace_notebook.py","review_workspace_routes.py","review_workspace_planner.py","review_workspace_evidence.py",
+    for name in ("review_workspace_pilot.py","review_workspace_batch_comparison.py","review_hybrid.py","review_routing.py","review_workspace_bridge.py","review_workspace_actions.py","review_workspace.py","review_workspace_notebook.py","review_workspace_routes.py","review_workspace_planner.py","review_workspace_evidence.py",
                  "review_worker.py","review_context.py","review_source_profile.py","review_orchestration.py","review_trace.py","review_export.py"):
         shutil.copyfile(product / "scripts" / name,package / "scripts" / name)
     shutil.copytree(product / "skills/mehscan-security",package / "skills/mehscan-security",
@@ -237,7 +239,8 @@ def prepare(args):
             if not batch_mode:
                 exp["bundle_max_reviews"] = 1
             bridge = NativeWorkspace.create(Namespace(**opts),design["per_arm_limits"],exp)
-            groups = ([{"id":"bundle-"+key,"review_ids":bundle["review_ids"]} for key,bundle in bridge.metadata["bundles"].items()]
+            groups = ([] if design.get("hybrid_mode") else
+                      [{"id":"bundle-"+key,"review_ids":bundle["review_ids"]} for key,bundle in bridge.metadata["bundles"].items()]
                       if batch_mode else [{"id":"claim-"+str(i),"review_ids":[rid]} for i,rid in enumerate(selected)])
             for group in groups:
                 work_id,ids = group["id"],group["review_ids"]

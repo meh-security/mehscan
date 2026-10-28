@@ -594,6 +594,9 @@ def run(args):
 
 
 def run_locked(args):
+    validate_only = getattr(args, "validate_only", False)
+    if type(validate_only) is not bool or validate_only and (args.phase != "native" or args.supersede):
+        raise ValueError("validation-only review requires native phase without supersession")
     collection_profile = getattr(args, "source_collector_profile", None)
     if collection_profile not in (None, "routine", "expert"):
         raise ValueError("source collector must use a bound routine or expert profile")
@@ -1922,8 +1925,9 @@ def run_locked(args):
                                      "kind": "other", "question": question})
                         entries.append({"operation": "pending", "options": {"--input": str(path)},
                             "operation_key": "worker-question:" + attempt_key + ":" + str(index) + ":" + decision["decision_id"]})
-                receipts = mutations.apply("admission", entries)
-                record["admission_sequence"] = receipts[0]["sequence"]
+                if not validate_only:
+                    receipts = mutations.apply("admission", entries)
+                    record["admission_sequence"] = receipts[0]["sequence"]
         final_work = fresh_work()
         if any(final_work["payload"][key] != payload[key] for key in ("generation", "snapshot_id", "plan_id")):
             raise ValueError("worker ownership or plan changed before result emission")
@@ -1932,7 +1936,9 @@ def run_locked(args):
         if state["generation"] != generation or state["snapshot_id"] != payload["snapshot_id"]:
             raise ValueError("worker was superseded before result emission")
         write(output / "state.json", state)
-        record.update(status="admitted", completion=state["completion"], work_package_id=package["package_id"])
+        record.update(status="source_validated" if validate_only else "admitted",
+                      completion=state["completion"], work_package_id=package["package_id"],
+                      native_admission=not validate_only)
     except Exception as error:
         record.update(status="cancelled" if _cancelled else "incomplete", reason=type(error).__name__, detail=str(error))
     finally:
@@ -1971,6 +1977,7 @@ def main():
     parser.add_argument("--artifact-root")
     parser.add_argument("--phase", choices=("all", "change-pass", "native"), default="all")
     parser.add_argument("--supersede", action="store_true")
+    parser.add_argument("--validate-only", action="store_true", help="native phase only: finalize/report without recording decisions or pending questions")
     parser.add_argument("--timeout", type=int)
     parser.add_argument("--skill-root", default=str(Path(__file__).resolve().parents[1] / "skills/mehscan-security"))
     parser.add_argument("--research-rounds", type=int)
@@ -1992,7 +1999,7 @@ def main():
         parser.error("review and research budgets must be positive and within bounded limits")
     result = run(args)
     print(json.dumps({"status": result["status"], "generation": result["generation"], "directory": args.output}))
-    return 0 if result["status"] == "admitted" else 2
+    return 0 if result["status"] in ("admitted", "source_validated") else 2
 
 
 if __name__ == "__main__":

@@ -98,4 +98,6 @@ and complete original-result assembly before native validation. Future dispatch
 must retain a combined allowance for fragments of the same original bundle;
 cross-bundle workspace groups need a shared ledger for the connected original
 bundles. Splitting a bundle must not grant each fragment a fresh six-call budget.
-This accounting and dispatch are the next slice, not behavior supplied here.
+The [hybrid dispatcher](review-hybrid.md) now implements that separate execution
+boundary. The inspector artifact itself remains a proposal with
+`dispatch_ready: false`; dispatch requires a fresh bound hybrid preparation.

@@ -10,8 +10,14 @@ First slice completed: [route inspector and CLI](review-routing.md), with the
 [22-claim offline check AJ](experiments/review-routing-inspection-results.md).
 Fifteen claims stay native and seven select workspace. The proposal exposes
 12 potential execution units versus ten original packets; this is a cost to
-evaluate, not a savings result. Next is experimental mixed dispatch with original
-result assembly and shared aggregate allowances across split/connected bundles.
+evaluate, not a savings result. Mixed dispatch, original-result assembly and shared
+aggregate allowances across split/connected bundles are now
+[implemented and checked offline in AK](experiments/review-hybrid-dispatch-results.md):
+the same 22 claims compile to nine budget components and sixty proposed call
+slots, rather than seventy-two from treating all twelve units independently.
+Deterministic-provider fixtures complete both paths and preserve original native
+results/workspace qualifications. No live efficiency result follows. Next is a
+fresh mixed comparison with actual packet readiness and proof criteria frozen.
 
 ## Initial routing policy
 
@@ -77,7 +83,9 @@ universal routing by category or independent human accuracy.
    planner. Keep the production default unchanged until the routing slice is
    checked. Bind the inspector artifact and complete original-result mapping.
    Charge fragments and cross-bundle shared groups to their connected original
-   bundle allowances; creating units must not multiply paid budgets.
+   bundle allowances; creating units must not multiply paid budgets. Implemented
+   and exercised in AK; see the [dispatcher usage](review-hybrid.md). Native uses
+   ordinary worker validation-only mode, and treatment performs no admission.
 3. **Check the mixed package, rather than requiring one engine to win it all.**
    Compare ordinary native maximum-20 review with the proposed hybrid policy.
    Include SQL/native local controls, shared handler/effect work, differently

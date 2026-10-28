@@ -22,10 +22,13 @@ as experimental infrastructure. The [selective-routing plan](review-routing-plan
 now puts local SQL/API work into native batches and selected shared/relational
 investigations into workspace. The [route inspector](review-routing.md) now makes
 this proposal visible; its [22-claim check](experiments/review-routing-inspection-results.md)
-also exposes two additional potential dispatch units. Next is experimental mixed
-execution/result assembly with combined original-bundle allowances. NoSQL
+also exposes two additional potential dispatch units. The
+[hybrid dispatcher AK](experiments/review-hybrid-dispatch-results.md) now implements
+mixed execution/result assembly with combined original-bundle allowances and
+deterministic-provider/native checks; a fresh actual-packet
+readiness freeze and live comparison remain. NoSQL
 navigation is a separate targeted improvement. No automatic dispatcher is
-released yet, and no full-app expansion or unchanged paid retry follows.
+released as the default, and no full-app expansion or unchanged paid retry follows.
 
 The [common source-channel slice AF](experiments/review-workspace-source-channel-results.md)
 adds `--source-profile` to native review and workspace initialization. The same

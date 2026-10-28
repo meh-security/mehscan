@@ -12,18 +12,24 @@ SQL constructions and other locally decisive API/configuration work into native
 batches. Use workspace for selected shared check-to-effect investigations,
 conditional facts with different caller contexts and partial relational work.
 Keep simple authorization local when its deciding relationship is already
-complete. Native is also the initial route for AI's NoSQL case. This is a proposed
-dispatch policy, not an implemented automatic router or a measured SQL engine win.
+complete. Native is also the initial route for AI's NoSQL case. This is an
+experimental dispatch policy, not a production default or a measured SQL engine win.
 
 The previous aggregate recommendation gave too much weight to whether workspace
 won the entire AI package. That experiment tested uniform packages; it did not
 test a selective hybrid. [AJ implements inspectable per-claim routing](experiments/review-routing-inspection-results.md):
 22 claims propose fifteen native/seven workspace, with twelve potential execution
 units versus ten original packets. This exposes fragmentation rather than claiming
-savings. Next wire experimental mixed dispatch, original-result assembly and
-combined original-bundle allowances, then evaluate the whole hybrid package.
-NoSQL navigation is a targeted correction candidate, not
-a prerequisite for every family. Preserve successful native and workspace lanes.
+savings.
+[AK now implements that dispatch/assembly boundary](experiments/review-hybrid-dispatch-results.md)
+with ordinary native-worker validation-only review, workspace state and one
+connected allowance ledger. The 22 saved claims retain sixty proposed slots,
+not seventy-two for their twelve units. End-to-end deterministic-provider
+fixtures preserve native drafts and workspace qualifications without admission.
+Next is fresh actual-packet readiness and a bounded live hybrid comparison;
+these offline checks are not savings or model-quality evidence.
+NoSQL navigation remains a targeted correction candidate, rather than a
+prerequisite for every family. Preserve successful native and workspace lanes.
 
 Current correction policy: [retain supported work and correct the affected boundary](experiments/review-workspace-surgical-plan.md).
 Mixed package results do not invalidate independently supported cases or useful
@@ -136,6 +142,9 @@ This is comparison reliability, not a model-quality or speed improvement.
    dispatch/result assembly and connected aggregate allowances, then evaluate
    the combined package against native maximum 20. AJ's two added units must
    count as potential overhead, not an assumed saving or extra free allowance.
+   Dispatch/assembly and connected accounting are implemented offline in AK.
+   Freeze actual per-unit packets, source/proof criteria and the fresh combined
+   allowance before the next paid hybrid comparison.
 5. Diagnose NoSQL evidence navigation only as an affected-route improvement.
    Trace the deciding question, available path/reference results, selected source
    and remaining proof. Include misleading names/no-useful-test controls before

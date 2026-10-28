@@ -9,6 +9,13 @@ No automatic model launch is enabled in the composite Action.
 
 ## Ordinary review profile
 
+For experimental routed execution, `--validate-only --phase native` performs
+ordinary review/finalization/report checks without recording decisions or pending
+questions. It returns `source_validated`; supersession and change-pass modes are
+rejected. The [mixed dispatcher](review-hybrid.md) uses this mode to assemble
+complete original bundles from native and workspace results. Ordinary admission
+remains the default.
+
 Use one configured capable model with direct source lookups and native
 finalization. Start with `--workers 4 --query-workers 2` and small source-bound
 jobs. An orchestration policy, collection agent or automatic second review is
