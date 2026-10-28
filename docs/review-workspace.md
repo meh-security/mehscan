@@ -15,8 +15,9 @@ Latest [live format comparison AR](experiments/review-addressed-pair-results.md)
 seven arms finalize, one raw Terra arm remains cap-censored with two reopened
 consumers. Forty calls have known usage, no paid repair occurs, and all unused
 slots are retired. Addressed source fixes the four selected caller citation sets.
-The next correction is making shared-answer consumers actionable in the same
-turn, while preserving source/dependency guards and separate judgments.
+[AS](experiments/review-answer-consumer-results.md) now makes shared-answer
+consumers actionable in the same turn, with source/dependency guards and separate
+judgments preserved. Its validation is offline; no new live savings is claimed.
 
 Earlier [live comparison AO](experiments/review-cookie-scope-results.md): 34 calls/
 60 dispositions across Sol and Terra native/hybrid pairs. Eight workspace claims
@@ -368,12 +369,27 @@ python scripts/review_workspace.py knowledge --workspace RUN/workspace.sqlite --
 python scripts/review_workspace.py view --workspace RUN/workspace.sqlite --seed RUN/seed.json --work-id initial --max-bytes 32768
 ```
 
-Views contain active claims, selected latest propositions, recorded applicability,
-relevant source and pending deciding questions. Drafted claims leave the active
-view unless flagged for reconsideration. Draft history and abandoned evidence
-remain in storage. Selected source is rechecked; an oversized view fails with a
+Views contain active `claims`, selected latest propositions, recorded applicability,
+relevant source and deciding questions. Drafted claims leave the active list
+unless flagged for reconsideration. `answer_consumers` separately carries exact
+previous results for settled claims connected to active work by shared questions,
+including answered questions that could be revised. The connection is closed
+within the current work item; unrelated settled claims and foreign-work drafts
+are excluded. The bridge offers these consumers' native questions and IDs for
+explicit decisions without making them active merely by displaying them. An
+all-settled work item has no offered consumers and terminates normally.
+
+Previous results are reviewer interpretations, not proof or automatic confirmation.
+A changed shared answer still reopens affected drafts; the reviewer must explicitly
+confirm or revise them. Foreign-work invalidation remains enforced without granting
+decision authority over that work. Draft history and abandoned evidence remain in
+storage. Consumer source/dependencies receive the same freshness checks. An oversized view fails with a
 request to split work or select smaller evidence. Nothing is silently truncated.
 The limit is serialized UTF-8 bytes, not a token estimate or model context size.
+Fresh work may explicitly configure up to 144 KiB for the view and assembled
+provider packet. Existing configured limits are unchanged; action size remains
+128 KiB, and model/query/source allowances do not grow. Adapter prompt formatting
+can add bytes outside the compact packet, so this is not a total prompt-size cap.
 
 Propositions are explicitly identified reviewer interpretations inside evidence
 data. They are never trusted guidance. Retrieval initially uses explicit IDs;
@@ -622,9 +638,10 @@ Each model response has exactly three arrays:
 
 - `updates`: changed propositions, caller applicability, new questions or question answers,
   disputes, or optional focus selection for the next context.
-- `lookups`: deciding questions, their affected active IDs and independent typed
+- `lookups`: deciding questions, their affected offered IDs and independent typed
   queries. The controller executes them after validating the entire response.
-- `decisions`: scoped decisions for any subset of active claims, without native
+- `decisions`: scoped decisions for any subset of offered active claims or
+  same-work answer consumers, without native
   `checks` or `blockers` fields.
 
 There is no `working_chain`, running progress inventory, routing table or

@@ -24,6 +24,7 @@ VERSION = "mehscanWorkspace/experimental-v1"
 RESOURCES = ("model_calls", "queries", "source_bytes")
 COUNTERS = ("input_tokens", "cached_input_tokens", "output_tokens", "elapsed_ms")
 MAX_ACTION_BYTES = 128 * 1024
+MAX_CONTEXT_BYTES = 144 * 1024
 
 
 def encoded(value):
@@ -218,8 +219,8 @@ class Workspace:
             shape(action,("kind","planning_id","work","max_context_bytes"),("deciding_targets",))
             label(action["planning_id"])
             maximum = number(action["max_context_bytes"],positive=True)
-            if maximum > 128*1024:
-                raise ValueError("planned context exceeds 128 KiB")
+            if maximum > MAX_CONTEXT_BYTES:
+                raise ValueError("planned context exceeds 144 KiB")
             if (set(state["work"]) != {"initial"} or state["sessions"] or state["calls"] or
                     state["questions"] or state["propositions"] or state["lookups"] or state.get("deciding_evidence") or
                     any(c["draft"] for c in state["claims"].values())):
@@ -706,13 +707,30 @@ class Workspace:
         deciding = review_workspace_evidence.visible(state, work_id)
         number(max_bytes, positive=True)
         ids = [c for c in state["work"][work_id]["claims"] if state["claims"][c]["draft"] is None or state["claims"][c]["reconsideration"]]
-        applies = {k:a for k,a in state["applicability"].items() if a["review_id"] in ids}
+        # Completion depends on active claims, not settled answer consumers.
+        # Close over question membership only within the selected work item.
+        members = set(state["work"][work_id]["claims"])
+        offered = set(ids)
+        related = set()
+        while offered:
+            expanded = set(offered)
+            for key,question in state["questions"].items():
+                if offered.intersection(question["review_ids"]):
+                    related.add(key)
+                    expanded.update(members.intersection(question["review_ids"]))
+            if expanded == offered:break
+            offered = expanded
+        consumers = {rid:{"question_ids":sorted(qid for qid in related if rid in state["questions"][qid]["review_ids"]),
+                          "previous_result":copy.deepcopy(state["claims"][rid]["draft"]["result"])}
+                     for rid in state["work"][work_id]["claims"] if rid in offered and rid not in ids}
+        applies = {k:a for k,a in state["applicability"].items() if a["review_id"] in offered}
         prop_ids = set(state["work"][work_id]["proposition_ids"]) | {a["proposition_id"] for a in applies.values()}
+        prop_ids.update(p["proposition_id"] for rid in consumers for p in state["claims"][rid]["draft"].get("propositions",[]))
         propositions = {key:state["propositions"][key][-1] for key in sorted(prop_ids)}
         questions = {}
         settled_evidence = set()
         for key,question in state["questions"].items():
-            if not set(question["review_ids"]) & set(ids):
+            if key not in related:
                 continue
             questions[key] = copy.deepcopy(question)
             questions[key]["origin"] = "reviewer_interpretation"
@@ -722,11 +740,14 @@ class Workspace:
             if settled:
                 questions[key]["settled_review_ids"] = settled
                 for rid in settled:
-                    settled_evidence.update(self._draft_evidence(state,state["claims"][rid]["draft"]["result"]))
+                    if rid in offered:
+                        settled_evidence.update(self._draft_evidence(state,state["claims"][rid]["draft"]["result"]))
             if question["status"] == "answered":
                 # Keep the conclusion/proof for this claim without replaying its
                 # full investigation or requiring a separate proposition action.
                 questions[key]["attempts"] = [copy.deepcopy(question["attempts"][-1])]
+        for rid in consumers:
+            settled_evidence.update(self._draft_evidence(state,state["claims"][rid]["draft"]["result"]))
         evidence_ids = set(e for p in propositions.values() for e in p["evidence"])
         evidence_ids.update(e for a in applies.values() for e in a["evidence"])
         evidence_ids.update(state["work"][work_id]["evidence_ids"])
@@ -738,7 +759,7 @@ class Workspace:
                   "work_id":work_id, "strategy":state["work"][work_id]["strategy"],
                   "claims":[state["claims"][c] for c in ids], "propositions":propositions, "applicability":applies,
                   "evidence":{e:state["evidence"][e] for e in sorted(evidence_ids)},
-                  "questions":questions,
+                  "questions":questions, "answer_consumers":consumers,
                   "lookups":{}, "guidance":{},
                   "deciding_evidence":deciding,
                   "preparation_limits":[{"preparation_id":key,"origin":record["origin"],"reason":reason}

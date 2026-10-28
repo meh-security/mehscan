@@ -327,7 +327,7 @@ def run_workspace(unit, opts, bridge, ledger):
     deadline=[time.time()+ledger.offer(uid)["seconds"]]
     bridge._remaining_seconds=lambda:min(original_remaining(),deadline[0]-time.time())
     try:
-        while bridge.workspace.view(uid,131072)["claims"]:
+        while bridge.workspace.view(uid,bridge.metadata["experiment"]["context_max_bytes"])["claims"]:
             offer=ledger.offer(uid);deadline[0]=time.time()+offer["seconds"]
             session=bridge.prepare(uid,opts["config"],"hybrid:"+uid+":"+str(ledger.state["units"][uid]["model_calls"]),parent)["session_id"]
             parent=session

@@ -417,8 +417,10 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertIsNone(state["claims"][second["review_id"]]["draft"])
         self.assertEqual(state["claims"][third["review_id"]],third_before)
         def finish_second(task,packet):
-            self.assertEqual(task["review_ids"],[second["review_id"]])
+            self.assertEqual(set(task["review_ids"]),set(ids))
             self.assertEqual(packet["workspace_evidence"]["questions"]["shared"]["settled_review_ids"],[first["review_id"]])
+            self.assertEqual(packet["workspace_evidence"]["answer_consumers"][first["review_id"]]["previous_result"],
+                             state["claims"][first["review_id"]]["draft"]["result"])
             return {"updates":[{"kind":"answer","question_id":"shared","status":"answered",
                 "reason":"String conversion preserves executable grammar in the remaining caller.",
                 "evidence":[self.handle(task,packet,"helper.js")]}],"lookups":[],"decisions":[self.decision(second)]}

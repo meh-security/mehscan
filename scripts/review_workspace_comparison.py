@@ -53,7 +53,7 @@ def run_arm(root, arm):
             parent = None
             error = None
             try:
-                while bridge.workspace.view(work_id,max_bytes=131072)["claims"]:
+                while bridge.workspace.view(work_id,max_bytes=bridge.metadata["experiment"]["context_max_bytes"])["claims"]:
                     usage = bridge.workspace.usage()
                     pilot.enforce_usage(usage["totals"],design["per_arm_experiment"])
                     if usage["unobserved_calls"]:
@@ -80,7 +80,7 @@ def run_arm(root, arm):
                         return reply
                     result = bridge.review(session,opts["config"],invoke)
                     calls += 1
-                    print(json.dumps({"arm":arm,"work":work_id,"turn":calls,"active":len(bridge.workspace.view(work_id,max_bytes=131072)["claims"]),"usage":result["usage"]}),flush=True)
+                    print(json.dumps({"arm":arm,"work":work_id,"turn":calls,"active":len(bridge.workspace.view(work_id,max_bytes=bridge.metadata["experiment"]["context_max_bytes"])["claims"]),"usage":result["usage"]}),flush=True)
             except Exception as exc:
                 error = {"type":type(exc).__name__}
                 if isinstance(exc,(ValueError,TimeoutError)):
@@ -201,7 +201,7 @@ def prepare(args):
                 # fixed-profile preparation units, not fabricated native calls.
                 if work["preparation_queries"]:
                     bridge.apply("profile-units:"+wid,{"kind":"reserve_queries","queries":work["preparation_queries"]})
-                actual = bridge.workspace.view(wid,max_bytes=131072)
+                actual = bridge.workspace.view(wid,max_bytes=bridge.metadata["experiment"]["context_max_bytes"])
                 if pilot.canonical_windows(actual["evidence"].values()) != pilot.canonical_windows(expected):
                     raise ValueError("working source differs from frozen complete profile")
                 if actual["propositions"] or actual["questions"] or actual["guidance"]:

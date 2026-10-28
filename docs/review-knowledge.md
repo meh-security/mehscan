@@ -4,14 +4,23 @@ The practical direction is a hybrid selected by deciding work, with packet
 placement chosen separately from logical investigation. No whole-app efficiency
 or quality win has been established.
 
-Latest: [AR's format comparison](experiments/review-addressed-pair-results.md)
+Latest implementation: [AS's answer-consumer correction](experiments/review-answer-consumer-results.md)
+makes connected same-work settled judgments actionable alongside remaining claims.
+The actual historical projection offers all four affected IDs with exact prior
+results and unchanged evidence/history at 135,731 compact bytes, within an
+explicit fresh 144 KiB configuration. A deterministic native-bound fixture
+confirms them on its sixth/final call; omission still prevents export. No paid
+calls occur, and this is not a demonstrated live completion or savings result.
+
+Latest live evidence: [AR's format comparison](experiments/review-addressed-pair-results.md)
 closes with 40 known calls, 25 aggregate finalized dispositions in seven arms and
 seven preserved draft answers in one capped partial arm. Addressed input includes
 the correct registration in four of four selected caller sets versus one of four
 raw sets. Both completed Sol comparisons improve, while Terra policy is slightly
 slower/larger and raw Terra Juice is not a completed efficiency baseline. Keep the
-format and useful partial state; fix the shared-question consumer/action-scope
-gap offline before wider runs. All 32 unused slots are retired; no paid repairs.
+format and useful partial state. AS now fixes the shared-question consumer/action
+scope gap offline; a fresh narrow completion observation is the next useful live
+question before wider runs. All 32 unused AR slots are retired; no paid repairs.
 
 Earlier: [AO's four-arm comparison](experiments/review-cookie-scope-results.md)
 closes at 34 calls/60 dispositions, zero unknown usage and no paid repair. The
@@ -76,6 +85,7 @@ remains offline rather than being confused with AL's ownership negatives.
 | Concrete source presentation can improve the evidence map | AR addressed quotes all four selected caller registrations; raw quotes one. Sol Juice is seven versus nine calls with the same supported conditional package | Keep the option without requiring universal time/input improvement; Terra's policy pair is slightly worse and its raw Juice efficiency baseline is censored |
 | Retained state can expose a decision that the model is not authorized to update | AR's final raw Terra prompt names settled shared-question consumers but offers only profile/erasure; the answer reopens both hidden image drafts after the sixth call | Make affected same-work consumers and exact prior results actionable together; retain invalidation, source guards and paid limits |
 | More input can be the balanced choice | AR's full affected-consumer projection is 135,628 bytes versus a 131,072-byte cap; simple bookkeeping compression still misses the cap | Test a bounded projection and modest fresh context allowance before semantic truncation or another investigation; never repair the retired run |
+| The shared-answer eligibility gap has a concrete bounded correction | AS's actual projection is 135,731 bytes with all four affected IDs and exact previous judgments; a fresh native-bound fixture confirms them on its final allowed call | Keep active-only termination, same-work scope, explicit reconfirmation and original paid limits; live reviewer behavior and savings remain untested |
 | Useful uncertainty can coexist with missed local closure or scope expansion | Terra retains cookie uncertainty, but coupon format has an available local helper and JSONP delivery is stronger than the selected field-to-JSON question | Keep mechanisms and honest uncertainty; adjudicate and correct each deciding boundary rather than discarding all mixed results |
 | Workspace preserves extra useful uncertainty without classifying new findings | Both AL hybrids retain the wallet payment/amount lead absent from native; all preserve external-policy uncertainty | Keep the useful leads and qualifications; do not inflate finding counts or claim complete operation review |
 
@@ -96,9 +106,10 @@ closure and shared four-claim cookie questions. AP now puts exact selected
 questions, current reasons and conditional facts together for a human reviewer.
 All 210 AO exported excerpts are physically correct, yet selected caller examples
 still miss bindings. Human source addresses do not change model prompts. AQ now
-implements and checks the separate provider format offline; AR now retains a live
-citation improvement and reveals a shared-answer completion defect. Next follow
-the [bounded consumer-projection correction](review-closure-and-evidence-plan.md#next-implementation-after-ar).
+implements and checks the separate provider format offline; AR retains a live
+citation improvement and reveals a shared-answer completion defect. AS corrects
+that defect offline without changing the closed result. Next follow the
+[narrow fresh completion question](review-closure-and-evidence-plan.md#next-evidence-after-as).
 Keep locally decisive negatives free of mandatory caller investigations. No
 unchanged speed rerun, full-app review or retired allowance resumes.
 

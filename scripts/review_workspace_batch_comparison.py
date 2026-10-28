@@ -33,7 +33,7 @@ def run_treatment(root):
                 if seconds<=5: raise ValueError("matched bundle deadline reached")
                 return seconds
             bridge._remaining_seconds = remaining
-            while bridge.workspace.view(wid,131072)["claims"]:
+            while bridge.workspace.view(wid,bridge.metadata["experiment"]["context_max_bytes"])["claims"]:
                 if calls>=6: raise ValueError("matched six-call bundle allowance reached")
                 state = bridge.workspace.snapshot()
                 units = sum(2 if l["query"]["tool"]=="definition" else 1 for l in state["lookups"].values()
@@ -57,7 +57,7 @@ def run_treatment(root):
                     return reply
                 response = bridge.review(session,opts["config"],invoke)
                 calls += 1
-                print(json.dumps({"bundle":fingerprint,"turn":calls,"active":len(bridge.workspace.view(wid,131072)["claims"]),"usage":response["usage"]}),flush=True)
+                print(json.dumps({"bundle":fingerprint,"turn":calls,"active":len(bridge.workspace.view(wid,bridge.metadata["experiment"]["context_max_bytes"])["claims"]),"usage":response["usage"]}),flush=True)
             validated = bridge.finalize(fingerprint)
             work_results.append({"bundle":fingerprint,"review_ids":ids,"calls":calls,"validated":validated})
             summary.update(usage=bridge.workspace.usage())

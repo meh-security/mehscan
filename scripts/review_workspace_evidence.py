@@ -7,7 +7,7 @@ import json
 import re
 from pathlib import Path
 
-from review_workspace import identity, label, shape, source
+from review_workspace import identity, label, shape, source, MAX_CONTEXT_BYTES
 
 VERSION = "mehscanDecidingEvidence/experimental-v1"
 LOCKS = ("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml")
@@ -84,7 +84,7 @@ def prepare(workspace, request, operation_key):
             raise ValueError("evidence retry changed")
         # Revalidate source and local availability before returning an old receipt.
         for target in request["targets"]:
-            workspace.view(target["work_id"], 128 * 1024)
+            workspace.view(target["work_id"], MAX_CONTEXT_BYTES)
         return workspace.apply(operation_key, previous["request"]["revision"], action)
     return workspace.apply(operation_key, workspace.snapshot()["revision"], action)
 
@@ -142,7 +142,7 @@ def apply(state, workspace, action, operation_key):
         work["evidence_ids"] = sorted(set(work["evidence_ids"]) | set(evidence))
         created.append({"work_id":wid, "receipt_id":key})
     for target in targets:
-        workspace._view(state, target["work_id"], 128 * 1024)
+        workspace._view(state, target["work_id"], MAX_CONTEXT_BYTES)
     return {"receipts":created, "native_query_count":0, "native_admission":False}
 
 

@@ -16,7 +16,7 @@ import time
 import review_context as context
 import review_source_profile as source_profiles
 import review_worker as worker
-from review_workspace import Workspace, encoded, identity, number, references, shape, render_review_package
+from review_workspace import Workspace, encoded, identity, number, references, shape, render_review_package, MAX_CONTEXT_BYTES
 import review_workspace_actions as actions
 
 
@@ -188,7 +188,7 @@ class NativeWorkspace:
             raise ValueError("prepare_application must be boolean")
         if "knowledge_lookup" in experiment and type(experiment["knowledge_lookup"]) is not bool:
             raise ValueError("knowledge_lookup must be boolean")
-        if experiment["max_elapsed_seconds"] > 3600 or experiment["context_max_bytes"] > 128 * 1024:
+        if experiment["max_elapsed_seconds"] > 3600 or experiment["context_max_bytes"] > MAX_CONTEXT_BYTES:
             raise ValueError("experiment exceeds bounded checkpoint limits")
         count = len(bridge.payload["review_ids"])
         ceilings = {"model_calls":count * (bridge.runtime["limits"]["rounds"] + 1),
@@ -307,6 +307,42 @@ class NativeWorkspace:
             raise ValueError("actual provider differs from native runtime")
         return argv
 
+    def provider_packet(self, view):
+        """Project a source-checked view; no session or execution authority."""
+        ids = [c["review_id"] for c in view["claims"]] + list(view["answer_consumers"])
+        entries = [entry for b in self.metadata["bundles"].values() for entry in b["entries"] if entry["review_id"] in ids]
+        playbooks = {k:v for b in self.metadata["bundles"].values() for k,v in b["playbooks"].items() if k in ids}
+        contract_keys = {key for entry in entries for key in entry["native_context"].get("contract_keys",[])}
+        native_contracts = {c["contract"]:c for b in self.metadata["bundles"].values()
+                            for c in b["contracts"] if c["contract"] in contract_keys}
+        windows = [{"artifact_id":k, **{field:e[field] for field in
+                    ("path","start_line","end_line","text","complete_file")}, "clipped":e.get("fragment",False)}
+                   for k,e in view["evidence"].items()]
+        for window in windows:
+            window["line_range"] = {"start_line":window["start_line"],"end_line":window["end_line"],"inclusive":True}
+        packet = {"schema_version":"1","package_id":self.package["package_id"],
+                  "source_binding":{"snapshot_id":self.payload["snapshot_id"],
+                                    "inventory_input_fingerprint":self.payload["inventory_input_fingerprint"]},
+                  "contract":context.compile_contract(self.skill,"native_bundle",entries,[],playbooks),
+                  "work":context.compact_work(self.payload,ids),"native_questions":entries,
+                  "primary":{"windows":windows,"limits":view["preparation_limits"]},
+                  "workspace_evidence":{"propositions":view["propositions"],"applicability":view["applicability"],
+                                        "native_contracts":native_contracts,
+                                        "deciding_evidence":view["deciding_evidence"],
+                                        "questions":view["questions"],"authority":view["authority"]}}
+        if view["answer_consumers"]:
+            packet["workspace_evidence"]["answer_consumers"] = view["answer_consumers"]
+        mode = self.metadata["experiment"].get("protocol","checkpoint")
+        if mode == actions.VERSION:
+            packet.update(workspace_protocol=mode,contract={"version":mode,"sources":[
+                context.sections(self.skill / "references/runtime-review.md",["api_semantics"])]},
+                          work={"runtime":self.runtime,"review_ids":ids,"policy":self.payload["policy"]})
+            packet["workspace_evidence"]["lookups"] = view["lookups"]
+            packet["workspace_guidance"] = list(view["guidance"].values())
+        if len(encoded(packet).encode("utf-8")) > self.metadata["experiment"]["context_max_bytes"]:
+            raise ValueError("assembled provider packet exceeds context limit; narrow the work item")
+        return packet,ids
+
     @observed
     def prepare(self, work_id, config_path, operation_key, parent_session=None):
         with self.guarded():
@@ -326,38 +362,11 @@ class NativeWorkspace:
             directory = self.directory / "sessions" / key
             if "artifacts" in stored:
                 self._session(key,config_path)
-                return {"session_id":key,"directory":str(directory),"review_ids":[c["review_id"] for c in view["claims"]],"native_admission":False}
+                return {"session_id":key,"directory":str(directory),"review_ids":[c["review_id"] for c in view["claims"]]+list(view["answer_consumers"]),"native_admission":False}
             directory.mkdir(parents=True, exist_ok=True)
-            ids = [c["review_id"] for c in view["claims"]]
-            entries = [entry for b in self.metadata["bundles"].values() for entry in b["entries"] if entry["review_id"] in ids]
-            playbooks = {k:v for b in self.metadata["bundles"].values() for k,v in b["playbooks"].items() if k in ids}
-            contract_keys = {key for entry in entries for key in entry["native_context"].get("contract_keys",[])}
-            native_contracts = {c["contract"]:c for b in self.metadata["bundles"].values()
-                                for c in b["contracts"] if c["contract"] in contract_keys}
-            windows = [{"artifact_id":k, **{field:e[field] for field in
-                        ("path","start_line","end_line","text","complete_file")}, "clipped":e.get("fragment",False)}
-                       for k,e in view["evidence"].items()]
-            for window in windows:
-                window["line_range"] = {"start_line":window["start_line"],"end_line":window["end_line"],"inclusive":True}
-            packet = {"schema_version":"1","package_id":self.package["package_id"],
-                      "source_binding":{"snapshot_id":self.payload["snapshot_id"],
-                                        "inventory_input_fingerprint":self.payload["inventory_input_fingerprint"]},
-                      "contract":context.compile_contract(self.skill,"native_bundle",entries,[],playbooks),
-                      "work":context.compact_work(self.payload,ids),"native_questions":entries,
-                      "primary":{"windows":windows,"limits":view["preparation_limits"]},
-                      "workspace_evidence":{"propositions":view["propositions"],"applicability":view["applicability"],
-                                            "native_contracts":native_contracts,
-                                            "deciding_evidence":view["deciding_evidence"],
-                                            "questions":view["questions"],"authority":view["authority"]}}
+            packet,ids = self.provider_packet(view)
+            windows = packet["primary"]["windows"]
             mode = self.metadata["experiment"].get("protocol","checkpoint")
-            if mode == actions.VERSION:
-                packet.update(workspace_protocol=mode,contract={"version":mode,"sources":[
-                    context.sections(self.skill / "references/runtime-review.md",["api_semantics"])]},
-                              work={"runtime":self.runtime,"review_ids":ids,"policy":self.payload["policy"]})
-                packet["workspace_evidence"]["lookups"] = view["lookups"]
-                packet["workspace_guidance"] = list(view["guidance"].values())
-            if len(encoded(packet).encode("utf-8")) > self.metadata["experiment"]["context_max_bytes"]:
-                raise ValueError("assembled provider packet exceeds context limit; narrow the work item")
             handles = {"source" + str(i):w["artifact_id"] for i,w in enumerate(windows,1)}
             task = {"kind":"native_bundle","conversation_id":key,"source_root":str(self.root),
                     "artifact_root":str(self.directory),"evidence_packet":str(directory / "context.json"),

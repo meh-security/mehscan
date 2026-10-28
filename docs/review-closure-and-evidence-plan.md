@@ -255,9 +255,49 @@ generic model reminder. The raw arm stays closed and partial.
    automatically repeat all eight AR arms or resume retired slots.
 
 Retain the independently useful format, native local defaults and qualified state.
-The hypothetical projections in AR are diagnostics only; no controller fix or
-new live savings is implemented by this plan. A successful fresh projection would
-make confirmation possible, not prove that a model will choose it or finish faster.
+The hypothetical projections in AR remain diagnostics. [AS's implementation and
+offline checks](experiments/review-answer-consumer-results.md) now complete the
+controller correction above: active claims remain the termination condition;
+connected same-work answer consumers receive their exact previous results,
+questions, source and decision eligibility. Changed answers still invalidate old
+drafts, and explicit reviewer confirmation is required. No old session is resumed.
+
+The actual builder projects the reconstructed pre-answer state to 135,731 compact
+packet bytes, preserving all its question attempts, lookup receipts, source,
+applicability and qualified propositions. It fits an explicitly configured fresh
+144 KiB allowance; existing configurations retain their limits. No history
+compression or new model/query/source credit is needed. A deterministic fresh
+native-bound fixture explicitly confirms the affected judgments on its sixth and
+last call and passes ordinary finalization. Omitting confirmation still blocks
+export. These checks establish available action and guard behavior, not live
+closure, savings or a corrected AR result.
+
+### Next evidence after AS
+
+The useful next paid question is whether the capable reviewer uses this authority
+without losing a condition, rather than another raw/addressed speed tournament.
+If proceeding, freeze one fresh Terra 6.1 medium raw-source run of the same
+six-claim cookie/relationship workspace. Retain its distinct basket-item and
+checkout questions, complete source preparation and original six-call, 24-query,
+512 KiB received-JSON and 900-second limits. Configure 144 KiB explicitly. Do not
+add a native fragment, policy arm, alternate model or reserve repair just to
+repeat already checked controls. Keep those controls in the offline suite.
+
+Record each offered/active/consumer ID, previous-result identity, answer change,
+explicit decision and resulting reconsideration flag. Audit selected mechanisms,
+cookie qualifications, caller evidence, actual input/output and time. AR raw
+Terra is a censored historical reference, not an equal completed efficiency arm.
+If the run never creates a partial shared-answer consumer, it does not test that
+transition; retain the ordinary result without buying a repeat to force it.
+
+Stop on the original limits, unknown usage, source/binding change or repeated
+retrieval without a new deciding question. If exposed consumers are omitted,
+inspect that response/contract boundary before changing budgets. If they are
+explicitly decided but reopen, inspect update ordering and dependency receipts.
+If correct decisions are blocked only by packet size, inspect the exact projection
+before another allowance change. Keep successful claims and useful uncertainty
+in every case. Wider experiments need a distinct unresolved question; neither
+offline success nor one successful live completion establishes whole-app savings.
 
 ## Keep, narrow or stop
 
