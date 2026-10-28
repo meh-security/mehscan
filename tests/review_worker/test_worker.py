@@ -1482,6 +1482,34 @@ else:
         self.assertEqual(record["research_queries"], 1)
         self.assertEqual(record["status"], "admitted")
 
+    def test_directory_reference_variants_share_native_result_without_provider_repair(self):
+        (self.root / "module").mkdir()
+        normal = self.base / "normal.py"
+        normal.write_text(self.reviewer.read_text(),encoding="utf-8")
+        self.reviewer.write_text('import json,sys,subprocess\ntask=json.load(sys.stdin)\n'
+            'if task["research"]["round"] == 0:\n'
+            ' queries=[{"tool":"references","review_id":task["review_ids"][0],"arguments":dict(symbol="eval",**args)}'
+            'for args in ({"path":"module"},{"path_prefix":"module"},{"path":"module","path_prefix":"module/"})]\n'
+            ' print(json.dumps({"research":queries}))\n'
+            'else:\n'
+            ' rows=task["research"]["results"]\n'
+            ' assert len(rows)==3 and rows[0]["result"]==rows[1]["result"]==rows[2]["result"]\n'
+            ' assert rows[0]["filter_normalization"]["effective_arguments"]["path_prefix"]=="module"\n'
+            ' assert "filter_normalization" not in rows[1]\n'
+            ' print(subprocess.check_output([sys.executable,'+repr(str(normal))+'],input=json.dumps(task),text=True))\n',encoding="utf-8")
+        result = self.invoke(extra=["--phase","native"])
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        directory=self.base/"worker";record=json.loads((directory/"worker.json").read_text())
+        rows=[json.loads(s)for s in(directory/"research.jsonl").read_text().splitlines()]
+        self.assertEqual([r["query"]["arguments"]for r in rows],
+                         [{"symbol":"eval","path":"module"},{"symbol":"eval","path_prefix":"module"},
+                          {"symbol":"eval","path":"module","path_prefix":"module/"}])
+        self.assertEqual(record["research_queries"],3)
+        self.assertEqual(record["research_executions"],1)
+        self.assertEqual(record["research_cache_hits"],2)
+        self.assertEqual(record.get("protocol_corrections",0),0)
+        self.assertEqual(record["status"],"admitted")
+
     def test_directory_definition_feedback_is_bounded_and_preserves_batch_atomicity(self):
         (self.root / "module").mkdir()
         normal = self.base / "normal.py"
@@ -1776,10 +1804,12 @@ else:
         self.assertFalse(list((self.base / "worker").glob("context-*.json")))
         self.assert_no_decisions()
 
-    def test_directory_filters_are_rejected_before_any_native_query(self):
+    def test_directory_filters_normalize_only_unambiguous_reference_scope(self):
         directory = self.root / "module"
         directory.mkdir()
-        for arguments in ({"symbol":"eval","path":"module"}, {"symbol":"eval","path_prefix":"app.js"}):
+        for arguments in ({"symbol":"eval","path_prefix":"app.js"},
+                          {"symbol":"eval","path":"module","path_prefix":"missing"},
+                          {"symbol":"eval","path":"missing","path_prefix":"missing"}):
             with self.assertRaises(ValueError):
                 worker.research_arguments({"tool":"references","review_id":None,"arguments":arguments}, self.root, [], self.base)
         compiled = worker.research_arguments({"tool":"references","review_id":None,
@@ -1788,6 +1818,17 @@ else:
         trailing = worker.research_arguments({"tool":"references","review_id":None,
             "arguments":{"symbol":"eval","path_prefix":"module/"}}, self.root, [], self.base)
         self.assertEqual(trailing,compiled)
+        for arguments in ({"symbol":"eval","path":"module"},
+                          {"symbol":"eval","path":"module","path_prefix":"module/"}):
+            normalized = worker.research_arguments({"tool":"references","review_id":None,"arguments":arguments},self.root,[],self.base)
+            self.assertEqual(normalized,compiled)
+            self.assertEqual(normalized.filter_normalization["original_arguments"],arguments)
+            self.assertEqual(normalized.filter_normalization["effective_arguments"],
+                             {"symbol":"eval","path_prefix":"module","limit":20})
+        unknown=worker.research_arguments({"tool":"references","review_id":None,
+            "arguments":{"symbol":"eval","path":"missing"}},self.root,[],self.base)
+        self.assertIn("--path",unknown)
+        self.assertIsNone(unknown.filter_normalization)
         for path in ("/module/", "module/../../", "module//nested/"):
             with self.assertRaises(ValueError):
                 worker.research_arguments({"tool":"references","review_id":None,

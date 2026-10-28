@@ -48,6 +48,13 @@ class ResearchFilterError(ValueError):
                        "authority":"Controller API feedback, not source evidence; no source or absence of protection is established."}
 
 
+class ResearchArguments(list):
+    """Native argv with optional controller-only scope normalization provenance."""
+    def __init__(self, arguments, filter_normalization=None):
+        super().__init__(arguments)
+        self.filter_normalization = filter_normalization
+
+
 def missing_source_result(query, error):
     """Recover narrowly recognized missing-source or navigation-scope outcomes.
 
@@ -489,18 +496,22 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
         limit = values.setdefault("limit", 20)
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("research result limit must be 1 to 100")
-    arguments = ["investigate", "symbol" if tool == "definition" else tool, str(root)]
-    for key, value in sorted(values.items()):
-        arguments += ["--" + key.replace("_", "-"), str(value)]
-    if tool == "references":
-        arguments += ["--summary", "true"]
+    journal = None
     if review_id is not None:
         journal = journals / (review_id + ".jsonl")
         if not journal.resolve().is_relative_to(journals.resolve()):
             raise ValueError("research journal escapes its attempt directory")
-        arguments += ["--journal", str(journal)]
-    # Validate scope, shape, names, limits and journal binding before classifying
-    # this recoverable filter mistake. Never suggest an unoffered argument.
+    # All arguments and both scopes pass validation before this narrow repair.
+    # Never turn different filters, unknown paths or required-file tools into
+    # a directory search. Keep the original request separate from effective argv.
+    normalization = None
+    if (tool == "references" and "path_prefix" in optional and "path" in values
+            and (root / values["path"]).is_dir()
+            and ("path_prefix" not in values or values["path_prefix"] == values["path"])):
+        values["path_prefix"] = values.pop("path")
+        normalization = {"code":"existing_directory_to_prefix",
+            "original_arguments":query["arguments"].copy(),"effective_arguments":values.copy(),
+            "authority":"Controller scope normalization only, not source evidence or proof that a protection is absent."}
     if "path" in values and "path_prefix" in values:
         raise ResearchFilterError(tool,"conflicting_path_filters",
             "Choose one research path filter: path for a file OR path_prefix for a directory, not both. No filter was applied.",required,optional)
@@ -515,7 +526,14 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
     if "path_prefix" in values and (root / values["path_prefix"]).is_file():
         raise ResearchFilterError(tool,"directory_filter_is_file",
             "The path_prefix filter must name a directory. Use path for the known file.",required,optional)
-    return arguments
+    arguments = ["investigate", "symbol" if tool == "definition" else tool, str(root)]
+    for key, value in sorted(values.items()):
+        arguments += ["--" + key.replace("_", "-"), str(value)]
+    if tool == "references":
+        arguments += ["--summary", "true"]
+    if journal is not None:
+        arguments += ["--journal", str(journal)]
+    return ResearchArguments(arguments, normalization)
 
 
 def research_cost(queries):
@@ -1294,6 +1312,8 @@ def run_locked(args):
                             "origin_package_id": expected["package_id"], "query": query, "result": result}
                     if query["tool"] == "definition":
                         fact["native_query_count"] = native_queries
+                    if getattr(arguments,"filter_normalization",None):
+                        fact["filter_normalization"] = arguments.filter_normalization
                     return fact
 
                 fact, reused = broker.get(key, load, remaining())
@@ -1314,7 +1334,7 @@ def run_locked(args):
                         shared_facts.append(fact)
                         known_facts.add(fact["result_id"])
                 save_facts()
-            for query, fact, reused in batch:
+            for (query, fact, reused), arguments in zip(batch,commands):
                 result = fact["result"]
                 cost = research_cost([query])
                 query_count += cost
@@ -1326,6 +1346,8 @@ def run_locked(args):
                          "package_id": expected["package_id"], "result_id": fact["result_id"],
                          "reused": reused, "origin_package_id": fact["origin_package_id"],
                          "origin_review_id": fact["origin_review_id"], "result": result}
+                if getattr(arguments,"filter_normalization",None):
+                    entry["filter_normalization"] = arguments.filter_normalization
                 execution_trace.emit("query_completed", job_id=job.path.stem, conversation_id=conversation_id,
                     round=round_index, query=query, result_id=fact["result_id"], reused=reused,
                     result_operation=result.get("operation"))

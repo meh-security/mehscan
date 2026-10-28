@@ -499,7 +499,24 @@ class Workspace:
             self._action(state,receipt,operation_key)
             return {"lookup_id":receipt["lookup_id"],"evidence":receipt["evidence"]}
         if kind == "lookup_result":
-            shape(action, ("kind","lookup_id","question_id","query","result","evidence","native_query_count","reused_from"))
+            shape(action, ("kind","lookup_id","question_id","query","result","evidence","native_query_count","reused_from"),
+                  ("filter_normalization",))
+            if "filter_normalization" in action:
+                normalization = action["filter_normalization"]
+                shape(normalization,("code","original_arguments","effective_arguments","authority"))
+                if (normalization["code"] != "existing_directory_to_prefix"
+                        or action["query"]["tool"] != "references"
+                        or normalization["original_arguments"] != action["query"]["arguments"]):
+                    raise ValueError("lookup filter normalization differs from its request")
+                label(normalization["authority"])
+                original = normalization["original_arguments"]
+                effective = {"limit":20,**original}
+                path = effective.pop("path",None)
+                if not path or ("path_prefix" in effective and effective["path_prefix"].rstrip("/") != path):
+                    raise ValueError("lookup filter normalization changes its scope")
+                effective["path_prefix"] = path
+                if normalization["effective_arguments"] != effective:
+                    raise ValueError("lookup filter normalization changes its arguments")
             key = label(action["lookup_id"])
             previous = state["lookups"].get(key)
             if previous and previous["status"] != "reserved":
@@ -746,6 +763,8 @@ class Workspace:
                     packet["lookups"][key]["requested_question"] = lookup["requested_question"]
                 if "review_ids" in lookup:
                     packet["lookups"][key]["review_ids"] = lookup["review_ids"]
+                if "filter_normalization" in lookup:
+                    packet["lookups"][key]["filter_normalization"] = lookup["filter_normalization"]
         # Closed draft histories remain in storage, not in a replacement context.
         packet = copy.deepcopy(packet)
         for claim in packet["claims"]:

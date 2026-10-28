@@ -45,6 +45,14 @@ bundles; requiring each fragment to include unrelated peers' source is not the
 same check. [AM](experiments/review-native-boundary-audit-results.md) verifies this
 boundary offline on three original packets becoming two hybrid packets.
 
+`references` also accepts an unambiguous existing directory supplied as `path`,
+including the identical directory repeated in `path_prefix`. The controller uses
+the offered `path_prefix` operation and records original/effective arguments in
+`filter_normalization`. Different scopes and tools requiring a file retain their
+validation behavior. Equivalent reference requests reuse source results while
+each requested lookup still spends its original query allowance. The receipt is
+controller metadata, never source evidence or a safe verdict.
+
 The hybrid binding captures input files, native requests/packages, current runner
 code and the prepared workspace state identity. At most 32 units are supported
 in this first slice. Selections that cannot fund even one final turn per unit

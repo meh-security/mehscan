@@ -88,10 +88,18 @@ def _source_capture(query, result, native_count):
 
 def _lookup(bridge, query, arguments, key):
     state = bridge.workspace.snapshot()
+    def lookup_key(query, normalization=None):
+        values = (normalization or {}).get("effective_arguments",query["arguments"])
+        if query["tool"] == "references":
+            values = {"limit":20,**values}
+            if "path_prefix" in values:
+                values["path_prefix"] = values["path_prefix"].rstrip("/")
+        return query["tool"],values
+    requested_key = lookup_key(query,getattr(arguments,"filter_normalization",None))
     for old_id, old in state["lookups"].items():
         if (query["tool"] != "knowledge" and old["status"] == "complete" and
                 (old["result"] or {}).get("operation") != "lookup_feedback" and
-                (old["query"]["tool"],old["query"]["arguments"]) == (query["tool"],query["arguments"])):
+                lookup_key(old["query"],old.get("filter_normalization")) == requested_key):
             if old["evidence"]:
                 bridge.workspace._evidence(state,old["evidence"])
             return old["result"],old["evidence"],0,old_id
@@ -319,6 +327,8 @@ def apply_response(bridge, session_id, task, packet, response):
             raise ValueError("experiment received-query byte ceiling exceeded; observed overspend retained")
         receipt = {"kind":"lookup_result","lookup_id":key,"question_id":qid,"query":query,"result":result,
                    "evidence":evidence,"native_query_count":count,"reused_from":reused}
+        if getattr(arguments,"filter_normalization",None):
+            receipt["filter_normalization"] = arguments.filter_normalization
         published = bridge.apply("receipt:" + key,{"kind":"lookup_capture","receipt":receipt,
             "capture":_source_capture(query,result,count) if count else None},before_commit=bridge.check)
         evidence = published["evidence"]

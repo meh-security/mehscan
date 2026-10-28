@@ -22,7 +22,7 @@ class LookupFeedbackTests(unittest.TestCase):
 
     def query(self,tool="references",**arguments):
         return {"tool":tool,"review_id":self.rid,"purpose":"Locate the declaration relevant to the selected relationship",
-                "arguments":arguments or {"symbol":"marker","path":"nested","limit":20}}
+                "arguments":arguments or {"symbol":"marker","path":"nested/code.js","path_prefix":"nested","limit":20}}
 
     def reply(self,queries,decisions=None):
         return {"updates":[],"decisions":decisions or [],"lookups":[{
@@ -36,12 +36,12 @@ class LookupFeedbackTests(unittest.TestCase):
         self.fx.turn("mixed",lambda task,packet:self.reply([*invalid,valid],[other]))
         state = self.bridge.workspace.snapshot()
         lookups = sorted(state["lookups"].values(),key=lambda l:l["sequence"])
-        for lookup,query in zip(lookups,invalid):
+        for lookup,query,code in zip(lookups,invalid,("conflicting_path_filters","file_filter_is_directory")):
             self.assertEqual(lookup["query"],query)
             self.assertEqual(lookup["evidence"],[])
             self.assertEqual(lookup["native_query_count"],0)
             self.assertIsNone(lookup["reused_from"])
-            self.assertEqual(lookup["result"]["code"],"file_filter_is_directory")
+            self.assertEqual(lookup["result"]["code"],code)
             self.assertFalse(lookup["result"]["native_query_executed"])
         self.assertIn("path_prefix",lookups[0]["result"]["allowed_arguments"]["optional"])
         self.assertNotIn("path_prefix",lookups[1]["result"]["allowed_arguments"]["optional"])
@@ -64,6 +64,44 @@ class LookupFeedbackTests(unittest.TestCase):
         self.assertEqual(current["used"]["queries"],5)
         self.assertEqual(self.bridge.workspace.usage()["totals"]["input_tokens"],200)
         self.assertIn('"lookup_feedback"',self.fx.calls[-1]["prompt"])
+
+    def test_known_directory_intent_executes_once_and_retains_each_request_scope(self):
+        directory = self.query("references",symbol="marker",path="nested")
+        canonical = self.query("references",symbol="marker",path_prefix="nested")
+        duplicate = self.query("references",symbol="marker",path="nested",path_prefix="nested/",limit=20)
+        original = json.loads(json.dumps(directory))
+        self.fx.turn("directory",lambda task,packet:self.reply([directory]))
+        def continued(task,packet):
+            old = next(iter(packet["workspace_evidence"]["lookups"].values()))
+            self.assertEqual(old["filter_normalization"]["original_arguments"],original["arguments"])
+            self.assertEqual(old["filter_normalization"]["effective_arguments"],
+                             {"symbol":"marker","path_prefix":"nested","limit":20})
+            return self.reply([canonical,duplicate])
+        self.fx.turn("same-effective-scope",continued)
+        rows = sorted(self.bridge.workspace.snapshot()["lookups"].values(),key=lambda l:l["sequence"])
+        self.assertEqual(directory,original)
+        self.assertEqual([r["query"]for r in rows],[directory,canonical,duplicate])
+        self.assertEqual([r["native_query_count"]for r in rows],[1,0,0])
+        self.assertEqual(rows[1]["reused_from"],rows[2]["reused_from"])
+        self.assertTrue(all(r["result"]==rows[0]["result"]and not r["evidence"]for r in rows))
+        self.assertEqual([r["path"]for r in rows[0]["result"]["results"]],["nested/code.js"])
+        self.assertNotIn("filter_normalization",rows[1])
+        self.assertEqual(rows[2]["filter_normalization"]["original_arguments"],duplicate["arguments"])
+        state = self.bridge.workspace.snapshot()
+        self.assertEqual(state["used"]["queries"],3)
+        self.assertEqual(state["questions"]["binding"]["status"],"open")
+        self.assertEqual(state["received_query_bytes"],sum(len(json.dumps(r["result"],ensure_ascii=False).encode())for r in rows))
+
+    def test_normalization_receipt_cannot_change_effective_scope(self):
+        self.fx.turn("directory",lambda task,packet:self.reply([self.query("references",symbol="marker",path="nested")]))
+        state = self.bridge.workspace.snapshot();key,row=next(iter(state["lookups"].items()))
+        receipt = {k:row[k]for k in ("question_id","query","result","evidence","native_query_count","reused_from","filter_normalization")}
+        receipt = json.loads(json.dumps(receipt))
+        receipt.update(kind="lookup_result",lookup_id=key)
+        receipt["filter_normalization"]["effective_arguments"]["path_prefix"]="other"
+        with self.assertRaisesRegex(ValueError,"normalization changes its arguments"):
+            self.bridge.workspace.preview(receipt)
+        self.assertEqual(self.bridge.workspace.snapshot(),state)
 
     def test_file_in_directory_filter_and_required_file_tool_have_precise_alternatives(self):
         self.fx.turn("inverted",lambda task,packet:self.reply([
