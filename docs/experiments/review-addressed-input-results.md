@@ -78,7 +78,7 @@ and their sometimes incorrect short excerpts remain unchanged. An addressed
 registration is available evidence, not automatic proof of a selected claim.
 
 The replay includes AO's local fixed redirects and conditional cookie findings,
-AL's complete local/SQL controls, Directus source and the unavailable external
+AL's SQL positives and scoped local negatives, Directus source and the unavailable external
 policy fixture. Questions, interpretations, conditions, exclusions, guidance and
 navigation records remain unchanged. There is no new mandatory caller lookup for
 a complete local negative and no conversion of an unknown policy into a finding.
@@ -119,3 +119,8 @@ input on caller proof, related cookie questions and local/unresolved controls,
 for Sol medium and Terra 6.1 medium. Keep supported mechanisms and useful
 uncertainty if results differ. No unchanged fifteen-claim speed run, full-app
 review, retrospective verdict repair or automatic reserve wave follows here.
+
+AR preparation corrects a wording/scope risk: the saved Juice inventory has no
+safe parameterized SQL candidate. AL's scoped ownership negatives do not provide
+that control. The parameterized SQL state/source control remains offline; it is
+not counted as a native or paid disposition in the new comparison.

@@ -147,12 +147,23 @@ before expanding source or budgets.
 
 ### Concrete paired-test preparation
 
+[AR's concrete plan](experiments/review-addressed-pair-plan.md) corrects one red
+flag in the proposal below: the saved Juice inventory has no safe parameterized
+SQL candidate, as earlier breadth/batch plans already recorded. Keep that as an
+offline source/state/presentation control rather than inventing admission. AR
+therefore selects eight live claims, plus the offline SQL control. Its fixed
+placement is one six-claim workspace packet with distinct caller questions, one
+native redirect and a separate policy workspace. This avoids an extra split of
+the original resource bucket. Both source formats use the same placement.
+
 Use the actual basket-item and checkout caller-proof cases as the primary targets,
 plus the four related cookie-authenticated mutations to retain shared qualified
 state. Add one complete bound SQL negative, one fixed profile redirect negative
-and the genuinely unavailable external-policy control: nine selected claims,
+and the genuinely unavailable external-policy control: originally nine proposed
+cases, corrected to eight admitted live claims plus the offline SQL control,
 with the policy fixture kept in its own application/source binding. Select the
-SQL control by inspecting its complete current construction, not its label.
+SQL control by inspecting its complete current construction, not its label or a
+forced native candidate. The completed parameterized SQL control is offline.
 
 Compare raw versus addressed presentation within the same chosen engine/placement
 and source preparation. Keep SQL/local redirect work native and the coherent
