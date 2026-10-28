@@ -55,15 +55,22 @@ Five original packets remain five hybrid units. Actual source/profile/metadata
 checks pass, yet every ownership packet omits custom asyncHandler at utils:229–231.
 The evaluator confirms transparent dispatch in the actual source; this supports
 the outcomes without retroactively giving that evidence to the reviewers. A
-targeted common-profile extension is prepared offline, not paid-rerun or packet
-acceptance evidence. Keep AL closed and all 67 unused slots retired.
+targeted common-profile extension was prepared offline at AL closure; it was not
+then paid-rerun or packet acceptance evidence. AM's fresh packet check follows
+below. Keep AL closed and all 67 unused slots retired.
 
-Next verify the corrected custom-intermediary source in fresh actual packets.
-AL's workspace packets already fit native's existing buckets, so it has not tested
-avoiding conversations across those boundaries. Audit existing related
-registration/check/effect traces first; one targeted new test needs compatible
-scope, no stranded peer fragments, counted preparation and equal aggregate credit.
-Do not repeat already-one-call packets just to test the workspace label again.
+Latest offline follow-up: [AM](experiments/review-native-boundary-audit-results.md)
+checks thirty actual first packets, including the corrected custom intermediary,
+and maps all 254 saved claims to 38 native buckets. Zero model calls. A four-claim
+shared profile-image handler alone saves no context across the full population.
+Adding two independent redirect peers drains another bucket; retaining the nine
+remaining native peers makes the fair affected package fifteen claims, with
+three native packets versus two hybrid packets. Actual source and per-claim
+questions pass in Sol and Terra preparations. Freeze the fifteen proof requirements
+before a fresh live study; distinguish eighteen aggregate slots from each unit's
+six-call cap. The address and Directus service candidates do not demonstrate
+avoided native contexts. Do not repeat already-one-call packets just to test the
+workspace label again or silently omit the peers left in a split bucket.
 Separately inspect the 28 already-captured native import citations and request-identity
 differences before any native pass-through optimization. Use saved external-policy
 traces to identify the last deciding fact before bounded uncertainty. Do not add

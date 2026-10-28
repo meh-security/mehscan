@@ -13,17 +13,19 @@ can retain independent local claims beside a workspace subgroup without adding
 native fragments or assuming shared authorization. It replaces a fragmented
 trial design, while preserving AJ/AK's original results and budget safeguards.
 
-AL is now [closed at 23 calls/36 dispositions](experiments/review-hybrid-packet-results.md).
+AL is [closed at 23 calls/36 dispositions](experiments/review-hybrid-packet-results.md).
 Sol native/hybrid each use eight calls; hybrid takes 39.288 more active seconds.
-Packet co-location works, state qualifications/extra workflow leads remain useful,
-and all arms retain the selected mechanisms. Reviewer-established caller proof is
-qualified by an omitted custom wrapper; its actual transparent body is inspected
-by the evaluator and a targeted profile correction is prepared offline. Next
-verify that corrected boundary in fresh packets, then audit existing related work
-split across native buckets; AL's workspace groups already fit native packets.
-Require compatible scope, no stranded fragments and equal aggregate credit before
-one targeted new test. Native-path redundancy and unavailable-fact stopping remain
-separate supporting diagnostics. No unchanged paid rerun or universal engine switch.
+Packet co-location, qualified state and extra workflow leads remain useful.
+[AM now verifies the omitted wrapper in fresh actual packets and audits the real
+native boundaries](experiments/review-native-boundary-audit-results.md), without
+repairing AL's historical model evidence. All 254 saved claims map to 38 buckets.
+The next candidate includes fifteen claims from three complete Juice buckets:
+six workspace claims plus nine native peers, giving two hybrid packets. Both
+Sol/Terra source and per-claim question checks pass offline; zero model calls.
+Freeze all fifteen proof requirements before a fresh targeted live comparison.
+Count remaining peers explicitly, preserve compatible scope and aggregate credit,
+and qualify unit caps separately. Native-path redundancy and unavailable-fact
+stopping remain separate diagnostics. No unchanged paid rerun or universal switch.
 
 First slice completed: [route inspector and CLI](review-routing.md), with the
 [22-claim offline check AJ](experiments/review-routing-inspection-results.md).
@@ -115,7 +117,11 @@ universal routing by category or independent human accuracy.
    Count route preparation, both execution lanes and package assembly together.
    AL completes the first such live comparison, with no same-model speed win and
    the wrapper proof qualification above. Do not repeat the successful packet
-   siblings to chase a favorable aggregate.
+   siblings to chase a favorable aggregate. AM's next concrete comparison covers
+   the complete fifteen-claim affected package, three native packets versus two
+   hybrid packets. The narrower six-claim slice would omit nine native peers and
+   exaggerate the full-population unit saving. Preserve native controls and their
+   proof requirements when testing the selected shared handler.
 4. **Fix only the failing route or boundary.** The NoSQL evidence-navigation
    question remains useful for a targeted offline diagnostic; it is not a global
    prerequisite for the hybrid slice. Qualification loss, stale facts or missing

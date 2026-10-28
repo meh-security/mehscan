@@ -38,6 +38,13 @@ fragment's exact IDs. Workspace work receives initial source and the selection's
 additional bounded evidence/questions. These preparation costs/source differences
 belong in the experiment's readiness and accounting, not an assumed saving.
 
+When auditing cross-bundle packets, resolve a sweep question ID inside its
+original bundle, then join by review ID. Question IDs are bundle-local. Compare
+source across the complete affected package when units split or combine original
+bundles; requiring each fragment to include unrelated peers' source is not the
+same check. [AM](experiments/review-native-boundary-audit-results.md) verifies this
+boundary offline on three original packets becoming two hybrid packets.
+
 The hybrid binding captures input files, native requests/packages, current runner
 code and the prepared workspace state identity. At most 32 units are supported
 in this first slice. Selections that cannot fund even one final turn per unit
