@@ -17,9 +17,12 @@ dispatch policy, not an implemented automatic router or a measured SQL engine wi
 
 The previous aggregate recommendation gave too much weight to whether workspace
 won the entire AI package. That experiment tested uniform packages; it did not
-test a selective hybrid. The next implementation slice makes per-claim route
-selection inspectable, then wires experimental mixed dispatch and evaluates the
-whole hybrid package. NoSQL navigation is a targeted correction candidate, not
+test a selective hybrid. [AJ implements inspectable per-claim routing](experiments/review-routing-inspection-results.md):
+22 claims propose fifteen native/seven workspace, with twelve potential execution
+units versus ten original packets. This exposes fragmentation rather than claiming
+savings. Next wire experimental mixed dispatch, original-result assembly and
+combined original-bundle allowances, then evaluate the whole hybrid package.
+NoSQL navigation is a targeted correction candidate, not
 a prerequisite for every family. Preserve successful native and workspace lanes.
 
 Current correction policy: [retain supported work and correct the affected boundary](experiments/review-workspace-surgical-plan.md).
@@ -126,11 +129,13 @@ This is comparison reliability, not a model-quality or speed improvement.
    mechanisms and source-assurance differences; do not count native's existing
    batching as work avoided only by workspace. Preserve selective SQL/shared
    investigation as earlier supported work, not a result of AI's non-SQL slice.
-4. Next, implement the inspectable route-selection slice in the
+4. Implemented/checked in AJ: the inspectable route-selection slice in the
    [selective-routing plan](review-routing-plan.md), using saved cases before
-   dispatch. Preserve native local batches and selected workspace relationships,
-   exact claim coverage and separate verdicts. Then add experimental mixed
-   dispatch and evaluate the combined package against native maximum 20.
+   dispatch. Native local batches and selected workspace relationships retain
+   exact claim coverage and separate verdicts. Next add experimental mixed
+   dispatch/result assembly and connected aggregate allowances, then evaluate
+   the combined package against native maximum 20. AJ's two added units must
+   count as potential overhead, not an assumed saving or extra free allowance.
 5. Diagnose NoSQL evidence navigation only as an affected-route improvement.
    Trace the deciding question, available path/reference results, selected source
    and remaining proof. Include misleading names/no-useful-test controls before

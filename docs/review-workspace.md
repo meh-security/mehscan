@@ -20,8 +20,11 @@ establish an efficiency win. Native already batches the shared YAML/cookie work.
 Keep workspace state and [review-package fidelity AH](experiments/review-workspace-review-package-results.md)
 as experimental infrastructure. The [selective-routing plan](review-routing-plan.md)
 now puts local SQL/API work into native batches and selected shared/relational
-investigations into workspace. The next slice makes this routing inspectable;
-NoSQL navigation is a separate targeted improvement. No automatic router is
+investigations into workspace. The [route inspector](review-routing.md) now makes
+this proposal visible; its [22-claim check](experiments/review-routing-inspection-results.md)
+also exposes two additional potential dispatch units. Next is experimental mixed
+execution/result assembly with combined original-bundle allowances. NoSQL
+navigation is a separate targeted improvement. No automatic dispatcher is
 released yet, and no full-app expansion or unchanged paid retry follows.
 
 The [common source-channel slice AF](experiments/review-workspace-source-channel-results.md)

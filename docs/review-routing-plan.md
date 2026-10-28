@@ -6,6 +6,13 @@ does not decide which path every rule should use. This corrects the overly broad
 next-step interpretation of [AI](experiments/review-workspace-mixed-fallback-results.md),
 without changing its results or reopening its budget.
 
+First slice completed: [route inspector and CLI](review-routing.md), with the
+[22-claim offline check AJ](experiments/review-routing-inspection-results.md).
+Fifteen claims stay native and seven select workspace. The proposal exposes
+12 potential execution units versus ten original packets; this is a cost to
+evaluate, not a savings result. Next is experimental mixed dispatch with original
+result assembly and shared aggregate allowances across split/connected bundles.
+
 ## Initial routing policy
 
 | Deciding work | Initial path | What changes the route or scope |
@@ -19,8 +26,8 @@ without changing its results or reopening its budget.
 | Unrelated claims with no demonstrated shared deciding work | Native batching | Keep the ordinary maximum 20; do not create a workspace conversation for each unsupported anchor. |
 | A genuinely unavailable deciding fact | Preserve precise uncertainty in the current path | Record what could change the decision and stop that investigation. Creating another workspace or searching again does not make an unavailable implementation available. |
 
-These are proposed defaults for the next implementation, not a newly released
-automatic router. Rule family supplies an initial strategy; actual construction,
+These are inspection defaults, not a released automatic dispatcher. Rule family
+supplies an initial strategy; actual construction,
 shared dependencies and caller compatibility determine exceptions. In particular,
 "SQL native, everything else workspace" is still too coarse: local cookie/YAML
 work already closes efficiently in native batches, while shared authorization
@@ -59,14 +66,18 @@ universal routing by category or independent human accuracy.
    question, any shared implementation/fact and the reason for separation.
    Existing metadata should settle obvious local batches. Manually review
    ambiguous relationships in this first slice and count that work; do not hide
-   a full investigation in the router. This is the next implementation slice.
+   a full investigation in the router. Implemented/checked in AJ: CLI output also
+   exposes split native bundles, proposed unit counts and groups already fitting
+   one native packet. Shared-service selection remains explicit, not automatic.
 2. **Add pre-dispatch selection to the experimental comparison controller.**
    Dispatch each selected claim through one path and retain the original native
    bundle/result mapping. Native lanes keep ordinary batching. Workspace lanes
    use existing questions, scoped propositions, applicability and review-package
    export. Do not add a new fact engine, general test preloader or mandatory AI
    planner. Keep the production default unchanged until the routing slice is
-   checked.
+   checked. Bind the inspector artifact and complete original-result mapping.
+   Charge fragments and cross-bundle shared groups to their connected original
+   bundle allowances; creating units must not multiply paid budgets.
 3. **Check the mixed package, rather than requiring one engine to win it all.**
    Compare ordinary native maximum-20 review with the proposed hybrid policy.
    Include SQL/native local controls, shared handler/effect work, differently
