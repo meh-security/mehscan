@@ -11,7 +11,14 @@ drafts, work splitting, bounded context views, explicit session replacement, cal
 reservations and usage records. It uses Python's standard-library SQLite support;
 no additional dependency is required.
 
-Latest [live format comparison AR](experiments/review-addressed-pair-results.md):
+Latest [fresh completion observation AT](experiments/review-consumer-completion-results.md):
+Terra raw finalizes six claims in four known calls with the conditional package
+preserved. All four cookie claims close together, so AS's consumer transition is
+unobserved; no forced repeat follows. Raw checkout citation selection still
+misses its registration. A post-finalization wrapper trace assertion is audited
+without redispatch; native finalization and immutable inputs remain valid.
+
+Earlier [live format comparison AR](experiments/review-addressed-pair-results.md):
 seven arms finalize, one raw Terra arm remains cap-censored with two reopened
 consumers. Forty calls have known usage, no paid repair occurs, and all unused
 slots are retired. Addressed source fixes the four selected caller citation sets.

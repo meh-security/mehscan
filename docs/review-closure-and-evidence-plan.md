@@ -274,6 +274,11 @@ closure, savings or a corrected AR result.
 
 ### Next evidence after AS
 
+This observation is now closed as [AT](experiments/review-consumer-completion-results.md).
+Its four-call completion never creates a settled shared-answer consumer, so the
+target transition is unobserved. Keep this design as the record; do not dispatch
+it again merely to force the transition.
+
 The useful next paid question is whether the capable reviewer uses this authority
 without losing a condition, rather than another raw/addressed speed tournament.
 If proceeding, freeze one fresh Terra 6.1 medium raw-source run of the same
@@ -298,6 +303,51 @@ If correct decisions are blocked only by packet size, inspect the exact projecti
 before another allowance change. Keep successful claims and useful uncertainty
 in every case. Wider experiments need a distinct unresolved question; neither
 offline success nor one successful live completion establishes whole-app savings.
+
+### After AT
+
+AT finalizes all six claims in four known calls, with 149,860 input tokens,
+3,712 output tokens and 56.667 provider seconds. It preserves both authorization
+mechanisms and four explicitly conditional cookie findings. The two authorization
+claims close together on call 2; all cookie claims close together on call 4.
+No consumer is offered and the largest packet fits even the old 128 KiB bound.
+Keep AS's offline proof and guard correction without attributing AT's lower cost
+to an unexercised transition. Retire the two unused calls; no forced repeat or
+wider speed package follows. The raw checkout registration citation still misses
+its binding, reinforcing the already demonstrated addressed-source correction.
+
+Use native default batching for complete local SQL/parser/API work. Keep workspace
+for compatible shared questions and caller/check-to-effect work, with independent
+judgments, explicit conditions and addressed source recommended for these
+relationship reviews. This is a practical rule-specific configuration, not a
+universal engine or format performance claim.
+
+Next implement a reusable read-only turn audit from existing saved sessions and
+controller receipts. Join offered active/consumer IDs, exact prior-result identity,
+schema eligibility, requested deciding fact, returned evidence, answer change,
+explicit decisions, reconsideration flags and remaining credit. The operator
+should see why work remains or closes without reconstructing an application or
+asking the model to maintain a progress diary. Preserve historical, diagnostic
+and native-bound authority separately; do not project current eligibility back
+onto an old session as if it had been offered then.
+
+Replay the closed AR failure, AS diagnostic projection/fresh deterministic fixture
+and AT's no-consumer completion. State when a transition is absent, source is
+stale or receipts cannot establish an exact link. Keep original judgments and
+qualified uncertainty unchanged. Correct the harness boundary by distinguishing
+immutable source/configuration/package inputs from append-only runtime traces;
+AT's post-run trace assertion is preserved and audited, not repaired by a paid
+rerun. This implementation needs no new model calls or target execution.
+
+Before any wider experiment, identify a distinct unresolved question in another
+actual rule/caller family. Inspect its default native packets and source first:
+shared file/category alone does not justify workspace, and an existing single
+native packet is not an avoided conversation. Freeze a small coherent comparison
+only when it can test retained relationships, separate applicability or useful
+uncertainty beyond these cases. Stop preparation if the proposed grouping merely
+repeats this study, hides incompatible authority or requires application-wide
+reconstruction. No automatic AI grouping, larger budget or memory subsystem is
+justified by AT.
 
 ## Keep, narrow or stop
 
