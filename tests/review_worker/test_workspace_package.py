@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import test_workspace as fixtures
-from review_workspace import Workspace, identity, render_review_package
+from review_workspace import Workspace, captured_source_rows, identity, render_review_package
 
 
 class ReviewPackageTests(unittest.TestCase):
@@ -105,6 +105,12 @@ class ReviewPackageTests(unittest.TestCase):
         self.assertTrue(claims['safe']['questions'][0]['resolved_for_claim'])
         self.assertFalse(claims['unsafe']['questions'][0]['resolved_for_claim'])
         self.assertEqual(package['questions']['shared']['status'],'blocked')
+        rendered=render_review_package(package)
+        self.assertEqual(rendered.count('### Question 1\n'),1)
+        self.assertIn('[Question 1](#question-1) — resolved for this claim',rendered)
+        self.assertIn('[Question 1](#question-1) — blocked',rendered)
+        self.assertIn('Resolved for these shown claims: [Claim 1](#claim-1)',rendered)
+        self.assertIn('Installed hook state is unavailable.',rendered)
         self.assertIn(proof,package['evidence'])
         hook.write_text('changed hook\n')
         with self.assertRaisesRegex(ValueError,'source changed'):
@@ -140,6 +146,86 @@ class ReviewPackageTests(unittest.TestCase):
         self.assertEqual(subprocess.check_output(command+['--format','markdown'],text=True,encoding='utf-8').strip(),rendered.strip())
         payload=copy.deepcopy(package);pid=payload.pop('package_id')
         self.assertEqual(pid,identity(payload))
+
+    def test_shared_records_render_once_without_losing_caller_qualifications(self):
+        self.f.proposition(self.evidence,statement='Shared helper interpretation with its exact qualifications.')
+        aid=self.f.applicability('safe',self.evidence)
+        question='Does the configured external policy accept these callers?'
+        reason='Missing configured policy; do not infer a safe default. ' * 15
+        self.f.apply('question',question_id='policy',review_ids=['safe','unsafe'],question=question)
+        self.f.apply('answer',question_id='policy',status='blocked',reason=reason,evidence=[self.evidence])
+        self.draft_all(dependencies={rid:[{'proposition_id':'body-owner','revision':1}] for rid in ('safe','unsafe')},
+                       applies={'safe':[aid]},decisions={'safe':'needs_review','unsafe':'needs_review'})
+        package=self.workspace.review_package();before=copy.deepcopy(package)
+        rendered=render_review_package(package)
+        self.assertEqual(rendered.count(question),1)
+        self.assertEqual(rendered.count('Shared helper interpretation with its exact qualifications.'),1)
+        self.assertEqual(rendered.count(reason),1)
+        self.assertEqual(rendered.count('### Note 1\n'),1)
+        self.assertEqual(rendered.count('### Source 1\n'),1)
+        self.assertIn('Shown affected claims: [Claim 1](#claim-1), [Claim 3](#claim-3)',rendered)
+        self.assertIn('[Note 1](#note-1) — caller applicability recorded',rendered)
+        self.assertIn('[Note 1](#note-1) — context only; applicability not recorded',rendered)
+        note=next(iter(package['notes'].values()))
+        for field in ('conditions','exclusions','origin','scope'):
+            self.assertIn(str(note[field]),rendered)
+        for claim in package['claims']:
+            self.assertIn(claim['property'],rendered)
+        self.assertEqual(package,before)
+
+    def test_focus_cli_keeps_package_identity_source_and_hidden_scope(self):
+        self.f.apply('question',question_id='shared',review_ids=['safe','unsafe'],question='Which caller uses the external policy? Unicode: \u00e9\u2192\u2028')
+        self.f.apply('answer',question_id='shared',status='blocked',reason='Policy implementation unavailable.',evidence=[self.evidence])
+        self.draft_all(decisions={'safe':'needs_review','unsafe':'needs_review'})
+        package=self.workspace.review_package();before=self.workspace.path.read_bytes()
+        seed=self.f.directory/'seed.json';seed.write_text(json.dumps({'binding':self.f.binding}))
+        command=[sys.executable,str(fixtures.PRODUCT/'scripts/review_workspace.py'),'review-package',
+                 '--workspace',str(self.workspace.path),'--seed',str(seed)]
+        focus=subprocess.check_output(command+['--format','markdown','--review-id','unsafe'],text=True,encoding='utf-8')
+        self.assertIn('## Claim 3\n',focus)
+        self.assertNotIn('## Claim 1\n',focus)
+        self.assertNotIn('## Claim 2\n',focus)
+        self.assertIn('Included package claims outside this view:',focus)
+        self.assertIn('Other affected IDs (not shown):\n```text\nsafe\n```',focus)
+        self.assertNotIn('](#claim-1)',focus)
+        self.assertIn(package['package_id'],focus)
+        self.assertIn('Unicode: \u00e9\u2192\u2028',focus)
+        self.assertEqual(focus.count('### Source 1\n'),1)
+        self.assertEqual(self.workspace.path.read_bytes(),before)
+        self.assertEqual(self.workspace.review_package(),package)
+        both=render_review_package(package,['unsafe','safe'])
+        self.assertIn('## Claim 1\n',both);self.assertIn('## Claim 3\n',both)
+        for args in (['--review-id','safe'],['--format','markdown','--review-id','missing'],
+                     ['--format','markdown','--review-id','safe','--review-id','safe']):
+            failed=subprocess.run(command+args,capture_output=True,text=True,encoding='utf-8')
+            self.assertEqual(failed.returncode,2,failed.stdout)
+        self.f.code.write_text('source changed\n')
+        failed=subprocess.run(command+['--format','markdown','--review-id','unsafe'],capture_output=True,text=True,encoding='utf-8')
+        self.assertEqual(failed.returncode,2)
+        self.assertIn('source changed',failed.stdout)
+
+    def test_line_addresses_preserve_blank_lines_fragments_unicode_and_eof(self):
+        for evidence in (
+            {'start_line':3,'end_line':5,'text':'third\nfourth'},
+            {'start_line':3,'end_line':5,'text':'third\nfourth\n'},
+            {'start_line':1,'end_line':1,'text':''},
+            {'start_line':8,'end_line':9,'text':'partial\u2028text\rkept\nfragment','fragment':True},
+        ):
+            with self.subTest(evidence=evidence):
+                rows=captured_source_rows(evidence)
+                self.assertEqual('\n'.join(row['text'] for row in rows),evidence['text'])
+                self.assertEqual([r['line'] for r in rows],list(range(evidence['start_line'],evidence['start_line']+len(rows))))
+        self.assertEqual(captured_source_rows({'start_line':3,'end_line':5,'text':'third\nfourth'})[-1]['line'],4)
+        for first,last,text in ((0,1,''),(1,1,'a\nb'),(1,4,'a'),(True,1,'')):
+            with self.subTest(first=first,last=last),self.assertRaises(ValueError):
+                captured_source_rows({'start_line':first,'end_line':last,'text':text})
+        self.draft_all();package=self.workspace.review_package()
+        evidence=package['evidence'][self.evidence]
+        evidence.update(start_line=8,end_line=9,text='partial\u2028text\rkept\nfragment',fragment=True,complete_file=False)
+        before=copy.deepcopy(package);rendered=render_review_package(package)
+        self.assertIn('Partial-line fragment; columns are not supplied.',rendered)
+        self.assertIn('L8 | partial\u2028text\rkept\nL9 | fragment',rendered)
+        self.assertEqual(package,before)
 
 
 if __name__=='__main__':unittest.main()

@@ -11,13 +11,13 @@ drafts, work splitting, bounded context views, explicit session replacement, cal
 reservations and usage records. It uses Python's standard-library SQLite support;
 no additional dependency is required.
 
-Latest [live hybrid packet result AL](experiments/review-hybrid-packet-results.md):
-23 calls/36 dispositions, no unknown usage or paid controller failure. Sol
-native/hybrid each use eight calls, with hybrid slower in this run. Explicit
-packet co-location preserves qualified state and extra workflow leads without
-adding native fragments. A shared omitted-wrapper proof gap is corrected only
-in an offline profile candidate; no old packet or verdict is retroactively
-recertified. See [current knowledge and next corrections](review-knowledge.md).
+Latest [live comparison AO](experiments/review-cookie-scope-results.md): 34 calls/
+60 dispositions across Sol and Terra native/hybrid pairs. Eight workspace claims
+share the cookie investigation while seven local peers stay native. Both hybrid
+packages remain slower in observed active time; useful mechanisms, conditional
+findings and uncertainty survive. The subsequent [offline reviewer view AP](experiments/review-reviewer-view-results.md)
+checks 52 unchanged results across six saved packages. No old packet or verdict
+is retroactively recertified. See [current knowledge and next corrections](review-knowledge.md).
 
 The earlier [mixed fallback comparison AI](experiments/review-workspace-mixed-fallback-results.md)
 closes eight claims across native Sol, workspace Sol and workspace Terra medium:
@@ -402,6 +402,7 @@ applicability, current deciding questions and one shared captured-source catalog
 ```powershell
 python scripts/review_workspace.py review-package --workspace RUN/workspace.sqlite --seed RUN/seed.json
 python scripts/review_workspace.py review-package --workspace RUN/workspace.sqlite --seed RUN/seed.json --format markdown
+python scripts/review_workspace.py review-package --workspace RUN/workspace.sqlite --seed RUN/seed.json --format markdown --review-id EXACT_REVIEW_ID
 ```
 
 By default all selected bundles must be complete. `--bundle-id EXACT_BUNDLE_ID`
@@ -409,6 +410,15 @@ exports that complete bundle and explicitly lists omitted workspace claim IDs.
 This never permits exporting only part of a native bundle. JSON retains the
 standard `native_admission: false` / `result` CLI wrapper; Markdown is a human
 view of the same package. The package is not a native finalizer input.
+
+Markdown's repeatable `--review-id` focuses on included claims without changing
+the JSON package, its scope or identity. Original claim numbers stay stable;
+included-but-hidden claims are listed separately from package omissions. Shared
+questions and notes appear once, with links from each shown claim. A shared
+question retains its full affected ID set, latest reason and recorded status;
+resolution for one claim never resolves its siblings. Conditions, exclusions,
+origin and caller-specific applicability reasons remain literal and untruncated.
+Unknown or repeated focus IDs are rejected; focus is unavailable for JSON export.
 
 Each note link says either `caller_applicability_recorded` or `context_only`.
 The former records a reviewer judgment, not controller-certified applicability;
@@ -423,6 +433,14 @@ without changing draft history, usage or reservations. Source appears once in a
 shared catalog, with IDs and whole-file hashes; the Markdown view links note and
 question evidence to those excerpts. Literal reviewer/source text is fenced.
 No new inference, navigation, stored fact or model action is required.
+
+Markdown labels captured source rows as `L427 | ...` without changing source
+records, hashes or text. Blank captured lines survive. Partial-line fragments
+are explicitly marked and acquire no missing prefix, columns or whole-line
+authority; terminal EOF positions are not padded. The entire package source
+catalog remains available in a focused view. This is human navigation, not a
+smaller model context or a fix to earlier model-selected caller citations. The
+provider prompt and source broker remain unchanged. CLI output is UTF-8.
 
 Native-bound `finalize` writes `review-package.json` and `review-package.md`
 beside the original `draft.json` and `response.json`. `validated.json` binds their

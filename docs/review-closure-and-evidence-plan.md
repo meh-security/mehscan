@@ -12,10 +12,13 @@ This is the next bounded implementation plan, not a new live authorization or a
 proposal to replace native review. Complete SQL constructions and local API work
 stay native initially; relationship investigations can retain workspace state.
 
-Initial offline step completed: AO's raw `closure-worksheet.md` joins eight cases
-and 32 original results, with exact questions/reasons/qualifiers and no relabeling
-or model calls. Use it as a concrete presentation prototype before adding fields
-or altering the model contract; it is not an implemented product view.
+Initial prototype: AO's raw `closure-worksheet.md` joins eight cases and 32 original
+results with no relabeling or model calls. The subsequent [AP implementation](experiments/review-reviewer-view-results.md)
+now makes existing closure state reviewable through the product Markdown/CLI
+renderer: shared questions/notes once, claim focus, exact reasons/qualifications
+and addressed captured source. Six saved packages preserve all 52 results and
+their JSON identities. No schema extension was needed. The evaluator worksheet
+remains separate; its manual interpretation is not imported into product output.
 
 ## 1. Make existing closure information reviewable
 
@@ -67,6 +70,11 @@ output; label any prototype-only interpretation.
 
 ## 2. Improve source/caller citation presentation
 
+AP completes human source navigation only. It does not change model input or
+correct previously chosen short citations. Existing native and workspace provider
+paths serialize packets and new facts separately; a change only to this Markdown
+renderer cannot affect either reviewer's source selection.
+
 Use the actual AO/AN basket-item and checkout examples. A physically correct
 excerpt can still be the wrong caller evidence. Inspect what source was visible
 when the model selected those ranges before choosing a fix.
@@ -90,6 +98,39 @@ paired test target citation/closure behavior on the affected cases, with source,
 proof expectations and effective allowances frozen. Count any extra presentation
 input and actual time. Do not repeat all fifteen claims simply to chase a faster
 aggregate; no full-app run, old-budget resumption or reserved follow-up.
+
+## Next bounded slice after AP
+
+1. Inspect the actual native `codex_protocol.build_prompt` and workspace
+   `workspace_protocol` initial/continuation source shapes. Inventory physical
+   windows, query results, partial callable fragments and navigation-only records
+   before choosing a transformation. Do not recursively number arbitrary `text`
+   fields, trusted guidance, model interpretations or quoted source examples.
+2. Add an opt-in provider presentation for verified source only, replacing its
+   displayed text with addressed rows rather than appending a second full copy.
+   Retain artifact handles, original coordinates, raw evidence, source completeness,
+   query attribution, cache identity and physical validation. Use native LF/CRLF
+   semantics, including blank lines and terminal positions; do not use generic
+   `splitlines()` as a physical source locator. Stop and report unsupported source
+   shapes rather than inventing coordinates.
+3. Replay the affected saved initial and continuation packets offline. Check exact
+   recoverability and availability of basket-item/checkout registration lines,
+   partial-fragment labeling, no new source, and unchanged receipt/budget/handle
+   behavior. Keep bound SQL, fixed redirect and unavailable policy controls. Count
+   displayed input additions; AP's human-focused view is not model-input savings.
+4. Only then freeze a fresh small paired citation test on the affected
+   relationship cases with local and unresolved controls. Preserve both models'
+   supported mechanisms and conditional/unknown outcomes. Judge correct caller
+   evidence and selected-question closure separately from labels and actual time.
+   Specify the slice and allowance before running; do not automatically repeat
+   the fifteen-claim speed package or buy calls solely to test the human renderer.
+
+If addressed input fixes citation selection but leaves closure differences,
+keep the citation correction and inspect the exact remaining claim/question
+boundary. Do not add a generic reminder, new fact engine or force a common verdict
+as a substitute for that diagnosis. If the source view already allows accurate
+selection and errors persist, investigate targeted evidence-handle selection
+before expanding source or budgets.
 
 ## Keep, narrow or stop
 

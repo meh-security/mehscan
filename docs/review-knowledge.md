@@ -24,6 +24,14 @@ Keep the useful state, repaired API and coherent placement. Next follow the
 using the qualified information already present before another unchanged paid
 package test or more routing expansion. Native local-rule defaults remain.
 
+[AP's offline view](experiments/review-reviewer-view-results.md) now implements
+that first step: 52 original results in six packages retain exact JSON identities,
+with shared questions/notes once, claim-focused CLI navigation and addressed
+captured source. No schema extension or model pass is required. It makes
+qualifications inspectable; it does not resolve missing applicability, supply an
+omitted API-contract assumption, or change provider citation behavior. Next inspect
+actual provider source shapes before a narrow addressed-input experiment.
+
 | New knowledge | Evidence | Consequence |
 | --- | --- | --- |
 | Useful grouping exists, but singleton comparisons overstate its advantage over native defaults | L2 saves five uncapped calls on SQL/deluxe; both arms are workspace. Native already defaults to 20 reviews | Keep those shared mechanisms; use ordinary native batching as the actual comparator |
@@ -45,6 +53,7 @@ package test or more routing expansion. Native local-rule defaults remain.
 | The API repair is concrete but not a measured live savings result | AO's compiled repair returns the same results as four explicit native queries for eight historical requests; all live requests use valid filters | Keep the tested repair and avoid another paid run merely to elicit malformed arguments |
 | Coherent sharing can improve the package without a time win | AO uses one cookie question for four CSRF claims and eliminates producer discovery in the native fragment; both observed pairs remain slower in active time | Keep the corrected eight-plus-seven placement; investigate closure/remaining-work boundaries rather than discard state |
 | Closure level changes labels without erasing shared source evidence | Sol leaves browser applicability unresolved; Terra hybrid reports the local CSRF mechanisms with explicit delivery conditions | Present selected mechanism, applicability and stronger impact questions distinctly; do not force all uncertainty into issues or all source findings into runtime investigations |
+| Existing state suffices for a useful reviewer view | AP preserves 52 results and identities across six saved packages, with shared records linked once and 4,128 source rows addressed | Keep the read-only view without another schema or model pass; model-input citation correction remains a separate bounded slice |
 | Useful uncertainty can coexist with missed local closure or scope expansion | Terra retains cookie uncertainty, but coupon format has an available local helper and JSONP delivery is stronger than the selected field-to-JSON question | Keep mechanisms and honest uncertainty; adjudicate and correct each deciding boundary rather than discarding all mixed results |
 | Workspace preserves extra useful uncertainty without classifying new findings | Both AL hybrids retain the wallet payment/amount lead absent from native; all preserve external-policy uncertainty | Keep the useful leads and qualifications; do not inflate finding counts or claim complete operation review |
 
@@ -61,12 +70,13 @@ reduction, shorter responses, fewer groups and lower configured ceilings are not
 success criteria. Saved implementation-agent audits are not independent human gold.
 
 AO completes both model pairs on the same fifteen claims, with useful partial
-closure and shared four-claim cookie questions. The next view should put exact
-selected questions, current remaining reasons and conditional facts together.
-All 210 exported excerpts are physically correct, yet selected caller examples
-still miss bindings. Improve source-handle/line presentation with offline checks;
-keep locally decisive negatives free of mandatory caller investigations. No
-unchanged speed rerun, full-app review or retired allowance resumes.
+closure and shared four-claim cookie questions. AP now puts exact selected
+questions, current reasons and conditional facts together for a human reviewer.
+All 210 AO exported excerpts are physically correct, yet selected caller examples
+still miss bindings. Human source addresses do not change model prompts. Next
+target actual provider source presentation with offline checks; keep locally
+decisive negatives free of mandatory caller investigations. No unchanged speed
+rerun, full-app review or retired allowance resumes.
 
 Details: [L2](experiments/review-workspace-confirmation-results.md),
 [AA](experiments/review-workspace-policy-contrast-results.md),

@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import sys
 import tempfile
 import time
 
@@ -872,49 +873,117 @@ class Workspace:
         return package
 
 
-def render_review_package(package):
-    """Human view of the same attributed records, with no prose interpretation."""
+def captured_source_rows(evidence):
+    """Address captured LF-separated text, without padding a terminal position.
+
+    Stored excerpts are joined source lines, not raw file contents with a final
+    delimiter. A final blank captured line must survive; str.splitlines() would
+    also incorrectly split Unicode separators and lone CR inside source text.
+    """
+    first,last,text = evidence["start_line"],evidence["end_line"],evidence["text"]
+    if type(first) is not int or type(last) is not int or not 1 <= first <= last or not isinstance(text,str):
+        raise ValueError("invalid captured source coordinates")
+    lines = text.split("\n")
+    if len(lines) > last-first+1 or last-first+1-len(lines) > 1:
+        raise ValueError("captured text differs from declared source range")
+    return [{"line":first+offset,"text":line} for offset,line in enumerate(lines)]
+
+
+def render_review_package(package, review_ids=None):
+    """Read-only view: original conclusions, shared questions/notes and source.
+
+    Focus changes presentation only. It does not produce a subset package or
+    infer a mechanism/applicability classification from free-form model prose.
+    """
     def block(value):
         text = str(value)
         fence = "`" * max(3, max((len(m[0])+1 for m in re.finditer(r'`+',text)),default=0))
         return fence + "text\n" + text + "\n" + fence
+    claim_numbers = {claim["review_id"]:i for i,claim in enumerate(package["claims"],1)}
+    if review_ids is not None:
+        references(review_ids,claim_numbers)
+    shown_ids = set(claim_numbers) if review_ids is None else set(review_ids)
+    claims = [claim for claim in package["claims"] if claim["review_id"] in shown_ids]
+    note_ids = {link["note_id"] for claim in claims for link in claim["reviewer_notes"]}
+    question_ids = {link["question_id"] for claim in claims for link in claim["questions"]}
+    note_numbers = {key:i for i,key in enumerate(sorted(note_ids),1)}
+    question_numbers = {key:i for i,key in enumerate(sorted(question_ids),1)}
     evidence_numbers = {key:i for i,key in enumerate(package["evidence"],1)}
     def links(ids):
         return ", ".join(f"[Source {evidence_numbers[key]}](#source-{evidence_numbers[key]})" for key in ids)
+    def claim_links(ids):
+        return ", ".join(f"[Claim {claim_numbers[rid]}](#claim-{claim_numbers[rid]})" for rid in ids if rid in shown_ids)
     lines = ["# Workspace review package", "", package["authority"], "",
              "Package: `" + package["package_id"] + "`", "",
-             f"Included claims: {len(package['claims'])}; omitted claims: {len(package['omitted_review_ids'])}.", ""]
+             f"Included claims: {len(package['claims'])}; omitted claims: {len(package['omitted_review_ids'])}.",
+             f"Shown in this view: {len(claims)}. Shared questions and notes are listed once; original verdicts are unchanged.", ""]
     if package["omitted_review_ids"]:
         lines.extend(["Omitted claim IDs:", block("\n".join(package["omitted_review_ids"])), ""])
-    for index,claim in enumerate(package["claims"],1):
+    hidden = sorted(set(claim_numbers)-shown_ids)
+    if hidden:
+        lines.extend(["Included package claims outside this view:",block("\n".join(hidden)),""])
+    lines.extend(["## Claim index", ""])
+    for claim in claims:
+        lines.append(f"- [Claim {claim_numbers[claim['review_id']]}](#claim-{claim_numbers[claim['review_id']]}) — " + claim["result"]["decision"])
+    lines.append("")
+    for claim in claims:
+        index = claim_numbers[claim["review_id"]]
         result = claim["result"]
         lines.extend([f"## Claim {index}", "", block(claim["review_id"]),
-                      block(f"{claim['path']}:{claim['line']}\n{claim['property']}"), "",
-                      "Decision: " + result["decision"], block(result["summary"]), block(result["reason"]), ""])
+                      block(f"{claim['path']}:{claim['line']}"), "",
+                      "Selected native question:",block(claim["property"]),"",
+                      "Recorded decision: " + result["decision"], block(result["summary"]), block(result["reason"]), ""])
         # Preserve every remaining native result field, including diagnosis,
         # outstanding checks, blockers and adjacent source leads.
         details = {k:v for k,v in result.items() if k not in ("review_id","decision","summary","reason")}
         lines.extend(["Claim result details:",block(json.dumps(details,ensure_ascii=False,indent=2)),""])
         for link in claim["reviewer_notes"]:
-            note = package["notes"][link["note_id"]]
-            lines.extend(["### Reviewer note: " + ("caller applicability recorded" if link["applicability_ids"] else "context only; applicability not recorded"), "",
-                          block(f"{note['proposition_id']} (revision {note['revision']})\nScope: {note['scope']}\nStatement: {note['statement']}\nConditions: {note['conditions']}\nExclusions: {note['exclusions']}"),
-                          links(note["evidence"]), ""])
-            for aid in link["applicability_ids"]:
-                applies = package["applicability"][aid]
-                lines.extend(["Caller applicability (reviewer interpretation):", block(applies["reason"]),links(applies["evidence"]),""])
+            number = note_numbers[link["note_id"]]
+            relationship = "caller applicability recorded" if link["relationship"] == "caller_applicability_recorded" else "context only; applicability not recorded"
+            lines.extend([f"[Note {number}](#note-{number}) — " + relationship, ""])
         for link in claim["questions"]:
             question = package["questions"][link["question_id"]]
             status = "resolved for this claim" if link["resolved_for_claim"] else question["status"]
-            last = question["last_attempt"]
-            lines.extend(["### Deciding question", "", block(question["question"]), "Status: " + status,
-                          block(last["reason"]) if last else "No answer recorded.",
-                          links(last.get("evidence",[])) if last else "", ""])
-    lines.extend(["## Captured source", "", "Shared source is listed once. Notes do not certify caller applicability.", ""])
+            number = question_numbers[link["question_id"]]
+            lines.extend([f"[Question {number}](#question-{number}) — " + status, ""])
+        if not claim["questions"] and not claim["reviewer_notes"]:
+            lines.extend(["No shared question or qualified note is linked to this claim; its original result details are retained above.", ""])
+    lines.extend(["## Shared questions", "", "These are recorded reviewer questions, not new verdict requirements.", ""])
+    for key,number in question_numbers.items():
+        question = package["questions"][key];last = question["last_attempt"]
+        lines.extend([f"### Question {number}", "", block(key),block(question["question"]),
+                      "Recorded status: " + question["status"], "",
+                      "Shown affected claims: " + (claim_links(question["review_ids"]) or "none"), ""])
+        others = [rid for rid in question["review_ids"] if rid not in shown_ids]
+        if others:
+            lines.extend(["Other affected IDs (not shown):",block("\n".join(others)),""])
+        resolved = [c["review_id"] for c in claims for link in c["questions"] if link["question_id"] == key and link["resolved_for_claim"]]
+        if resolved:
+            lines.extend(["Resolved for these shown claims: " + claim_links(resolved), ""])
+        lines.extend([block(f"Origin: {question['origin']}\nRecorded attempts: {question['attempt_count']}"),
+                      "Latest recorded reason:",block(last["reason"]) if last else "No answer recorded.",
+                      block("Latest attempt status: " + last["status"]) if last else "",
+                      links(last.get("evidence",[])) if last else "", ""])
+    lines.extend(["## Qualified reviewer notes", "", "Context-only notes do not establish caller applicability. Conditions and exclusions are preserved as recorded.", ""])
+    for key,number in note_numbers.items():
+        note = package["notes"][key]
+        linked = [c for c in claims if any(link["note_id"] == key for link in c["reviewer_notes"])]
+        lines.extend([f"### Note {number}", "", block(key),
+                      "Referenced by: " + claim_links([c["review_id"] for c in linked]), "",
+                      block(f"{note['proposition_id']} (revision {note['revision']})\nOrigin: {note['origin']}\nStatus: {note['status']}\nScope: {note['scope']}\nStatement: {note['statement']}\nConditions: {note['conditions']}\nExclusions: {note['exclusions']}"),
+                      links(note["evidence"]), ""])
+        aids = sorted({aid for c in linked for link in c["reviewer_notes"] if link["note_id"] == key for aid in link["applicability_ids"]})
+        for aid in aids:
+            applies = package["applicability"][aid]
+            lines.extend(["Caller applicability (reviewer interpretation): " + claim_links([applies["review_id"]]),
+                          block(aid),block(applies["reason"]),links(applies["evidence"]),""])
+    lines.extend(["## Captured source", "", "Shared source is listed once, including in a focused view. Availability does not certify a caller relationship.",
+                  "Line addresses label captured text only. No missing lines or terminal EOF positions are padded into the source.", ""])
     for key,evidence in package["evidence"].items():
         lines.extend([f"### Source {evidence_numbers[key]}", "",
-            block(f"{evidence['path']}:{evidence['start_line']}-{evidence['end_line']}\nSHA-256: {evidence['file_sha256']}"),
-            block(evidence["text"]), ""])
+            block(f"{evidence['path']}:{evidence['start_line']}-{evidence['end_line']}\nSHA-256: {evidence['file_sha256']}\nOrigin: " + json.dumps(evidence["origin"],ensure_ascii=False)),
+            "Partial-line fragment; columns are not supplied. This is not a complete source line." if evidence.get("fragment") else ("Complete file (as captured)." if evidence["complete_file"] else "Captured window."),
+            block("\n".join(f"L{row['line']} | {row['text']}" for row in captured_source_rows(evidence))), ""])
     return "\n".join(lines)
 
 
@@ -930,10 +999,13 @@ def main():
     parser.add_argument("--max-bytes", type=int, default=32768)
     parser.add_argument("--proposition-id")
     parser.add_argument("--bundle-id")
+    parser.add_argument("--review-id",dest="review_ids",action="append",help="focus Markdown on an included claim; repeat for multiple claims")
     parser.add_argument("--format", choices=("json","markdown"), default="json", help="review-package output format")
     args = parser.parse_args()
     if args.format == "markdown" and args.command != "review-package":
         parser.error("markdown format requires review-package")
+    if args.review_ids and (args.command != "review-package" or args.format != "markdown"):
+        parser.error("review-id focus requires review-package --format markdown; JSON package scope is unchanged")
     seed = json.loads(Path(args.seed).read_text(encoding="utf-8"))
     if args.command == "init":
         workspace = Workspace.create(args.workspace, seed["source_root"], seed["binding"], seed["claims"], seed["limits"])
@@ -957,12 +1029,13 @@ def main():
     else:
         result = workspace.bundle_draft(args.bundle_id)
     if args.format == "markdown":
-        print(render_review_package(result))
+        print(render_review_package(result,args.review_ids))
         return
     print(json.dumps({"native_admission":False, "result":result}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8",newline="\n")
     try:
         main()
     except (ValueError, KeyError, OSError, sqlite3.Error) as error:
