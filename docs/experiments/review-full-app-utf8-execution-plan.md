@@ -7,6 +7,9 @@ receipts and the original frozen plan remain preserved; matched investigation
 allowances and quality/accounting fences remain in force.
 The subsequent [parallel amendment](review-full-app-parallel-amendment.md)
 replaces serial scheduling for the three remaining independent arms.
+After the provider-capacity failure, the user authorized a
+[fresh Sol hybrid rerun only](review-sol-hybrid-rerun-plan.md); all other arms
+and original receipts remain unchanged.
 
 Continue the requested full-app quality/total-price comparison under receipt
 encoding correction **`4cee4a1`**. This is a new source-bound candidate and fresh
