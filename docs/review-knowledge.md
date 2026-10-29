@@ -5,6 +5,19 @@ placement chosen separately from logical investigation. **Quality and total pric
 are primary; latency is secondary.** No whole-app quality or total-price win has
 been established.
 
+Next broader scope: [fresh full-app testing with four retained candidates](review-full-app-comparison-plan.md)
+under the user's new request. Current Juice has 116 claims/25 native buckets;
+conservative hybrid has 108 native/eight workspace claims in 24 units. This is
+not the old 104-singleton baseline. BA performs zero-call readiness first and
+finds a shared source-projection defect in one nine-claim native bucket: an empty
+location-only helper lead conflicts with the real body at the same byte range.
+[BA](experiments/review-full-app-readiness-results.md) corrects that projection in
+`a7ee24e`: all 25 unchanged buckets now sweep, the previous 24 preserve nonempty
+source/questions, and twenty CLI checks pass. All 98 actual first packets are
+captured across fresh Sol/Terra native/hybrid preparations with equal package
+source and preserved metadata. No model calls occur; prepared stores remain
+undispatched for a separate execution freeze. No historical study resumes.
+
 [AZ's quality/price reassessment](review-quality-and-price-assessment.md) reconciles
 100 saved calls without new dispatch: Sol workspace/hybrid model-price equivalents
 are 22.4% lower in AI, 8.3% in AL and 23.8% in AO, despite slower observed execution.

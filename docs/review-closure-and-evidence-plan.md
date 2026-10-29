@@ -8,6 +8,16 @@ unmetered preparation/adjudication costs prevent an equal-quality total-price
 claim. Historical criteria below remain the record of those studies; current
 selection must not reject adequate cheaper work merely because it is slower.
 
+The user's subsequent request for broader full-app testing now opens a new,
+separately bounded [four-candidate full-app plan](review-full-app-comparison-plan.md).
+Retain multiple modes and prepare all 116 current Juice claims before payment.
+The completed historical series below remains closed; its retired credit and
+sessions are not reused. [BA's zero-call readiness](experiments/review-full-app-readiness-results.md)
+finds and fixes a common native helper projection defect in `a7ee24e`, then captures
+all 98 first packets with fresh source/runtime bindings. All four candidates are
+prepared; paid execution still requires its separate freeze, not another protocol
+change or repeated unchanged readiness cycle.
+
 Current direction: **keep the implemented feature set frozen at `a0feb12` and
 close the finite development experiment series**. Retain native local SQL/API
 review and optional workspace for prepared shared relationships; no new workflow
