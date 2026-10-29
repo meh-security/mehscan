@@ -1,5 +1,11 @@
 # Corrected full-app execution BD: fresh states after UTF-8 fix
 
+Current execution policy: the user-requested
+[completion amendment](review-full-app-completion-amendment.md) supersedes the
+aggregate token/time cutoffs and no-resumption rule below for BD. Original
+receipts and the original frozen plan remain preserved; matched investigation
+allowances and quality/accounting fences remain in force.
+
 Continue the requested full-app quality/total-price comparison under receipt
 encoding correction **`4cee4a1`**. This is a new source-bound candidate and fresh
 execution, not a repair, continuation or resumption of [BB](review-full-app-execution-results.md).
