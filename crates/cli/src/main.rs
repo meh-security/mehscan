@@ -3559,7 +3559,12 @@ fn compact_helper_context(
     // Keep them in the skill's initial view, not only as nearby locations.
     // Prefixes remain lookup work; declaration context is not a guard verdict.
     let mut contexts = review["facts"].as_array().into_iter().flatten()
-        .filter(|fact| fact["role"] == "imported_member_definition_context")
+        .filter(|fact| {
+            fact["role"] == "imported_member_definition_context"
+                // Source-budget trimming keeps the location as a navigation
+                // lead, but an empty excerpt is not a captured helper body.
+                && fact["excerpt"].as_str().is_some_and(|text| !text.is_empty())
+        })
         .take(6)
         .map(|fact| {
             let location = &fact["location"];
@@ -4450,6 +4455,37 @@ mod tests {
                 .unwrap()
                 .contains("not established")
         );
+    }
+
+    #[test]
+    fn helper_view_does_not_promote_location_only_leads_to_source() {
+        let anchor = serde_json::json!({"id":"operation", "rule_id":"framework-authorization-review-marker"});
+        let location = serde_json::json!({"path":"helper.ts",
+            "start":{"line":1,"column":1,"byte_offset":0},
+            "end":{"line":1,"column":2,"byte_offset":1}});
+        let lead = serde_json::json!({"facts":[
+            {"role":"imported_member_definition_context", "symbol":"run", "excerpt":"",
+             "location":location, "provenance":{"engine":"location-only review lead"}}
+        ]});
+        let mut captured = lead.clone();
+        captured["facts"][0]["excerpt"] = serde_json::json!("x");
+        captured["facts"][0]["provenance"]["engine"] = serde_json::json!("exact imported member");
+        assert!(super::compact_helper_context(&lead, &anchor).is_empty());
+        let contexts = super::compact_helper_context(&captured, &anchor);
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0]["excerpt"], "x");
+        // The original location-only fact remains in the bundle for navigation.
+        assert_eq!(lead["facts"][0]["location"], location);
+        assert_eq!(lead["facts"][0]["excerpt"], "");
+        let cards = [("a", lead), ("b", captured)].map(|(id, review)| {
+            serde_json::json!({
+                "review_id":id, "anchor":{"location":{"path":"caller.ts","start_line":1}},
+                "helper_context":super::compact_helper_context(&review, &anchor)
+            })
+        });
+        let sweep = super::review_sweep::sweep("bundle", cards.into()).unwrap();
+        assert_eq!(sweep["source_contexts"].as_array().unwrap().len(), 1);
+        assert_eq!(sweep["source_contexts"][0]["excerpt"], "x");
     }
 
     #[test]
