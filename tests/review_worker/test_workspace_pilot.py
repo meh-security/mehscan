@@ -14,6 +14,51 @@ import review_workspace_pilot as pilot
 
 
 class PilotTests(unittest.TestCase):
+    def test_native_receipt_budget_uses_utf8_under_a_legacy_default_encoding(self):
+        original_read_text = Path.read_text
+        def legacy_read_text(path, *args, **kwargs):
+            if not args and kwargs.get("encoding") is None:
+                kwargs["encoding"] = "cp1252"
+            return original_read_text(path, *args, **kwargs)
+        for text in ("caf\u00e9", "quoted \u201c\u6f22\u5b57\u201d \U0001f642"):
+            result = {"operation":"source", "text":text}
+            received = len(json.dumps(result,ensure_ascii=False).encode("utf-8"))
+            for allowance, admitted in ((received + 1, True), (received, False)):
+                with self.subTest(text=text,allowance=allowance),tempfile.TemporaryDirectory() as name:
+                    root=Path(name);output=root/"control/worker";output.mkdir(parents=True)
+                    (output/"research.jsonl").write_text(json.dumps({"result":result},ensure_ascii=False)+"\n",encoding="utf-8")
+                    (root/"initial-evidence.json").write_text("{}",encoding="utf-8")
+                    command=["fixture-provider"]
+                    (root/"command.json").write_text(json.dumps(command),encoding="utf-8")
+                    options={k:str(root/k)for k in ("scanner","source_root","inventory","store","claim","work_package","skill_root","provider_contract")}
+                    options.update(stream="fixture",command=str(root/"command.json"))
+                    design={"per_arm_limits":{"model_calls":1,"queries":2,"source_bytes":allowance},
+                            "per_arm_experiment":{"max_input_tokens":1000,"max_output_tokens":1000,"max_elapsed_seconds":60}}
+                    calls=[]
+                    def provider(*args,**kwargs):
+                        calls.append(True)
+                        return {"research":[]}
+                    def metrics(directory,attempted_calls=None):
+                        return {"observed_calls":len(calls),"unobserved_calls":(attempted_calls or 0)-len(calls),
+                                "input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"cumulative_model_call_ms":0}
+                    def worker_run(args):
+                        task={"review_ids":["claim"],"research":{"round":1,"queries_remaining":2}}
+                        pilot.worker.execute(command,root,{},10,json.dumps(task))
+                        return {"status":"source_validated"}
+                    with patch.object(pilot,"load_run",return_value=(root,design,{"arms":{"control":options}})), \
+                            patch.object(pilot,"metrics",side_effect=metrics), \
+                            patch.object(pilot.worker,"execute",side_effect=provider), \
+                            patch.object(pilot.worker,"run",side_effect=worker_run), \
+                            patch.object(Path,"read_text",legacy_read_text):
+                        summary=pilot.run_control(root)
+                    self.assertEqual(len(calls),int(admitted))
+                    self.assertEqual(summary["status"],"source_validated"if admitted else"incomplete")
+                    if admitted:
+                        budget=json.loads((root/"control/budget.json").read_text(encoding="utf-8"))
+                        self.assertEqual(budget["received_query_bytes"],received)
+                    else:
+                        self.assertIn("received-byte ceiling",summary["error"])
+
     def test_native_fragment_can_coexist_with_full_source_but_cannot_supply_a_full_line(self):
         with tempfile.TemporaryDirectory() as name:
             root=Path(name);file=root/'a.ts';file.write_text('  const value = input;\n')

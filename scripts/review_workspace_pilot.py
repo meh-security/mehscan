@@ -357,7 +357,7 @@ def run_control(root):
             expected = matches[0] if design.get("batch_mode") and len(matches)==1 else parity.get(task["review_ids"][0])
             if not expected or identity(ordinary_windows(packet)) != expected["sha256"]:
                 raise ValueError("actual ordinary context differs from frozen source parity receipt")
-        rows = [json.loads(s) for s in (output / "research.jsonl").read_text().splitlines()] if (output / "research.jsonl").exists() else []
+        rows = [json.loads(s) for s in (output / "research.jsonl").read_text(encoding="utf-8").splitlines()] if (output / "research.jsonl").exists() else []
         received = sum(len(json.dumps(r["result"],ensure_ascii=False).encode()) for r in rows)
         if received >= design["per_arm_limits"]["source_bytes"]:
             raise ValueError("ordinary aggregate received-byte ceiling reached")
