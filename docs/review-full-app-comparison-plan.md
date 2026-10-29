@@ -1,12 +1,19 @@
 # Fresh full-app comparison: keep multiple promising modes
 
-**Current status:** [BB stops after three known calls](experiments/review-full-app-execution-results.md)
-on the native wrapper's default Windows decoding of UTF-8 receipts. There are no
-finalized claim verdicts, and all remaining BA/BB states and credit are retired.
-`4cee4a1` fixes that reader with an offline boundary regression; continue only with
-fresh preparation and a new execution freeze. Keep all four modes and this
-quality/total-price design. [BA's 98 captures](experiments/review-full-app-readiness-results.md)
-remain historical source/packet-readiness evidence, not reusable live authority.
+**Current status:** BD's Sol and Terra native arms both complete all 116 claims;
+semantic whole-package adjudication remains pending. Sol hybrid stopped on a
+provider-capacity error; Terra hybrid retained 115 drafts before the shared stop.
+The Sol-only BE rerun stopped on malformed CWE metadata before workspace review.
+Those original results, costs and stop records remain preserved.
+
+The [BF correction and focused retests](experiments/review-workspace-cwe-retest-results.md)
+complete the same eight workspace claims on both models without repeating native
+peers. Terra reports five conditional/scoped issues and three negatives; Sol
+reports one issue, three negatives and four cookie-delivery uncertainties.
+Keep both useful packages and the rule-specific direction. The focused prices
+are not full-app hybrid prices, and neither incomplete hybrid package is complete.
+The [BB failure](experiments/review-full-app-execution-results.md) and BA/BB
+retirements remain historical; no old state or retired credit is reopened.
 
 Keep multiple candidates and evaluate **quality and total price**, with latency
 secondary. A new whole-population test is now useful: the small slices establish

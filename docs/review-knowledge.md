@@ -182,6 +182,16 @@ remains offline rather than being confused with AL's ownership negatives.
 | Useful uncertainty can coexist with missed local closure or scope expansion | Terra retains cookie uncertainty, but coupon format has an available local helper and JSONP delivery is stronger than the selected field-to-JSON question | Keep mechanisms and honest uncertainty; adjudicate and correct each deciding boundary rather than discarding all mixed results |
 | Workspace preserves extra useful uncertainty without classifying new findings | Both AL hybrids retain the wallet payment/amount lead absent from native; all preserve external-policy uncertainty | Keep the useful leads and qualifications; do not inflate finding counts or claim complete operation review |
 
+BF's [focused CWE/workspace retest](experiments/review-workspace-cwe-retest-results.md)
+completes both eight-claim packages after a schema/bounded-repair correction.
+Terra uses four calls and 4.643625 Standard credits; Sol uses six and 14.291100.
+Both retain SSRF and three scoped redirect negatives. Terra reports four
+cookie-delivery-qualified CSRF findings; Sol retains their mechanisms as four
+actionable uncertainties. Shared state works in both; closure/calibration is the
+remaining difference. These are scoped repeated development results, not a
+full-app price win, independent gold or proof that the repair saved live calls.
+Both full native arms finish 116 claims; the full hybrid packages remain incomplete.
+
 Native is the practical initial choice for complete SQL constructions, cookie
 flags and local parser/API decisions. This is not a proven SQL engine ranking.
 Workspace remains appropriate for selected shared dependencies, different caller
