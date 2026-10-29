@@ -53,6 +53,13 @@ class ArtifactCopy(unittest.TestCase):
 
 
 class LookupFailures(unittest.TestCase):
+    def test_cwe_feedback_is_exact_and_does_not_repair_other_native_failures(self):
+        message="error: invalid reviewer work: diagnosis CWEs must be at most five distinct CWE-N identifiers"
+        self.assertIn("distinct CWE-N",worker.finalization_feedback(worker.CommandFailure(2,message),["id"]))
+        for code,text in ((1,message),(2,message+"\nsource changed"),(2,"error: source changed"),
+                          (2,"error: invalid reviewer work: diagnosis severity is invalid")):
+            self.assertIsNone(worker.finalization_feedback(worker.CommandFailure(code,text),["id"]))
+
     def test_guidance_is_an_allowlisted_skill_read_not_a_source_command(self):
         import review_context as context
         guide = {"tool":"guidance", "review_id":"id", "arguments":{"name":"mass-assignment"}}
@@ -547,6 +554,69 @@ else:
         self.assertEqual(result["status"],"admitted",result)
         self.assertEqual(calls,["routine","routine","routine"])
         self.assertEqual(json.loads((Path(args.output) / "budget.json").read_text())["totals"]["model_calls"],3)
+
+    def run_cwe_repair_case(self, *, interrupt=False, repeat_invalid=False):
+        from argparse import Namespace
+        plan=self.native("state","plan-template","--inventory",str(self.inventory),"--source-root",str(self.root),
+            "--policy","comprehensive","--skill-root",str(ROOT/"skills/mehscan-security"),
+            "--research-rounds","1","--research-queries","4","--research-bytes","262144","--timeout","60")
+        plan_path=self.base/"cwe-plan.json";plan_path.write_text(json.dumps(plan))
+        parent=json.loads(self.package.read_text())["payload"]["plan_id"]
+        self.native("state","plan",*self.common,"--input",str(plan_path),"--expected-plan-id",parent,"--operation-key","cwe-plan")
+        self.package.write_text(json.dumps(self.native("state","work",*self.common)))
+        args=Namespace(scanner=str(self.scanner),source_root=str(self.root),inventory=str(self.inventory),
+            store=str(self.store),stream="local-review",claim=str(self.claim),work_package=str(self.package),
+            reviewer_command=str(self.command),reviewer_label="cwe-repair-test",run=str(self.run),
+            output=str(self.base/"cwe-first"),provider_contract=None,artifact_root=None,phase="native",supersede=False,
+            timeout=60,skill_root=str(ROOT/"skills/mehscan-security"),research_rounds=1,research_queries=4,
+            research_bytes=262144,workers=1,query_workers=1,expert_command=None,expert_workers=1,
+            expert_review_ids=None,resume_from=None,source_collector_profile=None)
+        original, calls, interrupted = worker.execute, [], []
+        def provider(command,cwd,env,timeout,payload=None):
+            if command == [sys.executable,str(self.reviewer)]:
+                task=json.loads(payload);calls.append(task)
+                if len(calls)>1:
+                    self.assertEqual(task["research"]["queries_remaining"],0)
+                    self.assertEqual(task["research"]["rounds_remaining"],0)
+                    self.assertIn("distinct CWE-N",task["research"]["feedback"]["reason"])
+                    self.assertEqual(task["research"]["feedback"]["rejected_draft"]["results"][0]["diagnosis"]["cwes"],
+                                     ["CWE- mass-assignment","CWE-94"])
+                cwes=["CWE- mass-assignment","CWE-94"] if len(calls)==1 or repeat_invalid else ["CWE-94"]
+                return {"draft":{"results":[{"review_id":rid,"decision":"issue","confidence":"medium",
+                    "summary":"Request data reaches eval.","reason":"The supplied handler evaluates request.query.code.",
+                    "checks":[],"blockers":[],"evidence":[{"path":"app.js","start_line":1,"end_line":1}],
+                    "diagnosis":{"title":"Request data is evaluated","cwes":cwes,"severity":"high",
+                                 "impact":"A caller can supply evaluated code.","remediation":"Remove evaluation of caller-supplied code."}}
+                    for rid in task["review_ids"]]},"working_chain":"","progress":[],"routing":[]}
+            if interrupt and not interrupted and command[1:3]==["investigate","review-bundle-finalize"]:
+                interrupted.append(True)
+                raise worker.CommandFailure(1,"injected interruption after saving the candidate")
+            return original(command,cwd,env,timeout,payload)
+        with patch.object(worker,"execute",side_effect=provider):result=worker.run(args)
+        if interrupt:
+            self.assertEqual(result["status"],"incomplete",result)
+            self.assertEqual(len(calls),1)
+            previous=Path(args.output)
+            self.assertTrue(any("candidate_draft"in json.loads(p.read_text())for p in(previous/"jobs").glob("*.json")))
+            args.resume_from,args.output=str(previous),str(self.base/"cwe-recovered")
+            with patch.object(worker,"execute",side_effect=provider):result=worker.run(args)
+        self.assertEqual(len(calls),2,result)
+        self.assertEqual(sum(json.loads(p.read_text())["calls"]for p in(Path(args.output)/"jobs").glob("*.json")),2)
+        return result,args
+
+    def test_native_cwe_format_repairs_once_with_original_budget_and_real_validator(self):
+        result,args=self.run_cwe_repair_case()
+        self.assertEqual(result["status"],"admitted",result)
+        jobs=[json.loads(p.read_text())for p in(Path(args.output)/"jobs").glob("*.json")]
+        self.assertEqual(jobs[0]["draft"]["results"][0]["diagnosis"]["cwes"],["CWE-94"])
+
+    def test_recovered_invalid_candidate_uses_only_its_remaining_repair_turn(self):
+        result,_=self.run_cwe_repair_case(interrupt=True)
+        self.assertEqual(result["status"],"admitted",result)
+
+    def test_second_invalid_cwe_reply_stops_without_extra_calls_or_admission(self):
+        result,_=self.run_cwe_repair_case(repeat_invalid=True)
+        self.assertEqual(result["status"],"incomplete",result)
 
     def run_revalidation_case(self, reopening=False, interrupt=False):
         args = self.configure_tiered(run_calls=10, quality=True, research_rounds=1)

@@ -14,6 +14,13 @@ import workspace_protocol as workspace
 
 
 class WorkspaceProtocolTests(unittest.TestCase):
+    def test_workspace_issue_schema_inherits_native_cwe_constraints(self):
+        schema=workspace.schema(self.fixture.task)
+        issue=schema["properties"]["decisions"]["items"]["anyOf"][0]
+        cwes=issue["properties"]["diagnosis"]["properties"]["cwes"]
+        self.assertEqual(cwes["maxItems"],5)
+        self.assertEqual(cwes["items"]["pattern"],r"^CWE-[1-9][0-9]{0,5}$")
+
     def setUp(self):
         self.fixture = fixtures.Adapter(methodName="test_exact_resume_sends_new_facts_only_and_metrics_exclude_private_data")
         self.fixture.setUp()

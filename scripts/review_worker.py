@@ -114,6 +114,24 @@ def citation_feedback(error, ids):
     return detail[:700]
 
 
+def finalization_feedback(error, ids):
+    """Allow one bounded correction of citations or CWE syntax, never a verdict."""
+    message = citation_feedback(error, ids)
+    if message is not None:
+        return message
+    cwes = "diagnosis CWEs must be at most five distinct CWE-N identifiers"
+    if error.returncode == 2 and error.stderr.strip() == "error: invalid reviewer work: " + cwes:
+        return cwes
+    return None
+
+
+def finalization_correction(message, draft):
+    return {"reason":message, "rejected_draft":draft,
+            "instruction":"Correct only the rejected citation or diagnosis.cwes format. Preserve every result's verdict, "
+                          "source evidence, mechanism, qualifications and honest uncertainty. Do not research or invent a replacement CWE. "
+                          "The draft was not admitted."}
+
+
 def cancel(signum, frame):
     global _cancelled
     _cancelled = True
@@ -849,14 +867,35 @@ def run_locked(args):
     def case_identity(task):
         return context.digest([task["kind"], sorted(task.get("review_ids", []))])
 
+    def validate_native_candidate(task, job, draft, seconds):
+        draft_path = output / ("draft-" + job.path.stem + ".json")
+        assessment_path = output / "assessments" / (job.path.stem + ".json")
+        write(draft_path, draft)
+        native(["investigate", "review-bundle-finalize", "--bundle", task["bundle"], "--draft", str(draft_path),
+                "--source-root", str(root), "--journal-dir", str(journals), "--output", str(assessment_path)], seconds)
+        job.save(assessment_sha256=digest_file(assessment_path))
+
     def reviewer(task, job):
         if job.state["status"] == "drafted":
             return job.state["draft"]
         if "candidate_draft" in job.state:
-            # A native finalization response may have been lost after the model
-            # finished. Reuse its exact bytes; the scheduler still source-validates
-            # them before admission. No provider replay or new model reservation.
-            return job.complete(job.state["candidate_draft"])
+            # Validate retained candidates before recovery marks them complete.
+            # A rejected candidate may use only an original remaining turn.
+            draft = job.state["candidate_draft"]
+            try:
+                if task["kind"] == "native_bundle":
+                    validate_native_candidate(task, job, draft, max(0, args.timeout - job.prior_elapsed))
+            except CommandFailure as error:
+                message = finalization_feedback(error, task.get("review_ids", []))
+                if (message is None or job.state.get("citation_feedback") or job.state.get("unknown_provider_calls")
+                        or job.state["calls"] >= args.research_rounds + 1):
+                    raise
+                job.state.pop("candidate_draft")
+                job.state.pop("candidate_digest")
+                # Legacy checkpoint key also covers narrowly allowlisted CWE syntax.
+                job.save(citation_feedback=finalization_correction(message, draft))
+            else:
+                return job.complete(draft)
         deadline = time.monotonic() + max(0, args.timeout - job.prior_elapsed)
         results = list(job.state["results"])
         byte_count, query_count = job.state["bytes"], job.state["queries"]
@@ -1182,25 +1221,19 @@ def run_locked(args):
                         if task["kind"] == "native_bundle":
                             # Validate while a bounded repair turn is still possible.
                             job.save(candidate_draft=value["draft"], candidate_digest=context.digest(value["draft"]))
-                            draft_path = output / ("draft-" + job.path.stem + ".json")
-                            assessment_path = output / "assessments" / (job.path.stem + ".json")
-                            write(draft_path, value["draft"])
                             try:
-                                native(["investigate", "review-bundle-finalize", "--bundle", task["bundle"], "--draft", str(draft_path),
-                                    "--source-root", str(root), "--journal-dir", str(journals), "--output", str(assessment_path)], remaining())
+                                validate_native_candidate(task, job, value["draft"], remaining())
                             except CommandFailure as error:
-                                message = citation_feedback(error, ids)
+                                message = finalization_feedback(error, ids)
                                 if corrections or round_index == calls_left + repair_slot - 1 or message is None:
                                     raise
                                 corrections += 1
                                 job.state.pop("candidate_draft", None)
                                 job.state.pop("candidate_digest", None)
                                 job.save()
-                                feedback = {"reason":message,
-                                    "instruction":"Correct only the rejected source citation using actual supplied ranges. The draft was not admitted; preserve honest uncertainty."}
+                                feedback = finalization_correction(message, value["draft"])
                                 job.save(citation_feedback=feedback)
                                 continue
-                            job.save(assessment_sha256=digest_file(assessment_path))
                         return job.complete(value["draft"])
                     value = {"research": value.get("research")}
                 if not isinstance(value, dict) or "research" not in value:

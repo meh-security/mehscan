@@ -23,6 +23,19 @@ THREAD = "12345678-1234-1234-1234-123456789abc"
 
 
 class Adapter(unittest.TestCase):
+    def test_diagnosis_cwe_schema_matches_native_identifier_syntax_and_count(self):
+        import re
+        self.task.update(kind="native_bundle",review_ids=["one"])
+        schema=protocol.build_schema(self.task)
+        draft=schema["properties"]["draft"]["anyOf"][0]
+        cwes=draft["properties"]["results"]["items"]["properties"]["diagnosis"]["anyOf"][0]["properties"]["cwes"]
+        self.assertEqual(cwes["maxItems"],5)
+        pattern=cwes["items"]["pattern"]
+        for value in ("CWE-1","CWE-94","CWE-999999"):
+            self.assertIsNotNone(re.fullmatch(pattern,value))
+        for value in ("CWE- mass-assignment","CWE-0","CWE-01","CWE-1234567","CWE-94\n"):
+            self.assertIsNone(re.fullmatch(pattern,value))
+
     def test_on_demand_guidance_has_typed_names_and_is_not_presented_as_source(self):
         schema = protocol.build_schema(self.task)
         variant = next(v for v in schema["properties"]["research"]["items"]["anyOf"]
