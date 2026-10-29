@@ -5,6 +5,8 @@ Current execution policy: the user-requested
 aggregate token/time cutoffs and no-resumption rule below for BD. Original
 receipts and the original frozen plan remain preserved; matched investigation
 allowances and quality/accounting fences remain in force.
+The subsequent [parallel amendment](review-full-app-parallel-amendment.md)
+replaces serial scheduling for the three remaining independent arms.
 
 Continue the requested full-app quality/total-price comparison under receipt
 encoding correction **`4cee4a1`**. This is a new source-bound candidate and fresh
