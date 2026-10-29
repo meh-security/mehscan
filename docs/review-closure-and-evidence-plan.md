@@ -18,6 +18,13 @@ all 98 first packets with fresh source/runtime bindings. All four candidates are
 prepared; paid execution still requires its separate freeze, not another protocol
 change or repeated unchanged readiness cycle.
 
+That separate [BB execution](experiments/review-full-app-execution-results.md)
+subsequently stops after three known native calls on the previously identified
+Windows receipt-decoding path. No claim finalizes. Retire BA/BB states and unused
+credit; preserve the cost and research. UTF-8 correction `4cee4a1` passes eleven
+offline pilot checks. Continue the requested full-app scope only with fresh
+preparation/new bindings and unchanged quality criteria, not a repaired BB arm.
+
 Current direction: **keep the implemented feature set frozen at `a0feb12` and
 close the finite development experiment series**. Retain native local SQL/API
 review and optional workspace for prepared shared relationships; no new workflow

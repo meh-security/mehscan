@@ -1,5 +1,11 @@
 # Full-app readiness BA: four candidates, no paid review yet
 
+Historical boundary: BA passed readiness without inference. Its later
+[BB execution](review-full-app-execution-results.md) stops after three known
+native calls on receipt decoding; all BA states are now consumed or retired.
+Do not dispatch from the old prepared bindings. UTF-8 correction `4cee4a1` requires
+fresh preparation and a separate execution freeze for continued full-app testing.
+
 All four candidates in the [new full-app plan](../review-full-app-comparison-plan.md)
 now pass actual first-packet readiness: native and selective hybrid, each with
 Sol medium and Terra 6.1 medium. Keep all four for quality/total-price evaluation;

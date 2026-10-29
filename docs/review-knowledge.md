@@ -5,6 +5,15 @@ placement chosen separately from logical investigation. **Quality and total pric
 are primary; latency is secondary.** No whole-app quality or total-price win has
 been established.
 
+Current full-app status: [BB stops on a shared receipt-decoding defect](experiments/review-full-app-execution-results.md)
+after three known native Sol calls, 76,741 input/1,805 output tokens and zero
+finalized claim verdicts. Twenty-five conservative worker unknown-call flags are
+reconciled read-only as failures before provider invocation; three actual metric
+records match three instrumented offers/observations. All 585 unused slots and
+BA preparations are retired. `4cee4a1` uses explicit UTF-8, with eleven pilot
+checks passing and no inference in the fix tests. Keep all four modes and create
+fresh bindings; this failure does not rank reviewer quality or erase its cost.
+
 Next broader scope: [fresh full-app testing with four retained candidates](review-full-app-comparison-plan.md)
 under the user's new request. Current Juice has 116 claims/25 native buckets;
 conservative hybrid has 108 native/eight workspace claims in 24 units. This is

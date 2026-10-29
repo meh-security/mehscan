@@ -1,9 +1,12 @@
 # Fresh full-app comparison: keep multiple promising modes
 
-**Readiness now passes:** [BA captures all 98 first packets](experiments/review-full-app-readiness-results.md)
-after the narrow native projection fix `a7ee24e`. All four candidate populations
-are prepared with zero model calls. This plan still requires a separate paid
-execution freeze; no full-app result is claimed.
+**Current status:** [BB stops after three known calls](experiments/review-full-app-execution-results.md)
+on the native wrapper's default Windows decoding of UTF-8 receipts. There are no
+finalized claim verdicts, and all remaining BA/BB states and credit are retired.
+`4cee4a1` fixes that reader with an offline boundary regression; continue only with
+fresh preparation and a new execution freeze. Keep all four modes and this
+quality/total-price design. [BA's 98 captures](experiments/review-full-app-readiness-results.md)
+remain historical source/packet-readiness evidence, not reusable live authority.
 
 Keep multiple candidates and evaluate **quality and total price**, with latency
 secondary. A new whole-population test is now useful: the small slices establish
