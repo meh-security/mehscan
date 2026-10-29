@@ -190,7 +190,8 @@ cookie-delivery-qualified CSRF findings; Sol retains their mechanisms as four
 actionable uncertainties. Shared state works in both; closure/calibration is the
 remaining difference. These are scoped repeated development results, not a
 full-app price win, independent gold or proof that the repair saved live calls.
-Both full native arms finish 116 claims; the full hybrid packages remain incomplete.
+At BF, both full native arms finished 116 claims while the full hybrid packages
+remained incomplete. BG below supersedes that completion status.
 
 Native is the practical initial choice for complete SQL constructions, cookie
 flags and local parser/API decisions. This is not a proven SQL engine ranking.
@@ -223,3 +224,36 @@ Details: [L2](experiments/review-workspace-confirmation-results.md),
 [AI](experiments/review-workspace-mixed-fallback-results.md),
 [AJ](experiments/review-routing-inspection-results.md),
 [AK](experiments/review-hybrid-dispatch-results.md).
+
+## BG: full population changes what we can claim
+
+[Both corrected full hybrids now complete all 116 claims](experiments/review-full-hybrid-comparison-results.md)
+against stored native packages. Terra is +0.70% at the frozen Standard equivalent;
+Sol is already at least +1.68%, plus an actual unmeasured timeout. The routed
+15-claim package costs at least 18.5% more for Sol and 20.3% more for Terra. No
+whole-app savings are demonstrated. This does not erase useful shared questions,
+conditional facts, independent verdicts or exact package regeneration.
+
+| New evidence | Consequence |
+| --- | --- |
+| Only 11–12% of native price lies in the affected 15 claims; 82.8–85.9% of input is on non-first unit calls | Keep native local work, but larger price improvements must reach its deciding continuations; eight workspace claims cannot solve the whole repeated-context problem |
+| Root JWT 0.4.0 and nested express-jwt JWT ~0.1.0 are different bindings; expiresIn:6h is unsupported by the root sign implementation | Version/name alone is insufficient. New Sol's framework uncertainty is useful, while its independent cache unit repeats the unsupported six-hour premise |
+| MarsDB findOne preserves supplied ID order while update sorts before selecting one record | Single-record mutation is not same-record authorization. Both Sol packages dismiss four branches on an insufficient invariant; Terra retains the deciding question |
+| Valid metadata filenames coexist with a conditional ZIP write and full-schema function construction/call | Path closure and YAML integrity need different facts. Concrete source-bound writer/effect evidence qualifies Sol's local-file negatives; do not transfer the effect to every parser consumer |
+| The broad CRUD issue denotes basket ownership, registration roles or unguarded Product PUT across packages | Compare mechanism coverage, not unchanged issue labels. Native peers also vary independently of workspace routing |
+| New Sol closes conditional tracking/admin HTML chains; Terra hybrid closes fallthrough registration but loses the unpaid-entitlement lead | Keep mixed benefits and correct precise gaps; there is no uniform quality winner |
+| Shared cookie evidence persists, with Terra reporting four conditional mechanisms and Sol four uncertainties | State works; closure/calibration still differs. Deployment delivery is not established by either package |
+| Source quote/package validation passes all 116 outcomes per arm | Artifact fidelity is useful, but is not semantic correctness or independent gold |
+
+The full source audit assigns 35 cross-package disagreements to deciding groups,
+retains 11 severity differences and samples ten agreeing negatives. It introduces
+real qualifications to earlier limited statements about absence of wrong safe
+dismissals. Evaluator-only versioned source is not retroactive provider evidence.
+Do not blanket relabel resource predicates because of one shared credential
+question, or require exhaustive application discovery for every local control.
+
+The study is closed. Preserve the timeout, operator frozen-document incident,
+local accounting/recovery corrections and proved prelaunch failure separately.
+The next proposed work is precise reusable dependency facts and mechanism-aware
+package completion, with offline checks before a distinct small live question.
+No unchanged full-app repetition, wider grouping pass or default promotion follows.

@@ -1,26 +1,38 @@
 # Fresh full-app comparison: keep multiple promising modes
 
-**Current status:** BD's Sol and Terra native arms both complete all 116 claims;
-semantic whole-package adjudication remains pending. Sol hybrid stopped on a
-provider-capacity error; Terra hybrid retained 115 drafts before the shared stop.
-The Sol-only BE rerun stopped on malformed CWE metadata before workspace review.
-Those original results, costs and stop records remain preserved.
+**Current status:** [BG completes both corrected full hybrids and the four-way
+comparison](experiments/review-full-hybrid-comparison-results.md), using BD's
+stored 116-claim native packages. All four packages cover every claim. Terra
+hybrid costs 0.70% more at the frozen Standard equivalent; Sol's known cost is
+already 1.68% more plus one actual unmeasured timeout. The development source
+audit covers 35 verdict disagreements, 11 severity differences and ten sampled
+agreeing negatives. There is no demonstrated whole-app price reduction or
+universal quality winner. The study is closed; preserve the useful modes.
 
-The [BF correction and focused retests](experiments/review-workspace-cwe-retest-results.md)
+The older BD hybrid failures, BE malformed-CWE stop and their costs remain
+historical. BG's targeted Sol recovery also records local accounting/prelaunch
+corrections and an operator edit of a frozen retry document. No paid response
+was discarded to manufacture a cleaner comparison, and the unknown is not zero.
+
+The earlier [BF correction and focused retests](experiments/review-workspace-cwe-retest-results.md)
 complete the same eight workspace claims on both models without repeating native
 peers. Terra reports five conditional/scoped issues and three negatives; Sol
 reports one issue, three negatives and four cookie-delivery uncertainties.
 Keep both useful packages and the rule-specific direction. The focused prices
-are not full-app hybrid prices, and neither incomplete hybrid package is complete.
+are not full-app hybrid prices; BG now supplies the separate complete packages.
 The [BB failure](experiments/review-full-app-execution-results.md) and BA/BB
 retirements remain historical; no old state or retired credit is reopened.
 
 Keep multiple candidates and evaluate **quality and total price**, with latency
-secondary. A new whole-population test is now useful: the small slices establish
+secondary. The original whole-population rationale was that the small slices establish
 enough working behavior to ask whether the package stays useful across every
 admitted claim, including the unselected peers and preparation/assembly costs.
 This is a new scope requested after the [quality/price reassessment](review-quality-and-price-assessment.md),
 not resumption of a retired experiment or automatic promotion of one workflow.
+
+The original execution contract below remains as study provenance. The
+[After BG section](#after-bg-correct-deciding-facts-before-another-paid-experiment)
+specifies the current next boundary; the completed study is not reopened.
 
 ## Candidates and first application
 
@@ -182,3 +194,64 @@ Directus has **138 claims in 13 native packets**, beyond the current router's
 an app-wide coverage/cost ledger, or a separately tested intake correction; never
 silently truncate to 128 or call a selected slice full-app. Keep that decision
 separate from the first application's modes and results.
+
+## After BG: correct deciding facts before another paid experiment
+
+BG answers the requested whole-population comparison. Neither hybrid is cheaper;
+the routed 15-claim package costs more in both models, while it represents only
+11–12% of native whole-package price. Keep native local SQL/API work and useful
+selective workspace state. Do not broaden routing, add a model grouping pass,
+rerun native, or repeat this full app merely for a cleaner result.
+
+The two practical directions are:
+
+1. **Make exact implementation facts reusable across deciding questions.** First
+   build offline saved cases for root versus nested JWT binding, the expiration
+   option contract, MarsDB findOne/update selection order, and YAML filename
+   versus content integrity. Use the existing workspace/question/source records
+   and lookup interface before inventing another memory schema. A reusable fact
+   needs source/version/hash provenance, scope, conditions and unresolved caller
+   applicability. A source change invalidates its binding; a shared fact never
+   transfers a verdict automatically. Evaluator dependency downloads cannot be
+   retroactively inserted into BG reviewer evidence. A later authorized slice
+   must deliver the exact fact as fresh, inspectable evidence and account for
+   its preparation/lookup price. This correction needs to help native
+   continuations too: most measured price is outside the selected workspace.
+2. **Preserve mechanisms at the review-package boundary.** Compare source-bound
+   mechanisms, qualified impact, useful negatives and unresolved questions across
+   exact IDs. Broad CRUD can identify a different real issue in each package;
+   duplicate basket findings must not hide a missing role consumer or unpaid
+   entitlement lead. Keep the small local closure rule for traversal and SQL;
+   YAML integrity and authorization have different deciding dependencies. Do not
+   fix a mismatch by forcing every uncertainty to an issue or dismissal.
+
+Offline checks should show: the same-record counterexample survives; six-hour
+issuance is not assumed under the declared API; a valid metadata key does not
+certify its contents; the conditional tracking/admin HTML chains remain visible;
+parameterized-query/local-format controls stay scoped; and external/deployment
+facts remain actionable uncertainty. The saved inventory has no safe parameterized
+SQL candidate, so that control remains an offline fixture, not a fabricated live
+review. These are proposed correction checks, not newly implemented features.
+
+Dig further when the next source or contract fact can change the selected result,
+or when an explicit stronger impact question requires it. Stop with the selected
+mechanism and conditions when its boundary is sufficient. Preserve a precise gap
+when the deciding evidence is unavailable. A concrete known writer, verifier or
+post-control transformation requires accounting; lack of a generic whole-app
+caller search does not by itself require more work.
+
+Before a new small live slice, make the correction concrete and verify source
+parity against the saved comparator. Include the complete affected peer package,
+complex positives, scoped controls and genuine unknowns. Count actual input,
+output, failures, preparation and remaining completion work. Advance only if it
+retains the important mechanisms without new wrong safe dismissals at a useful
+complete-package price. Mixed conditional labels alone do not fail it. Wider app
+validation follows only after that distinct question is answered; no fresh paid
+allowance is created by this plan update.
+
+Keep progress journals outside immutable dispatch inputs. The Windows ledger-save
+and recovery protocol defects need bounded reliability checks before another
+live study; those supporting fixes cannot be marketed as measured token savings.
+Unknown actual usage still stops the affected arm. A local prelaunch reservation
+can be distinguished only with exact proof and remains a spent slot; it must not
+be confused with a launched call missing a receipt.

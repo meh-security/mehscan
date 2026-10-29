@@ -157,3 +157,31 @@ permission transformation or authority edge when it improves the selected proof.
 Count its price, but do not shorten qualifications or withhold deciding source to
 meet a prompt-size target. A first-response decision is valuable only when its
 evidence boundary is appropriate.
+
+## After the complete BG comparison
+
+The [full four-package comparison](experiments/review-full-hybrid-comparison-results.md)
+now supplies 116 outcomes per candidate and actual whole-package receipts.
+Terra hybrid is at +0.70% to stored native Terra; Sol's known cost is already
++1.68% to native Sol before one unmeasured timeout. The earlier focused prices
+cannot substitute for these totals. Full production price remains unmeasured.
+
+The broader source audit also qualifies earlier limited observations about wrong
+safe dismissals: both Sol packages' like-review same-record reasoning misses a
+version-bound selection-order counterexample, and local YAML content has a
+concrete conditional writer/effect chain. Some Terra broad authorization negatives
+assume a stronger verifier contract than the declared dependency establishes.
+Conversely, Terra retains useful questions while leaving some available local
+producers unread, and loses a distinct unpaid-entitlement lead in its hybrid
+package. New Sol adds supported conditional frontend chains and a generated
+product-update mechanism. Neither verdict totals nor greater caution establish a
+uniform quality winner.
+
+Keep native local closure and selective workspace state. Native peer variation
+is not a workspace-routing effect. The affected 15 claims account for only
+11–12% of native price, so substantial overall improvement needs to reach the
+remaining native continuation work. Prioritize exact versioned facts with
+provenance and applicability, plus mechanism-preserving package completion.
+Freeze further paid full-app repetition until a concrete correction answers a
+new small-slice quality/price question. Preserve useful mixed results and precise
+uncertainty; do not buy another run merely to make the table look cleaner.
