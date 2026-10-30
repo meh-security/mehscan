@@ -34,6 +34,43 @@ pub(super) fn template(
     }
 }
 
+/// Initial priority selection only. Deferred IDs remain visible, with no verdict.
+pub(super) fn select_policy(
+    draft: &mut ReviewCompletionDraft,
+    inventory: &mehscan_engine::investigation::ReviewInventory,
+) {
+    if draft.policy != ReviewCompletionPolicy::Value {
+        return;
+    }
+    let hints = inventory
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .value_hint
+                .as_ref()
+                .map(|hint| (entry.review_id.as_str(), hint))
+        })
+        .collect::<BTreeMap<_, _>>();
+    draft.selected_review_ids.retain(|id| {
+        let Some(hint) = hints.get(id.as_str()) else {
+            return true;
+        };
+        let dependency = hint
+            .depends_on
+            .as_ref()
+            .map_or(String::new(), |id| format!(" Dependency: {id}."));
+        draft.deferred_review_ids.insert(
+            id.clone(),
+            format!(
+                "Initial Value priority deferral ({}): {}{} Unreviewed; not a safety verdict.",
+                hint.reason, hint.assumption, dependency
+            ),
+        );
+        false
+    });
+}
+
 fn relative(path: &str) -> Result<(), String> {
     if path.is_empty()
         || path.contains('\\')

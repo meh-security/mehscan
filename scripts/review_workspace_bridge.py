@@ -403,7 +403,7 @@ class NativeWorkspace:
             raise ValueError("workspace session is retired")
         return directory, read(directory / "task.json"), read(directory / "context.json")
 
-    def _remaining_seconds(self):
+    def _remaining_seconds(self, work_id=None):
         state = self.workspace.snapshot()
         if state["received_query_bytes"] >= self.metadata["experiment"].get("max_received_query_bytes",2**63):
             raise ValueError("experiment received-query byte ceiling reached")
@@ -418,11 +418,27 @@ class NativeWorkspace:
         remaining = experiment["max_elapsed_seconds"] - (round(time.time()*1000) - started) / 1000
         if remaining <= 0:
             raise ValueError("experiment elapsed-time ceiling reached")
-        return min(remaining, self.runtime["limits"]["timeout_seconds"])
+        timeout = self.runtime["limits"]["timeout_seconds"]
+        if work_id is not None:
+            ancestors, current = set(), work_id
+            while current is not None:
+                ancestors.add(current)
+                current = state["work"][current]["parent"]
+            claims = set(state["work"][work_id]["claims"])
+            sessions = {k:s for k,s in state["sessions"].items() if s["work_id"] == work_id or
+                        s["work_id"] in ancestors and claims.intersection(c["review_id"] for c in s["packet"]["claims"])}
+            starts = [s["prepared_epoch_ms"] for s in sessions.values() if "prepared_epoch_ms" in s]
+            starts += [c["started_epoch_ms"] for c in state["calls"].values() if c["session_id"] in sessions]
+            if starts:
+                timeout -= (round(time.time()*1000)-min(starts))/1000
+            if timeout <= 0:
+                raise ValueError("work item absolute deadline reached")
+        return min(remaining, timeout)
 
-    def _usage(self, session_id):
+    def _usage(self, session_id, round_index=0):
         state = self.workspace.snapshot()
-        call_id = "call:" + session_id
+        suffix = session_id + (":" + str(round_index) if round_index else "")
+        call_id = "call:" + suffix
         call = state["calls"][call_id]
         if call["usage"] is not None:
             return
@@ -430,12 +446,26 @@ class NativeWorkspace:
         if not path.exists():
             return  # An interrupted or unobserved call remains unknown, never free.
         rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-        if len(rows) != 1 or rows[0]["conversation_id"] != session_id or rows[0]["round"] != 0 or rows[0]["provider"] != self.runtime["provider"]:
-            raise ValueError("checkpoint metrics do not describe one fresh bound turn")
-        row = rows[0]
+        if any(r.get("conversation_id") != session_id or r.get("provider") != self.runtime["provider"]
+               or type(r.get("round")) is not int or r["round"] not in (0,1) for r in rows):
+            raise ValueError("checkpoint metrics do not describe bound turns")
+        matching = [r for r in rows if r["round"] == round_index]
+        if len(rows) != len({r["round"] for r in rows}):
+            raise ValueError("checkpoint metrics do not describe one exact bound turn")
+        if not matching:
+            return  # A prior receipt cannot price an interrupted correction.
+        row = matching[0]
         usage = {k:row.get("usage",{}).get(k) for k in ("input_tokens","cached_input_tokens","output_tokens")}
+        for key in row.get("unknown_delta_counters",[]):
+            if key in usage:usage[key] = None
         usage["elapsed_ms"] = row.get("elapsed_ms")
-        self.apply("usage:" + session_id, {"kind":"finish_call","call_id":call_id,"usage":usage})
+        completion = {"kind":"finish_call","call_id":call_id,"usage":usage}
+        candidate = path.with_name("reply-candidate-"+session_id+"-"+str(round_index)+".json")
+        if candidate.is_file():
+            if candidate.stat().st_size>128*1024:
+                raise ValueError("candidate rejection record exceeds bounded intake")
+            completion["candidate_rejection_sha256"]=worker.digest_file(candidate)
+        self.apply("usage:" + suffix,completion)
 
     @observed
     def review(self, session_id, config_path, invoke=None):
@@ -444,15 +474,34 @@ class NativeWorkspace:
             directory, task, packet = self._session(session_id,config_path)
             if "call:" + session_id in self.workspace.snapshot()["calls"]:
                 raise ValueError("checkpoint already dispatched; recover usage without redispatch")
-            task["research"]["seconds_remaining"] = self._remaining_seconds()
-            self.apply("call:" + session_id, {"kind":"start_call","session_id":session_id})
-            try:
-                if invoke is None:
-                    response = worker.execute(argv,self.directory,provider_environment(),task["research"]["seconds_remaining"],json.dumps(task))
-                else:
-                    response = invoke(task)  # Test seam: bundled adapter with a deterministic launcher.
-            finally:
-                self._usage(session_id)
+            work_id = self.workspace.snapshot()["sessions"][session_id]["work_id"]
+            for round_index in range(2):
+                task["research"]["seconds_remaining"] = self._remaining_seconds(work_id)
+                task["research"]["round"] = round_index
+                suffix = session_id + (":" + str(round_index) if round_index else "")
+                self.apply("call:" + suffix, {"kind":"start_call","session_id":session_id,"round":round_index})
+                failed = None
+                try:
+                    if invoke is None:
+                        response = worker.execute(argv,self.directory,provider_environment(),task["research"]["seconds_remaining"],json.dumps(task))
+                    else:
+                        response = invoke(task)  # Test seam: bundled adapter with a deterministic launcher.
+                except worker.CommandFailure as error:
+                    failed = error
+                finally:
+                    self._usage(session_id,round_index)
+                if failed is None:
+                    break
+                feedback = worker.reply_validation_feedback(failed,task)
+                call = self.workspace.snapshot()["calls"]["call:" + suffix]
+                known = call["usage"] is not None and all(call["usage"].get(k) is not None for k in
+                                                          ("input_tokens","cached_input_tokens","output_tokens"))
+                if round_index or feedback is None or not known or not self.runtime["limits"]["rounds"]:
+                    raise failed
+                self.check()
+                self.workspace.check_session(session_id)
+                task["research"]["feedback"] = feedback
+                self.trace("reply_validation_correction",session_id=session_id)
             self.check()  # Reject stale answers after paid work while retaining its usage.
             self.workspace.check_session(session_id)
             if task.get("workspace_protocol") == actions.VERSION:
@@ -486,8 +535,150 @@ class NativeWorkspace:
     def recover_usage(self, session_id):
         # Recover costs even if source/plan freshness prevents using the answer.
         with self.guarded(fresh=False):
-            self._usage(session_id)
+            turns = [c.get("round",0) for c in self.workspace.snapshot()["calls"].values() if c["session_id"] == session_id]
+            for round_index in sorted(set(turns)):
+                self._usage(session_id,round_index)
             return self.workspace.usage()
+
+    @observed
+    def export_candidates(self, session_id, config_path, round_index=None):
+        """Preview independently valid decisions; never apply rejected actions."""
+        with self.guarded():
+            argv=self._provider(config_path)
+            directory,_,packet=self._session(session_id,config_path)
+            self.workspace.check_session(session_id)
+            state=self.workspace.snapshot()
+            calls=[(key,c) for key,c in state["calls"].items() if c["session_id"]==session_id]
+            if not calls:raise ValueError("candidate session has no dispatched call")
+            latest=max(c.get("round",0) for _,c in calls)
+            if round_index is None:round_index=latest
+            if type(round_index) is not int or round_index!=latest:
+                raise ValueError("candidate is not the latest dispatched turn")
+            matching=[c for _,c in calls if c.get("round",0)==round_index]
+            if len(matching)!=1:raise ValueError("candidate requires one exact recorded call")
+            call=matching[0]
+            if "candidate_rejection_sha256" not in call:
+                raise ValueError("no eligible rejected candidate was recorded for this call")
+            if call["usage"] is None:raise ValueError("candidate usage is unobserved")
+            artifacts=state["sessions"][session_id]["artifacts"]["files"]
+            request={"directory":str(directory),"session_id":session_id,"round":round_index,
+                     "candidate_sha256":call["candidate_rejection_sha256"],"packet_sha256":artifacts["context.json"],
+                     "task_file_sha256":artifacts["task.json"],"usage":call["usage"]}
+            inspected=worker.execute([*argv,"--inspect-candidate"],self.directory,provider_environment(),30,json.dumps(request))
+            shape(inspected,("decisions","binding","auxiliary_actions_accepted","native_admission"))
+            if inspected["auxiliary_actions_accepted"] is not False or inspected["native_admission"] is not False:
+                raise ValueError("candidate inspection cannot accept workspace actions")
+            decisions=inspected["decisions"]
+            references([d["review_id"] for d in decisions],[q["review_id"] for q in packet["native_questions"]])
+            # Render uncertainty from saved questions, never from rejected updates.
+            drafts={d["review_id"]:actions.native_decision(d,state) for d in decisions}
+            binding={"schema_version":"mehscanCandidatePreview/v1","parent_package_id":self.package["package_id"],
+                     "session_id":session_id,"round":round_index,"workspace_revision":state["revision"],
+                     "candidate_rejection_sha256":call["candidate_rejection_sha256"],"returned_turn":inspected["binding"]}
+            export=self.directory/"candidate-previews"/identity(binding)
+            export.mkdir(parents=True,exist_ok=True)
+            binding_path=export/"binding.json"
+            if binding_path.exists() and read(binding_path)!=binding:
+                raise ValueError("candidate preview binding changed")
+            worker.write(binding_path,binding)
+            worker.write(export/"model-decisions.json",decisions)
+            run=export/"run"
+            if not (run/"manifest.json").exists():
+                self.native(["investigate","review-bundles",str(self.root),"--inventory",str(self.inventory),
+                             "--review-ids",",".join(sorted(drafts)),"--output",str(run)])
+            manifest=read(run/"manifest.json")
+            if sorted(r for b in manifest["bundles"] for r in b["review_ids"])!=sorted(drafts):
+                raise ValueError("candidate native run scope differs")
+            responses,journals=export/"responses",export/"journals"
+            responses.mkdir(exist_ok=True);journals.mkdir(exist_ok=True)
+            for bundle in manifest["bundles"]:
+                name=bundle["filename"]
+                if Path(name).name!=name:raise ValueError("native bundle filename must be flat")
+                path=export/("draft-"+name)
+                worker.write(path,{"results":[drafts[rid] for rid in bundle["review_ids"]]})
+                self.native(["investigate","review-bundle-finalize","--bundle",str(run/"requests"/name),
+                             "--draft",str(path),"--source-root",str(self.root),"--journal-dir",str(journals),
+                             "--output",str(responses/name)])
+            report=self.native(["report","--run",str(run),"--responses",str(responses),"--source-root",str(self.root),
+                                "--reviewer","independent-candidate-preview"])
+            self.check();self.workspace.check_session(session_id)
+            if state!=self.workspace.snapshot():raise ValueError("workspace changed during candidate preview")
+            # Recheck the private reply, receipt and context after native validation.
+            if worker.execute([*argv,"--inspect-candidate"],self.directory,provider_environment(),30,json.dumps(request))!=inspected:
+                raise ValueError("candidate changed during source validation")
+            worker.write(export/"candidate-report.json",report)
+            result={"status":"candidate_only","review_ids":sorted(drafts),"native_source_validated":True,
+                    "workspace_response_accepted":False,"auxiliary_actions_applied":False,"semantic_review_required":True,
+                    "native_admission":False,"workspace_revision":state["revision"],"usage":self.workspace.usage(),
+                    "omitted_review_ids":sorted(set(self.payload["review_ids"])-set(drafts)),
+                    "model_decisions":str(export/"model-decisions.json"),"candidate_report":str(export/"candidate-report.json"),
+                    "authority":"Independent source-validated decision candidates for reviewer inspection. The original response remains rejected; no question, draft, budget or admission state is changed."}
+            worker.write(export/"preview.json",result)
+            lines=["# Independent decision candidates","",result["authority"],"","Semantic source/flow review is required before adoption.",""]
+            for d in decisions:
+                lines.extend(["## "+d["review_id"],""])
+                lines.extend("    "+line for line in "\n".join([d["decision"],d["summary"],d["reason"]]).splitlines())
+                lines.append("")
+            worker.write_text(export/"preview.md","\n".join(lines))
+            return result
+
+    @observed
+    def export_completed(self):
+        """Validate saved judgments in a new subset run; never fill missing claims."""
+        with self.guarded():
+            review = self.workspace.completed_review_package()
+            ids = sorted(c["review_id"] for c in review["claims"])
+            result = {"status":review["status"], "original_selection_count":review["original_selection_count"],
+                      "completed_review_ids":ids, "incomplete_review_ids":review["incomplete_review_ids"],
+                      "native_admission":False, "native_validated":False}
+            if not ids:
+                return result
+            directory = self.directory / "partial-finalizations" / review["package_id"]
+            directory.mkdir(parents=True,exist_ok=True)
+            binding = {"parent_package_id":self.package["package_id"], "review_package_id":review["package_id"],
+                       "review_ids":ids, "workspace_revision":review["workspace_revision"]}
+            binding_path = directory / "binding.json"
+            if binding_path.exists() and read(binding_path) != binding:
+                raise ValueError("completed export binding changed")
+            worker.write(binding_path,binding)
+            run = directory / "run"
+            if not (run / "manifest.json").exists():
+                self.native(["investigate","review-bundles",str(self.root),"--inventory",str(self.inventory),
+                             "--review-ids",",".join(ids),"--output",str(run)])
+            manifest = read(run / "manifest.json")
+            members = [rid for b in manifest["bundles"] for rid in b["review_ids"]]
+            if sorted(members) != ids:
+                raise ValueError("completed export scope differs from saved judgments")
+            responses = directory / "responses"
+            responses.mkdir(exist_ok=True)
+            journals = directory / "journals"
+            journals.mkdir(exist_ok=True)
+            judgments = {c["review_id"]:c["result"] for c in review["claims"]}
+            for bundle in manifest["bundles"]:
+                name = bundle["filename"]
+                if Path(name).name != name:
+                    raise ValueError("native bundle filename must be flat")
+                draft_path = directory / ("draft-" + name)
+                worker.write(draft_path,{"results":[judgments[rid] for rid in bundle["review_ids"]]})
+                self.native(["investigate","review-bundle-finalize","--bundle",str(run / "requests" / name),
+                             "--draft",str(draft_path),"--source-root",str(self.root),
+                             "--journal-dir",str(journals),
+                             "--output",str(responses / name)])
+            report = self.native(["report","--run",str(run),"--responses",str(responses),
+                                  "--source-root",str(self.root),"--reviewer","workspace-completed"])
+            self.check()
+            if self.workspace.snapshot()["revision"] != review["workspace_revision"]:
+                raise ValueError("workspace changed during completed export")
+            worker.write(directory / "findings.json",report)
+            worker.write(directory / "review-package.json",review)
+            worker.write_text(directory / "review-package.md",render_review_package(review))
+            result.update(native_validated=True, run=str(run), responses=str(responses),
+                          findings=str(directory / "findings.json"), review_package=str(directory / "review-package.json"))
+            worker.write(directory / "validated.json",{**binding, **result,
+                         "files":{str(p.relative_to(directory)):worker.digest_file(p) for p in
+                                  [directory / "findings.json", directory / "review-package.json",
+                                   directory / "review-package.md", *sorted(responses.glob("*.json"))]}})
+            return result
 
     @observed
     def finalize(self, bundle_id):
@@ -521,7 +712,7 @@ class NativeWorkspace:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command",choices=("init","check","plan","prepare-evidence","prepare","review","recover-usage","finalize"))
+    parser.add_argument("command",choices=("init","check","plan","prepare-evidence","prepare","review","recover-usage","finalize","export-completed","export-candidates"))
     for name in ("scanner","source-root","inventory","store","stream","claim","work-package","directory"):
         parser.add_argument("--" + name,required=True)
     parser.add_argument("--skill-root",default=str(Path(__file__).resolve().parents[1] / "skills/mehscan-security"))
@@ -533,6 +724,7 @@ def main():
     parser.add_argument("--operation-key")
     parser.add_argument("--parent-session")
     parser.add_argument("--session-id")
+    parser.add_argument("--candidate-round",type=int,choices=(0,1))
     parser.add_argument("--bundle-id")
     parser.add_argument("--plan",help="source-bound deterministic work plan; for plan command")
     parser.add_argument("--evidence-request",help="question-linked source/dependency preparation JSON")
@@ -572,6 +764,12 @@ def main():
             result = bridge.review(args.session_id,args.config)
         elif args.command == "recover-usage":
             result = bridge.recover_usage(args.session_id)
+        elif args.command == "export-completed":
+            result = bridge.export_completed()
+        elif args.command == "export-candidates":
+            if not args.config or not args.session_id:
+                parser.error("export-candidates requires --config and --session-id")
+            result = bridge.export_candidates(args.session_id,args.config,args.candidate_round)
         else:
             result = bridge.finalize(args.bundle_id)
     print(json.dumps(result))

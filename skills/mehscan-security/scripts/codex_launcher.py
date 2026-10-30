@@ -23,8 +23,9 @@ def load_config(path):
     config = json.loads(Path(path).read_text(encoding="utf-8"))
     expected = {"schema_version", "executable", "executable_version", "model", "reasoning_effort",
                 "auth_file", "private_directory"}
-    if (not isinstance(config, dict) or set(config)-{"source_presentation"} != expected or config["schema_version"] != "1"
-            or config.get("source_presentation","raw") not in ("raw","line-addressed-v1")):
+    if (not isinstance(config, dict) or set(config)-{"source_presentation", "schema_mode"} != expected or config["schema_version"] != "1"
+            or config.get("source_presentation","raw") not in ("raw","line-addressed-v1")
+            or config.get("schema_mode", "dynamic") not in ("dynamic", "stable")):
         raise ValueError("unsupported Codex BYOK configuration")
     for key in ("executable", "auth_file", "private_directory"):
         if not isinstance(config[key], str) or not Path(config[key]).is_absolute():
@@ -96,6 +97,12 @@ def cancel(signum, frame):
     CANCELLED = True
 
 
+class ProviderExecutionError(RuntimeError):
+    def __init__(self, returncode, events, stderr):
+        super().__init__("BYOK provider execution failed")
+        self.returncode, self.events, self.stderr = returncode, events, stderr
+
+
 class Launcher:
     def __init__(self, config, session):
         self.config, self.session = config, Path(session).resolve()
@@ -156,5 +163,5 @@ class Launcher:
         arguments = ["exec", *self.options(), "-C", str(self.work), "-"] if thread_id is None else ["exec", "resume", *self.options(), thread_id, "-"]
         code, events, stderr = self.call(arguments, prompt, timeout)
         if code or not answer.exists():
-            raise RuntimeError("BYOK provider execution failed")
+            raise ProviderExecutionError(code, events, stderr)
         return json.loads(answer.read_text(encoding="utf-8")), events, stderr

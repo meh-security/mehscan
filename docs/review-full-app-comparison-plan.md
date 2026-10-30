@@ -1,5 +1,10 @@
 # Fresh full-app comparison: keep multiple promising modes
 
+**Latest next-step plan (2026-10-29):**
+[Terra first pass with targeted Terra-versus-Sol completion](review-targeted-completion-plan-2026-10-29.md).
+That dated decision supersedes the next-experiment recommendation below; this
+document retains the completed full-app study's historical contract and results.
+
 **Current status:** [BG completes both corrected full hybrids and the four-way
 comparison](experiments/review-full-hybrid-comparison-results.md), using BD's
 stored 116-claim native packages. All four packages cover every claim. Terra

@@ -50,6 +50,13 @@ allows selection, but every other native ID must have an explicit reason in
 `deferred_review_ids`. Every changed path starts `unassessed`; an empty native
 queue still needs a change pass. Admit the plan and export the work package:
 
+For initial Value priority selection, use `--policy value --selection policy`
+on the template. Existing native hints become explicit unreviewed deferrals;
+they do not become safe decisions. Omitting `--selection` preserves the all-ID
+template default for manual/full-coverage audits. The advisory Action uses
+`--selection policy` for its configured policy. Research limits and selection
+are independent; lowering lookup budgets does not improve scope selection.
+
 ```text
 mehscan state plan --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --input RUN/plan.json --operation-key plan-1 --skill-root TRUSTED/mehscan-security
 mehscan state work --store STATE --stream pr:24 --inventory RUN/inventory --source-root ROOT --generation 1 --owner OWNER --skill-root TRUSTED/mehscan-security
@@ -170,6 +177,19 @@ finalizes responses and admits the complete native set. If a job fails, other
 jobs can finish and their drafts remain available; the attempt is incomplete,
 and no partial set is admitted as a completed run.
 
+An incomplete attempt also writes `partial-results.json`, indexing already
+finalized responses and explicitly listing the missing IDs. This index does not
+establish current source freshness or admission. It makes saved independent work
+reviewable without inventing a verdict for an unfinished job.
+
+A stable-schema reply rejected solely for an auxiliary proof handle can use one
+correction in the same conversation, within the original call/query/byte allowance
+and absolute deadline. The adapter requires the remaining reply, existing valid
+references and reference-list structure to remain unchanged. It retains the exact
+rejected reply privately and both usage receipts. Other provider/account errors
+and untyped failures receive no automatic retry. Unknown usage stops that job;
+independent native jobs can still finish.
+
 To recover an interrupted investigation, keep the original `--work-package` and
 claim and use the normal invocation with a **new** `--output` plus
 `--resume-from PRIOR_ATTEMPT`. Source, runtime, reviewer configuration and bundle
@@ -178,7 +198,11 @@ requires separate work, not a reset recovery budget. A completed change pass nee
 not be repeated. Completed drafts
 are revalidated natively without another model call. Unfinished jobs start fresh
 provider conversations with previous query results and remaining turn/query/byte/
-time budgets. Recovery never silently changes model or resets consumed limits.
+time budgets. The persisted absolute deadline also spans downtime between
+attempts. Recovery never silently changes model or resets consumed limits.
+An unknown provider turn must have an exact late receipt before that job can
+make another call. Its original metrics location remains recorded through
+recovery attempts; reconciled counters are included once in the aggregate.
 A recovery chain cannot fork from an already continued attempt; follow its
 `continued-to.json` to the latest attempt. One OS lock fences controllers for the
 same local state stream and releases when the controller exits.

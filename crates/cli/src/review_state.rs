@@ -1377,14 +1377,23 @@ pub(super) fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
             "comprehensive" => mehscan_core::ReviewCompletionPolicy::Comprehensive,
             _ => return Err("completion policy must be value or comprehensive".into()),
         };
+        // Keep historical/manual templates compatible; automated handoffs opt
+        // into the native initial priority hints instead of silently selecting all.
+        let selection = args.optional("--selection").unwrap_or_else(|| "all".into());
+        if !matches!(selection.as_str(), "all" | "policy") {
+            return Err("plan-template selection must be all or policy".into());
+        }
         let runtime = if args.options.contains_key("--skill-root") {
             Some(runtime_template(&mut args, policy, Some(&root))?)
         } else {
             None
         };
         args.finish()?;
-        let (_, binding) = inventory(&inventory_path, &root)?;
+        let (cache, binding) = inventory(&inventory_path, &root)?;
         let mut draft = super::review_completion::template(&binding, policy);
+        if selection == "policy" {
+            super::review_completion::select_policy(&mut draft, &cache);
+        }
         draft.runtime = runtime;
         return super::print_json(&draft);
     }
@@ -2046,7 +2055,7 @@ fn help() {
         "\nOptional claim: --coordination-key KEY binds a trusted coordinator's opaque lifecycle/tool contract into the snapshot. It does not authenticate that assertion."
     );
     println!(
-        "\nCompletion accounting:\n  mehscan state runtime-template --skill-root DIR [--policy value|comprehensive] [--research-rounds N --research-queries N --research-bytes N --timeout SECONDS]\n  mehscan state plan-template --inventory DIR --source-root ROOT [--policy value|comprehensive] [--skill-root DIR --provider-contract FILE]\n  mehscan state plan --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID [--expected-plan-id ID]\nRuntime-bound plan, work and record require --skill-root DIR and verify actual trusted package bytes outside source. Provider-bound runtime/plan templates accept --provider-contract FILE; bound plan/work/record require the same descriptor. Templates select all native IDs and leave changed paths unassessed. Value may defer IDs with explicit reasons; Comprehensive must select every admitted ID. Every changed path requires an entry, including deletions and unsupported paths. Assessed modifications/deletions/renames require pinned base evidence; primary current evidence is required for existing files. Native response completion, pending effects, coverage limits and execution status remain distinct. Plan updates require the exact current parent. Evidence is materialized from authorized source, not caller-supplied text."
+        "\nCompletion accounting:\n  mehscan state runtime-template --skill-root DIR [--policy value|comprehensive] [--research-rounds N --research-queries N --research-bytes N --timeout SECONDS]\n  mehscan state plan-template --inventory DIR --source-root ROOT [--policy value|comprehensive] [--selection all|policy] [--skill-root DIR --provider-contract FILE]\n  mehscan state plan --store DIR --stream KEY --inventory DIR --source-root ROOT --generation N --owner TOKEN --input FILE --operation-key ID [--expected-plan-id ID]\nRuntime-bound plan, work and record require --skill-root DIR and verify actual trusted package bytes outside source. Provider-bound runtime/plan templates accept --provider-contract FILE; bound plan/work/record require the same descriptor. Templates default to all native IDs; --selection policy applies initial Value priority hints as explicit unreviewed deferrals, while Comprehensive selects all. Changed paths remain unassessed. Value may defer IDs with explicit reasons; Comprehensive must select every admitted ID. Every changed path requires an entry, including deletions and unsupported paths. Assessed modifications/deletions/renames require pinned base evidence; primary current evidence is required for existing files. Native response completion, pending effects, coverage limits and execution status remain distinct. Plan updates require the exact current parent. Evidence is materialized from authorized source, not caller-supplied text."
     );
     println!(
         "\nTiered local review: runtime-template and plan-template accept --review-orchestration FILE with a bound expert provider, shared case/run limits and seeded closure audits. Tiered state record also requires --review-execution FILE and its assessments/ artifacts; native admission validates their source, provider policy and issue verification coverage."

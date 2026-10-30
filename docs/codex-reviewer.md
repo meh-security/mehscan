@@ -8,6 +8,57 @@ Value/Comprehensive research profiles remain configurable.
 
 ## Configuration
 
+For the tested cost-conscious native workflow, use Terra 6.1 medium with
+`"schema_mode": "stable"` and `"source_presentation": "line-addressed-v1"`.
+Model access still depends on the configured account. Install the adapter's own
+Python requirements before enabling stable mode:
+
+```text
+python -m pip install --requirement skills/mehscan-security/scripts/requirements.txt
+```
+
+Stable mode sends the unbound wire schema and validates the reply against the
+exact current-turn schema locally. Handles, offered claims, query/final-turn
+constraints and existing envelope/source checks still apply. Usage and private
+continuation state are recorded before a completed reply can be rejected.
+`schema-validation-<conversation>.jsonl` records validity and wire/local schema
+hashes outside the provider-metrics glob. Missing dependencies fail before
+inference. A fresh conversation is required when changing schema mode.
+
+For an auxiliary proof-reference failure, `reply-validation-<conversation>-<round>.json`
+records a bounded, exact-task diagnostic. The ordinary worker and experimental
+workspace bridge may spend one remaining turn correcting it in the same thread.
+Only originally invalid reference slots may change to offered handles; decisions,
+reasoning, evidence windows, existing valid references and list structure are
+protected. A corrected reply still passes the normal envelope/source checks.
+The private exact reply and usage survive rejection. Other schema, provider and
+account failures do not receive this automatic correction.
+
+New rejected workspace replies with valid decision components also retain a
+private `dispatched-task.json` and public `reply-candidate-<conversation>-<round>.json`
+hash binding. The workspace records that binding with the call receipt. Its
+`export-candidates` command invokes the adapter's read-only `--inspect-candidate`
+operation, checks the original task/context/reply/usage and supplied citations,
+and source-validates decisions through the ordinary native finalizer. This makes
+a separate candidate available for semantic review; it applies no rejected
+actions and performs no inference or native admission. It cannot recover old
+sessions lacking these bindings. See [workspace candidate export](review-workspace.md).
+
+Omitting `schema_mode`, or setting it to `"dynamic"`, preserves the existing
+bound-wire behavior and has no extra validator dependency. The provider descriptor
+is unchanged; configuration fingerprints and private conversation binding retain
+the option. Stable native continuations demonstrated substantial cache-adjusted
+price savings in the saved studies. Fresh-context workspace calls retain exact
+validation but have not demonstrated equivalent cache savings. Cache hits remain
+provider-dependent, and neither mode guarantees a hit.
+
+The native worker already supports bounded independent reviewers through
+`--workers` (use `1` for serial). Choose concurrency separately from model/schema
+or evidence routing; do not transfer shared-fact interpretations or caller
+applicability merely because jobs run together. Failed launcher attempts preserve
+returned provider events and stderr privately; an absent usage receipt remains
+unknown rather than zero.
+
 Install a trusted Codex CLI outside target source. Pin its package/version in the
 workflow. Create configuration and private session storage outside the checkout
 and the entire artifact upload directory:

@@ -34,8 +34,9 @@ use mehscan_core::{
     ReviewContextTruncation, ReviewDecision, ReviewDecisionFacts, ReviewFamilyMeasurement,
     ReviewInvestigationPlan, ReviewInvestigationTrace, ReviewLookupRequest, ReviewNeighborhoodFact,
     ReviewPipelineCoverage, ReviewReadiness, ReviewTriageContract, ReviewWorkSummary,
-    ReviewerOriginLeadRecord, Rule, RuntimeEnvironment, SCHEMA_VERSION, SecurityPathState,
-    SecurityPathStepKind, Severity, SeveritySource, SourceSlice, StructuralMatch, TextReference,
+    ReviewerOriginLead, ReviewerOriginLeadRecord, Rule, RuntimeEnvironment, SCHEMA_VERSION,
+    SecurityPathState, SecurityPathStepKind, Severity, SeveritySource, SourceSlice,
+    StructuralMatch, TextReference,
 };
 
 mod angular;
@@ -4614,6 +4615,56 @@ fn observation_review_supplied_artifacts(
     artifacts
 }
 
+// A single brief source range can become several bounded artifacts, especially
+// on minified lines. This exception to the four-reference limit covers one exact
+// contiguous range, not an expanded collection of unrelated lead evidence.
+fn reviewer_lead_fragment_range_supported(
+    lead: &ReviewerOriginLead,
+    available: &BTreeMap<String, Vec<Location>>,
+) -> bool {
+    if lead.artifact_ids.is_empty() || lead.artifact_ids.len() > 32 {
+        return false;
+    }
+    let Some(bytes) = lead
+        .location
+        .end
+        .byte_offset
+        .checked_sub(lead.location.start.byte_offset)
+    else {
+        return false;
+    };
+    if bytes == 0
+        || bytes > 64 * 1024
+        || lead.location.start.line == 0
+        || lead.location.end.line < lead.location.start.line
+        || lead.location.end.line - lead.location.start.line > 400
+    {
+        return false;
+    }
+    let mut fragments = Vec::with_capacity(lead.artifact_ids.len());
+    for id in &lead.artifact_ids {
+        let Some(locations) = available.get(id) else {
+            return false;
+        };
+        if locations.len() != 1 || locations[0].path != lead.location.path {
+            return false;
+        }
+        fragments.push(&locations[0]);
+    }
+    fragments.sort_by_key(|location| location.start.byte_offset);
+    let mut cursor = lead.location.start.clone();
+    for fragment in fragments {
+        if fragment.start != cursor
+            || fragment.end.byte_offset <= fragment.start.byte_offset
+            || fragment.end.byte_offset > lead.location.end.byte_offset
+        {
+            return false;
+        }
+        cursor = fragment.end.clone();
+    }
+    cursor == lead.location.end
+}
+
 fn validate_review_investigation_trace(
     review_id: &str,
     checks: &[String],
@@ -4745,9 +4796,13 @@ fn validate_review_investigation_trace(
                 "investigation trace for {review_id:?} contains a duplicate reviewer-origin lead"
             )));
         }
-        if lead.artifact_ids.is_empty() || lead.artifact_ids.len() > 4 {
+        let fragmented_range_supported =
+            reviewer_lead_fragment_range_supported(lead, &available_artifacts);
+        if lead.artifact_ids.is_empty()
+            || (lead.artifact_ids.len() > 4 && !fragmented_range_supported)
+        {
             return Err(EngineError(format!(
-                "reviewer-origin lead for {review_id:?} must cite between one and four artifacts"
+                "reviewer-origin lead for {review_id:?} must cite between one and four artifacts or one bounded contiguous source range"
             )));
         }
         let mut lead_artifacts = BTreeSet::new();
@@ -4775,7 +4830,7 @@ fn validate_review_investigation_trace(
                     && lead.location.start.byte_offset <= lead.location.end.byte_offset
             });
         }
-        if !location_supported {
+        if !location_supported && !fragmented_range_supported {
             return Err(EngineError(format!(
                 "reviewer-origin lead location for {review_id:?} must be contained by one of its cited artifacts"
             )));
@@ -22731,6 +22786,92 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    fn source_lead_fragments(
+        count: usize,
+        width: usize,
+    ) -> (ReviewerOriginLead, BTreeMap<String, Vec<Location>>) {
+        let position = |offset| Position {
+            line: 1,
+            column: offset + 1,
+            byte_offset: offset,
+        };
+        let artifacts = (0..count)
+            .map(|i| {
+                (
+                    format!("part-{i}"),
+                    vec![Location {
+                        path: "plugin.js".into(),
+                        start: position(i * width),
+                        end: position((i + 1) * width),
+                    }],
+                )
+            })
+            .collect();
+        (
+            ReviewerOriginLead {
+                question: "Who controls this markup?".into(),
+                security_relevance: "It is interpreted as HTML.".into(),
+                distinct_from_review: "Separate from request destination authority.".into(),
+                location: Location {
+                    path: "plugin.js".into(),
+                    start: position(0),
+                    end: position(count * width),
+                },
+                artifact_ids: (0..count).map(|i| format!("part-{i}")).collect(),
+            },
+            artifacts,
+        )
+    }
+
+    #[test]
+    fn reviewer_origin_lead_fragment_guard_accepts_one_exact_bounded_range() {
+        let (mut lead, artifacts) = source_lead_fragments(7, 4000);
+        assert!(reviewer_lead_fragment_range_supported(&lead, &artifacts));
+        lead.artifact_ids.reverse();
+        assert!(reviewer_lead_fragment_range_supported(&lead, &artifacts));
+        let (lead, artifacts) = source_lead_fragments(17, 3800);
+        assert!(reviewer_lead_fragment_range_supported(&lead, &artifacts));
+    }
+
+    #[test]
+    fn reviewer_origin_lead_fragment_guard_rejects_uncovered_or_unbounded_proof() {
+        let (lead, artifacts) = source_lead_fragments(7, 4000);
+        for overlap in [false, true] {
+            let mut changed = artifacts.clone();
+            let start = &mut changed.get_mut("part-1").unwrap()[0].start;
+            if overlap {
+                start.byte_offset -= 1;
+                start.column -= 1;
+            } else {
+                start.byte_offset += 1;
+                start.column += 1;
+            }
+            assert!(!reviewer_lead_fragment_range_supported(&lead, &changed));
+        }
+        let mut changed = artifacts.clone();
+        changed.get_mut("part-2").unwrap()[0].path = "other.js".into();
+        assert!(!reviewer_lead_fragment_range_supported(&lead, &changed));
+        let mut changed = lead.clone();
+        changed.artifact_ids[0] = "unknown".into();
+        assert!(!reviewer_lead_fragment_range_supported(
+            &changed, &artifacts
+        ));
+        let mut changed = lead.clone();
+        changed.artifact_ids[1] = changed.artifact_ids[0].clone();
+        assert!(!reviewer_lead_fragment_range_supported(
+            &changed, &artifacts
+        ));
+        let mut changed = lead.clone();
+        changed.location.end.column += 1;
+        assert!(!reviewer_lead_fragment_range_supported(
+            &changed, &artifacts
+        ));
+        let (lead, artifacts) = source_lead_fragments(17, 4000);
+        assert!(!reviewer_lead_fragment_range_supported(&lead, &artifacts));
+        let (lead, artifacts) = source_lead_fragments(33, 1);
+        assert!(!reviewer_lead_fragment_range_supported(&lead, &artifacts));
+    }
 
     #[test]
     fn named_import_prefilter_preserves_unfiltered_ast_results() {

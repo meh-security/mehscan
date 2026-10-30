@@ -186,8 +186,11 @@ establish those behaviors.
 
 Set `review-mode: value` or `comprehensive` to prepare a fresh one-run review
 instead of ending a native-only attempt. The Action creates a native runtime-bound
-plan, exports exact work and creates bundles for the selected native IDs. Templates
-currently select all IDs in both profiles; Value does not silently rank or defer.
+plan, exports exact work and creates bundles for the selected native IDs. It
+requests `plan-template --selection policy`: Value records native priority hints
+as explicit unreviewed deferrals with reasons; Comprehensive keeps every admitted
+ID. Deferrals are not safe verdicts. Manual plan templates retain their all-ID
+default unless selection is requested explicitly.
 A zero-native queue still prepares changed-effect work. The Action returns
 `review_ready` and a private `review-handoff` path. This status means ready to
 review, not reviewed. The example caller remains native-only.

@@ -3,6 +3,9 @@
 For a credential operation, compare the authority across producer, accepted value
 and consumer. Safe signing or high entropy does not settle lifecycle correctness.
 Use the credential-state guide for password/MFA/recovery transitions.
+For token/session/API-key semantics, load [token review](../token-review.md)
+(`guidance` name `token-review`), especially when a signing option, verifier
+version, expiry claim or cache hit is being treated as proof of authority.
 
 Select the relationships relevant to this operation:
 

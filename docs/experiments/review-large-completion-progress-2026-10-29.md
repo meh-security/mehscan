@@ -1,0 +1,13 @@
+# Larger-slice progress — 2026-10-29
+
+BP launched the paired Terra/Sol completion diagnostic on 68 claims in eight complete original bundles, as authorized by the user's request for bigger slices. Both received the same saved Terra first-pass results, source citation ranges and versioned vendor catalog, with flow-review and amendment fields. The frozen BP plan remains unchanged.
+
+Terra completed the first nine-claim authorization group and continues through the remaining groups. Early cache fractions were roughly 76–81%, with receipts retained. These are progress observations, not a completed quality/price comparison.
+
+Sol stopped during authorization on call 7. The private runtime reports `cyber_policy` and the Daybreak account-security/hardware-key requirement. Six calls have receipts, costing $0.1552652 known Standard API equivalent; the seventh attempted call has no normal receipt. No selected Sol group completed. The arm is stopped, with artifacts preserved; no route/model/prompt workaround or retry was attempted. The prior successful retry does not establish that every subsequent session meets the account-security gate.
+
+BQ separately prepared fresh state for the original eight-claim Terra workspace group with the BM evidence-string format restriction. Its exact primary source and native questions match BK and source/runtime/input hashes are frozen. Its first request failed before review: the private runtime records HTTP 400 `invalid_json_schema`, explicitly stating that regex lookaround is unsupported. No normal usage receipt exists; do not silently price the attempt as zero. No claim completed.
+
+BM2 replaces the pattern with `^source[1-9][0-9]*$`, preserving exact offered-handle validation locally. Its 13 native checks, 13 workspace checks and six replay/format checks pass without inference. Because `$` may accept a final newline in some regex dialects, strict availability remains the authoritative local check; malformed newline aliases are not valid offered handles. Provider acceptance of this simpler pattern still requires a new bound live test. The BQ failure remains preserved; the frozen BQ adapter was not edited.
+
+Artifacts: `C:/dmitry/scan-runs/targeted-completion-20261029-bp`, `C:/dmitry/scan-runs/workspace-format-live-20261029-bq`, and corrected offline fixture `C:/dmitry/scan-runs/workspace-format-20261029-bm2`. BP's `status.py` reports progress; Sol's known price must not be treated as a completed arm cost. Terra had completed 13 claims at the last check and continues independently. Preserve all failed-call spend and unknowns before drawing conclusions.

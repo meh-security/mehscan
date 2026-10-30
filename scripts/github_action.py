@@ -685,7 +685,7 @@ def prepare_review(plan, directory, record, get, execute, cancelled):
             raise CancelledRun()
         owned = [*common, *source_args, "--generation", str(receipt["generation"]), "--owner", receipt["owner"],
                  "--skill-root", plan["review"]["skill_root"], *provider_arguments(plan)]
-        draft = state_json(plan, execute, "plan-template", [*source_args, "--policy", plan["review"]["policy"],
+        draft = state_json(plan, execute, "plan-template", [*source_args, "--policy", plan["review"]["policy"], "--selection", "policy",
             "--skill-root", plan["review"]["skill_root"], *provider_arguments(plan)])
         if draft["runtime"] != plan["review"]["runtime"]:
             raise ValueError("review template differs from pinned runtime")

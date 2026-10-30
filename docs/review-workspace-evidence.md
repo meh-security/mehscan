@@ -72,6 +72,44 @@ any applicability judgment. Adding evidence changes the context and requires a
 new explicit session; it cannot silently mutate an existing session. Planning
 cannot replace work after deciding evidence is prepared.
 
+## Reuse an existing deciding-evidence receipt
+
+The same controller-only `prepare-evidence` command accepts a receipt reference
+instead of repeating its paths and hashes:
+
+```json
+{
+  "version": "mehscanDecidingEvidenceReuse/experimental-v1",
+  "targets": [{
+    "work_id": "recipient-work-id",
+    "question": "Does this verifier contract apply to the credential consumer?",
+    "source_work_id": "producer-work-id",
+    "receipt_id": "existing-deciding-evidence-receipt-id"
+  }]
+}
+```
+
+The receipt must exist in the same source-bound workspace. The controller selects
+it because its implementation contract is relevant; matching filenames or rule
+categories alone do not establish caller compatibility. Reuse validates the
+original source hashes and local dependency observations, then atomically adds
+the evidence to the recipient with its own deciding question. The new record's
+`reused_from` retains the original work and receipt IDs. Replays revalidate both
+source and recipient observations; changed requests and stale support fail.
+
+Only source windows and package observations are reused. Propositions, answers,
+applicability, drafts, verdicts and model-call usage are not transferred. Existing
+limits, source-root restrictions and metadata-resolution caveats apply. This
+does not import external vendor snapshots into the target source root or prove
+installed dependency resolution. New interpretations still use the notebook
+path, with their conditions and exclusions.
+
+Already-captured source is not charged as newly stored source again and no model
+call or native query is created. Independent reviewers still receive the source
+in their model context; measure those input tokens and total price normally.
+Prepare a fresh explicit session after reuse. This API is opt-in; ordinary native
+review routing and admission defaults are unchanged.
+
 ## Stop or dig deeper
 
 After a local metadata receipt, do not repeat the same path search expecting new

@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from review_workspace import Workspace
-from review_workspace_evidence import VERSION, dependency, prepare
+from review_workspace_evidence import VERSION, REUSE_VERSION, dependency, prepare
 
 
 class DecidingEvidenceTests(unittest.TestCase):
@@ -38,6 +38,68 @@ class DecidingEvidenceTests(unittest.TestCase):
     def split(self):
         self.workspace.apply("split", self.workspace.snapshot()["revision"],
             {"kind":"split", "work_id":"initial", "new_work_id":"other", "review_ids":["b"], "strategy":"separate caller"})
+
+    def reuse_request(self):
+        self.split()
+        receipt = prepare(self.workspace, self.request(), "source-evidence")["result"]["receipts"][0]["receipt_id"]
+        return {"version":REUSE_VERSION, "targets":[{"work_id":"other",
+            "question":"Does the same implementation apply to the second caller?",
+            "source_work_id":"initial", "receipt_id":receipt}]}
+
+    def test_reuse_preserves_provenance_and_separate_question_without_charging_source_twice(self):
+        request = self.reuse_request()
+        before = self.workspace.snapshot()
+        first = prepare(self.workspace, request, "reuse")
+        state = self.workspace.snapshot()
+        view = self.workspace.view("other")
+        record = next(iter(view["deciding_evidence"].values()))
+        self.assertEqual(record["question"], request["targets"][0]["question"])
+        self.assertEqual(record["reused_from"], {"work_id":"initial", "receipt_id":request["targets"][0]["receipt_id"]})
+        self.assertEqual(len(state["evidence"]), 1)
+        self.assertEqual(len(state["dependency_observations"]), 1)
+        self.assertEqual(state["used"], before["used"])
+        self.assertEqual(view["propositions"], {})
+        self.assertEqual(view["applicability"], {})
+        self.assertEqual(view["questions"], {})
+        self.assertTrue(all(c["draft"] is None for c in state["claims"].values()))
+        self.assertEqual(first["result"]["native_query_count"], 0)
+        again = prepare(self.workspace, request, "reuse")
+        self.assertTrue(again["replayed"])
+        self.assertEqual(first["revision"], again["revision"])
+
+    def test_reuse_revalidates_source_and_dependency_metadata_on_replay(self):
+        request = self.reuse_request()
+        prepare(self.workspace, request, "reuse")
+        (self.root / "helper.ts").write_text("changed\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "source changed"):
+            prepare(self.workspace, request, "reuse")
+        (self.root / "helper.ts").write_text("export function bind(req) { req.body.UserId = req.user.id; }\n", encoding="utf-8")
+        (self.root / "yarn.lock").write_text("new resolution", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "observation is stale"):
+            prepare(self.workspace, request, "reuse")
+
+    def test_reuse_changed_question_and_unknown_receipt_are_rejected(self):
+        request = self.reuse_request()
+        prepare(self.workspace, request, "reuse")
+        request["targets"][0]["question"] = "Different caller question"
+        with self.assertRaisesRegex(ValueError, "retry changed"):
+            prepare(self.workspace, request, "reuse")
+        request["targets"][0]["receipt_id"] = "missing"
+        with self.assertRaisesRegex(ValueError, "unknown source evidence receipt"):
+            prepare(self.workspace, request, "another")
+
+    def test_reuse_late_target_failure_is_atomic_and_model_cannot_invoke_it(self):
+        request = self.reuse_request()
+        before = self.workspace.snapshot()
+        request["targets"].append({**request["targets"][0], "work_id":"missing"})
+        with self.assertRaises((KeyError, ValueError)):
+            prepare(self.workspace, request, "reuse")
+        self.assertEqual(self.workspace.snapshot(), before)
+        self.assertIsNone(self.workspace.operation("reuse"))
+        with self.assertRaisesRegex(ValueError, "privileged"):
+            self.workspace.apply("model-reuse", before["revision"], {"kind":"review_updates", "updates":[
+                {"kind":"reuse_evidence", "targets":request["targets"][:1]}]})
+        self.assertEqual(self.workspace.snapshot(), before)
 
     def test_shared_source_is_delivered_before_session_once_stored_per_caller(self):
         self.split()
@@ -192,6 +254,23 @@ class NativeEvidencePreparationTests(unittest.TestCase):
         session = recovered.prepare("initial",fixture.config_path,"evidence-context")["session_id"]
         packet = fixtures.read(recovered.directory/"sessions"/session/"context.json")
         self.assertEqual(packet["workspace_evidence"]["deciding_evidence"],view["deciding_evidence"])
+        self.assertEqual(recovered.workspace.snapshot()["calls"], {})
+        source_receipt = next(iter(view["deciding_evidence"]))
+        path.write_text(json.dumps({"version":REUSE_VERSION, "targets":[{
+            "work_id":"initial", "question":"Does this source support a different consumer contract?",
+            "source_work_id":"initial", "receipt_id":source_receipt}]}), encoding="utf-8")
+        command[command.index("shared-evidence")] = "reuse-evidence"
+        for replay in (False, True):
+            completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            self.assertEqual(json.loads(completed.stdout)["replayed"], replay)
+        reused_view = recovered.workspace.view("initial")
+        self.assertEqual(len(reused_view["deciding_evidence"]), 2)
+        self.assertTrue(any(r.get("reused_from", {}).get("receipt_id") == source_receipt
+                            for r in reused_view["deciding_evidence"].values()))
+        fresh = recovered.prepare("initial",fixture.config_path,"reused-evidence-context")["session_id"]
+        fresh_packet = fixtures.read(recovered.directory/"sessions"/fresh/"context.json")
+        self.assertEqual(fresh_packet["workspace_evidence"]["deciding_evidence"], reused_view["deciding_evidence"])
         self.assertEqual(recovered.workspace.snapshot()["calls"], {})
 
 

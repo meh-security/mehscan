@@ -1,0 +1,13 @@
+# JWT guidance/source retest — 2026-10-29
+
+At the user's request, BS narrows the proposed 68-claim experiment to **13 JWT-related claims in two complete original groups**: four credential-lifecycle claims and nine authorization/caller-context claims. The latter preserve independent owner, password and IP checks needed to assess token authority. BR was closed before provider dispatch with zero actual calls.
+
+Four Terra 6.1 medium arms run concurrently: control (source on demand), token guidance only, prepared token dependency source only, and both. Every arm has the same first-pass proposals, application evidence, full on-demand vendor access, generic source-review scope, output schema and limits. Only the two declared factors differ. The guidance is loaded from the skill's allowlisted `token-review` reference and explicitly delivered to both relevant groups. This tests guidance delivery, not spontaneous guide discovery.
+
+Prepared source is eight versioned JWT/middleware/JWS/JWA entry/manifest ranges. It contains no evaluator verdicts or helper interpretations. Snapshot compatibility and actual dependency resolution remain distinct. Missing root manifest evidence is not fabricated. All four have eight calls, 48 queries and 1 MiB returned source per group, with the same 1,800-second per-call timeout and no aggregate token/time censor. No warm-up calls. Known-usage failures stay group-scoped; unknown usage stops the affected arm. Normal provider controls remain in effect.
+
+Primary questions: distinguish intended, emitted and enforced expiry; correct unsupported duration-option assumptions; explain cached versus verified identity; preserve independent caller checks and supported conditional findings. Audit flow explanations even when verdicts match. Report unsupported conclusions, lost mechanisms and remaining deciding questions separately from closure counts.
+
+Measure input, cached input, output, cache writes, all actual calls, review price, base-plus-review price, lookups and elapsed time. Concurrent arms may share cache routing, so do not claim independent cold-cache results. Produce source-checked amendments for the 13 claims and retain the other 103 base outcomes separately. This diagnostic does not perform native product admission or establish full-app precision.
+
+Artifacts: `C:/dmitry/scan-runs/jwt-combinations-20261029-bs`. Preflight verifies source/runtime/config hashes, all four prompt boundaries, factor delivery, identical schemas and inspected-citation restrictions without inference. Freeze this plan and all inputs before dispatch; no prompt or source tuning while arms run. Then reconcile receipts and inspect the exact JWT explanations before selecting a combination.

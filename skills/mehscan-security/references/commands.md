@@ -131,7 +131,11 @@ plan/record admission. If it is stale, refresh it; do not edit its generation,
 parents or fingerprints. Use normal queries and finalization for the new answer.
 
 For a provider-neutral worker, create the plan with the trusted skill package:
-`mehscan state plan-template --inventory DIR --source-root ROOT --policy value --skill-root TRUSTED/mehscan-security`.
+`mehscan state plan-template --inventory DIR --source-root ROOT --policy value --selection policy --skill-root TRUSTED/mehscan-security`.
+`--selection policy` applies initial native Value hints as explicit unreviewed
+deferrals, with reasons/dependencies. Comprehensive keeps all IDs. The default
+without this option remains `all` for compatible manual/full-coverage templates.
+Deferred work has no verdict; promote it when stronger evidence warrants review.
 The native runtime binds profile defaults (Value: 2 rounds/8 queries/128 KiB/300s;
 Comprehensive: 3 rounds/12 queries/256 KiB/600s per conversation). Set
 `--research-rounds`, `--research-queries`, `--research-bytes` or `--timeout` on
@@ -153,6 +157,11 @@ plan/work/record commands. The worker receives the same file and requires the
 bundled adapter configuration to match. Model/effort/client-version changes invalidate
 old work. Use provider descriptors; schema-1 execution needs a fresh plan.
 See the [BYOK adapter contract](../../../docs/codex-reviewer.md).
+The selected [balanced workflow](../../../docs/review-workflow-final-2026-10-29.md)
+uses explicit stable-schema/addressed-source configuration with exact local
+validation, and `--workers 1` for price-focused review (`2` for optional speed).
+Configure the validator requirements before stable mode; create fresh bound work
+after changing skill/code/config bytes.
 
 Without an orchestration policy, the worker runs the selected model directly
 across its parallel job pool. It exposes research and final decisions without

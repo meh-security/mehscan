@@ -23,6 +23,152 @@ THREAD = "12345678-1234-1234-1234-123456789abc"
 
 
 class Adapter(unittest.TestCase):
+    def stable_factory(self, config, session):
+        fake = self.factory(config, session)
+        original = fake.review
+        def review(*args, **kwargs):
+            response, events, stderr = original(*args, **kwargs)
+            response["routing"] = []
+            if getattr(self, "invalid_stable_handle", False):
+                response["progress"] = [{"edge":"Inspected", "status":"inspected",
+                                         "cause":None, "artifacts":["invented"]}]
+            return response, events, stderr
+        fake.review = review
+        return fake
+
+    def test_stable_wire_schema_survives_new_handles_and_final_only_budget(self):
+        self.config["schema_mode"] = "stable"
+        reviewer.run(self.config, self.task, self.stable_factory)
+        self.task["research"].update(round=1, rounds_remaining=0, queries_remaining=0,
+                                     artifact_handles={"new":"actual"})
+        reviewer.run(self.config, self.task, self.stable_factory)
+        self.assertEqual(self.calls[0][2], self.calls[1][2])
+        self.assertEqual([c[1] for c in self.calls], [None, THREAD])
+        receipts = [json.loads(l) for l in (self.public / "provider-metrics.jsonl").read_text().splitlines()]
+        self.assertEqual([r["usage"]["input_tokens"] for r in receipts], [100,100])
+
+    def test_stable_invalid_handle_keeps_paid_usage_and_continuation_before_rejection(self):
+        self.config["schema_mode"] = "stable"
+        self.invalid_stable_handle = True
+        with self.assertRaisesRegex(ValueError, "current-turn schema"):
+            reviewer.run(self.config, self.task, self.stable_factory)
+        self.assertEqual(len(self.calls), 1)
+        self.assertTrue((self.public / "provider-metrics.jsonl").exists())
+        state = json.loads((Path(self.config["private_directory"]) / ("a"*64) / "conversation.json").read_text())
+        self.assertEqual(state["round"], 0)
+        diagnostic = json.loads(next(self.public.glob("schema-validation-*.jsonl")).read_text())
+        self.assertFalse(diagnostic["valid"])
+        self.assertEqual(len(list(self.public.glob("provider-metrics*.jsonl"))), 1)
+        reply = Path(self.config["private_directory"]) / ("a"*64) / "round-0/response.json"
+        self.assertTrue(reply.is_file())
+        self.assertEqual(json.loads(reply.read_text())["action"], "final")
+        self.assertEqual(json.loads(reply.read_text())["progress"][0]["artifacts"], ["invented"])
+        self.assertFalse(list(self.public.rglob("response.json")))
+
+    def test_stable_missing_dependency_and_mid_conversation_switch_fail_before_provider(self):
+        self.config["schema_mode"] = "stable"
+        with patch.dict(sys.modules, {"jsonschema":None}), self.assertRaisesRegex(ValueError, "requirements.txt"):
+            reviewer.run(self.config, self.task, self.stable_factory)
+        self.assertFalse(self.calls)
+        self.config.pop("schema_mode")
+        self.invoke()
+        self.config["schema_mode"] = "stable"
+        self.task["research"]["round"] = 1
+        with self.assertRaisesRegex(ValueError, "incompatible"):
+            reviewer.run(self.config, self.task, self.stable_factory)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_bound_proof_correction_resumes_same_thread_and_preserves_reply(self):
+        self.config["schema_mode"] = "stable"
+        self.task["research"]["artifact_handles"] = {"source1":"actual-source"}
+        def factory(config,session):
+            fake = self.stable_factory(config,session); original = fake.review
+            def review(*args,**kwargs):
+                response,events,stderr = original(*args,**kwargs)
+                response["progress"] = [{"edge":"Inspected", "status":"inspected", "cause":None,
+                                         "artifacts":["source1" if kwargs.get("thread_id") or len(self.calls)>1 else "invented"]}]
+                return response,events,stderr
+            fake.review = review
+            return fake
+        with self.assertRaisesRegex(ValueError,"current-turn schema"):
+            reviewer.run(self.config,self.task,factory)
+        diagnostic = json.loads(next(self.public.glob("reply-validation-*.json")).read_text())
+        self.assertTrue(diagnostic["repairable_proof_references"])
+        self.task["research"].update(round=1,feedback={"kind":"local_response_validation"})
+        value = reviewer.run(self.config,self.task,factory)
+        self.assertEqual(value["progress"][0]["artifacts"],["source1"])
+        self.assertEqual([c[1] for c in self.calls],[None,THREAD])
+        receipts = [json.loads(l) for l in (self.public / "provider-metrics.jsonl").read_text().splitlines()]
+        self.assertEqual(sum(r["usage"]["input_tokens"] for r in receipts),200)
+        state = json.loads((Path(self.config["private_directory"]) / ("a"*64) / "conversation.json").read_text())
+        self.assertNotIn("rejected_intent_sha256",state)
+
+    def test_proof_correction_cannot_drop_references_or_change_review_intent(self):
+        original = {"progress":[{"artifacts":["invented","source1"]}], "draft":{"results":[{"decision":"issue"}]}}
+        task = {"research":{"artifact_handles":{"source1":"actual"},"source_artifact_handles":["source1"]}}
+        corrected = copy.deepcopy(original);corrected["progress"][0]["artifacts"][0] = "source1"
+        self.assertTrue(reviewer.proof_correction_matches(original,corrected,task))
+        corrected["progress"][0]["artifacts"].pop()
+        self.assertFalse(reviewer.proof_correction_matches(original,corrected,task))
+        corrected = copy.deepcopy(original);corrected["draft"]["results"][0]["decision"] = "not_issue"
+        self.assertNotEqual(reviewer.review_intent(original),reviewer.review_intent(corrected))
+
+    def test_rejected_correction_retains_paid_reply_usage_and_protected_intent(self):
+        self.config['schema_mode']='stable'
+        self.task['research']['artifact_handles']={'source1':'actual'}
+        for index,change in enumerate(('intent','strip','unbound'),2):
+            with self.subTest(change=change):
+                task=copy.deepcopy(self.task);task['conversation_id']=str(index)*64
+                def factory(config,session):
+                    fake=self.stable_factory(config,session);original=fake.review
+                    def review(*args,**kwargs):
+                        response,events,stderr=original(*args,**kwargs)
+                        correction=task['research']['round']>0
+                        response['progress']=[{'edge':'Inspected','status':'inspected','cause':None,
+                                               'artifacts':['source1' if correction else 'invented']}]
+                        if correction and change=='intent':response['working_chain']='Changed review conclusion.'
+                        if correction and change=='strip':response['progress'][0]['artifacts']=[]
+                        return response,events,stderr
+                    fake.review=review;return fake
+                with self.assertRaisesRegex(ValueError,'current-turn schema'):reviewer.run(self.config,task,factory)
+                task['research']['round']=1
+                if change!='unbound':task['research']['feedback']={'kind':'local_response_validation'}
+                with self.assertRaisesRegex(ValueError,'protected review intent|explicit bound correction'):
+                    reviewer.run(self.config,task,factory)
+                private=Path(self.config['private_directory'])/task['conversation_id']
+                state=json.loads((private/'conversation.json').read_text())
+                self.assertIn('rejected_intent_sha256',state)
+                self.assertEqual(state['round'],0 if change=='unbound' else 1)
+                self.assertEqual((private/'round-1/response.json').exists(),change!='unbound')
+                rows=[json.loads(l) for l in (self.public/'provider-metrics.jsonl').read_text().splitlines()]
+                matching=[r for r in rows if r['conversation_id']==task['conversation_id']]
+                self.assertEqual(len(matching),1 if change=='unbound' else 2)
+
+    def test_failed_launcher_diagnostics_are_preserved_without_fabricating_usage(self):
+        class Failed:
+            def review(*args, **kwargs):
+                raise launcher.ProviderExecutionError(2, '{"type":"error"}', "private diagnostics")
+        with self.assertRaises(launcher.ProviderExecutionError):
+            reviewer.run(self.config, self.task, lambda *args:Failed())
+        log = Path(self.config["private_directory"]) / ("a"*64) / "round-0"
+        self.assertEqual((log / "stderr.txt").read_text(), "private diagnostics")
+        self.assertTrue((log / "events.jsonl").exists())
+        self.assertFalse((self.public / "provider-metrics.jsonl").exists())
+
+    def test_generic_review_scope_covers_roles_without_repeating_on_resume(self):
+        for role in ("investigator", "research", "collection"):
+            with self.subTest(role=role):
+                task = {**self.task, "review_role": role}
+                prompt = protocol.build_prompt(task, self.body, [], None)
+                self.assertTrue(prompt.startswith(protocol.REVIEW_SCOPE))
+                self.assertEqual(prompt.count(protocol.REVIEW_SCOPE), 1)
+                for source in self.body["contract"]["sources"]:
+                    self.assertIn(source["text"], prompt)
+                continued = protocol.build_prompt(task, self.body, [],
+                                                  {"sent_facts": [], "sent_results": 0})
+                self.assertNotIn(protocol.REVIEW_SCOPE, continued)
+        self.assertNotIn("Juice", protocol.REVIEW_SCOPE)
+
     def test_diagnosis_cwe_schema_matches_native_identifier_syntax_and_count(self):
         import re
         self.task.update(kind="native_bundle",review_ids=["one"])
@@ -487,6 +633,10 @@ class Adapter(unittest.TestCase):
         path = self.base / "config.json"
         path.write_text(json.dumps(self.config))
         self.assertEqual(launcher.load_config(path), self.config)
+        path.write_text(json.dumps({**self.config,"schema_mode":"stable"}))
+        self.assertEqual(launcher.load_config(path)["schema_mode"], "stable")
+        path.write_text(json.dumps({**self.config,"schema_mode":"invalid"}))
+        with self.assertRaises(ValueError): launcher.load_config(path)
         for key, value in (("extra_args",["--dangerously-bypass-approvals-and-sandbox"]), ("model","--unsafe")):
             config = {**self.config, key:value}
             path.write_text(json.dumps(config))

@@ -1,7 +1,8 @@
 # Files, network destinations and redirects
 
-Use the resource-boundary guide for operand facts; this guide frames the complete
-operation when producers, consumers or alternate paths matter.
+Use the [resource-boundary guide](../buckets/resource-boundary.md) for operand
+facts and local root guarantees versus caller exposure; this guide frames the
+complete operation when producers, consumers or alternate paths matter.
 
 For files, compare the final selected path and actual read/write root. Normalizing
 a path is not containment; containment checked after the effect is not enforcement.

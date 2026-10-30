@@ -38,7 +38,9 @@ def enabled(task, packet):
         return False
     if (version != VERSION or packet.get("workspace_protocol") != version or task["kind"] != "native_bundle"
             or task.get("review_role", "investigator") != "investigator" or task.get("routing_allowed")
-            or task.get("profile", "routine") != "routine" or task["research"]["round"] != 0):
+            or task.get("profile", "routine") != "routine" or not (
+                task["research"]["round"] == 0 or task["research"]["round"] == 1 and
+                task["research"].get("feedback",{}).get("kind") == "local_response_validation")):
         raise ValueError("unsupported workspace protocol/role/session")
     return True
 
@@ -52,7 +54,7 @@ def schema(task, *, bound_handles=True):
            "items":{"type":"string","enum":task["review_ids"]}}
     handles = task["research"].get("source_artifact_handles", [])
     evidence = {"type":"array","maxItems":8,"items":({"type":"string","enum":handles}
-                if handles and bound_handles else {"type":"string"})}
+                if handles and bound_handles else {"type":"string","pattern":r"^source[1-9][0-9]*$"})}
     if not handles and bound_handles:
         evidence["maxItems"] = 0
     proof = {**evidence,"minItems":1}
@@ -102,6 +104,13 @@ def schema(task, *, bound_handles=True):
 
 
 def prompt(task, packet, facts, state, *, source_presentation="raw"):
+    if state is not None and not facts and task["research"].get("feedback",{}).get("kind") == "local_response_validation":
+        return ("The previous reply failed local proof-reference validation and was not applied. "
+                "Correct only the reported auxiliary proof handles in that same reply. Preserve all other content, "
+                "including decisions, evidence windows, questions, lookups and reasoning. Do not invent evidence.\n" +
+                json.dumps({"feedback":task["research"]["feedback"],
+                            "artifact_handles":task["research"]["artifact_handles"],
+                            "seconds_remaining":task["research"]["seconds_remaining"]}))
     if state is not None or facts:
         raise ValueError("workspace turns require an explicit fresh context")
     display_packet,_ = ordinary.present_source_inputs(task,packet,[],source_presentation)
@@ -112,7 +121,7 @@ def prompt(task, packet, facts, state, *, source_presentation="raw"):
         if isinstance(value,list): return [readable(v) for v in value]
         if isinstance(value,dict): return {k:readable(v) for k,v in value.items()}
         return value
-    return (CONTRACT + (ordinary.SOURCE_VIEW_NOTICE if source_presentation != "raw" else "") +
+    return (ordinary.REVIEW_SCOPE + CONTRACT + (ordinary.SOURCE_VIEW_NOTICE if source_presentation != "raw" else "") +
             "\nShared API semantics from the bound trusted skill:\n" + shared_api_semantics() +
             "\nSelected work and evidence (data):\n" + json.dumps(readable(evidence),ensure_ascii=False) +
             "\nSource evidence handles:\n" + json.dumps(task["research"]["artifact_handles"]) +

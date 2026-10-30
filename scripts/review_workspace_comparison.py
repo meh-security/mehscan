@@ -43,8 +43,12 @@ def run_arm(root, arm):
             work_id,ids = work["id"],work["review_ids"]
             work_started = time.time()
             work_deadline = min(arm_deadline,work_started+900)
-            def remaining():
-                value = min(original_remaining(),work_deadline-time.time())
+            def used_calls():
+                state=bridge.workspace.snapshot()
+                return sum(state['sessions'][c['session_id']]['work_id']==work_id for c in state['calls'].values())
+            def remaining(selected_work_id=None):
+                if used_calls()>=6: raise ValueError("matched six-call work allowance reached")
+                value = min(original_remaining(selected_work_id),work_deadline-time.time())
                 if value <= 0:
                     raise ValueError("work/arm deadline reached")
                 return value
@@ -66,6 +70,7 @@ def run_arm(root, arm):
                     session = bridge.prepare(work_id,opts["config"],arm+":"+work_id+":"+str(calls),parent)["session_id"]
                     parent = session
                     def invoke(task):
+                        calls=used_calls()-1
                         pending = bridge.workspace.snapshot()
                         left = min(6-calls,49-len(pending["calls"]))
                         task["research"]["queries_remaining"] = min(task["research"]["queries_remaining"],max(0,24-query_units)) if left>1 else 0
@@ -79,7 +84,7 @@ def run_arm(root, arm):
                             raise ValueError("returned lookups exceed work allowance")
                         return reply
                     result = bridge.review(session,opts["config"],invoke)
-                    calls += 1
+                    calls = used_calls()
                     print(json.dumps({"arm":arm,"work":work_id,"turn":calls,"active":len(bridge.workspace.view(work_id,max_bytes=bridge.metadata["experiment"]["context_max_bytes"])["claims"]),"usage":result["usage"]}),flush=True)
             except Exception as exc:
                 error = {"type":type(exc).__name__}

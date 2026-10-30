@@ -10,6 +10,7 @@ from pathlib import Path
 from review_workspace import identity, label, shape, source, MAX_CONTEXT_BYTES
 
 VERSION = "mehscanDecidingEvidence/experimental-v1"
+REUSE_VERSION = "mehscanDecidingEvidenceReuse/experimental-v1"
 LOCKS = ("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml")
 
 
@@ -74,6 +75,8 @@ def dependency(root, package):
 
 def prepare(workspace, request, operation_key):
     """Caller holds native guard. One atomic action, bounded views, no model updates."""
+    if isinstance(request, dict) and request.get("version") == REUSE_VERSION:
+        return prepare_reuse(workspace, request, operation_key)
     shape(request, ("version", "targets"))
     if request["version"] != VERSION:
         raise ValueError("unsupported deciding evidence request")
@@ -89,7 +92,54 @@ def prepare(workspace, request, operation_key):
     return workspace.apply(operation_key, workspace.snapshot()["revision"], action)
 
 
-def apply(state, workspace, action, operation_key):
+def reuse_targets(state, workspace, targets):
+    if not isinstance(targets, list) or not 1 <= len(targets) <= 16:
+        raise ValueError("expected one to sixteen reuse targets")
+    prepared, origins = [], []
+    for target in targets:
+        shape(target, ("work_id", "question", "source_work_id", "receipt_id"))
+        for key in ("work_id", "question", "source_work_id", "receipt_id"):
+            label(target[key])
+        source_work = target["source_work_id"]
+        record = visible(state, source_work).get(target["receipt_id"])
+        if record is None:
+            raise ValueError("unknown source evidence receipt")
+        workspace._evidence(state, record["evidence_ids"])
+        windows = [{k:state["evidence"][eid][k] for k in
+                    ("path", "start_line", "end_line", "file_sha256")}
+                   for eid in record["evidence_ids"]]
+        packages = [state["dependency_observations"][key]["package"] for key in record["dependency_ids"]]
+        prepared.append({"work_id":target["work_id"], "question":target["question"],
+                         "windows":windows, "packages":packages})
+        origins.append({"work_id":source_work, "receipt_id":target["receipt_id"]})
+    return prepared, origins
+
+
+def prepare_reuse(workspace, request, operation_key):
+    """Reuse a specific inspected receipt; retain recipient questions and source checks."""
+    shape(request, ("version", "targets"))
+    if request["version"] != REUSE_VERSION:
+        raise ValueError("unsupported deciding evidence reuse request")
+    action = {"kind":"reuse_evidence", "targets":request["targets"]}
+    # Replays must check both original support and recipient observations for drift.
+    reuse_targets(workspace.snapshot(), workspace, request["targets"])
+    previous = workspace.operation(operation_key)
+    if previous:
+        if previous["request"]["action"] != action:
+            raise ValueError("evidence reuse retry changed")
+        for target in request["targets"]:
+            workspace.view(target["work_id"], MAX_CONTEXT_BYTES)
+        return workspace.apply(operation_key, previous["request"]["revision"], action)
+    return workspace.apply(operation_key, workspace.snapshot()["revision"], action)
+
+
+def apply_reuse(state, workspace, action, operation_key):
+    shape(action, ("kind", "targets"))
+    targets, origins = reuse_targets(state, workspace, action["targets"])
+    return apply(state, workspace, {"kind":"prepare_evidence", "targets":targets}, operation_key, origins)
+
+
+def apply(state, workspace, action, operation_key, origins=None):
     shape(action, ("kind", "targets"))
     targets = action["targets"]
     if not isinstance(targets, list) or not 1 <= len(targets) <= 16:
@@ -99,7 +149,7 @@ def apply(state, workspace, action, operation_key):
     shared = state.setdefault("dependency_observations", {})
     observed = {}
     created = []
-    for target in targets:
+    for index, target in enumerate(targets):
         shape(target, ("work_id", "question", "windows", "packages"))
         wid = target["work_id"]
         work = state["work"][wid]
@@ -134,6 +184,8 @@ def apply(state, workspace, action, operation_key):
                   "dependency_ids":observations,
                   "authority":"Controller observations and source only; question remains open. "
                               "Establish caller applicability and check-to-effect relationship separately."}
+        if origins is not None:
+            record["reused_from"] = origins[index]
         key = identity(record)
         bucket = records.setdefault(wid, {})
         if len(bucket) >= 8 and key not in bucket:

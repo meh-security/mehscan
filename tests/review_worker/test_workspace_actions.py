@@ -70,6 +70,41 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertEqual(self.calls[0]["prompt"].count(sources[0]["text"]),1)
         self.assertNotIn("Operator commands",sources[0]["text"])
 
+    def test_invalid_auxiliary_handle_gets_one_same_context_correction(self):
+        self.fixture.config['schema_mode']='stable'
+        self.fixture.config_path.write_text(json.dumps(self.fixture.config))
+        session=self.bridge.prepare('initial',self.fixture.config_path,'correct-proof')['session_id']
+        thread=str(uuid.uuid4());turns=[]
+        outer=self
+        def invoke(task):
+            packet=fixtures.read(task['evidence_packet'])
+            class Fake:
+                def review(self,prompt,schema,thread_id=None,timeout=600):
+                    turns.append({'thread':thread_id,'task':json.loads(json.dumps(task)),'prompt':prompt})
+                    proof=outer.handle(task,packet,'app.js') if task['research']['round'] else 'invented'
+                    claim=packet['native_questions'][0]
+                    response={'updates':[{'kind':'proposition','proposition_id':'eval-contract',
+                        'statement':'The selected evaluator interprets its argument.','scope':'Only the shown evaluator.',
+                        'conditions':'Input reaches this call.','exclusions':'Caller exposure not established.',
+                        'evidence':[proof]}],'lookups':[],'decisions':[outer.decision(claim)]}
+                    events=[{'type':'thread.started','thread_id':thread},{'type':'turn.completed','usage':{
+                        'input_tokens':100*len(turns),'cached_input_tokens':20*len(turns),'output_tokens':20*len(turns)}}]
+                    return response,'\n'.join(json.dumps(e) for e in events),''
+            try:return codex_reviewer.run(outer.fixture.config,task,lambda c,s:Fake())
+            except ValueError as error:raise fixtures.CommandFailure(2,'fixture adapter rejection') from error
+        self.bridge.review(session,self.fixture.config_path,invoke)
+        self.assertEqual([t['thread'] for t in turns],[None,thread])
+        self.assertEqual([t['task']['research']['round'] for t in turns],[0,1])
+        self.assertLessEqual(turns[1]['task']['research']['seconds_remaining'],turns[0]['task']['research']['seconds_remaining'])
+        usage=self.bridge.workspace.usage()
+        self.assertEqual(usage['calls'],2)
+        self.assertEqual(usage['totals']['input_tokens'],200)
+        self.assertEqual(usage['unobserved_calls'],0)
+        state=self.bridge.workspace.snapshot()
+        self.assertEqual(sum(c['draft'] is not None for c in state['claims'].values()),1)
+        self.assertEqual(state['used']['queries'],0)
+        self.assertTrue(state['propositions']['eval-contract'][-1]['evidence'])
+
     def test_native_relationship_facts_and_open_leads_reach_actual_provider_packet(self):
         expected = {}
         contracts = {}

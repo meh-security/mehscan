@@ -122,6 +122,21 @@ class NativeBridgeTests(unittest.TestCase):
             return codex_reviewer.run(config,task,lambda c,s:Fake())
         return invoke
 
+    def test_stable_adapter_reply_reaches_native_source_finalization(self):
+        self.config["schema_mode"] = "stable"
+        self.config_path.write_text(json.dumps(self.config))
+        bridge = self.create()
+        session = bridge.prepare("initial", self.config_path, "stable-context")["session_id"]
+        calls = []
+        bridge.review(session, self.config_path, self.provider(calls))
+        self.assertEqual(len(calls), 1)
+        bundle_id = next(iter(bridge.metadata["bundles"]))
+        finalized = bridge.finalize(bundle_id)
+        self.assertTrue(finalized["native_validated"])
+        self.assertFalse(finalized["native_admission"])
+        self.assertEqual(len(read(finalized["response"])["results"]), 2)
+        self.assertEqual(bridge.workspace.usage()["totals"]["input_tokens"], 100)
+
     def test_native_bootstrap_fresh_context_reuse_and_complete_original_bundle_finalization(self):
         bridge = self.create()
         state = bridge.workspace.snapshot()
@@ -259,6 +274,61 @@ class NativeBridgeTests(unittest.TestCase):
             bridge.review(session,self.config_path,self.provider([],invalid=True))
         self.assertEqual(bridge.workspace.usage()["totals"]["input_tokens"],100)
         self.assertTrue(all(c["draft"] is None for c in bridge.workspace.snapshot()["claims"].values()))
+
+    def test_completed_subset_validates_while_missing_sibling_and_usage_stay_explicit(self):
+        bridge=self.create()
+        ids=list(bridge.workspace.snapshot()['claims'])
+        bridge.apply('split',{'kind':'split','work_id':'initial','new_work_id':'pending',
+                             'review_ids':ids[1:],'strategy':'caller'})
+        session=bridge.prepare('initial',self.config_path,'ready')['session_id']
+        bridge.review(session,self.config_path,self.provider([]))
+        pending=bridge.prepare('pending',self.config_path,'pending-context')['session_id']
+        def failed(task):raise RuntimeError('unobserved test provider')
+        with self.assertRaises(RuntimeError):bridge.review(pending,self.config_path,failed)
+        before=bridge.workspace.snapshot()
+        bundle_id=next(iter(bridge.metadata['bundles']))
+        with self.assertRaisesRegex(ValueError,'incomplete'):bridge.finalize(bundle_id)
+        import review_workspace_bridge as module
+        write=module.worker.write
+        def interrupted_export(path,value):
+            if Path(path).name=='validated.json':raise RuntimeError('interrupted after source export')
+            return write(path,value)
+        with patch.object(module.worker,'write',side_effect=interrupted_export):
+            with self.assertRaisesRegex(RuntimeError,'after source export'):bridge.export_completed()
+        self.assertEqual(before,bridge.workspace.snapshot())
+        self.assertTrue(list((bridge.directory/'partial-finalizations').glob('*/findings.json')))
+        self.assertFalse(list((bridge.directory/'partial-finalizations').glob('*/validated.json')))
+        result=bridge.export_completed()
+        self.assertEqual(result['status'],'partial')
+        self.assertEqual(result['completed_review_ids'],ids[:1])
+        self.assertEqual(set(result['incomplete_review_ids']),set(ids[1:]))
+        self.assertTrue(result['native_validated'])
+        self.assertFalse(result['native_admission'])
+        records=read(result['findings'])['decision_records']
+        self.assertEqual([r['response']['review_id'] for r in records],ids[:1])
+        self.assertEqual(before,bridge.workspace.snapshot())
+        self.assertEqual(bridge.workspace.usage()['unobserved_calls'],1)
+        self.assertEqual(result,bridge.export_completed())
+        status=self.native('state','status','--store',str(self.store),'--stream','pilot',
+                           '--repository-key','evaluation:workspace-bridge')
+        self.assertEqual({s['state'] for s in status['subjects']},{'unassessed'})
+
+    def test_replacement_context_cannot_reset_work_item_deadline(self):
+        import review_workspace_bridge as module
+        bridge=self.create()
+        first=bridge.prepare('initial',self.config_path,'first')['session_id']
+        starts=bridge.workspace.snapshot()['sessions'][first]['prepared_epoch_ms']/1000
+        with patch.object(module.time,'time',return_value=starts+bridge.runtime['limits']['timeout_seconds']+1):
+            bridge.prepare('initial',self.config_path,'replacement',first)
+            with self.assertRaisesRegex(ValueError,'absolute deadline'):
+                bridge._remaining_seconds('initial')
+            ids=list(bridge.workspace.snapshot()['claims'])
+            bridge.apply('split-after-expiry',{'kind':'split','work_id':'initial','new_work_id':'child',
+                                              'review_ids':ids[:1],'strategy':'caller'})
+            bridge.prepare('child',self.config_path,'child-context')
+            with self.assertRaisesRegex(ValueError,'absolute deadline'):
+                bridge._remaining_seconds('child')
+        self.assertEqual(bridge.workspace.usage()['calls'],0)
 
     def test_preparation_retry_recovers_partial_artifacts_and_replays_without_new_sessions(self):
         bridge = self.create()

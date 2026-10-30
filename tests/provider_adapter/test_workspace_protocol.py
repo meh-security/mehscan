@@ -14,6 +14,35 @@ import workspace_protocol as workspace
 
 
 class WorkspaceProtocolTests(unittest.TestCase):
+    def test_stable_workspace_rejects_unavailable_alias_after_receipting(self):
+        self.fixture.config["schema_mode"] = "stable"
+        response = {"updates":[{"kind":"proposition","proposition_id":"helper",
+            "statement":"Fixture", "scope":"Fixture", "conditions":"Fixture", "exclusions":"Fixture",
+            "evidence":["source999"]}], "lookups":[], "decisions":[]}
+        with self.assertRaisesRegex(ValueError, "current-turn schema"):
+            self.run_reply(response)
+        rows = [json.loads(l) for l in (self.fixture.public / "provider-metrics.jsonl").read_text().splitlines()]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["usage"]["input_tokens"], 100)
+
+    def test_unbound_evidence_uses_source_alias_format_and_local_schema_keeps_membership(self):
+        import re
+        task = self.fixture.task
+        unbound = workspace.schema(task, bound_handles=False)
+        bound = workspace.schema(task)
+        variants = unbound["properties"]["updates"]["items"]["anyOf"]
+        evidence = [v["properties"]["evidence"] for v in variants if "evidence" in v["properties"]]
+        self.assertEqual(len(evidence), 4)
+        for item in evidence:
+            pattern = item["items"]["pattern"]
+            self.assertIsNotNone(re.fullmatch(pattern, "source1"))
+            self.assertIsNotNone(re.fullmatch(pattern, "source999"))
+            for invalid in ("source0", "source01", "navigation:0", "source1\n"):
+                self.assertIsNone(re.fullmatch(pattern, invalid))
+        local = bound["properties"]["updates"]["items"]["anyOf"][0]["properties"]["evidence"]["items"]
+        self.assertEqual(local["enum"], ["source1"])
+        self.assertNotIn("source999", local["enum"])
+
     def test_workspace_issue_schema_inherits_native_cwe_constraints(self):
         schema=workspace.schema(self.fixture.task)
         issue=schema["properties"]["decisions"]["items"]["anyOf"][0]
@@ -54,6 +83,8 @@ class WorkspaceProtocolTests(unittest.TestCase):
                     "lookups":[],"decisions":[]}
         self.assertEqual(self.run_reply(response),{"workspace_actions":response})
         prompt,thread,schema = self.fixture.calls[0]
+        self.assertTrue(prompt.startswith(workspace.ordinary.REVIEW_SCOPE))
+        self.assertEqual(prompt.count(workspace.ordinary.REVIEW_SCOPE), 1)
         self.assertIsNone(thread)
         self.assertEqual(set(schema["properties"]),{"updates","lookups","decisions"})
         self.assertNotIn("working_chain",schema["properties"])

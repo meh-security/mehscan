@@ -34,6 +34,55 @@ class ProviderFailure(CommandFailure):
     """A failed provider subprocess, distinct from source/native validation."""
 
 
+class ReplyValidationFailure(CommandFailure):
+    """A receipted reply rejected by exact current-turn local validation."""
+
+
+def observed_turn(directory, turn, provider):
+    """Read one exact paid turn, without guessing missing/invalid usage."""
+    name = "provider-metrics-" + turn["conversation_id"] + ".jsonl"
+    path = Path(directory) / name
+    if not path.is_file() or path.stat().st_size > 8 * 1024 * 1024:
+        return None
+    rows = [row for row in (json.loads(s) for s in path.read_text(encoding="utf-8").splitlines())
+            if row.get("conversation_id") == turn["conversation_id"] and row.get("round") == turn["round"]]
+    if len(rows) != 1 or rows[0].get("provider") != provider:
+        return None
+    usage = rows[0].get("usage", {})
+    if set(rows[0].get("unknown_delta_counters",[])).intersection(("input_tokens","cached_input_tokens","output_tokens")):
+        return None
+    if any(type(usage.get(k)) is not int or usage[k] < 0 for k in ("input_tokens","cached_input_tokens","output_tokens")):
+        return None
+    return rows[0] if usage["cached_input_tokens"] <= usage["input_tokens"] else None
+
+
+def reply_validation_feedback(error, task):
+    """Only a typed, exact-task local rejection permits a bounded correction."""
+    path = Path(task["provider_metrics"]).with_name(
+        "reply-validation-" + task["conversation_id"] + "-" + str(task["research"]["round"]) + ".json")
+    if error.returncode != 2 or not path.is_file() or path.stat().st_size > 128 * 1024:
+        return None
+    diagnostic = read(path)
+    expected = {"schema_version":"1", "kind":"local_response_validation", "conversation_id":task["conversation_id"],
+        "round":task["research"]["round"], "task_sha256":context.digest(task),
+        "artifact_handles":list(task["research"]["artifact_handles"]),
+        "source_artifact_handles":task["research"].get("source_artifact_handles", [])}
+    if (set(diagnostic) != set(expected) | {"error_paths","repairable_proof_references"}
+            or diagnostic.get("repairable_proof_references") is not True
+            or any(diagnostic.get(k) != v for k,v in expected.items())):
+        return None
+    paths = diagnostic["error_paths"]
+    if (not isinstance(paths,list) or not 1 <= len(paths) <= 20 or any(not isinstance(p,list) or len(p)>32
+            or any(not (type(v) is int and v>=0 or isinstance(v,str) and len(v)<=200) for v in p) for p in paths)):
+        return None
+    return {"kind":"local_response_validation", "error_paths":paths,
+        "source_artifact_handles":expected["source_artifact_handles"],
+        "instruction":"The previous reply was rejected, not admitted. Correct only the reported response format/proof references. "
+            "Use the current offered handles; source-only proof requires the inspected source handles. "
+            "Do not replace, strip or fabricate evidence or change a verdict to pass validation. "
+            "Retain honest uncertainty. This correction uses the original remaining allowance."}
+
+
 class ResearchFilterError(ValueError):
     """A validated in-root query uses the wrong file/directory filter kind.
 
@@ -147,6 +196,29 @@ def finalization_draft(response):
     return result
 
 
+def save_partial_results(output, package):
+    """Index already finalized bundles; missing work never gets a verdict."""
+    output = Path(output)
+    expected = set(package["payload"]["review_ids"])
+    completed, artifacts = set(), []
+    for path in sorted((output / "responses").glob("*.json")):
+        response = read(path)
+        ids = {row["review_id"] for row in response["results"]}
+        if (len(ids)!=len(response["results"]) or not ids<=expected or ids&completed
+                or "bundle_fingerprint" not in response):
+            raise ValueError("saved partial response has invalid or overlapping membership")
+        completed.update(ids)
+        artifacts.append({"path":str(path.relative_to(output)),"sha256":digest_file(path),
+                          "review_ids":sorted(ids),"bundle_fingerprint":response["bundle_fingerprint"]})
+    result = {"schema_version":"1", "status":"partial_saved_results", "package_id":package["package_id"],
+        "snapshot_id":package["payload"]["snapshot_id"], "completed_review_ids":sorted(completed),
+        "incomplete_review_ids":sorted(expected-completed),"responses":artifacts,"native_admission":False,
+        "authority":"Previously finalized artifacts for this bound attempt. Current source/ownership and admission "
+            "are not established by this partial index. Incomplete IDs have no verdict; normal validation is still required."}
+    write(output / "partial-results.json", result)
+    return result
+
+
 def write(path, value):
     write_text(path, json.dumps(value, indent=2) + "\n")
 
@@ -184,6 +256,12 @@ def consolidate_metrics(directory, inherited=None):
                 if identity in rows and rows[identity] != row:
                     raise ValueError("conflicting provider counters for one conversation turn")
                 rows[identity] = row
+        for path in sorted((parent / "jobs").glob("*.json")):
+            for row in read(path).get("reconciled_provider_metrics",[]):
+                key = (row["conversation_id"],row["round"])
+                if key in rows and rows[key] != row:
+                    raise ValueError("conflicting reconciled provider counters")
+                rows[key] = row
     if rows:
         write_text(directory / "provider-metrics.jsonl", "".join(json.dumps(row) + "\n" for row in rows.values()))
     return list(rows.values())
@@ -280,7 +358,7 @@ class EvidenceBroker:
 
 class JobCheckpoint:
     """Recover drafts and conserve conversation budgets, never admit verdicts."""
-    def __init__(self, path, binding, previous=None):
+    def __init__(self, path, binding, previous=None, timeout=None, provider=None):
         self.path = path
         self.state = read(previous) if previous and previous.is_file() else {
             "binding": binding, "calls": 0, "queries": 0, "bytes": 0,
@@ -292,9 +370,37 @@ class JobCheckpoint:
             self.state["elapsed_seconds"] += max(0, time.time() - self.state["active_since"])
             if self.state.get("model_inflight"):
                 self.state["unknown_provider_calls"] += 1
+                if self.state.get("active_turn"):
+                    self.state.setdefault("unobserved_turns", []).append({**self.state["active_turn"],
+                        "metrics_directory":str(previous.parent.parent.resolve())})
+        if previous:
+            unresolved = []
+            for turn in self.state.get("unobserved_turns", []):
+                if (not isinstance(turn,dict) or set(turn) not in ({"conversation_id","round"},{"conversation_id","round","metrics_directory"})
+                        or not re.fullmatch(r"[0-9a-f]{64}",turn["conversation_id"])
+                        or type(turn["round"]) is not int or not 0<=turn["round"]<=10):
+                    raise ValueError("invalid unobserved provider-turn checkpoint")
+                origin = Path(turn.get("metrics_directory",previous.parent.parent))
+                if not origin.is_absolute():
+                    raise ValueError("unobserved metrics origin must be absolute")
+                receipt = observed_turn(origin, turn, provider)
+                if receipt is None:
+                    unresolved.append({**turn,"metrics_directory":str(origin)})
+                else:
+                    self.state["unknown_provider_calls"] -= 1
+                    self.state.setdefault("reconciled_provider_turns", []).append(turn)
+                    self.state.setdefault("reconciled_provider_metrics", []).append(receipt)
+            if self.state["unknown_provider_calls"] < 0:
+                raise ValueError("provider reconciliation exceeds unknown attempts")
+            self.state["unobserved_turns"] = unresolved
         self.prior_elapsed = self.state["elapsed_seconds"]
         self.started = time.monotonic()
-        self.state.update(active_since=None, model_inflight=False)
+        self.state.update(active_since=None, model_inflight=False, active_turn=None)
+        self.deadline = None
+        if timeout is not None:
+            remaining = max(0, timeout - self.prior_elapsed)
+            self.state.setdefault("deadline_epoch", time.time() + remaining)
+            self.deadline = self.started + min(remaining, max(0, self.state["deadline_epoch"]-time.time()))
         if self.state["status"] == "drafted":
             if context.digest(self.state["draft"]) != self.state["draft_digest"]:
                 raise ValueError("recovery draft changed")
@@ -313,8 +419,11 @@ class JobCheckpoint:
 
     def fail(self, error):
         unknown = self.state["unknown_provider_calls"] + int(self.state.get("model_inflight", False))
+        if self.state.get("model_inflight") and self.state.get("active_turn"):
+            self.state.setdefault("unobserved_turns", []).append({**self.state["active_turn"],
+                "metrics_directory":str(self.path.parent.parent.resolve())})
         self.save(status="incomplete", reason=type(error).__name__, active_since=None,
-                  model_inflight=False, unknown_provider_calls=unknown)
+                  model_inflight=False, active_turn=None, unknown_provider_calls=unknown)
 
 
 def copy_review_files(source, destination):
@@ -813,11 +922,11 @@ def run_locked(args):
                    "assessment_cycle":task.get("assessment_cycle"),
                    "bundle_sha256": digest_file(task["bundle"]) if task.get("bundle") else None}
         return JobCheckpoint(output / "jobs" / (identity + ".json"), binding,
-                             recovery / "jobs" / (identity + ".json") if recovery else None)
+                             recovery / "jobs" / (identity + ".json") if recovery else None,
+                             timeout=args.timeout, provider=tiered_policy["expert"] if task.get("profile")=="expert" else bound_runtime.get("provider"))
 
     def execute_job(task, job):
         started = time.monotonic()
-        job.started = started
         reused = job.state["status"] == "drafted"
         execution_trace.emit("job_started", job_id=job.path.stem, review_ids=task.get("review_ids", []),
             profile=task.get("profile", "routine"), role=task.get("review_role", "investigator"),
@@ -825,23 +934,7 @@ def run_locked(args):
         try:
             if shared_budget and not reused:
                 shared_budget.begin_case(case_identity(task))
-            while True:
-                try:
-                    draft = reviewer(task, job)
-                    break
-                except ProviderFailure as error:
-                    job.fail(error)
-                    # One fresh provider conversation, using only the original
-                    # remaining budget. Never retry native/source failures or
-                    # invent another turn after the final allowed call.
-                    if (tiered_policy or job.state.get("provider_retries", 0) >= 1
-                            or job.state["calls"] >= args.research_rounds + 1
-                            or job.state["elapsed_seconds"] >= args.timeout
-                            or _cancelled):
-                        raise
-                    job.save(provider_retries=1)
-                    job.prior_elapsed = job.state["elapsed_seconds"]
-                    job.started = time.monotonic()
+            draft = reviewer(task, job)
             with shared_lock:
                 record["jobs"][job.path.stem] = {"review_ids": task.get("review_ids", []), "kind": task["kind"],
                     "status": "drafted", "recovered_draft": reused,
@@ -878,6 +971,8 @@ def run_locked(args):
     def reviewer(task, job):
         if job.state["status"] == "drafted":
             return job.state["draft"]
+        if job.state.get("unknown_provider_calls"):
+            raise ValueError("previous provider usage is unknown; reconcile before another call")
         if "candidate_draft" in job.state:
             # Validate retained candidates before recovery marks them complete.
             # A rejected candidate may use only an original remaining turn.
@@ -896,7 +991,7 @@ def run_locked(args):
                 job.save(citation_feedback=finalization_correction(message, draft))
             else:
                 return job.complete(draft)
-        deadline = time.monotonic() + max(0, args.timeout - job.prior_elapsed)
+        deadline = job.deadline
         results = list(job.state["results"])
         byte_count, query_count = job.state["bytes"], job.state["queries"]
         job_facts = list({entry["result_id"]: {
@@ -1104,21 +1199,30 @@ def run_locked(args):
                 round=round_index, calls_remaining=calls_left-round_index, queries_remaining=frame["research"]["queries_remaining"])
             if shared_budget:
                 shared_budget.reserve(case_id, "model_calls", 1)
-            job.save(status="running", calls=job.state["calls"] + 1, model_inflight=True, active_since=time.time())
+            job.save(status="running", calls=job.state["calls"] + 1, model_inflight=True, active_since=time.time(),
+                     active_turn={"conversation_id":conversation_id,"round":round_index})
             succeeded = False
             try:
                 value = execute(worker_command, output, dict(os.environ), remaining(), json.dumps(frame))
                 succeeded = True
             except CommandFailure as error:
-                metrics_path = Path(frame["provider_metrics"])
-                if metrics_path.is_file() and metrics_path.stat().st_size <= 8 * 1024 * 1024:
-                    receipts = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines()]
-                    if any(row.get("conversation_id") == conversation_id and row.get("round") == round_index for row in receipts):
-                        # The provider completed and recorded usage, but its
-                        # adapter rejected the reply. This is not an unseen
-                        # interrupted call or an automatic infrastructure retry.
-                        job.save(model_inflight=False, active_since=time.time())
-                        raise
+                provider = tiered_policy["expert"] if profile=="expert" else bound_runtime.get("provider")
+                if observed_turn(output, job.state["active_turn"], provider) is not None:
+                    job.save(model_inflight=False, active_turn=None, active_since=time.time())
+                    correction = reply_validation_feedback(error, frame)
+                    if (correction is not None and not job.state.get("reply_validation_corrections")
+                            and round_index + 1 < calls_left and deadline > time.monotonic()):
+                        job.save(reply_validation_corrections=1)
+                        feedback = correction
+                        with shared_lock:
+                            record["reply_validation_corrections"] = record.get("reply_validation_corrections", 0) + 1
+                        execution_trace.emit("reply_validation_rejected", job_id=job.path.stem,
+                            conversation_id=conversation_id, round=round_index, feedback=correction)
+                        continue
+                    if correction is not None:
+                        raise ReplyValidationFailure(error.returncode, "local reply validation failed; no correction allowance remains") from error
+                    # Receipted but untyped failures are not automatically retried.
+                    raise
                 raise ProviderFailure(error.returncode, error.stderr) from error
             finally:
                 with shared_lock:
@@ -1126,7 +1230,7 @@ def run_locked(args):
                         "job_id": job.path.stem, "profile":profile, "role":role,
                         "provider":tiered_policy["expert"] if profile == "expert" else bound_runtime.get("provider"),
                         "succeeded":succeeded, "elapsed_ms": round((time.monotonic() - started) * 1000)})
-            job.save(model_inflight=False, active_since=time.time())
+            job.save(model_inflight=False, active_turn=None, active_since=time.time())
             check_fresh()
             received_response = json.loads(json.dumps(value))
             execution_trace.emit("reviewer_response", job_id=job.path.stem, conversation_id=conversation_id,
@@ -2006,7 +2110,7 @@ def run_locked(args):
     # Per-conversation append files have no concurrent writers. Consolidate
     # only after workers stop, retaining prior-attempt actual counters.
     try:
-        metrics = consolidate_metrics(output)
+        metrics = consolidate_metrics(output, recovery)
         record["provider_usage"] = provider_usage(metrics)
         record["cache_write_usage_complete"] = bool(metrics) and all(
             "cache_write_tokens" not in row["unknown_counters"] for row in record["provider_usage"])
@@ -2017,6 +2121,13 @@ def run_locked(args):
                     for row in record["provider_usage"]))
     except (OSError, ValueError, KeyError, TypeError) as error:
         record.update(status="incomplete", usage_error=type(error).__name__)
+    if record["status"] not in ("admitted", "source_validated") and "package" in locals():
+        try:
+            partial = save_partial_results(output, package)
+            record["partial_results"] = {"path":"partial-results.json", "native_admission":False,
+                "completed":len(partial["completed_review_ids"]),"incomplete":len(partial["incomplete_review_ids"])}
+        except (OSError,ValueError,KeyError,TypeError) as error:
+            record["partial_export_error"] = type(error).__name__
     write(output / "worker.json", record)
     execution_trace.emit("attempt_completed", status=record["status"], elapsed_ms=record["elapsed_ms"])
     return record

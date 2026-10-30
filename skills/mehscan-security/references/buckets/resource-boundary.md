@@ -13,6 +13,16 @@ Check the complete expression: quoted fragments do not make an operand fixed.
 Concatenation and conditional/logical operators can select a different path or
 destination even when a literal prefix is visible.
 
+For a root-scoped file API, establish the promised root and supported path
+semantics, then follow resolution into the selected read/write effect. A prefix
+check that permits a sibling path can violate that local containment guarantee
+under stated root, platform, access and existence conditions. A conditional local
+finding does not also need an HTTP entrypoint or deployed attacker. A claim of
+untrusted application access does need the relevant caller/input binding. Keep
+these questions distinct; do not continue caller discovery solely to re-prove
+an established local defect. An API intentionally accepting arbitrary paths, or
+a fixed/constrained selected operand, does not inherit the same violation.
+
 Establish where the request executes before calling an outbound request
 SSRF. A browser or desktop client fetch is not a server-side request merely
 because it uses an HTTP client; identify any separate privileged network

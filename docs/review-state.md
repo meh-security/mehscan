@@ -197,9 +197,12 @@ protocol and the trusted skill-package digest. Optional research-round/query/
 byte/timeout overrides are resolved in the template, not silently in the worker.
 `state runtime-template --skill-root DIR --policy value` exports the same
 contract separately. Value defaults to 2 rounds/8 queries/128 KiB/300 seconds;
-Comprehensive to 3/12/256 KiB/600 seconds per conversation. Templates still select
-all admitted IDs; Value selection/defer decisions must be explicit and native-
-validated. No model-based ranking or hidden deferral is introduced here.
+Comprehensive to 3/12/256 KiB/600 seconds per conversation. Templates retain the
+compatible all-ID default. Add `--selection policy` to apply native initial
+priority hints: Value moves hinted IDs into explicit `deferred_review_ids` with
+their reason/dependency; Comprehensive keeps every admitted ID. The advisory
+Action requests this selection explicitly. Deferral is unreviewed work, not a
+negative verdict. No model-based ranking or hidden exclusion is introduced.
 
 Contract changes produce a new plan/work ID. Exact old handoffs are rejected;
 new engine bytes require a newly bound plan. Runtime-bound `state record` requires

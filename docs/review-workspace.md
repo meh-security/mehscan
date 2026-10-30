@@ -11,6 +11,41 @@ drafts, work splitting, bounded context views, explicit session replacement, cal
 reservations and usage records. It uses Python's standard-library SQLite support;
 no additional dependency is required.
 
+The native-bound bridge now supports `export-completed` with its ordinary bound
+source/inventory/store/work-package arguments. It validates ready saved judgments
+in a new native subset run, emits a review package and report, and explicitly
+lists unfinished IDs from the original scope. It does not fill them with old or
+invented verdicts, mark the original bundle complete, or admit native decisions.
+Honest `needs_review` judgments remain exportable with their outstanding questions.
+Unknown provider usage does not prevent this source-checked export. Changed source,
+invalid evidence or stale interpretation dependencies still reject it.
+
+The bridge preserves one work-item deadline from first context preparation through
+replacement contexts, local corrections and descendant splits. A typed auxiliary
+proof-reference rejection can consume one remaining turn in that same provider
+thread; it cannot change the review's decisions or reasoning, remove references,
+reset budgets or bypass exact source validation. Ordinary investigation contexts
+remain fresh. Other errors stop the affected dispatch, retaining exact private
+replies, observed usage and explicit unknown receipts.
+
+For newly recorded stable-schema replies rejected solely for auxiliary proof
+references, `export-candidates --session-id <id> --config <config.json>` uses the
+same bound source/inventory/store/work-package arguments. It verifies the exact
+private reply and dispatched task against the recorded rejection, context and
+observed usage. It checks that decision citations were supplied, then runs the
+ordinary native source finalizer in a separate subset run. No inference occurs;
+an exhausted call allowance or deadline does not prevent this offline preview.
+
+The output is `candidate_only`: `model-decisions.json` preserves the decisions,
+`candidate-report.json` contains native validation, and `preview.json`/`preview.md`
+identify the separate semantic review requirement. Failed auxiliary actions,
+open questions, drafts, usage, budgets and native admission remain unchanged.
+Only the latest dispatched turn is eligible; optional `--candidate-round 0|1`
+must name that turn. Changed source/context/reply/receipts, unseen citations,
+unobserved usage and unrelated failures reject the export. Historical sessions
+without the newly recorded task/reply binding cannot be upgraded in place.
+See the [implementation and exact-reply replay](experiments/review-candidate-preview-results-2026-10-30.md).
+
 For concrete claims, CLI output and stopping decisions, start with the
 [worked examples](review-worked-examples.md): native SQL, separate safe/unsafe/
 external-policy outcomes, scoped ownership with a payment lead, and inherited

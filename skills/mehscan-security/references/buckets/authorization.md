@@ -32,6 +32,17 @@ question before closing it. When permission metadata is present, locate the
 code that consumes it and establish that enforcement applies to this route;
 neither the annotation nor its apparent missing local guard proves the verdict.
 
+A missing more granular check is not itself a bypass. Establish which principal
+can reach which prohibited effect under the effective permission composition.
+A global grant may cover the selected objects; trace how applicable own-resource,
+type and explicit-denial handlers combine with it. Do not assume a null-resource
+check grants less authority or that a later handler revokes an earlier grant.
+Comments about optional custom policy are leads, not evidence of an active denial.
+A shown check-to-effect identity mismatch can support a conditional finding
+under source-supported permission conditions without a deployed account. If the
+effective policy is still unknown, preserve that question rather than promoting
+a bypass or declaring the whole endpoint safe.
+
 1. Resolve the exact method/path, action or resolver. For generated CRUD,
    separate the supported collection and item operations; do not transfer a
    guard from a sibling route.

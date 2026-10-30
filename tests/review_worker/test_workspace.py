@@ -45,6 +45,34 @@ class WorkspaceTests(unittest.TestCase):
     def capture(self, first=1, last=1, claim="safe"):
         return self.apply("source", path="routes.ts", start_line=first, end_line=last, review_id=claim)["evidence_id"]
 
+    def test_controller_question_rejects_native_incompatible_text_before_state_change(self):
+        before = self.workspace.snapshot()
+        values = ["x" * 301, "Which owner?\nWhich effect?", "Which\x85owner?"]
+        for question in values:
+            with self.subTest(question=repr(question)):
+                with self.assertRaisesRegex(ValueError, "at most 300"):
+                    self.apply("question", question_id="scope", review_ids=["safe"], question=question)
+                self.assertEqual(self.workspace.snapshot(), before)
+        question = "\u00e9" * 300
+        self.apply("question", question_id="scope", review_ids=["safe"], question=question)
+        result = actions.native_decision({"review_id":"safe", "decision":"needs_review"}, self.workspace.snapshot())
+        self.assertEqual(result["checks"], [question])
+        self.assertEqual(self.workspace.snapshot()["used"], before["used"])
+
+    def test_controller_answer_rejects_native_incompatible_blocker_before_state_change(self):
+        self.apply("question", question_id="scope", review_ids=["safe"], question="Which owner reaches the write?")
+        before = self.workspace.snapshot()
+        for reason in ("x" * 701, "Missing owner\nMissing effect", "Missing\x7fowner"):
+            with self.subTest(reason=repr(reason)):
+                with self.assertRaisesRegex(ValueError, "at most 700"):
+                    self.apply("answer", question_id="scope", status="blocked", reason=reason, evidence=[])
+                self.assertEqual(self.workspace.snapshot(), before)
+        reason = "\u00e9" * 700
+        self.apply("answer", question_id="scope", status="blocked", reason=reason, evidence=[])
+        result = actions.native_decision({"review_id":"safe", "decision":"needs_review"}, self.workspace.snapshot())
+        self.assertEqual(result["blockers"], [reason])
+        self.assertEqual(self.workspace.snapshot()["used"], before["used"])
+
     def proposition(self, evidence, statement="The helper binds body.UserId to the authenticated subject."):
         return self.apply("proposition", proposition_id="body-owner", statement=statement, scope="bind in routes.ts",
                           conditions="Middleware runs before effect", exclusions="Route parameters are not constrained",

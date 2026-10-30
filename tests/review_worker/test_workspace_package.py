@@ -130,6 +130,23 @@ class ReviewPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'distinct known'):
             self.workspace.review_package(['bundle-1','bundle-1'])
 
+    def test_completed_projection_keeps_ready_sibling_and_actionable_uncertainty(self):
+        self.f.apply('draft',result=self.result('safe'),applicability=[])
+        self.f.apply('draft',result=self.result('unsafe','needs_review'),applicability=[])
+        before=self.workspace.snapshot()
+        package=self.workspace.completed_review_package()
+        self.assertEqual(package['status'],'partial')
+        self.assertEqual(package['original_selection_count'],3)
+        self.assertEqual({c['review_id'] for c in package['claims']},{'safe','unsafe'})
+        self.assertEqual(set(package['incomplete_review_ids']),{'unknown'})
+        self.assertEqual(next(c['result'] for c in package['claims'] if c['review_id']=='unsafe'),self.result('unsafe','needs_review'))
+        self.assertEqual(before,self.workspace.snapshot())
+        with self.assertRaisesRegex(ValueError,'incomplete'):
+            self.workspace.review_package()
+        (self.f.root/'routes.ts').write_text('changed source\n')
+        with self.assertRaisesRegex(ValueError,'source changed'):
+            self.workspace.completed_review_package()
+
     def test_cli_and_markdown_keep_literal_notes_and_share_one_source_catalog(self):
         text='Literal ``` fence and <script>untrusted()</script>'
         self.f.proposition(self.evidence,statement=text)
@@ -151,7 +168,8 @@ class ReviewPackageTests(unittest.TestCase):
         self.f.proposition(self.evidence,statement='Shared helper interpretation with its exact qualifications.')
         aid=self.f.applicability('safe',self.evidence)
         question='Does the configured external policy accept these callers?'
-        reason='Missing configured policy; do not infer a safe default. ' * 15
+        # Retain a long shared record within the native blocker's 700-character bound.
+        reason='Missing configured policy; do not infer a safe default. ' * 12
         self.f.apply('question',question_id='policy',review_ids=['safe','unsafe'],question=question)
         self.f.apply('answer',question_id='policy',status='blocked',reason=reason,evidence=[self.evidence])
         self.draft_all(dependencies={rid:[{'proposition_id':'body-owner','revision':1}] for rid in ('safe','unsafe')},

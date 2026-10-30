@@ -84,6 +84,25 @@ else:
             snapshots.append(record["snapshot_id"])
         self.assertNotEqual(*snapshots)
 
+    def test_value_handoff_defers_priority_hints_while_comprehensive_keeps_them(self):
+        (self.checkout / "app.js").write_text("function run(req,res) { eval(req.query.code); res.redirect(req.query.next); }\n")
+        self.git("add", ".")
+        self.git("commit", "--quiet", "-m", "mixed review priorities")
+        self.head = self.git("rev-parse", "HEAD")
+        self.delivery.pr["head"]["sha"] = self.head
+        counts = {}
+        for policy in ("value", "comprehensive"):
+            directory, plan, record = self.ready(policy)
+            work = json.loads((directory / "work.json").read_text())["payload"]
+            draft = json.loads((directory / "review-plan.json").read_text())
+            counts[policy] = len(work["review_ids"])
+            if policy == "value":
+                self.assertTrue(draft["deferred_review_ids"])
+                self.assertTrue(all("not a safety verdict" in reason for reason in draft["deferred_review_ids"].values()))
+            else:
+                self.assertFalse(draft["deferred_review_ids"])
+        self.assertLess(counts["value"], counts["comprehensive"])
+
     def test_real_worker_finishes_native_admission_without_workflow_secrets_or_replay(self):
         directory, plan, record = self.ready("comprehensive")
         calls = []

@@ -86,7 +86,7 @@ def _source_capture(query, result, native_count):
     return {"action":action,"text_sha256":hashlib.sha256(text.encode("utf-8")).hexdigest()}
 
 
-def _lookup(bridge, query, arguments, key):
+def _lookup(bridge, query, arguments, key, work_id=None):
     state = bridge.workspace.snapshot()
     def lookup_key(query, normalization=None):
         values = (normalization or {}).get("effective_arguments",query["arguments"])
@@ -96,7 +96,9 @@ def _lookup(bridge, query, arguments, key):
                 values["path_prefix"] = values["path_prefix"].rstrip("/")
         return query["tool"],values
     requested_key = lookup_key(query,getattr(arguments,"filter_normalization",None))
-    for old_id, old in state["lookups"].items():
+    # Persisted mappings are sorted by ID; reuse the first observation rather
+    # than whichever intermediate reuse receipt happens to sort first.
+    for old_id, old in sorted(state["lookups"].items(), key=lambda item:(item[1]["sequence"],item[0])):
         if (query["tool"] != "knowledge" and old["status"] == "complete" and
                 (old["result"] or {}).get("operation") != "lookup_feedback" and
                 lookup_key(old["query"],old.get("filter_normalization")) == requested_key):
@@ -129,7 +131,7 @@ def _lookup(bridge, query, arguments, key):
         nonlocal count
         count += 1
         try:
-            return bridge.native(args,timeout=bridge._remaining_seconds())
+            return bridge.native(args,timeout=bridge._remaining_seconds(work_id))
         except worker.CommandFailure as error:
             result = worker.missing_source_result(q,error)
             if result is None:
@@ -311,14 +313,15 @@ def apply_response(bridge, session_id, task, packet, response):
     bridge.workspace.preview(transaction)  # Invalid later actions cannot leave earlier judgments saved.
     accepted = bridge.apply("actions:" + session_id,transaction)
     receipts = []
+    work_id = bridge.workspace.snapshot()["sessions"][session_id]["work_id"]
     for index,(qid,query,arguments,units,requested_question,feedback,beneficiaries) in enumerate(queries):
-        bridge._remaining_seconds()
+        bridge._remaining_seconds(work_id)
         key = session_id + ":" + str(index)
         bridge.apply("reserve:" + key,{"kind":"lookup_request","lookup_id":key,"question_id":qid,"query":query,"units":units,
                                        "requested_question":requested_question,"review_ids":beneficiaries})
         started = time.monotonic()
         if feedback is None:
-            result,evidence,count,reused = _lookup(bridge,query,arguments,key)
+            result,evidence,count,reused = _lookup(bridge,query,arguments,key,work_id)
         else:
             result,evidence,count,reused = feedback,[],0,None
         bridge.apply("observed:" + key,{"kind":"lookup_observed","lookup_id":key,

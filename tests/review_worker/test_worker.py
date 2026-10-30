@@ -19,6 +19,30 @@ spec.loader.exec_module(worker)
 
 
 class ArtifactCopy(unittest.TestCase):
+    def test_late_usage_survives_multiple_recovery_attempts_and_keeps_deadline(self):
+        with tempfile.TemporaryDirectory(prefix='mehscan-recovery-') as name:
+            root=Path(name)
+            first=root/'first/jobs/job.json';second=root/'second/jobs/job.json';third=root/'third/jobs/job.json'
+            for path in (first,second,third):path.parent.mkdir(parents=True)
+            binding={'runtime':'fixture'};turn={'conversation_id':'a'*64,'round':0}
+            with patch.object(worker.time,'time',return_value=1000):
+                job=worker.JobCheckpoint(first,binding,timeout=100)
+                job.save(calls=1,queries=2,bytes=10,model_inflight=True,active_turn=turn)
+                job.fail(TimeoutError('fixture interruption'))
+            with patch.object(worker.time,'time',return_value=1010):
+                pending=worker.JobCheckpoint(second,binding,first,timeout=100)
+                self.assertEqual(pending.state['unknown_provider_calls'],1)
+                self.assertEqual(pending.state['deadline_epoch'],1100)
+            receipt={**turn,'provider':None,'elapsed_ms':4,'usage':{'input_tokens':50,'cached_input_tokens':10,'output_tokens':3}}
+            (first.parent.parent/('provider-metrics-'+turn['conversation_id']+'.jsonl')).write_text(json.dumps(receipt)+'\n')
+            with patch.object(worker.time,'time',return_value=1120):
+                recovered=worker.JobCheckpoint(third,binding,second,timeout=100)
+                self.assertLessEqual(recovered.deadline,worker.time.monotonic())
+            self.assertEqual(recovered.state['unknown_provider_calls'],0)
+            self.assertEqual([recovered.state[k] for k in ('calls','queries','bytes')],[1,2,10])
+            self.assertEqual(worker.consolidate_metrics(third.parent.parent,second.parent.parent),[receipt])
+            self.assertEqual(worker.consolidate_metrics(third.parent.parent,second.parent.parent),[receipt])
+
     def test_refinalization_clears_native_journal_counts_without_mutating_approved_siblings(self):
         response = {"results":[{"decision":"issue","investigation":{"journal_summary":{"queries":1},"decisive_artifacts":["source"]}},
             {"decision":"needs_review","checks":["Read the control."],"investigation":{"journal_summary":None}}]}
@@ -459,6 +483,12 @@ else:
             task = json.loads(payload)
             packet = json.loads(Path(task["evidence_packet"]).read_text())
             role, resumed = task["review_role"], task.get("assessment_cycle") == "dependency_resume"
+            provider_id=(packet['work']['runtime']['orchestration']['expert'] if task['profile']=='expert'
+                         else packet['work']['runtime']['provider'])
+            with Path(task['provider_metrics']).open('a',encoding='utf-8') as receipt:
+                receipt.write(json.dumps({'conversation_id':task['conversation_id'],'round':task['research']['round'],
+                    'provider':provider_id,'elapsed_ms':1,
+                    'usage':{'input_tokens':100,'cached_input_tokens':0,'output_tokens':10}})+'\n')
             calls.append((role,resumed,task["review_ids"][0]))
             if role == "collection":
                 research_started.set()
@@ -923,6 +953,15 @@ print(json.dumps(result))
         self.assertEqual(len(list((self.base / "events").glob("*.json"))), len(events))
         self.run = original_run
 
+        # A delayed, exact receipt makes the failed test turn observable. This
+        # is recovery of actual counters, not permission to assume a free call.
+        failed=next(json.loads(p.read_text()) for p in (first/'jobs').glob('*.json') if json.loads(p.read_text())['status']=='incomplete')
+        turn=failed['unobserved_turns'][0]
+        (first/('provider-metrics-'+turn['conversation_id']+'.jsonl')).write_text(json.dumps({
+            **turn,'provider':None,'usage':{'input_tokens':10,'cached_input_tokens':0,'output_tokens':2},'elapsed_ms':1})+'\n')
+        partial=json.loads((first/'partial-results.json').read_text())
+        self.assertEqual(len(partial['completed_review_ids']),3)
+        self.assertEqual(partial['incomplete_review_ids'],[self.ids[-1]])
         (self.base / "allow-last").touch()
         result = self.invoke("parallel-recovered", ["--phase", "native", "--workers", "2", "--resume-from", str(first)])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr + (self.base / "parallel-recovered/worker.json").read_text())
@@ -930,7 +969,7 @@ print(json.dumps(result))
         record = json.loads((recovered / "worker.json").read_text())
         self.assertEqual(sum(job["recovered_draft"] for job in record["jobs"].values()), 3)
         self.assertTrue(record["completion"]["review_work_complete"])
-        self.assertEqual(record["unknown_provider_calls"], 2)
+        self.assertEqual(record["unknown_provider_calls"], 0)
         events = [json.loads(path.read_text()) for path in (self.base / "events").glob("*.json")]
         after = {id: sum(event["id"] == id for event in events) for id in self.ids}
         self.assertEqual({id: after[id]-before[id] for id in self.ids}, {id: 1 if id == self.ids[-1] else 0 for id in self.ids})
@@ -945,7 +984,7 @@ print(json.dumps(result))
         self.assertIn("recovery requires", json.loads((self.base / "parallel-stale/worker.json").read_text())["detail"])
         self.assertEqual(len(list((self.base / "events").glob("*.json"))), len(events))
 
-    def test_direct_provider_failure_retries_once_without_resetting_budget(self):
+    def test_unknown_provider_failure_stops_without_a_fresh_paid_conversation(self):
         original = self.reviewer.read_text()
         self.reviewer.write_text(original.replace('package=json.loads', '''marker=Path(__file__).with_suffix('.failed')
 if not marker.exists():
@@ -955,25 +994,61 @@ package=json.loads'''))
         result = self.invoke("retry-once", ["--phase", "native"])
         directory = self.base / "retry-once"
         record = json.loads((directory / "worker.json").read_text())
-        self.assertEqual(result.returncode, 0, result.stderr + json.dumps(record))
+        self.assertNotEqual(result.returncode, 0)
         self.assertEqual(record["review_mode"], "single_model")
         self.assertEqual(record["review_capacity"], 3)
-        self.assertEqual(record["provider_retries"], 1)
+        self.assertEqual(record["provider_retries"], 0)
         self.assertEqual(record["unknown_provider_calls"], 1)
         self.assertFalse(record["usage_complete"])
-        self.assertEqual(record["status"], "admitted")
-        report = json.loads((directory / "findings.json").read_text())
-        self.assertEqual(len(report["decision_records"]), len(self.ids))
-        # This run selects native review only, leaving the change pass explicit.
-        self.assertFalse(record["completion"]["review_work_complete"])
+        self.assertEqual(record["status"], "incomplete")
         job = json.loads(next((directory / "jobs").glob('*.json')).read_text())
-        self.assertEqual(job["calls"], 2)
+        self.assertEqual(job["calls"], 1)
         turns = [row for row in record["timings_ms"] if row["operation"] == "reviewer/native_bundle"]
-        self.assertEqual([row["succeeded"] for row in turns], [False, True])
+        self.assertEqual([row["succeeded"] for row in turns], [False])
         contexts = [json.loads(path.read_text()) for path in directory.glob('context-*.json')]
-        self.assertEqual(len(contexts), 2)  # Fresh conversation after an uncertain failed turn.
+        self.assertEqual(len(contexts), 1)
         self.assertTrue(all('tiered_routing' not in packet['contract']['sources'][0]['sections'] for packet in contexts))
-        self.assertTrue((directory / "findings.json").is_file())
+        self.assertFalse((directory / "findings.json").exists())
+        retry = self.invoke("unknown-recovery",["--phase","native","--resume-from",str(directory)])
+        self.assertNotEqual(retry.returncode,0)
+        recovered=json.loads((self.base/'unknown-recovery/worker.json').read_text())
+        self.assertIn('usage is unknown',recovered['detail'])
+        self.assertEqual(sum(json.loads(p.read_text())['calls'] for p in (self.base/'unknown-recovery/jobs').glob('*.json')),1)
+        self.assert_no_decisions()
+
+    def test_typed_proof_rejection_uses_one_bound_correction_and_counts_both_turns(self):
+        original=self.reviewer.read_text()
+        self.reviewer.write_text(original.replace('package=json.loads','''import hashlib
+turn=task['research']['round']
+row={'conversation_id':task['conversation_id'],'round':turn,'provider':None,
+     'usage':{'input_tokens':10,'cached_input_tokens':0,'output_tokens':2},'elapsed_ms':1}
+with Path(task['provider_metrics']).open('a',encoding='utf-8') as handle:
+    handle.write(json.dumps(row)+'\\n')
+Path(__file__).with_suffix('.turn-'+str(turn)+'.json').write_text(json.dumps(task))
+if turn==0:
+    diagnostic={'schema_version':'1','kind':'local_response_validation',
+        'conversation_id':task['conversation_id'],'round':turn,
+        'task_sha256':hashlib.sha256(json.dumps(task,sort_keys=True,ensure_ascii=False).encode()).hexdigest(),
+        'error_paths':[['progress',0,'artifacts',0]],'repairable_proof_references':True,
+        'artifact_handles':list(task['research']['artifact_handles']),
+        'source_artifact_handles':task['research']['source_artifact_handles']}
+    Path(task['provider_metrics']).with_name('reply-validation-'+task['conversation_id']+'-0.json').write_text(json.dumps(diagnostic))
+    sys.exit(2)
+assert turn==1 and task['research']['feedback']['kind']=='local_response_validation'
+package=json.loads'''))
+        result=self.invoke('proof-corrected',['--phase','native'])
+        directory=self.base/'proof-corrected'
+        record=json.loads((directory/'worker.json').read_text())
+        self.assertEqual(result.returncode,0,result.stderr+json.dumps(record))
+        self.assertEqual(record['reply_validation_corrections'],1)
+        self.assertEqual(record['unknown_provider_calls'],0)
+        self.assertEqual(record['provider_usage'][0]['usage']['input_tokens'],20)
+        first=json.loads(self.reviewer.with_suffix('.turn-0.json').read_text())
+        second=json.loads(self.reviewer.with_suffix('.turn-1.json').read_text())
+        self.assertEqual(first['conversation_id'],second['conversation_id'])
+        self.assertEqual(second['research']['queries_remaining'],first['research']['queries_remaining'])
+        self.assertLessEqual(second['research']['seconds_remaining'],first['research']['seconds_remaining'])
+        self.assertEqual(len(list(directory.glob('context-*.json'))),1)
 
     def test_completed_but_rejected_provider_reply_is_not_automatically_retried(self):
         self.reviewer.write_text('''import json,sys
@@ -1024,7 +1099,7 @@ sys.exit(2)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.reviewer.with_suffix('.calls').read_text(), 'call\n')
         recovered = json.loads((self.base / "exhausted-recovery/worker.json").read_text())
-        self.assertIn("no remaining model turns", recovered["detail"])
+        self.assertTrue('no remaining model turns' in recovered['detail'] or 'usage is unknown' in recovered['detail'])
         self.assertEqual(recovered["unknown_provider_calls"], 1)
 
     def test_change_pass_native_finalization_and_state_admission_share_one_bound_workflow(self):

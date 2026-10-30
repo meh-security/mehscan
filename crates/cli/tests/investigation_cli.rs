@@ -2,6 +2,146 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+#[test]
+fn retains_fragmented_source_lead_without_changing_the_paid_draft() {
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-source-lead-fragments-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let source = root.join("source");
+    fs::create_dir_all(&source).unwrap();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/v2-process-flow/positive/process-flow.js");
+    fs::copy(fixture, source.join("app.js")).unwrap();
+    let long_source = format!(
+        "function render(markup) {{ document.body.innerHTML = markup; }} /*{}{}*/\n",
+        "é".repeat(3000),
+        "x".repeat(19000)
+    );
+    fs::write(source.join("plugin.js"), &long_source).unwrap();
+    let run = root.join("run");
+    let result = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-bundles",
+            source.to_str().unwrap(),
+            "--output",
+            run.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{:?}", result.stderr);
+    let manifest: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    let entry = manifest["bundles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["category"]["review_kind"] == "path")
+        .unwrap();
+    let bundle_path = run
+        .join("requests")
+        .join(entry["filename"].as_str().unwrap());
+    let bundle: serde_json::Value =
+        serde_json::from_slice(&fs::read(&bundle_path).unwrap()).unwrap();
+    let draft = serde_json::json!({"results":bundle["reviews"].as_array().unwrap().iter().map(|r| serde_json::json!({
+        "review_id":r["id"], "decision":"needs_review", "confidence":"medium", "summary":"Selected operation awaits caller context.",
+        "reason":"The selected operation is inspected; its caller authority remains unresolved.",
+        "checks":["Which caller controls this operation?"],
+        "source_leads":[{"question":"Who supplies the separately rendered markup?", "security_relevance":"Markup is interpreted as HTML.",
+            "distinct_from_review":"This concerns rendering rather than the selected process operation.",
+            "evidence":{"path":"plugin.js","start_line":1,"end_line":1}}]
+    })).collect::<Vec<_>>()});
+    let draft_path = root.join("draft.json");
+    let bytes = serde_json::to_vec(&draft).unwrap();
+    fs::write(&draft_path, &bytes).unwrap();
+    let response_path = root.join("response.json");
+    fs::create_dir(root.join("journals")).unwrap();
+    let invoke = |input: &std::path::Path, output: &std::path::Path| {
+        Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args([
+                "investigate",
+                "review-bundle-finalize",
+                "--bundle",
+                bundle_path.to_str().unwrap(),
+                "--draft",
+                input.to_str().unwrap(),
+                "--source-root",
+                source.to_str().unwrap(),
+                "--journal-dir",
+                root.join("journals").to_str().unwrap(),
+                "--output",
+                output.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap()
+    };
+    let result = invoke(&draft_path, &response_path);
+    assert!(result.status.success(), "{:?}", result.stderr);
+    assert_eq!(fs::read(&draft_path).unwrap(), bytes);
+    let mut response: serde_json::Value =
+        serde_json::from_slice(&fs::read(&response_path).unwrap()).unwrap();
+    let schema_output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "investigate",
+            "review-response-schema",
+            "--bundle",
+            bundle_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(schema_output.status.success());
+    let schema: serde_json::Value = serde_json::from_slice(&schema_output.stdout).unwrap();
+    let max_refs = schema["properties"]["results"]["items"]["properties"]["investigation"]["properties"]
+        ["reviewer_origin_leads"]["items"]["properties"]["artifact_ids"]["maxItems"].as_u64().unwrap();
+    for r in response["results"].as_array().unwrap() {
+        assert_eq!(r["decision"], "needs_review");
+        let trace = &r["investigation"];
+        let lead = &trace["reviewer_origin_leads"][0];
+        assert_eq!(
+            lead["question"],
+            "Who supplies the separately rendered markup?"
+        );
+        let ids = lead["artifact_ids"].as_array().unwrap();
+        assert!(ids.len() > 4);
+        assert!(
+            ids.len() as u64 <= max_refs,
+            "materialized output exceeds the exported schema"
+        );
+        let mut chunks = trace["decisive_artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|a| ids.contains(&a["artifact_id"]))
+            .collect::<Vec<_>>();
+        chunks.sort_by_key(|a| a["location"]["start"]["byte_offset"].as_u64().unwrap());
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|a| a["excerpt"].as_str().unwrap())
+                .collect::<String>(),
+            long_source
+        );
+        for chunk in chunks {
+            assert!(chunk["excerpt"].as_str().unwrap().chars().count() <= 4000);
+        }
+        assert_eq!(lead["location"]["end"]["byte_offset"], long_source.len());
+    }
+    response["results"][0]["investigation"]["reviewer_origin_leads"][0]["artifact_ids"][0] =
+        serde_json::json!("unknown-source");
+    let invalid = root.join("invalid.json");
+    fs::write(&invalid, serde_json::to_vec(&response).unwrap()).unwrap();
+    assert!(
+        !invoke(&invalid, &root.join("invalid-response.json"))
+            .status
+            .success()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn assert_portable_artifact_paths(value: &serde_json::Value) {
     match value {
         serde_json::Value::Object(fields) => {

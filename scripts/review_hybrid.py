@@ -325,7 +325,7 @@ def run_workspace(unit, opts, bridge, ledger):
     # During a reserved call, usage is temporarily unknown; lookup deadlines must
     # use the already advertised deadline rather than requesting another offer.
     deadline=[time.time()+ledger.offer(uid)["seconds"]]
-    bridge._remaining_seconds=lambda:min(original_remaining(),deadline[0]-time.time())
+    bridge._remaining_seconds=lambda work_id=None:min(original_remaining(work_id),deadline[0]-time.time())
     try:
         while bridge.workspace.view(uid,bridge.metadata["experiment"]["context_max_bytes"])["claims"]:
             offer=ledger.offer(uid);deadline[0]=time.time()+offer["seconds"]

@@ -27,12 +27,13 @@ review; never cite a guide as application evidence.
 
 | Name | Read when |
 | --- | --- |
-| [`sql-query`](categories/sql-query.md) | SQL text, bound parameters, query wrappers or identifiers |
+| [`sql-query`](categories/sql-query.md) | SQL value-versus-grammar contracts, bound parameters, templates, query wrappers or identifiers |
 | [`structured-query`](categories/structured-query.md) | NoSQL/BSON operators, executable predicates, search filters or selector objects |
 | [`process-code`](categories/process-code.md) | Process launch, shell text, dynamic evaluation or attacker-selected executable |
-| [`file-network`](categories/file-network.md) | File containment, archive writes, SSRF, redirects or template-selected files |
-| [`authorization`](buckets/authorization.md) | Effective server policy, object ownership, tenancy or delegated authority |
+| [`file-network`](categories/file-network.md) | Local file-root guarantees versus caller exposure, archive writes, SSRF, redirects or template-selected files |
+| [`authorization`](buckets/authorization.md) | Effective grant/denial composition, server policy, object ownership, tenancy or delegated authority |
 | [`credential-lifecycle`](categories/credential-lifecycle.md) | Issuance, acceptance, recovery, rotation, expiry, consumption or revocation |
+| [`token-review`](token-review.md) | JWT/session/API-key issuance or acceptance, version-specific signing/verification options, expiry, cached identity, token purpose or revocation |
 | [`mass-assignment`](categories/mass-assignment.md) | Generic body binding, generated CRUD, privileged fields or sensitive object updates |
 | [`workflow-state`](categories/workflow-state.md) | Ordering, alternate branches, payment/approval, quotas, repetition or concurrency |
 | [`html-output`](html-output-review.md) | Browser interpretation, HTML trust bypass, stored markup, templates or DOM output |

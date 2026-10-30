@@ -1,6 +1,109 @@
 use std::{fs, path::PathBuf, process::Command};
 
 #[test]
+fn policy_plan_selection_partitions_priority_without_inventing_verdicts() {
+    let base =
+        std::env::temp_dir().join(format!("mehscan-policy-selection-{}", std::process::id()));
+    let root = base.join("source");
+    let inventory = base.join("inventory");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("app.php"), "<?php function fixed() { $search = $_GET['search']; require __DIR__ . '/helper.php'; } function encoded($stored) { $search = $_GET['search']; echo esc_html($stored); } function execute() { require $_GET['page']; }\n").unwrap();
+    fs::write(root.join("helper.php"), "<?php return 'helper';").unwrap();
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    run(&[
+        "investigate",
+        "review-inventory",
+        root.to_str().unwrap(),
+        "--output",
+        inventory.to_str().unwrap(),
+        "--repository-key",
+        "fixture:value-selection",
+    ]);
+    let plan = |policy, selection: Option<&str>| {
+        let mut args = vec![
+            "state",
+            "plan-template",
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--source-root",
+            root.to_str().unwrap(),
+            "--policy",
+            policy,
+        ];
+        if let Some(selection) = selection {
+            args.extend(["--selection", selection]);
+        }
+        run(&args)
+    };
+    let all = plan("value", None);
+    assert_eq!(all["selected_review_ids"].as_array().unwrap().len(), 3);
+    let value = plan("value", Some("policy"));
+    let selected = value["selected_review_ids"].as_array().unwrap();
+    let deferred = value["deferred_review_ids"].as_object().unwrap();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(deferred.len(), 2);
+    assert!(
+        deferred
+            .values()
+            .all(|v| v.as_str().unwrap().contains("not a safety verdict"))
+    );
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(inventory.join("inventory.json")).unwrap()).unwrap();
+    let dynamic = metadata["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["symbol"] == "execute")
+        .unwrap();
+    assert_eq!(selected[0], dynamic["review_id"]);
+    for id in all["selected_review_ids"].as_array().unwrap() {
+        assert_ne!(
+            selected.contains(id),
+            deferred.contains_key(id.as_str().unwrap())
+        );
+    }
+    assert_eq!(plan("value", Some("all")), all);
+    let comprehensive = plan("comprehensive", Some("policy"));
+    assert_eq!(
+        comprehensive["selected_review_ids"],
+        all["selected_review_ids"]
+    );
+    assert!(
+        comprehensive["deferred_review_ids"]
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
+    let invalid = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "state",
+            "plan-template",
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--source-root",
+            root.to_str().unwrap(),
+            "--selection",
+            "unknown",
+        ])
+        .output()
+        .unwrap();
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("selection must be all or policy"));
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
 fn ordinary_owned_directory_creation_is_excluded_from_both_modes_without_losing_file_effects() {
     let root =
         std::env::temp_dir().join(format!("mehscan-directory-priority-{}", std::process::id()));

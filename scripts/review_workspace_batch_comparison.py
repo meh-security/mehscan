@@ -28,8 +28,12 @@ def run_treatment(root):
             wid,ids = "bundle-"+fingerprint,bundle["review_ids"]
             parent,calls = None,0
             bundle_deadline = min(deadline,time.time()+900)
-            def remaining():
-                seconds = min(original_remaining(),bundle_deadline-time.time())
+            def used_calls():
+                state=bridge.workspace.snapshot()
+                return sum(state['sessions'][c['session_id']]['work_id']==wid for c in state['calls'].values())
+            def remaining(work_id=None):
+                if used_calls()>=6: raise ValueError("matched six-call bundle allowance reached")
+                seconds = min(original_remaining(work_id),bundle_deadline-time.time())
                 if seconds<=5: raise ValueError("matched bundle deadline reached")
                 return seconds
             bridge._remaining_seconds = remaining
@@ -44,6 +48,7 @@ def run_treatment(root):
                 session = bridge.prepare(wid,opts["config"],f"batch:{fingerprint}:{calls}",parent)["session_id"]
                 parent = session
                 def invoke(task):
+                    calls=used_calls()-1
                     task["research"]["queries_remaining"] = min(task["research"]["queries_remaining"],max(0,24-units)) if calls<5 else 0
                     task["research"]["workspace_budget"]["work_remaining"] = {
                         "model_calls":6-calls,"queries":task["research"]["queries_remaining"],"received_bytes":524288-received}
@@ -56,7 +61,7 @@ def run_treatment(root):
                         raise ValueError("response exceeds matched bundle lookup allowance")
                     return reply
                 response = bridge.review(session,opts["config"],invoke)
-                calls += 1
+                calls = used_calls()
                 print(json.dumps({"bundle":fingerprint,"turn":calls,"active":len(bridge.workspace.view(wid,bridge.metadata["experiment"]["context_max_bytes"])["claims"]),"usage":response["usage"]}),flush=True)
             validated = bridge.finalize(fingerprint)
             work_results.append({"bundle":fingerprint,"review_ids":ids,"calls":calls,"validated":validated})

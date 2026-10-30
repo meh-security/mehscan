@@ -27,6 +27,10 @@ MAX_ACTION_BYTES = 128 * 1024
 MAX_CONTEXT_BYTES = 144 * 1024
 
 
+class IncompleteClaim(ValueError):
+    """A saved claim is not ready for a source-checked result projection."""
+
+
 def encoded(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
@@ -38,6 +42,14 @@ def identity(value):
 def label(value):
     if not isinstance(value, str) or not value.strip() or len(value) > 1000:
         raise ValueError("expected bounded nonempty text")
+    return value
+
+
+def review_line(value, limit):
+    """Keep saved review text compatible with native projection limits."""
+    label(value)
+    if len(value) > limit or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in value):
+        raise ValueError(f"expected one nonempty review line of at most {limit} characters")
     return value
 
 
@@ -212,6 +224,9 @@ class Workspace:
         if isinstance(action, dict) and action.get("kind") == "prepare_evidence":
             import review_workspace_evidence
             return review_workspace_evidence.apply(state, self, action, operation_key)
+        if isinstance(action, dict) and action.get("kind") == "reuse_evidence":
+            import review_workspace_evidence
+            return review_workspace_evidence.apply_reuse(state, self, action, operation_key)
         if not isinstance(action, dict):
             raise ValueError("action must be an object")
         kind = action.get("kind")
@@ -346,7 +361,7 @@ class Workspace:
             shape(action, ("kind", "question_id", "review_ids", "question"))
             key = label(action["question_id"])
             references(action["review_ids"], state["claims"])
-            label(action["question"])
+            review_line(action["question"], 300)
             if key in state["questions"]:
                 raise ValueError("question already exists")
             state["questions"][key] = {"review_ids":action["review_ids"], "question":action["question"],
@@ -360,7 +375,7 @@ class Workspace:
             shape(action, ("kind", "question_id", "status", "reason", "evidence"))
             if action["status"] not in ("open", "answered", "blocked"):
                 raise ValueError("invalid question state")
-            label(action["reason"])
+            review_line(action["reason"], 700)
             references(action["evidence"], state["evidence"], nonempty=action["status"] == "answered")
             if action["evidence"]:
                 self._evidence(state, action["evidence"])
@@ -420,7 +435,8 @@ class Workspace:
                 if session["work_id"] == action["work_id"]:
                     session["retired"] = True
             state["sessions"][key] = {"work_id":action["work_id"], "parent_session":parent,
-                                      "packet_digest":identity(packet), "packet":packet, "retired":False}
+                                      "packet_digest":identity(packet), "packet":packet, "retired":False,
+                                      "prepared_epoch_ms":round(time.time()*1000)}
             return {"session_id":key, "packet_digest":identity(packet)}
         if kind == "attach_session":
             shape(action, ("kind", "session_id", "artifacts"))
@@ -435,14 +451,22 @@ class Workspace:
             session["artifacts"] = action["artifacts"]
             return {"session_id":action["session_id"]}
         if kind == "start_call":
-            shape(action, ("kind", "session_id"))
+            shape(action, ("kind", "session_id"), ("round",))
             self._current_session(state, action["session_id"])
+            round_index = action.get("round",0)
+            if type(round_index) is not int or round_index not in (0,1):
+                raise ValueError("workspace permits only one local correction")
+            if round_index:
+                turns = [c for c in state["calls"].values() if c["session_id"] == action["session_id"]]
+                if (len(turns) != 1 or turns[0].get("round",0) != 0 or turns[0]["usage"] is None
+                        or any(turns[0]["usage"].get(k) is None for k in COUNTERS[:3])):
+                    raise ValueError("correction requires one fully observed prior turn")
             self._spend(state, {"model_calls":1})
             state["calls"][operation_key] = {"session_id":action["session_id"], "usage":None,
-                                            "started_epoch_ms":round(time.time() * 1000)}
+                                            "started_epoch_ms":round(time.time() * 1000), "round":round_index}
             return {"call_id":operation_key}
         if kind == "finish_call":
-            shape(action, ("kind", "call_id", "usage"))
+            shape(action, ("kind", "call_id", "usage"), ("candidate_rejection_sha256",))
             shape(action["usage"], COUNTERS)
             for value in action["usage"].values():
                 if value is not None:
@@ -453,6 +477,11 @@ class Workspace:
             call = state["calls"][action["call_id"]]
             if call["usage"] is not None:
                 raise ValueError("call usage already recorded")
+            if "candidate_rejection_sha256" in action:
+                digest=action["candidate_rejection_sha256"]
+                if not isinstance(digest,str) or not re.fullmatch(r"[0-9a-f]{64}",digest):
+                    raise ValueError("invalid candidate rejection digest")
+                call["candidate_rejection_sha256"]=digest
             call["usage"] = usage
             return {"call_id":action["call_id"]}
         if kind == "reserve_queries":
@@ -816,16 +845,17 @@ class Workspace:
         claims, _ = self._bundle_claims(state, bundle_id)
         return {"results":[c["draft"]["result"] for c in claims]}
 
-    def _bundle_claims(self, state, bundle_id):
-        claims = [c for c in state["claims"].values() if c["bundle_id"] == bundle_id]
+    def _bundle_claims(self, state, bundle_id, review_ids=None):
+        claims = [c for c in state["claims"].values() if c["bundle_id"] == bundle_id
+                  and (review_ids is None or c["review_id"] in review_ids)]
         if not claims or any(c["draft"] is None or c["reconsideration"] for c in claims):
-            raise ValueError("bundle working draft is incomplete or requires reconsideration")
+            raise IncompleteClaim("bundle working draft is incomplete or requires reconsideration")
         evidence = set()
         for claim in claims:
             if claim["draft"]["result"]["decision"] != "needs_review" and any(
                     claim["review_id"] in q["review_ids"] and q["status"] != "answered" and
                     qid not in claim["draft"].get("resolved_questions",[]) for qid,q in state["questions"].items()):
-                raise ValueError("unanswered deciding question prevents bundle closure")
+                raise IncompleteClaim("unanswered deciding question prevents bundle closure")
             evidence.update(self._draft_evidence(state, claim["draft"]["result"]))
             self._proposition_dependencies(state, claim["draft"].get("propositions", []))
             for dependency in claim["draft"].get("propositions", []):
@@ -840,15 +870,21 @@ class Workspace:
                 evidence.update([*applies["evidence"], *prop["evidence"]])
         return claims, evidence
 
-    def review_package(self, bundle_ids=None):
+    def review_package(self, bundle_ids=None, *, review_ids=None):
         """Project existing judgments; do not infer applicability or new blockers."""
         state = self.snapshot()
         known = {c["bundle_id"] for c in state["claims"].values()}
         bundle_ids = sorted(known) if bundle_ids is None else bundle_ids
         references(bundle_ids, known)
+        if review_ids is not None:
+            references(review_ids, state["claims"], nonempty=False)
+            if any(state["claims"][rid]["bundle_id"] not in bundle_ids for rid in review_ids):
+                raise ValueError("selected review is outside package bundles")
         claims, bundles, evidence_ids = [], [], set()
         for bundle_id in sorted(bundle_ids):
-            members, evidence = self._bundle_claims(state, bundle_id)
+            if review_ids is not None and not any(state["claims"][rid]["bundle_id"]==bundle_id for rid in review_ids):
+                continue
+            members, evidence = self._bundle_claims(state, bundle_id, review_ids)
             claims.extend(members); evidence_ids.update(evidence)
             bundles.append({"bundle_id":bundle_id,"review_ids":[c["review_id"] for c in members],
                             "draft_id":identity({"results":[c["draft"]["result"] for c in members]})})
@@ -892,6 +928,25 @@ class Workspace:
                    "evidence":{key:copy.deepcopy(state["evidence"][key]) for key in sorted(evidence_ids)}}
         package["package_id"] = identity(package)
         return package
+
+    def completed_review_package(self):
+        """Project ready saved judgments with an explicit incomplete partition."""
+        state = self.snapshot()
+        completed, pending = [], {}
+        for rid, claim in state["claims"].items():
+            try:
+                self._bundle_claims(state, claim["bundle_id"], [rid])
+            except IncompleteClaim as error:
+                pending[rid] = str(error)
+            else:
+                completed.append(rid)
+        result = self.review_package(review_ids=sorted(completed))
+        result.update(status="partial" if pending else "complete", incomplete_review_ids=pending,
+                      original_selection_count=len(state["claims"]))
+        if result["workspace_revision"] != state["revision"]:
+            raise ValueError("workspace changed during partial projection")
+        result["package_id"] = identity({k:v for k,v in result.items() if k!="package_id"})
+        return result
 
 
 def captured_source_rows(evidence):

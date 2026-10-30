@@ -24,11 +24,14 @@ control-character and entity handling. A server-side parser's scheme result
 alone does not establish what a browser will execute.
 
 - **SQL:** A raw-query API or nonliteral `sql` parameter is an inventory
-  point. If it is a wrapper, find the wrapper's callers and inspect every
-  relevant argument. Fixed query text with bound values differs from text
-  concatenation. Search the actual identifier used at call sites and treat
-  text references as leads; check whether aliases, dynamic dispatch, or an
-  exposed wrapper leave a caller outside that inventory. Check the inserted
+  point. Establish whether the selected API expects scalar values or intentionally
+  accepts trusted SQL grammar. A query/template authoring capability alone is not
+  injection. If the actual template or the authority of interpolated inputs is
+  missing, retain that applicability question; do not promote the API alone or
+  declare its consumers safe. For wrappers, inspect the selected caller's actual
+  arguments and binding; expand only when another caller could change this
+  judgment. Fixed calls do not prove all callers safe, and a bad neighbor does
+  not condemn this call. Treat textual references as leads. Check the inserted
   values' declared types, conversions and formatting. Source-proven restrictions
   that prevent SQL grammar changes can settle this property without binding;
   parameterization can remain a hardening recommendation. When an application

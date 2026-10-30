@@ -1565,7 +1565,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     "security_relevance": {"type": "string", "minLength": 1, "maxLength": 500},
                     "distinct_from_review": {"type": "string", "minLength": 1, "maxLength": 500},
                     "location": location_schema,
-                    "artifact_ids": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "string"}}
+                    "artifact_ids": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string"},
+                        "description": "Up to four ordinary references, or bounded fragments covering one exact contiguous source range; geometric and byte limits are checked by the engine."}
                 }
             });
             let investigation_schema = serde_json::json!({
@@ -3984,23 +3985,28 @@ fn expand_brief_reviews(
         }
         for lead in &review.source_leads {
             let source = read_brief_source(source_root, &lead.evidence)?;
-            if source.len() != 1 {
-                return Err("brief source lead must select one bounded evidence window".into());
+            let location = mehscan_core::Location {
+                path: source.first().expect("nonempty source").0.path.clone(),
+                start: source.first().expect("nonempty source").0.start.clone(),
+                end: source.last().expect("nonempty source").0.end.clone(),
+            };
+            let mut lead_artifact_ids = Vec::with_capacity(source.len());
+            for (location, excerpt) in source {
+                let artifact_id = format!("review-source-{}", artifacts.len() + 1);
+                artifacts.push(mehscan_core::ReviewRetrievedArtifact {
+                    artifact_id: artifact_id.clone(),
+                    location,
+                    excerpt,
+                });
+                artifact_ids.push(artifact_id.clone());
+                lead_artifact_ids.push(artifact_id);
             }
-            let (location, excerpt) = source.into_iter().next().expect("one source window");
-            let artifact_id = format!("review-source-{}", artifacts.len() + 1);
-            artifacts.push(mehscan_core::ReviewRetrievedArtifact {
-                artifact_id: artifact_id.clone(),
-                location: location.clone(),
-                excerpt,
-            });
-            artifact_ids.push(artifact_id.clone());
             reviewer_origin_leads.push(mehscan_core::ReviewerOriginLead {
                 question: lead.question.clone(),
                 security_relevance: lead.security_relevance.clone(),
                 distinct_from_review: lead.distinct_from_review.clone(),
                 location,
-                artifact_ids: vec![artifact_id],
+                artifact_ids: lead_artifact_ids,
             });
         }
         let citations = artifact_ids
@@ -4106,7 +4112,7 @@ fn read_brief_source(
     if source_ref.start_line > selected_end {
         return Err("brief evidence excerpt is empty or exceeds 64 KiB".to_string());
     }
-    let mut start_offset = lines[..source_ref.start_line - 1]
+    let start_offset = lines[..source_ref.start_line - 1]
         .iter()
         .map(|line| line.len())
         .sum();
@@ -4118,55 +4124,47 @@ fn read_brief_source(
     // original offsets; whitespace-only chunks carry no evidence. Do not repair
     // paths, accept positions beyond EOF, or change verdicts to normalize citations.
     let mut artifacts = Vec::new();
-    let mut start = source_ref.start_line - 1;
-    while start < selected_end {
-        let mut end = start;
-        let mut characters = 0;
-        while end < selected_end && end - start < 40 {
-            let count = lines[end].chars().count();
-            if count > 4000 {
-                return Err(format!(
-                    "brief evidence line {} exceeds 4000 characters",
-                    end + 1
-                ));
-            }
-            if characters + count > 4000 {
-                break;
-            }
-            characters += count;
-            end += 1;
+    let mut position = mehscan_core::Position {
+        line: source_ref.start_line,
+        column: 1,
+        byte_offset: start_offset,
+    };
+    let mut chunk_start = position.clone();
+    let mut chunk = String::new();
+    let (mut characters, mut newlines) = (0, 0);
+    let mut emit = |text: String, start, end| {
+        if !text.trim().is_empty() {
+            artifacts.push((
+                mehscan_core::Location {
+                    path: source_ref.path.replace('\\', "/"),
+                    start,
+                    end,
+                },
+                text,
+            ));
         }
-        let excerpt = lines[start..end].concat();
-        if excerpt.trim().is_empty() {
-            start_offset += excerpt.len();
-            start = end;
-            continue;
+    };
+    // Generated source may have a long physical line. Split at Unicode character
+    // boundaries, retaining exact byte offsets and columns in the full format.
+    // The existing 4000-character/40-line artifact and 64-KiB range bounds stay.
+    for character in excerpt.chars() {
+        if characters == 4000 || newlines == 40 {
+            emit(std::mem::take(&mut chunk), chunk_start, position.clone());
+            chunk_start = position.clone();
+            (characters, newlines) = (0, 0);
         }
-        let end_offset = start_offset + excerpt.len();
-        let (end_line, end_column) = if excerpt.ends_with('\n') {
-            (end + 1, 1)
+        chunk.push(character);
+        characters += 1;
+        position.byte_offset += character.len_utf8();
+        if character == '\n' {
+            newlines += 1;
+            position.line += 1;
+            position.column = 1;
         } else {
-            (end, lines[end - 1].chars().count() + 1)
-        };
-        artifacts.push((
-            mehscan_core::Location {
-                path: source_ref.path.replace('\\', "/"),
-                start: mehscan_core::Position {
-                    line: start + 1,
-                    column: 1,
-                    byte_offset: start_offset,
-                },
-                end: mehscan_core::Position {
-                    line: end_line,
-                    column: end_column,
-                    byte_offset: end_offset,
-                },
-            },
-            excerpt,
-        ));
-        start_offset = end_offset;
-        start = end;
+            position.column += 1;
+        }
     }
+    emit(chunk, chunk_start, position);
     Ok(artifacts)
 }
 
@@ -4777,12 +4775,30 @@ mod tests {
                 .unwrap_err()
                 .contains("past end")
         );
-        std::fs::write(directory.join("source.ts"), "x".repeat(4001)).unwrap();
-        assert!(
-            read_brief_source(&directory, &range(1))
-                .unwrap_err()
-                .contains("line 1 exceeds")
+        // A long physical line is represented by bounded exact sub-line spans.
+        let generated = format!("prefix\r\n{}\r\ntail", "é🦀".repeat(3000));
+        std::fs::write(directory.join("source.ts"), &generated).unwrap();
+        let mut selected = range(3);
+        selected.start_line = 2;
+        let artifacts = read_brief_source(&directory, &selected).unwrap();
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(artifacts[0].0.start.byte_offset, 8);
+        assert_eq!(artifacts[0].0.end.line, 2);
+        assert_eq!(artifacts[0].0.end.column, 4001);
+        assert_eq!(artifacts[1].0.start, artifacts[0].0.end);
+        assert_eq!(artifacts[1].0.end.line, 3);
+        assert_eq!(artifacts[1].0.end.column, 5);
+        assert_eq!(
+            artifacts.iter().map(|a| a.1.as_str()).collect::<String>(),
+            generated[8..]
         );
+        for (location, excerpt) in &artifacts {
+            assert!(excerpt.chars().count() <= 4000);
+            assert_eq!(
+                &generated[location.start.byte_offset..location.end.byte_offset],
+                excerpt
+            );
+        }
         std::fs::write(
             directory.join("source.ts"),
             ("x".repeat(3000) + "\n").repeat(23),

@@ -9,6 +9,9 @@ For a source-bound worker task, use the compiled
 [runtime review contract](references/runtime-review.md). It applies the same
 scope, decision and evidence policy with controller-owned finalization; applicable
 category guidance remains available. Use the guides below for manual CLI work.
+For JWT, session or API-key issuance/acceptance, expiry or cached identity, use
+[token review](references/token-review.md); workers load it through
+`guidance` with `name="token-review"` when that relationship is material.
 The ordinary controller uses one configured model with direct source lookups.
 The worker's [research API](references/worker-api.md) exposes exact tool arguments,
 costs and limits. It differs from the [operator CLI](references/commands.md):

@@ -42,7 +42,10 @@ verdicts.
    values remain separate questions, and `process_shell_mode` settles only
    the observed option, not executable, argument, platform or caller policy.
 3. **Test one evidence chain.** State the candidate failure and the facts that
-   would prove or refute it. Follow the same value, branch, actor, resource,
+   would prove or refute it. Establish the intended guarantee and its conditions;
+   keep a demonstrated local violation distinct from deployed caller exposure.
+   A dangerous capability or missing additional check alone is not a violation.
+   Follow the same value, branch, actor, resource,
    control, and effect. Ask Mehscan for the next decision-changing fact. Use
    a complete, context-compatible control to close this property before
    expanding caller/producer research; otherwise follow the missing input edge.
