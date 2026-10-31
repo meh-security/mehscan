@@ -1,4 +1,5 @@
 use super::*;
+mod csharp_boundaries;
 mod javascript_boundaries;
 mod python_credentials;
 
@@ -99,6 +100,7 @@ fn server_mutation_review_marker_groups(
             continue;
         }
         let spans = line_spans(&file.source);
+        let mut csharp_boundaries = csharp_boundaries::inspect(file, &spans);
         let mut javascript_boundaries = javascript_boundaries::inspect(file, &spans);
         let mut python_credentials = python_credentials::inspect(file, &spans);
         let comment_ranges = javascript_boundaries
@@ -130,7 +132,9 @@ fn server_mutation_review_marker_groups(
                 continue;
             }
             let line = file.source[line_start..line_end].trim();
-            let marker = if let Some(marker) = python_credentials.remove(&line_index) {
+            let marker = if file.language == Some(Language::Csharp) {
+                csharp_boundaries.remove(&line_index)
+            } else if let Some(marker) = python_credentials.remove(&line_index) {
                 Some(marker)
             } else if let Some(index) = javascript_boundaries.as_mut() {
                 if ["@Post(", "@Put(", "@Patch(", "@Delete(", "@Mutation("]
@@ -813,7 +817,7 @@ fn server_mutation_review_marker(
         return None;
     }
     match file.language? {
-        Language::Csharp | Language::Java | Language::Python => {
+        Language::Java | Language::Python => {
             attributed_server_mutation_marker(file, spans, line_index, line)
         }
         Language::Kotlin => kotlin_server_mutation_marker(file, spans, line_index, line),
@@ -841,9 +845,6 @@ fn attributed_server_mutation_marker(
     line: &str,
 ) -> Option<ServerMutationMarker> {
     let is_boundary = match file.language? {
-        Language::Csharp => ["[HttpPost", "[HttpPut", "[HttpPatch", "[HttpDelete"]
-            .iter()
-            .any(|prefix| line.starts_with(prefix)),
         Language::Java => [
             "@PostMapping",
             "@PutMapping",
@@ -1510,6 +1511,79 @@ fn review_admission_marker_id(path: &str, rule_id: &str, start: usize, end: usiz
 #[cfg(test)]
 mod effect_cases {
     use super::*;
+
+    #[test]
+    fn csharp_http_attributes_keep_the_owning_handler_and_review_family() {
+        let source = r#"
+using Microsoft.AspNetCore.Mvc;
+class AccountController {
+    [HttpPost]
+    [ActionName("Recover")]
+    [Route(
+        "account/recover",
+        Name = nameof(ResetPassword)
+    )]
+    [ValidateAntiForgeryToken]
+    public IActionResult ResetPassword(string token, string next) {
+        users.ResetPassword(token, next);
+        return Ok();
+    }
+    [HttpPut, Route("settings")]
+    public IActionResult UpdateSettings(string next) {
+        settings.Save(next);
+        return Ok();
+    }
+    public void Helper() {
+        var example = "[HttpPost]";
+        settings.Save(example);
+    }
+    [Example.HttpPost]
+    public void SaveUnrelatedAttribute() { settings.Save(); }
+}
+[HttpPost]
+class NotAHandler {
+    public void SaveHelper() { settings.Save(); }
+}
+"#;
+        let sources = RepositorySources {
+            node_modules: Default::default(),
+            root: ".".into(),
+            files: BTreeMap::from([(
+                "Account.cs".into(),
+                SourceFile {
+                    path: "Account.cs".into(),
+                    language: Some(Language::Csharp),
+                    source: source.into(),
+                },
+            )]),
+        };
+        let groups = server_mutation_review_marker_groups(&sources, &[], None, 0, true).0;
+        assert_eq!(groups.len(), 2);
+        for (symbol, capability, family, call) in [
+            (
+                "ResetPassword",
+                Capability::Authentication,
+                "review-invariant:credential-lifecycle",
+                "users.ResetPassword(token, next)",
+            ),
+            (
+                "UpdateSettings",
+                Capability::Authorization,
+                "review-invariant:action-resource-authorization",
+                "settings.Save(next)",
+            ),
+        ] {
+            let group = groups.iter().find(|group| group.symbol == symbol).unwrap();
+            let marker = &group.evidence[0];
+            assert_eq!(marker.capability, capability);
+            assert!(marker.tags.iter().any(|tag| tag == family));
+            let excerpt =
+                &source[marker.location.start.byte_offset..marker.location.end.byte_offset];
+            assert!(excerpt.contains(call));
+            assert!(excerpt.contains("return Ok()"));
+            assert!(!excerpt.contains("public void Helper"));
+        }
+    }
 
     #[test]
     fn simulated_and_actual_transitions_keep_separate_source_bound_questions() {

@@ -23286,7 +23286,7 @@ mod tests {
             SourceFile {
                 path: "AccountController.cs".to_string(),
                 language: Some(Language::Csharp),
-                source: "[HttpPost(\"password\")]\npublic IActionResult ChangePassword(ChangePasswordRequest request) {\n account.UpdatePassword(request.NewPassword);\n return Ok();\n}\n"
+                source: "class AccountController {\n[HttpPost(\"password\")]\npublic IActionResult ChangePassword(ChangePasswordRequest request) {\n account.UpdatePassword(request.NewPassword);\n return Ok();\n}\n}\n"
                     .to_string(),
             },
         );
