@@ -26,6 +26,16 @@ rate limiting, and repository behavior tests before leaving answer quality or
 reset authority unresolved. A challenge check after a successful reset does
 not by itself prove that its answer was accepted by the reset gate.
 
-Stop when the required authority and rejection are shown for this exact
-change, or when a concrete path mutates the credential without them. Keep
-unknown external identity policy as the named missing fact when decisive.
+For a proof authorizing a single reset/recovery transition, check whether it can
+authorize another after success. Signature, account binding and expiry establish
+first-use acceptance, not consumption. Follow effective token/nonce consumption,
+password or security-state binding, rotation or equivalent invalidation; absence
+of token deletion alone is not a defect. If delegated semantics remain unread,
+keep that deciding gap. This does not impose single use on ordinary sessions or
+operator administration. Load [credential lifecycle](../categories/credential-lifecycle.md)
+and [token review](../token-review.md) when that relationship needs further guidance.
+
+Stop when the required authority, rejection and applicable consumption are shown
+for this exact change, or a concrete violation is established under stated
+conditions. Keep unknown external identity policy or invalidation behavior as
+the named missing fact when decisive.
