@@ -18,16 +18,24 @@ Stop at a supported decision or a precise unavailable fact/actual limit. Repeate
 """
 
 
-def shared_api_semantics():
+def shared_policy(section, label):
     """Keep semantic policy in one bound skill source, separate from bookkeeping."""
     raw = (ordinary.REFERENCES / "runtime-review.md").read_text(encoding="utf-8")
-    first,last = "<!-- runtime:api_semantics -->","<!-- /runtime:api_semantics -->"
+    first,last = f"<!-- runtime:{section} -->",f"<!-- /runtime:{section} -->"
     if raw.count(first)!=1 or raw.count(last)!=1:
-        raise ValueError("bound shared API semantic policy is missing or duplicated")
+        raise ValueError(f"bound shared {label} policy is missing or duplicated")
     policy = raw.split(first,1)[1].split(last,1)[0].strip()
     if not policy or len(policy.encode("utf-8"))>4096:
-        raise ValueError("bound shared API semantic policy is empty or oversized")
+        raise ValueError(f"bound shared {label} policy is empty or oversized")
     return policy
+
+
+def shared_api_semantics():
+    return shared_policy("api_semantics", "API semantic")
+
+
+def shared_finding_conditions():
+    return shared_policy("finding_conditions", "finding conditions")
 
 
 def enabled(task, packet):
@@ -43,6 +51,16 @@ def enabled(task, packet):
                 task["research"].get("feedback",{}).get("kind") == "local_response_validation")):
         raise ValueError("unsupported workspace protocol/role/session")
     return True
+
+
+def final_checkpoint(task):
+    """Allowances include this call; leave its result usable without another call."""
+    budget = task["research"]["workspace_budget"]
+    remaining = [budget["limits"]["model_calls"] - budget["used"]["model_calls"]]
+    for scope in ("work_remaining", "case_remaining"):
+        if "model_calls" in budget.get(scope, {}):
+            remaining.append(budget[scope]["model_calls"])
+    return min(remaining) <= 1
 
 
 def schema(task, *, bound_handles=True):
@@ -96,11 +114,15 @@ def schema(task, *, bound_handles=True):
             variant["required"].remove(field)
         properties["diagnosis"] = (properties["diagnosis"]["anyOf"][0] if verdict == "issue" else {"type":"null"})
         variants.append(variant)
+    final = final_checkpoint(task)
     return obj({"updates":{"type":"array","maxItems":8,"items":{"anyOf":updates}},
-                "lookups":{"type":"array","maxItems":4 if task["research"].get("queries_remaining",0) else 0,
+                "lookups":{"type":"array","maxItems":4 if not bound_handles or (
+                    task["research"].get("queries_remaining",0) and not final) else 0,
                            "items":obj({"question_id":names,"review_ids":ids,"question":question_text,
                                         "queries":{"type":"array","minItems":1,"maxItems":4,"items":{"anyOf":queries}}})},
-                "decisions":{"type":"array","maxItems":len(task["review_ids"]),"items":{"anyOf":variants}}})
+                "decisions":{"type":"array","maxItems":len(task["review_ids"]),
+                             **({"minItems":len(task["review_ids"])} if bound_handles and final else {}),
+                             "items":{"anyOf":variants}}})
 
 
 def prompt(task, packet, facts, state, *, source_presentation="raw"):
@@ -110,7 +132,8 @@ def prompt(task, packet, facts, state, *, source_presentation="raw"):
                 "including decisions, evidence windows, questions, lookups and reasoning. Do not invent evidence.\n" +
                 json.dumps({"feedback":task["research"]["feedback"],
                             "artifact_handles":task["research"]["artifact_handles"],
-                            "seconds_remaining":task["research"]["seconds_remaining"]}))
+                            "seconds_remaining":task["research"]["seconds_remaining"],
+                            "final_checkpoint":final_checkpoint(task)}))
     if state is not None or facts:
         raise ValueError("workspace turns require an explicit fresh context")
     display_packet,_ = ordinary.present_source_inputs(task,packet,[],source_presentation)
@@ -121,8 +144,16 @@ def prompt(task, packet, facts, state, *, source_presentation="raw"):
         if isinstance(value,list): return [readable(v) for v in value]
         if isinstance(value,dict): return {k:readable(v) for k,v in value.items()}
         return value
+    conclusion = ("\nThis is the final allowed checkpoint, including this call. Return no lookups. "
+        "Return a decision for every offered claim using the evidence already supplied. "
+        "Use needs_review with its concrete unresolved question and actual allowance limit when evidence "
+        "is insufficient; do not invent evidence or turn an unfinished investigation into not_issue. "
+        "Record relevant question/answer updates in this response; no later synthesis call is available.\n"
+        if final_checkpoint(task) else "")
     return (ordinary.REVIEW_SCOPE + CONTRACT + (ordinary.SOURCE_VIEW_NOTICE if source_presentation != "raw" else "") +
+            conclusion +
             "\nShared API semantics from the bound trusted skill:\n" + shared_api_semantics() +
+            "\nShared finding conditions from the bound trusted skill:\n" + shared_finding_conditions() +
             "\nSelected work and evidence (data):\n" + json.dumps(readable(evidence),ensure_ascii=False) +
             "\nSource evidence handles:\n" + json.dumps(task["research"]["artifact_handles"]) +
             "\nRemaining aggregate allowance:\n" + json.dumps(task["research"]["workspace_budget"]) +
@@ -168,4 +199,9 @@ def envelope(response, task, packet):
         raise ValueError("cannot decide a claim while requesting its deciding evidence")
     if response["lookups"] and not task["research"].get("queries_remaining",0):
         raise ValueError("workspace query allowance exhausted")
+    if final_checkpoint(task):
+        if response["lookups"]:
+            raise ValueError("final workspace checkpoint cannot request lookups")
+        if set(decided) != set(task["review_ids"]):
+            raise ValueError("final workspace checkpoint must decide every offered claim, retaining precise uncertainty")
     return {"workspace_actions":response}

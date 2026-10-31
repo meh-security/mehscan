@@ -478,6 +478,11 @@ class NativeWorkspace:
             for round_index in range(2):
                 task["research"]["seconds_remaining"] = self._remaining_seconds(work_id)
                 task["research"]["round"] = round_index
+                if task.get("workspace_protocol") == actions.VERSION:
+                    # The task's allowance includes the call about to be reserved.
+                    # Refresh on correction too; its prepared budget predates the
+                    # rejected paid turn and cannot authorize another lookup loop.
+                    task["research"]["workspace_budget"]["used"] = self.workspace.snapshot()["used"].copy()
                 suffix = session_id + (":" + str(round_index) if round_index else "")
                 self.apply("call:" + suffix, {"kind":"start_call","session_id":session_id,"round":round_index})
                 failed = None

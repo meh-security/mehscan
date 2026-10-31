@@ -104,6 +104,16 @@ class ResearchArguments(list):
         self.filter_normalization = filter_normalization
 
 
+class ResearchBatchError(ValueError):
+    """Repairable query errors collected before any lookup or reservation."""
+    def __init__(self, errors):
+        super().__init__(errors[0][1].args[0])
+        self.errors = [{"query_index":index, "reason":str(error),
+                        **({"lookup_feedback":error.result} if isinstance(error, ResearchFilterError) else {})}
+                       for index,error in errors[:32]]
+        self.error_count = len(errors)
+
+
 def missing_source_result(query, error):
     """Recover narrowly recognized missing-source or navigation-scope outcomes.
 
@@ -669,6 +679,29 @@ def research_cost(queries):
     units = {item["name"]:item["query_units"] for item in context.research_api(
         Path(__file__).resolve().parents[1] / "skills/mehscan-security")["tools"]}
     return sum(units[query["tool"]] for query in queries)
+
+
+def research_batch_arguments(queries, root, review_ids, journals, *, api=None, guidance=None, query_units_remaining=None):
+    """Inspect every query for known repairable errors; fail closed on others.
+
+    Compilation never executes a query. A valid prefix of a rejected batch must
+    not reserve units, load source, or create journals.
+    """
+    commands, errors = [], []
+    for index,query in enumerate(queries):
+        try:
+            commands.append(research_arguments(query, root, review_ids, journals, api=api, guidance=guidance))
+        except ValueError as error:
+            if not isinstance(error, ResearchFilterError) and str(error) not in (
+                    "unsupported research arguments", "research source window must contain 1 to 400 lines",
+                    "research result limit must be 1 to 100"):
+                raise
+            errors.append((index,error))
+    if query_units_remaining is not None and research_cost(queries) > query_units_remaining:
+        errors.append((None,ValueError("research batch exceeds remaining query units")))
+    if errors:
+        raise ResearchBatchError(errors)
+    return commands
 
 
 def definition_result(discovery, read_source):
@@ -1351,13 +1384,12 @@ def run_locked(args):
                     raise ValueError("research response must be a nonempty query batch only")
                 if round_index >= calls_left - 1 or job.state.get("citation_feedback"):
                     raise ValueError("reviewer exhausted its research budget without a final draft")
-                if research_cost(queries) > remaining_count("queries", args.research_queries - query_count):
-                    raise ValueError("research batch exceeds remaining query units")
                 # Validate the entire batch before running any lookup.
-                commands = [research_arguments(query, root, task.get("review_ids", []), journals,
-                    api=context.research_api(skill_root), guidance=context.guidance_catalog(skill_root)) for query in queries]
+                commands = research_batch_arguments(queries, root, task.get("review_ids", []), journals,
+                    api=context.research_api(skill_root), guidance=context.guidance_catalog(skill_root),
+                    query_units_remaining=remaining_count("queries", args.research_queries - query_count))
             except ValueError as error:
-                recoverable = isinstance(error, ResearchFilterError) or str(error) in (
+                recoverable = isinstance(error, (ResearchFilterError, ResearchBatchError)) or str(error) in (
                             "review progress must cite current inspected artifacts",
                             "final draft cannot leave an available local edge open", "unsupported research arguments",
                             "blocked edge needs a precise cause", "open/inspected edges cannot claim a blocker",
@@ -1385,6 +1417,18 @@ def run_locked(args):
                         "No query in this rejected batch executed. Retain inspected source facts; "
                         "this API feedback establishes no source or security conclusion. "
                         "The rejected draft was not admitted.")
+                if isinstance(error, ResearchBatchError):
+                    feedback["query_errors"] = error.errors
+                    feedback["query_error_count"] = error.error_count
+                    feedback["query_errors_truncated"] = error.error_count > len(error.errors)
+                    # Retain the single-filter feedback shape for existing adapters.
+                    if "lookup_feedback" in error.errors[0]:
+                        feedback["lookup_feedback"] = error.errors[0]["lookup_feedback"]
+                    feedback["instruction"] += (
+                        " Correct every listed query_errors entry (query_index is zero-based; null denotes "
+                        "the whole batch), not only reason. "
+                        "No query in this rejected batch executed. API feedback is not source evidence "
+                        "and establishes no security conclusion.")
                 with shared_lock:
                     with (output / "review-feedback.jsonl").open("a", encoding="utf-8") as audit:
                         audit.write(json.dumps({"conversation_id": conversation_id, "round": round_index,

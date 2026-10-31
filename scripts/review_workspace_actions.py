@@ -155,6 +155,14 @@ def apply_response(bridge, session_id, task, packet, response):
         raise ValueError("workspace response must contain bounded actions")
     if len(response["updates"]) > 8 or len(response["lookups"]) > 4:
         raise ValueError("workspace action limit exceeded")
+    state = bridge.workspace.snapshot()
+    budget = task["research"].get("workspace_budget",{})
+    # The provider's offer includes this call; live workspace usage has already
+    # charged it. Enforce completion here too for alternate provider adapters.
+    final = state["used"]["model_calls"] >= state["limits"]["model_calls"] or any(
+        budget.get(scope,{}).get("model_calls",2) <= 1 for scope in ("work_remaining","case_remaining"))
+    if final and (response["lookups"] or {d["review_id"] for d in response["decisions"]} != set(task["review_ids"])):
+        raise ValueError("final workspace checkpoint requires every offered decision and no lookups; retain precise uncertainty")
     response = copy.deepcopy(response)
     projections = []
     for decision in response["decisions"]:
@@ -163,7 +171,6 @@ def apply_response(bridge, session_id, task, packet, response):
         if projected != original:
             projections.append({"review_id":decision["review_id"],"original":original,"projected":projected})
             decision["evidence"] = projected
-    state = bridge.workspace.snapshot()
     view = state["sessions"][session_id]["packet"]
     scoped_ids = {}
     declarations = [u for u in response["updates"] if u.get("kind") == "question"] + response["lookups"]

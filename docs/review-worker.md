@@ -9,6 +9,44 @@ No automatic model launch is enabled in the composite Action.
 
 ## Ordinary review profile
 
+An opt-in preparation experiment can build an ordinary `--source-profile` from
+native sweep helper/context leads. Save the selected bundles' `review-sweep`
+objects as one JSON array, then run:
+
+```powershell
+python scripts/review_source_profile.py --scanner C:/tools/mehscan.exe --source-root C:/src/app --work-package C:/review/work.json --sweeps C:/review/sweeps.json --output C:/review/source-profile.json --trace C:/review/preparation-trace.json
+```
+
+Pass the resulting profile through the worker's existing `--source-profile`
+option. The builder prepares up to eight complete bounded windows per bundle,
+using exact native source leads and unambiguous named declarations. It records
+ambiguity, missing source and size limits instead of selecting an arbitrary
+declaration or silently clipping a body. Expanded context ranges may end at the
+actual file end; the trace records both requested and returned ranges.
+Declaration uniqueness does not establish import, dispatch or caller applicability.
+Profiles retain exact bundle IDs, inventory binding and whole-file hashes; changed
+source fails normal profile validation. The trace contains navigation/provenance,
+not verdicts. A no-window result exits with code 2 and leaves the trace available;
+continue with ordinary preparation. This experiment does not change default
+preparation or enable a model call.
+
+Add `--dependencies` to opt into JS/TS explicit-import navigation. It follows
+the anchored operation's declared constructor dependencies and literal Nest
+Passport guard/strategy keys, including import aliases. Invoked dependencies
+precede passive type imports within the same window budget. Duplicate strategy
+registrations remain candidates; dynamic keys and missing modules are not guessed.
+The trace distinguishes module resolution, registration candidates, lookup
+failures and budget omissions. This is source navigation, not proof that an
+exported member, injected provider or registration is active at runtime.
+
+The underlying read-only command is
+`mehscan investigate import-targets ROOT --path relative/file.ts`. It returns
+actual static import statements with `source`, `external` or `unresolved` module
+targets using the existing resolver. It does not infer CommonJS bindings or
+follow arbitrary recursive imports. Preparation caches navigation queries within
+a work package, caps new dependency queries at 80, and retains normal source
+hash checks. Both the builder and this query remain opt-in.
+
 For experimental routed execution, `--validate-only --phase native` performs
 ordinary review/finalization/report checks without recording decisions or pending
 questions. It returns `source_validated`; supersession and change-pass modes are

@@ -1045,6 +1045,44 @@ fn is_native_secondary_tooling_review_material(
     tooling_directory || root_release_script
 }
 
+/// Resolve explicit JS/TS import modules for source navigation only. This does
+/// not establish exported-member identity, dependency injection or dispatch.
+pub fn get_import_targets(
+    root: &Path,
+    path: &str,
+) -> Result<QueryResponse<Vec<serde_json::Value>>, EngineError> {
+    use crate::code::node_modules::{ImportMode, ModuleTarget};
+    let sources = RepositorySources::load(root)?;
+    let file = sources.file(path)?;
+    if !matches!(
+        file.language,
+        Some(Language::Javascript | Language::Typescript | Language::Tsx)
+    ) {
+        return Err(EngineError(
+            "import targets currently require JavaScript or TypeScript".into(),
+        ));
+    }
+    let symbols = OutlineExtractors::build()?.extract(file)?;
+    let results = symbols.into_iter().filter(|symbol| symbol.is_import && symbol.ast_kind == "import_statement")
+        .map(|symbol| {
+            let specifier = symbol.name.trim_matches(&['\'', '"'][..]);
+            let (status, target) = match sources.node_modules.resolve(&file.path, specifier, ImportMode::Import) {
+                ModuleTarget::Source(path) => ("source", Some(path)),
+                ModuleTarget::External(_) => ("external", None),
+                ModuleTarget::Unresolved(_) => ("unresolved", None),
+            };
+            serde_json::json!({"import":symbol, "status":status, "source_path":target,
+                "scope":"module_source_only; exported member, runtime provider and caller applicability remain unproven"})
+        }).collect();
+    Ok(response(
+        &sources.root,
+        "get_import_targets",
+        ast_provenance("ast-grep-outline and node module resolver"),
+        false,
+        results,
+    ))
+}
+
 pub fn get_file_outline(
     root: &Path,
     path: &str,

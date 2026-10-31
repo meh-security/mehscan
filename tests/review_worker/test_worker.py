@@ -77,6 +77,44 @@ class ArtifactCopy(unittest.TestCase):
 
 
 class LookupFailures(unittest.TestCase):
+    def test_batch_feedback_collects_window_directory_limit_and_total_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "module").mkdir()
+            queries = [
+                {"tool":"source","review_id":"id","arguments":{"path":"app.js","start_line":1,"end_line":500}},
+                {"tool":"definition","review_id":"id","arguments":{"name":"guard","path":"module"}},
+                {"tool":"references","review_id":"id","arguments":{"symbol":"guard","limit":101}}]
+            original = json.dumps(queries)
+            with self.assertRaises(worker.ResearchBatchError) as caught:
+                worker.research_batch_arguments(queries,root,["id"],root / "journals",query_units_remaining=3)
+            error = caught.exception
+            self.assertEqual(error.error_count,4)
+            self.assertEqual([e["query_index"] for e in error.errors],[0,1,2,None])
+            self.assertIn("400 lines",str(error))
+            self.assertEqual(error.errors[1]["lookup_feedback"]["code"],"file_filter_is_directory")
+            self.assertFalse(error.errors[1]["lookup_feedback"]["native_query_executed"])
+            self.assertIn("query units",error.errors[-1]["reason"])
+            self.assertEqual(json.dumps(queries),original)
+            self.assertFalse((root / "journals").exists())
+            # A later authorization/path violation is not downgraded into repair.
+            queries.append({"tool":"source","review_id":"id","arguments":{"path":"../secret","start_line":1,"end_line":1}})
+            with self.assertRaisesRegex(ValueError,"authorized source") as fatal:
+                worker.research_batch_arguments(queries,root,["id"],root / "journals")
+            self.assertNotIsInstance(fatal.exception,worker.ResearchBatchError)
+
+    def test_batch_feedback_is_bounded_and_valid_queries_keep_order_and_cost(self):
+        query = {"tool":"source","review_id":None,"arguments":{"path":"app.js","start_line":1,"end_line":401}}
+        with self.assertRaises(worker.ResearchBatchError) as caught:
+            worker.research_batch_arguments([query]*40,ROOT,[],ROOT)
+        self.assertEqual(caught.exception.error_count,40)
+        self.assertEqual(len(caught.exception.errors),32)
+        valid = [{**query,"arguments":{**query["arguments"],"end_line":1}},
+                 {"tool":"definition","review_id":None,"arguments":{"name":"guard"}}]
+        commands = worker.research_batch_arguments(valid,ROOT,[],ROOT,query_units_remaining=3)
+        self.assertEqual(commands,[worker.research_arguments(q,ROOT,[],ROOT) for q in valid])
+        self.assertEqual(worker.research_cost(valid),3)
+
     def test_cwe_feedback_is_exact_and_does_not_repair_other_native_failures(self):
         message="error: invalid reviewer work: diagnosis CWEs must be at most five distinct CWE-N identifiers"
         self.assertIn("distinct CWE-N",worker.finalization_feedback(worker.CommandFailure(2,message),["id"]))
@@ -1571,6 +1609,31 @@ else:
             else:
                 self.assertNotEqual(result.returncode, 0)
                 self.assert_no_decisions()
+
+    def test_mixed_query_errors_share_one_charged_repair_without_partial_execution(self):
+        (self.root / "module").mkdir()
+        normal = self.base / "normal.py"
+        normal.write_text(self.reviewer.read_text(),encoding="utf-8")
+        self.reviewer.write_text('import json,sys,subprocess\ntask=json.load(sys.stdin)\n'
+            'if task["research"]["round"] == 0:\n'
+            ' id=task["review_ids"][0]\n'
+            ' print(json.dumps({"research":[{"tool":"source","review_id":id,"arguments":{"path":"app.js","start_line":1,"end_line":1}},'
+            '{"tool":"source","review_id":id,"arguments":{"path":"app.js","start_line":1,"end_line":401}},'
+            '{"tool":"definition","review_id":id,"arguments":{"name":"handle","path":"module"}}]}))\n'
+            'else:\n'
+            ' feedback=task["research"]["feedback"]\n'
+            ' assert [e["query_index"] for e in feedback["query_errors"]] == [1,2]\n'
+            ' assert feedback["query_errors"][1]["lookup_feedback"]["code"] == "file_filter_is_directory"\n'
+            ' assert not task["research"]["results"]\n'
+            ' print(subprocess.check_output([sys.executable,' + repr(str(normal)) + '],input=json.dumps(task),text=True))\n',encoding="utf-8")
+        result = self.invoke(extra=["--phase","native"])
+        self.assertEqual(result.returncode,0,result.stdout + result.stderr)
+        directory = self.base / "worker"
+        record = json.loads((directory / "worker.json").read_text())
+        self.assertEqual(record["protocol_corrections"],1)
+        job = json.loads(next((directory / "jobs").glob("*.json")).read_text())
+        self.assertEqual((job["calls"],job["queries"]),(2,0))
+        self.assertFalse((directory / "research.jsonl").exists())
 
     def test_oversized_definition_batch_gets_one_charged_repair_before_any_lookup(self):
         normal = self.base / "normal.py"

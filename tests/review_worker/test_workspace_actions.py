@@ -70,6 +70,49 @@ class WorkspaceActionTests(unittest.TestCase):
         self.assertEqual(self.calls[0]["prompt"].count(sources[0]["text"]),1)
         self.assertNotIn("Operator commands",sources[0]["text"])
 
+    def test_last_call_exports_supported_and_uncertain_claims_without_extra_inference(self):
+        # Spend five calls on explicit unanswered work, then use the final
+        # ordinary adapter checkpoint to conclude without additional research.
+        for index in range(5):
+            self.turn("pending-"+str(index),lambda task,packet:{"updates":[{"kind":"question",
+                "question_id":"authority","review_ids":task["review_ids"][1:],
+                "question":"Does the relevant caller supply attacker input?"} if index == 0 else {
+                    "kind":"answer","question_id":"authority","status":"open",
+                    "reason":"The relevant caller binding still needs evidence.","evidence":[]}],"lookups":[],"decisions":[]})
+        def conclude(task,packet):
+            self.assertEqual(task["research"]["workspace_budget"]["used"]["model_calls"],5)
+            results = [self.decision(c) for c in packet["native_questions"]]
+            for result in results[1:]:
+                result.update(decision="needs_review",diagnosis=None,
+                    summary="Caller authority remains unresolved.",
+                    reason="The selected input-to-effect binding remains unresolved at the model-call limit.")
+            return {"updates":[{"kind":"answer","question_id":"authority","status":"open",
+                    "reason":"Caller binding remains unestablished at the six-call limit.","evidence":[]}],
+                    "lookups":[],"decisions":results}
+        self.turn("last-checkpoint",conclude)
+        self.assertEqual(self.calls[-1]["schema"]["properties"]["lookups"]["maxItems"],0)
+        self.assertIn("final allowed checkpoint",self.calls[-1]["prompt"])
+        self.assertEqual(self.bridge.workspace.usage()["calls"],6)
+        self.assertEqual(self.bridge.workspace.usage()["unobserved_calls"],0)
+        self.assertFalse(self.bridge.workspace.view("initial")["claims"])
+        exported = self.bridge.export_completed()
+        self.assertTrue(exported["native_validated"])
+        self.assertEqual(len(exported["completed_review_ids"]),3)
+
+    def test_controller_rejects_last_work_call_lookup_from_an_alternate_adapter(self):
+        session = self.bridge.prepare("initial",self.fixture.config_path,"alternate-final")["session_id"]
+        directory = self.bridge.directory / "sessions" / session
+        task,packet = fixtures.read(directory / "task.json"),fixtures.read(directory / "context.json")
+        task["research"]["workspace_budget"]["work_remaining"] = {"model_calls":1}
+        before = self.bridge.workspace.snapshot()
+        response = {"updates":[],"decisions":[],"lookups":[{"question_id":"late",
+            "review_ids":task["review_ids"],"question":"Read one more fact?","queries":[{
+                "tool":"source","review_id":task["review_ids"][0],"purpose":"Read selected effect",
+                "arguments":{"path":"app.js","start_line":1,"end_line":1}}]}]}
+        with self.assertRaisesRegex(ValueError,"every offered decision and no lookups"):
+            actions.apply_response(self.bridge,session,task,packet,response)
+        self.assertEqual(self.bridge.workspace.snapshot(),before)
+
     def test_invalid_auxiliary_handle_gets_one_same_context_correction(self):
         self.fixture.config['schema_mode']='stable'
         self.fixture.config_path.write_text(json.dumps(self.fixture.config))
@@ -95,6 +138,7 @@ class WorkspaceActionTests(unittest.TestCase):
         self.bridge.review(session,self.fixture.config_path,invoke)
         self.assertEqual([t['thread'] for t in turns],[None,thread])
         self.assertEqual([t['task']['research']['round'] for t in turns],[0,1])
+        self.assertEqual([t['task']['research']['workspace_budget']['used']['model_calls'] for t in turns],[0,1])
         self.assertLessEqual(turns[1]['task']['research']['seconds_remaining'],turns[0]['task']['research']['seconds_remaining'])
         usage=self.bridge.workspace.usage()
         self.assertEqual(usage['calls'],2)

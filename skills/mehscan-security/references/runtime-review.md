@@ -64,6 +64,24 @@ insufficient. Safe local construction does not certify the whole operation.
 Preserve a distinct consequential question encountered in inspected source as a
 separate unreviewed lead; do not replace this ID's claim or hunt for neighbors.
 
+<!-- runtime:finding_conditions -->
+Conditional authorization findings need compatible preconditions: the accepted
+credential branch, principal class, applicable restriction and effect must
+describe one feasible path. Follow the named credential producer or acceptance
+constraint when it decides whether the restricted principal can reach the
+operation; a credential's name is not proof. If every admitted principal already
+has the relevant grant, a mismatched check alone is not a bypass. If that
+feasibility or policy is unresolved, return needs_review with the deciding
+question. Feasible source-supported permission conditions need no deployed
+account or PoC.
+Track changes to the principal, authorization state and selected object between
+the check and effect, including before a later read of apparently trusted state.
+An earlier unsafe operation on that same feasible path belongs to this review
+when it can change those values; a different weakness category does not make it
+an unrelated lead. Conversely, do not assume a mutation changes a value already
+captured independently. Bind the claimed influence to the actual evaluation order.
+<!-- /runtime:finding_conditions -->
+
 Stop when this relationship is settled or bounded research cannot settle the
 named gap. Keep available-but-unread source distinct from unknown binding,
 external semantics, deployment/business policy and exhausted budget. Return

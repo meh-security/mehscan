@@ -1,8 +1,91 @@
 # Review flow hardening and Value selection — 2026-10-30
 
-**Latest gate — normal controller replay passed offline:** [seven saved claims / five fresh workspaces](experiments/review-controller-replay-results-2026-10-30.md) complete through the bundled adapter, ordinary update handling and native export, with unchanged paid decision text and no candidate fallback. Bounded questions are attached to their actual unresolved claims; local companion constructions can close independently. All 33 new exported source excerpts, 12,872 frozen source files and 264 historical artifacts validate. Fourteen negative controls preserve question, proof and state guards. Zero live model calls / zero new provider spend. Implementation and prior reports are committed as `cc4fe2b`. This is an offline compatibility gate, not new quality/cache/price evidence or proof of unattended live acceptance.
+**Latest continuation — dependency navigation, CU (finished, partial provider
+completion):** the same 72 selected claims and 29 native bundles across five
+pinned applications produce **120/144 finalized assessments, 55 completed pairs
+and 13 verdict disagreements**. Eight HTTP 403 attempts lack receipts; the known
+provider price is **at least $2.670487**, with 66.6% cached input. Both arms use
+the same model, prompt, budgets and current runtime. See the [implementation,
+comparison, exact claim audit and corrected milestones](experiments/review-dependency-navigation-2026-10-30.md).
 
-**Latest result / broader scope complete:** the [120-claim held-out workload](experiments/review-broad-scope-results-2026-10-30.md) covered 105 files, 26 rules and 13 capabilities. Native plus five selected workspace investigations used **101 receipted calls / $2.022589 Standard API equivalent**, with unchanged guidance. Native cost $1.384853; workspace added $0.637736 and resolved a conditional menu authorization mechanism plus two local negatives. The final manually assessed package is **74 negatives / four conditional issue sites / 42 uncertainties**: 113 retained native decisions, three normally completed workspace decisions and four separately source-validated paid candidates. This is affordable measured scope, not a full-app estimate or precision/recall benchmark. Original run failures remain visible, and clean unattended acceptance is unpassed.
+The new native query follows actual import statements through the existing
+module resolver. Declared constructor types and literal Passport registration
+keys supply bounded source candidates, never proof of active providers or
+runtime dispatch. Same-name modules, import aliases, duplicate registrations,
+dynamic keys and failed lookups have explicit regression coverage. Existing
+parser gaps remain visible; this change does not suppress them. Source/hash/
+contract parity passes, with 4,796 frozen files and 389 exported excerpts verified.
+Keep all CT failures and unknown charges separate; no historical attempt resets.
+
+**Current decision:** keep navigation opt-in and retain native plus selective
+workspace. The 20 paired claims with changed source use 20 calls / $0.416063,
+versus 15 / $0.342764 with the existing builder: no saving demonstrated. There are
+useful local proof improvements (token/owner binding, sidebar filtering, authorized
+task creation), but more uncertainty is not automatically higher quality and a
+local negative must not erase a broader unresolved effect. Identical Python
+packets also disagree on one supported reply-target mismatch at two claim sites.
+
+**Next milestones:** (1) deliver a bounded deciding dependency chain, including
+re-export/provider context, without losing discovered evidence to unrelated
+bundle windows; (2) preserve local closure and separately scoped open effects in
+the review package, using the saved disagreements as an offline acceptance corpus.
+Keep hashes, caller/predicate scope and independent verdicts when sharing facts.
+Do not add blanket prompts, exhaustive caller discovery or a universal reviewer
+pass. Hold wider paid expansion while these gates and recurring provider failures
+remain unresolved. No further model run is queued.
+
+**Previous continuation — broad cross-app preparation test:** [72-claim paired
+experiment](experiments/review-cross-app-preparation-results-2026-10-30.md) covers
+five Python/JS/TS apps with identical model, guidance and grouping. Implemented
+an opt-in native-lead source-profile builder with scope/hash/ambiguity guards.
+Provider HTTP 403 failures leave **91/144 assessments finalized, 34 completed
+pairs, 166 receipted attempts and 15 unknown attempts**. Known provider price is
+**at least $2.472668**, not a complete total. All 34 paired verdicts agree; the
+24 changed-source survivors use five fewer calls and about 5.8% less measured
+provider cost. Failed-subset selection and single-run variability prevent a
+whole-workload saving or precision claim.
+
+**Decision at CT:** retain the builder opt-in, with its generic tests; keep
+ordinary native and selective workspace. Fuller controller context does not
+resolve the repeated JWT/workspace/permission implementation gaps. Next work is
+source-bound dependency identity and retrieval, tested on different callers,
+same-name declarations, overrides and stale source. Keep parser fixes separate.
+The complete comparison gate remains unpassed because of the provider incident;
+no affected attempt was reset/retried, no missing usage was priced as zero, and
+no further provider dispatch is queued. Earlier studies below remain historical.
+
+**Previous direction — TypeScript/JavaScript Value validation:** [three-app results and corrected direction](experiments/review-ts-js-value-results-2026-10-30.md), [plan](experiments/review-ts-js-value-plan-2026-10-30.md). Original full native baselines reviewed 211/251 claims across NodeGoat, Docmost and HedgeDoc. A generic constructor binding fix adds three Value claims, reviewed in a focused extension; current composed scope is **214/254 selected**, with **40 explicit unreviewed deferrals and no execution gaps**. All baseline, shared-context and correction/control attempts total **162 receipted calls / $3.353925 API equivalent**, with 61.1% cached input. Composed model outcomes are **28 issue sites / 74 negatives / 112 uncertainties**, not a precision estimate or distinct-vulnerability count. These are explicit runtime epochs, not a fresh full-app test of the final prompt.
+
+## Previous milestones — TS/JS Value focus
+
+1. **Complete:** three pinned full inventories, every marker continuation, true `--selection policy`, exact selected/deferred ledgers and parallel native reviews. Previous completion fixes are present in this live baseline; no selected claim is lost to an execution failure.
+2. **Complete:** three scoped shared-source groups finalize 13 claims. Five Docmost comment relationships close negatively; HedgeDoc alias add/promote close while removal retains a conditional reassignment race; five NodeGoat reflected POST sites retain branch/delivery conditions. Source preparation was manually scoped and remains additional work, not unattended automation evidence.
+3. **Fixed and tested:** generic conditional authority guidance requires compatible actor, credential, restriction and effect conditions. A workspace delivery gap is fixed by loading the same bounded reference in both prompts. A later native control wrongly dismissed an evaluation-induced identity change despite reading it; a prompt-only evaluation-order clarification recovers that mechanism while retaining own-profile and benefits controls. The two unestablished credential-feasibility cases remain uncertain. Historical mistakes and all costs are preserved; these small tests do not establish general precision.
+4. **Fixed and tested:** ordinary function-expression constructors now retain instance-method caller bindings, with async/arrow/static/reassignment/lexical-owner guards. Seventeen targeted Rust tests pass. Fresh optimized offline inventories preserve every original ID and priority; only NodeGoat adds three Value claims. Focused native review confirms the executable MongoDB predicate and caller-selected allocation disclosure, and closes server-assigned signup initialization. The original reviewer had retained the query mechanism as an unreviewed neighbor lead.
+5. **Next product milestone, offline first:** improve preparation of the one named deciding TypeScript helper/credential producer, with source/version-bound reuse and per-caller applicability. Use the saved cases, changed-hash/different-caller/partial-source controls and known manually prepared closures. Treat three parser diagnostics and source-only exports as separate coverage defects; do not guess runtime bindings or replace precise uncertainty with safety. A later small held-out slice needs a named quality/price question after offline acceptance.
+6. **Stop this study:** retain native plus selective workspace, actual Value deferrals, all original outcomes and complete attempt price. Freeze further prompt tuning. No fresh-app/model matrix, blanket reviewer pass or full-app rerun is queued. The 112 uncertainties remain explicit; Value does not certify the 40 deferrals. The original native stage took 4m55s; the extended study took about 66 minutes through verification, including manual audit/diagnosis and two optimized builds. Root coordination/source audit remains additional unmetered work.
+
+Earlier cross-application and OrchardCore sections below are historical gates. This user-directed TS/JS study supersedes their active queue without changing recorded results.
+
+**Previous live validation — two new app runs completed with explicit gaps:** [FlaskBB and crAPI results](experiments/review-two-app-validation-results-2026-10-30.md), [frozen plan](experiments/review-two-app-validation-plan-2026-10-30.md). Both apps ran in parallel under the committed, unchanged workflow: 360 selected claims, 191 fully receipted calls and **$3.843253 review-provider API equivalent**. FlaskBB finalized 205/205; crAPI finalized 135/155, with 20 explicit execution failures. After follow-ups the model outcomes are 180 negatives / 57 issue sites / 103 uncertainties, not a precision score or a count of distinct vulnerabilities. The reply-authorization mechanism in FlaskBB survives source/flow review; crAPI follow-ups correct causal reasoning for password reset and private-JWKS logging, qualify body-read exposure and settle the rejected short-key branch. A 17-claim form workspace uses its original six calls without exporting a final judgment. All 791 composed-package source excerpts match source. The previous offline gate remains valid, but **clean unattended live acceptance remains unpassed**. Provider cost is affordable; manual orchestration/audit remains additional unmetered work.
+
+## Cross-application gate — user-directed extension
+
+**Completion fixes implemented; offline validation:** [native batch feedback and final workspace checkpoint](experiments/review-completion-fixes-2026-10-30.md). Exact saved native replies now disclose the previously hidden directory errors together with the source-range error. The saved last workspace task now requires conclusions or precise uncertainty for all 17 offered claims, with no further lookups. Stable provider schemas, original allowances, source/proof guards and all checked historical artifacts are preserved. This changes the controller, not the recorded live outcomes; unattended live completion remains unproven.
+
+The earlier stop applied to tuning OrchardCore and the saved-answer fixtures. The user then requested fresh live bug-finding validation. That extension is now complete; do not use the earlier offline success as a substitute for the two live results.
+
+- **Completed:** two pinned full inventories, normal initial source preparation, parallel execution, bounded selective follow-ups, complete paid-attempt accounting, source checks, promotion/negative screening and 24 deeper reproducible negative controls. Keep both useful modes; no model/prompt/runtime tournament was introduced.
+- **Execution coverage still incomplete:** one crAPI research batch fails after its single protocol correction fixes one argument error but encounters another. Those 20 claims include the vehicle-location BOLA candidate. The failed IDs remain unreviewed; they are not safe. No expired deadline or allowance was reset.
+- **Progress/finalization gap demonstrated:** the auth-form workspace recovers from a lookup-attribution rejection using explicit controller feedback, then spends its remaining calls on investigation without a final judgment. Its 17 native uncertainties remain. Last-checkpoint output constraints and useful unresolved-question export are correctness work, not a token-saving micro-optimization.
+- **Completion implementation complete:** replay the exact saved native invalid batches and the workspace last-turn task/schema offline. Collect actionable batch feedback within the existing bounded repair policy; require the final available checkpoint to conclude with supported decisions or precise uncertainty without forcing dismissals or adding calls. Refresh aggregate usage before proof corrections and enforce the same final boundary for alternate adapters. Preserve all source, budget and historical rejection guards. See the fix report for regressions and the remaining live gate.
+- **Next review-quality task:** determine why ordinary macro/widget/theme semantics left so much HTML unresolved, distinguishing available local evidence from an actual external contract or caller gap. Use the saved FlaskBB, PyGoat and OrchardCore cases for any generic correction. Do not add app-specific prompt rules or assume every authorization/HTML claim needs the same mode.
+
+No additional paid test is queued. Stop widening app/model coverage until these specific observed completion problems are addressed; retain the two live runs unchanged as regressions. Their price does not justify more cache tuning at the expense of quality or useful completion.
+
+**Previous gate — normal controller replay passed offline:** [seven saved claims / five fresh workspaces](experiments/review-controller-replay-results-2026-10-30.md) complete through the bundled adapter, ordinary update handling and native export, with unchanged paid decision text and no candidate fallback. Bounded questions are attached to their actual unresolved claims; local companion constructions can close independently. All 33 new exported source excerpts, 12,872 frozen source files and 264 historical artifacts validate. Fourteen negative controls preserve question, proof and state guards. Zero live model calls / zero new provider spend. Implementation and prior reports are committed as `cc4fe2b`. This is an offline compatibility gate, not new quality/cache/price evidence or proof of unattended live acceptance.
+
+**Previous OrchardCore broader-scope result:** the [120-claim held-out workload](experiments/review-broad-scope-results-2026-10-30.md) covered 105 files, 26 rules and 13 capabilities. Native plus five selected workspace investigations used **101 receipted calls / $2.022589 Standard API equivalent**, with unchanged guidance. Native cost $1.384853; workspace added $0.637736 and resolved a conditional menu authorization mechanism plus two local negatives. The final manually assessed package is **74 negatives / four conditional issue sites / 42 uncertainties**: 113 retained native decisions, three normally completed workspace decisions and four separately source-validated paid candidates. This is affordable measured scope, not a full-app estimate or precision/recall benchmark. Original run failures remain visible, and clean unattended acceptance is unpassed.
 
 The earlier six-claim scope verifier's group exports finished in about 160 seconds, but its final completion record contains a post-export wall-clock gap with Modern Standby events. Preserve that recorded wall time; do not claim an end-to-end speed result. The wider runner now holds its execution request through final verification and records review and verification phases separately. See the timing audit in the scope-results report. Historical results, paid replies and native admission state remain unchanged.
 
