@@ -73,6 +73,7 @@ def references(values, known, *, nonempty=True):
 
 
 def source(root, path):
+    root = Path(root).resolve()
     file = context.relative_file(root, path)
     if any(parent.is_symlink() for parent in (file, *file.parents) if parent != root.parent):
         raise ValueError("source symlinks are not supported")

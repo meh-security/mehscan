@@ -173,7 +173,7 @@ def prepare(args):
     shutil.copytree(product / "skills/mehscan-security",package / "skills/mehscan-security",
                     ignore=shutil.ignore_patterns("__pycache__",".git"))
     scanner = package / "mehscan.exe"
-    shutil.copyfile(args.scanner,scanner)
+    shutil.copy2(args.scanner,scanner)
     old = read(args.provider_config)
     executable = Path(args.provider_executable).resolve(strict=True)
     version = subprocess.check_output([str(executable),"--version"],text=True,encoding="utf-8").strip().removeprefix("codex-cli ")

@@ -617,7 +617,7 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
         path = values[key]
         if (not isinstance(path, str) or not path or "\\" in path or ":" in path
                 or any(part in ("", ".", "..", ".git") for part in path.split("/"))
-                or Path(path).is_absolute() or not (root / path).resolve().is_relative_to(root)):
+                or Path(path).is_absolute() or not (root / path).resolve().is_relative_to(root.resolve())):
             raise ValueError("research paths must stay relative to the authorized source")
     for key in ("name", "symbol"):
         if key in values and (not isinstance(values[key], str) or not values[key].strip()

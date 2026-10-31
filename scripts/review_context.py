@@ -77,6 +77,7 @@ def source_lines(text):
 
 
 def relative_file(root, path):
+    root = Path(root).resolve()
     if (not isinstance(path, str) or not path or ":" in path or "\\" in path
             or any(part in ("", ".", "..", ".git") for part in path.split("/"))):
         raise ValueError("context path must be source relative")
