@@ -1,5 +1,6 @@
 use super::*;
 mod javascript_boundaries;
+mod python_credentials;
 
 const AUTHORIZATION_REVIEW_MARKER_RULE_ID: &str = "framework-authorization-review-marker";
 const CREDENTIAL_LIFECYCLE_REVIEW_MARKER_RULE_ID: &str =
@@ -19,6 +20,7 @@ struct ServerMutationMarker {
     symbol: String,
     effect: String,
     related_handlers: Vec<String>,
+    credential_effect: Option<(std::ops::Range<usize>, &'static str)>,
 }
 
 struct ReviewAdmissionDescriptor {
@@ -98,6 +100,7 @@ fn server_mutation_review_marker_groups(
         }
         let spans = line_spans(&file.source);
         let mut javascript_boundaries = javascript_boundaries::inspect(file, &spans);
+        let mut python_credentials = python_credentials::inspect(file, &spans);
         let comment_ranges = javascript_boundaries
             .as_ref()
             .map(|index| index.comments.clone())
@@ -127,7 +130,9 @@ fn server_mutation_review_marker_groups(
                 continue;
             }
             let line = file.source[line_start..line_end].trim();
-            let marker = if let Some(index) = javascript_boundaries.as_mut() {
+            let marker = if let Some(marker) = python_credentials.remove(&line_index) {
+                Some(marker)
+            } else if let Some(index) = javascript_boundaries.as_mut() {
                 if ["@Post(", "@Put(", "@Patch(", "@Delete(", "@Mutation("]
                     .iter()
                     .any(|s| line.starts_with(s))
@@ -153,6 +158,20 @@ fn server_mutation_review_marker_groups(
             let Some(marker) = marker else {
                 continue;
             };
+            // Prefer the AST-backed credential effect to the surrounding Python
+            // decorator marker; the same implementation is one review question.
+            if marker.credential_effect.is_none()
+                && file.language == Some(Language::Python)
+                && (marker.start_index..=marker.end_index)
+                    .find(|index| {
+                        let (start, end) = spans[*index];
+                        authorization_definition_identifier(&file.source[start..end]).as_deref()
+                            == Some(marker.symbol.as_str())
+                    })
+                    .is_some_and(|index| python_credentials.contains_key(&index))
+            {
+                continue;
+            }
             let start = spans[marker.start_index].0;
             let end = spans[marker.end_index].1;
             if !seen.insert((file.path.clone(), start, end)) {
@@ -187,10 +206,27 @@ fn server_mutation_review_marker_groups(
             captures.insert(
                 "effect".to_string(),
                 Capture {
-                    text: marker.effect,
-                    location: location.clone(),
+                    text: marker.credential_effect.as_ref().map_or_else(
+                        || marker.effect.clone(),
+                        |(range, _)| file.source[range.clone()].to_string(),
+                    ),
+                    location: marker.credential_effect.as_ref().map_or_else(
+                        || location.clone(),
+                        |(range, _)| {
+                            location_from_offsets(&file.path, &file.source, range.start, range.end)
+                        },
+                    ),
                 },
             );
+            if let Some((_, basis)) = &marker.credential_effect {
+                captures.insert(
+                    "effect_basis".to_string(),
+                    Capture {
+                        text: (*basis).to_string(),
+                        location: location.clone(),
+                    },
+                );
+            }
             for (index, handler) in marker.related_handlers.iter().enumerate() {
                 captures.insert(
                     format!("related_handler_{}", index + 1),
@@ -212,8 +248,17 @@ fn server_mutation_review_marker_groups(
                 tags: descriptor.tags,
                 confidence: Confidence::Medium,
                 provenance: Provenance {
-                    resolution: Resolution::Textual,
-                    engine: "bounded server mutation classifier".to_string(),
+                    resolution: if marker.credential_effect.is_some() {
+                        Resolution::Ast
+                    } else {
+                        Resolution::Textual
+                    },
+                    engine: if marker.credential_effect.is_some() {
+                        "bounded Python credential effect classifier"
+                    } else {
+                        "bounded server mutation classifier"
+                    }
+                    .to_string(),
                     rule_version: 1,
                 },
                 context: EvidenceContext::default(),
@@ -426,21 +471,22 @@ fn review_admission_descriptor(
         operation.push(' ');
         operation.push_str(&handler.to_ascii_lowercase());
     }
-    let credential_lifecycle = [
-        "password",
-        "passwd",
-        "passcode",
-        "credential",
-        "mfa",
-        "totp",
-        "authenticator",
-        "recoverycode",
-        "recovery_code",
-        "apikey",
-        "api_key",
-    ]
-    .iter()
-    .any(|marker| operation.contains(marker));
+    let credential_lifecycle = marker.credential_effect.is_some()
+        || [
+            "password",
+            "passwd",
+            "passcode",
+            "credential",
+            "mfa",
+            "totp",
+            "authenticator",
+            "recoverycode",
+            "recovery_code",
+            "apikey",
+            "api_key",
+        ]
+        .iter()
+        .any(|marker| operation.contains(marker));
     if credential_lifecycle {
         let recovery = operation.contains("reset")
             || operation.contains("recover")
@@ -1025,6 +1071,7 @@ fn marker_from_definition(
         end_index,
         effect,
         related_handlers: terminal_call_identifiers(excerpt, &symbol),
+        credential_effect: None,
         symbol,
     })
 }
@@ -1102,6 +1149,7 @@ fn marker_from_inline_boundary_through(
         symbol,
         effect,
         related_handlers: handlers,
+        credential_effect: None,
     })
 }
 
