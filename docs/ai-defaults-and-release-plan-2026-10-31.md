@@ -3,6 +3,8 @@
 Status: default-profile implementation complete locally; paired live acceptance
 has a bounded passing targeted run after one diagnostic correction. CI
 timing/classification is implemented, with all tests still enabled.
+The subsequent local release acceptance found and corrected native trace and
+test-fixture regressions; see the [acceptance record](experiments/release-acceptance-2026-10-31.md).
 This supersedes the release direction at
 the top of the [previous plan](review-flow-hardening-plan-2026-10-30.md).
 
@@ -205,17 +207,20 @@ general precision/recall benchmark. No new live result was generated in this rev
 ## Test and code cleanup
 
 Inventory on 2026-10-31: unittest discovery finds **378 worker tests across 29
-modules, with no duplicate test IDs**. CI runs the full worker suite on Linux,
-Windows and macOS after native tests. Existing native fixtures repeatedly create
-inventories/state and default to the debug executable. No per-test duration
-inventory exists in this review, so test count is not a measured savings claim.
+modules, with no duplicate test IDs**. The complete local optimized-scanner run
+took 1,439 seconds: 322 product tests consumed 1,366 seconds and 56 research
+tests consumed 73 seconds. Its failures were corrected and rerun separately;
+this is timing evidence, not an uninterrupted green final run. CI retains the
+full Linux, Windows and macOS suites and now sets `MEHSCAN_TEST_SCANNER` to an
+optimized executable. No tests were removed or excluded.
 
 Do not remove guards simply because an experiment first exposed the bug. Keep
 freshness, path/ID scope, ambiguity/type erasure, source/proof integrity, final
 checkpoint behavior, recovery budgets and unknown-usage accounting as product
 regressions. Imported fixture modules are not duplicate tests in current discovery.
 
-Use three tiers:
+The following three-tier split remains a possible later change. The measured
+research share is only about 5%, so splitting it is not a release prerequisite:
 
 1. **Every PR, supported OS matrix:** native tests; ordinary worker, package,
    adapter and lifecycle regressions; platform-sensitive process/auth/path and
@@ -235,12 +240,12 @@ tiered tests; `test_workspace_pilot.py` includes source coverage/accounting guar
 hide useful product checks. Six `test_work_formation_experiment.py` cases are
 clearly research-tool tests, but they are not established as the runtime bottleneck.
 
-Measure test ID/duration/status under the normal CI build before broad exclusions.
-Reduce repeated expensive fixture setup only where isolation survives. Evaluate
-an optimized scanner for integration tests using the existing
-`MEHSCAN_TEST_SCANNER` hook, including its build cost; do not require another
-full LTO build without demonstrating net savings. Emit tier membership and fail
-if any test is omitted or selected twice. Keep a manual full-suite command.
+Collect the normal hosted CI/platform timings before broad exclusions. Reduce
+repeated expensive fixture setup only where isolation survives. The optimized
+scanner has a measured local build cost of about 7.5 minutes; no matched complete
+debug run establishes its exact net saving. Retain complete membership checks
+and the full-suite command. Do not trade recovery or admission coverage for
+cosmetic test-count reduction.
 
 Delete code only after checking release-catalog membership, runtime imports,
 documented entry points, test-fixture dependencies and replay needs. Start with
@@ -254,10 +259,11 @@ they alone protect. Code deletion follows classification, not a bulk purge.
 1. **Finalize Value settings:** one named effective configuration emitted in work
    artifacts; align selection, native limits, adapter/setup and docs. Preserve
    explicit legacy overrides. Verify config parsing, binding and installed package.
-2. **Classify and time CI:** publish complete test membership and durations; move
-   pure research coverage to its own required-on-relevant-changes job. Keep
-   platform risks covered. Stop when the split has no coverage holes; do not
-   chase tiny unit tests for cosmetic count reduction.
+2. **Classify and time CI:** classification and complete local timing are done.
+   Retain all tests and collect hosted platform timings with the optimized
+   scanner. Defer the optional research split: its measured saving is small.
+   Keep platform risks covered and do not chase tiny unit tests for cosmetic
+   count reduction.
 3. **Accept the paired release:** one bounded live package using the installed
    default app and skill, spanning SQL/local closure, shared helper authorization,
    token version/binding, HTML context and a genuinely unresolved case. Reuse
@@ -274,5 +280,8 @@ they alone protect. Code deletion follows classification, not a bulk purge.
    failures. Stop experimentation when these gates pass; record optional audit,
    preparation and routing work as later improvements.
 
-Latest-candidate local deterministic checks still stand. They do not certify
-the newly proposed default settings, fresh live quality or hosted acceptance.
+Default-profile implementation and bounded installed live acceptance are complete
+within the limits recorded above. Local deterministic acceptance and its exact
+rerun qualifications are recorded separately. Hosted/platform acceptance and
+versioned release assets remain release gates; do not restart app/model tournaments
+to substitute for them.

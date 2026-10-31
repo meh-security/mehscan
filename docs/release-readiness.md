@@ -39,10 +39,18 @@ results, not an invoice, general precision/recall estimate or proof that histori
 intermittent provider failures are resolved. Some available helpers remain unread.
 
 Development archives pass exact membership, scanner/report/finalization and
-installed Changed-worker smoke checks. Focused native/profile checks and the
-full adapter suite pass locally. CI records worker test classifications and
-per-test durations while retaining all tests. These results do not substitute
-for platform CI or acceptance of versioned optimized release assets.
+installed Changed-worker smoke checks. Local Rust 1.88 all-target acceptance
+and the complete 378-test worker run exposed native trace and fixture regressions;
+each failing target/test passes after correction in focused reruns. The full
+Action suite and adapter suite also pass locally. See the
+[acceptance record and rerun qualifications](experiments/release-acceptance-2026-10-31.md).
+No uninterrupted green final full-suite run is claimed.
+
+CI retains all tests and records classifications and per-test durations. It now
+uses an optimized scanner for native-backed Python checks. The complete local
+worker run took 24 minutes, of which research tests consumed about 5%; broad
+test exclusions are deferred. These results do not substitute for platform CI
+or acceptance of versioned optimized release assets.
 
 ## Remaining release gates
 
