@@ -127,7 +127,7 @@
   provenance: *javascript_parameterization_provenance
 
 - id: python-sql-parameterization
-  version: 1
+  version: 2
   title: Python DB-API parameter binding
   language: python
   kind: sanitizer
@@ -136,11 +136,9 @@
   cwe: [CWE-89]
   match:
     any:
-      - pattern: cursor.execute($QUERY, $VALUES)
+      - pattern: $DATABASE.execute($QUERY, $VALUES)
         captures: { query: QUERY, parameters: VALUES }
-      - pattern: cursor.executemany($QUERY, $VALUES)
-        captures: { query: QUERY, parameters: VALUES }
-      - pattern: connection.execute($QUERY, $VALUES)
+      - pattern: $DATABASE.executemany($QUERY, $VALUES)
         captures: { query: QUERY, parameters: VALUES }
   tags: [database, sql, parameterization, db-api]
   ai: *parameterization_guidance
