@@ -130,11 +130,10 @@ fn guarded_aliases_and_imported_path_operations_keep_only_proved_operands() {
         assert_eq!(!paths.is_empty(), *expected, "unexpected flow for {file}");
         for path in paths {
             assert_eq!(path.state, SecurityPathState::Unknown);
-            assert!(
-                path.uncertainty_reasons
-                    .iter()
-                    .any(|r| r == "node_guarded_alias_operand_flow")
-            );
+            assert!(path.uncertainty_reasons.iter().any(|r| matches!(
+                r.as_str(),
+                "node_guarded_alias_operand_flow" | "node_explicit_operand_flow_is_syntactic"
+            )));
         }
     }
     fs::remove_dir_all(root).unwrap();

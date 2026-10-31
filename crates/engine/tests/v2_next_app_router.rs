@@ -348,15 +348,22 @@ fn packages_only_missing_financial_authority_as_investigation() {
         })
         .collect::<Vec<_>>();
     assert_eq!(shared_limits.len(), 2, "{shared_limits:#?}");
-    assert!(shared_limits.iter().all(|review| {
-        review.investigation.readiness == ReviewReadiness::Investigation
-            && review.investigation.lookup_requests.iter().any(|lookup| {
-                lookup.operation == "references"
-                    && lookup.arguments.get("symbol") == Some(&"updateRow".to_string())
-            })
-            && review.decision_facts.established.iter().any(|fact| {
-                fact.contains("read-check-derive-write sequence")
-                    && fact.contains("database atomicity remains unresolved")
-            })
-    }));
+    assert!(
+        shared_limits.iter().all(|review| {
+            // Assessment describes review readiness, not an atomicity verdict.
+            // The declared alias now resolves the local adapter; do not force a
+            // redundant global reference search before assessing these facts.
+            review.investigation.readiness == ReviewReadiness::Assessment
+                && review.investigation.lookup_requests.is_empty()
+                && review.decision_facts.established.iter().any(|fact| {
+                    fact.contains("read-check-derive-write sequence")
+                        && fact.contains("database atomicity remains unresolved")
+                })
+        }),
+        "{:#?}",
+        shared_limits
+            .iter()
+            .map(|review| (&review.investigation, &review.decision_facts))
+            .collect::<Vec<_>>()
+    );
 }

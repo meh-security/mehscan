@@ -8,6 +8,7 @@
 ## Bug fixes
 
 - Avoid incorrect source links through ambiguous or type-only exports.
+- Restore typed request flows through supported embedded evaluator contexts.
 - Continue independent lookups when a requested file is missing or its language is unsupported.
 - Allow reviewers to correct malformed lookup questions without losing completed work.
 - Keep detailed flow diagnostics opt-in during ordinary AI review.

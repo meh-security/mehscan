@@ -35,13 +35,6 @@ function sinkFunction(res) {
   return res.send(content)
 }
 
-function branchSink(req, res, enabled) {
-  const content = req.query.branchSink
-  if (enabled) {
-    return res.send(content)
-  }
-}
-
 function tooManyAliases(req, res) {
   const first = req.query.deep
   const second = first

@@ -605,17 +605,50 @@ fn build_family_paths<'tree>(
                 let index = node_operands.get_or_insert_with(|| {
                     NodeOperandIndex::new(root, language, evidence, returned_objects)
                 });
-                if let Some(transfers) = target_nodes.iter().find_map(|(_, target)| {
-                    node_guarded_alias_steps(
-                        path,
-                        language,
-                        symbols,
-                        &source_node,
-                        target,
-                        &sink_scope,
-                        index,
-                    )
-                }) {
+                let mut embedded_program = false;
+                let transfers = target_nodes
+                    .iter()
+                    .find_map(|(_, target)| {
+                        node_guarded_alias_steps(
+                            path,
+                            language,
+                            symbols,
+                            &source_node,
+                            target,
+                            &sink_scope,
+                            index,
+                        )
+                    })
+                    .or_else(|| {
+                        if !exact_operand
+                            || node_fields::source_in_object(&source_node, &source_scope)
+                        {
+                            return None;
+                        }
+                        let steps = embedded_evaluator_steps(
+                            path,
+                            root,
+                            language,
+                            symbols,
+                            &source_node,
+                            sink,
+                            &sink_scope,
+                        )
+                        .or_else(|| {
+                            embedded_deserialization_steps(
+                                path,
+                                root,
+                                language,
+                                symbols,
+                                &source_node,
+                                sink,
+                                &sink_scope,
+                            )
+                        });
+                        embedded_program = steps.is_some();
+                        steps
+                    });
+                if let Some(transfers) = transfers {
                     let mut steps = vec![evidence_step(SecurityPathStepKind::Source, source)];
                     steps.extend(transfers);
                     steps.extend(
@@ -647,6 +680,10 @@ fn build_family_paths<'tree>(
                         {
                             path.uncertainty_reasons
                                 .push("control_flow_context_not_modeled".into());
+                        }
+                        if embedded_program {
+                            path.uncertainty_reasons
+                                .push("embedded_program_resolution_is_syntactic".into());
                         }
                     }
                 }
@@ -3888,6 +3925,25 @@ fn embedded_context_property_steps(
         contains_range(assignment.right.range(), source_node.range())
             && assignment.node.range().end <= sink_node.range().start
     })?;
+    // The context must carry this scalar value, not the result of an unread
+    // transform or an object seeded from one request-derived property.
+    let direct = node_direct_string_operand(&source_assignment.right, &source_node.range());
+    let fallback = source_assignment.right.kind().as_ref() == "binary_expression"
+        && source_assignment
+            .right
+            .field("operator")
+            .is_some_and(|op| matches!(op.text().as_ref(), "||" | "??"))
+        && source_assignment
+            .right
+            .field("left")
+            .is_some_and(|left| node_direct_string_operand(&left, &source_node.range()))
+        && source_assignment
+            .right
+            .field("right")
+            .is_some_and(|right| simple_string_literal(right.text().trim()).is_some());
+    if !direct && !fallback {
+        return None;
+    }
     let source_end = source_assignment.node.range().end;
     let mut tracked = BTreeMap::from([(
         source_assignment.left.clone(),

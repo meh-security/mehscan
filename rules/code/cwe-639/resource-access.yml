@@ -28,6 +28,7 @@
     note: Structured single-resource read and delete syntax mapped to bounded object-level authorization review. The receiver may be an ORM or an application query wrapper; this match does not establish package identity or missing authorization.
     references:
       - https://cwe.mitre.org/data/definitions/639.html
+      - https://sequelize.org/docs/v6/core-concepts/model-querying-basics/
 
 - id: typescript-sequelize-resource-access
   version: 1
@@ -75,6 +76,7 @@
     note: Primary-key lookup syntax is a resource-access lead, not proof of Sequelize identity or missing authorization. Review requires a bounded source-to-key path; unbound occurrences remain inventory evidence. Actor options may preload policy context rather than filter the selected row.
     references:
       - https://sequelize.org/docs/v6/core-concepts/model-querying-finders/
+      - https://cwe.mitre.org/data/definitions/639.html
 
 - id: typescript-sequelize-primary-key-resource-access
   version: 1

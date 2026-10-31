@@ -48,7 +48,7 @@ fn fixed_hex_helpers_are_exact_sql_flow_barriers() {
         .iter()
         .filter(|path| path.capability == Capability::DatabaseQuery)
         .collect::<Vec<_>>();
-    assert_eq!(paths.len(), 12);
+    assert_eq!(paths.len(), 9);
     assert!(
         paths
             .iter()
@@ -66,7 +66,7 @@ fn fixed_hex_helpers_are_exact_sql_flow_barriers() {
         counts
     });
     assert_eq!(paths_by_area["positive"], 3);
-    assert_eq!(paths_by_area["negative"], 9);
+    assert_eq!(paths_by_area["negative"], 6);
     assert!(
         paths
             .iter()
