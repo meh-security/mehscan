@@ -56,6 +56,20 @@ fn import_names(node: &PyNode<'_>) -> Vec<(String, String, String)> {
 }
 
 fn visible(node: &PyNode<'_>, function: &PyNode<'_>) -> bool {
+    // Class namespaces are not enclosing lexical scopes for bare names in
+    // methods or unrelated functions. Do not borrow a class-local import.
+    if node
+        .ancestors()
+        .find(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "function_definition" | "lambda" | "class_definition"
+            )
+        })
+        .is_some_and(|n| n.kind().as_ref() == "class_definition")
+    {
+        return false;
+    }
     owner(node).is_none_or(|range| range == function.range())
 }
 
@@ -553,5 +567,17 @@ def wrapper():
     return implementation
 "#;
         assert_eq!(symbols(source), BTreeSet::from(["implementation".into()]));
+    }
+
+    #[test]
+    fn class_local_import_does_not_bind_an_unrelated_bare_name() {
+        let source = r#"
+class Other:
+    import sqlalchemy as sa
+def apply(db, model, value):
+    record = db.session.execute(sa.select(model)).scalar_one()
+    record.password = value
+"#;
+        assert!(symbols(source).is_empty());
     }
 }
