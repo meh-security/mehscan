@@ -62,4 +62,71 @@ class DependencySource(unittest.TestCase):
         self.assertIsNone(result['profile'])
         self.assertTrue(any(r['status']=='dependency_navigation_failed' for r in result['trace']))
 
+    def test_shared_guard_chain_survives_many_unrelated_invoked_services(self):
+        cards=[];ids=[]
+        for i in range(4):
+            rid='caller'+str(i);ids.append(rid)
+            declarations=''.join("import { S%d } from './service%d';\n"%(j,j) for j in range(i*3,i*3+3))
+            for j in range(i*3,i*3+3):
+                (self.root/('service%d.ts'%j)).write_text('export class S%d { run() { return %d; } }\n'%(j,j),encoding='utf-8')
+            text=declarations+"import { Gate } from './gate';\n@UseGuards(Gate)\nexport class C%d {\n"%i
+            text+=' constructor('+','.join('private s%d: S%d'%(j,j) for j in range(i*3,i*3+3))+') {}\n'
+            text+=' run() { '+''.join('this.s%d.run();'%j for j in range(i*3,i*3+3))+' }\n}\n'
+            path='caller%d.ts'%i;(self.root/path).write_text(text,encoding='utf-8')
+            cards.append({'review_id':rid,'anchor':{'captures':{'operation':'run'},'location':{'path':path,'start_line':8,'end_line':8}}})
+        payload={**self.payload,'review_ids':ids}
+        result=profiles.build_from_sweeps(self.root,payload,[{'reviews':cards}],self.lookup,
+                                          dependencies=True,dependency_chains=True)
+        windows=result['profile']['targets'][0]['windows'];paths={w['path'] for w in windows}
+        self.assertTrue({'gate.ts','producer.ts','registry.ts'}<=paths)
+        self.assertTrue({'service0.ts','service3.ts','service6.ts','service9.ts'}<=paths)
+        self.assertLessEqual(len(windows),8)
+        groups=[r for r in result['trace'] if r.get('kind')=='credential_registration' and r['status']=='source_chain_delivered']
+        self.assertEqual({g['review_id'] for g in groups},set(ids))
+        self.assertEqual(sum(g['reused'] for g in groups),3)
+        self.assertTrue(all(len(g['delivered_windows'])==3 and g['question'] for g in groups))
+        profiles.prepare(self.root,result['profile'],ids,'snapshot')
+
+    def test_oversized_registration_chain_is_not_partially_selected(self):
+        # No strategy is preferred merely because it happens to sort first.
+        for i in range(8):
+            (self.root/('alternative%d.ts'%i)).write_text(self.sources['producer.ts'].replace('ActualStrategy','Alternative%d'%i),encoding='utf-8')
+        result=profiles.build_from_sweeps(self.root,self.payload,[{'reviews':[self.card]}],self.lookup,
+                                          dependencies=True,dependency_chains=True)
+        windows=result['profile']['targets'][0]['windows']
+        self.assertEqual({w['path'] for w in windows},{'selected.ts'})
+        omitted=[r for r in result['trace'] if r.get('kind')=='credential_registration' and r['status']=='source_chain_omitted']
+        self.assertEqual(omitted[0]['reason'],'window_count_bound')
+        self.assertEqual(omitted[0]['delivered_windows'],[])
+        self.assertGreater(len(omitted[0]['requested_windows']),8)
+
+    def test_chain_profiles_retain_hash_and_caller_scope_guards(self):
+        result=profiles.build_from_sweeps(self.root,self.payload,[{'reviews':[self.card]}],self.lookup,
+                                          dependencies=True,dependency_chains=True)
+        with self.assertRaisesRegex(ValueError,'membership'):
+            profiles.check_bundles(result['profile'],[['different']])
+        (self.root/'producer.ts').write_text('export const changed = true;\n',encoding='utf-8')
+        with self.assertRaisesRegex(ValueError,'changed'):
+            profiles.prepare(self.root,result['profile'],['one'],'snapshot')
+
+    def test_chain_byte_limit_keeps_other_work_without_partial_credentials(self):
+        for i in range(5):
+            path='producer.ts' if i==0 else 'candidate%d.ts'%i
+            text=self.sources['producer.ts'].replace('ActualStrategy','Candidate%d'%i)+'// '+'x'*14000+'\n'
+            (self.root/path).write_text(text,encoding='utf-8')
+        result=profiles.build_from_sweeps(self.root,self.payload,[{'reviews':[self.card]}],self.lookup,
+                                          dependencies=True,dependency_chains=True)
+        self.assertEqual({w['path'] for w in result['profile']['targets'][0]['windows']},{'selected.ts'})
+        omitted=[r for r in result['trace'] if r.get('kind')=='credential_registration' and r['status']=='source_chain_omitted']
+        self.assertEqual(omitted[0]['reason'],'total_byte_bound')
+
+    def test_missing_required_source_does_not_deliver_only_the_strategy(self):
+        (self.root/'gate.ts').write_text(self.sources['gate.ts']+'// filler\n'*401,encoding='utf-8')
+        result=profiles.build_from_sweeps(self.root,self.payload,[{'reviews':[self.card]}],self.lookup,
+                                          dependencies=True,dependency_chains=True)
+        self.assertEqual({w['path'] for w in result['profile']['targets'][0]['windows']},{'selected.ts'})
+        omitted=[r for r in result['trace'] if r.get('kind')=='credential_registration' and r['status']=='source_chain_omitted']
+        self.assertEqual(omitted[0]['reason'],'missing_dependency_source')
+        self.assertIn('gate.ts',omitted[0]['missing_paths'])
+
 if __name__=='__main__':unittest.main()

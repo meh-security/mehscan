@@ -121,7 +121,7 @@ def combine(*groups):
     return result
 
 
-def dependency_leads(root, card, lookup, cache, trace):
+def dependency_leads(root, card, lookup, cache, trace, *, chains=None):
     """Navigate explicit imports and literal Passport registration candidates.
 
     Returned bytes are evidence candidates. Constructor annotations, registration
@@ -222,8 +222,15 @@ def dependency_leads(root, card, lookup, cache, trace):
         trace.append({"review_id":rid,"importer":path,"source_path":target,"status":"import_module_"+row["status"],
                       "scope":"export, injected provider and runtime applicability unproven"})
         if not target:continue
+        chain_start = len(selected)
+        missing = []
+        def require_source(p, member_names=()):
+            found = source_candidates(p, member_names)
+            selected.extend(found)
+            if not found:missing.append(p)
         methods = set().union(*(typed.get(local,set()) for local in used))
-        selected.extend(source_candidates(target,methods))
+        kind = "declared_receiver" if methods else "import_source"
+        require_source(target,methods)
         # Recognize the library API through its actual static import, including aliases.
         for entry in imports(target):
             if entry["import"]["name"].strip("'\"") != "@nestjs/passport":continue
@@ -235,6 +242,7 @@ def dependency_leads(root, card, lookup, cache, trace):
                 match = re.fullmatch(re.escape(factory)+r"\(\s*(['\"])([A-Za-z0-9_-]{1,80})\1\s*\)",call["text"])
                 if not match:continue
                 key = match[2]
+                kind = "credential_registration"
                 registry = query(["imports","--name","@nestjs/passport","--limit","40"])
                 trace.append({"review_id":rid,"registry_key":key,"status":"literal_registration_navigation",
                               "search_incomplete":registry.get("truncated",False),"scope":"declaration candidates, not active registration"})
@@ -245,7 +253,7 @@ def dependency_leads(root, card, lookup, cache, trace):
                     found = query(["structural","--language","typescript","--path",candidate,
                                    "--pattern",producer+"($BASE, '"+key+"')","--limit","20"])
                     if not found.get("results"):continue
-                    selected.extend(source_candidates(candidate,("constructor","validate")))
+                    require_source(candidate,("constructor","validate"))
                     trace.append({"review_id":rid,"registry_key":key,"path":candidate,
                                   "status":"registration_declaration_provider_unproven"})
                     classes = [s["name"] for s in symbols(candidate) if s.get("symbol_type")=="class"]
@@ -256,16 +264,84 @@ def dependency_leads(root, card, lookup, cache, trace):
                             # Require an explicit module resolution back to the declaration file.
                             if any(r.get("source_path")==candidate for r in imports(owner_path)):
                                 selected.extend(source_candidates(owner_path))
+        if chains is not None:
+            question = ("Which declared credential implementation accompanies this guard?" if kind == "credential_registration"
+                        else "Which declared implementation supplies the invoked member?" if methods
+                        else "Which source module supplies this used import?")
+            chains.append({"review_id":rid,"kind":kind,"question":question,
+                "operation_delegate":((card.get("anchor") or {}).get("captures") or {}).get("operation") in methods,
+                "caller":{"path":path,"start_line":first,"end_line":last},
+                "importer":path,"target":target,"members":list(dict.fromkeys(selected[chain_start:])),
+                "missing_paths":sorted(set(missing)),
+                "scope":"Source candidates only; runtime provider, caller applicability and verdict remain unproven."})
     return list(dict.fromkeys(selected))
 
 
-def build_from_sweeps(root, payload, sweeps, lookup, *, dependencies=False):
+def allocate_dependency_chains(chains, window, trace):
+    """Deliver each discovered source chain atomically under the existing bounds.
+
+    A delivered chain is not an answered question: unseen registration branches,
+    runtime providers and downstream effects retain their existing uncertainty.
+    Shared bytes are reusable; each caller keeps a separate trace and verdict.
+    """
+    selected = []  # (validated window, byte count)
+    # Protect one explicitly same-named operation delegate per caller before
+    # shared credential context consumes the bundle. This is a structural lead,
+    # not proof that the named method is the final effect or only relevant call.
+    first_delegates = {}
+    for index,chain in enumerate(chains):
+        if chain.get("operation_delegate") and chain["kind"]=="declared_receiver":
+            first_delegates.setdefault(chain["review_id"],index)
+    reserved = set(first_delegates.values())
+    stages = [list(first_delegates.values())]
+    stages.extend([i for i,c in enumerate(chains) if c["kind"]==kind and i not in reserved]
+                  for kind in ("credential_registration","declared_receiver","import_source"))
+    for stage in stages:
+        queues = {}
+        for index in stage:
+            chain = chains[index]
+            queues.setdefault(chain["review_id"],[]).append(chain)
+        for index in range(max((len(q) for q in queues.values()),default=0)):
+            for queue in queues.values():
+                if index >= len(queue):continue
+                chain = queue[index]
+                record = {k:v for k,v in chain.items() if k != "members"}
+                record["requested_windows"] = [{"path":p,"start_line":a,"end_line":b} for p,a,b,_ in chain["members"]]
+                candidate = list(selected)
+                reason = "missing_dependency_source" if chain["missing_paths"] or not chain["members"] else None
+                for path,first,last,_ in chain["members"]:
+                    if reason:break
+                    try:
+                        prepared,reason = window(path,first,last,False)
+                    except (OSError,UnicodeDecodeError):
+                        prepared,reason = None,"source_unavailable"
+                    if prepared is None:break
+                    item,size = prepared
+                    if any(w["path"]==path and w["start_line"]<=first<=last<=w["end_line"] for w,_ in candidate):
+                        continue
+                    candidate = [(w,n) for w,n in candidate if not (w["path"]==path and first<=w["start_line"]<=w["end_line"]<=last)]
+                    candidate.append((item,size))
+                if reason is None and len(candidate)>8:reason="window_count_bound"
+                if reason is None and sum(n for _,n in candidate)>65536:reason="total_byte_bound"
+                if reason:
+                    record.update(status="source_chain_omitted",reason=reason,delivered_windows=[])
+                else:
+                    record.update(status="source_chain_delivered",reused=candidate==selected,
+                                  delivered_windows=[w for w,_ in candidate if any(w["path"]==p and w["start_line"]<=a<=b<=w["end_line"] for p,a,b,_ in chain["members"])])
+                    selected = candidate
+                trace.append(record)
+    return [w for w,_ in selected],sum(n for _,n in selected)
+
+
+def build_from_sweeps(root, payload, sweeps, lookup, *, dependencies=False, dependency_chains=False):
     """Prepare native-named declarations and clipped contexts, without verdicts.
 
     A unique declaration is navigation evidence, not a resolved caller binding.
     Lookup is the controller's read-only native command callback. No recursive
     caller discovery, historical decisions or application-specific names enter.
     """
+    if dependency_chains and not dependencies:
+        raise ValueError("dependency chains require dependency navigation")
     root = Path(root).resolve(strict=True)
     targets, trace, symbols, files, dependency_cache = [], [], {}, {}, {}
 
@@ -293,9 +369,11 @@ def build_from_sweeps(root, payload, sweeps, lookup, *, dependencies=False):
         ids = [card["review_id"] for card in cards]
         if not ids or not set(ids) <= set(payload["review_ids"]):
             raise ValueError("preparation sweep outside selected claims")
-        queues = []
+        queues, chains = [], []
         for card in cards:
-            candidates = dependency_leads(root, card, lookup, dependency_cache, trace) if dependencies else []
+            candidates = dependency_leads(root, card, lookup, dependency_cache, trace,
+                                          chains=chains if dependency_chains else None) if dependencies else []
+            if dependency_chains:candidates=[]
             captures = (card.get("anchor") or {}).get("captures") or {}
             for key, name in sorted(captures.items()):
                 if not key.startswith("related_handler_") or not isinstance(name, str) or not 1 <= len(name) <= 200:
@@ -317,7 +395,7 @@ def build_from_sweeps(root, payload, sweeps, lookup, *, dependencies=False):
                 if lead.get("operation") == "source" and set(a) >= {"path", "start-line", "end-line"}:
                     candidates.append((a["path"], int(a["start-line"]), int(a["end-line"]), "native_source_lead"))
             queues.append((card["review_id"], candidates))
-        windows, total = [], 0
+        windows,total = allocate_dependency_chains(chains,window,trace) if dependency_chains else ([],0)
         # Round-robin claims so one large operation does not consume all slots.
         for index in range(max((len(q) for _, q in queues), default=0)):
             for rid, queue in queues:
@@ -362,6 +440,7 @@ if __name__ == "__main__":
     for name in ("scanner", "source-root", "work-package", "sweeps", "output", "trace"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--dependencies", action="store_true", help="Include explicit import and literal registration source candidates; experimental")
+    parser.add_argument("--dependency-chains", action="store_true", help="Deliver dependency candidate chains atomically; implies --dependencies; experimental")
     args = parser.parse_args()
     root = Path(args.source_root).resolve(strict=True)
     scanner = Path(args.scanner).resolve(strict=True)
@@ -374,7 +453,8 @@ if __name__ == "__main__":
         result = subprocess.run([str(scanner), *argv], check=True, capture_output=True,
                                 text=True, encoding="utf-8", timeout=120)
         return json.loads(result.stdout)
-    result = build_from_sweeps(root, work["payload"], sweeps, lookup, dependencies=args.dependencies)
+    result = build_from_sweeps(root, work["payload"], sweeps, lookup,
+                              dependencies=args.dependencies or args.dependency_chains,dependency_chains=args.dependency_chains)
     outputs[1].write_text(json.dumps(result, indent=2), encoding="utf-8")
     if result["profile"] is None:
         parser.exit(2, "No bounded source windows available; inspect trace and retain ordinary preparation.\n")

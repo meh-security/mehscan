@@ -6,6 +6,14 @@ review for complete local constructions and selective workspace investigation
 for a concrete shared implementation or compatible authority-to-effect scope.
 Quality and total package price remain primary.
 
+**Latest offline step:** [CW chain delivery](review-dependency-chain-delivery-2026-10-30.md)
+replays all 72 selected claims, preserves legacy preparation exactly, and delivers
+all eight caller-scoped credential chains while retaining the import delegate
+displaced by the first prototype. Eighteen focused tests pass; 88 candidate
+chains remain bounded omissions. No new model calls or quality claim. Keep the
+allocator opt-in, use the 13-case scope corpus for the next acceptance work, and
+retain the paid-run hold until delivery/scope and provider gates justify it.
+
 ## Latest continuation — dependency navigation CU
 
 [CU implementation and comparison](review-dependency-navigation-2026-10-30.md)

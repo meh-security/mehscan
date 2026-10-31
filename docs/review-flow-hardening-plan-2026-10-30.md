@@ -1,6 +1,29 @@
 # Review flow hardening and Value selection — 2026-10-30
 
-**Latest continuation — dependency navigation, CU (finished, partial provider
+**Latest continuation — bounded chain delivery, CW (offline):** previous work is
+committed as `bce0a4c`. The new opt-in allocator delivers known dependency chains
+atomically and protects one same-named operation delegate per caller before
+shared credential context. The first credential-first replay displaced useful
+import implementation source; the corrected replay retains both. Both results
+remain recorded in the [delivery report](experiments/review-dependency-chain-delivery-2026-10-30.md).
+
+All 72 selected claims / 29 bundles replay with identical legacy flat profiles,
+4,796 source hashes verified and 18 focused tests passing. CW delivers eight
+caller-scoped credential chains; 41 candidate chains fit and 88 remain explicitly
+omitted by the window bound. Actual source sets change in three bundles / 13
+claims; additional profile-order changes are not physical source gains. This is
+delivery evidence only: **zero model calls / zero new provider spend**, no new
+verdict or quality/price result. A 13-case, source-bound scope corpus is assembled
+for evaluation only; scope-aware finalization is not yet implemented.
+
+**Current next gates:** keep both preparation modes opt-in. Stop adding global
+priority heuristics; add bounded native re-export navigation and reviewer-directed
+chain selection for a stated deciding question. Preserve local facts and separate
+downstream obligations against the scope corpus. The recurring provider 403 gate
+and all unknown costs remain; no new paid run is queued. Earlier CU/CT decisions
+below are historical and remain available for comparison.
+
+**Previous continuation — dependency navigation, CU (finished, partial provider
 completion):** the same 72 selected claims and 29 native bundles across five
 pinned applications produce **120/144 finalized assessments, 55 completed pairs
 and 13 verdict disagreements**. Eight HTTP 403 attempts lack receipts; the known
@@ -17,7 +40,7 @@ parser gaps remain visible; this change does not suppress them. Source/hash/
 contract parity passes, with 4,796 frozen files and 389 exported excerpts verified.
 Keep all CT failures and unknown charges separate; no historical attempt resets.
 
-**Current decision:** keep navigation opt-in and retain native plus selective
+**Decision at CU:** keep navigation opt-in and retain native plus selective
 workspace. The 20 paired claims with changed source use 20 calls / $0.416063,
 versus 15 / $0.342764 with the existing builder: no saving demonstrated. There are
 useful local proof improvements (token/owner binding, sidebar filtering, authorized
@@ -25,7 +48,7 @@ task creation), but more uncertainty is not automatically higher quality and a
 local negative must not erase a broader unresolved effect. Identical Python
 packets also disagree on one supported reply-target mismatch at two claim sites.
 
-**Next milestones:** (1) deliver a bounded deciding dependency chain, including
+**Milestones after CU:** (1) deliver a bounded deciding dependency chain, including
 re-export/provider context, without losing discovered evidence to unrelated
 bundle windows; (2) preserve local closure and separately scoped open effects in
 the review package, using the saved disagreements as an offline acceptance corpus.

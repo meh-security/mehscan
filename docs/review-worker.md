@@ -47,6 +47,21 @@ follow arbitrary recursive imports. Preparation caches navigation queries within
 a work package, caps new dependency queries at 80, and retains normal source
 hash checks. Both the builder and this query remain opt-in.
 
+`--dependency-chains` is a further opt-in experiment and implies `--dependencies`.
+It schedules each discovered dependency chain as a unit under the same eight-window
+and 64-KiB limits. One same-named operation delegate per claim receives priority,
+followed by shared credential-registration candidates, remaining declared receivers
+and other imports. If a chain cannot fit, the trace records the omitted chain and
+reason; independent source can still be prepared. No member is silently preferred
+from an oversized ambiguous registration set.
+
+Each chain trace records its caller, navigation question, requested windows,
+delivered source/hash bindings or omission reason, and source reuse. Delivery does
+not answer the security question or establish active provider registration. Shared
+bytes never transfer a caller's verdict to another claim. This option does not yet
+follow re-export chains or replace reviewer-directed deciding lookups; the older
+`--dependencies` behavior remains available unchanged.
+
 For experimental routed execution, `--validate-only --phase native` performs
 ordinary review/finalization/report checks without recording decisions or pending
 questions. It returns `source_validated`; supersession and change-pass modes are
