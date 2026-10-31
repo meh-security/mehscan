@@ -1236,8 +1236,10 @@ fn native_runtime_profiles_bind_work_and_fence_old_handoffs() {
         skill.to_str().unwrap(),
     ]);
     assert_eq!(value["policy"], "value");
-    assert_eq!(value["limits"]["rounds"], 2);
-    assert_eq!(value["limits"]["queries"], 8);
+    assert_eq!(value["limits"]["rounds"], 5);
+    assert_eq!(value["limits"]["queries"], 24);
+    assert_eq!(value["limits"]["bytes"], 524288);
+    assert_eq!(value["limits"]["timeout_seconds"], 900);
     let comprehensive = ok(&[
         "state",
         "runtime-template",
@@ -1246,8 +1248,7 @@ fn native_runtime_profiles_bind_work_and_fence_old_handoffs() {
         "--policy",
         "comprehensive",
     ]);
-    assert_eq!(comprehensive["limits"]["rounds"], 3);
-    assert_eq!(comprehensive["limits"]["queries"], 12);
+    assert_eq!(comprehensive["limits"], value["limits"]);
     assert_eq!(value["engine_sha256"], comprehensive["engine_sha256"]);
     let claim = fixture.claim("runtime", "0", "claim-runtime", false);
     let owner = claim["result"]["owner"].as_str().unwrap();

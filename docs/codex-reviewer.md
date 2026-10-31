@@ -8,8 +8,17 @@ Value/Comprehensive research profiles remain configurable.
 
 ## Configuration
 
-For the tested cost-conscious native workflow, use Terra 6.1 medium with
-`"schema_mode": "stable"` and `"source_presentation": "line-addressed-v1"`.
+Detailed authorization/token evidence tables are opt-in with
+`"boundary_checks": true` in trusted adapter configuration (default: false).
+They add final control/value-binding observations and source-only proof checks;
+they are not an independent second review. Ordinary review retains category
+guidance, check-to-effect reasoning and native evidence validation without these
+auxiliary tables. Changing this option requires a fresh conversation. Existing
+execution traces remain enabled in either mode.
+
+The adapter defaults to `"schema_mode": "stable"` and
+`"source_presentation": "line-addressed-v1"`. The setup example selects Terra 6.1
+medium; explicit model overrides remain supported.
 Model access still depends on the configured account. Install the adapter's own
 Python requirements before enabling stable mode:
 
@@ -44,8 +53,8 @@ a separate candidate available for semantic review; it applies no rejected
 actions and performs no inference or native admission. It cannot recover old
 sessions lacking these bindings. See [workspace candidate export](review-workspace.md).
 
-Omitting `schema_mode`, or setting it to `"dynamic"`, preserves the existing
-bound-wire behavior and has no extra validator dependency. The provider descriptor
+Set `"schema_mode": "dynamic"` explicitly for legacy bound-wire behavior
+without the extra validator dependency. Omitting the setting uses stable mode. The provider descriptor
 is unchanged; configuration fingerprints and private conversation binding retain
 the option. Stable native continuations demonstrated substantial cache-adjusted
 price savings in the saved studies. Fresh-context workspace calls retain exact
@@ -68,7 +77,7 @@ and the entire artifact upload directory:
   "schema_version": "1",
   "executable": "/TRUSTED/codex",
   "executable_version": "EXACT_INSTALLED_VERSION",
-  "model": "gpt-6-luna",
+  "model": "gpt-6.1-terra",
   "reasoning_effort": "medium",
   "auth_file": "/PRIVATE/codex-auth.json",
   "private_directory": "/PRIVATE/provider-sessions"
@@ -83,13 +92,13 @@ file into its private Codex home and preserves refreshed authentication on resum
 Create the parent of `private_directory`; the adapter creates and marks its own
 store. It refuses arbitrary existing directories or incompatible stores.
 
-An experimental, optional configuration field selects addressed source input:
+The default configuration uses addressed source input:
 
 ```json
 "source_presentation": "line-addressed-v1"
 ```
 
-Omit it, or use `"raw"`, for the original prompt presentation. The opt-in view
+Use `"raw"` explicitly for the original prompt presentation. The addressed view
 replaces text only in explicit, bound source windows/contexts and source-query
 results with `L<number> | ...` rows. It does not recursively number arbitrary text,
 guidance, discovery previews, signatures or reviewer interpretations. Raw artifacts,

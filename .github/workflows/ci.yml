@@ -81,7 +81,15 @@ jobs:
         run: ./scripts/test-e2e.ps1 -SkipBuild
 
       - name: Test provider-neutral review worker with native admission
-        run: python -m unittest discover -s tests/review_worker -v
+        run: python scripts/test-review-suites.py --output test-results/review-worker.json
+
+      - name: Save worker test classifications and timings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: review-worker-tests-${{ matrix.os }}
+          path: test-results/review-worker.json
+          if-no-files-found: ignore
 
       - name: Test BYOK provider protocol and process execution
         run: python -m unittest discover -s tests/provider_adapter -v

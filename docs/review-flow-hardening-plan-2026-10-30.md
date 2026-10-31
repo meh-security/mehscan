@@ -1,5 +1,13 @@
 # Review flow hardening and Value selection — 2026-10-30
 
+**Latest product direction — 2026-10-31:** finalize the app plus AI skill as one
+release, with a reproducible default Value profile, explicit optional depth and
+a classified CI suite. The [AI defaults and release plan](ai-defaults-and-release-plan-2026-10-31.md)
+supersedes the release recommendations below. Current native limits and adapter
+defaults differ from the latest measured configuration. Deterministic study
+closure does not establish acceptance of the complete AI product. Selective
+follow-up is a promotion candidate; automatic selection remains unaccepted.
+
 **Latest decision — close the study and prepare release, CZ:** the 13-case scope
 audit is reconciled against 26 unchanged source files and two bound audit inputs.
 Keep valid local closures, conditional mechanisms and separately scoped open

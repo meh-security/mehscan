@@ -53,7 +53,8 @@ def setup(root, version, model, auth_json, retrieve=fetch):
     auth_file.chmod(0o600)
     config = {"schema_version":"1", "executable":str(executable), "executable_version":version,
               "model":model, "reasoning_effort":"medium", "auth_file":str(auth_file),
-              "private_directory":str(root / "sessions")}
+              "private_directory":str(root / "sessions"),
+              "schema_mode":"stable", "source_presentation":"line-addressed-v1"}
     path = root / "config.json"
     path.write_text(json.dumps(config), encoding="utf-8")
     path.chmod(0o600)
@@ -64,7 +65,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--private-root", required=True, type=Path)
     parser.add_argument("--version", default="0.162.0-alpha.17.2")
-    parser.add_argument("--model", default="gpt-6-luna")
+    parser.add_argument("--model", default="gpt-6.1-terra")
     args = parser.parse_args()
     try:
         path = setup(args.private_root, args.version, args.model, os.environ.get("MEHSCAN_CODEX_AUTH_JSON", ""))

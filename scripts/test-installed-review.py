@@ -52,7 +52,8 @@ def main():
     claim_file, work_file = base / "claim.json", base / "work.json"
     save(claim_file, claim)
     plan = native("state", "plan-template", "--skill-root", skill, "--inventory", inventory,
-                  "--source-root", source, "--policy", "value")
+                  "--source-root", source, "--policy", "value", "--selection", "policy")
+    assert plan["runtime"]["limits"] == {"rounds":5, "queries":24, "bytes":524288, "timeout_seconds":900}
     assert plan["selected_review_ids"], "Changed inventory has no seeded native question"
     plan_file = base / "plan.json"
     save(plan_file, plan)

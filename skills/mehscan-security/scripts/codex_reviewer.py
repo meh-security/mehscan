@@ -265,6 +265,12 @@ def initialize_store(private, expected):
 
 def run(config, task, launcher_factory=Launcher):
     started = time.monotonic()
+    boundary_checks = config.get("boundary_checks", False)
+    if type(boundary_checks) is not bool:
+        raise ValueError("boundary_checks must be a boolean")
+    # Keep the dispatched task/digests unchanged for exact paid-reply recovery.
+    # Diagnostic policy comes from trusted adapter config, never target source.
+    review_task = {**task, "boundary_checks_enabled":boundary_checks}
     presentation = source_presentation_mode(config)
     packet, facts_file = read(task["evidence_packet"]), read(task["shared_facts"])
     facts = facts_file["facts"]
@@ -311,8 +317,8 @@ def run(config, task, launcher_factory=Launcher):
     packet_hash = file_digest(task["evidence_packet"])
     workspace_mode = workspace_protocol.enabled(task, packet)
     schema_builder = workspace_protocol.schema if workspace_mode else build_schema
-    local_schema = schema_builder(task)
-    stable_schema = config.get("schema_mode", "dynamic") == "stable"
+    local_schema = schema_builder(review_task)
+    stable_schema = config.get("schema_mode", "stable") == "stable"
     validator = None
     if stable_schema:
         try:
@@ -320,14 +326,16 @@ def run(config, task, launcher_factory=Launcher):
         except ImportError as error:
             raise ValueError("stable schema mode requires the adapter requirements.txt dependencies") from error
         validator = Draft202012Validator(local_schema)
-    schema = schema_builder(task, bound_handles=False) if stable_schema else local_schema
+    schema = schema_builder(review_task, bound_handles=False) if stable_schema else local_schema
     round_index = task["research"]["round"]
     if type(round_index) is not int or not 0 <= round_index <= 10:
         raise ValueError("invalid native research round")
     # Source/query handles grow as the native broker returns inspected facts.
     # Pin the protocol and exact question IDs; constrain each turn's output to
     # its current handles without treating new evidence as a new conversation.
-    binding = {"packet_sha256": packet_hash, "provider": expected, "schema": schema_builder(task, bound_handles=False)}
+    binding = {"packet_sha256": packet_hash, "provider": expected, "schema": schema_builder(review_task, bound_handles=False)}
+    if boundary_checks:
+        binding["boundary_checks"] = True
     if stable_schema:
         binding["schema_mode"] = "stable"
     if presentation != "raw":binding["source_presentation"] = presentation
@@ -341,7 +349,7 @@ def run(config, task, launcher_factory=Launcher):
         raise ValueError("cannot silently restart a missing provider continuation")
     log = session / ("round-" + str(round_index))
     log.mkdir(exist_ok=False)
-    prompt = (workspace_protocol.prompt if workspace_mode else build_prompt)(task, packet, facts, state, source_presentation=presentation)
+    prompt = (workspace_protocol.prompt if workspace_mode else build_prompt)(review_task, packet, facts, state, source_presentation=presentation)
     save(log / "dispatched-task.json", task)
     (log / "prompt.txt").write_text(prompt, encoding="utf-8")
     launcher = launcher_factory(config, session)
@@ -368,7 +376,8 @@ def run(config, task, launcher_factory=Launcher):
     metric = {"schema_version": "1", "provider": expected, "conversation_id": conversation, "round": round_index,
               "profile":profile, "role":task.get("review_role", "investigator"),
               "resumed": state is not None, "elapsed_ms": round((time.monotonic()-started)*1000),
-              "source_presentation":presentation,
+              "source_presentation":presentation, "schema_mode":"stable" if stable_schema else "dynamic",
+              "boundary_checks":boundary_checks,
               "prompt_bytes": len(prompt.encode()), "usage":delta, "usage_basis":"conversation_delta",
               "reported_conversation_usage":usage, "unknown_delta_counters":unknown}
     with metrics_path.open("a", encoding="utf-8") as handle:
@@ -413,7 +422,7 @@ def run(config, task, launcher_factory=Launcher):
             raise ValueError("current-turn schema rejected response: " + str(diagnostic["error_paths"]))
     # A completed provider turn costs tokens even when its reply is rejected.
     # Persist counters/continuation before admission; never admit the bad draft.
-    accepted = workspace_protocol.envelope(response,task,packet) if workspace_mode else review_envelope(response, task, packet, envelope)
+    accepted = workspace_protocol.envelope(response,task,packet) if workspace_mode else review_envelope(response, review_task, packet, envelope)
     if "rejected_intent_sha256" in next_state:
         del next_state["rejected_intent_sha256"]
         del next_state["rejected_response_round"]

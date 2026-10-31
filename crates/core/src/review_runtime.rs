@@ -16,17 +16,13 @@ pub struct ReviewResearchLimits {
 impl ReviewResearchLimits {
     pub fn for_policy(policy: ReviewCompletionPolicy) -> Self {
         match policy {
-            ReviewCompletionPolicy::Value => Self {
-                rounds: 2,
-                queries: 8,
-                bytes: 128 * 1024,
-                timeout_seconds: 300,
-            },
-            ReviewCompletionPolicy::Comprehensive => Self {
-                rounds: 3,
-                queries: 12,
-                bytes: 256 * 1024,
-                timeout_seconds: 600,
+            // Coverage selection differs; each selected investigation receives
+            // the same bounded allowance exercised by the live Value studies.
+            ReviewCompletionPolicy::Value | ReviewCompletionPolicy::Comprehensive => Self {
+                rounds: 5,
+                queries: 24,
+                bytes: 512 * 1024,
+                timeout_seconds: 900,
             },
         }
     }
@@ -40,6 +36,35 @@ impl ReviewResearchLimits {
             return Err("review research limits exceed supported bounds".into());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod default_profile_tests {
+    use super::*;
+
+    #[test]
+    fn selected_work_has_the_same_allowance_in_both_coverage_profiles() {
+        let limits = ReviewResearchLimits::for_policy(ReviewCompletionPolicy::Value);
+        assert_eq!(limits.rounds + 1, 6);
+        assert_eq!(limits.queries, 24);
+        assert_eq!(limits.bytes, 524_288);
+        assert_eq!(limits.timeout_seconds, 900);
+        assert_eq!(
+            limits,
+            ReviewResearchLimits::for_policy(ReviewCompletionPolicy::Comprehensive)
+        );
+        // Previously bound work and explicit smaller overrides remain valid.
+        assert!(
+            ReviewResearchLimits {
+                rounds: 2,
+                queries: 8,
+                bytes: 131_072,
+                timeout_seconds: 300
+            }
+            .validate()
+            .is_ok()
+        );
     }
 }
 
@@ -242,7 +267,7 @@ mod tests {
     fn profile_defaults_and_zero_research_are_bounded_without_implying_completion() {
         let mut value = ReviewResearchLimits::for_policy(ReviewCompletionPolicy::Value);
         let comprehensive = ReviewResearchLimits::for_policy(ReviewCompletionPolicy::Comprehensive);
-        assert!(value.queries < comprehensive.queries);
+        assert_eq!(value, comprehensive);
         value.rounds = 0;
         value.queries = 0;
         assert!(value.validate().is_ok());

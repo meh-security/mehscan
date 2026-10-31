@@ -61,7 +61,8 @@ Prioritize the fact that decides the selected claim. An inspected complete contr
 can close that property; a named unread helper is a lookup target. For authority
 or state changes, bind the actual check to the same actor/object and effect.
 Stop once the selected relationship is settled or its decisive gap is explicit.
-For authorization and token-generation worker tasks, the adapter includes
+With explicit `"boundary_checks": true` in trusted adapter configuration,
+authorization and token-generation worker tasks include
 [boundary checks](references/boundary-review.md): concrete prerequisite tests and
 producer/consumer value bindings within the same investigation. These observations
 are emitted once with the final draft and remain unvalidated; research turns use
@@ -114,8 +115,10 @@ to inspect review progress and separate mechanical completion from review qualit
 | Local changes, PR or release review | [Changed review](references/changed-review.md) |
 | Repository AI review | [Review planning](references/review-planning.md) |
 
-Candidates are leads, not confirmed vulnerabilities. Default to Value mode;
-honor Comprehensive or a requested category. Value prioritizes stronger signals,
+Candidates are leads, not confirmed vulnerabilities. Default to Value mode.
+For runtime-bound AI work use `--policy value --selection policy` as described in
+[controller commands](references/commands.md).
+Honor Comprehensive or a requested category. Value prioritizes stronger signals,
 clearly justified fixes and promising high-impact leads, including useful medium
 issues. Comprehensive covers admitted plausible medium-or-higher issues; it is
 not a queue for every raw sink occurrence. Excluded observations remain supporting

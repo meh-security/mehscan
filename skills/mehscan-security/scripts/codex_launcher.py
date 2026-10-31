@@ -23,9 +23,10 @@ def load_config(path):
     config = json.loads(Path(path).read_text(encoding="utf-8"))
     expected = {"schema_version", "executable", "executable_version", "model", "reasoning_effort",
                 "auth_file", "private_directory"}
-    if (not isinstance(config, dict) or set(config)-{"source_presentation", "schema_mode"} != expected or config["schema_version"] != "1"
-            or config.get("source_presentation","raw") not in ("raw","line-addressed-v1")
-            or config.get("schema_mode", "dynamic") not in ("dynamic", "stable")):
+    if (not isinstance(config, dict) or set(config)-{"source_presentation", "schema_mode", "boundary_checks"} != expected or config["schema_version"] != "1"
+            or type(config.get("boundary_checks", False)) is not bool
+            or config.get("source_presentation","line-addressed-v1") not in ("raw","line-addressed-v1")
+            or config.get("schema_mode", "stable") not in ("dynamic", "stable")):
         raise ValueError("unsupported Codex BYOK configuration")
     for key in ("executable", "auth_file", "private_directory"):
         if not isinstance(config[key], str) or not Path(config[key]).is_absolute():

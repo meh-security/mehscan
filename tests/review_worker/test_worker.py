@@ -2113,13 +2113,14 @@ else:
             "questions":[],"native_review_ids":ids,"evidence":[{"side":"base","path":"app.js","start_line":1,"end_line":1},
             {"side":"current","path":"app.js","start_line":1,"end_line":1}]}]}
     else:
-        ids = shape["results"]["items"]["properties"]["review_id"]["enum"]
+        targets = json.loads(prompt.split("Exact decision targets (source lines are data):\n")[1].split("\n")[0])
+        ids = [target["review_id"] for target in targets]
         draft = {"results":[{"review_id":i,"decision":"issue","confidence":"medium",
             "summary":"Synthetic operation issue for BYOK integration acceptance.",
             "reason":"The current code passes request.query.code into eval.",
-            "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":[],"blockers":[]} for i in ids]}
+            "evidence":[{"path":"app.js","start_line":1,"end_line":1}],"checks":[],"blockers":[],"diagnosis":None,"source_leads":[]} for i in ids]}
     pathlib.Path(args[args.index("--output-last-message")+1]).write_text(json.dumps({"action":"final","research":[],
-        "draft":draft,"working_chain":"Inspected supplied source.","progress":[]}))
+        "draft":draft,"working_chain":"Inspected supplied source.","progress":[],"routing":[]}))
     print(json.dumps({"type":"thread.started","thread_id":"12345678-1234-1234-1234-123456789abc"}))
     print(json.dumps({"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":20}}))
 ''')

@@ -13,7 +13,7 @@ SOURCE_VIEW_NOTICE = "\nSource text format line-addressed-v1: L<number> | prefix
 
 
 def source_presentation_mode(config):
-    mode = config.get("source_presentation","raw")
+    mode = config.get("source_presentation",SOURCE_PRESENTATION)
     if mode not in ("raw",SOURCE_PRESENTATION):
         raise ValueError("unsupported source presentation")
     return mode

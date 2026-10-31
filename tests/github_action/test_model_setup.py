@@ -83,6 +83,9 @@ class PinnedSetup(unittest.TestCase):
         path = setup.setup(self.root,"0.162.0-alpha.17.2","gpt-6-luna",'{"fixture":"private-fixture"}',self.fetch)
         config = json.loads(path.read_text())
         self.assertEqual(config["reasoning_effort"],"medium")
+        self.assertEqual(config["model"],"gpt-6-luna")  # Explicit model override survives.
+        self.assertEqual(config["schema_mode"],"stable")
+        self.assertEqual(config["source_presentation"],"line-addressed-v1")
         self.assertTrue(Path(config["executable"]).is_file())
         self.assertFalse(Path(config["private_directory"]).exists())
         self.assertEqual(json.loads(Path(config["auth_file"]).read_text()),{"fixture":"private-fixture"})

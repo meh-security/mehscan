@@ -138,8 +138,9 @@ For a provider-neutral worker, create the plan with the trusted skill package:
 deferrals, with reasons/dependencies. Comprehensive keeps all IDs. The default
 without this option remains `all` for compatible manual/full-coverage templates.
 Deferred work has no verdict; promote it when stronger evidence warrants review.
-The native runtime binds profile defaults (Value: 2 rounds/8 queries/128 KiB/300s;
-Comprehensive: 3 rounds/12 queries/256 KiB/600s per conversation). Set
+The native runtime binds the same per-conversation allowance for Value and
+Comprehensive: five research rounds (six total calls), 24 query units, 512 KiB and
+900 seconds. Coverage selection distinguishes the profiles. Set
 `--research-rounds`, `--research-queries`, `--research-bytes` or `--timeout` on
 that template to configure them explicitly. The worker consumes the admitted
 limits; changing policy, limits, engine or skill requires a new native plan/work

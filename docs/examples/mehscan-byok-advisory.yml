@@ -76,12 +76,15 @@ jobs:
           MEHSCAN_BASE: ${{ inputs.base }}
           MEHSCAN_TARGET: ${{ inputs.target }}
         run: python -I .mehscan-tool/scripts/github_action.py model-lane
+      - name: Install trusted reviewer validation dependencies
+        if: steps.lane.outputs.model-allowed == 'true'
+        run: python -m pip install --requirement .mehscan-tool/skills/mehscan-security/scripts/requirements.txt
       - name: Prepare trusted client and private company credentials
         if: steps.lane.outputs.model-allowed == 'true'
         env:
           MEHSCAN_CODEX_AUTH_JSON: ${{ secrets.MEHSCAN_CODEX_AUTH_JSON }}
           MEHSCAN_CODEX_VERSION: ${{ vars.MEHSCAN_CODEX_VERSION || '0.162.0-alpha.17.2' }}
-          MEHSCAN_REVIEW_MODEL: ${{ vars.MEHSCAN_REVIEW_MODEL || 'gpt-6-luna' }}
+          MEHSCAN_REVIEW_MODEL: ${{ vars.MEHSCAN_REVIEW_MODEL || 'gpt-6.1-terra' }}
         run: |
           python -I .mehscan-tool/scripts/setup-action-provider.py --private-root "$RUNNER_TEMP/company-mehscan-provider" --version "$MEHSCAN_CODEX_VERSION" --model "$MEHSCAN_REVIEW_MODEL"
       - name: Run the authorized advisory lane

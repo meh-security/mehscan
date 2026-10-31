@@ -7,7 +7,8 @@ CAPABILITIES = {"authorization", "token_generation"}
 
 
 def eligible_ids(task, packet=None):
-    if task.get("kind") != "native_bundle" or task.get("review_role", "investigator") != "investigator":
+    if (not task.get("boundary_checks_enabled", False) or task.get("kind") != "native_bundle"
+            or task.get("review_role", "investigator") != "investigator"):
         return []
     if packet is None:
         packet = json.loads(Path(task["evidence_packet"]).read_text(encoding="utf-8"))

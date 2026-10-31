@@ -144,7 +144,7 @@ class AdapterPresentationTests(unittest.TestCase):
         self.assertEqual(len(f.calls),1)
         # A separate native conversation starts addressed and cannot resume raw.
         f.task.update(conversation_id='b'*64);f.task['research']['round']=0;f.invoke()
-        f.task['research']['round']=1;f.config.pop('source_presentation')
+        f.task['research']['round']=1;f.config['source_presentation']='raw'
         with self.assertRaisesRegex(ValueError,'incompatible'):f.invoke()
         self.assertEqual(len(f.calls),2)
 

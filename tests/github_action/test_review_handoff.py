@@ -66,7 +66,7 @@ else:
 
     def test_profiles_keep_active_ownership_private_and_bind_distinct_work(self):
         snapshots = []
-        for policy, queries in (("value", 8), ("comprehensive", 12)):
+        for policy, queries in (("value", 24), ("comprehensive", 24)):
             directory, plan, record = self.ready(policy)
             state = self.view(directory, plan)
             self.assertEqual(state["attempt_status"], "running")

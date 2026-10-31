@@ -1,5 +1,27 @@
 # Changed review release readiness
 
+## Paired product acceptance — 2026-10-31
+
+The release includes the app and AI review through the skill. The
+[latest defaults and release plan](ai-defaults-and-release-plan-2026-10-31.md)
+identifies a gap between native/adapter defaults and the configuration used by
+recent live studies. Align and accept one effective Value configuration before
+claiming the paired product is ready. Default completion/source checks, selective
+model follow-up and opt-in reasoning audits have different acceptance requirements.
+The default settings are now implemented and locally checked through a development
+archive. CI records complete test classifications/timings while retaining every
+test. The [installed live acceptance](experiments/review-installed-defaults-2026-10-31.md)
+found and corrected a mandatory diagnostic-table failure; its targeted retest
+admits all six claims with supported findings and explicit uncertainty. Hosted
+candidate checks and versioned optimized asset verification remain pending;
+automatic selective follow-up is still a promotion candidate. This bounded result
+does not establish broad precision or resolve historical intermittent provider errors.
+
+The preparation study is closed; its deterministic replay is not fresh live
+acceptance. Ordinary skill acceptance and company-auth/GitHub automation are
+distinct paths. Preserve the earlier local results and provider failures below,
+but do not substitute native-only release acceptance for the paired product.
+
 ## Current candidate — 2026-10-30
 
 The review preparation/navigation study is closed for release. Ship the tested

@@ -110,10 +110,10 @@ jobs. An orchestration policy, collection agent or automatic second review is
 not required. Group claims only when they share the actual operation and
 implementation; a shared file or CWE alone is insufficient.
 
-For operation-level Value review, a tested starting profile sets
-`--research-rounds 3 --research-queries 12 --research-bytes 131072 --timeout 600`
-on `state plan-template`. These override the conservative native defaults below;
-they are ceilings, not instructions to spend the entire allowance. Finish settled
+Value and Comprehensive now use the same per-investigation defaults:
+`--research-rounds 5 --research-queries 24 --research-bytes 524288 --timeout 900`.
+These are six total model calls and ceilings, not instructions to spend the entire
+allowance. Comprehensive widens coverage selection. Finish settled
 relationships early. An essential unresolved fact remains pending. Request a
 separate claim challenge only for a specific material assumption, rather than
 routinely repeating the investigation or routing by a confidence threshold.
@@ -125,7 +125,7 @@ a pinned Changed inventory with a stable repository namespace, claim a generatio
 and save its receipt privately. Create a completion template:
 
 ```text
-mehscan state plan-template --inventory RUN/inventory --source-root ROOT --policy comprehensive --skill-root TRUSTED/mehscan-security
+mehscan state plan-template --inventory RUN/inventory --source-root ROOT --policy value --selection policy --skill-root TRUSTED/mehscan-security
 ```
 
 The AI worker requires this native runtime-bound plan. The native contract records
@@ -329,8 +329,9 @@ query results as deltas. Resume the exact session, retain the same contract and
 schema, and reject changed evidence packets. The controller stays provider neutral;
 model authentication and session management belong to the trusted adapter.
 
-Native profile defaults per conversation are Value: 2 research rounds, 8 queries,
-128 KiB and 300 seconds; Comprehensive: 3 rounds, 12 queries, 256 KiB and 600 seconds.
+Native defaults per conversation for both Value and Comprehensive are five
+research rounds (six total model calls), 24 query units, 512 KiB and 900 seconds.
+Value uses policy selection; Comprehensive selects every admitted ID.
 Configure `--research-rounds`, `--research-queries`, `--research-bytes` and
 `--timeout` on `state plan-template --skill-root ...`; zero rounds disables research.
 The worker reads those admitted values. Explicit worker overrides must match exactly.

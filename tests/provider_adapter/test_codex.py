@@ -23,6 +23,18 @@ THREAD = "12345678-1234-1234-1234-123456789abc"
 
 
 class Adapter(unittest.TestCase):
+    def test_omitted_modes_use_stable_addressed_defaults_and_resume(self):
+        self.config.pop("schema_mode")
+        self.config.pop("source_presentation")
+        reviewer.run(self.config, self.task, self.stable_factory)
+        self.task["research"].update(round=1, rounds_remaining=0, queries_remaining=0)
+        reviewer.run(self.config, self.task, self.stable_factory)
+        self.assertEqual(self.calls[0][2], self.calls[1][2])
+        self.assertEqual([c[1] for c in self.calls], [None, THREAD])
+        receipts = [json.loads(line) for line in (self.public / "provider-metrics.jsonl").read_text().splitlines()]
+        self.assertEqual([r["schema_mode"] for r in receipts], ["stable", "stable"])
+        self.assertEqual([r["source_presentation"] for r in receipts], ["line-addressed-v1"] * 2)
+
     def stable_factory(self, config, session):
         fake = self.factory(config, session)
         original = fake.review
@@ -70,7 +82,7 @@ class Adapter(unittest.TestCase):
         with patch.dict(sys.modules, {"jsonschema":None}), self.assertRaisesRegex(ValueError, "requirements.txt"):
             reviewer.run(self.config, self.task, self.stable_factory)
         self.assertFalse(self.calls)
-        self.config.pop("schema_mode")
+        self.config["schema_mode"] = "dynamic"
         self.invoke()
         self.config["schema_mode"] = "stable"
         self.task["research"]["round"] = 1
@@ -215,9 +227,10 @@ class Adapter(unittest.TestCase):
             self.assertIsNone(re.fullmatch(pattern, name))
 
     def boundary_task(self):
+        self.config["boundary_checks"] = True
         self.body["native_questions"] = [{"review_id":"one","capability":"authorization"}]
         self.packet.write_text(json.dumps(self.body))
-        self.task.update(kind="native_bundle",review_ids=["one"])
+        self.task.update(kind="native_bundle",review_ids=["one"],boundary_checks_enabled=True)
         self.task["research"].update(artifact_handles={"source1":"actual-source-id","locator":"navigation-id"},
             source_artifact_handles=["source1"])
         return {"action":"final","research":[],"draft":{"results":[{"review_id":"one",
@@ -258,6 +271,41 @@ class Adapter(unittest.TestCase):
         self.assertEqual(protocol.build_schema(self.task)["properties"]["boundary_checks"]["minItems"],0)
         self.assertEqual(schema["properties"]["boundary_checks"]["items"]["properties"]["artifacts"]["items"]["enum"],
             ["source1","source2"])
+
+    def test_boundary_tables_are_opt_in_and_cannot_be_enabled_during_resume(self):
+        response = self.boundary_task()
+        self.config.pop("boundary_checks")
+        self.task.pop("boundary_checks_enabled")
+        response.pop("boundary_checks")
+        draft = copy.deepcopy(response["draft"])
+        factory = self.factory
+        def provider(config, session):
+            client = factory(config, session)
+            original = client.review
+            def review(*args, **kwargs):
+                _, events, stderr = original(*args, **kwargs)
+                return response, events, stderr
+            client.review = review
+            return client
+        result = reviewer.run(self.config,self.task,provider)
+        self.assertEqual(result["draft"],draft)
+        self.assertNotIn("boundary_checks",self.calls[0][2]["properties"])
+        self.assertNotIn("Build two small final evidence tables",self.calls[0][0])
+        self.assertFalse(list(self.public.glob("boundary-checks-*.json")))
+        self.config["boundary_checks"] = True
+        self.task["research"]["round"] = 1
+        with self.assertRaisesRegex(ValueError,"incompatible"):
+            reviewer.run(self.config,self.task,provider)
+        self.assertEqual(len(self.calls),1)
+
+    def test_boundary_config_requires_an_explicit_boolean(self):
+        path = self.base / "config.json"
+        for setting in (False, True):
+            path.write_text(json.dumps({**self.config,"boundary_checks":setting}))
+            self.assertIs(launcher.load_config(path)["boundary_checks"],setting)
+        for setting in (None, 0, 1, [], "true"):
+            path.write_text(json.dumps({**self.config,"boundary_checks":setting}))
+            with self.assertRaises(ValueError):launcher.load_config(path)
 
     def test_boundary_review_rejects_duplicate_ids_and_locator_citations_in_nested_tables(self):
         response = self.boundary_task()
@@ -347,6 +395,7 @@ class Adapter(unittest.TestCase):
         self.auth.write_text('{"test_secret":"private-only"}')
         self.config = {"schema_version":"1","executable":str(self.binary),"executable_version":"0.162.0-alpha.17.2",
             "model":"gpt-6-luna","reasoning_effort":"medium",
+            "schema_mode":"dynamic","source_presentation":"raw",
             "auth_file":str(self.auth),"private_directory":str(self.base / "provider-private")}
         self.packet = self.public / "context.json"
         self.facts = self.public / "facts.json"
