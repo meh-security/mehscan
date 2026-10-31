@@ -1083,6 +1083,37 @@ pub fn get_import_targets(
     ))
 }
 
+/// Follow one named static export through bounded application source modules.
+pub fn get_export_target(
+    root: &Path,
+    path: &str,
+    name: &str,
+) -> Result<QueryResponse<serde_json::Value>, EngineError> {
+    if name.is_empty()
+        || name.len() > 200
+        || !name.chars().enumerate().all(|(i, c)| {
+            c == '_' || c == '$' || c.is_ascii_alphabetic() || i > 0 && c.is_ascii_digit()
+        })
+    {
+        return Err(EngineError(
+            "export name must be a simple JavaScript identifier or default".into(),
+        ));
+    }
+    let sources = RepositorySources::load(root)?;
+    let file = sources.file(path)?;
+    let (result, truncated) = sources.node_modules.review_export(&file.path, name, |p| {
+        let f = sources.files.get(p)?;
+        Some((f.language?, f.source.clone()))
+    });
+    Ok(response(
+        &sources.root,
+        "get_export_target",
+        ast_provenance("bounded native export summaries and node module resolver"),
+        truncated,
+        result,
+    ))
+}
+
 pub fn get_file_outline(
     root: &Path,
     path: &str,

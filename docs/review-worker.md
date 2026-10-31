@@ -62,6 +62,41 @@ bytes never transfer a caller's verdict to another claim. This option does not y
 follow re-export chains or replace reviewer-directed deciding lookups; the older
 `--dependencies` behavior remains available unchanged.
 
+For one known exported name, the read-only native CLI now supports:
+
+```powershell
+mehscan investigate export-target C:/src/app --path src/helpers/index.ts --name sanitizeUrl --journal C:/review/queries.jsonl
+```
+
+Use `import-targets` first when the question concerns a caller's import; an
+explicit source path is not a substitute for a missing package/build binding.
+`export-target` follows named aliases and star exports using the native module
+resolver, returning a unique static source candidate or explicit ambiguity/gaps.
+The result includes visited nodes, successfully summarized files, parsed bytes
+and bounds. Missing modules, parse errors, namespace objects, erased imports,
+reassigned bindings and incomplete branches cannot establish a unique target.
+Inspected nodes remain available as leads when the overall answer is incomplete.
+
+Traversal is bounded to eight levels, 128 nodes/edges, 32 summarized files,
+256 KiB per file and 1 MiB of parsed source. Repository discovery/source loading
+still occurs outside these graph limits. Only the traversed modules receive export
+AST summaries; unrelated imports inside an implementation are not recursively
+loaded into the graph. Read the candidate's source with `outline`/`source` before
+assessing its behavior. Runtime provider selection, build conditions and caller
+applicability remain separate questions. The command accepts simple ASCII export
+identifiers or `default`.
+
+Both `import-targets(path)` and `export-target(path, name)` are available in the
+worker's typed research API, at one query unit each. Both require a bounded
+`purpose` stating the deciding question. The broker shares identical lookups
+within the pinned snapshot while recording each requesting claim and purpose;
+cache hits still consume recipient query/byte budgets and pass freshness checks.
+Navigation facts are not source-body proof handles. Use `definition` or `source`
+to inspect behavior after locating an implementation. Missing files and unsupported
+import-navigation languages return explicit non-source lookup results; unrelated
+execution errors still fail normally. Automatic source-profile preparation does
+not yet follow these export chains.
+
 For experimental routed execution, `--validate-only --phase native` performs
 ordinary review/finalization/report checks without recording decisions or pending
 questions. It returns `source_validated`; supersession and change-pass modes are

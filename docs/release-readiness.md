@@ -1,5 +1,23 @@
 # Changed review release readiness
 
+## Current candidate — 2026-10-30
+
+The review preparation/navigation study is closed for release. Ship the tested
+native navigation and recovery fixes; retain native plus selective workspace and
+keep preparation experiments opt-in. The [closure report](experiments/review-release-closure-2026-10-30.md)
+records the retained scope limits, TypeScript alias fix, bounded query correction
+and corrected caller-attribution replay. Semantic verdict rewriting and another
+app/model comparison are not release prerequisites.
+
+The remaining release gates are full hosted CI on the exact reviewed commit,
+including MSRV/platform acceptance, followed by the selected version's paired
+assets and installer/pin verification. Existing provider-403 failures and real
+company-auth acceptance remain open for the optional AI reviewer: do not promote
+it by default or claim reliable unattended completion. No tag or publication has
+been performed. The sections below retain the broader workflow's acceptance history.
+
+## Earlier workflow acceptance
+
 The Changed scope and advisory workflow are implemented on the V11 development
 branch. They are experimental until the reviewed commit passes hosted acceptance.
 The released 0.8.0 executable does not include these options. No version bump or

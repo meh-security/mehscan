@@ -1,6 +1,83 @@
 # Review flow hardening and Value selection — 2026-10-30
 
-**Latest continuation — bounded chain delivery, CW (offline):** previous work is
+**Latest decision — close the study and prepare release, CZ:** the 13-case scope
+audit is reconciled against 26 unchanged source files and two bound audit inputs.
+Keep valid local closures, conditional mechanisms and separately scoped open
+effects. Do not add an automatic semantic verdict rewriter as a release gate.
+Native plus selective workspace stays; preparation experiments remain opt-in.
+See the [study closure, fixes and release gates](experiments/review-release-closure-2026-10-30.md).
+
+Two concrete fixes now exclude erased TypeScript import aliases from runtime
+propagation and allow bounded correction of malformed lookup questions, without
+masking source-scope or claim-attribution failures. CY's swapped sanitizer caller
+labels are corrected in a new replay checked against the native inventory; its
+original artifacts remain historical and its report discloses the error.
+
+Local candidate acceptance passes: 102 tests, one platform skip, workspace
+formatting, optimized build and the corrected three-claim worker replay. The
+replay checks 4,796 source hashes, makes zero provider calls and admits no decisions.
+This closes the implementation experiment; it does not certify live model quality.
+
+**Remaining release path:** freeze experiment expansion, finish the candidate
+checks, then run full hosted CI on the exact commit and verify versioned paired
+assets/installer pins before tagging. Scope-aware semantic adjudication is deferred,
+not an indefinite release blocker. Provider 403s and company-auth acceptance still
+block unattended-AI/default-promotion claims; keep AI review opt-in/experimental.
+No new paid run, app/model comparison, tag or publication is queued here.
+
+**Previous continuation — export lookup broker, CY (offline):** `import-targets`
+and `export-target` now use the normal typed review API, with deciding questions,
+claim attribution and existing snapshot-bound reuse, budget and freshness guards.
+Missing files and unsupported import-language lookups return explicit non-source
+results; successful independent lookups continue. Navigation handles cannot stand
+in for inspected implementation bodies. Main review prose is unchanged. See the
+[broker implementation and replay report](experiments/review-export-broker-2026-10-30.md).
+
+The three saved Docmost claims complete a deterministic normal-worker replay:
+11 lookup requests / 14 query units, eight unique facts, three research-cache hits,
+ten native CLI executions and 5.507 seconds of worker time. All 4,796 source hashes
+verify. **Zero provider calls / zero new provider spend / no admitted decisions**;
+synthetic uncertainty records are not fresh semantic assessments. 59 tests pass,
+with one existing platform-specific skip. This is source-delivery and controller
+acceptance, not model-quality or provider-cache savings evidence.
+
+**Milestones at CY:** bounded native navigation and typed broker integration
+are complete. Freeze further retrieval/preparation expansion. Next, evaluate the
+13-case scope corpus for supported local closure versus distinct downstream
+obligations before choosing a narrow finalization change. Scope-aware finalization
+is still unimplemented; automatic preparation does not preload re-export graphs.
+Keep native plus selective workspace and both preparation experiments. The
+provider-403 diagnostic gate and unknown historical charges remain; no paid
+expansion is queued until these gates and a named quality/price question are ready.
+
+**Previous continuation — bounded export navigation, CX (offline):** the native
+`investigate export-target` command now follows one named static export with
+explicit ambiguity, parser/build gaps and traversal limits. It also fixes a
+shared resolver defect where nested ambiguity could disappear before a parent
+selected a sibling target. Fourteen focused Rust tests pass, including an old/new
+scanner counterexample that retains the valid direct-import control. See the
+[implementation and saved-case report](experiments/review-export-navigation-2026-10-30.md).
+
+The 72-claim / 29-bundle replay across all five apps exactly preserves CU flat
+profiles and CW chain profiles, with 4,796 source hashes verified, in 63.339 seconds.
+Seven specific navigation questions take 2.700 seconds: four unique source
+candidates, two unresolved package imports and one bounded incomplete barrel.
+The actual export-title helper is kept distinct from a same-name helper elsewhere.
+The sanitizer leaf remains inspectable without pretending its package/build
+binding is settled. **Zero model calls / zero new provider spend**; no new verdict
+or quality/price improvement is claimed.
+
+**Milestones at CX:** native navigation and saved-preparation compatibility are
+complete. Next, expose a deciding-name lookup through the normal typed review
+broker, retaining the exact claim/question, source freshness, returned evidence
+and separate caller applicability. Then exercise local closure versus downstream
+obligations against the frozen 13-case scope corpus. This command is not yet in
+the model API or automatic builder, and scope-aware finalization is not implemented.
+Keep both preparation modes opt-in; stop adding global priority heuristics or
+raising limits for one app. The provider-403 gate and unknown historical costs
+remain; no paid expansion is queued before these specific gates are addressed.
+
+**Previous continuation — bounded chain delivery, CW (offline):** previous work is
 committed as `bce0a4c`. The new opt-in allocator delivers known dependency chains
 atomically and protects one same-named operation delegate per caller before
 shared credential context. The first credential-first replay displaced useful
@@ -16,7 +93,7 @@ delivery evidence only: **zero model calls / zero new provider spend**, no new
 verdict or quality/price result. A 13-case, source-bound scope corpus is assembled
 for evaluation only; scope-aware finalization is not yet implemented.
 
-**Current next gates:** keep both preparation modes opt-in. Stop adding global
+**Next gates at CW:** keep both preparation modes opt-in. Stop adding global
 priority heuristics; add bounded native re-export navigation and reviewer-directed
 chain selection for a stated deciding question. Preserve local facts and separate
 downstream obligations against the scope corpus. The recurring provider 403 gate

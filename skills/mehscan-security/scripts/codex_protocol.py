@@ -173,8 +173,10 @@ def build_schema(task, *, bound_handles=True):
                 props[name] = {"type":["string","null"]}
         if tool == "guidance":
             props["name"] = {**props["name"], "enum":list(GUIDANCE)}
+        if tool == "export-target":
+            props["name"] = {**props["name"], "pattern":r"^[A-Za-z_$][A-Za-z0-9_$]*$"}
         query_variants.append(object_schema({"tool":{"type":"string","enum":[tool]},"review_id":query_id,
-                                            "purpose":text,"arguments":object_schema(props)}))
+                                            "purpose":{"type":"string","minLength":1,"maxLength":300},"arguments":object_schema(props)}))
     query = {"anyOf":query_variants}
     handles = list(task["research"]["artifact_handles"])
     artifacts = ({"type":"array", "items":{"type":"string", "enum":handles}} if handles else {"type":"array", "items":text, "maxItems":0}) if bound_handles else strings

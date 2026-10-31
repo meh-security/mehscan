@@ -197,6 +197,23 @@ class Adapter(unittest.TestCase):
         self.assertIn("Inspect sensitive writable fields", after)
         self.assertNotIn("guide1", self.task["research"]["artifact_handles"])
 
+    def test_export_navigation_schema_uses_exact_arguments_and_deciding_question(self):
+        import re
+        schema = protocol.build_schema(self.task)
+        variants = schema["properties"]["research"]["items"]["anyOf"]
+        for tool, keys in (("import-targets", {"path"}), ("export-target", {"path", "name"})):
+            variant = next(v for v in variants if v["properties"]["tool"]["enum"] == [tool])
+            self.assertIn("purpose", variant["required"])
+            self.assertEqual(variant["properties"]["purpose"],{"type":"string","minLength":1,"maxLength":300})
+            arguments = variant["properties"]["arguments"]
+            self.assertEqual(set(arguments["properties"]), keys)
+            self.assertEqual(set(arguments["required"]), keys)
+        pattern = variant["properties"]["arguments"]["properties"]["name"]["pattern"]
+        for name in ("guard", "default", "$guard", "_guard2"):
+            self.assertIsNotNone(re.fullmatch(pattern, name))
+        for name in ("guard.call", "guard()", "../guard", "guard\n", "1guard"):
+            self.assertIsNone(re.fullmatch(pattern, name))
+
     def boundary_task(self):
         self.body["native_questions"] = [{"review_id":"one","capability":"authorization"}]
         self.packet.write_text(json.dumps(self.body))

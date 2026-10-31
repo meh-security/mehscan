@@ -605,6 +605,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             operation.as_str(),
             "outline"
                 | "import-targets"
+                | "export-target"
                 | "source"
                 | "enclosing"
                 | "enclosing-at"
@@ -1793,6 +1794,21 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     .cloned(),
             );
             print_json(&summary)
+        }
+        "export-target" => {
+            let path = parsed.required("--path")?;
+            let name = parsed.required("--name")?;
+            parsed.finish()?;
+            print_logged_query(
+                engine(mehscan_engine::investigation::get_export_target(
+                    &root, &path, &name,
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
         }
         "import-targets" => {
             let path = parsed.required("--path")?;
@@ -4417,6 +4433,7 @@ USAGE:
   mehscan investigate review-bundle-summary --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false]
   mehscan investigate outline [ROOT] --path FILE
   mehscan investigate import-targets [ROOT] --path FILE
+  mehscan investigate export-target [ROOT] --path FILE --name EXPORT
   mehscan investigate source [ROOT] --path FILE --start-line N --end-line N
   mehscan investigate enclosing [ROOT] --evidence-id ID
   mehscan investigate enclosing-at [ROOT] --path FILE --line N

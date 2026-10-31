@@ -251,6 +251,10 @@ class Worker(unittest.TestCase):
         self.git("commit", "--quiet", "-m", "base")
         self.old = self.git("rev-parse", "HEAD")
         (self.root / "app.js").write_text("function handle(request) { eval(request.query.code); }\n")
+        for path, source in getattr(self, "extra_source_files", {}).items():
+            target = self.root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(source, encoding="utf-8")
         self.inventory = self.base / "inventory"
         self.store = self.base / "state"
         self.run = self.base / "run"

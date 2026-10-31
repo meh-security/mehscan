@@ -123,14 +123,19 @@ def missing_source_result(query, error):
     if error.returncode != 2:
         return None
     path = query["arguments"].get("path")
-    if query["tool"] in ("references", "symbol", "definition", "outline") and isinstance(path, str):
+    if query["tool"] in ("references", "symbol", "definition", "outline", "import-targets", "export-target") and isinstance(path, str):
         expected = 'error: scannable text file ' + json.dumps(path, ensure_ascii=False) + ' was not found under the scan root'
         if error.stderr.strip() == expected:
             operation = {"references":"reference_lookup_error", "symbol":"symbol_lookup_error",
-                         "definition":"symbol_lookup_error", "outline":"outline_lookup_error"}[query["tool"]]
+                         "definition":"symbol_lookup_error", "outline":"outline_lookup_error",
+                         "import-targets":"import_target_lookup_error", "export-target":"export_target_lookup_error"}[query["tool"]]
             return {"operation":operation, "results":[], "error":{
                 "code":"not_found", "path":path,
                 "message":"The requested source file was not found. Discover its actual path before retrying; no source was inspected and this does not establish that a symbol or control is absent."}}
+    if query["tool"] == "import-targets" and error.stderr.strip() == "error: import targets currently require JavaScript or TypeScript":
+        return {"operation":"import_target_lookup_error", "results":[], "error":{
+            "code":"unsupported_language", "path":path,
+            "message":"Import-target navigation supports JavaScript/TypeScript source. Use source or the relevant language's lookup; this establishes no missing implementation or security conclusion."}}
     if query["tool"] == "references" and "path_prefix" in query["arguments"]:
         path = query["arguments"]["path_prefix"].rstrip("/")
         prefix = 'error: cannot access query directory ' + json.dumps(path, ensure_ascii=False) + ': '
@@ -588,8 +593,6 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
     """Compile typed requests, never model-supplied argv or shell commands."""
     if not isinstance(query, dict) or not {"tool", "review_id", "arguments"} <= query.keys() or query.keys() - {"tool", "review_id", "arguments", "purpose"}:
         raise ValueError("research request must contain tool, review_id and arguments")
-    if "purpose" in query and (not isinstance(query["purpose"], str) or not 1 <= len(query["purpose"].strip()) <= 300):
-        raise ValueError("research purpose must be a bounded missing-edge description")
     review_id = query["review_id"]
     if review_ids:
         if review_id not in review_ids or Path(review_id + ".jsonl").name != review_id + ".jsonl":
@@ -606,11 +609,6 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
     required, optional = definitions[tool]
     if not required <= values.keys() or values.keys() - required - optional:
         raise ValueError("unsupported research arguments")
-    if tool == "guidance":
-        catalog = guidance if guidance is not None else context.guidance_catalog(skill)
-        if not isinstance(values["name"], str) or values["name"] not in catalog:
-            raise ValueError("unknown review guidance; select an offered catalog name")
-        return []  # Trusted skill lookup, never a native source query/journal.
     if isinstance(values.get("path_prefix"), str) and not values["path_prefix"].startswith("/"):
         values["path_prefix"] = values["path_prefix"].rstrip("/")
     for key in ("path", "path_prefix"):
@@ -625,11 +623,27 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
         if key in values and (not isinstance(values[key], str) or not values[key].strip()
                               or len(values[key]) > 200 or "\0" in values[key]):
             raise ValueError("research names must be bounded nonempty strings")
+    # Attribution and source scope above are fatal guards. Do not mask them with
+    # repairable question feedback or execute a valid prefix of a rejected batch.
+    if "purpose" in query and (not isinstance(query["purpose"], str) or not 1 <= len(query["purpose"].strip()) <= 300):
+        raise ResearchFilterError(tool,"invalid_deciding_question",
+            "Supply purpose as a nonempty deciding question of at most 300 characters.",required,optional)
+    if tool in ("import-targets", "export-target") and "purpose" not in query:
+        raise ResearchFilterError(tool,"missing_deciding_question",
+            "Supply purpose with the deciding question for this claim's navigation lookup.",required,optional)
+    if tool == "export-target" and not re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", values["name"]):
+        raise ResearchFilterError(tool,"invalid_export_name",
+            "Use one simple ASCII export identifier or default, not a member expression or call.",required,optional)
+    if tool == "guidance":
+        catalog = guidance if guidance is not None else context.guidance_catalog(skill)
+        if not isinstance(values["name"], str) or values["name"] not in catalog:
+            raise ValueError("unknown review guidance; select an offered catalog name")
+        return []  # Trusted skill lookup, never a native source query/journal.
     if tool in ("source", "base_source"):
         first, last = values["start_line"], values["end_line"]
         if type(first) is not int or type(last) is not int or first < 1 or last < first or last - first >= 400:
             raise ValueError("research source window must contain 1 to 400 lines")
-    elif tool != "outline":
+    elif "limit" in required | optional:
         limit = values.setdefault("limit", 20)
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("research result limit must be 1 to 100")
@@ -652,7 +666,7 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
     if "path" in values and "path_prefix" in values:
         raise ResearchFilterError(tool,"conflicting_path_filters",
             "Choose one research path filter: path for a file OR path_prefix for a directory, not both. No filter was applied.",required,optional)
-    if tool in ("source", "outline", "symbol", "definition", "references") and "path" in values and (root / values["path"]).is_dir():
+    if tool in ("source", "outline", "symbol", "definition", "references", "import-targets", "export-target") and "path" in values and (root / values["path"]).is_dir():
         if "path_prefix" in optional:
             correction = "Use path_prefix for the directory, or path for a known file."
         elif "path" in optional:

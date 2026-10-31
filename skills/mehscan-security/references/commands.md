@@ -59,6 +59,8 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Identifier or markup uses | `mehscan investigate references ROOT --symbol NAME --path-prefix DIR --limit 20 --summary true` (per-file locations/previews; `--path FILE` scopes one file; omit summary for full matches) |
 | Symbol definitions | `mehscan investigate symbol ROOT --name NAME --path FILE --limit 20` (omit `--path` only when the defining file is unknown) |
 | Import uses | `mehscan investigate imports ROOT --name NAME --limit 200` |
+| JS/TS import module targets | `mehscan investigate import-targets ROOT --path CALLER_FILE` (module navigation only; missing build outputs remain unresolved) |
+| One JS/TS exported implementation | `mehscan investigate export-target ROOT --path MODULE_FILE --name EXPORT` (bounded aliases/barrels; read the candidate body separately and preserve caller/build applicability gaps) |
 | Exact syntax | `mehscan investigate structural ROOT --language LANG --pattern PATTERN --path FILE` |
 | Native call syntax | `mehscan investigate native-call-sites ROOT --callee NAME --path FILE` |
 | Response shape | `mehscan investigate review-response-schema --bundle REQUEST --output SCHEMA` |
