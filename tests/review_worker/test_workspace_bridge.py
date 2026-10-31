@@ -36,6 +36,9 @@ class NativeBridgeTests(unittest.TestCase):
         self.skill = PRODUCT / "skills/mehscan-security"
         self.inventory, self.store = self.base / "inventory", self.base / "store"
         self.config = {"schema_version":"1","executable":sys.executable,"executable_version":"fixture-1",
+                       # Controller guard tests deliberately submit malformed replies.
+                       # Keep them past adapter validation; stable mode has dedicated tests.
+                       "schema_mode":"dynamic","source_presentation":"raw",
                        "model":"fixture-model","reasoning_effort":"medium","auth_file":str(self.base / "auth.json"),
                        "private_directory":str(self.base / "provider-private")}
         (self.base / "auth.json").write_text('{"fixture":"never-an-api-key"}')

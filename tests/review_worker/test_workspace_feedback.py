@@ -169,11 +169,14 @@ class LookupFeedbackTests(unittest.TestCase):
             self.assertNotIsInstance(caught.exception,worker.ResearchFilterError)
 
     def test_feedback_is_charged_and_never_creates_extra_model_slots(self):
-        for index in range(6):
+        for index in range(5):
             self.fx.turn("invalid-"+str(index),lambda task,packet:self.reply([self.query()]))
+        # The last paid call is a final checkpoint, so it cannot buy another lookup.
+        with self.assertRaisesRegex(ValueError,"final workspace checkpoint cannot request lookups"):
+            self.fx.turn("invalid-final",lambda task,packet:self.reply([self.query()]))
         before = self.bridge.workspace.snapshot()
-        self.assertEqual(before["used"]["queries"],6)
-        self.assertEqual(len(before["lookups"]),6)
+        self.assertEqual(before["used"]["queries"],5)
+        self.assertEqual(len(before["lookups"]),5)
         self.assertTrue(all(l["native_query_count"]==0 and l["reused_from"] is None for l in before["lookups"].values()))
         self.assertGreater(before["received_query_bytes"],0)
         with self.assertRaisesRegex(ValueError,"budget exhausted"):

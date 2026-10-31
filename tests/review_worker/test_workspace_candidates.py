@@ -133,7 +133,8 @@ class CandidatePreviewTests(unittest.TestCase):
                 'queries':[{'tool':'source','review_id':rid,'purpose':'Read deciding code.',
                             'arguments':{'path':'app.js','start_line':1,'end_line':2}}]}]
         self.rejected(research)
-        with self.assertRaises(fixtures.CommandFailure):self.export()
+        # A final-only wire rejection is already ineligible before native export.
+        with self.assertRaises((ValueError,fixtures.CommandFailure)):self.export()
 
     def test_changed_private_reply_is_not_accepted_even_after_existing_preview(self):
         self.rejected();self.export()

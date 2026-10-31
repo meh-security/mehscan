@@ -3941,7 +3941,29 @@ fn embedded_context_property_steps(
             .right
             .field("right")
             .is_some_and(|right| simple_string_literal(right.text().trim()).is_some());
-    if !direct && !fallback {
+    // Upload rules capture either the buffer or its typed member expression.
+    // Preserve this explicit text conversion, without admitting arbitrary calls.
+    let buffer_text = callable_canonical == "js-yaml.load"
+        && sink.provenance.engine.ends_with("constant-vm-wrapper")
+        && source_assignment.right.kind().as_ref() == "call_expression"
+        && source_assignment
+            .right
+            .field("function")
+            .is_some_and(|function| {
+                function.kind().as_ref() == "member_expression"
+                    && function
+                        .field("property")
+                        .is_some_and(|property| property.text() == "toString")
+                    && function.field("object").is_some_and(|object| {
+                        object.range() == source_node.range()
+                            || function.range() == source_node.range()
+                    })
+            })
+        && source_assignment
+            .right
+            .field("arguments")
+            .is_some_and(|arguments| !arguments.children().any(|argument| argument.is_named()));
+    if !direct && !fallback && !buffer_text {
         return None;
     }
     let source_end = source_assignment.node.range().end;
