@@ -1518,7 +1518,7 @@ mod effect_cases {
 using Microsoft.AspNetCore.Mvc;
 class AccountController {
     [HttpPost]
-    [ActionName("Recover")]
+    [ActionName("ResetPassword")]
     [Route(
         "account/recover",
         Name = nameof(ResetPassword)
@@ -1539,6 +1539,12 @@ class AccountController {
     }
     [Example.HttpPost]
     public void SaveUnrelatedAttribute() { settings.Save(); }
+    [HttpPost, ActionName("Index")]
+    [FormValueRequired("Filter")]
+    public IActionResult Filter() {
+        editor.UpdateEditor();
+        return RedirectToAction("Index");
+    }
 }
 [HttpPost]
 class NotAHandler {

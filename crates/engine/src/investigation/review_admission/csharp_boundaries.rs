@@ -54,6 +54,17 @@ pub(super) fn inspect(
                 continue;
             }
             let start_index = attributes.start_pos().line();
+            // Correct ownership without broadening the existing admission gate.
+            // A form/filter action mentioning an editor update is not new work
+            // merely because the AST can now identify its declaration.
+            let boundary = file.source[spans[start_index].0..spans[start_index].1].trim();
+            if !["[HttpPost", "[HttpPut", "[HttpPatch", "[HttpDelete"]
+                .iter()
+                .any(|prefix| boundary.starts_with(prefix))
+                || marker_after_boundary(file, spans, start_index, 8).is_none()
+            {
+                continue;
+            }
             let excerpt = &file.source[spans[start_index].0..spans[end_index].1];
             let Some(effect) = mutation_effect(excerpt) else {
                 continue;
