@@ -34,6 +34,8 @@ Synthetic replies below check execution and admission, not reviewer accuracy.
 | Windows installer | All 32 checks pass |
 | Unix installer tests on Windows | 10 pass, two platform skips |
 | Release tag handling | Five cases pass with publisher mocked; no remote writes |
+| Corrected optimized Windows archive | Pass: exact contents, checksum, help/version, 16 candidates and SARIF results, review finalization and installed Changed review |
+| Corrected optimized binary's YAML regression | Three expected paths retained: two propagated, one uncertain; no negative paths |
 
 The full runs are preserved as failed historical executions. They were not
 silently relabeled green. Each failing target or test is covered by the corrected
@@ -81,14 +83,30 @@ comparison establishing a numerical speedup. Hosted cold-build timing may
 require a later job split; the local timings do not guarantee the timeout on
 every runner. Do not delete safety regressions to meet a cosmetic count target.
 
+## Accepted local archive
+
+The corrected Rust 1.88 optimized build took **320.541 seconds**. The binary
+comes from `f978b9d`; its paired payload comes from `11ef92c`, whose additional
+changes are documentation only. Extracted-package acceptance took 27.932 seconds.
+All 12 historical worker failures have passing corrected reruns, mapped by test
+ID in the external `worker-corrections-coverage.json`.
+
+Artifact: `archive-final/mehscan-v0.8.0-windows-x86_64.zip` under the external
+acceptance directory above. SHA-256:
+
+```text
+7b5e814394693293c7dda4bfae3c020912148d1067185895dee4b3a6df79860f
+```
+
+This is an unpublished development candidate with the existing version number,
+not a replacement for the public 0.8.0 release or a newly chosen release version.
+
 ## Remaining release work
 
-1. Finish acceptance of the corrected optimized paired Windows archive and
-   record its exact source revision and checksum.
-2. Run hosted CI for the final commit across supported platforms and verify
+1. Run hosted CI for the final commit across supported platforms and verify
    both macOS release targets. This session has no authenticated `gh` login,
    and the available connector cannot dispatch a new workflow.
-3. Choose the next version, generate and verify exact versioned release assets,
+2. Choose the next version, generate and verify exact versioned release assets,
    then publish with the concise user-facing release notes. No version choice
    or publication is inferred from the local candidate archive.
 
