@@ -5,9 +5,6 @@ for the current advisory Action or an Actions-based SARIF ingestion test.
 The hosted conversational agent/publisher is later work. Use synthetic fixtures
 in this repository; all security findings are deliberate test cases.
 
-See [release readiness](release-readiness.md) for accepted local checks and the
-remaining CI, hosted/company-auth and quality gates.
-
 ## Repository setup
 
 1. Open [New repository](https://github.com/new). Choose the intended owner, for

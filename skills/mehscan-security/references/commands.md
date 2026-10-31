@@ -160,8 +160,7 @@ plan/work/record commands. The worker receives the same file and requires the
 bundled adapter configuration to match. Model/effort/client-version changes invalidate
 old work. Use provider descriptors; schema-1 execution needs a fresh plan.
 See the [BYOK adapter contract](../../../docs/codex-reviewer.md).
-The selected [balanced workflow](../../../docs/review-workflow-final-2026-10-29.md)
-uses explicit stable-schema/addressed-source configuration with exact local
+The default workflow uses stable-schema/addressed-source configuration with exact local
 validation, and `--workers 1` for price-focused review (`2` for optional speed).
 Configure the validator requirements before stable mode; create fresh bound work
 after changing skill/code/config bytes.

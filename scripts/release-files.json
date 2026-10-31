@@ -10,7 +10,6 @@
   "docs/examples/mehscan-byok-advisory.yml",
   "docs/installation.md",
   "docs/output-contract.md",
-  "docs/release-readiness.md",
   "docs/review-state.md",
   "docs/review-worker.md",
   "scripts/github_action.py",

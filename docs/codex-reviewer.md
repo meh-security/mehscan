@@ -51,15 +51,13 @@ operation, checks the original task/context/reply/usage and supplied citations,
 and source-validates decisions through the ordinary native finalizer. This makes
 a separate candidate available for semantic review; it applies no rejected
 actions and performs no inference or native admission. It cannot recover old
-sessions lacking these bindings. See [workspace candidate export](review-workspace.md).
+sessions lacking these bindings.
 
 Set `"schema_mode": "dynamic"` explicitly for legacy bound-wire behavior
 without the extra validator dependency. Omitting the setting uses stable mode. The provider descriptor
 is unchanged; configuration fingerprints and private conversation binding retain
-the option. Stable native continuations demonstrated substantial cache-adjusted
-price savings in the saved studies. Fresh-context workspace calls retain exact
-validation but have not demonstrated equivalent cache savings. Cache hits remain
-provider-dependent, and neither mode guarantees a hit.
+the option. Cache hits remain provider-dependent; record actual cached input
+and usage rather than assuming a hit.
 
 The native worker already supports bounded independent reviewers through
 `--workers` (use `1` for serial). Choose concurrency separately from model/schema
@@ -115,18 +113,6 @@ binding: switching between raw and addressed presentation requires a fresh
 conversation. It is also recorded in provider metrics alongside actual prompt bytes
 and usage. The provider descriptor below is unchanged; the worker's full reviewer
 configuration fingerprint and the adapter's conversation binding retain the mode.
-
-[AQ's offline replay](experiments/review-addressed-input-results.md) checks 57 saved
-prompts and physical source recovery. It measures extra displayed bytes, not token
-or time savings or improved model citation selection. The mode remains opt-in;
-native batching and rule-specific review placement are unchanged.
-
-The later [AR comparison](experiments/review-addressed-pair-results.md) retains
-the option: addressed input fixes four selected caller-citation examples, and
-completed Sol pairs use fewer calls. Terra's policy pair is slightly slower/larger;
-raw Terra Juice is cap-censored by a shared-answer completion gap. These bounded
-observations do not establish a whole-app speed win or change the default. The
-next controller fix must preserve the source and invalidation guards.
 
 Export the provider descriptor:
 

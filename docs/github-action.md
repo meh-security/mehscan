@@ -1,8 +1,7 @@
 # Advisory GitHub Action
 
 For the dedicated hosted test repository, phased SARIF acceptance and later App
-setup, see [GitHub acceptance setup](github-acceptance.md) and
-[release readiness](release-readiness.md).
+setup, see [GitHub acceptance setup](github-acceptance.md).
 
 By default, the root `action.yml` prepares a Changed native review inventory for a current PR
 or an explicitly selected release delta. It writes source-bound JSON, a compact

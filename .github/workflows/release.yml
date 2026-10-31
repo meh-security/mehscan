@@ -22,7 +22,6 @@ on:
       - "Cargo.lock"
       - "crates/**"
       - "docs/release-notes-*.md"
-      - "docs/release-readiness.md"
 
 permissions: {}
 
