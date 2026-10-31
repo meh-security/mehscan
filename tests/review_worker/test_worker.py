@@ -77,17 +77,57 @@ class ArtifactCopy(unittest.TestCase):
 
 
 class LookupFailures(unittest.TestCase):
+    def test_missing_symbol_prefix_is_navigation_feedback_not_absence_proof(self):
+        for tool in ("symbol", "definition", "references"):
+            query = {"tool":tool,"arguments":{"path_prefix":"src/missing"}}
+            missing = worker.CommandFailure(2,'error: cannot access query directory "src/missing": missing (os error 2)')
+            result = worker.missing_source_result(query,missing)
+            self.assertEqual(result["error"]["code"],"scope_not_found")
+            self.assertIn("not evidence",result["error"]["message"])
+            for diagnostic in ('error: cannot access query directory "src/missing": denied (os error 5)',
+                               missing.stderr + '\nadditional error'):
+                self.assertIsNone(worker.missing_source_result(query,worker.CommandFailure(2,diagnostic)))
+
+    def test_symbol_and_definition_keep_the_requested_directory_scope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "src/policy").mkdir(parents=True)
+            (root / "src/policy/guard.ts").write_text("export function guard() {}")
+            for tool in ("symbol", "definition"):
+                original = {"tool":tool, "review_id":"id", "arguments":{"name":"guard", "path":"src/policy"}}
+                compiled = worker.research_arguments(original,root,["id"],root / "journals")
+                self.assertNotIn("--path",compiled)
+                self.assertEqual(compiled[compiled.index("--path-prefix")+1],"src/policy")
+                self.assertEqual(original["arguments"]["path"],"src/policy")
+                self.assertEqual(compiled.filter_normalization["original_arguments"],original["arguments"])
+                canonical = {**original,"arguments":{"name":"guard","path_prefix":"src/policy"}}
+                self.assertEqual(compiled,worker.research_arguments(canonical,root,["id"],root / "journals"))
+                for arguments in ({"name":"guard","path":"src/policy/guard.ts","path_prefix":"src/policy"},
+                                  {"name":"guard","path_prefix":"src/policy/guard.ts"}):
+                    with self.assertRaises(worker.ResearchFilterError):
+                        worker.research_arguments({**original,"arguments":arguments},root,["id"],root / "journals")
+                with self.assertRaisesRegex(ValueError,"authorized source"):
+                    worker.research_arguments({**original,"arguments":{"name":"guard","path_prefix":"../outside"}},
+                                              root,["id"],root / "journals")
+                missing = worker.research_arguments({**original,"arguments":{"name":"guard","path":"missing"}},
+                                                    root,["id"],root / "journals")
+                self.assertIsNone(missing.filter_normalization)
+                self.assertIn("--path",missing)
+            self.assertEqual(worker.research_cost([
+                {"tool":"symbol"},{"tool":"definition"}]),3)
+            self.assertFalse((root / "journals").exists())
+
     def test_batch_feedback_collects_window_directory_limit_and_total_errors(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             (root / "module").mkdir()
             queries = [
                 {"tool":"source","review_id":"id","arguments":{"path":"app.js","start_line":1,"end_line":500}},
-                {"tool":"definition","review_id":"id","arguments":{"name":"guard","path":"module"}},
+                {"tool":"outline","review_id":"id","arguments":{"path":"module"}},
                 {"tool":"references","review_id":"id","arguments":{"symbol":"guard","limit":101}}]
             original = json.dumps(queries)
             with self.assertRaises(worker.ResearchBatchError) as caught:
-                worker.research_batch_arguments(queries,root,["id"],root / "journals",query_units_remaining=3)
+                worker.research_batch_arguments(queries,root,["id"],root / "journals",query_units_remaining=2)
             error = caught.exception
             self.assertEqual(error.error_count,4)
             self.assertEqual([e["query_index"] for e in error.errors],[0,1,2,None])
@@ -1624,7 +1664,7 @@ else:
             ' id=task["review_ids"][0]\n'
             ' print(json.dumps({"research":[{"tool":"source","review_id":id,"arguments":{"path":"app.js","start_line":1,"end_line":1}},'
             '{"tool":"source","review_id":id,"arguments":{"path":"app.js","start_line":1,"end_line":401}},'
-            '{"tool":"definition","review_id":id,"arguments":{"name":"handle","path":"module"}}]}))\n'
+            '{"tool":"outline","review_id":id,"arguments":{"path":"module"}}]}))\n'
             'else:\n'
             ' feedback=task["research"]["feedback"]\n'
             ' assert [e["query_index"] for e in feedback["query_errors"]] == [1,2]\n'
@@ -1723,7 +1763,33 @@ else:
         self.assertEqual(record.get("protocol_corrections",0),0)
         self.assertEqual(record["status"],"admitted")
 
-    def test_directory_definition_feedback_is_bounded_and_preserves_batch_atomicity(self):
+    def test_directory_definition_reads_only_its_unique_scoped_source_without_repair(self):
+        self.extra_source_files = {"module/helper.js":"export function handle(value) { return value; }\n"}
+        self.setUp()  # Bind the helper before inventory/source freshness is frozen.
+        normal = self.base / "normal.py"
+        normal.write_text(self.reviewer.read_text(),encoding="utf-8")
+        self.reviewer.write_text('import json,sys,subprocess\ntask=json.load(sys.stdin)\n'
+            'if task["research"]["round"] == 0:\n'
+            ' print(json.dumps({"research":[{"tool":"definition","review_id":task["review_ids"][0],'
+            '"arguments":{"name":"handle","path":"module"}}]}))\n'
+            'else:\n'
+            ' assert not task["research"].get("feedback")\n'
+            ' result=task["research"]["results"][0]["result"]\n'
+            ' assert result["source_complete"]\n'
+            ' body=result["source"]["results"]\n'
+            ' assert body.get("path",body.get("location",{}).get("path")) == "module/helper.js"\n'
+            ' print(subprocess.check_output([sys.executable,' + repr(str(normal)) + '],input=json.dumps(task),text=True))\n')
+        result = self.invoke(extra=["--phase","native"])
+        self.assertEqual(result.returncode,0,result.stdout + result.stderr)
+        directory = self.base / "worker"
+        record = json.loads((directory / "worker.json").read_text())
+        self.assertEqual(record.get("protocol_corrections",0),0)
+        rows = [json.loads(line) for line in (directory / "research.jsonl").read_text().splitlines()]
+        self.assertEqual(rows[0]["query"]["arguments"]["path"],"module")
+        self.assertEqual(rows[0]["filter_normalization"]["effective_arguments"]["path_prefix"],"module")
+        self.assertEqual(rows[0]["reserved_query_units"],2)
+
+    def test_file_only_directory_feedback_is_bounded_and_preserves_batch_atomicity(self):
         (self.root / "module").mkdir()
         normal = self.base / "normal.py"
         normal.write_text(self.reviewer.read_text(), encoding="utf-8")
@@ -1733,12 +1799,12 @@ else:
                 'if not ' + repr(repair) + ' or round == 0:\n'
                 ' print(json.dumps({"research":[{"tool":"source","review_id":id,'
                 '"arguments":{"path":"app.js","start_line":1,"end_line":1}},'
-                '{"tool":"definition","review_id":id,'
-                '"arguments":{"name":"handle","path":"module"}}]}))\n'
+                '{"tool":"outline","review_id":id,'
+                '"arguments":{"path":"module"}}]}))\n'
                 'elif round == 1:\n'
                 ' feedback=task["research"]["feedback"]["lookup_feedback"]\n'
                 ' assert feedback["code"] == "file_filter_is_directory"\n'
-                ' assert feedback["tool"] == "definition"\n'
+                ' assert feedback["tool"] == "outline"\n'
                 ' assert "path_prefix" not in feedback["allowed_arguments"]["optional"]\n'
                 ' assert feedback["native_query_executed"] is False\n'
                 ' assert "not source evidence" in feedback["authority"]\n'

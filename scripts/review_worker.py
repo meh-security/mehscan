@@ -136,12 +136,13 @@ def missing_source_result(query, error):
         return {"operation":"import_target_lookup_error", "results":[], "error":{
             "code":"unsupported_language", "path":path,
             "message":"Import-target navigation supports JavaScript/TypeScript source. Use source or the relevant language's lookup; this establishes no missing implementation or security conclusion."}}
-    if query["tool"] == "references" and "path_prefix" in query["arguments"]:
+    if query["tool"] in ("references", "symbol", "definition") and "path_prefix" in query["arguments"]:
         path = query["arguments"]["path_prefix"].rstrip("/")
         prefix = 'error: cannot access query directory ' + json.dumps(path, ensure_ascii=False) + ': '
         diagnostic = error.stderr.strip()
         if diagnostic.startswith(prefix) and diagnostic.endswith("(os error 2)") and "\n" not in diagnostic:
-            return {"operation":"reference_lookup_error", "results":[], "error":{
+            operation = "reference_lookup_error" if query["tool"] == "references" else "symbol_lookup_error"
+            return {"operation":operation, "results":[], "error":{
                 "code":"scope_not_found", "path":path,
                 "message":"The requested query directory was not found. Discover the actual component path before retrying; this is not evidence that a symbol or control is absent."}}
         return None
@@ -656,7 +657,7 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
     # Never turn different filters, unknown paths or required-file tools into
     # a directory search. Keep the original request separate from effective argv.
     normalization = None
-    if (tool == "references" and "path_prefix" in optional and "path" in values
+    if (tool in ("references", "symbol", "definition") and "path_prefix" in optional and "path" in values
             and (root / values["path"]).is_dir()
             and ("path_prefix" not in values or values["path_prefix"] == values["path"])):
         values["path_prefix"] = values.pop("path")

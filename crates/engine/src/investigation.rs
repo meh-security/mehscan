@@ -21369,12 +21369,29 @@ pub fn find_symbol(
     path: Option<&str>,
     limit: Option<usize>,
 ) -> Result<QueryResponse<Vec<OutlineSymbol>>, EngineError> {
+    find_symbol_scoped(root, name, path, None, limit)
+}
+
+pub fn find_symbol_scoped(
+    root: &Path,
+    name: &str,
+    path: Option<&str>,
+    path_prefix: Option<&str>,
+    limit: Option<usize>,
+) -> Result<QueryResponse<Vec<OutlineSymbol>>, EngineError> {
     if name.is_empty() {
         return Err(EngineError("symbol name must not be empty".to_string()));
+    }
+    if path.is_some() && path_prefix.is_some() {
+        return Err(EngineError(
+            "choose either --path or --path-prefix".to_string(),
+        ));
     }
     let limit = bounded_limit(limit)?;
     let sources = if let Some(path) = path {
         RepositorySources::load_selected(root, path)?
+    } else if let Some(prefix) = path_prefix {
+        RepositorySources::load_directory(root, prefix)?
     } else {
         RepositorySources::load(root)?
     };

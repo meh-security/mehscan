@@ -231,7 +231,12 @@ old/new hunk windows and bounded enclosing units rather than always reading the
 first 400 lines. Small files carry complete-file evidence; clipping and missing
 coverage remain explicit.
 References are bounded identifier text matches, not resolved calls; a
-`path_prefix` must name a directory. Path discovery uses a literal substring,
+`path_prefix` must name a directory. Symbol and definition queries accept either
+`path` for a declaration file or `path_prefix` for a directory. A confirmed
+in-root directory supplied as `path` keeps that exact scope with recorded
+normalization; conflicting filters are rejected. Definition reads only a unique,
+unclipped discovery result and does not establish caller applicability.
+Path discovery uses a literal substring,
 not a glob, and searches the investigation index. Empty or clipped results do
 not prove a caller or runtime file cannot exist. Inspect provenance and actual
 source before using navigation results as proof.

@@ -1963,13 +1963,15 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
         "symbol" => {
             let name = parsed.required("--name")?;
             let path = parsed.optional("--path");
+            let path_prefix = parsed.optional("--path-prefix");
             let limit = parsed.optional_usize("--limit")?;
             parsed.finish()?;
             print_logged_query(
-                engine(mehscan_engine::investigation::find_symbol(
+                engine(mehscan_engine::investigation::find_symbol_scoped(
                     &root,
                     &name,
                     path.as_deref(),
+                    path_prefix.as_deref(),
                     limit,
                 )),
                 journal.as_deref(),
@@ -4439,7 +4441,7 @@ USAGE:
   mehscan investigate enclosing-at [ROOT] --path FILE --line N
   mehscan investigate evidence [ROOT] [--kind KIND] [--capability NAME] [--language LANG] [--path FILE] [--limit N]
   mehscan investigate units [ROOT] [--kind KIND] [--capability NAME] [--language LANG] [--path FILE] [--context-lines N] [--limit N]
-  mehscan investigate symbol [ROOT] --name NAME [--path FILE] [--limit N]
+  mehscan investigate symbol [ROOT] --name NAME [--path FILE | --path-prefix DIR] [--limit N]
   mehscan investigate imports [ROOT] --name NAME [--limit N]
   mehscan investigate references [ROOT] --symbol NAME [--path FILE | --path-prefix DIR] [--limit N] [--summary true]
   mehscan investigate provenance [ROOT] [--inventory DIR] [--path-prefix DIR] [--limit N]

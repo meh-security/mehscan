@@ -84,6 +84,54 @@ fn symbol_queries_preserve_later_definitions_and_scope_parse_work() {
 }
 
 #[test]
+fn directory_symbol_queries_preserve_scope_ambiguity_and_limits() {
+    use mehscan_engine::investigation::find_symbol_scoped;
+    let root = std::env::temp_dir().join(format!("mehscan-symbol-prefix-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("src/auth/nested")).unwrap();
+    std::fs::create_dir_all(root.join("src/author")).unwrap();
+    for (path, source) in [
+        (
+            "src/auth/guard.ts",
+            "export function guard() { return true; }",
+        ),
+        (
+            "src/auth/nested/guard.py",
+            "def guard():\n    return False\n",
+        ),
+        (
+            "src/author/guard.ts",
+            "export function guard() { return 'outside'; }",
+        ),
+    ] {
+        std::fs::write(root.join(path), source).unwrap();
+    }
+    let result = find_symbol_scoped(&root, "guard", None, Some("src/auth"), None).unwrap();
+    assert_eq!(result.results.len(), 2);
+    assert!(!result.truncated);
+    assert!(
+        result
+            .results
+            .iter()
+            .all(|s| s.location.path.starts_with("src/auth/"))
+    );
+    let limited = find_symbol_scoped(&root, "guard", None, Some("src/auth"), Some(1)).unwrap();
+    assert_eq!(limited.results.len(), 1);
+    assert!(limited.truncated);
+    let missing = find_symbol_scoped(&root, "absent", None, Some("src/auth"), None).unwrap();
+    assert!(missing.results.is_empty());
+    for (file, prefix) in [
+        (Some("src/auth/guard.ts"), "src/auth"),
+        (None, "src/auth/guard.ts"),
+        (None, "src/missing"),
+        (None, "../outside"),
+        (None, ""),
+    ] {
+        assert!(find_symbol_scoped(&root, "guard", file, Some(prefix), None).is_err());
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn directory_references_find_template_producers_without_crossing_scope() {
     use mehscan_engine::investigation::find_text_references;
     let root = std::env::temp_dir().join(format!("mehscan-producer-scope-{}", std::process::id()));
