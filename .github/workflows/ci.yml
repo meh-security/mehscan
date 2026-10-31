@@ -70,6 +70,15 @@ jobs:
       - name: Build and test all targets
         run: cargo test --all-targets --locked
 
+      - name: Build the optimized scanner for native integration tests
+        shell: pwsh
+        run: |
+          cargo build -p mehscan-cli --release --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Optimized scanner build failed' }
+          $binaryName = if ($IsWindows) { 'mehscan.exe' } else { 'mehscan' }
+          $scanner = Join-Path $env:GITHUB_WORKSPACE "target/release/$binaryName"
+          "MEHSCAN_TEST_SCANNER=$scanner" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Test advisory GitHub lifecycle and native adapter
         env:
           MEHSCAN_REQUIRE_NATIVE_TESTS: "true"
