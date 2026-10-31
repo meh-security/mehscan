@@ -374,7 +374,10 @@ pub(super) fn inspect(
         let Some(name) = function.field("name") else {
             continue;
         };
-        let imports = imports(&root, &function);
+        // Resolve imports only for a syntactic effect with a potentially bound
+        // receiver. Most functions in account/model files merely read fields;
+        // repeating whole-file binding scans for them is quadratic wasted work.
+        let mut imported = None;
         let effect = function.dfs().find_map(|node| {
             if owner(&node) != Some(function.range()) {
                 return None;
@@ -411,7 +414,19 @@ pub(super) fn inspect(
                 }
                 _ => return None,
             };
-            entity(&receiver, &function, &imports, node.range().start, 0)
+            if receiver.kind().as_ref() == "identifier"
+                && !function.dfs().any(|n| {
+                    n.kind().as_ref() == "assignment"
+                        && owner(&n) == Some(function.range())
+                        && n.range().end <= node.range().start
+                        && n.field("left")
+                            .is_some_and(|left| left.text() == receiver.text())
+                })
+            {
+                return None;
+            }
+            let imports = imported.get_or_insert_with(|| imports(&root, &function));
+            entity(&receiver, &function, imports, node.range().start, 0)
                 .then(|| (node.range(), basis))
         });
         let Some((range, basis)) = effect else {
