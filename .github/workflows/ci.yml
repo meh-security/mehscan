@@ -43,7 +43,7 @@ jobs:
 
       - name: Set up Python
         # Worker/provider runtime and Action test suites use this interpreter.
-        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13'
 
@@ -94,7 +94,7 @@ jobs:
 
       - name: Save worker test classifications and timings
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: review-worker-tests-${{ matrix.os }}
           path: test-results/review-worker.json
