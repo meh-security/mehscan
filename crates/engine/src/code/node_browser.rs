@@ -904,7 +904,12 @@ pub(crate) fn add_browser_observations<'tree>(
         literals,
         evidence,
     );
-    compact_orphan_browser_reads(evidence);
+    // Vue template consumers are appended after script analysis, in another
+    // lexical scope. Absence of a script sink cannot make these component
+    // inputs orphaned. Preserve observations without inventing a template flow.
+    if vue_templates.is_none() {
+        compact_orphan_browser_reads(evidence);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1168,6 +1173,11 @@ fn shadowed_browser_globals(root: &Node<'_, StrDoc<SupportLang>>) -> BTreeSet<St
             _ => None,
         })
         .filter_map(|name| {
+            if name.text().as_ref() == "location"
+                && !super::node_identity::module_declaration(&name)
+            {
+                return None;
+            }
             let name = normalized(&name.text());
             GLOBALS.contains(&name.as_str()).then_some(name)
         })

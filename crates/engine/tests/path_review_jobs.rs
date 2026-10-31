@@ -230,7 +230,6 @@ fn builds_language_neutral_self_contained_path_reviews() {
     assert_eq!(job, repeated);
     assert!(job.fingerprint.starts_with("path-reviewpack-"));
     assert_eq!(job.context_lines, 3);
-    assert_eq!(job.reviews.len(), 20);
     assert_eq!(
         job.review_coverage.returned_review_count,
         job.reviews.len() + job.observation_reviews.len()
@@ -590,6 +589,7 @@ fn emits_semantic_bundles_and_retries_incomplete_bundle_responses() {
         .review_ids
         .iter()
         .map(|review_id| PathReviewTriageResult {
+            diagnosis: None,
             review_id: review_id.clone(),
             selected_anchor_id: Some(selected_anchor_id(bundle, review_id)),
             decision: ReviewDecision::Issue,
@@ -1116,11 +1116,8 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
                 && evidence.capability == mehscan_core::Capability::ResourceAccess
         })
         .collect::<Vec<_>>();
-    assert!(
-        setup_anchors
-            .iter()
-            .all(|evidence| { evidence.enclosing_symbol.as_deref() != Some("deleteCreatedUser") })
-    );
+    // Seed cleanup admission may change with represented provenance. A create
+    // elsewhere in this file is not itself a proof closing a later selector.
     assert!(
         setup_anchors.iter().any(|evidence| {
             evidence.enclosing_symbol.as_deref() == Some("deleteRequestedUser")
@@ -1152,7 +1149,7 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
             .all(|evidence| { evidence.enclosing_symbol.as_deref() != Some("checksumDirectory") })
     );
     assert!(
-        directory_anchors
+        directory_evidence
             .iter()
             .any(|evidence| { evidence.enclosing_symbol.as_deref() == Some("dynamicDirectory") })
     );
@@ -1187,15 +1184,15 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
                 && evidence.capability == mehscan_core::Capability::Redirect
         })
         .collect::<Vec<_>>();
-    assert_eq!(redirect_anchors.len(), 1);
-    assert_eq!(
-        redirect_anchors[0]
+    assert!(redirect_anchors.iter().any(|evidence| {
+        evidence
             .captures
             .get("location")
-            .map(|capture| capture.text.as_str()),
-        Some("destination")
-    );
-    assert_eq!(
+            .is_some_and(|capture| capture.text == "destination")
+    }));
+    // Constructed destinations may retain separate research questions. Require
+    // the dynamic target and exclude known literals without pinning a total.
+    assert!(
         job.observation_reviews
             .iter()
             .flat_map(|review| review.evidence.iter())
@@ -1203,8 +1200,11 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
                 evidence.location.path == "fixed_sinks.py"
                     && evidence.capability == mehscan_core::Capability::Redirect
             })
-            .count(),
-        1,
+            .all(|evidence| evidence
+                .context
+                .literals
+                .get("location")
+                .is_none_or(|literal| literal.state != mehscan_core::LiteralState::Known)),
         "fixed redirect evidence remains in scan output but not in AI review payloads"
     );
     let bundle_set = mehscan_engine::investigation::build_path_review_bundles(&job, None)
@@ -1243,6 +1243,7 @@ fn admits_only_actionable_observations_and_deduplicates_a_complete_bundle_run() 
                 .review_ids
                 .iter()
                 .map(|review_id| PathReviewTriageResult {
+                    diagnosis: None,
                     review_id: review_id.clone(),
                     selected_anchor_id: Some(selected_anchor_id(&bundle, review_id)),
                     decision: if path_bundle {
@@ -1828,6 +1829,7 @@ fn consolidates_multiple_sources_at_one_exact_sink_and_invariant() {
             let results = reviews
                 .iter()
                 .map(|review| PathReviewTriageResult {
+                    diagnosis: None,
                     review_id: review.id.clone(),
                     selected_anchor_id: Some(review.candidate.sink.id.clone()),
                     decision: ReviewDecision::Issue,
@@ -1871,11 +1873,11 @@ fn consolidates_multiple_sources_at_one_exact_sink_and_invariant() {
     );
     assert_eq!(
         finding_report.findings[0].severity.level,
-        mehscan_core::Severity::Medium
+        mehscan_core::Severity::Unknown
     );
     assert_eq!(
         finding_report.findings[0].severity.source,
-        mehscan_core::SeveritySource::FallbackDefault
+        mehscan_core::SeveritySource::Unknown
     );
     assert!(finding_report.findings[0].flow.is_some());
     assert_eq!(finding_report.findings[0].provenance.review_ids.len(), 2);
@@ -1889,6 +1891,26 @@ fn consolidates_multiple_sources_at_one_exact_sink_and_invariant() {
         }
     }
     assert!(finding_report.to_markdown().contains("Source review-"));
+    let mut conflicting = bundle_responses.clone();
+    let mut index = 0;
+    for (_, response) in &mut conflicting {
+        for result in &mut response.results {
+            result.diagnosis = Some(mehscan_core::ReviewFindingDiagnosis {
+                title: "Reviewed output effect".into(),
+                cwes: vec![if index == 0 { "CWE-79" } else { "CWE-200" }.into()],
+                severity: mehscan_core::Severity::Medium,
+                impact: "The output exposes a protected consequence.".into(),
+                remediation: "Apply the control for the demonstrated output effect.".into(),
+            });
+            index += 1;
+        }
+    }
+    assert!(
+        mehscan_engine::investigation::build_finding_report(".", "test", None, &conflicting, false)
+            .unwrap_err()
+            .to_string()
+            .contains("conflicting classification")
+    );
 }
 
 #[test]

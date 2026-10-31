@@ -95,11 +95,17 @@ mod native_serialized_blob;
 mod native_signedness;
 mod native_state;
 mod native_toctou;
+mod node_api_boundaries;
+pub(crate) use node_api_boundaries::stable_binding as stable_js_import_binding;
 mod node_browser;
+mod node_cfg;
 pub(crate) use node_browser::unverified_dompurify_binding;
 mod node_context;
 mod node_express;
 mod node_fastify;
+mod node_http_clients;
+mod node_identity;
+pub(crate) mod node_modules;
 mod node_nest;
 mod node_next_policy;
 mod node_operands;
@@ -125,6 +131,9 @@ mod scanner;
 #[path = "sql_flow.rs"]
 mod security_paths;
 mod symbols;
+mod typescript_syntax;
+pub(crate) use typescript_syntax::has_unsupported_errors as has_unsupported_syntax_errors;
+mod url_shape;
 pub(crate) mod vue;
 mod webforms;
 

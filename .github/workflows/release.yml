@@ -9,9 +9,14 @@ on:
       - main
     paths:
       - ".github/workflows/release.yml"
-      - "scripts/build-preview.ps1"
-      - "scripts/test-installer.ps1"
-      - "scripts/test-unix-installer.py"
+      - "scripts/**"
+      - "action.yml"
+      - "docs/installation.md"
+      - "docs/review-*.md"
+      - "docs/codex-reviewer.md"
+      - "docs/github-*.md"
+      - "docs/output-contract.md"
+      - "docs/examples/**"
       - "skills/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -31,7 +36,7 @@ jobs:
     timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: "0"
-      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: "0"
     permissions:
       contents: read
       id-token: write
@@ -60,6 +65,16 @@ jobs:
       - name: Test public installer contracts
         shell: pwsh
         run: ./scripts/test-installer.ps1
+
+      - name: Test stable and prerelease publication arguments
+        shell: pwsh
+        run: ./scripts/test-release-tags.ps1
+
+      - name: Set up Python
+        # Archive smoke exercises the installed stdlib Python review worker.
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.13'
 
       - name: Test Unix installer contracts
         if: runner.os != 'Windows'
@@ -171,12 +186,19 @@ jobs:
           }
 
       - name: Create the GitHub release
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "${GITHUB_REF_NAME}"
-          dist/*
-          --repo "${GITHUB_REPOSITORY}"
-          --verify-tag
-          --notes-file "docs/release-notes-${GITHUB_REF_NAME}.md"
-          --title "${GITHUB_REF_NAME}"
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
+            throw "Invalid release tag: $tag"
+          }
+          $releaseArguments = @('release', 'create', $tag)
+          $releaseArguments += @(Get-ChildItem -LiteralPath dist -File | ForEach-Object { $_.FullName })
+          $releaseArguments += @('--repo', $env:GITHUB_REPOSITORY, '--verify-tag', '--notes-file', "docs/release-notes-$tag.md", '--title', $tag)
+          if ($tag -match '^v[0-9]+\.[0-9]+\.[0-9]+-') {
+            $releaseArguments += @('--prerelease', '--latest=false')
+          }
+          & gh @releaseArguments
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub release creation failed' }

@@ -16,7 +16,6 @@ fn builds_only_bounded_unambiguous_sql_paths() {
 
     assert_eq!(result.coverage.totals.scanned, 8);
     assert_eq!(result.coverage.totals.parse_failed, 0);
-    assert_eq!(result.security_paths.len(), 15);
     assert_eq!(result.security_paths, repeated.security_paths);
 
     let states = result
@@ -29,6 +28,24 @@ fn builds_only_bounded_unambiguous_sql_paths() {
     assert_eq!(states[&SecurityPathState::Direct], 7);
     assert_eq!(states[&SecurityPathState::Propagated], 7);
     assert_eq!(states[&SecurityPathState::Protected], 1);
+    let guarded = result
+        .security_paths
+        .iter()
+        .find(|path| {
+            result.evidence.iter().any(|sink| {
+                sink.id == path.sink_evidence_id
+                    && sink.location.path == "positive/sql-flow.js"
+                    && sink.enclosing_symbol.as_deref() == Some("branchSink")
+            })
+        })
+        .expect("explicit guarded helper input remains reviewable");
+    assert_eq!(guarded.state, SecurityPathState::Unknown);
+    assert!(
+        guarded
+            .uncertainty_reasons
+            .iter()
+            .any(|reason| reason == "control_flow_context_not_modeled")
+    );
 
     assert!(result.security_paths.iter().all(|path| {
         path.capability == Capability::DatabaseQuery

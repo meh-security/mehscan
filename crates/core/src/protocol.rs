@@ -35,14 +35,35 @@ pub struct ImpactScopeFile {
     pub reason: String,
 }
 
+/// Pinned Git endpoints; source bytes come from the validated checkout or
+/// explicitly labelled working tree, never an implicit checkout operation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChangeComparison {
+    pub requested_base: String,
+    pub base_commit: String,
+    pub head_commit: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_target: Option<String>,
+    pub target_commit: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merge_base_commit: Option<String>,
+    pub working_tree: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ImpactScanScope {
     pub mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comparison: Option<ChangeComparison>,
+    /// SHA-256 binding for current changed-path bytes, including files outside
+    /// native analysis. This is snapshot validity, not semantic finding identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_fingerprint: Option<String>,
     pub strategy: String,
     /// Which findings are returned after the scan: `changed_locations`,
-    /// `impact_scope`, or `all` after a conservative full fallback.
+    /// `changed_files`, `impact_scope`, or `all` after a full fallback.
     pub result_policy: String,
     pub full_scan: bool,
     pub included_file_count: usize,

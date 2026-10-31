@@ -124,6 +124,7 @@ fn keeps_distinct_cookie_invariants_at_one_sink_as_separate_issue_groups() {
                 PathReviewBundlePayload::SecurityPath { reviews } => reviews
                     .iter()
                     .map(|review| PathReviewTriageResult {
+                        diagnosis: None,
                         review_id: review.id.clone(),
                         selected_anchor_id: Some(review.candidate.sink.id.clone()),
                         decision: ReviewDecision::Issue,
@@ -143,6 +144,7 @@ fn keeps_distinct_cookie_invariants_at_one_sink_as_separate_issue_groups() {
                 PathReviewBundlePayload::Observation { reviews } => reviews
                     .iter()
                     .map(|review| PathReviewTriageResult {
+                        diagnosis: None,
                         review_id: review.id.clone(),
                         selected_anchor_id: Some(review.anchor_evidence_ids[0].clone()),
                         decision: ReviewDecision::Issue,

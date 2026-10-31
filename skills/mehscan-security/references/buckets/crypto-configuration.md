@@ -4,6 +4,9 @@ Identify the security purpose and exact operation first. A hash used as a
 checksum has a different requirement from password storage, token signing or
 credential derivation. Inspect the effective algorithm, parameters, key
 source or random generator at that operation.
+When signing or verification settings are used to infer token lifetime or
+consumer authority, use [token review](../token-review.md); check the invoked
+implementation rather than treating configuration intent as effective behavior.
 
 For cookies, CORS and similar settings, determine which configuration owns
 the reviewed response or route. A possible proxy rewrite does not erase a

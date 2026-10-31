@@ -20,6 +20,63 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn promise_entrypoints_preserve_filesystem_sinks_without_matching_other_packages() {
+    let fixture = Fixture::new(
+        "promise-entrypoints",
+        &[
+            (
+                "app.js",
+                "const files = require('node:fs/promises'); function read(path){return files.readFile(path);} function remove(path){return files.unlink(path);}",
+            ),
+            (
+                "app.ts",
+                "import { readFile as load, unlink as erase } from 'fs/promises'; function read(path:string){return load(path);} function remove(path:string){return erase(path);}",
+            ),
+            (
+                "app.tsx",
+                "import files from 'node:fs/promises'; function read(path:string){return files.readFile(path);} function remove(path:string){return files.unlink(path);}",
+            ),
+            (
+                "unrelated.js",
+                "const files = require('custom/fs/promises'); function read(path){return files.readFile(path);} function remove(path){return files.unlink(path);}",
+            ),
+        ],
+    );
+    let inventory =
+        mehscan_engine::investigation::build_review_inventory(&fixture.0, false).unwrap();
+    for path in ["app.js", "app.ts", "app.tsx"] {
+        for (symbol, capability) in [
+            ("read", Capability::FilesystemRead),
+            ("remove", Capability::FilesystemWrite),
+        ] {
+            assert!(
+                inventory
+                    .scan
+                    .evidence
+                    .iter()
+                    .any(|e| e.location.path == path
+                        && e.kind == EvidenceKind::Sink
+                        && e.capability == capability
+                        && e.enclosing_symbol.as_deref() == Some(symbol)),
+                "lost {path}/{symbol}"
+            );
+        }
+    }
+    assert!(
+        !inventory
+            .scan
+            .evidence
+            .iter()
+            .any(|e| e.location.path == "unrelated.js"
+                && e.kind == EvidenceKind::Sink
+                && matches!(
+                    e.capability,
+                    Capability::FilesystemRead | Capability::FilesystemWrite
+                ))
+    );
+}
+
+#[test]
 fn ordinary_setup_has_no_sink_extraction_but_content_and_recursive_roots_survive() {
     let fixture = Fixture::new(
         "extraction",

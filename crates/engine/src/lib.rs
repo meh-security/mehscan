@@ -11,6 +11,7 @@ pub mod investigation;
 pub mod provenance;
 mod report_policy;
 pub mod repository;
+pub mod review_runtime;
 pub mod rules;
 pub mod secrets;
 pub mod typescript_semantic;
@@ -35,6 +36,8 @@ pub struct ScanOptions {
 pub struct ImpactScopeRequest {
     pub mode: String,
     pub base: Option<String>,
+    pub comparison: Option<mehscan_core::ChangeComparison>,
+    pub snapshot_fingerprint: String,
     pub changed_files: Vec<ChangedFile>,
     pub diff_mode: ImpactDiffMode,
 }
@@ -48,6 +51,8 @@ pub enum ImpactDiffMode {
     /// Analyze a bounded changed/dependent scope, falling back to a complete
     /// repository result when narrowing is unsafe.
     Impact,
+    /// Analyze whole changed files only, without expansion or full fallback.
+    Files,
 }
 
 #[derive(Debug)]

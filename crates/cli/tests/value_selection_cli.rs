@@ -1,16 +1,119 @@
 use std::{fs, path::PathBuf, process::Command};
 
 #[test]
+fn policy_plan_selection_partitions_priority_without_inventing_verdicts() {
+    let base =
+        std::env::temp_dir().join(format!("mehscan-policy-selection-{}", std::process::id()));
+    let root = base.join("source");
+    let inventory = base.join("inventory");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("app.php"), "<?php function fixed() { $search = $_GET['search']; require __DIR__ . '/helper.php'; } function encoded($stored) { $search = $_GET['search']; echo esc_html($stored); } function execute() { require $_GET['page']; }\n").unwrap();
+    fs::write(root.join("helper.php"), "<?php return 'helper';").unwrap();
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    run(&[
+        "investigate",
+        "review-inventory",
+        root.to_str().unwrap(),
+        "--output",
+        inventory.to_str().unwrap(),
+        "--repository-key",
+        "fixture:value-selection",
+    ]);
+    let plan = |policy, selection: Option<&str>| {
+        let mut args = vec![
+            "state",
+            "plan-template",
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--source-root",
+            root.to_str().unwrap(),
+            "--policy",
+            policy,
+        ];
+        if let Some(selection) = selection {
+            args.extend(["--selection", selection]);
+        }
+        run(&args)
+    };
+    let all = plan("value", None);
+    assert_eq!(all["selected_review_ids"].as_array().unwrap().len(), 3);
+    let value = plan("value", Some("policy"));
+    let selected = value["selected_review_ids"].as_array().unwrap();
+    let deferred = value["deferred_review_ids"].as_object().unwrap();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(deferred.len(), 2);
+    assert!(
+        deferred
+            .values()
+            .all(|v| v.as_str().unwrap().contains("not a safety verdict"))
+    );
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(inventory.join("inventory.json")).unwrap()).unwrap();
+    let dynamic = metadata["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["symbol"] == "execute")
+        .unwrap();
+    assert_eq!(selected[0], dynamic["review_id"]);
+    for id in all["selected_review_ids"].as_array().unwrap() {
+        assert_ne!(
+            selected.contains(id),
+            deferred.contains_key(id.as_str().unwrap())
+        );
+    }
+    assert_eq!(plan("value", Some("all")), all);
+    let comprehensive = plan("comprehensive", Some("policy"));
+    assert_eq!(
+        comprehensive["selected_review_ids"],
+        all["selected_review_ids"]
+    );
+    assert!(
+        comprehensive["deferred_review_ids"]
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
+    let invalid = Command::new(env!("CARGO_BIN_EXE_mehscan"))
+        .args([
+            "state",
+            "plan-template",
+            "--inventory",
+            inventory.to_str().unwrap(),
+            "--source-root",
+            root.to_str().unwrap(),
+            "--selection",
+            "unknown",
+        ])
+        .output()
+        .unwrap();
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("selection must be all or policy"));
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
 fn ordinary_owned_directory_creation_is_excluded_from_both_modes_without_losing_file_effects() {
     let root =
         std::env::temp_dir().join(format!("mehscan-directory-priority-{}", std::process::id()));
     let artifacts = root.with_extension("inventory");
     fs::create_dir_all(&root).unwrap();
-    fs::write(root.join("app.js"), "const fs=require('fs');\nfunction mkdir(path){fs.mkdirSync(path);}\nfunction write(path,data){fs.writeFileSync(path,data);}\nfunction endpoint(req,res){fs.mkdirSync(req.query.path);}").unwrap();
-    fs::write(root.join("app.php"), "<?php function make_dir($path){mkdir($path,0755);} function write_file($path,$data){file_put_contents($path,$data);} function endpoint(){mkdir($_GET['path'],0755);}").unwrap();
-    fs::write(root.join("app.ts"), "import * as fs from 'fs';\nfunction make(path:string){fs.mkdirSync(path);}\nfunction write(path:string,data:string){fs.writeFileSync(path,data);}").unwrap();
-    fs::write(root.join("App.java"), "import java.nio.file.Files; import java.nio.file.Path; class App { void make(Path path) throws Exception { Files.createDirectories(path); } void write(Path path,byte[] data) throws Exception { Files.write(path,data); } }").unwrap();
-    fs::write(root.join("app.go"), "package app\nimport \"os\"\nfunc makeDir(path string){os.MkdirAll(path,0755)}\nfunc write(path string,data []byte){os.WriteFile(path,data,0600)}").unwrap();
+    fs::write(root.join("app.js"), "const fs=require('fs');\nfunction mkdir(path){fs.mkdirSync(path);}\nfunction write(req){fs.writeFileSync(req.query.path,'constant');}\nfunction endpoint(req,res){fs.mkdirSync(req.query.path);}").unwrap();
+    fs::write(root.join("app.php"), "<?php function make_dir($path){mkdir($path,0755);} function write_file(){file_put_contents($_GET['path'],'constant');} function endpoint(){mkdir($_GET['path'],0755);}").unwrap();
+    fs::write(root.join("app.ts"), "import * as fs from 'fs';\nfunction make(path:string){fs.mkdirSync(path);}\nfunction write(req:any){fs.writeFileSync(req.query.path,'constant');}").unwrap();
+    fs::write(root.join("App.java"), "import java.nio.file.Files; import java.nio.file.Path; import javax.servlet.http.HttpServletRequest; class App { void make(Path path) throws Exception { Files.createDirectories(path); } void write(HttpServletRequest req) throws Exception { Files.write(Path.of(req.getParameter(\"path\")),new byte[0]); } }").unwrap();
+    fs::write(root.join("app.go"), "package app\nimport (\"os\"; \"net/http\")\nfunc makeDir(path string){os.MkdirAll(path,0755)}\nfunc write(r *http.Request){os.WriteFile(r.URL.Query().Get(\"path\"),[]byte(\"constant\"),0600)}").unwrap();
     fs::write(
         root.join("lookalike.js"),
         "const fs={mkdirSync(path){return eval(path)}}; function custom(path){fs.mkdirSync(path);}",
@@ -123,11 +226,19 @@ fn build_scope_defers_ordinary_sinks_and_preserves_runtime_and_connected_work() 
         r#"{"main":"app.js","scripts":{"build":"node tools/build.js","start":"node app.js"}}"#,
     )
     .unwrap();
-    fs::write(root.join("tools/build.js"), "require('./render'); const fs=require('fs'); function build(path,data) { fs.writeFileSync(path,data); }").unwrap();
-    fs::write(root.join("tools/render.js"), "const fs=require('fs'); module.exports=function render(path) { return fs.readFileSync(path); };").unwrap();
+    fs::write(
+        root.join("tools/build.js"),
+        "require('./render'); function build(url) { return fetch(url); }",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tools/render.js"),
+        "module.exports=function render(url) { return fetch(url); };",
+    )
+    .unwrap();
     fs::write(
         root.join("app.js"),
-        "const fs=require('fs'); function read(path) { return fs.readFileSync(path); }",
+        "function read(url) { return fetch(url); }",
     )
     .unwrap();
     let inventory = |output: &std::path::Path| {
@@ -185,7 +296,11 @@ fn build_scope_defers_ordinary_sinks_and_preserves_runtime_and_connected_work() 
             .iter()
             .all(|e| e["path"] == "app.js")
     );
-    fs::write(root.join("app.js"), "require('./tools/render'); const fs=require('fs'); function read(path) { return fs.readFileSync(path); }").unwrap();
+    fs::write(
+        root.join("app.js"),
+        "require('./tools/render'); function read(url) { return fetch(url); }",
+    )
+    .unwrap();
     let shared = inventory(&root.with_extension("shared-inventory"));
     assert!(
         shared["entries"]
@@ -635,7 +750,7 @@ fn php_tiers_preserve_research_and_reopen_exact_surface_without_safe_verdicts() 
     }
     let inventory: serde_json::Value =
         serde_json::from_slice(&fs::read(artifacts.join("inventory.json")).unwrap()).unwrap();
-    assert_eq!(inventory["schema_version"], "22");
+    assert_eq!(inventory["schema_version"], "26");
     let id = values
         .iter()
         .find(|e| e["symbol"] == "raw_request")

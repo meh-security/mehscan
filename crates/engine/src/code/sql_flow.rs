@@ -18,6 +18,13 @@ use super::java_context::FORWARDED_PARAMETER_RULE_ID as JAVA_FORWARDED_PARAMETER
 use super::java_ingress::{SPRING_MULTIPART_RULE_ID, SPRING_PARAMETER_RULE_ID};
 use super::symbols::FileSymbolEnvironment;
 
+#[path = "node_fields.rs"]
+mod node_fields;
+#[path = "node_strings.rs"]
+mod node_strings;
+#[path = "node_url.rs"]
+mod node_url;
+
 const MAX_PROPAGATION_DEPTH: usize = 4;
 
 #[derive(Clone)]
@@ -26,6 +33,7 @@ struct Assignment<'tree> {
     left: String,
     right: Node<'tree, StrDoc<SupportLang>>,
     in_control_flow: bool,
+    projection: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -34,19 +42,46 @@ struct TrackedValue {
     steps: Vec<SecurityPathStep>,
 }
 
-pub(crate) fn build_security_paths(
+pub(crate) fn build_security_paths<'tree>(
     path: &str,
-    root: &Node<'_, StrDoc<SupportLang>>,
+    root: &Node<'tree, StrDoc<SupportLang>>,
     language: Language,
-    evidence: &[Evidence],
+    evidence: &mut [Evidence],
     symbols: &FileSymbolEnvironment,
     relations: &[RelationContract],
+    node_context: &super::node_context::NodeProjectContext,
 ) -> Vec<SecurityPath> {
+    let returned_objects = node_context.returned_objects_for_path(path);
     let mut paths = Vec::new();
+    // Built only if a Node guarded-operand check needs it; shared across all
+    // source/sink pairs and relation families in this file.
+    let mut node_operands = None;
+    if matches!(
+        language,
+        Language::Javascript | Language::Typescript | Language::Tsx
+    ) && evidence.iter().any(|e| {
+        e.kind == EvidenceKind::Sink
+            && (matches!(
+                e.capability,
+                Capability::Redirect | Capability::OutboundNetworkRequest
+            ) || node_url::intrinsic_link(e))
+    }) {
+        let index = node_operands.get_or_insert_with(|| {
+            NodeOperandIndex::new(root, language, evidence, &returned_objects)
+        });
+        node_url::annotate(evidence, index);
+    }
     for relation in relations {
         match relation.strategy {
             RelationStrategy::BoundedLocalValue => paths.extend(build_family_paths(
-                path, root, language, evidence, symbols, relation,
+                path,
+                root,
+                language,
+                evidence,
+                symbols,
+                relation,
+                &mut node_operands,
+                &returned_objects,
             )),
             RelationStrategy::StoredSubtitleFile => paths.extend(build_stored_subtitle_html_paths(
                 path, root, language, evidence, relation,
@@ -241,13 +276,16 @@ fn stored_subtitle_html_steps(
     ])
 }
 
-fn build_family_paths(
+#[allow(clippy::too_many_arguments)]
+fn build_family_paths<'tree>(
     path: &str,
-    root: &Node<'_, StrDoc<SupportLang>>,
+    root: &Node<'tree, StrDoc<SupportLang>>,
     language: Language,
     evidence: &[Evidence],
     symbols: &FileSymbolEnvironment,
     family: &RelationContract,
+    node_operands: &mut Option<NodeOperandIndex<'tree>>,
+    returned_objects: &BTreeMap<String, super::node_context::ReturnedObject>,
 ) -> Vec<SecurityPath> {
     let sources = evidence
         .iter()
@@ -306,7 +344,18 @@ fn build_family_paths(
         .unwrap_or_default();
 
     let mut paths = Vec::new();
+    let mut url_facts = BTreeMap::new();
     for sink in sinks {
+        if sink.capability == Capability::Redirect
+            && sink.tags.iter().any(|t| {
+                matches!(
+                    t.as_str(),
+                    "redirect-closure:fixed-origin" | "redirect-closure:constant-targets"
+                )
+            })
+        {
+            continue;
+        }
         if family.id.starts_with("cwe-79-")
             && sink.tags.iter().any(|tag| tag == "pug-output:escaped")
         {
@@ -461,6 +510,185 @@ fn build_family_paths(
                 continue;
             };
             let source_scope = scope_range(&source_node, root);
+            if matches!(
+                language,
+                Language::Javascript | Language::Typescript | Language::Tsx
+            ) && source.capability == Capability::HttpRequestData
+                && matches!(
+                    family.sink.capability,
+                    Capability::Redirect
+                        | Capability::OutboundNetworkRequest
+                        | Capability::DatabaseQuery
+                        | Capability::FilesystemRead
+                        | Capability::FilesystemWrite
+                        | Capability::ProcessExecution
+                        | Capability::TemplateEvaluation
+                        | Capability::DynamicCodeExecution
+                        | Capability::HtmlOutput
+                        | Capability::LdapQuery
+                        | Capability::XpathQuery
+                        | Capability::Deserialization
+                )
+                && source_is_conditional_predicate(&source_node)
+            {
+                continue;
+            }
+            if source_scope == sink_scope
+                && family.sink.capability == Capability::Redirect
+                && matches!(
+                    language,
+                    Language::Javascript | Language::Typescript | Language::Tsx
+                )
+            {
+                let index = node_operands.get_or_insert_with(|| {
+                    NodeOperandIndex::new(root, language, evidence, returned_objects)
+                });
+                if let Some((_, target)) = target_nodes.first() {
+                    match node_url::contribution(&source_node, target, index, &sink_scope) {
+                        node_url::Contribution::NoValue => continue,
+                        node_url::Contribution::QuerySuffix => {
+                            url_facts.insert(
+                                (source.id.clone(), sink.id.clone()),
+                                "node_url_query_suffix_base_unclassified",
+                            );
+                        }
+                        node_url::Contribution::FragmentSuffix => {
+                            url_facts.insert(
+                                (source.id.clone(), sink.id.clone()),
+                                "node_url_fragment_suffix_base_unclassified",
+                            );
+                        }
+                        node_url::Contribution::Unknown => {}
+                    }
+                }
+            }
+            let exact_operand = source
+                .tags
+                .iter()
+                .any(|t| t == "flow-contract:exact-node-operand");
+            if exact_operand && source_scope != sink_scope {
+                continue;
+            }
+            // Do not seed an entire object from one request-derived field.
+            // Scalar sink operands need an exact local projection proof. Keep
+            // resource selectors / structured NoSQL contracts on their own path.
+            if source_scope == sink_scope
+                && matches!(
+                    language,
+                    Language::Javascript | Language::Typescript | Language::Tsx
+                )
+                && source.capability == Capability::HttpRequestData
+                && (exact_operand
+                    || ((matches!(
+                        sink.capability,
+                        Capability::ProcessExecution
+                            | Capability::DynamicCodeExecution
+                            | Capability::FilesystemRead
+                            | Capability::FilesystemWrite
+                            | Capability::OutboundNetworkRequest
+                            | Capability::Redirect
+                            | Capability::TemplateEvaluation
+                            | Capability::HtmlOutput
+                            | Capability::LdapQuery
+                            | Capability::XpathQuery
+                            | Capability::Deserialization
+                    ) || (sink.capability == Capability::DatabaseQuery
+                        && sink.cwe_candidates == ["CWE-89"]))
+                        && (node_fields::source_in_object(&source_node, &source_scope)
+                            || node_fields::source_in_return_call(
+                                &source_node,
+                                &source_scope,
+                                returned_objects,
+                                &location_range(&sink.location),
+                            ))))
+            {
+                let index = node_operands.get_or_insert_with(|| {
+                    NodeOperandIndex::new(root, language, evidence, returned_objects)
+                });
+                let mut embedded_program = false;
+                let transfers = target_nodes
+                    .iter()
+                    .find_map(|(_, target)| {
+                        node_guarded_alias_steps(
+                            path,
+                            language,
+                            symbols,
+                            &source_node,
+                            target,
+                            &sink_scope,
+                            index,
+                        )
+                    })
+                    .or_else(|| {
+                        if !exact_operand
+                            || node_fields::source_in_object(&source_node, &source_scope)
+                        {
+                            return None;
+                        }
+                        let steps = embedded_evaluator_steps(
+                            path,
+                            root,
+                            language,
+                            symbols,
+                            &source_node,
+                            sink,
+                            &sink_scope,
+                        )
+                        .or_else(|| {
+                            embedded_deserialization_steps(
+                                path,
+                                root,
+                                language,
+                                symbols,
+                                &source_node,
+                                sink,
+                                &sink_scope,
+                            )
+                        });
+                        embedded_program = steps.is_some();
+                        steps
+                    });
+                if let Some(transfers) = transfers {
+                    let mut steps = vec![evidence_step(SecurityPathStepKind::Source, source)];
+                    steps.extend(transfers);
+                    steps.extend(
+                        attached_protections
+                            .iter()
+                            .map(|p| evidence_step(SecurityPathStepKind::Protection, p)),
+                    );
+                    steps.push(evidence_step(SecurityPathStepKind::Sink, sink));
+                    push_path(
+                        &mut paths,
+                        source,
+                        sink,
+                        SecurityPathState::Unknown,
+                        steps,
+                        &attached_protections,
+                        family,
+                    );
+                    if let Some(path) = paths.last_mut() {
+                        path.uncertainty_reasons.push(
+                            if exact_operand {
+                                "node_explicit_operand_flow_is_syntactic"
+                            } else {
+                                "node_object_field_projection_is_syntactic"
+                            }
+                            .into(),
+                        );
+                        if has_control_flow_ancestor(&source_node, &sink_scope)
+                            || sink_in_control_flow
+                        {
+                            path.uncertainty_reasons
+                                .push("control_flow_context_not_modeled".into());
+                        }
+                        if embedded_program {
+                            path.uncertainty_reasons
+                                .push("embedded_program_resolution_is_syntactic".into());
+                        }
+                    }
+                }
+                continue;
+            }
             if sink.rule_id.ends_with("postgres-query")
                 && sink.captures.get("query").is_some_and(|query| {
                     contains_range(location_range(&query.location), source_range.clone())
@@ -719,6 +947,98 @@ fn build_family_paths(
 
             let source_in_control_flow = has_control_flow_ancestor(&source_node, &sink_scope);
             if source_in_control_flow || sink_in_control_flow {
+                if matches!(
+                    language,
+                    Language::Javascript | Language::Typescript | Language::Tsx
+                ) && source.capability == Capability::HttpRequestData
+                    && target_nodes
+                        .iter()
+                        .any(|(_, target)| node_direct_string_operand(target, &source_range))
+                    && node_operands
+                        .get_or_insert_with(|| {
+                            NodeOperandIndex::new(root, language, evidence, returned_objects)
+                        })
+                        .source_is_unchanged(&source_node, &source_scope)
+                {
+                    let mut steps = vec![evidence_step(SecurityPathStepKind::Source, source)];
+                    steps.extend(
+                        attached_protections
+                            .iter()
+                            .map(|p| evidence_step(SecurityPathStepKind::Protection, p)),
+                    );
+                    steps.push(evidence_step(SecurityPathStepKind::Sink, sink));
+                    push_path(
+                        &mut paths,
+                        source,
+                        sink,
+                        SecurityPathState::Unknown,
+                        steps,
+                        &attached_protections,
+                        family,
+                    );
+                    if let Some(path) = paths.last_mut() {
+                        path.uncertainty_reasons
+                            .push("node_guarded_direct_operand_flow".to_string());
+                        path.uncertainty_reasons
+                            .push("control_flow_context_not_modeled".to_string());
+                    }
+                    continue;
+                }
+                let node_operand_steps = matches!(
+                    language,
+                    Language::Javascript | Language::Typescript | Language::Tsx
+                )
+                .then(|| {
+                    (source.capability == Capability::HttpRequestData)
+                        .then(|| {
+                            target_nodes.iter().find_map(|(_, target)| {
+                                node_guarded_alias_steps(
+                                    path,
+                                    language,
+                                    symbols,
+                                    &source_node,
+                                    target,
+                                    &sink_scope,
+                                    node_operands.get_or_insert_with(|| {
+                                        NodeOperandIndex::new(
+                                            root,
+                                            language,
+                                            evidence,
+                                            returned_objects,
+                                        )
+                                    }),
+                                )
+                            })
+                        })
+                        .flatten()
+                })
+                .flatten();
+                if let Some(transfer_steps) = node_operand_steps {
+                    let mut steps = vec![evidence_step(SecurityPathStepKind::Source, source)];
+                    steps.extend(transfer_steps);
+                    steps.extend(
+                        attached_protections
+                            .iter()
+                            .map(|p| evidence_step(SecurityPathStepKind::Protection, p)),
+                    );
+                    steps.push(evidence_step(SecurityPathStepKind::Sink, sink));
+                    push_path(
+                        &mut paths,
+                        source,
+                        sink,
+                        SecurityPathState::Unknown,
+                        steps,
+                        &attached_protections,
+                        family,
+                    );
+                    if let Some(path) = paths.last_mut() {
+                        path.uncertainty_reasons
+                            .push("node_guarded_alias_operand_flow".to_string());
+                        path.uncertainty_reasons
+                            .push("control_flow_context_not_modeled".to_string());
+                    }
+                    continue;
+                }
                 if sink.rule_id == "go-cookie-authenticated-state-change-review"
                     && sink.related_evidence.as_slice() == [source.id.as_str()]
                 {
@@ -1202,6 +1522,16 @@ fn build_family_paths(
             );
         }
     }
+    if !url_facts.is_empty() {
+        for candidate in &mut paths {
+            if let Some(reason) = url_facts.get(&(
+                candidate.source_evidence_id.clone(),
+                candidate.sink_evidence_id.clone(),
+            )) {
+                candidate.uncertainty_reasons.push((*reason).to_string());
+            }
+        }
+    }
     paths
 }
 
@@ -1535,6 +1865,667 @@ fn contextual_step(
         evidence_id: None,
         symbol: Some(symbol.to_string()),
     }
+}
+
+// This establishes only value contribution within one operand, not branch
+// feasibility. Calls, predicates, object construction and transforms are not
+// implicitly value-preserving. Conditions remain available in enclosing code.
+fn node_direct_string_operand(
+    target: &Node<'_, StrDoc<SupportLang>>,
+    source: &Range<usize>,
+) -> bool {
+    if target.range() == *source {
+        return true;
+    }
+    if !contains_range(target.range(), source.clone()) {
+        return false;
+    }
+    match target.kind().as_ref() {
+        "binary_expression" if target.field("operator").is_some_and(|n| n.text() == "+") => {}
+        "template_string"
+        | "template_substitution"
+        | "parenthesized_expression"
+        | "as_expression"
+        | "non_null_expression" => {}
+        _ => return false,
+    }
+    target
+        .children()
+        .filter(|n| n.is_named())
+        .any(|child| node_direct_string_operand(&child, source))
+}
+
+type NodeScope = (usize, usize);
+
+struct NodeOperandWrite {
+    range: Range<usize>,
+    scope: NodeScope,
+    access: Option<Vec<String>>,
+    text: String,
+    binding: bool,
+}
+
+#[derive(Default)]
+struct NodeOperandBinding<'tree> {
+    assignments: Vec<Assignment<'tree>>,
+    declarations: Vec<Range<usize>>,
+    writes: Vec<Range<usize>>,
+}
+
+/// Syntax facts only. Index once per file, query by callable scope/binding.
+/// Declaration and mutation facts are shared by source, alias and API checks;
+/// this index neither joins branches nor infers values or external behavior.
+#[derive(Default)]
+struct NodeOperandIndex<'tree> {
+    file_scope: Range<usize>,
+    custom_jsx_factory: bool,
+    nested_binding_writes: BTreeSet<(NodeScope, String)>,
+    root: Option<Node<'tree, StrDoc<SupportLang>>>,
+    returned_objects: BTreeMap<String, super::node_context::ReturnedObject>,
+    callable_declarations: BTreeMap<String, Vec<(Range<usize>, Range<usize>)>>,
+    object_bindings: BTreeSet<String>,
+    object_escapes: std::cell::OnceCell<BTreeMap<String, Vec<Range<usize>>>>,
+    destination_nodes: BTreeMap<(usize, usize), Node<'tree, StrDoc<SupportLang>>>,
+    bindings: BTreeMap<NodeScope, BTreeMap<String, NodeOperandBinding<'tree>>>,
+    declarations: BTreeMap<String, Vec<(Range<usize>, NodeScope)>>,
+    writes: BTreeMap<String, Vec<NodeOperandWrite>>,
+    imported: BTreeSet<String>,
+    source_cache: std::cell::RefCell<BTreeMap<(NodeScope, usize, usize), bool>>,
+    api_cache: std::cell::RefCell<BTreeMap<usize, Option<&'static str>>>,
+}
+
+impl<'tree> NodeOperandIndex<'tree> {
+    fn new(
+        root: &Node<'tree, StrDoc<SupportLang>>,
+        language: Language,
+        evidence: &[Evidence],
+        returned_objects: &BTreeMap<String, super::node_context::ReturnedObject>,
+    ) -> Self {
+        let mut index = Self {
+            file_scope: root.range(),
+            custom_jsx_factory: root.text().contains("@jsx"),
+            root: Some(root.clone()),
+            returned_objects: returned_objects.clone(),
+            ..Self::default()
+        };
+        let targets = evidence
+            .iter()
+            .filter_map(|e| match e.capability {
+                Capability::Redirect => e.captures.get("location"),
+                Capability::OutboundNetworkRequest => e.captures.get("endpoint"),
+                Capability::HtmlOutput if node_url::intrinsic_link(e) => e.captures.get("content"),
+                _ => None,
+            })
+            .map(|c| (c.location.start.byte_offset, c.location.end.byte_offset))
+            .collect::<BTreeSet<_>>();
+        for node in root.dfs() {
+            let range = node.range();
+            if targets.contains(&(range.start, range.end)) {
+                index
+                    .destination_nodes
+                    .insert((range.start, range.end), node.clone());
+            }
+            let kind = node.kind();
+            if (matches!(
+                kind.as_ref(),
+                "function_declaration" | "generator_function_declaration" | "class_declaration"
+            ) || (kind.as_ref() == "variable_declarator"
+                && node.field("value").is_some_and(|n| {
+                    matches!(n.kind().as_ref(), "arrow_function" | "function_expression")
+                })))
+                && let Some(name) = node.field("name")
+            {
+                let visibility = node
+                    .ancestors()
+                    .find(|n| {
+                        matches!(
+                            n.kind().as_ref(),
+                            "statement_block" | "program" | "switch_body"
+                        )
+                    })
+                    .map_or_else(|| root.range(), |n| n.range());
+                index
+                    .callable_declarations
+                    .entry(name.text().into_owned())
+                    .or_default()
+                    .push((node.range(), visibility));
+            }
+            let (target, declaration) = match kind.as_ref() {
+                "import_statement" => {
+                    index.imported.extend(
+                        node.dfs()
+                            .filter(|n| n.kind().as_ref() == "identifier")
+                            .map(|n| n.text().into_owned()),
+                    );
+                    continue;
+                }
+                "variable_declarator" => (node.field("name"), true),
+                "assignment_expression" | "augmented_assignment_expression" => {
+                    (node.field("left"), false)
+                }
+                "update_expression" => (node.field("argument"), false),
+                _ => continue,
+            };
+            let Some(target) = target else { continue };
+            let scope = scope_range(&node, root);
+            let key = (scope.start, scope.end);
+            if let Some(assignment) = assignment_parts(node.clone(), language, &scope) {
+                if assignment.right.kind().as_ref() == "object"
+                    || node_fields::is_return_call(&assignment.right, &index.returned_objects)
+                {
+                    index.object_bindings.insert(assignment.left.clone());
+                }
+                index
+                    .bindings
+                    .entry(key)
+                    .or_default()
+                    .entry(assignment.left.clone())
+                    .or_default()
+                    .assignments
+                    .push(assignment);
+            }
+            if declaration
+                && target.kind().as_ref() == "object_pattern"
+                && let Some(value) = node.field("value")
+                && let Some(parts) = node_fields::destructured_bindings(&target)
+            {
+                for (name, projection) in parts {
+                    index
+                        .bindings
+                        .entry(key)
+                        .or_default()
+                        .entry(name.clone())
+                        .or_default()
+                        .assignments
+                        .push(Assignment {
+                            node: node.clone(),
+                            left: name,
+                            right: value.clone(),
+                            projection,
+                            in_control_flow: has_control_flow_ancestor(&node, &scope),
+                        });
+                }
+            }
+            if declaration && target.kind().as_ref() == "identifier" {
+                index
+                    .declarations
+                    .entry(target.text().into_owned())
+                    .or_default()
+                    .push((node.range(), key));
+            }
+            let bindings = if matches!(target.kind().as_ref(), "object_pattern" | "array_pattern") {
+                // Conservatively includes competing pattern keys, matching the
+                // previous write barrier rather than guessing destructuring.
+                target
+                    .dfs()
+                    .filter(|n| n.is_named())
+                    .filter_map(|n| simple_identifier(n.text().as_ref()).map(str::to_string))
+                    .collect::<BTreeSet<_>>()
+            } else if target.kind().as_ref() == "identifier" {
+                BTreeSet::from([target.text().into_owned()])
+            } else {
+                BTreeSet::new()
+            };
+            for binding in &bindings {
+                let effects = index
+                    .bindings
+                    .entry(key)
+                    .or_default()
+                    .entry(binding.clone())
+                    .or_default();
+                if declaration {
+                    effects.declarations.push(node.range());
+                } else {
+                    effects.writes.push(node.range());
+                    // Nested callbacks can replace a captured outer alias.
+                    // Record that possibility once, without resolving calls
+                    // or pretending an inner write executes in source order.
+                    for outer in node
+                        .ancestors()
+                        .filter(|n| is_function_scope(n.kind().as_ref()))
+                        .skip(1)
+                        .map(|n| n.range())
+                        .chain((scope != root.range()).then(|| root.range()))
+                    {
+                        index
+                            .nested_binding_writes
+                            .insert(((outer.start, outer.end), binding.clone()));
+                    }
+                }
+            }
+            if declaration {
+                continue;
+            }
+            let access = node_static_access(&target, 0).or_else(|| {
+                target
+                    .field("object")
+                    .and_then(|n| node_static_access(&n, 0))
+            });
+            let roots = if let Some(access) = &access {
+                access.first().cloned().into_iter().collect::<BTreeSet<_>>()
+            } else {
+                bindings
+            };
+            for name in roots {
+                index
+                    .writes
+                    .entry(name)
+                    .or_default()
+                    .push(NodeOperandWrite {
+                        range: node.range(),
+                        scope: key,
+                        access: access.clone(),
+                        text: compact_expression(target.text().as_ref()),
+                        binding: target.kind().as_ref() == "identifier",
+                    });
+            }
+        }
+        index
+    }
+
+    fn object_escapes(&self) -> &BTreeMap<String, Vec<Range<usize>>> {
+        self.object_escapes.get_or_init(|| {
+            let mut escapes = BTreeMap::<String, Vec<Range<usize>>>::new();
+            let Some(root) = &self.root else {
+                return escapes;
+            };
+            // Lazy, once per file, and only for literal-object bindings. URL and
+            // ordinary alias checks do not pay for field escape bookkeeping.
+            for node in root.dfs() {
+                if !matches!(
+                    node.kind().as_ref(),
+                    "identifier" | "shorthand_property_identifier"
+                ) || !self.object_bindings.contains(node.text().as_ref())
+                {
+                    continue;
+                }
+                let range = node.range();
+                let safe_read = node.parent().is_some_and(|parent| {
+                    (parent.field("object").is_some_and(|n| n.range() == range)
+                        && node_static_access(&parent, 0).is_some()
+                        && !parent.parent().is_some_and(|call| {
+                            call.kind().as_ref() == "call_expression"
+                                && call
+                                    .field("function")
+                                    .is_some_and(|n| n.range() == parent.range())
+                        }))
+                        || (parent.kind().as_ref() == "variable_declarator"
+                            && parent.field("name").is_some_and(|n| n.range() == range))
+                });
+                if !safe_read {
+                    escapes
+                        .entry(node.text().into_owned())
+                        .or_default()
+                        .push(range);
+                }
+            }
+            escapes
+        })
+    }
+
+    fn source_is_unchanged(
+        &self,
+        source: &Node<'_, StrDoc<SupportLang>>,
+        scope: &Range<usize>,
+    ) -> bool {
+        let scope = (scope.start, scope.end);
+        let key = (scope, source.range().start, source.range().end);
+        if let Some(result) = self.source_cache.borrow().get(&key) {
+            return *result;
+        }
+        let observed = compact_expression(source.text().as_ref());
+        let access = node_static_access(source, 0);
+        let affects_source = |write: &NodeOperandWrite| {
+            write.scope == scope
+                && write.range.end <= source.range().start
+                && (access
+                    .as_ref()
+                    .zip(write.access.as_ref())
+                    .is_some_and(|(source, written)| source.starts_with(written))
+                    || observed == write.text
+                    || observed.starts_with(&format!("{}.", write.text))
+                    || observed.starts_with(&format!("{}[", write.text)))
+        };
+        let changed = if let Some(head) = access.as_ref().and_then(|access| access.first()) {
+            self.writes
+                .get(head)
+                .is_some_and(|writes| writes.iter().any(affects_source))
+        } else {
+            self.writes.values().flatten().any(affects_source)
+        };
+        let unchanged = !changed;
+        self.source_cache.borrow_mut().insert(key, unchanged);
+        unchanged
+    }
+
+    fn binding(&self, scope: &Range<usize>, name: &str) -> Option<&NodeOperandBinding<'tree>> {
+        self.bindings.get(&(scope.start, scope.end))?.get(name)
+    }
+
+    fn alias_assignment(
+        &self,
+        scope: &Range<usize>,
+        target: &Node<'_, StrDoc<SupportLang>>,
+    ) -> Option<&Assignment<'tree>> {
+        let binding = self.binding(scope, target.text().as_ref())?;
+        let assignment = binding
+            .assignments
+            .iter()
+            .rev()
+            .find(|a| a.node.range().end <= target.range().start)?;
+        // Callable indexing must not make a block-local let/const binding
+        // visible to a same-named read outside its lexical block.
+        if assignment
+            .node
+            .parent()
+            .is_some_and(|n| n.kind().as_ref() == "lexical_declaration")
+            && assignment
+                .node
+                .ancestors()
+                .find(|n| matches!(n.kind().as_ref(), "statement_block" | "switch_body"))
+                .is_some_and(|block| !contains_range(block.range(), target.range()))
+        {
+            return None;
+        }
+        (lexical_if_try_path_is_prefix(&assignment.node, target, scope)
+            && !binding
+                .declarations
+                .iter()
+                .chain(&binding.writes)
+                .any(|r| r.start >= assignment.node.range().end && r.end <= target.range().start))
+        .then_some(assignment)
+    }
+
+    fn path_api(
+        &self,
+        symbols: &FileSymbolEnvironment,
+        language: Language,
+        callee: &Node<'_, StrDoc<SupportLang>>,
+    ) -> Option<&'static str> {
+        let at = callee.range().start;
+        if let Some(api) = self.api_cache.borrow().get(&at) {
+            return *api;
+        }
+        let observed = compact_expression(callee.text().as_ref()).replace("?.", ".");
+        let head = observed.split('.').next()?;
+        let api = ["path.resolve", "path.join", "path.normalize"]
+            .into_iter()
+            .find(|api| symbols.resolve_imported(&observed, api).is_some());
+        let declared = self
+            .declarations
+            .get(head)
+            .into_iter()
+            .flatten()
+            .filter(|(_, scope)| scope.0 <= at && at < scope.1)
+            .collect::<Vec<_>>();
+        let stable = declared.len() <= 1
+            && declared.iter().all(|(range, _)| range.end <= at)
+            && (declared.is_empty() || !self.imported.contains(head))
+            && !self.writes.get(head).into_iter().flatten().any(|write| {
+                write.range.start < at
+                    && (write.binding
+                        || write
+                            .access
+                            .as_ref()
+                            .is_some_and(|access| access.first().is_some_and(|name| name == head)))
+            })
+            && !symbols.has_shadowing_parameter(callee, &observed, language)
+            && !callee
+                .ancestors()
+                .filter(|n| is_function_scope(n.kind().as_ref()))
+                .filter_map(|n| n.field("parameters"))
+                .any(|parameters| {
+                    parameters
+                        .dfs()
+                        .any(|n| n.kind().as_ref() == "identifier" && n.text() == head)
+                });
+        let api = api.filter(|_| stable);
+        self.api_cache.borrow_mut().insert(at, api);
+        api
+    }
+}
+
+// A bounded operand proof, not a branch join or general call interpreter. Each
+// alias is resolved at its own assignment, so later writes cannot alter a copy.
+#[allow(clippy::too_many_arguments)]
+fn node_guarded_alias_steps<'tree>(
+    path: &str,
+    language: Language,
+    symbols: &FileSymbolEnvironment,
+    source: &Node<'tree, StrDoc<SupportLang>>,
+    target: &Node<'tree, StrDoc<SupportLang>>,
+    scope: &Range<usize>,
+    index: &NodeOperandIndex<'tree>,
+) -> Option<Vec<SecurityPathStep>> {
+    if !index.source_is_unchanged(source, scope) {
+        return None;
+    }
+    let mut work = 64;
+    node_operand_origin(
+        path, language, symbols, source, target, scope, index, 0, &mut work,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn node_operand_origin<'tree>(
+    path: &str,
+    language: Language,
+    symbols: &FileSymbolEnvironment,
+    source: &Node<'tree, StrDoc<SupportLang>>,
+    target: &Node<'tree, StrDoc<SupportLang>>,
+    scope: &Range<usize>,
+    index: &NodeOperandIndex<'tree>,
+    depth: usize,
+    work: &mut usize,
+) -> Option<Vec<SecurityPathStep>> {
+    if *work == 0
+        || depth > MAX_PROPAGATION_DEPTH
+        || !lexical_if_try_path_is_prefix(source, target, scope)
+    {
+        return None;
+    }
+    *work -= 1;
+    if target.range() == source.range() {
+        return Some(Vec::new());
+    }
+    if target.kind().as_ref() == "identifier" {
+        let name = target.text();
+        if index
+            .nested_binding_writes
+            .contains(&((scope.start, scope.end), name.to_string()))
+        {
+            return None;
+        }
+        let assignment = index.alias_assignment(scope, target)?;
+        let selection = if assignment.projection.is_empty() {
+            node_fields::Selection {
+                value: assignment.right.clone(),
+                steps: Vec::new(),
+            }
+        } else {
+            node_fields::selected_value(
+                &assignment.right,
+                &assignment.projection,
+                &assignment.node,
+                index,
+                scope,
+                depth + 1,
+                work,
+            )?
+        };
+        let mut steps = node_operand_origin(
+            path,
+            language,
+            symbols,
+            source,
+            &selection.value,
+            scope,
+            index,
+            depth + 1,
+            work,
+        )?;
+        steps.extend(selection.steps);
+        if !assignment.projection.is_empty() {
+            steps.push(SecurityPathStep {
+                kind: SecurityPathStepKind::Alias,
+                location: node_location(path, &assignment.node),
+                evidence_id: None,
+                symbol: Some(format!(
+                    "field projection: {}",
+                    assignment.projection.join(".")
+                )),
+            });
+        }
+        steps.push(SecurityPathStep {
+            kind: SecurityPathStepKind::Assignment,
+            location: node_location(path, &assignment.node),
+            evidence_id: None,
+            symbol: Some(name.into_owned()),
+        });
+        return Some(steps);
+    }
+    if matches!(
+        target.kind().as_ref(),
+        "member_expression" | "subscript_expression"
+    ) {
+        let selection = node_fields::projected_value(target, index, scope, depth, work)?;
+        let mut steps = node_operand_origin(
+            path,
+            language,
+            symbols,
+            source,
+            &selection.value,
+            scope,
+            index,
+            depth + 1,
+            work,
+        )?;
+        steps.extend(selection.steps);
+        steps.push(SecurityPathStep {
+            kind: SecurityPathStepKind::Alias,
+            location: node_location(path, target),
+            evidence_id: None,
+            symbol: Some(format!(
+                "field projection: {}",
+                node_static_access(target, 0)
+                    .map(|parts| parts.join("."))
+                    .filter(|text| text.len() <= 256)
+                    .unwrap_or_else(|| "selected return field".to_string())
+            )),
+        });
+        return Some(steps);
+    }
+    if let Some(receiver) = node_strings::replacement_receiver(target)
+        && node_strings::path_string(&receiver, symbols, language, index, scope, depth, work)
+        && !["String", "RegExp"].iter().any(|name| {
+            index
+                .writes
+                .get(*name)
+                .is_some_and(|writes| writes.iter().any(|w| w.range.start < target.range().start))
+        })
+    {
+        // Only the receiver contributes. Search/replacement operands cannot
+        // seed a path, and this is no claim that a validator is effective.
+        let mut steps = node_operand_origin(
+            path, language, symbols, source, &receiver, scope, index, depth, work,
+        )?;
+        steps.push(SecurityPathStep {
+            kind: SecurityPathStepKind::Alias,
+            location: node_location(path, target),
+            evidence_id: None,
+            symbol: Some("String.replace: partial replacement of path-derived string; validation not established".into()),
+        });
+        return Some(steps);
+    }
+    let transform = if target.kind().as_ref() == "call_expression" {
+        let callee = target.field("function")?;
+        index.path_api(symbols, language, &callee).map(Some)?
+    } else {
+        match target.kind().as_ref() {
+            "binary_expression" if target.field("operator").is_some_and(|n| n.text() == "+") => {}
+            "template_string"
+            | "template_substitution"
+            | "parenthesized_expression"
+            | "as_expression"
+            | "non_null_expression" => {}
+            _ => return None,
+        }
+        None
+    };
+    let operand = if transform.is_some() {
+        target.field("arguments")?
+    } else {
+        target.clone()
+    };
+    let arguments = operand
+        .children()
+        .filter(|n| n.is_named())
+        .collect::<Vec<_>>();
+    let mut steps = arguments
+        .iter()
+        .enumerate()
+        .find_map(|(operand_index, n)| {
+            // resolve discards earlier components at a later absolute segment.
+            // Do not turn a definitely discarded input into a review candidate.
+            if transform == Some("path.resolve")
+                && arguments[operand_index + 1..].iter().any(|later| {
+                    let text = later.text();
+                    simple_string_literal(text.trim()).is_some_and(|value| {
+                        value.starts_with('/')
+                            || value.starts_with('\\')
+                            || value.as_bytes().get(1) == Some(&b':')
+                    })
+                })
+            {
+                return None;
+            }
+            node_operand_origin(
+                path, language, symbols, source, n, scope, index, depth, work,
+            )
+        })?;
+    if let Some(api) = transform {
+        steps.push(SecurityPathStep {
+            kind: SecurityPathStepKind::Alias,
+            location: node_location(path, target),
+            evidence_id: None,
+            symbol: Some(format!(
+                "{api}: input contribution; confinement not established"
+            )),
+        });
+    }
+    Some(steps)
+}
+
+pub(super) fn node_static_access(
+    node: &Node<'_, StrDoc<SupportLang>>,
+    depth: usize,
+) -> Option<Vec<String>> {
+    if depth >= 16 {
+        return None;
+    }
+    if node.kind().as_ref() == "identifier" {
+        return Some(vec![node.text().into_owned()]);
+    }
+    let object = node.field("object")?;
+    let mut path = node_static_access(&object, depth + 1)?;
+    let key = match node.kind().as_ref() {
+        "member_expression" => node.field("property")?.text().into_owned(),
+        "subscript_expression" => {
+            let index = node.field("index")?;
+            if index.kind().as_ref() != "string" {
+                return None;
+            }
+            let text = index.text();
+            let quote = text.chars().next()?;
+            if !matches!(quote, '\'' | '"') || text.contains('\\') {
+                return None;
+            }
+            text.strip_prefix(quote)?.strip_suffix(quote)?.to_string()
+        }
+        _ => return None,
+    };
+    path.push(key);
+    Some(path)
 }
 
 fn angular_direct_steps(
@@ -2934,6 +3925,47 @@ fn embedded_context_property_steps(
         contains_range(assignment.right.range(), source_node.range())
             && assignment.node.range().end <= sink_node.range().start
     })?;
+    // The context must carry this scalar value, not the result of an unread
+    // transform or an object seeded from one request-derived property.
+    let direct = node_direct_string_operand(&source_assignment.right, &source_node.range());
+    let fallback = source_assignment.right.kind().as_ref() == "binary_expression"
+        && source_assignment
+            .right
+            .field("operator")
+            .is_some_and(|op| matches!(op.text().as_ref(), "||" | "??"))
+        && source_assignment
+            .right
+            .field("left")
+            .is_some_and(|left| node_direct_string_operand(&left, &source_node.range()))
+        && source_assignment
+            .right
+            .field("right")
+            .is_some_and(|right| simple_string_literal(right.text().trim()).is_some());
+    // Upload rules capture either the buffer or its typed member expression.
+    // Preserve this explicit text conversion, without admitting arbitrary calls.
+    let buffer_text = callable_canonical == "js-yaml.load"
+        && sink.provenance.engine.ends_with("constant-vm-wrapper")
+        && source_assignment.right.kind().as_ref() == "call_expression"
+        && source_assignment
+            .right
+            .field("function")
+            .is_some_and(|function| {
+                function.kind().as_ref() == "member_expression"
+                    && function
+                        .field("property")
+                        .is_some_and(|property| property.text() == "toString")
+                    && function.field("object").is_some_and(|object| {
+                        object.range() == source_node.range()
+                            || function.range() == source_node.range()
+                    })
+            })
+        && source_assignment
+            .right
+            .field("arguments")
+            .is_some_and(|arguments| !arguments.children().any(|argument| argument.is_named()));
+    if !direct && !fallback && !buffer_text {
+        return None;
+    }
     let source_end = source_assignment.node.range().end;
     let mut tracked = BTreeMap::from([(
         source_assignment.left.clone(),
@@ -3171,6 +4203,7 @@ fn assignment_parts<'tree>(
     }
     let left = assignment_identifier(&left, language)?;
     Some(Assignment {
+        projection: Vec::new(),
         in_control_flow: has_control_flow_ancestor(&node, scope),
         node,
         left,

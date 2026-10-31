@@ -154,7 +154,7 @@ pub(crate) fn scan_source(
         scan_secrets_if_enabled(scan_secrets, path, source, &comments, secret_allowlist);
     let parse_issue_ranges = root
         .dfs()
-        .filter(|node| node.is_error() || node.is_missing())
+        .filter(|node| super::typescript_syntax::unsupported_error(node, language))
         .map(|node| node.range())
         .collect::<Vec<_>>();
     let conditional = ConditionalRegions::from_source(language, source, build_symbols);
@@ -756,6 +756,25 @@ pub(crate) fn scan_source(
         path,
         &root,
         language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    super::node_express::add_typed_koa_boundaries(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    super::node_api_boundaries::add_boundaries(
+        path,
+        &root,
+        language,
+        &symbol_environment,
         &comments,
         &conditional,
         &literals,
@@ -1674,6 +1693,26 @@ pub(crate) fn scan_source(
     if let Some(context) = &php_context {
         super::php::add_operand_facts(path, &php_operand_nodes, context, &literals, &mut evidence);
     }
+    super::node_http_clients::add(
+        path,
+        &root,
+        language,
+        &symbol_environment,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
+    super::node_identity::correct(language, &root, &symbol_environment, &mut evidence);
+    node_context.add_http_effect_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
     super::node_operands::annotate(language, source, &root, &mut evidence);
     super::filesystem_operands::annotate(language, &root, &literals, &mut evidence);
     super::python_operands::annotate(language, &root, &mut evidence);
@@ -1690,6 +1729,7 @@ pub(crate) fn scan_source(
     super::extended_database::attach_query_construction(&root, &mut evidence);
     super::database_cleanup::close_equalities(language, &root, &mut evidence);
     super::route_context_cleanup::annotate(language, &root, &mut evidence);
+    super::node_cfg::emit_if_enabled(path, language, &root, &literals, &evidence);
     if matches!(
         language,
         Language::Javascript | Language::Typescript | Language::Tsx
@@ -1754,15 +1794,24 @@ pub(crate) fn scan_source(
             });
         }
     }
+    super::url_shape::annotate(&root, language, &mut evidence);
     let summaries_microseconds = summaries_started.elapsed().as_micros();
     let paths_started = Instant::now();
     let mut security_paths = super::security_paths::build_security_paths(
         path,
         &root,
         language,
-        &evidence,
+        &mut evidence,
         &symbol_environment,
         relations,
+        node_context,
+    );
+    node_context.retain_proved_helper_returns(
+        path,
+        &root,
+        language,
+        &evidence,
+        &mut security_paths,
     );
     if language == Language::Kotlin {
         security_paths.extend(super::kotlin::paths(&root, &evidence, relations));

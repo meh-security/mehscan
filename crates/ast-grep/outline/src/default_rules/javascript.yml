@@ -101,7 +101,20 @@ language: JavaScript
 role: item
 symbolType: constant
 rule:
-  pattern: 'export const $NAME = $VALUE;'
+  all:
+    - kind: variable_declarator
+    - has:
+        field: name
+        kind: identifier
+        pattern: $NAME
+    - inside:
+        all:
+          - kind: lexical_declaration
+          - regex: '^const\b'
+          - inside:
+              kind: export_statement
+              stopBy: neighbor
+        stopBy: neighbor
 name: $NAME
 isExported: true
 ---
@@ -110,7 +123,20 @@ language: JavaScript
 role: item
 symbolType: variable
 rule:
-  pattern: 'export let $NAME = $VALUE;'
+  all:
+    - kind: variable_declarator
+    - has:
+        field: name
+        kind: identifier
+        pattern: $NAME
+    - inside:
+        all:
+          - kind: lexical_declaration
+          - regex: '^let\b'
+          - inside:
+              kind: export_statement
+              stopBy: neighbor
+        stopBy: neighbor
 name: $NAME
 isExported: true
 ---

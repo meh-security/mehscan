@@ -160,10 +160,8 @@ prove safety of other XML features, resolvers or configuration lifecycles.
 - Android intents/WebView/components/storage, Kotlin/JS and Kotlin/Native APIs.
   Parsing multiplatform Kotlin does not establish platform-specific coverage.
 
-The current partial JVM profile is approved for release as-is; these remaining
-items are future improvements. See the [quality checkpoint](kotlin-quality.md) for pinned applications, source
-oracles, runtime checks, model comparison and the release gate. A small passing
-native corpus does not establish parity with the broader established profiles.
+These remaining items are outside the current partial JVM profile. A small
+passing native corpus does not establish parity with broader language profiles.
 
 Servlet multipart support owns javax/jakarta HttpServletRequest getPart/getParts
 and Part submitted filename/input-stream getters and Kotlin synthetic properties.

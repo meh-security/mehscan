@@ -42,7 +42,7 @@ fn inventories_html_encoding_and_builds_contextual_bounded_paths() {
         .iter()
         .filter(|path| path.capability == Capability::HtmlOutput)
         .collect::<Vec<_>>();
-    assert_eq!(html_paths.len(), 23);
+    assert_eq!(html_paths.len(), 24);
     let states = html_paths.iter().fold(BTreeMap::new(), |mut counts, path| {
         *counts.entry(path.state).or_insert(0usize) += 1;
         counts
@@ -50,7 +50,7 @@ fn inventories_html_encoding_and_builds_contextual_bounded_paths() {
     assert_eq!(states[&SecurityPathState::Direct], 8);
     assert_eq!(states[&SecurityPathState::Propagated], 7);
     assert_eq!(states[&SecurityPathState::Protected], 7);
-    assert_eq!(states[&SecurityPathState::Unknown], 1);
+    assert_eq!(states[&SecurityPathState::Unknown], 2);
 
     assert!(html_paths.iter().all(|path| {
         path.cwe_candidates == ["CWE-79"]
@@ -118,7 +118,11 @@ fn inventories_html_encoding_and_builds_contextual_bounded_paths() {
 
     let subtitle_path = html_paths
         .iter()
-        .find(|path| path.state == SecurityPathState::Unknown)
+        .find(|path| {
+            path.uncertainty_reasons
+                .iter()
+                .any(|reason| reason == "stored_file_to_html_flow_is_syntactic")
+        })
         .expect("the stored subtitle insertion should remain an unknown path");
     assert_eq!(subtitle_path.steps.len(), 4);
     assert!(

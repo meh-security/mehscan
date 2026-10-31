@@ -121,9 +121,11 @@ if ($report.scan.root -ne "." -or $sarif.runs[0].properties.scanRoot -ne ".") {
 }
 $reported = @($report.findings) + @($report.review_required)
 foreach ($finding in $reported) {
-    if ($finding.severity.level -eq "unknown") { throw "final report contains unknown severity" }
-    if ($finding.severity.level -eq "medium" -and $finding.severity.source -ne "fallback_default") {
-        throw "fallback medium severity is missing its source marker"
+    if ($finding.severity.level -ne "unknown" -or $finding.severity.source -ne "unknown") {
+        throw "synthetic responses without a reviewed diagnosis must leave severity unassigned"
+    }
+    if ($finding.PSObject.Properties['cwes'] -and @($finding.cwes).Count -gt 0) {
+        throw "candidate CWE was promoted into an unassessed finding"
     }
     if ([IO.Path]::IsPathRooted([string]$finding.primary_location.path)) {
         throw "final report contains an absolute location: $($finding.primary_location.path)"

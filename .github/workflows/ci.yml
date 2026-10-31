@@ -20,10 +20,10 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: "0"
-      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: "0"
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +40,15 @@ jobs:
 
       - name: Install the minimum supported Rust toolchain
         run: rustup toolchain install 1.88.0 --profile minimal --component rustfmt --no-self-update
+
+      - name: Set up Python
+        # Worker/provider runtime and Action test suites use this interpreter.
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Install Python test dependencies
+        run: python -m pip install --requirement scripts/requirements-ci.txt
 
       - name: Select the minimum supported Rust toolchain
         run: rustup default 1.88.0
@@ -61,7 +70,35 @@ jobs:
       - name: Build and test all targets
         run: cargo test --all-targets --locked
 
+      - name: Build the optimized scanner for native integration tests
+        shell: pwsh
+        run: |
+          cargo build -p mehscan-cli --release --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Optimized scanner build failed' }
+          $binaryName = if ($IsWindows) { 'mehscan.exe' } else { 'mehscan' }
+          $scanner = Join-Path $env:GITHUB_WORKSPACE "target/release/$binaryName"
+          "MEHSCAN_TEST_SCANNER=$scanner" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Test advisory GitHub lifecycle and native adapter
+        env:
+          MEHSCAN_REQUIRE_NATIVE_TESTS: "true"
+        run: python -m unittest discover -s tests/github_action -v
+
       - name: Run the CLI acceptance test
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/test-e2e.ps1 -SkipBuild
+
+      - name: Test provider-neutral review worker with native admission
+        run: python scripts/test-review-suites.py --output test-results/review-worker.json
+
+      - name: Save worker test classifications and timings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: review-worker-tests-${{ matrix.os }}
+          path: test-results/review-worker.json
+          if-no-files-found: ignore
+
+      - name: Test BYOK provider protocol and process execution
+        run: python -m unittest discover -s tests/provider_adapter -v

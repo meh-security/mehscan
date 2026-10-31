@@ -13,8 +13,15 @@ pub mod location;
 pub mod protocol;
 pub mod relation;
 pub mod report;
+pub mod review_completion;
+pub mod review_identity;
+pub mod review_pending;
+pub mod review_runtime;
+pub mod review_state;
 pub mod rule;
 pub mod sarif;
+pub mod sarif_automation;
+pub mod sarif_fingerprint;
 pub mod security_path;
 
 pub use candidate::{
@@ -64,17 +71,17 @@ pub use investigation::{
     QueryResponse, RelationshipFunnel, RelationshipFunnelCapability, ReviewAdmissionAudit,
     ReviewAdmissionAuditCount, ReviewAdmissionAuditExample, ReviewAdmissionDisposition,
     ReviewArtifactCitation, ReviewConfidence, ReviewContextTruncation, ReviewDecision,
-    ReviewDecisionFacts, ReviewFamilyMeasurement, ReviewInvestigationPlan,
-    ReviewInvestigationTrace, ReviewLookupRequest, ReviewNeighborhood, ReviewNeighborhoodFact,
-    ReviewNeighborhoodVerification, ReviewPipelineCoverage, ReviewPlaybook,
+    ReviewDecisionFacts, ReviewFamilyMeasurement, ReviewFindingDiagnosis, ReviewInvestigationPlan,
+    ReviewInvestigationTrace, ReviewLookupRequest, ReviewMarkerAdmission, ReviewNeighborhood,
+    ReviewNeighborhoodFact, ReviewNeighborhoodVerification, ReviewPipelineCoverage, ReviewPlaybook,
     ReviewQueryJournalSummary, ReviewReadiness, ReviewRetrievedArtifact, ReviewTriageContract,
     ReviewWorkSummary, ReviewerInference, ReviewerOriginLead, ReviewerOriginLeadRecord,
     SourceSlice, StructuralMatch, TextReference,
 };
 pub use location::{Capture, Location, Position};
 pub use protocol::{
-    ChangedFile, ChangedFileStatus, ChangedLineRange, Diagnostic, DiagnosticLevel, ImpactScanScope,
-    ImpactScopeFile, ScanRequest, ScanResult,
+    ChangeComparison, ChangedFile, ChangedFileStatus, ChangedLineRange, Diagnostic,
+    DiagnosticLevel, ImpactScanScope, ImpactScopeFile, ScanRequest, ScanResult,
 };
 pub use relation::{
     ProtectionApplication, RelationContract, RelationProtection, RelationSink, RelationSource,
@@ -86,8 +93,14 @@ pub use report::{
     FindingReportSummary, FindingReportTool, FindingReportTriage, FindingStatus, ReportedFinding,
     ReportedSeverity, SeveritySource,
 };
+pub use review_completion::*;
+pub use review_identity::*;
+pub use review_pending::*;
+pub use review_runtime::*;
+pub use review_state::*;
 pub use rule::{AiGuidance, Language, MatchSpec, PatternSpec, Rule, RuleProvenance, SymbolSpec};
 pub use sarif::{SARIF_SCHEMA_URI, SARIF_VERSION, SarifLog};
+pub use sarif_automation::*;
 pub use security_path::{
     SecurityPath, SecurityPathProvenance, SecurityPathState, SecurityPathStep, SecurityPathStepKind,
 };

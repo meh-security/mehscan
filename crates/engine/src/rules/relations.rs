@@ -26,6 +26,11 @@ fn validate_relations(relations: &[RelationContract], rules: &[Rule]) -> Result<
     let mut ids = BTreeSet::new();
     let mut selectors = BTreeSet::new();
     let mut capture_roles = capture_roles_by_kind_and_capability(rules);
+    // Express file delivery selects a file using both its path and optional root.
+    capture_roles
+        .entry((EvidenceKind::Sink, Capability::FilesystemRead))
+        .or_default()
+        .insert("root".to_string());
     // The bounded Node response-shaping pass emits this semantic role only
     // after it proves a sensitive computed read reaches an HTTP response.
     capture_roles

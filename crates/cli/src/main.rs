@@ -9,7 +9,9 @@ use std::time::Instant;
 use mehscan_core::{Capability, EvidenceFilter, EvidenceKind, Language};
 use serde::{Deserialize, Serialize};
 
+mod review_completion;
 mod review_facts;
+mod review_state;
 mod review_sweep;
 
 fn main() -> ExitCode {
@@ -39,11 +41,12 @@ fn run(arguments: impl IntoIterator<Item = String>) -> Result<(), String> {
         }
         "scan" => run_scan(arguments),
         "report" => run_report(arguments),
+        "state" => review_state::run(arguments),
         "benchmark" => run_benchmark(arguments),
         "evaluate" => run_evaluation(arguments),
         "investigate" => run_investigation(arguments),
         _ => Err(format!(
-            "unknown command {command:?}; expected 'scan', 'report', 'benchmark', 'evaluate', or 'investigate'"
+            "unknown command {command:?}; expected 'scan', 'report', 'benchmark', 'evaluate', 'investigate', or 'state'"
         )),
     }
 }
@@ -65,6 +68,21 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
         value => return Err(format!("unsupported report format {value:?}")),
     };
     let reviewer = parsed.optional("--reviewer");
+    let sarif_category = parsed.optional("--sarif-category");
+    let sarif_run_id = parsed.optional("--sarif-run-id");
+    // Validate configured identities before reading a run or writing output.
+    let sarif_automation = sarif_category
+        .as_deref()
+        .map(|category| {
+            mehscan_core::SarifAutomationConfiguration::new(category, sarif_run_id.as_deref())
+        })
+        .transpose()?;
+    if sarif_automation.is_none() && sarif_run_id.is_some() {
+        mehscan_core::SarifAutomationConfiguration::new(
+            "mehscan/triaged",
+            sarif_run_id.as_deref(),
+        )?;
+    }
     let output = parsed.optional("--output").map(PathBuf::from);
     let include_dismissed = parsed
         .optional_bool("--include-dismissed")?
@@ -88,6 +106,12 @@ fn run_report(arguments: impl Iterator<Item = String>) -> Result<(), String> {
             work,
         ),
     )?;
+    report.scan.sarif_automation = Some(sarif_automation.unwrap_or(
+        mehscan_core::SarifAutomationConfiguration::new(
+            report.default_sarif_category(),
+            sarif_run_id.as_deref(),
+        )?,
+    ));
     for label in scope {
         // Explicit handoff labels replace inherited labels of the same kind;
         // selection and coverage limitations remain intact.
@@ -243,6 +267,61 @@ fn run_evaluation(mut arguments: impl Iterator<Item = String>) -> Result<(), Str
     }
 }
 
+fn parse_diff_mode(value: &str) -> Result<mehscan_engine::ImpactDiffMode, String> {
+    match value {
+        "full" => Ok(mehscan_engine::ImpactDiffMode::Full),
+        "impact" => Ok(mehscan_engine::ImpactDiffMode::Impact),
+        "files" => Ok(mehscan_engine::ImpactDiffMode::Files),
+        _ => Err(format!(
+            "unsupported diff mode {value:?}; expected full, impact, or files"
+        )),
+    }
+}
+
+fn resolve_change_scope(
+    root: &Path,
+    changed_from: Option<&str>,
+    files_from: Option<&Path>,
+    diff_mode: Option<mehscan_engine::ImpactDiffMode>,
+    target: Option<&str>,
+    merge_base: bool,
+    default_mode: mehscan_engine::ImpactDiffMode,
+) -> Result<Option<mehscan_engine::ImpactScopeRequest>, String> {
+    if changed_from.is_some() && files_from.is_some() {
+        return Err("--changed-from and --files-from cannot be used together".into());
+    }
+    if diff_mode.is_some() && changed_from.is_none() && files_from.is_none() {
+        return Err("--diff-mode requires --changed-from or --files-from".into());
+    }
+    if (target.is_some() || merge_base) && changed_from.is_none() {
+        return Err("--target and --merge-base require --changed-from".into());
+    }
+    let mut request = if let Some(base) = changed_from {
+        Some(engine(
+            mehscan_engine::impact::changed_files_from_git_comparison(
+                root, base, target, merge_base,
+            ),
+        )?)
+    } else if let Some(path) = files_from {
+        let source = fs::read_to_string(path).map_err(|error| {
+            format!(
+                "could not read changed-file list {}: {error}",
+                path.display()
+            )
+        })?;
+        Some(engine(mehscan_engine::impact::changed_files_from_list(
+            root,
+            source.lines().map(str::to_string),
+        ))?)
+    } else {
+        None
+    };
+    if let Some(request) = request.as_mut() {
+        request.diff_mode = diff_mode.unwrap_or(default_mode);
+    }
+    Ok(request)
+}
+
 fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let mut root = None;
     let mut format = ScanOutputFormat::Text;
@@ -253,6 +332,8 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let mut files_from = None;
     let mut diff_mode = mehscan_engine::ImpactDiffMode::Full;
     let mut diff_mode_explicit = false;
+    let mut target = None;
+    let mut merge_base = false;
     let mut csharp_semantic = None;
     let mut csharp_context = None;
     let mut typescript_semantic = None;
@@ -289,6 +370,10 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
                 ))
             }
             "--timings" => timings = true,
+            "--merge-base" => merge_base = true,
+            "--target" => {
+                target = Some(arguments.next().ok_or("--target requires a Git revision")?)
+            }
             "--include-tests" => include_tests = true,
             "--changed-from" => {
                 changed_from = Some(
@@ -306,14 +391,10 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
             }
             "--diff-mode" => {
                 diff_mode_explicit = true;
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| "--diff-mode requires 'full' or 'impact'".to_string())?;
-                diff_mode = match value.as_str() {
-                    "full" => mehscan_engine::ImpactDiffMode::Full,
-                    "impact" => mehscan_engine::ImpactDiffMode::Impact,
-                    _ => return Err(format!("unsupported diff mode {value:?}")),
-                };
+                let value = arguments.next().ok_or_else(|| {
+                    "--diff-mode requires 'full', 'impact', or 'files'".to_string()
+                })?;
+                diff_mode = parse_diff_mode(&value)?;
             }
             "--jobs" => {
                 let value = arguments
@@ -355,7 +436,7 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
             "--typescript-semantic and --typescript-context must be supplied together".into(),
         );
     }
-    if typescript_semantic.is_some() && diff_mode == mehscan_engine::ImpactDiffMode::Impact {
+    if typescript_semantic.is_some() && diff_mode != mehscan_engine::ImpactDiffMode::Full {
         return Err(
             "TypeScript snapshot import requires full scan context; use --diff-mode full".into(),
         );
@@ -363,39 +444,21 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
     if csharp_semantic.is_some() != csharp_context.is_some() {
         return Err("--csharp-semantic and --csharp-context must be supplied together".into());
     }
-    if csharp_semantic.is_some() && diff_mode == mehscan_engine::ImpactDiffMode::Impact {
+    if csharp_semantic.is_some() && diff_mode != mehscan_engine::ImpactDiffMode::Full {
         return Err(
             "Roslyn snapshot import currently requires full scan context; use --diff-mode full"
                 .into(),
         );
     }
-    if changed_from.is_some() && files_from.is_some() {
-        return Err("--changed-from and --files-from cannot be used together".to_string());
-    }
-    if diff_mode_explicit && changed_from.is_none() && files_from.is_none() {
-        return Err("--diff-mode requires --changed-from or --files-from".to_string());
-    }
-    let mut impact_scope = if let Some(base) = changed_from {
-        Some(engine(mehscan_engine::impact::changed_files_from_git(
-            &root, &base,
-        ))?)
-    } else if let Some(path) = files_from {
-        let source = fs::read_to_string(&path).map_err(|error| {
-            format!(
-                "could not read changed-file list {}: {error}",
-                path.display()
-            )
-        })?;
-        Some(engine(mehscan_engine::impact::changed_files_from_list(
-            &root,
-            source.lines().map(str::to_string),
-        ))?)
-    } else {
-        None
-    };
-    if let Some(scope) = impact_scope.as_mut() {
-        scope.diff_mode = diff_mode;
-    }
+    let impact_scope = resolve_change_scope(
+        &root,
+        changed_from.as_deref(),
+        files_from.as_deref(),
+        diff_mode_explicit.then_some(diff_mode),
+        target.as_deref(),
+        merge_base,
+        mehscan_engine::ImpactDiffMode::Full,
+    )?;
     let options = mehscan_engine::ScanOptions {
         include_tests,
         jobs,
@@ -430,6 +493,9 @@ fn run_scan(arguments: impl Iterator<Item = String>) -> Result<(), String> {
             &snapshot,
             &mut result,
         ))?;
+    }
+    if let Some(scope) = &result.impact_scope {
+        engine(mehscan_engine::impact::validate_scope(&root, scope))?;
     }
     mehscan_engine::impact::apply_result_policy(&mut result);
     // Serialized CLI artifacts must be portable and must not disclose a
@@ -538,6 +604,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
         && !matches!(
             operation.as_str(),
             "outline"
+                | "import-targets"
+                | "export-target"
                 | "source"
                 | "enclosing"
                 | "enclosing-at"
@@ -685,10 +753,13 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             )
         }
         "review-inventory" => {
+            let continue_from = parsed.optional("--continue-from").map(PathBuf::from);
+            let marker_page = parsed.optional_usize("--marker-page")?;
+            let repository_key = parsed.optional("--repository-key");
+            let source_repository_key = parsed.optional("--source-repository-key");
             let output = PathBuf::from(parsed.required("--output")?);
-            let include_review_material = parsed
-                .optional_bool("--include-review-material")?
-                .unwrap_or(false);
+            let review_material_option = parsed.optional_bool("--include-review-material")?;
+            let include_review_material = review_material_option.unwrap_or(false);
             let semantic = parsed.optional("--csharp-semantic").map(PathBuf::from);
             let context = parsed.optional("--csharp-context").map(PathBuf::from);
             let backend = parsed.optional("--csharp-backend").map(PathBuf::from);
@@ -696,6 +767,14 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             let ts_context = parsed.optional("--typescript-context").map(PathBuf::from);
             let ts_backend = parsed.optional("--typescript-backend").map(PathBuf::from);
             let timings = parsed.optional_bool("--timings")?.unwrap_or(false);
+            let changed_from = parsed.optional("--changed-from");
+            let files_from = parsed.optional("--files-from").map(PathBuf::from);
+            let diff_mode = parsed
+                .optional("--diff-mode")
+                .map(|value| parse_diff_mode(&value))
+                .transpose()?;
+            let target = parsed.optional("--target");
+            let merge_base = parsed.optional_bool("--merge-base")?.unwrap_or(false);
             if semantic.is_some() && backend.is_some() {
                 return Err("supply --csharp-semantic or --csharp-backend, not both".into());
             }
@@ -727,17 +806,74 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     })
             };
             parsed.finish()?;
-            let mut profile = mehscan_engine::investigation::ReviewInventoryProfile::default();
-            let inventory = engine(
-                mehscan_engine::investigation::build_review_inventory_with_native_backends(
-                    &root,
-                    include_review_material,
-                    semantic.as_deref().zip(context.as_deref()),
-                    context.as_deref().zip(backend.as_deref()),
-                    ts_input,
-                    timings.then_some(&mut profile),
-                ),
+            let impact_scope = resolve_change_scope(
+                &root,
+                changed_from.as_deref(),
+                files_from.as_deref(),
+                diff_mode,
+                target.as_deref(),
+                merge_base,
+                mehscan_engine::ImpactDiffMode::Files,
             )?;
+            let mut profile = mehscan_engine::investigation::ReviewInventoryProfile::default();
+            let mut inventory = if let Some(directory) = continue_from {
+                let started = std::time::Instant::now();
+                if semantic.is_some()
+                    || backend.is_some()
+                    || ts_input.is_some()
+                    || impact_scope.is_some()
+                {
+                    return Err("continuation reuses cached scope and native facts; omit scan/native options".into());
+                }
+                let cached: mehscan_engine::investigation::ReviewInventory =
+                    serde_json::from_slice(
+                        &fs::read(directory.join("scan-cache.json")).map_err(|e| e.to_string())?,
+                    )
+                    .map_err(|e| e.to_string())?;
+                if review_material_option
+                    .is_some_and(|value| value != cached.include_review_material)
+                {
+                    return Err("continuation must retain the cached review-material scope".into());
+                }
+                let continued = engine(mehscan_engine::investigation::continue_review_markers(
+                    &root,
+                    &cached,
+                    marker_page.ok_or("supply --marker-page with --continue-from")?,
+                ))?;
+                profile.inventory_milliseconds = started.elapsed().as_millis();
+                continued
+            } else {
+                if marker_page.is_some() {
+                    return Err("--marker-page requires --continue-from DIR".into());
+                }
+                engine(
+                    mehscan_engine::investigation::build_review_inventory_scoped_with_native_backends(
+                        &root,
+                        include_review_material,
+                        semantic.as_deref().zip(context.as_deref()),
+                        context.as_deref().zip(backend.as_deref()),
+                        ts_input,
+                        mehscan_engine::ScanOptions {
+                            impact_scope,
+                            ..Default::default()
+                        },
+                        timings.then_some(&mut profile),
+                    ),
+                )?
+            };
+            if repository_key.is_some()
+                || source_repository_key.is_some()
+                || inventory
+                    .identity_catalog
+                    .as_ref()
+                    .is_some_and(|c| c.repository.repository_key.is_none())
+            {
+                engine(mehscan_engine::investigation::bind_inventory_repository(
+                    &mut inventory,
+                    repository_key,
+                    source_repository_key,
+                ))?;
+            }
             fs::create_dir_all(&output).map_err(|error| {
                 format!(
                     "could not create inventory directory {}: {error}",
@@ -751,8 +887,11 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "include_review_material": inventory.include_review_material,
                 "review_count": inventory.entries.len(),
                 "coverage": inventory.scan.coverage.totals,
+                "impact_scope": inventory.scan.impact_scope,
+                "identity_catalog": inventory.identity_catalog,
                 "entries": inventory.entries,
                 "admission_audit": inventory.admission_audit,
+                "marker_admission": inventory.marker_admission,
             });
             let mut by_capability = BTreeMap::<String, usize>::new();
             let mut by_cwe = BTreeMap::<String, usize>::new();
@@ -796,14 +935,22 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 .sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
             top_areas.truncate(40);
             let overview = serde_json::json!({
+                "native_identity": inventory.identity_catalog.as_ref().map(|catalog| serde_json::json!({
+                    "schema_version": catalog.schema_version,
+                    "repository": catalog.repository,
+                    "assessment_context": catalog.assessment_context,
+                    "source_fingerprint": catalog.source_fingerprint,
+                })),
                 "schema_version": inventory.schema_version,
                 "source_fingerprint": inventory.source_fingerprint,
                 "input_fingerprint": engine(inventory.input_fingerprint())?,
                 "review_count": inventory.entries.len(),
                 "coverage": inventory.scan.coverage.totals,
+                "impact_scope": inventory.scan.impact_scope,
                 "by_capability": by_capability,
                 "by_cwe": by_cwe,
                 "by_operand_fact": by_operand_fact,
+                "marker_admission": inventory.marker_admission,
                 "deterministic_operand_closures": inventory.admission_audit.closed_operands.len(),
                 "value_deferred_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_some()).count(),
                 "value_active_count": inventory.entries.iter().filter(|entry| entry.value_hint.is_none()).count(),
@@ -1050,6 +1197,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
             }))
         }
         "review-jobs" => {
+            let repository_key = parsed.optional("--repository-key");
+            let source_repository_key = parsed.optional("--source-repository-key");
             let limit = parsed.optional_usize("--limit")?;
             let context_lines = parsed.optional_usize("--context-lines")?;
             let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
@@ -1057,37 +1206,51 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 .optional_bool("--include-review-material")?
                 .unwrap_or(false);
             parsed.finish()?;
-            print_json(&engine(
-                mehscan_engine::investigation::build_path_review_jobs_page(
-                    &root,
-                    context_lines,
-                    limit,
-                    offset,
-                    include_review_material,
-                ),
-            )?)
-        }
-        "review-tasks" => {
-            let limit = parsed.optional_usize("--limit")?;
-            let context_lines = parsed.optional_usize("--context-lines")?;
-            let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
-            let include_review_material = parsed
-                .optional_bool("--include-review-material")?
-                .unwrap_or(false);
-            parsed.finish()?;
-            let job = engine(mehscan_engine::investigation::build_path_review_jobs_page(
+            let mut job = engine(mehscan_engine::investigation::build_path_review_jobs_page(
                 &root,
                 context_lines,
                 limit,
                 offset,
                 include_review_material,
             ))?;
+            engine(mehscan_engine::investigation::bind_review_job_repository(
+                &mut job,
+                repository_key,
+                source_repository_key,
+            ))?;
+            print_json(&job)
+        }
+        "review-tasks" => {
+            let repository_key = parsed.optional("--repository-key");
+            let source_repository_key = parsed.optional("--source-repository-key");
+            let limit = parsed.optional_usize("--limit")?;
+            let context_lines = parsed.optional_usize("--context-lines")?;
+            let offset = parsed.optional_usize("--offset")?.unwrap_or(0);
+            let include_review_material = parsed
+                .optional_bool("--include-review-material")?
+                .unwrap_or(false);
+            parsed.finish()?;
+            let mut job = engine(mehscan_engine::investigation::build_path_review_jobs_page(
+                &root,
+                context_lines,
+                limit,
+                offset,
+                include_review_material,
+            ))?;
+            engine(mehscan_engine::investigation::bind_review_job_repository(
+                &mut job,
+                repository_key,
+                source_repository_key,
+            ))?;
             print_json(&mehscan_engine::investigation::path_review_tasks(&job))
         }
         "review-bundles" => {
+            let repository_key = parsed.optional("--repository-key");
+            let source_repository_key = parsed.optional("--source-repository-key");
             let started = std::time::Instant::now();
             let output = PathBuf::from(parsed.required("--output")?);
             let inventory_dir = parsed.optional("--inventory").map(PathBuf::from);
+            let inventory_backed = inventory_dir.is_some();
             let ledger_path = parsed.optional("--ledger").map(PathBuf::from);
             let selected_ids = parsed.optional("--review-ids");
             let max_bytes = parsed.optional_usize("--max-bytes")?;
@@ -1099,6 +1262,23 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 .optional_bool("--include-review-material")?
                 .unwrap_or(false);
             let scope = parse_report_scope(&mut parsed);
+            if inventory_dir.is_some()
+                && (repository_key.is_some() || source_repository_key.is_some())
+            {
+                return Err("repository identity must be established with review-inventory; selected bundles inherit it".into());
+            }
+            if [
+                "--changed-from",
+                "--files-from",
+                "--diff-mode",
+                "--target",
+                "--merge-base",
+            ]
+            .iter()
+            .any(|flag| parsed.options.contains_key(*flag))
+            {
+                return Err("change scope must be established with review-inventory; review-bundles inherits it through --inventory and --review-ids".into());
+            }
             parsed.finish()?;
             if inventory_dir.is_some() != selected_ids.is_some() {
                 return Err("--inventory and --review-ids must be used together".to_string());
@@ -1182,6 +1362,14 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         None,
                     )
                 };
+            let mut job = job;
+            if !inventory_backed {
+                engine(mehscan_engine::investigation::bind_review_job_repository(
+                    &mut job,
+                    repository_key,
+                    source_repository_key,
+                ))?;
+            }
             let review_jobs_milliseconds = started.elapsed().as_millis();
             let mut bundle_set = engine(
                 mehscan_engine::investigation::build_path_review_bundles_with_run_limit(
@@ -1340,6 +1528,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                 "decision",
                 "confidence",
                 "summary",
+                "diagnosis",
                 "checks",
                 "investigation",
             ];
@@ -1378,7 +1567,8 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     "security_relevance": {"type": "string", "minLength": 1, "maxLength": 500},
                     "distinct_from_review": {"type": "string", "minLength": 1, "maxLength": 500},
                     "location": location_schema,
-                    "artifact_ids": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "string"}}
+                    "artifact_ids": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string"},
+                        "description": "Up to four ordinary references, or bounded fragments covering one exact contiguous source range; geometric and byte limits are checked by the engine."}
                 }
             });
             let investigation_schema = serde_json::json!({
@@ -1435,6 +1625,17 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                             "decision": {"type": "string", "enum": ["issue", "not_issue", "needs_review"]},
                             "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
                             "summary": {"type": "string", "maxLength": 450},
+                            "diagnosis": {"anyOf": [{"type":"null"}, {
+                                "type":"object", "additionalProperties":false,
+                                "required":["title","cwes","severity","impact","remediation"],
+                                "properties": {
+                                    "title":{"type":"string","minLength":1,"maxLength":160},
+                                    "cwes":{"type":"array","maxItems":5,"uniqueItems":true,"items":{"type":"string","pattern":"^CWE-[1-9][0-9]{0,5}$"}},
+                                    "severity":{"type":"string","enum":["unknown","note","low","medium","high","critical"]},
+                                    "impact":{"type":"string","minLength":1,"maxLength":1000},
+                                    "remediation":{"type":"string","minLength":1,"maxLength":1000}
+                                }
+                            }]},
                             "checks": {"type": "array", "items": {"type": "string"}},
                             "investigation": investigation_schema
                         }
@@ -1462,6 +1663,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                         bundle_path.display()
                     )
                 })?;
+            validate_changed_bundle_binding(&bundle_path, &bundle, source_root.as_deref())?;
             let response_source = fs::read_to_string(&responses_path).map_err(|error| {
                 format!(
                     "could not read path-review bundle response {}: {error}",
@@ -1507,6 +1709,7 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     format!("could not read bundle {}: {error}", bundle_path.display())
                 })?)
                 .map_err(|error| format!("invalid bundle {}: {error}", bundle_path.display()))?;
+            validate_changed_bundle_binding(&bundle_path, &bundle, Some(&source_root))?;
             let draft: serde_json::Value =
                 serde_json::from_slice(&fs::read(&draft_path).map_err(|error| {
                     format!("could not read draft {}: {error}", draft_path.display())
@@ -1591,6 +1794,35 @@ fn run_investigation(mut arguments: impl Iterator<Item = String>) -> Result<(), 
                     .cloned(),
             );
             print_json(&summary)
+        }
+        "export-target" => {
+            let path = parsed.required("--path")?;
+            let name = parsed.required("--name")?;
+            parsed.finish()?;
+            print_logged_query(
+                engine(mehscan_engine::investigation::get_export_target(
+                    &root, &path, &name,
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
+        }
+        "import-targets" => {
+            let path = parsed.required("--path")?;
+            parsed.finish()?;
+            print_logged_query(
+                engine(mehscan_engine::investigation::get_import_targets(
+                    &root, &path,
+                )),
+                journal.as_deref(),
+                &operation,
+                &root,
+                &query_options,
+                started,
+            )
         }
         "outline" => {
             let path = parsed.required("--path")?;
@@ -2039,6 +2271,72 @@ fn summarize_query_journal(
     Ok(summary)
 }
 
+fn validate_changed_run_binding(
+    run: &Path,
+    scope: &mehscan_core::ImpactScanScope,
+    source_root: Option<&Path>,
+) -> Result<ReviewChunkBinding, String> {
+    let root = source_root.ok_or(
+        "changed-scope finalization requires --source-root for current source and Git validation",
+    )?;
+    engine(mehscan_engine::impact::validate_scope(root, scope))?;
+    let binding_path = run.join("input-binding.json");
+    let binding: ReviewChunkBinding = serde_json::from_slice(
+        &fs::read(&binding_path)
+            .map_err(|e| format!("changed-scope run requires its input binding: {e}"))?,
+    )
+    .map_err(|e| format!("invalid changed-scope input binding: {e}"))?;
+    if binding.source_fingerprint
+        != engine(mehscan_engine::investigation::review_repository_fingerprint(root))?
+    {
+        return Err(
+            "changed-scope run is stale: source files changed; regenerate the inventory".into(),
+        );
+    }
+    Ok(binding)
+}
+
+fn validate_changed_bundle_binding(
+    path: &Path,
+    bundle: &mehscan_core::PathReviewBundle,
+    source_root: Option<&Path>,
+) -> Result<(), String> {
+    let Some(scope) = &bundle.impact_scope else {
+        return Ok(());
+    };
+    let run = path
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("changed-scope bundle requires its run/requests layout and input binding")?;
+    let binding = validate_changed_run_binding(run, scope, source_root)?;
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("invalid changed-scope bundle filename")?;
+    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    if binding.requests.get(filename)
+        != Some(&mehscan_engine::investigation::review_content_fingerprint(
+            &bytes,
+        ))
+    {
+        return Err("changed-scope request does not match its input binding".into());
+    }
+    let manifest: mehscan_core::PathReviewBundleManifest =
+        serde_json::from_slice(&fs::read(run.join("manifest.json")).map_err(|e| e.to_string())?)
+            .map_err(|e| format!("invalid changed-scope manifest: {e}"))?;
+    if manifest.impact_scope.as_ref() != Some(scope)
+        || manifest.job_fingerprint != bundle.job_fingerprint
+        || !manifest.bundles.iter().any(|entry| {
+            entry.filename == filename
+                && entry.bundle_fingerprint == bundle.bundle_fingerprint
+                && entry.review_ids == bundle.review_ids
+        })
+    {
+        return Err("changed-scope bundle does not match its manifest".into());
+    }
+    Ok(())
+}
+
 fn read_complete_bundle_responses(
     run: &Path,
     responses: Option<&Path>,
@@ -2072,6 +2370,11 @@ fn read_complete_bundle_responses(
     let response_directory = responses
         .map(Path::to_path_buf)
         .unwrap_or_else(|| run.join("responses"));
+    let scope_binding = if let Some(scope) = &manifest.impact_scope {
+        Some(validate_changed_run_binding(run, scope, source_root)?)
+    } else {
+        None
+    };
     if manifest.bundle_count != manifest.bundles.len()
         || manifest.review_count
             != manifest
@@ -2126,6 +2429,18 @@ fn read_complete_bundle_responses(
                     request_path.display()
                 )
             })?;
+        if bundle.impact_scope != manifest.impact_scope {
+            return Err("review bundle change scope does not match its manifest".into());
+        }
+        if let Some(binding) = &scope_binding {
+            if binding.requests.get(&entry.filename)
+                != Some(&mehscan_engine::investigation::review_content_fingerprint(
+                    request_source.as_bytes(),
+                ))
+            {
+                return Err("changed-scope request does not match its input binding".into());
+            }
+        }
         if bundle.job_fingerprint != manifest.job_fingerprint
             || bundle.review_ids != entry.review_ids
             || bundle.review_ids.len() != entry.review_count
@@ -2874,9 +3189,13 @@ impl ParsedArguments {
                 continue;
             }
             if argument.starts_with('-') {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| format!("{argument} requires a value"))?;
+                let value = if argument == "--merge-base" {
+                    "true".to_string()
+                } else {
+                    arguments
+                        .next()
+                        .ok_or_else(|| format!("{argument} requires a value"))?
+                };
                 if value.starts_with('-') {
                     return Err(format!("{argument} requires a value"));
                 }
@@ -3103,8 +3422,94 @@ fn compact_anchor_context(
     facts: &[serde_json::Value],
     anchor: &serde_json::Value,
 ) -> Option<serde_json::Value> {
+    compact_location_context(facts, anchor, false)
+}
+
+fn compact_location_context(
+    facts: &[serde_json::Value],
+    anchor: &serde_json::Value,
+    include_path_steps: bool,
+) -> Option<serde_json::Value> {
     let anchor_path = anchor["location"]["path"].as_str()?;
     let anchor_line = anchor["location"]["start"]["line"].as_u64()?;
+    // Mutation markers cover an operation, not only the route-header line.
+    // Preserve a complete small range from its own packed source fact.
+    if anchor["tags"]
+        .as_array()
+        .is_some_and(|tags| tags.iter().any(|tag| tag == "review-admission-marker"))
+    {
+        for fact in facts.iter().filter(|fact| {
+            fact["role"] == "source_context"
+                && fact["location"]["path"].as_str() == Some(anchor_path)
+        }) {
+            let location = &anchor["location"];
+            if let (Some(start), Some(end), Some(base), Some(limit), Some(text)) = (
+                location["start"]["byte_offset"].as_u64(),
+                location["end"]["byte_offset"].as_u64(),
+                fact["location"]["start"]["byte_offset"].as_u64(),
+                fact["location"]["end"]["byte_offset"].as_u64(),
+                fact["excerpt"].as_str(),
+            ) && start >= base
+                && end <= limit
+                && end > start
+                && end - start <= 1_536
+                && limit.checked_sub(base) == Some(text.len() as u64)
+                && let Some(excerpt) = text.get((start - base) as usize..(end - base) as usize)
+            {
+                return Some(serde_json::json!({"evidence_id":anchor["id"],
+                    "location":{"path":anchor_path,"start_line":location["start"]["line"],"end_line":location["end"]["line"],
+                        "start_column":location["start"]["column"],"end_column":location["end"]["column"],
+                        "start_byte_offset":start,"end_byte_offset":end},
+                    "excerpt":excerpt,"truncated":false}));
+            }
+        }
+    }
+    // Keep a complete, already-packed small operation. Re-clipping it around
+    // the sink hides late checks and defeats shared-callable source reuse.
+    let operation_role = match anchor["capability"].as_str() {
+        Some("resource_access") => Some("resource_operation"),
+        Some("outbound_network_request") => Some("outbound_operation"),
+        _ => None,
+    };
+    if let Some(operation) = anchor["context"]["operand_facts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|fact| {
+            fact["kind"] == "query_structure"
+                && fact["value"] == "local_callable_context"
+                && fact["role"]
+                    .as_str()
+                    .is_some_and(|role| Some(role) == operation_role)
+                && fact["location"]["path"] == anchor["location"]["path"]
+        })
+        && let Some(fact) = facts.iter().find(|fact| {
+            fact["role"] == "source_context"
+                && fact["location"] == operation["location"]
+                && fact["excerpt"]
+                    .as_str()
+                    .is_some_and(|text| !text.is_empty() && text.len() <= 1_536)
+        })
+        && let (Some(start), Some(end), Some(anchor_start), Some(anchor_end)) = (
+            operation["location"]["start"]["byte_offset"].as_u64(),
+            operation["location"]["end"]["byte_offset"].as_u64(),
+            anchor["location"]["start"]["byte_offset"].as_u64(),
+            anchor["location"]["end"]["byte_offset"].as_u64(),
+        )
+        && start <= anchor_start
+        && end >= anchor_end
+        && end.checked_sub(start) == Some(fact["excerpt"].as_str()?.len() as u64)
+    {
+        let location = &operation["location"];
+        return Some(serde_json::json!({
+            "evidence_id": fact["evidence_id"],
+            "location": {"path": anchor_path,
+                "start_line": location["start"]["line"], "end_line": location["end"]["line"],
+                "start_column": location["start"]["column"], "end_column": location["end"]["column"],
+                "start_byte_offset": start, "end_byte_offset": end},
+            "excerpt": fact["excerpt"], "truncated": false,
+        }));
+    }
     let center_line = anchor["captures"]
         .as_object()
         .and_then(|captures| {
@@ -3123,7 +3528,18 @@ fn compact_anchor_context(
             matches!(
                 fact["role"].as_str(),
                 Some("source_context" | "sink_context")
-            ) && fact["location"]["path"].as_str() == Some(anchor_path)
+            ) || include_path_steps
+                && matches!(
+                    fact["role"].as_str(),
+                    Some(
+                        "intermediate_context"
+                            | "protection_context"
+                            | "ineffective_protection_context"
+                    )
+                )
+        })
+        .filter(|fact| {
+            fact["location"]["path"].as_str() == Some(anchor_path)
                 && fact["excerpt"].as_str().is_some_and(|s| !s.is_empty())
         })
         .min_by_key(|fact| {
@@ -3151,7 +3567,11 @@ fn compact_anchor_context(
     let start = center.saturating_sub(2);
     let end = (center + 5).min(lines.len());
     let full_excerpt = lines[start..end].join("\n");
-    let truncated = full_excerpt.chars().count() > 700 || !covers(anchor_line);
+    let truncated = full_excerpt.chars().count() > 700
+        || !covers(anchor_line)
+        || anchor["location"]["end"]["line"]
+            .as_u64()
+            .is_some_and(|line| line >= first_line + end as u64);
     let excerpt = full_excerpt.chars().take(700).collect::<String>();
     Some(serde_json::json!({
         "evidence_id": fact["evidence_id"],
@@ -3159,6 +3579,101 @@ fn compact_anchor_context(
         "excerpt": excerpt,
         "truncated": truncated,
     }))
+}
+
+// Preserve an already-resolved helper definition in the normal skill view.
+// This is source context for the selected call, not a protection verdict.
+fn compact_helper_context(
+    review: &serde_json::Value,
+    anchor: &serde_json::Value,
+) -> Vec<serde_json::Value> {
+    // These are complete declared members reached through explicit imports.
+    // Keep them in the skill's initial view, not only as nearby locations.
+    // Prefixes remain lookup work; declaration context is not a guard verdict.
+    let mut contexts = review["facts"].as_array().into_iter().flatten()
+        .filter(|fact| {
+            fact["role"] == "imported_member_definition_context"
+                // Source-budget trimming keeps the location as a navigation
+                // lead, but an empty excerpt is not a captured helper body.
+                && fact["excerpt"].as_str().is_some_and(|text| !text.is_empty())
+        })
+        .take(6)
+        .map(|fact| {
+            let location = &fact["location"];
+            serde_json::json!({
+                "role":fact["role"], "symbol":fact["symbol"], "provenance":fact["provenance"],
+                "location":{"path":location["path"], "start_line":location["start"]["line"], "end_line":location["end"]["line"],
+                    "start_column":location["start"]["column"], "end_column":location["end"]["column"],
+                    "start_byte_offset":location["start"]["byte_offset"], "end_byte_offset":location["end"]["byte_offset"]},
+                "excerpt":fact["excerpt"], "truncated":false,
+            })
+        }).collect::<Vec<_>>();
+    // Path candidates intentionally omit captures. The definition fact remains
+    // bound to this exact evidence ID; do not infer a target from its spelling.
+    if !anchor["rule_id"].as_str().is_some_and(|rule| {
+        ["javascript-", "typescript-", "tsx-"]
+            .iter()
+            .any(|prefix| rule.starts_with(prefix))
+            && rule.ends_with("parameter-sink-summary")
+    }) {
+        return contexts;
+    }
+    let Some(fact) = review["facts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|fact| {
+            fact["role"] == "captured_definition_context" && fact["evidence_id"] == anchor["id"]
+        })
+    else {
+        return contexts;
+    };
+    let location = &fact["location"];
+    let exact_excerpt = match (
+        location["start"]["byte_offset"].as_u64(),
+        location["end"]["byte_offset"].as_u64(),
+        fact["excerpt"].as_str(),
+    ) {
+        (Some(start), Some(end), Some(text)) => end.checked_sub(start) == Some(text.len() as u64),
+        _ => false,
+    };
+    contexts.push(serde_json::json!({
+        "role": fact["role"], "symbol": fact["symbol"],
+        "location": {
+            "path": location["path"], "start_line": location["start"]["line"], "end_line": location["end"]["line"],
+            "start_column": location["start"]["column"], "end_column": location["end"]["column"],
+            "start_byte_offset": location["start"]["byte_offset"], "end_byte_offset": location["end"]["byte_offset"],
+        },
+        "excerpt": fact["excerpt"],
+        "truncated": !exact_excerpt || review["truncation"]["occurred"] == true,
+    }));
+    contexts
+}
+
+// Path provenance is decision context, even when it is far from the sink.
+// Project only the existing bounded steps and packed source; never infer edges.
+fn compact_path_steps(review: &serde_json::Value) -> Vec<serde_json::Value> {
+    let facts = review["facts"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    review["candidate"]["steps"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|step| {
+            let mut context = compact_location_context(facts, step, true);
+            if let Some(context) = &mut context {
+                let end = step["location"]["end"]["line"].as_u64();
+                if end > context["location"]["end_line"].as_u64() {
+                    context["truncated"] = serde_json::json!(true);
+                }
+            }
+            serde_json::json!({
+                "kind":step["kind"], "symbol":step["symbol"],
+                "evidence_id":step["evidence_id"],
+                "location":brief_location(&step["location"]),
+                "context":context,
+            })
+        })
+        .collect()
 }
 
 fn review_card_from_value(
@@ -3299,6 +3814,53 @@ fn review_card_from_value(
             })
             .collect::<serde_json::Map<String, serde_json::Value>>()
     });
+    let application_context: Vec<_> = review["facts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|fact| {
+            matches!(
+                fact["role"].as_str(),
+                Some("application_policy_context" | "inherited_policy_context")
+            )
+        })
+        .map(|fact| {
+            serde_json::json!({"role":fact["role"],"symbol":fact["symbol"],"location":brief_location(&fact["location"])})
+        })
+        .collect();
+    let path_steps = compact_path_steps(review);
+    let mut truncation = review["truncation"].clone();
+    let anchor_view =
+        serde_json::json!({"context":context,"location":brief_location(&anchor["location"])});
+    for (step, role) in path_steps
+        .iter()
+        .map(|step| (step, "path_step_context"))
+        .chain(std::iter::once((&anchor_view, "selected_anchor_context")))
+    {
+        if step["context"].is_null() || step["context"]["truncated"] == true {
+            truncation["occurred"] = serde_json::json!(true);
+            truncation["decision_critical"] = serde_json::json!(true);
+            let roles = truncation
+                .as_object_mut()
+                .unwrap()
+                .entry("roles")
+                .or_insert_with(|| serde_json::json!([]));
+            if let Some(roles) = roles.as_array_mut()
+                && !roles.iter().any(|existing| existing == role)
+            {
+                roles.push(serde_json::json!(role));
+            }
+            lookups.insert(0, serde_json::json!({
+                "operation":"source",
+                "arguments":{"path":step["location"]["path"],
+                    "start-line":step["location"]["start_line"].as_u64().unwrap_or(1).to_string(),
+                    "end-line":step["location"]["end_line"].as_u64().unwrap_or(1).to_string()},
+                "purpose":"Inspect missing or clipped operation/path context before relying on this relationship."
+            }));
+        }
+    }
+    lookups.dedup();
+    lookups.truncate(2);
     Ok(serde_json::json!({
         "bundle_fingerprint": bundle.bundle_fingerprint,
         "review_id": review_id,
@@ -3318,10 +3880,13 @@ fn review_card_from_value(
             "captures": captures,
         },
         "source_context": context,
+        "path_steps": path_steps,
+        "helper_context": compact_helper_context(review, anchor),
         "frontend_context": frontend_context,
+        "application_context": application_context,
         "nearby_locations": nearby_locations,
         "suggested_lookups": lookups,
-        "truncation": review["truncation"],
+        "truncation": truncation,
     }))
 }
 
@@ -3347,6 +3912,8 @@ struct BriefReview {
     confidence: mehscan_core::ReviewConfidence,
     summary: String,
     #[serde(default)]
+    diagnosis: Option<mehscan_core::ReviewFindingDiagnosis>,
+    #[serde(default)]
     reason: String,
     #[serde(default)]
     checks: Vec<String>,
@@ -3356,6 +3923,17 @@ struct BriefReview {
     blockers: Vec<String>,
     #[serde(default)]
     reviewer_origin_leads: Vec<mehscan_core::ReviewerOriginLead>,
+    #[serde(default)]
+    source_leads: Vec<BriefSourceLead>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BriefSourceLead {
+    question: String,
+    security_relevance: String,
+    distinct_from_review: String,
+    evidence: BriefSourceRef,
 }
 
 #[derive(serde::Deserialize)]
@@ -3432,6 +4010,36 @@ fn expand_brief_reviews(
                 artifact_ids.push(artifact_id);
             }
         }
+        let mut reviewer_origin_leads = review.reviewer_origin_leads.clone();
+        if reviewer_origin_leads.len() + review.source_leads.len() > 3 {
+            return Err("brief review supports at most three separate source leads".into());
+        }
+        for lead in &review.source_leads {
+            let source = read_brief_source(source_root, &lead.evidence)?;
+            let location = mehscan_core::Location {
+                path: source.first().expect("nonempty source").0.path.clone(),
+                start: source.first().expect("nonempty source").0.start.clone(),
+                end: source.last().expect("nonempty source").0.end.clone(),
+            };
+            let mut lead_artifact_ids = Vec::with_capacity(source.len());
+            for (location, excerpt) in source {
+                let artifact_id = format!("review-source-{}", artifacts.len() + 1);
+                artifacts.push(mehscan_core::ReviewRetrievedArtifact {
+                    artifact_id: artifact_id.clone(),
+                    location,
+                    excerpt,
+                });
+                artifact_ids.push(artifact_id.clone());
+                lead_artifact_ids.push(artifact_id);
+            }
+            reviewer_origin_leads.push(mehscan_core::ReviewerOriginLead {
+                question: lead.question.clone(),
+                security_relevance: lead.security_relevance.clone(),
+                distinct_from_review: lead.distinct_from_review.clone(),
+                location,
+                artifact_ids: lead_artifact_ids,
+            });
+        }
         let citations = artifact_ids
             .iter()
             .map(|artifact_id| mehscan_core::ReviewArtifactCitation {
@@ -3456,13 +4064,14 @@ fn expand_brief_reviews(
             decision: review.decision,
             confidence: review.confidence,
             summary: review.summary.clone(),
+            diagnosis: review.diagnosis.clone(),
             checks: review.checks.clone(),
             investigation: Some(mehscan_core::ReviewInvestigationTrace {
                 decisive_artifacts: artifacts,
                 journal_summary: None,
                 citations,
                 reviewer_inferences,
-                reviewer_origin_leads: review.reviewer_origin_leads.clone(),
+                reviewer_origin_leads,
                 blockers: review.blockers.clone(),
             }),
         });
@@ -3521,72 +4130,72 @@ fn read_brief_source(
         )
     })?;
     let lines = source.split_inclusive('\n').collect::<Vec<_>>();
-    if source_ref.end_line > lines.len() {
+    // A trailing newline exposes an empty EOF position at the following line,
+    // also used by source Location.end. It contributes no bytes to an excerpt.
+    let eof_position = source.ends_with('\n') && source_ref.end_line == lines.len() + 1;
+    if source_ref.end_line > lines.len() && !eof_position {
         return Err(format!(
             "brief evidence line is past end of {:?}",
             source_ref.path
         ));
     }
-    let mut start_offset = lines[..source_ref.start_line - 1]
+    let selected_end = source_ref.end_line.min(lines.len());
+    if source_ref.start_line > selected_end {
+        return Err("brief evidence excerpt is empty or exceeds 64 KiB".to_string());
+    }
+    let start_offset = lines[..source_ref.start_line - 1]
         .iter()
         .map(|line| line.len())
         .sum();
-    let excerpt = lines[source_ref.start_line - 1..source_ref.end_line].concat();
+    let excerpt = lines[source_ref.start_line - 1..selected_end].concat();
     if excerpt.trim().is_empty() || excerpt.len() > 64 * 1024 {
         return Err("brief evidence excerpt is empty or exceeds 64 KiB".to_string());
     }
-    // Retain every selected byte in ordered, contiguous artifacts. Do not
-    // truncate source, repair paths or change verdicts to normalize citations.
+    // Validate the entire selected range above. Retain nonblank chunks at their
+    // original offsets; whitespace-only chunks carry no evidence. Do not repair
+    // paths, accept positions beyond EOF, or change verdicts to normalize citations.
     let mut artifacts = Vec::new();
-    let mut start = source_ref.start_line - 1;
-    while start < source_ref.end_line {
-        let mut end = start;
-        let mut characters = 0;
-        while end < source_ref.end_line && end - start < 40 {
-            let count = lines[end].chars().count();
-            if count > 4000 {
-                return Err(format!(
-                    "brief evidence line {} exceeds 4000 characters",
-                    end + 1
-                ));
-            }
-            if characters + count > 4000 {
-                break;
-            }
-            characters += count;
-            end += 1;
+    let mut position = mehscan_core::Position {
+        line: source_ref.start_line,
+        column: 1,
+        byte_offset: start_offset,
+    };
+    let mut chunk_start = position.clone();
+    let mut chunk = String::new();
+    let (mut characters, mut newlines) = (0, 0);
+    let mut emit = |text: String, start, end| {
+        if !text.trim().is_empty() {
+            artifacts.push((
+                mehscan_core::Location {
+                    path: source_ref.path.replace('\\', "/"),
+                    start,
+                    end,
+                },
+                text,
+            ));
         }
-        let excerpt = lines[start..end].concat();
-        if excerpt.trim().is_empty() {
-            return Err(
-                "brief evidence produces an empty artifact; select decision-relevant ranges".into(),
-            );
+    };
+    // Generated source may have a long physical line. Split at Unicode character
+    // boundaries, retaining exact byte offsets and columns in the full format.
+    // The existing 4000-character/40-line artifact and 64-KiB range bounds stay.
+    for character in excerpt.chars() {
+        if characters == 4000 || newlines == 40 {
+            emit(std::mem::take(&mut chunk), chunk_start, position.clone());
+            chunk_start = position.clone();
+            (characters, newlines) = (0, 0);
         }
-        let end_offset = start_offset + excerpt.len();
-        let (end_line, end_column) = if excerpt.ends_with('\n') {
-            (end + 1, 1)
+        chunk.push(character);
+        characters += 1;
+        position.byte_offset += character.len_utf8();
+        if character == '\n' {
+            newlines += 1;
+            position.line += 1;
+            position.column = 1;
         } else {
-            (end, lines[end - 1].chars().count() + 1)
-        };
-        artifacts.push((
-            mehscan_core::Location {
-                path: source_ref.path.replace('\\', "/"),
-                start: mehscan_core::Position {
-                    line: start + 1,
-                    column: 1,
-                    byte_offset: start_offset,
-                },
-                end: mehscan_core::Position {
-                    line: end_line,
-                    column: end_column,
-                    byte_offset: end_offset,
-                },
-            },
-            excerpt,
-        ));
-        start_offset = end_offset;
-        start = end;
+            position.column += 1;
+        }
     }
+    emit(chunk, chunk_start, position);
     Ok(artifacts)
 }
 
@@ -3753,13 +4362,13 @@ fn print_benchmark_summary(report: &mehscan_engine::benchmark::BenchmarkReport) 
 
 fn print_help() {
     println!(
-        "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact]\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n\nRun a command with --help for details."
+        "mehscan - deterministic security evidence scanner\n\nUSAGE:\n  mehscan --version\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact|files] [--target REF] [--merge-base]\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH]\n  mehscan benchmark [ROOT] [--manifest PATH] [--include-optional] [--format text|json]\n  mehscan evaluate <prepare|score> [ROOT] [OPTIONS]\n  mehscan investigate <OPERATION> [PATH] [OPTIONS]\n  mehscan state <claim|runtime-template|plan-template|plan|pending|pending-batch|fact|work|record|end|status|history> [OPTIONS]\n\nRun a command with --help for details."
     );
 }
 
 fn print_report_help() {
     println!(
-        "USAGE:\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH] [--reviewer NAME] [--include-dismissed true|false] [--scope-label TEXT] [--project NAME] [--revision REF]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. Markdown is the human-readable summary and prioritizes unresolved review checks before confirmed and dismissed results; use --include-dismissed true to include not-issue summaries. --responses defaults to DIR/responses. --allow-partial true skips missing response files only and labels completed versus total review coverage; present responses must still validate as complete bundles. Scope, project and revision labels are user-supplied handoff metadata, not verified security facts."
+        "USAGE:\n  mehscan report --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false] [--format json|sarif|markdown] [--output PATH] [--reviewer NAME] [--sarif-category CATEGORY] [--sarif-run-id ID] [--include-dismissed true|false] [--scope-label TEXT] [--project NAME] [--revision REF]\n\nBuilds canonical post-triage findings by joining validated bundle responses to deterministic review evidence. JSON is the full-fidelity consumer artifact. SARIF 2.1.0 contains confirmed issues only. Markdown is the human-readable summary and prioritizes unresolved review checks before confirmed and dismissed results; use --include-dismissed true to include not-issue summaries. --responses defaults to DIR/responses. --allow-partial true skips missing response files only and labels completed versus total review coverage; present responses must still validate as complete bundles. Scope, project and revision labels are user-supplied handoff metadata, not verified security facts.\n\nSARIF category defaults to 'mehscan/triaged', or 'mehscan/triaged/changed' for change-scoped runs. Category is a stable analysis partition: keep reviewer, model, PR number, revision and changing file set out of it. --sarif-run-id optionally identifies an attempt without changing category. Category segments and run IDs use ASCII letters, digits, '.', '_' or '-'; category alone permits '/' separators. JSON retains the configuration for repeatable export. Complete review work is limited to the manifest and does not establish alert closure. Changed/partial SARIF is an advisory artifact; custom properties do not prevent GitHub from closing absent alerts if it is uploaded. Actual GitHub ingestion/closure acceptance remains pending."
     );
 }
 
@@ -3771,7 +4380,16 @@ fn print_scan_help() {
         "Optional TS/JS facts: --typescript-semantic SNAPSHOT --typescript-context CONTEXT (full scan context only)."
     );
     println!(
-        "USAGE:\n  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--timings] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact]\n\n'json' preserves raw evidence and SecurityPath data. 'candidates' emits only reviewable bounded relationships plus coverage. 'sarif-candidates' emits one SARIF 2.1.0 review result per candidate, never one result per raw observation; legacy 'sarif' remains an alias. Use 'mehscan report --format sarif' for confirmed post-triage findings. Secret detection is currently disabled; secret-only text is reported as ignored. '--timings' emits one machine-readable phase profile to stderr without changing stdout. Directory scans honor repository-local .gitignore, nested .gitignore, .ignore, and .git/info/exclude rules, but not global user ignores. Built-in dependency and generated-tree exclusions remain mandatory. By default, test, fixture, sample, generated, and bundled sources are excluded from SAST. '--include-tests' promotes those supported source files into full SAST. '--jobs N' overrides automatic per-file worker selection. '--changed-from REF' includes tracked changes since REF and untracked files. '--files-from PATH' accepts one repository-relative path per line; a missing path is treated as a deletion. Diff mode 'full' is the default: analyze the complete repository, then return evidence and paths touching changed lines. Diff mode 'impact' analyzes changed files, small same-directory context, and direct importers. Both modes return all full-scan results when deletions, renames, project-wide configuration, or central entrypoint changes make changed-location filtering unsafe; impact mode also falls back for large or broad expansions. Scope, result policy, fallback reasons, and Git changed-line ranges are retained in JSON, candidate, and SARIF run metadata."
+        r#"USAGE:
+  mehscan scan [PATH] [--format text|json|candidates|sarif-candidates] [--timings] [--jobs N] [--include-tests] [--changed-from REF | --files-from PATH] [--diff-mode full|impact|files] [--target REF] [--merge-base]
+
+'json' preserves raw evidence and SecurityPath data. 'candidates' emits only reviewable bounded relationships plus coverage. 'sarif-candidates' emits one SARIF 2.1.0 review result per candidate, never one result per raw observation; legacy 'sarif' remains an alias. Use 'mehscan report --format sarif' for confirmed post-triage findings. Secret detection is currently disabled; secret-only text is reported as ignored. '--timings' emits one machine-readable phase profile to stderr without changing stdout. Directory scans honor repository-local .gitignore, nested .gitignore, .ignore, and .git/info/exclude rules, but not global user ignores. Built-in dependency and generated-tree exclusions remain mandatory. By default, test, fixture, sample, generated, and bundled sources are excluded from SAST. '--include-tests' promotes those supported source files into full SAST. '--jobs N' overrides automatic per-file worker selection.
+
+'--changed-from REF' compares tracked working-tree contents with REF and includes nonignored untracked files. '--target REF' instead compares commits and requires a clean checkout at that target's HEAD. '--merge-base' compares one merge base with the target (HEAD by default); omit it for direct release endpoints. Neither option changes the checkout. '--files-from PATH' accepts one repository-relative path per line; blank/comment lines and surrounding whitespace are ignored, and a missing path is treated as a deletion.
+
+Diff mode 'files' analyzes whole existing changed files and returns their applicable results. It never expands to siblings/importers or falls back to a full scan for deletions, renames, configuration or large changes. Unchanged native analysis is excluded; removed controls and affected consumers need a reviewer change pass and targeted context. Zero candidates does not clear a diff. Optional compiler snapshots currently require 'full'.
+
+Diff mode 'full' remains the scan default: analyze the complete repository, then return evidence and paths touching changed lines. Diff mode 'impact' analyzes changed files, small same-directory context, and direct importers. Both modes return all full-scan results when deletions, renames, project-wide configuration, or central entrypoint changes make changed-location filtering unsafe; impact mode also falls back for large or broad expansions. Scope, result policy, fallback reasons, pinned Git comparison and changed-line ranges are retained in JSON, candidate, and SARIF run metadata."#
     );
 }
 
@@ -3796,8 +4414,9 @@ USAGE:
   mehscan investigate csharp-context [ROOT] --context SEED --output FILE
   mehscan investigate csharp-semantic [ROOT] --context FILE --backend EXE --output FILE [--inventory DIR] [--evidence-ids ID,ID]
   mehscan investigate typescript-semantic [ROOT] --context FILE --backend SCRIPT --output FILE [--inventory DIR] [--evidence-ids ID,ID]
-  mehscan investigate review-inventory [ROOT] --output DIR [--include-review-material true|false] [--csharp-backend EXE --csharp-context FILE | --csharp-semantic FILE --csharp-context FILE] [--timings true|false]
+  mehscan investigate review-inventory [ROOT] --output DIR [--changed-from REF | --files-from PATH] [--diff-mode full|impact|files] [--target REF] [--merge-base] [--include-review-material true|false] [--csharp-backend EXE --csharp-context FILE | --csharp-semantic FILE --csharp-context FILE] [--timings true|false]
     Optional TS/JS: [--typescript-backend SCRIPT --typescript-context FILE | --typescript-semantic FILE --typescript-context FILE]
+  mehscan investigate review-inventory ROOT --continue-from DIR --marker-page N --output DIR
   mehscan investigate review-inventory-list --inventory DIR [--ledger FILE] [--selection all|value|deferred] [--capability NAME] [--cwe CWE] [--path-prefix PATH] [--operand-kind KIND] [--group-by contract|implementation] [--contract KEY] [--limit N] [--offset N]
   mehscan investigate review-ledger --inventory DIR --history RUN_ROOT[,RUN_ROOT] --output FILE
   mehscan investigate review-jobs [ROOT] [--context-lines N] [--limit N] [--offset N] [--include-review-material true|false]
@@ -3813,6 +4432,8 @@ USAGE:
   mehscan investigate review-bundle-triage --bundle PATH --responses PATH [--source-root ROOT] [--summary true|false]
   mehscan investigate review-bundle-summary --run DIR [--responses DIR] [--source-root ROOT] [--allow-partial true|false]
   mehscan investigate outline [ROOT] --path FILE
+  mehscan investigate import-targets [ROOT] --path FILE
+  mehscan investigate export-target [ROOT] --path FILE --name EXPORT
   mehscan investigate source [ROOT] --path FILE --start-line N --end-line N
   mehscan investigate enclosing [ROOT] --evidence-id ID
   mehscan investigate enclosing-at [ROOT] --path FILE --line N
@@ -3825,6 +4446,10 @@ USAGE:
   mehscan investigate paths [ROOT] --name TEXT [--limit N]
   mehscan investigate native-call-sites [ROOT] --callee NAME [--path FILE] [--limit N]
   mehscan investigate structural [ROOT] --language LANG --pattern PATTERN [--path FILE] [--limit N]
+
+Changed inventories default to 'files': whole changed files without expansion or full fallback. Use '--merge-base' for a branch comparison and '--target REF' for a clean pinned checkout; omit merge-base for release endpoints. Optional compiler inputs require full analysis. Selected review-bundles inherit inventory scope; change flags must be supplied at review-inventory. Keep output outside the source worktree. Scoped finalization, triage, summary and report require --source-root and the run's input-binding.json; stale source or Git comparisons require a new inventory. Zero IDs does not complete a diff review.
+
+Native identity: add --repository-key STABLE_ID to review-inventory, review-jobs, review-tasks or direct review-bundles. Use the assessed/base repository's stable platform ID or configured namespace; optional --source-repository-key ID records fork/head provenance. Selected bundles inherit identity and reject overrides. Unknown namespaces are explicitly unscoped. Identity matching never authorizes verdict reuse; canonical reports retain native decision records for issue, not_issue and needs_review.
 
 Add --journal FILE to a read-only query to append its exact arguments, output or error, and elapsed time as JSONL. Use one file per review. Response schema 1.3 cites only decisive source in investigation.decisive_artifacts; review-bundle-finalize attaches journal counts and checks the response. Source reads are capped at 400 lines and 64 KiB. References default to 20 results; other result limits default to 200. The maximum is 1000."#
     );
@@ -3839,6 +4464,177 @@ mod tests {
     };
     use mehscan_core::Capability;
     use std::collections::{BTreeMap, BTreeSet};
+
+    #[test]
+    fn helper_view_preserves_complete_imported_members_for_ordinary_reviews() {
+        let anchor = serde_json::json!({"id":"operation", "rule_id":"framework-authorization-review-marker"});
+        let review = serde_json::json!({"facts":[
+            {"role":"imported_member_prefix_context", "symbol":"module", "excerpt":"prefix only"},
+            {"role":"imported_member_definition_context", "symbol":"permit", "excerpt":"function permit() {}",
+             "location":{"path":"policy.ts","start":{"line":10,"column":1,"byte_offset":20},"end":{"line":11,"column":1,"byte_offset":40}},
+             "provenance":{"resolution":"textual", "engine":"explicit import; runtime dispatch not established"}}
+        ]});
+        let contexts = super::compact_helper_context(&review, &anchor);
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0]["symbol"], "permit");
+        assert_eq!(contexts[0]["excerpt"], "function permit() {}");
+        assert_eq!(contexts[0]["location"]["path"], "policy.ts");
+        assert_eq!(contexts[0]["truncated"], false);
+        assert!(
+            contexts[0]["provenance"]["engine"]
+                .as_str()
+                .unwrap()
+                .contains("not established")
+        );
+    }
+
+    #[test]
+    fn helper_view_does_not_promote_location_only_leads_to_source() {
+        let anchor = serde_json::json!({"id":"operation", "rule_id":"framework-authorization-review-marker"});
+        let location = serde_json::json!({"path":"helper.ts",
+            "start":{"line":1,"column":1,"byte_offset":0},
+            "end":{"line":1,"column":2,"byte_offset":1}});
+        let lead = serde_json::json!({"facts":[
+            {"role":"imported_member_definition_context", "symbol":"run", "excerpt":"",
+             "location":location, "provenance":{"engine":"location-only review lead"}}
+        ]});
+        let mut captured = lead.clone();
+        captured["facts"][0]["excerpt"] = serde_json::json!("x");
+        captured["facts"][0]["provenance"]["engine"] = serde_json::json!("exact imported member");
+        assert!(super::compact_helper_context(&lead, &anchor).is_empty());
+        let contexts = super::compact_helper_context(&captured, &anchor);
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0]["excerpt"], "x");
+        // The original location-only fact remains in the bundle for navigation.
+        assert_eq!(lead["facts"][0]["location"], location);
+        assert_eq!(lead["facts"][0]["excerpt"], "");
+        let cards = [("a", lead), ("b", captured)].map(|(id, review)| {
+            serde_json::json!({
+                "review_id":id, "anchor":{"location":{"path":"caller.ts","start_line":1}},
+                "helper_context":super::compact_helper_context(&review, &anchor)
+            })
+        });
+        let sweep = super::review_sweep::sweep("bundle", cards.into()).unwrap();
+        assert_eq!(sweep["source_contexts"].as_array().unwrap().len(), 1);
+        assert_eq!(sweep["source_contexts"][0]["excerpt"], "x");
+    }
+
+    #[test]
+    fn helper_view_uses_the_selected_evidence_fact_without_candidate_captures() {
+        let anchor =
+            serde_json::json!({"id":"selected", "rule_id":"typescript-parameter-sink-summary"});
+        let mut review = serde_json::json!({"facts":[{
+            "role":"captured_definition_context", "evidence_id":"selected", "symbol":"run",
+            "location":{"path":"helper.ts","start":{"line":1,"column":1,"byte_offset":0},"end":{"line":1,"column":2,"byte_offset":1}},
+            "excerpt":"x"
+        }], "truncation":{"occurred":false}});
+        let context = super::compact_helper_context(&review, &anchor);
+        assert_eq!(context.len(), 1);
+        assert_eq!(context[0]["location"]["path"], "helper.ts");
+        assert_eq!(context[0]["truncated"], false);
+        review["truncation"]["occurred"] = serde_json::json!(true);
+        assert_eq!(
+            super::compact_helper_context(&review, &anchor)[0]["truncated"],
+            true
+        );
+        review["facts"][0]["evidence_id"] = serde_json::json!("another-call");
+        assert!(super::compact_helper_context(&review, &anchor).is_empty());
+    }
+
+    #[test]
+    fn compact_context_preserves_only_a_complete_bounded_operation() {
+        let text = "async function request(url) {\n  const response = await fetch(url);\n\n\n\n\n\n\n\n\n  if (!allowed(response.url)) throw Error('blocked');\n  return response;\n}";
+        let location = serde_json::json!({"path":"client.ts","start":{"line":10,"column":1,"byte_offset":0},"end":{"line":22,"column":2,"byte_offset":text.len()}});
+        let fact = serde_json::json!({"role":"source_context","evidence_id":"callable","location":location,"excerpt":text});
+        let anchor = serde_json::json!({"capability":"outbound_network_request",
+            "location":{"path":"client.ts","start":{"line":11,"byte_offset":54},"end":{"line":11,"byte_offset":64}},
+            "context":{"operand_facts":[{"kind":"query_structure","role":"outbound_operation","value":"local_callable_context","location":location}]}});
+        let context = compact_anchor_context(&[fact.clone()], &anchor).unwrap();
+        assert_eq!(context["excerpt"], text);
+        assert_eq!(context["location"]["start_byte_offset"], 0);
+        assert_eq!(context["truncated"], false);
+        for case in ["wrong_role", "incomplete", "oversized"] {
+            let mut anchor = anchor.clone();
+            let mut fact = fact.clone();
+            match case {
+                "wrong_role" => {
+                    anchor["context"]["operand_facts"][0]["role"] = serde_json::json!("receiver")
+                }
+                "incomplete" => {
+                    fact["excerpt"] = serde_json::json!(text.replace("blocked", "changed-length"));
+                }
+                _ => {
+                    fact["excerpt"] = serde_json::json!(format!("{text}{}", " ".repeat(1536)));
+                }
+            }
+            let context = compact_anchor_context(&[fact], &anchor).unwrap();
+            assert!(
+                context["location"]["start_byte_offset"].is_null(),
+                "{case} cannot claim a complete callable"
+            );
+            assert!(
+                !context["excerpt"]
+                    .as_str()
+                    .unwrap()
+                    .contains("allowed(response.url)")
+            );
+        }
+    }
+
+    #[test]
+    fn path_step_context_never_substitutes_another_file_or_hides_clipping() {
+        for (kind, role) in [
+            ("assignment", "intermediate_context"),
+            ("protection", "protection_context"),
+            ("ineffective_protection", "ineffective_protection_context"),
+        ] {
+            let location =
+                serde_json::json!({"path":"Helper.cs","start":{"line":20},"end":{"line":20}});
+            let review = serde_json::json!({"candidate":{"steps":[{"kind":kind,"location":location}]},"facts":[{"role":role,"location":location,"excerpt":"Guard(value);"}]});
+            assert_eq!(
+                super::compact_path_steps(&review)[0]["context"]["excerpt"],
+                "Guard(value);"
+            );
+        }
+        let source = serde_json::json!({"role":"source_context", "location":{"path":"app.ts","start":{"line":1}}, "excerpt":"x".repeat(900)});
+        let step = serde_json::json!({"kind":"source", "location":{"path":"app.ts","start":{"line":1},"end":{"line":1}}});
+        let mut review = serde_json::json!({"candidate":{"steps":[step]},"facts":[source]});
+        let steps = super::compact_path_steps(&review);
+        assert_eq!(steps[0]["context"]["truncated"], true);
+        assert_eq!(steps[0]["context"]["excerpt"].as_str().unwrap().len(), 700);
+        review["candidate"]["steps"][0]["location"]["path"] = serde_json::json!("other.ts");
+        assert!(super::compact_path_steps(&review)[0]["context"].is_null());
+        review["candidate"]["steps"][0]["location"]["path"] = serde_json::json!("app.ts");
+        review["candidate"]["steps"][0]["location"]["end"]["line"] = serde_json::json!(20);
+        assert_eq!(
+            super::compact_path_steps(&review)[0]["context"]["truncated"],
+            true
+        );
+    }
+
+    #[test]
+    fn mutation_marker_view_keeps_its_exact_effect_and_refuses_unbound_source() {
+        let text = "router.patch('/', async(req) => {\n  const service = new Service(req.actor);\n\n\n\n\n\n\n  await service.updateOne(req.body);\n});";
+        let location = serde_json::json!({"path":"routes.ts","start":{"line":1,"column":1,"byte_offset":0},"end":{"line":10,"column":4,"byte_offset":text.len()}});
+        let anchor = serde_json::json!({"id":"selected","tags":["review-admission-marker"],"location":location});
+        let fact = serde_json::json!({"role":"source_context","evidence_id":"selected","location":location,"excerpt":text});
+        let context = compact_anchor_context(&[fact.clone()], &anchor).unwrap();
+        assert_eq!(context["excerpt"], text);
+        assert_eq!(context["truncated"], false);
+        assert_eq!(context["location"]["start_byte_offset"], 0);
+        let mut other = fact;
+        other["location"]["start"]["byte_offset"] = serde_json::json!(1);
+        other["location"]["end"]["byte_offset"] = serde_json::json!(text.len() + 1);
+        let fallback = compact_anchor_context(&[other], &anchor).unwrap();
+        assert!(fallback["location"]["start_byte_offset"].is_null());
+        assert_eq!(fallback["truncated"], true);
+        assert!(
+            !fallback["excerpt"]
+                .as_str()
+                .unwrap()
+                .contains("service.updateOne")
+        );
+    }
 
     #[test]
     fn compact_context_uses_the_sink_window_when_source_does_not_cover_it() {
@@ -3966,6 +4762,25 @@ mod tests {
                 .contains("could not resolve")
         );
 
+        // Accept only the empty EOF position exposed by a trailing LF/CRLF.
+        // Excerpts and their locations must still describe exact existing bytes.
+        for newline in ["\n", "\r\n"] {
+            let source = format!("first{newline}second{newline}third{newline}");
+            std::fs::write(directory.join("source.ts"), &source).unwrap();
+            let artifacts = read_brief_source(&directory, &range(4)).unwrap();
+            assert_eq!(artifacts.len(), 1);
+            assert_eq!(artifacts[0].1, source);
+            assert_eq!(artifacts[0].0.end.line, 4);
+            assert_eq!(artifacts[0].0.end.column, 1);
+            assert_eq!(artifacts[0].0.end.byte_offset, source.len());
+            assert!(read_brief_source(&directory, &range(5)).is_err());
+            let mut empty_eof = range(4);
+            empty_eof.start_line = 4;
+            assert!(read_brief_source(&directory, &empty_eof).is_err());
+            std::fs::write(directory.join("source.ts"), source.trim_end()).unwrap();
+            assert!(read_brief_source(&directory, &range(4)).is_err());
+        }
+
         // Character limits differ from byte offsets for Unicode. Keep CRLF,
         // a non-first starting line, and the final line without a newline exact.
         let long_line = format!("{}\r\n", "é".repeat(2100));
@@ -3993,12 +4808,30 @@ mod tests {
                 .unwrap_err()
                 .contains("past end")
         );
-        std::fs::write(directory.join("source.ts"), "x".repeat(4001)).unwrap();
-        assert!(
-            read_brief_source(&directory, &range(1))
-                .unwrap_err()
-                .contains("line 1 exceeds")
+        // A long physical line is represented by bounded exact sub-line spans.
+        let generated = format!("prefix\r\n{}\r\ntail", "é🦀".repeat(3000));
+        std::fs::write(directory.join("source.ts"), &generated).unwrap();
+        let mut selected = range(3);
+        selected.start_line = 2;
+        let artifacts = read_brief_source(&directory, &selected).unwrap();
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(artifacts[0].0.start.byte_offset, 8);
+        assert_eq!(artifacts[0].0.end.line, 2);
+        assert_eq!(artifacts[0].0.end.column, 4001);
+        assert_eq!(artifacts[1].0.start, artifacts[0].0.end);
+        assert_eq!(artifacts[1].0.end.line, 3);
+        assert_eq!(artifacts[1].0.end.column, 5);
+        assert_eq!(
+            artifacts.iter().map(|a| a.1.as_str()).collect::<String>(),
+            generated[8..]
         );
+        for (location, excerpt) in &artifacts {
+            assert!(excerpt.chars().count() <= 4000);
+            assert_eq!(
+                &generated[location.start.byte_offset..location.end.byte_offset],
+                excerpt
+            );
+        }
         std::fs::write(
             directory.join("source.ts"),
             ("x".repeat(3000) + "\n").repeat(23),
@@ -4009,6 +4842,25 @@ mod tests {
                 .unwrap_err()
                 .contains("64 KiB")
         );
+        let padded = "const x = 1;\n".repeat(40) + &"\n".repeat(40) + "const y = 2;\n\n";
+        std::fs::write(directory.join("source.ts"), &padded).unwrap();
+        let artifacts = read_brief_source(&directory, &range(82)).unwrap();
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(artifacts[1].0.start.line, 81);
+        assert_eq!(
+            artifacts[1].0.start.byte_offset,
+            padded.find("const y").unwrap()
+        );
+        assert_eq!(
+            read_brief_source(&directory, &range(83)).unwrap(),
+            artifacts
+        );
+        assert!(
+            read_brief_source(&directory, &range(84))
+                .unwrap_err()
+                .contains("past end")
+        );
+        assert_eq!(read_brief_source(&directory, &range(41)).unwrap().len(), 1);
         std::fs::write(directory.join("source.ts"), " \r\n").unwrap();
         assert!(
             read_brief_source(&directory, &range(1))

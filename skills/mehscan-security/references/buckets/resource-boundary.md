@@ -1,8 +1,27 @@
 # Resource boundary
 
+Keep the verdict on its selected operation. An unsafe archive extraction does
+not turn temporary-file cleanup into an unsafe deletion. Use the engine's
+extraction sink and destination for ZIP traversal; retain an uncovered adjacent
+effect as a separate lead. Containment computed only for reporting after the
+write does not prevent extraction.
+
 Trace **selector origin → resolved resource or destination → applicable
 constraint → read, write or request**. Compare the final target, not just a
 raw path or URL string.
+Check the complete expression: quoted fragments do not make an operand fixed.
+Concatenation and conditional/logical operators can select a different path or
+destination even when a literal prefix is visible.
+
+For a root-scoped file API, establish the promised root and supported path
+semantics, then follow resolution into the selected read/write effect. A prefix
+check that permits a sibling path can violate that local containment guarantee
+under stated root, platform, access and existence conditions. A conditional local
+finding does not also need an HTTP entrypoint or deployed attacker. A claim of
+untrusted application access does need the relevant caller/input binding. Keep
+these questions distinct; do not continue caller discovery solely to re-prove
+an established local defect. An API intentionally accepting arbitrary paths, or
+a fixed/constrained selected operand, does not inherit the same violation.
 
 Establish where the request executes before calling an outbound request
 SSRF. A browser or desktop client fetch is not a server-side request merely
@@ -71,6 +90,14 @@ than rereading equivalent distributions.
   and destination after any parsing or rewrite. Fixed release URLs selected
   by OS or architecture do not become attacker-selected merely because a
   variable holds them.
+  Establish the intended network authority first. Fetching user-selected public
+  URLs for images, previews or imports is not by itself SSRF, and need not use
+  a fixed host allowlist. Show unintended protected-resource access or credential/
+  data disclosure; inspect actual scheme/address filtering, redirects and proxy
+  behavior. A named filtering wrapper is not proof: read its rejection behavior,
+  defaults and the selected call's overrides. Report a shown conditional bypass
+  with its activation conditions; do not replace that analysis with either an
+  automatic safe verdict or an issue based only on arbitrary public destinations.
   URL parsing alone is not destination approval. Review the dispatch, using
   `endpoint` and its related construction facts. When
   `outbound-request:unresolved-producer` is present, inspect the supplied
@@ -92,11 +119,69 @@ than rereading equivalent distributions.
   separately from the request URL. A fixed URL does not close proxy selection.
   A typed unknown connection retains its origin question; metadata/setup reads
   such as getURL and getRequestProperty are omitted from network reviews.
+  The endpoint capture and `outbound_operation` locate the destination expression
+  and exact lexical callable. Compact callable source can expose shared URL
+  construction and transport options. Check whether execution is in a browser
+  or server and whether dynamic data can change the destination authority,
+  rather than only a path/query. Configuration and SDK callbacks require their
+  actual producers checked. A nearby configuration assignment does not prove
+  the reaching URL: inspect fallbacks, interpolation and later writes before
+  dismissing caller influence. Shared client context does not prove identical
+  redirect, proxy, credential or branch policy across sites.
 - For resource access, identify whether the selected object belongs to the
+  intended public surface or requires authority the caller lacks. Establish the
+  consequential read/disclosure/action before treating missing guards as a gap.
+  A response difference can be an existence oracle, but explain which protected
+  information it discloses and why that exceeds intended access. Expected
+  discovery behavior alone does not establish that consequence. Then compare the
+  selected object with the
   verified subject or another tenant. A sensitive read or existence oracle
   can matter without a mutation. Inspect earlier middleware on every matching
   route prefix to see whether it replaces request identity fields before the
   selected handler; compare the final field value used in the query.
+  Before closing on delegated protection, inspect the applicable policy and its
+  rejection behavior for the selected actor, resource and action. A call named
+  `authorize` or `can`, or an actor ID passed to a finder, does not establish that
+  protection. Finder options, association loading and policy context can preload
+  data without restricting which row is selected. Read the effective filter or
+  the invoked guard's implementation; cite that behavior, not only its call site.
+  If this decisive code remains unread or unresolved within the budget, retain
+  the specific gap rather than returning a safe verdict from the names/arguments.
+  `result_use:boolean_or_null_test_only` describes complete bounded local uses
+  of a lookup result, not an ownership control or proof the query was awaited.
+  Review the observable error/status difference and any credential or mutation
+  enabled by that test. Do not infer safety from validation-shaped consumption.
+  `resource_selector.*` facts locate selector-value producers, including bounded
+  local constants. A member read such as `req.user.id` is not a verified subject
+  or proof that the selected model is that subject's account. Follow the identity
+  producer and match the resource/key. `resource_selector:fixed_equality` closes
+  caller-selected key substitution only; operation authorization and disclosure
+  remain separate questions.
+  `resource_operation` locates the exact lexical callable, not a proven route or
+  policy scope. Compact callables can be supplied as one reusable source artifact
+  so later checks remain visible. Reuse that context across questions, but verify
+  each selector, branch and effect independently. Larger callables remain lookup
+  targets; a bounded excerpt cannot establish that a later control is absent.
+  Resource helper context can identify a direct call to a unique stable local
+  function. This establishes a lexical target, not that the helper ran, succeeded,
+  or protected this operation. Member calls, imported helpers, shadowed names and
+  mutable bindings may have no resolved helper excerpt. Use the operation and
+  import/receiver locations to inspect the actual implementation when its behavior
+  changes the verdict; missing helper context is not evidence of missing controls.
+  Python filter captures identify the selector expression without tracing aliases
+  or proving object identity.
+  `resource_execution_context` points to enclosing class bases: resolve their
+  imports and actual registration before treating a method as CLI, HTTP or an
+  authentication callback. A CLI-looking class may have other callers. A read
+  using a passed object's key is not automatically an authorized reload.
+  A thin repository getter still needs its caller checked. Imports, service
+  registries and callbacks can expose it even when no request-to-getter flow is
+  supplied. Use references or structural lookup to locate method calls and
+  service registrations, then check the actual caller's selector and authority.
+  An authorized caller does not close other callers; no local guard in a getter
+  does not establish a bypass. A nearby `create()` call does not establish that a
+  later selector retains the created record's ID: inspect intervening writes, model/context
+  identity and ordering. Keep distinct reads, disclosures and writes separate.
 
 Stop when the exact target is fixed or constrained for the same operation, or
 when a lower-trust selector can reach the protected target. If resolution or

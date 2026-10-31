@@ -135,9 +135,44 @@ pub(super) fn contract_queue(
         "groups": groups.into_iter().skip(offset).take(limit).collect::<Vec<_>>()})
 }
 
+// Reuse an operation range already attached to this anchor. Labels such as
+// `perform` or `line-39-20` are not callable identities. Conflicting or foreign
+// ranges cannot replace the existing, explicitly labelled source hint.
+fn operation_location(entry: &Value) -> Option<&Value> {
+    let line = entry["line"].as_u64().filter(|line| *line > 0)?;
+    let mut locations = entry["operand_facts"]
+        .as_array()?
+        .iter()
+        .filter_map(|fact| {
+            if fact["kind"] != "query_structure"
+                || fact["value"] != "local_callable_context"
+                || !matches!(
+                    fact["role"].as_str(),
+                    Some("resource_operation" | "outbound_operation")
+                )
+            {
+                return None;
+            }
+            let location = &fact["location"];
+            let start = location["start"]["byte_offset"].as_u64()?;
+            let end = location["end"]["byte_offset"].as_u64()?;
+            let first = location["start"]["line"].as_u64()?;
+            let last = location["end"]["line"].as_u64()?;
+            (location["path"].is_string()
+                && location["path"] == entry["path"]
+                && end > start
+                && first > 0
+                && first <= line
+                && line <= last)
+                .then_some(location)
+        });
+    let first = locations.next()?;
+    locations.all(|location| location == first).then_some(first)
+}
+
 /// Source neighborhoods for planning reads, not shared security contracts.
-/// Partition by exact file, callable, capability and CWE set. Every ID remains
-/// independent, including distinct guards/operands inside the same callable.
+/// Prefer located callable ranges; otherwise retain a source-label hint.
+/// Every ID remains independent, including distinct guards and operands.
 pub(super) fn implementation_queue(
     entries: &[&Value],
     fingerprint: &Value,
@@ -146,22 +181,30 @@ pub(super) fn implementation_queue(
 ) -> Value {
     let mut grouped = BTreeMap::<String, Vec<&Value>>::new();
     for entry in entries {
-        let key = json!([
-            entry["path"],
-            entry["symbol"],
-            entry["capability"],
-            entry["cwe_candidates"]
-        ])
-        .to_string();
+        let neighborhood = operation_location(entry).map_or_else(
+            || json!(["source_label", entry["path"], entry["symbol"]]),
+            |location| {
+                json!([
+                    "callable_range",
+                    location["path"],
+                    location["start"]["byte_offset"],
+                    location["end"]["byte_offset"]
+                ])
+            },
+        );
+        let key = json!([neighborhood, entry["capability"], entry["cwe_candidates"]]).to_string();
         grouped.entry(key).or_default().push(entry);
     }
     let mut groups: Vec<Value> = grouped.into_values().map(|mut members| {
         members.sort_by(|a, b| a["line"].as_u64().cmp(&b["line"].as_u64())
             .then_with(|| a["review_id"].as_str().cmp(&b["review_id"].as_str())));
         let first = members[0];
+        let location = operation_location(first);
         let contracts: BTreeSet<_> = members.iter().flat_map(|entry| contract_keys(entry))
             .map(|(key, _, _)| key).collect();
         json!({"path": first["path"], "symbol": first["symbol"],
+            "grouping_basis": if location.is_some() { "callable_range" } else { "source_label" },
+            "source_location": location,
             "capability": first["capability"], "cwe_candidates": first["cwe_candidates"],
             "review_count": members.len(), "verified": false,
             "representative_review_id": first["review_id"],
@@ -206,6 +249,56 @@ pub(super) fn implementation_queue(
         "next_offset": next_offset, "groups": groups.into_iter().skip(offset).take(limit).collect::<Vec<_>>()})
 }
 
+// Complete AST ranges can begin/end mid-line. Keep them atomic rather than
+// weaving fragments from different same-line callbacks into one source view.
+fn atomic_context(context: &Value) -> bool {
+    context["truncated"] == true || context["location"]["start_byte_offset"].is_u64()
+}
+
+fn register_atomic_context(contexts: &mut Vec<Value>, mut source: Value) -> Result<String, String> {
+    source
+        .as_object_mut()
+        .ok_or("invalid source context")?
+        .remove("evidence_id");
+    if source["location"]["start_byte_offset"].is_u64()
+        && contexts.iter().any(|item| {
+            item["location"] == source["location"] && item["excerpt"] != source["excerpt"]
+        })
+    {
+        return Err("conflicting exact source ranges; inspect individual cards".into());
+    }
+    let index = contexts
+        .iter()
+        .position(|item| item == &source)
+        .unwrap_or_else(|| {
+            contexts.push(source);
+            contexts.len() - 1
+        });
+    Ok(format!("source-{}", index + 1))
+}
+
+fn context_refs(contexts: &mut Vec<Value>, source: Value) -> Result<Vec<String>, String> {
+    if source.is_null() {
+        return Ok(Vec::new());
+    }
+    if atomic_context(&source) {
+        return Ok(vec![register_atomic_context(contexts, source)?]);
+    }
+    Ok(contexts
+        .iter()
+        .enumerate()
+        .filter(|(_, context)| {
+            !atomic_context(context)
+                && context["location"]["path"] == source["location"]["path"]
+                && context["location"]["start_line"].as_u64()
+                    <= source["location"]["end_line"].as_u64()
+                && context["location"]["end_line"].as_u64()
+                    >= source["location"]["start_line"].as_u64()
+        })
+        .map(|(index, _)| format!("source-{}", index + 1))
+        .collect())
+}
+
 pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, String> {
     // Read adjacent operations in source order. Identity still comes from the
     // exact ID/anchor, never the position of a row in this list.
@@ -222,9 +315,16 @@ pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, S
     });
     let mut lines = BTreeMap::<String, BTreeMap<u64, String>>::new();
     let mut contexts = Vec::<Value>::new();
-    for card in &cards {
-        let context = &card["source_context"];
-        if context.is_null() || context["truncated"] == true {
+    for context in cards.iter().flat_map(|card| {
+        std::iter::once(&card["source_context"]).chain(
+            card["path_steps"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|step| &step["context"]),
+        )
+    }) {
+        if context.is_null() || atomic_context(context) {
             continue;
         }
         let path = context["location"]["path"]
@@ -271,38 +371,33 @@ pub(super) fn sweep(fingerprint: &str, mut cards: Vec<Value>) -> Result<Value, S
     let mut questions = Vec::<Value>::new();
     for card in &mut cards {
         let source = card["source_context"].take();
-        let mut refs = Vec::new();
-        if !source.is_null() {
-            if source["truncated"] == true {
-                let mut source = source;
-                source.as_object_mut().unwrap().remove("evidence_id");
-                let index = contexts
-                    .iter()
-                    .position(|item| item == &source)
-                    .unwrap_or_else(|| {
-                        contexts.push(source);
-                        contexts.len() - 1
-                    });
-                refs.push(format!("source-{}", index + 1));
-            } else {
-                for (index, context) in contexts.iter().enumerate() {
-                    if context["location"]["path"] == source["location"]["path"]
-                        && context["location"]["start_line"].as_u64()
-                            <= source["location"]["end_line"].as_u64()
-                        && context["location"]["end_line"].as_u64()
-                            >= source["location"]["start_line"].as_u64()
-                    {
-                        refs.push(format!("source-{}", index + 1));
-                    }
-                }
-            }
-        }
+        let refs = context_refs(&mut contexts, source)?;
         let keys = contract_keys(card);
         card["contract_keys"] = json!(keys.iter().map(|item| &item.0).collect::<Vec<_>>());
         for (key, kind, value) in keys {
             contracts.entry(key.clone()).or_insert_with(|| json!({"contract":key,"kind":kind,"value":value,"verified":false,"checks":checks(&kind)}));
         }
         card["source_context_ids"] = json!(refs);
+        if let Some(steps) = card["path_steps"].as_array_mut() {
+            for step in steps {
+                let context = step["context"].take();
+                step["context_ids"] = json!(context_refs(&mut contexts, context)?);
+                step.as_object_mut()
+                    .ok_or("invalid path step")?
+                    .remove("context");
+            }
+        }
+        let helpers = card["helper_context"].take();
+        let mut helper_refs = Vec::new();
+        for helper in helpers.as_array().into_iter().flatten() {
+            helper_refs.push(register_atomic_context(&mut contexts, helper.clone())?);
+        }
+        if !helper_refs.is_empty() {
+            card["helper_context_ids"] = json!(helper_refs);
+        }
+        card.as_object_mut()
+            .ok_or("invalid review card")?
+            .remove("helper_context");
         let mut question = json!({});
         for field in ["category", "playbook", "security_question", "relationship"] {
             question[field] = card[field].take();
@@ -339,6 +434,88 @@ mod tests {
     use super::*;
 
     #[test]
+    fn implementation_reads_use_ranges_without_merging_names_or_security_questions() {
+        let make = |id: &str, symbol: &str, start: u64, end: u64| {
+            json!({"review_id":id,"path":"routes.ts","symbol":symbol,"line":10,
+                "capability":"resource_access","cwe_candidates":["CWE-639"],
+                "operand_facts":[{"kind":"query_structure","value":"local_callable_context","role":"resource_operation",
+                    "location":{"path":"routes.ts","start":{"byte_offset":start,"line":10},"end":{"byte_offset":end,"line":10}}}]})
+        };
+        let a = make("a", "line-10-20", 0, 100);
+        let b = make("b", "line-10-40", 0, 100);
+        let c = make("c", "line-10-20", 120, 200);
+        let mut other_cwe = a.clone();
+        other_cwe["review_id"] = json!("other-cwe");
+        other_cwe["cwe_candidates"] = json!(["CWE-862"]);
+        let mut other_capability = a.clone();
+        other_capability["review_id"] = json!("other-capability");
+        other_capability["capability"] = json!("authorization");
+        let mut foreign = a.clone();
+        foreign["review_id"] = json!("foreign");
+        foreign["operand_facts"][0]["location"]["path"] = json!("other.ts");
+        let mut outside = a.clone();
+        outside["review_id"] = json!("outside");
+        outside["line"] = json!(30);
+        let mut conflicting = a.clone();
+        conflicting["review_id"] = json!("conflicting");
+        conflicting["operand_facts"]
+            .as_array_mut()
+            .unwrap()
+            .push(c["operand_facts"][0].clone());
+        assert!(operation_location(&foreign).is_none());
+        assert!(operation_location(&outside).is_none());
+        assert!(operation_location(&conflicting).is_none());
+        let entries = [
+            &a,
+            &b,
+            &c,
+            &other_cwe,
+            &other_capability,
+            &foreign,
+            &outside,
+            &conflicting,
+        ];
+        let queue = implementation_queue(&entries, &json!("revision"), 0, 100);
+        let groups = queue["groups"].as_array().unwrap();
+        let containing = |id: &str| {
+            groups
+                .iter()
+                .find(|g| g["review_ids"].as_array().unwrap().contains(&json!(id)))
+                .unwrap()
+        };
+        assert_eq!(containing("a")["review_ids"], json!(["a", "b"]));
+        assert_eq!(containing("a")["grouping_basis"], "callable_range");
+        assert_eq!(
+            containing("a")["source_location"]["start"]["byte_offset"],
+            0
+        );
+        for id in [
+            "c",
+            "other-cwe",
+            "other-capability",
+            "foreign",
+            "outside",
+            "conflicting",
+        ] {
+            assert!(
+                !containing("a")["review_ids"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(id))
+            );
+        }
+        assert!(groups.iter().all(|group| group["verified"] == false));
+        assert_eq!(
+            groups
+                .iter()
+                .map(|g| g["review_count"].as_u64().unwrap())
+                .sum::<u64>(),
+            entries.len() as u64
+        );
+        assert_eq!(containing("foreign")["grouping_basis"], "source_label");
+    }
+
+    #[test]
     fn bound_producers_group_cross_file_members_without_transferring_safety() {
         let fact = json!({"kind":"semantic_definition", "role":"path", "value":"Store.Resolve(string)",
             "location":{"path":"Store.cs","start":{"byte_offset":10},"end":{"byte_offset":17}}});
@@ -358,6 +535,61 @@ mod tests {
 
     fn card(text: &str, truncated: bool) -> Value {
         json!({"review_id":text,"source_context":{"location":{"path":"view.php","start_line":10,"end_line":10},"excerpt":text,"truncated":truncated}})
+    }
+
+    #[test]
+    fn exact_callables_reuse_source_without_merging_same_line_neighbors() {
+        let make = |id: &str, start: u64, text: &str| {
+            json!({"review_id":id,
+            "anchor":{"location":{"path":"client.ts","start_line":1}},
+            "source_context":{"location":{"path":"client.ts","start_line":1,"end_line":1,
+                "start_column":start+1,"end_column":start+1+text.len() as u64,
+                "start_byte_offset":start,"end_byte_offset":start+text.len() as u64},
+                "excerpt":text,"truncated":false}})
+        };
+        let a = make("a", 0, "() => fetch(left)");
+        let mut b = a.clone();
+        b["review_id"] = json!("b");
+        let c = make("c", 30, "() => fetch(right)");
+        let plain = json!({"review_id":"plain", "anchor":{"location":{"path":"client.ts","start_line":1}},
+            "source_context":{"location":{"path":"client.ts","start_line":1,"end_line":1},"excerpt":"whole line", "truncated":false}});
+        let result = sweep("bundle", vec![a.clone(), b, c, plain]).unwrap();
+        let rows = result["reviews"].as_array().unwrap();
+        let row = |id| rows.iter().find(|r| r["review_id"] == id).unwrap();
+        assert_eq!(
+            row("a")["source_context_ids"],
+            row("b")["source_context_ids"]
+        );
+        assert_ne!(
+            row("a")["source_context_ids"],
+            row("c")["source_context_ids"]
+        );
+        assert_eq!(
+            row("plain")["source_context_ids"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(result["source_contexts"].as_array().unwrap().len(), 3);
+        let mut conflict = a.clone();
+        conflict["source_context"]["excerpt"] = json!("different source");
+        assert!(sweep("bundle", vec![a, conflict]).is_err());
+    }
+
+    #[test]
+    fn resolved_helper_source_is_shared_without_merging_call_decisions() {
+        let helper = json!({"role":"captured_definition_context", "symbol":"run",
+            "location":{"path":"helper.ts","start_line":1,"end_line":1,"start_byte_offset":0,"end_byte_offset":23},
+            "excerpt":"function run(x){exec(x)}", "truncated":false});
+        let cards = ["a", "b"].map(|id| {
+            json!({"review_id":id,"selected_anchor_id":id,
+            "anchor":{"location":{"path":format!("{id}.ts"),"start_line":1}},
+            "helper_context":[helper.clone()]})
+        });
+        let result = sweep("bundle", cards.into()).unwrap();
+        let rows = result["reviews"].as_array().unwrap();
+        assert_eq!(result["source_contexts"].as_array().unwrap().len(), 1);
+        assert_eq!(rows[0]["helper_context_ids"], rows[1]["helper_context_ids"]);
+        assert_ne!(rows[0]["selected_anchor_id"], rows[1]["selected_anchor_id"]);
+        assert!(rows.iter().all(|row| row.get("helper_context").is_none()));
     }
 
     #[test]

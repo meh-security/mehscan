@@ -1,9 +1,27 @@
 ---
 name: mehscan-security
-description: Run Mehscan on an authorized codebase, plan a repository review, or triage Mehscan bundles. Use for Mehscan scans, candidate review, and security reports.
+description: Run Mehscan on an authorized codebase, review local changes, a pull request or release delta, plan a repository review, or triage Mehscan bundles. Use for Mehscan scans, candidate review, and security reports.
 ---
 
 # Mehscan security
+
+For a source-bound worker task, use the compiled
+[runtime review contract](references/runtime-review.md). It applies the same
+scope, decision and evidence policy with controller-owned finalization; applicable
+category guidance remains available. Use the guides below for manual CLI work.
+For JWT, session or API-key issuance/acceptance, expiry or cached identity, use
+[token review](references/token-review.md); workers load it through
+`guidance` with `name="token-review"` when that relationship is material.
+The ordinary controller uses one configured model with direct source lookups.
+The worker's [research API](references/worker-api.md) exposes exact tool arguments,
+costs and limits. It differs from the [operator CLI](references/commands.md):
+the controller owns scans, state writes, finalization and reports. In manual mode,
+use the corresponding native commands and preserve actual query journals.
+For an explicitly configured experimental tiered run, use the matching compiled
+role sections and [controller commands](references/commands.md#tiered-controller).
+Preserve bound profiles, shared budgets and assessment provenance. Never resume
+a conversation under another model or turn unresolved disagreement into a
+confidence threshold.
 
 Use the supplied executable, `mehscan` on `PATH`, or the executable in the
 current Mehscan checkout. Scan only the authorized source root. If the executable
@@ -39,6 +57,16 @@ another journal. Preserve consequential adjacent questions as separate
 unreviewed leads or existing inventory IDs.
 Batch already-known independent lookups in one tool turn, retaining each query's
 journal. Wait for results before choosing dependent queries; keep batches focused.
+Prioritize the fact that decides the selected claim. An inspected complete control
+can close that property; a named unread helper is a lookup target. For authority
+or state changes, bind the actual check to the same actor/object and effect.
+Stop once the selected relationship is settled or its decisive gap is explicit.
+With explicit `"boundary_checks": true` in trusted adapter configuration,
+authorization and token-generation worker tasks include
+[boundary checks](references/boundary-review.md): concrete prerequisite tests and
+producer/consumer value bindings within the same investigation. These observations
+are emitted once with the final draft and remain unvalidated; research turns use
+the existing progress fields. Distinct concerns use the existing source-lead channel.
 
 Return `issue` for a shown weakness, `not_issue` for an affirmatively safe or
 inapplicable relationship, and `needs_review` for a decisive fact unavailable
@@ -48,16 +76,49 @@ ready to write decisions. Consult [commands](references/commands.md) only for
 an operation not covered by these guides. A supplied subset remains a scoped
 review, not a complete application assessment.
 
+## Load guidance for the actual question
+
+Start with the common workflow and the bundle's bucket. Load additional guidance
+when the actual operation needs a different relationship; the category is not
+limited to the scanner's CWE or bucket. A safe primitive can coexist with a
+separate authority/state question. Keep those claims distinct.
+
+| Question encountered | Additional reference / worker guidance name |
+| --- | --- |
+| SQL text, bound values, dynamic identifiers, wrappers | [SQL query](references/categories/sql-query.md), `sql-query` |
+| Operator objects, NoSQL selectors, executable predicates | [Structured queries](references/categories/structured-query.md), `structured-query` |
+| Process launch, shell text, dynamic evaluation | [Process and code](references/categories/process-code.md), `process-code` |
+| Files, archives, SSRF, redirects, template paths | [Files and network](references/categories/file-network.md), `file-network` |
+| Server policy, ownership, tenancy, delegated authority | [Authorization](references/buckets/authorization.md), `authorization` |
+| Issuance, recovery, expiry, rotation, revocation | [Credential lifecycle](references/categories/credential-lifecycle.md), `credential-lifecycle` |
+| Generic updates, generated CRUD, sensitive writable fields | [Mass assignment](references/categories/mass-assignment.md), `mass-assignment` |
+| Ordering, alternate branches, quotas, payment, repetition | [Workflow and state](references/categories/workflow-state.md), `workflow-state` |
+| Stored/reflected/DOM interpretation and trust bypasses | [HTML output](references/html-output-review.md), `html-output` |
+| Angular pipes, inputs, dialogs and trust-marking handoffs | [Angular output](references/angular-output-review.md), `angular-output` |
+| XML, YAML, deserialization, expansion and resource bounds | [Parser/resource effects](references/categories/parser-resource.md), `parser-resource` |
+| Crypto, hashing, randomness, cookies, CORS | [Crypto/configuration](references/buckets/crypto-configuration.md), `crypto-configuration` |
+| C/C++ bounds, lifetime and ownership | [Native memory](references/buckets/native-memory.md), `native-memory` |
+
+In worker mode, the initial contract already contains relevant shared/bucket
+guidance. Use `guidance` with the exact catalog name for a needed additional guide;
+do not request every reference or reread a supplied one. Guides are trusted
+instructions, not application evidence. Record actual source and unresolved facts
+normally. The [execution trace guide](references/execution-trace.md) explains how
+to inspect review progress and separate mechanical completion from review quality.
+
 ## New scan or repository-wide review
 
 | Job | Command or guide |
 | --- | --- |
 | Candidate scan | `mehscan scan ROOT --format candidates` (or `json`) |
-| Changed lines | `mehscan scan ROOT --changed-from BASE --format candidates` |
+| Changed-file scan | `mehscan scan ROOT --changed-from BASE --diff-mode files --format candidates` |
+| Local changes, PR or release review | [Changed review](references/changed-review.md) |
 | Repository AI review | [Review planning](references/review-planning.md) |
 
-Candidates are leads, not confirmed vulnerabilities. Default to Value mode;
-honor Comprehensive or a requested category. Value prioritizes stronger signals,
+Candidates are leads, not confirmed vulnerabilities. Default to Value mode.
+For runtime-bound AI work use `--policy value --selection policy` as described in
+[controller commands](references/commands.md).
+Honor Comprehensive or a requested category. Value prioritizes stronger signals,
 clearly justified fixes and promising high-impact leads, including useful medium
 issues. Comprehensive covers admitted plausible medium-or-higher issues; it is
 not a queue for every raw sink occurrence. Excluded observations remain supporting
@@ -68,6 +129,11 @@ Planning ranks work, accounts for deferred IDs and chooses small chunks or
 disjoint agent assignments when requested. Read it for repository scope or
 queue decisions, then use the supplied-bundle flow for each selected chunk.
 Keep the whole-run plan current and continue authorized work in auto mode.
+
+Changed is a scope, combined with Value or Comprehensive. Use its guide before
+building an inventory; it requires a short change pass even when no IDs appear.
+Read unchanged context to settle specific questions within the authorized root.
+Do not turn a Changed review into a repository-wide assessment.
 
 Use [review scope policy](references/review-scope.md) when choosing modes or
 reconsidering a noisy family. It defines practical admission and language

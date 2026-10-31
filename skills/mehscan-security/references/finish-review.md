@@ -24,6 +24,19 @@ Stop when the chain is established,
    In this brief format, omit `schema_version`, `bundle_fingerprint` and
    `selected_anchor_id`; the finalizer supplies binding and anchor fields.
    Do not mix brief-draft fields with the full response schema.
+   For an issue, also include `diagnosis`: `{ "title": "Exact demonstrated failure",
+   "cwes": ["CWE-N"], "severity": "unknown", "impact": "Source-supported consequence and conditions", "remediation": "Repair the demonstrated invariant" }`.
+   Use only justified CWE IDs (or an empty array) and assess severity independently
+   of confidence; do not copy detector defaults. Omit diagnosis or use null for
+   not_issue/needs_review. Without an issue diagnosis, report classification and
+   severity remain unassigned.
+   For a distinct consequential question discovered in inspected source, optionally
+   add `source_leads: [{"question":"...", "security_relevance":"...",
+   "distinct_from_review":"...", "evidence":{"path":"relative/file",
+   "start_line":10,"end_line":14}}]` to that result. Use at most three leads,
+   each with one small source window. The finalizer binds their source locations
+   and artifact IDs into `reviewer_origin_leads`; they remain unvalidated questions
+   separate from the selected verdict.
    If the caller explicitly requests a draft-only review, save this brief draft
    and journals, then stop. The caller must finalize, validate and report it;
    a draft-only result is not a completed validated review.

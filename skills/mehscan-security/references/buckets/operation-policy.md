@@ -5,6 +5,14 @@ effect and the relevant producer, policy or control before assigning a
 weakness. A rule or API name can be an observation without a reportable
 relationship.
 
+For browser messages, inspect the actual payload and recipient contract.
+Wildcard delivery alone is not a disclosure: fixed dimensions and public UI
+instructions may have no sensitive effect. A generic wrapper can still carry
+booking/account data or prefill fields from its callers. Check those callers
+before dismissing it as UI-only, then check the intended origin and relevant
+navigation/readiness behavior. Keep consequential unresolved recipient questions
+open without claiming that a disclosure has been demonstrated.
+
 For logging and authentication, distinguish an executable exposure from
 ordinary syntax or API inventory. For an explicit policy, check the exact
 branch and whether denial stops the effect. If supplied facts affirmatively

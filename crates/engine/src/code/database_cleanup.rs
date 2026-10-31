@@ -9,6 +9,18 @@ type N<'a> = Node<'a, StrDoc<SupportLang>>;
 const BUILDER: &str = "query-construction:sql-builder";
 
 pub(super) fn annotate(language: Language, root: &N<'_>, evidence: &mut Vec<Evidence>) {
+    let needs_resource_uses = matches!(
+        language,
+        Language::Javascript | Language::Typescript | Language::Tsx
+    ) && evidence.iter().any(resource_read_candidate);
+    let needs_python_resource =
+        language == Language::Python && evidence.iter().any(resource_read_candidate);
+    let needs_outbound = matches!(
+        language,
+        Language::Javascript | Language::Typescript | Language::Tsx
+    ) && evidence.iter().any(|e| {
+        e.kind == EvidenceKind::Sink && e.capability == Capability::OutboundNetworkRequest
+    });
     let needs_sql = matches!(
         language,
         Language::Php
@@ -20,7 +32,12 @@ pub(super) fn annotate(language: Language, root: &N<'_>, evidence: &mut Vec<Evid
     ) && evidence
         .iter()
         .any(|e| e.kind == EvidenceKind::Sink && e.cwe_candidates == ["CWE-89"]);
-    if !needs_sql && !evidence.iter().any(orm) {
+    if !needs_sql
+        && !needs_resource_uses
+        && !needs_python_resource
+        && !needs_outbound
+        && !evidence.iter().any(orm)
+    {
         return;
     }
     let ranges = evidence
@@ -35,9 +52,23 @@ pub(super) fn annotate(language: Language, root: &N<'_>, evidence: &mut Vec<Evid
         .collect::<BTreeSet<_>>();
     let mut nodes = BTreeMap::new();
     let mut calls = BTreeMap::<usize, Vec<N<'_>>>::new();
+    let mut identifiers = BTreeMap::<String, Vec<N<'_>>>::new();
     for n in root.dfs() {
         if ranges.contains(&(n.range().start, n.range().end)) {
             nodes.insert((n.range().start, n.range().end), n.clone());
+        }
+        if needs_resource_uses
+            && matches!(
+                n.kind().as_ref(),
+                "identifier"
+                    | "shorthand_property_identifier"
+                    | "shorthand_property_identifier_pattern"
+            )
+        {
+            identifiers
+                .entry(n.text().into_owned())
+                .or_default()
+                .push(n.clone());
         }
         if needs_sql && is_call(&n) {
             calls
@@ -159,7 +190,232 @@ pub(super) fn annotate(language: Language, root: &N<'_>, evidence: &mut Vec<Evid
             }
         }
     }
+    if needs_python_resource || needs_outbound {
+        attach_operation_context(language, &nodes, evidence);
+    }
     attach_reloads(language, root, &nodes, evidence);
+    if needs_resource_uses {
+        for item in evidence
+            .iter_mut()
+            .filter(|item| resource_read_candidate(item))
+        {
+            let Some(owner) = nodes
+                .get(&(
+                    item.location.start.byte_offset,
+                    item.location.end.byte_offset,
+                ))
+                .and_then(scope)
+            else {
+                continue;
+            };
+            item.context.operand_facts.push(OperandFact {
+                kind: OperandFactKind::QueryStructure,
+                role: "resource_operation".into(),
+                location: super::node_operands::capture_at("", item, &owner).location,
+                value: "local_callable_context".into(),
+                remaining_checks: vec![
+                    "caller_authority".into(),
+                    "branch_ordering".into(),
+                    "operation_effects".into(),
+                ],
+            });
+        }
+        attach_resource_result_uses(&nodes, &identifiers, evidence);
+    }
+}
+
+/// Reuse the existing selector/endpoint captures; add only missing callable
+/// and class-base locators. Neither establishes a trusted identity or route.
+fn attach_operation_context(
+    language: Language,
+    nodes: &BTreeMap<(usize, usize), N<'_>>,
+    evidence: &mut [Evidence],
+) {
+    for e in evidence.iter_mut().filter(|e| e.kind == EvidenceKind::Sink) {
+        let (capture_role, operation_role) = match (language, e.capability) {
+            (Language::Python, Capability::ResourceAccess) if resource_read_candidate(e) => {
+                ("filter", "resource_operation")
+            }
+            (
+                Language::Javascript | Language::Typescript | Language::Tsx,
+                Capability::OutboundNetworkRequest,
+            ) => ("endpoint", "outbound_operation"),
+            _ => continue,
+        };
+        let Some(capture) = e.captures.get(capture_role) else {
+            continue;
+        };
+        let Some(operand) = nodes.get(&(
+            capture.location.start.byte_offset,
+            capture.location.end.byte_offset,
+        )) else {
+            continue;
+        };
+        let Some(owner) = scope(operand) else {
+            continue;
+        };
+        if owner.range().start > e.location.start.byte_offset
+            || owner.range().end < e.location.end.byte_offset
+        {
+            continue;
+        }
+        e.context.operand_facts.push(OperandFact {
+            kind: OperandFactKind::QueryStructure,
+            role: operation_role.into(),
+            location: super::node_operands::capture_at("", e, &owner).location,
+            value: "local_callable_context".into(),
+            remaining_checks: vec![
+                "caller_authority".into(),
+                "branch_ordering".into(),
+                "operation_effects".into(),
+            ],
+        });
+        if language == Language::Python
+            && let Some(bases) = owner
+                .ancestors()
+                .find(|n| n.kind().as_ref() == "class_definition")
+                .and_then(|n| n.field("superclasses"))
+        {
+            e.context.operand_facts.push(OperandFact {
+                kind: OperandFactKind::QueryStructure,
+                role: "resource_execution_context".into(),
+                location: super::node_operands::capture_at("", e, &bases).location,
+                value: "enclosing_class_bases".into(),
+                remaining_checks: vec![
+                    "base_import_identity".into(),
+                    "actual_entrypoint_registration".into(),
+                    "other_callers".into(),
+                ],
+            });
+        }
+    }
+}
+
+fn resource_read_candidate(e: &Evidence) -> bool {
+    e.kind == EvidenceKind::Sink
+        && e.capability == Capability::ResourceAccess
+        && e.cwe_candidates.iter().any(|cwe| cwe == "CWE-639")
+}
+
+/// Describe consumption, not authority. A boolean-only result can still be
+/// an oracle, authorize a mutation or participate in a credential bypass.
+/// The admission policy must not treat this fact as an ownership control.
+fn attach_resource_result_uses<'a>(
+    nodes: &BTreeMap<(usize, usize), N<'a>>,
+    identifiers: &BTreeMap<String, Vec<N<'a>>>,
+    evidence: &mut [Evidence],
+) {
+    for e in evidence.iter_mut().filter(|e| resource_read_candidate(e)) {
+        let Some(n) = nodes.get(&(e.location.start.byte_offset, e.location.end.byte_offset)) else {
+            continue;
+        };
+        let Some((_, method, _)) = call(n) else {
+            continue;
+        };
+        if !matches!(
+            method.as_str(),
+            "findOne" | "findUnique" | "findFirst" | "findById"
+        ) {
+            continue;
+        }
+        let use_site = if let Some(use_site) = boolean_result_use(n) {
+            Some(use_site)
+        } else {
+            binding(n).and_then(|(declaration, name)| {
+                // Mutable slots and aliases need a different contract. Accept
+                // only a const initialized directly from this exact read.
+                let lexical = declaration.parent()?;
+                if lexical.kind().as_ref() != "lexical_declaration"
+                    || !lexical.text().trim_start().starts_with("const ")
+                {
+                    return None;
+                }
+                let callable = scope(&declaration)?;
+                let uses = identifiers
+                    .get(&name)?
+                    .iter()
+                    .filter(|reference| {
+                        callable.range().start <= reference.range().start
+                            && reference.range().end <= callable.range().end
+                            && !(declaration.range().start <= reference.range().start
+                                && reference.range().end <= declaration.range().end)
+                    })
+                    .take(9)
+                    .collect::<Vec<_>>();
+                if uses.is_empty() || uses.len() > 8 {
+                    return None;
+                }
+                let mut first = None;
+                for reference in uses {
+                    // A nested closure, shadow declaration or read before the
+                    // binding vetoes completeness, even if it looks boolean.
+                    if reference.range().start < declaration.range().end
+                        || scope(reference).map(|s| s.range()) != Some(callable.range())
+                    {
+                        return None;
+                    }
+                    let consumer = boolean_result_use(reference)?;
+                    first.get_or_insert(consumer);
+                }
+                first
+            })
+        };
+        let Some(use_site) = use_site else { continue };
+        e.captures.insert(
+            "resource_result_use".into(),
+            super::node_operands::capture_at("", e, &use_site),
+        );
+        e.context.operand_facts.push(OperandFact {
+            kind: OperandFactKind::QueryStructure,
+            role: "resource_result".into(),
+            location: e.location.clone(),
+            value: "result_use:boolean_or_null_test_only".into(),
+            remaining_checks: vec![
+                "query_result_execution".into(),
+                "selector_authority".into(),
+                "observable_existence_disclosure".into(),
+                "downstream_credential_or_mutation_authorization".into(),
+            ],
+        });
+    }
+}
+
+fn boolean_result_use<'a>(n: &N<'a>) -> Option<N<'a>> {
+    let mut value = n.clone();
+    for _ in 0..8 {
+        let parent = value.parent()?;
+        match parent.kind().as_ref() {
+            "await_expression" | "parenthesized_expression" => value = parent,
+            "unary_expression" if parent.text().trim_start().starts_with('!') => {
+                return Some(parent);
+            }
+            "binary_expression" => {
+                let left = parent.field("left")?;
+                let right = parent.field("right")?;
+                let other = if left.range() == value.range() {
+                    right
+                } else if right.range() == value.range() {
+                    left
+                } else {
+                    return None;
+                };
+                return (other.kind().as_ref() == "null"
+                    && parent.field("operator").is_some_and(|operator| {
+                        matches!(operator.text().as_ref(), "==" | "!=" | "===" | "!==")
+                    }))
+                .then_some(parent);
+            }
+            "if_statement" | "ternary_expression"
+                if parent
+                    .field("condition")
+                    .is_some_and(|condition| condition.range() == value.range()) =>
+            {
+                return Some(value);
+            }
+            _ => return None,
+        }
+    }
+    None
 }
 
 pub(super) fn close_equalities<'a>(language: Language, root: &N<'a>, evidence: &mut Vec<Evidence>) {
@@ -299,6 +555,7 @@ fn scope<'a>(n: &N<'a>) -> Option<N<'a>> {
                 | "arrow_function"
                 | "function_expression"
                 | "lambda_expression"
+                | "lambda"
                 | "lambda_literal"
         )
     })

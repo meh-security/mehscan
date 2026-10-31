@@ -2,6 +2,121 @@ use std::path::PathBuf;
 use std::process::Command;
 
 #[test]
+fn sarif_categories_are_stable_configurable_and_validated_before_output() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "mehscan-category-report-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let manifest = serde_json::json!({
+        "schema_version":"1.0", "root":".", "operation":"build_path_review_bundles",
+        "job_fingerprint":"category-empty-job", "max_input_bytes":524288,
+        "max_reviews_per_bundle":20, "review_count":0, "bundle_count":0, "bundles":[],
+        "coverage":{"discovered":0,"scanned":0,"ignored":0,"unsupported":0,"parse_failed":0}
+    });
+    std::fs::write(directory.join("manifest.json"), manifest.to_string()).unwrap();
+    let invoke = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_mehscan"))
+            .args(["report", "--run", directory.to_str().unwrap()])
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+    for reviewer in [
+        None,
+        Some("model-a"),
+        Some("different/reviewer with spaces"),
+    ] {
+        let mut args = vec!["--format", "sarif"];
+        if let Some(reviewer) = reviewer {
+            args.extend(["--reviewer", reviewer]);
+        }
+        let output = invoke(&args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            value["runs"][0]["automationDetails"]["id"],
+            "mehscan/triaged/"
+        );
+        assert_eq!(
+            value["runs"][0]["properties"]["reviewer"].as_str(),
+            reviewer
+        );
+        assert_eq!(
+            value["runs"][0]["properties"]["publication"]["alert_disposition"],
+            "not_established"
+        );
+    }
+    for run_id in ["attempt-1", "attempt-2"] {
+        let output = invoke(&[
+            "--format",
+            "sarif",
+            "--sarif-category",
+            "mehscan/triaged/release-delta",
+            "--sarif-run-id",
+            run_id,
+        ]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            value["runs"][0]["automationDetails"]["id"],
+            format!("mehscan/triaged/release-delta/{run_id}")
+        );
+        assert_eq!(
+            value["runs"][0]["properties"]["publication"]["analysis_scope"],
+            "scan_root"
+        );
+    }
+    let output = invoke(&[
+        "--sarif-category",
+        "mehscan/triaged/release-delta",
+        "--sarif-run-id",
+        "attempt-1",
+    ]);
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        json["scan"]["sarif_automation"],
+        serde_json::json!({"category":"mehscan/triaged/release-delta","run_id":"attempt-1"})
+    );
+    let output = invoke(&["--format", "sarif", "--sarif-run-id", "attempt-3"]);
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        value["runs"][0]["automationDetails"]["id"],
+        "mehscan/triaged/attempt-3"
+    );
+    let output_path = directory.join("preserve.json");
+    std::fs::write(&output_path, "existing output").unwrap();
+    for (flag, value) in [
+        ("--sarif-category", "bad/"),
+        ("--sarif-category", "bad//partition"),
+        ("--sarif-category", "bad\npartition"),
+        ("--sarif-run-id", "nested/run"),
+    ] {
+        let output = invoke(&[flag, value, "--output", output_path.to_str().unwrap()]);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains(flag));
+        assert_eq!(
+            std::fs::read_to_string(&output_path).unwrap(),
+            "existing output"
+        );
+    }
+}
+
+#[test]
 fn empty_review_runs_render_all_formats_and_keep_the_manifest_fingerprint() {
     let directory =
         std::env::temp_dir().join(format!("mehscan-empty-report-{}", std::process::id()));
@@ -40,6 +155,10 @@ fn empty_review_runs_render_all_formats_and_keep_the_manifest_fingerprint() {
         if format == "json" {
             let report: serde_json::Value =
                 serde_json::from_slice(&output.stdout).expect("JSON report");
+            assert_eq!(
+                report["scan"]["sarif_automation"]["category"],
+                "mehscan/triaged"
+            );
             assert_eq!(report["scan"]["job_fingerprint"], "empty-run-fingerprint");
             assert_eq!(report["summary"]["reviewed"], 0);
             assert_eq!(report["findings"], serde_json::json!([]));
@@ -60,6 +179,18 @@ fn empty_review_runs_render_all_formats_and_keep_the_manifest_fingerprint() {
         } else if format == "sarif" {
             let report: serde_json::Value =
                 serde_json::from_slice(&output.stdout).expect("SARIF report");
+            assert_eq!(
+                report["runs"][0]["automationDetails"]["id"],
+                "mehscan/triaged/"
+            );
+            assert_eq!(
+                report["runs"][0]["properties"]["publication"]["review_work_complete"],
+                true
+            );
+            assert_eq!(
+                report["runs"][0]["properties"]["publication"]["alert_disposition"],
+                "not_established"
+            );
             assert_eq!(report["runs"][0]["results"], serde_json::json!([]));
             let scope = report["runs"][0]["properties"]["scope"].to_string();
             assert!(scope.contains("Project label: example-app"));
@@ -182,6 +313,22 @@ fn scan(format: &str) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).expect("output should be JSON")
 }
 
+fn native_path_ids() -> Vec<String> {
+    let scan = scan("json");
+    let mut ids = scan["security_paths"]
+        .as_array()
+        .expect("native paths")
+        .iter()
+        .map(|path| path["id"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        !ids.is_empty(),
+        "reporting fixture must contain qualified paths"
+    );
+    ids.sort();
+    ids
+}
+
 #[test]
 fn candidate_format_excludes_raw_observation_inventory() {
     let report = scan("candidates");
@@ -189,10 +336,14 @@ fn candidate_format_excludes_raw_observation_inventory() {
     assert_eq!(report["schema_version"], "1.0");
     assert_eq!(report["root"], ".");
     assert_eq!(report["scan_schema_version"], "2.1");
-    assert_eq!(
-        report["candidates"].as_array().expect("candidates").len(),
-        15
-    );
+    let mut ids = report["candidates"]
+        .as_array()
+        .expect("candidates")
+        .iter()
+        .map(|item| item["id"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    ids.sort();
+    assert_eq!(ids, native_path_ids());
     assert!(report.get("evidence").is_none());
     assert!(report["candidates"][0].get("source").is_some());
     assert!(report["candidates"][0].get("sink").is_some());
@@ -205,13 +356,19 @@ fn sarif_format_emits_candidates_instead_of_raw_observations() {
     assert_eq!(sarif["version"], "2.1.0");
     assert_eq!(sarif["runs"][0]["properties"]["scanRoot"], ".");
     assert_eq!(sarif["runs"][0]["columnKind"], "unicodeCodePoints");
-    assert_eq!(
-        sarif["runs"][0]["results"]
-            .as_array()
-            .expect("results")
-            .len(),
-        15
-    );
+    let mut ids = sarif["runs"][0]["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .map(|item| {
+            item["properties"]["candidateId"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    ids.sort();
+    assert_eq!(ids, native_path_ids());
     assert_eq!(sarif["runs"][0]["results"][0]["kind"], "review");
     assert!(sarif["runs"][0].get("evidence").is_none());
     assert!(sarif["runs"][0]["results"][0]["codeFlows"].is_array());
@@ -435,6 +592,19 @@ fn partial_triage_reports_coverage_and_rejects_invalid_present_responses() {
             assert!(rendered.contains("Review work"));
         } else {
             assert!(rendered.contains("reviewWork"));
+            let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(
+                value["runs"][0]["automationDetails"]["id"],
+                "mehscan/triaged/"
+            );
+            assert_eq!(
+                value["runs"][0]["properties"]["publication"]["review_work_complete"],
+                false
+            );
+            assert_eq!(
+                value["runs"][0]["properties"]["publication"]["alert_disposition"],
+                "not_established"
+            );
         }
     }
     for invalid in ["not json".to_string(), serde_json::json!({"schema_version":"1.0", "bundle_fingerprint":request["bundle_fingerprint"], "results":[]}).to_string()] {

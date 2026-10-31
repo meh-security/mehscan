@@ -1,4 +1,6 @@
+use super::node_modules::{ImportMode, ModuleTarget, NodeModuleIndex, module_key};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use ast_grep_core::Node;
 use ast_grep_core::tree_sitter::StrDoc;
@@ -15,6 +17,7 @@ struct Binding {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ProjectSymbolEnvironment {
+    node_modules: Arc<NodeModuleIndex>,
     csharp_aliases: BTreeMap<String, Binding>,
     csharp_namespaces: BTreeSet<String>,
     csharp_statics: BTreeSet<String>,
@@ -23,6 +26,10 @@ pub(crate) struct ProjectSymbolEnvironment {
 }
 
 impl ProjectSymbolEnvironment {
+    pub(crate) fn with_node_modules(mut self, modules: Arc<NodeModuleIndex>) -> Self {
+        self.node_modules = modules;
+        self
+    }
     pub(crate) fn from_sources<'a>(
         sources: impl Iterator<Item = (&'a str, Language, &'a str)>,
     ) -> Self {
@@ -56,11 +63,13 @@ impl ProjectSymbolEnvironment {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct FileSymbolEnvironment {
+    node_modules: Arc<NodeModuleIndex>,
     aliases: BTreeMap<String, Binding>,
     namespaces: BTreeSet<String>,
     statics: BTreeSet<String>,
     declarations: BTreeSet<String>,
     javascript_imports: BTreeSet<String>,
+    javascript_modules: BTreeMap<String, (String, Option<String>)>,
     path: String,
     fixed_format_exports: BTreeMap<String, FixedFormatSummary>,
     password_kdf_exports: BTreeMap<String, PasswordKdfSummary>,
@@ -91,6 +100,7 @@ impl FileSymbolEnvironment {
         project: &ProjectSymbolEnvironment,
     ) -> Self {
         let mut environment = Self {
+            node_modules: project.node_modules.clone(),
             path: path.to_string(),
             fixed_format_exports: project.fixed_format_exports.clone(),
             password_kdf_exports: project.password_kdf_exports.clone(),
@@ -134,6 +144,19 @@ impl FileSymbolEnvironment {
                 {
                     let mut imports = BTreeMap::new();
                     parse_javascript_import(text.as_ref(), &mut imports);
+                    if let Some(module_node) = node.field("source")
+                        && let Some(module) = exact_quoted(module_node.text().trim())
+                    {
+                        for (visible, binding) in &imports {
+                            let exported = binding
+                                .target
+                                .strip_prefix(&format!("{module}."))
+                                .map(str::to_string);
+                            environment
+                                .javascript_modules
+                                .insert(visible.clone(), (module.to_string(), exported));
+                        }
+                    }
                     environment
                         .javascript_imports
                         .extend(imports.keys().cloned());
@@ -286,6 +309,28 @@ impl FileSymbolEnvironment {
         None
     }
 
+    /// Require an imported binding, including when its visible spelling equals
+    /// the canonical module name. A same-named local API is not package identity.
+    pub(crate) fn resolve_imported(
+        &self,
+        observed: &str,
+        canonical: &str,
+    ) -> Option<SymbolResolution> {
+        let observed = normalize_symbol(observed);
+        let canonical = normalize_symbol(canonical);
+        let (head, tail) = observed
+            .split_once('.')
+            .map_or((observed.as_str(), ""), |(head, tail)| (head, tail));
+        let binding = self.aliases.get(head)?;
+        let expanded = if tail.is_empty() {
+            binding.target.clone()
+        } else {
+            format!("{}.{tail}", binding.target)
+        };
+        (normalize_symbol(&expanded) == canonical)
+            .then(|| resolution(canonical, observed, binding.method, SymbolConfidence::High))
+    }
+
     pub(crate) fn resolve_fixed_format(
         &self,
         observed: &str,
@@ -298,14 +343,7 @@ impl FileSymbolEnvironment {
         if !self.javascript_imports.contains(head) {
             return None;
         }
-        let expanded = if tail.is_empty() {
-            binding.target.clone()
-        } else {
-            format!("{}.{}", binding.target, tail)
-        };
-        let (module, export) = expanded.rsplit_once('.')?;
-        let module = resolve_module(&self.path, module)?;
-        let key = format!("{module}.{export}");
+        let key = self.project_export_key(head, tail)?;
         let summary = self.fixed_format_exports.get(&key)?.clone();
         let resolution = resolution(
             summary.canonical.clone(),
@@ -328,14 +366,7 @@ impl FileSymbolEnvironment {
         if !self.javascript_imports.contains(head) {
             return None;
         }
-        let expanded = if tail.is_empty() {
-            binding.target.clone()
-        } else {
-            format!("{}.{}", binding.target, tail)
-        };
-        let (module, export) = expanded.rsplit_once('.')?;
-        let module = resolve_module(&self.path, module)?;
-        let key = format!("{module}.{export}");
+        let key = self.project_export_key(head, tail)?;
         let summary = self.password_kdf_exports.get(&key)?.clone();
         let resolution = resolution(
             summary.canonical.clone(),
@@ -344,6 +375,30 @@ impl FileSymbolEnvironment {
             SymbolConfidence::High,
         );
         Some((resolution, summary))
+    }
+
+    fn project_export_key(&self, head: &str, tail: &str) -> Option<String> {
+        let (module, imported) = self.javascript_modules.get(head)?;
+        let export = match (imported.as_deref(), tail) {
+            (Some(name), "") => name,
+            (None, "") => "default",
+            (None, member) if is_simple_identifier(member) => member,
+            _ => return None,
+        };
+        if self.node_modules.is_empty() {
+            return Some(format!("{}.{export}", resolve_module(&self.path, module)?));
+        }
+        let ModuleTarget::Source(file) =
+            self.node_modules
+                .resolve(&self.path, module, ImportMode::Import)
+        else {
+            return None;
+        };
+        let target = self.node_modules.resolve_export(&file, export)?;
+        if target.adapter.is_some() {
+            return None;
+        }
+        Some(format!("{}.{}", module_key(&target.path), target.name))
     }
 }
 
@@ -582,13 +637,8 @@ fn resolve_module(importer: &str, imported: &str) -> Option<String> {
 }
 
 fn module_path(path: &str) -> Option<String> {
-    let path = path.replace('\\', "/");
-    let path = path.trim_start_matches("./");
-    let path = [".tsx", ".jsx", ".ts", ".js"]
-        .iter()
-        .find_map(|extension| path.strip_suffix(extension))
-        .unwrap_or(path);
-    (!path.is_empty()).then_some(path.to_string())
+    let path = module_key(path);
+    (!path.is_empty()).then_some(path)
 }
 
 fn is_simple_identifier(value: &str) -> bool {
@@ -614,11 +664,20 @@ fn resolution(
 }
 
 fn normalize_symbol(symbol: &str) -> String {
-    symbol
+    let normalized = symbol
         .trim()
         .trim_start_matches("node:")
         .trim_start_matches("global::")
-        .replace("::", ".")
+        .replace("::", ".");
+    // Both Node entrypoints expose the same promise API. Normalize only this
+    // exact built-in subpath; slashes in arbitrary package names are meaningful.
+    if normalized == "fs/promises" {
+        "fs.promises".to_string()
+    } else if let Some(member) = normalized.strip_prefix("fs/promises.") {
+        format!("fs.promises.{member}")
+    } else {
+        normalized
+    }
 }
 
 fn parse_csharp_using(
@@ -741,6 +800,12 @@ fn parse_javascript_import(text: &str, aliases: &mut BTreeMap<String, Binding>) 
             &module,
             SymbolResolutionMethod::ImportedNamespace,
         );
+        if let Some((_, remaining)) = clause.split_once(',') {
+            parse_javascript_import(
+                &format!("import {} from '{module}'", remaining.trim()),
+                aliases,
+            );
+        }
     }
 }
 

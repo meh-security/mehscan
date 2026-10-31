@@ -1,0 +1,108 @@
+"""Artifact usage is numeric, bounded and explicit about missing counters."""
+import importlib.util
+import json
+from pathlib import Path
+import tempfile
+import unittest
+
+spec = importlib.util.spec_from_file_location("review_export", Path(__file__).resolve().parents[2] / "scripts/review_export.py")
+export = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(export)
+
+
+class UsageTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / "metrics.jsonl"
+        self.runtime = {"provider":{"provider":"codex-cli"}, "policy":"value", "limits":{}}
+
+    def row(self, round=0, **values):
+        return {"schema_version":"1", "provider":self.runtime["provider"], "usage_basis":"conversation_delta",
+                "conversation_id":"session", "round":round, **values}
+
+    def put(self, *rows):
+        self.path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    def test_absent_counters_are_unknown_and_partial_sums_are_identified(self):
+        missing = export.usage(self.path, self.runtime)
+        self.assertFalse(missing["usage_available"])
+        self.assertIsNone(missing["reported_token_sums"]["input_tokens"])
+        self.put(self.row(usage={"input_tokens":7}, prompt="private prompt"), self.row(1))
+        result = export.usage(self.path, self.runtime)
+        self.assertEqual(result["round_count"], 2)
+        self.assertEqual(result["reported_token_sums"]["input_tokens"], 7)
+        self.assertEqual(result["counter_reporting_rounds"]["input_tokens"], 1)
+        self.assertIsNone(result["reported_token_sums"]["output_tokens"])
+        self.assertNotIn("private prompt", json.dumps(result))
+        self.assertIsNone(result["cost"])
+        self.assertFalse(result["usage_complete"])
+
+    def test_failed_or_unobserved_calls_prevent_complete_usage_claim(self):
+        self.put(self.row(usage={"input_tokens":7, "cached_input_tokens":3, "output_tokens":2}))
+        self.assertTrue(export.usage(self.path, self.runtime)["usage_complete"])
+        partial = export.usage(self.path, self.runtime, unobserved_provider_calls=1)
+        self.assertFalse(partial["usage_complete"])
+        self.assertEqual(partial["reported_token_sums"]["input_tokens"], 7)
+
+    def test_write_and_reasoning_subsets_are_reported_without_inflating_parent_totals(self):
+        first = self.row(usage={"input_tokens":100,"cached_input_tokens":20,"output_tokens":10,
+                                "cache_write_tokens":30,"reasoning_output_tokens":6})
+        second = self.row(1,usage={"input_tokens":50,"cached_input_tokens":10,"output_tokens":5,
+                                  "cache_write_tokens":0,"reasoning_output_tokens":2})
+        self.put(first,second)
+        result = export.usage(self.path,self.runtime)
+        self.assertEqual(result["reported_token_sums"],{"input_tokens":150,"cached_input_tokens":30,
+            "output_tokens":15,"cache_write_tokens":30,"reasoning_output_tokens":8})
+        self.assertTrue(result["cache_write_usage_complete"])
+        self.assertTrue(result["reasoning_output_usage_complete"])
+        stage = result["profiles"][0]["stages"][0]
+        self.assertEqual(stage["reported_token_sums"]["cache_write_tokens"],30)
+        self.assertEqual(stage["counter_reporting_rounds"]["reasoning_output_tokens"],2)
+        del second["usage"]["cache_write_tokens"]
+        self.put(first,second)
+        partial = export.usage(self.path,self.runtime)
+        self.assertEqual(partial["reported_token_sums"]["cache_write_tokens"],30)
+        self.assertEqual(partial["counter_reporting_rounds"]["cache_write_tokens"],1)
+        self.assertTrue(partial["usage_complete"])
+        self.assertFalse(partial["cache_write_usage_complete"])
+        self.assertFalse(export.usage(self.path,self.runtime,1)["reasoning_output_usage_complete"])
+
+    def test_tiered_usage_keeps_actual_counters_by_bound_provider(self):
+        expert = {"provider":"codex-cli", "model":"gpt-6-sol"}
+        self.runtime["orchestration"] = {"expert":expert}
+        self.put(self.row(elapsed_ms=20,usage={"input_tokens":7}),
+            self.row(1, provider=expert, role="verification", elapsed_ms=30,usage={"input_tokens":11}),
+            self.row(2, provider=expert, role="adjudication", elapsed_ms=40,usage={"input_tokens":13}),
+            self.row(3, provider=expert, role="final_qa",elapsed_ms=50,usage={"input_tokens":17}))
+        result = export.usage(self.path, self.runtime)
+        self.assertEqual(result["reported_token_sums"]["input_tokens"], 48)
+        self.assertEqual([row["reported_token_sums"]["input_tokens"] for row in result["profiles"]], [7,41])
+        self.assertEqual(result["profiles"][1]["roles"], {"verification":1,"adjudication":1,"final_qa":1})
+        self.assertEqual([row["provider_elapsed_ms"] for row in result["profiles"]],[20,120])
+        self.assertEqual(result["profiles"][1]["stages"][0]["provider_elapsed_ms"],40)
+        self.assertEqual(result["profiles"][1]["stages"][0]["reported_token_sums"]["input_tokens"],13)
+
+    def test_duplicate_or_mismatched_provider_metrics_are_rejected(self):
+        self.put(self.row(), self.row())
+        with self.assertRaises(ValueError): export.usage(self.path, self.runtime)
+        self.put(self.row(provider={"provider":"other"}))
+        with self.assertRaises(ValueError): export.usage(self.path, self.runtime)
+        self.put(self.row(usage_basis="conversation_total"))
+        with self.assertRaises(ValueError): export.usage(self.path, self.runtime)
+
+    def test_negative_boolean_and_noninteger_counts_are_rejected(self):
+        for value in (-1, True, "7", 1.5):
+            with self.subTest(value=value):
+                self.put(self.row(usage={"input_tokens":value}))
+                with self.assertRaises(ValueError): export.usage(self.path, self.runtime)
+
+    def test_malformed_records_fail_with_a_controlled_error(self):
+        for row in ([], self.row(usage=[]), self.row(usage=None), self.row(round=True), self.row(conversation_id=[])):
+            with self.subTest(row=row):
+                self.put(row)
+                with self.assertRaises(ValueError): export.usage(self.path, self.runtime)
+
+
+if __name__ == "__main__":
+    unittest.main()

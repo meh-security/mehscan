@@ -1,4 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
+#[path = "node_response_contract.rs"]
+mod response_contract;
+#[path = "node_return_fields.rs"]
+mod returned_fields;
+pub(crate) use returned_fields::ReturnedObject;
+#[path = "node_http_effects.rs"]
+mod http_effects;
 
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{AstGrep, Node};
@@ -96,11 +103,16 @@ struct ExpressMountedMiddleware {
     guards: Vec<String>,
 }
 
+// Canonical display names omit extensions; contracts must retain the exact
+// selected source owner so sibling JS/TS/CommonJS modules cannot exchange them.
+type NodeSummaryKey = (String, String);
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ParameterReturnSummary {
     canonical: String,
     parameter_index: usize,
     returned_suffix: String,
+    asynchronous: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -108,6 +120,7 @@ enum SummarySink {
     Process,
     DynamicCode,
     FilesystemRead,
+    FilesystemWrite,
     OutboundRequest,
     Redirect,
     Deserialization,
@@ -125,6 +138,7 @@ impl SummarySink {
             Self::Process => Capability::ProcessExecution,
             Self::DynamicCode => Capability::DynamicCodeExecution,
             Self::FilesystemRead => Capability::FilesystemRead,
+            Self::FilesystemWrite => Capability::FilesystemWrite,
             Self::OutboundRequest => Capability::OutboundNetworkRequest,
             Self::Redirect => Capability::Redirect,
             Self::Deserialization => Capability::Deserialization,
@@ -142,6 +156,7 @@ impl SummarySink {
             Self::Process => "CWE-78",
             Self::DynamicCode => "CWE-94",
             Self::FilesystemRead => "CWE-22",
+            Self::FilesystemWrite => "CWE-22",
             Self::OutboundRequest => "CWE-918",
             Self::Redirect => "CWE-601",
             Self::Deserialization => "CWE-502",
@@ -159,6 +174,7 @@ impl SummarySink {
             Self::Process => "command",
             Self::DynamicCode => "code",
             Self::FilesystemRead => "path",
+            Self::FilesystemWrite => "path",
             Self::OutboundRequest => "endpoint",
             Self::Redirect => "location",
             Self::Deserialization => "payload",
@@ -175,8 +191,11 @@ impl SummarySink {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ParameterSinkSummary {
     canonical: String,
+    definition: Capture,
     parameter_index: usize,
     sink: SummarySink,
+    operand: &'static str,
+    non_html_controls: Vec<Capture>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -184,6 +203,7 @@ struct CallbackForwardSummary {
     canonical: String,
     value_index: usize,
     callback_index: usize,
+    result_index: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -207,16 +227,20 @@ struct PromiseContinuation<'tree> {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct NodeProjectContext {
+    imports_by_path: BTreeMap<String, BTreeMap<String, ImportTarget>>,
+    unresolved_imports_by_path: BTreeMap<String, BTreeSet<String>>,
     runtime_by_path: BTreeMap<String, RuntimeEnvironment>,
     routes_by_handler: BTreeMap<String, Vec<ExpressRouteSummary>>,
     owner_field_overwrite_guards: BTreeSet<String>,
     sensitive_model_fields: BTreeMap<String, BTreeSet<String>>,
     express_wrappers: BTreeSet<String>,
-    parameter_returns: BTreeMap<String, ParameterReturnSummary>,
-    parameter_sinks: BTreeMap<String, Vec<ParameterSinkSummary>>,
-    callback_forwards: BTreeMap<String, CallbackForwardSummary>,
-    mongo_callback_results: BTreeMap<String, MongoCallbackResultSummary>,
-    xxe_parsers: BTreeMap<String, XxeParserSummary>,
+    parameter_returns: BTreeMap<NodeSummaryKey, ParameterReturnSummary>,
+    returned_objects: BTreeMap<(String, String), ReturnedObject>,
+    parameter_sinks: BTreeMap<NodeSummaryKey, Vec<ParameterSinkSummary>>,
+    http_effects: BTreeMap<NodeSummaryKey, Vec<http_effects::HttpEffect>>,
+    callback_forwards: BTreeMap<NodeSummaryKey, CallbackForwardSummary>,
+    mongo_callback_results: BTreeMap<NodeSummaryKey, MongoCallbackResultSummary>,
+    xxe_parsers: BTreeMap<NodeSummaryKey, XxeParserSummary>,
     has_express_session: bool,
     csrf_middleware_paths: BTreeSet<String>,
     has_graphql_http: bool,
@@ -226,8 +250,132 @@ pub(crate) struct NodeProjectContext {
 }
 
 impl NodeProjectContext {
+    pub(crate) fn returned_objects_for_path(&self, path: &str) -> BTreeMap<String, ReturnedObject> {
+        let mut result = BTreeMap::new();
+        let module = module_path(path).unwrap_or_default();
+        let prefix = format!("{module}.");
+        for ((_, canonical), summary) in self
+            .returned_objects
+            .range((path.to_string(), String::new())..)
+            .take_while(|((file, _), _)| file == path)
+        {
+            if let Some(observed) = canonical.strip_prefix(&prefix) {
+                result.insert(observed.to_string(), summary.clone());
+            }
+        }
+        if let Some(imports) = self.imports_by_path.get(path) {
+            for (observed, target) in imports {
+                if !target.source || target.adapter.is_some() || target.instance {
+                    continue;
+                }
+                if let Some(canonical) = resolve_handler(observed, &module, imports)
+                    && let Some(source_file) = &target.source_file
+                    && let Some(summary) =
+                        self.returned_objects.get(&(source_file.clone(), canonical))
+                {
+                    let mut binding = summary.clone();
+                    binding.imported = true;
+                    result.insert(observed.clone(), binding);
+                }
+            }
+        }
+        result
+    }
+
+    /// Input effects and return effects are separate contracts. The local
+    /// expression-containment shortcut cannot establish a return flow through
+    /// an application helper or unresolved import. Explicit return/continuation sources
+    /// remain valid because their source location is the result, not an input.
+    pub(crate) fn retain_proved_helper_returns(
+        &self,
+        path: &str,
+        root: &Node<'_, StrDoc<SupportLang>>,
+        language: Language,
+        evidence: &[Evidence],
+        paths: &mut Vec<mehscan_core::SecurityPath>,
+    ) {
+        if !is_node_language(language) || paths.is_empty() {
+            return;
+        }
+        let Some(imports) = self.imports_by_path.get(path) else {
+            return;
+        };
+        let module = module_path(path).unwrap_or_default();
+        let calls = root
+            .dfs()
+            .filter_map(call_site)
+            .filter(|call| {
+                let observed = compact(&call.callee);
+                let head = observed.split('.').next().unwrap_or(&observed);
+                let imported = imports.get(&observed).or_else(|| imports.get(head));
+                imported.is_some_and(|target| target.source)
+                    || self
+                        .unresolved_imports_by_path
+                        .get(path)
+                        .is_some_and(|names| names.contains(head))
+                    || resolve_handler(&observed, &module, imports)
+                        .and_then(|name| resolved_summary_key(path, &observed, &name, imports))
+                        .is_some_and(|key| {
+                            self.parameter_sinks.contains_key(&key)
+                                || self.parameter_returns.contains_key(&key)
+                                || self.callback_forwards.contains_key(&key)
+                        })
+            })
+            .collect::<Vec<_>>();
+        let items = evidence
+            .iter()
+            .map(|e| (e.id.as_str(), e))
+            .collect::<BTreeMap<_, _>>();
+        paths.retain(|candidate| {
+            // Assignments can carry the containment shortcut forward, but do
+            // not prove a callee's return. Preserve dedicated relationships
+            // and explicit transfer proofs rather than reinterpreting them.
+            if candidate.steps.iter().any(|step| {
+                !matches!(
+                    step.kind,
+                    mehscan_core::SecurityPathStepKind::Source
+                        | mehscan_core::SecurityPathStepKind::Assignment
+                        | mehscan_core::SecurityPathStepKind::Sink
+                        | mehscan_core::SecurityPathStepKind::Protection
+                )
+            }) {
+                return true;
+            }
+            let (Some(source), Some(sink)) = (
+                items.get(candidate.source_evidence_id.as_str()),
+                items.get(candidate.sink_evidence_id.as_str()),
+            ) else {
+                return true;
+            };
+            let source = location_range(&source.location);
+            let sink = location_range(&sink.location);
+            !calls.iter().any(|call| {
+                let range = call.node.range();
+                !(range.start <= sink.start && sink.end <= range.end)
+                    && call.arguments.iter().any(|argument| {
+                        let input = argument.range();
+                        input.start <= source.start && source.end <= input.end
+                    })
+            })
+        });
+    }
+
+    #[cfg(test)]
     pub(crate) fn from_sources<'a>(
         sources: impl Iterator<Item = (&'a str, Language, &'a str)>,
+    ) -> Self {
+        let sources = sources.collect::<Vec<_>>();
+        let modules = std::sync::Arc::new(super::node_modules::NodeModuleIndex::build(
+            None,
+            sources.iter().copied(),
+            std::iter::empty(),
+        ));
+        Self::from_sources_with_modules(sources.into_iter(), modules)
+    }
+
+    pub(crate) fn from_sources_with_modules<'a>(
+        sources: impl Iterator<Item = (&'a str, Language, &'a str)>,
+        modules: std::sync::Arc<super::node_modules::NodeModuleIndex>,
     ) -> Self {
         let sources = sources
             .filter(|(_, language, _)| is_node_language(*language))
@@ -258,18 +406,44 @@ impl NodeProjectContext {
             let ast = AstGrep::doc(document);
             let root = ast.root();
             trace.step(path, "parse_validation");
-            if root.dfs().any(|node| node.is_error() || node.is_missing()) {
+            if super::typescript_syntax::has_unsupported_errors(&root, *language) {
                 trace.finish();
                 continue;
             }
             trace.step(path, "owner_guards");
             collect_owner_field_overwrite_guards(source, &mut context.owner_field_overwrite_guards);
             trace.step(path, "exported_functions");
-            let functions = exported_functions(&root);
+            let mut functions = exported_functions(&root);
+            let ranges = modules.local_functions(path);
+            if !ranges.is_empty() {
+                let nodes = root
+                    .dfs()
+                    .filter(is_function_node)
+                    .map(|n| ((n.range().start, n.range().end), n))
+                    .collect::<BTreeMap<_, _>>();
+                for (name, range) in ranges {
+                    if let Some(node) = nodes.get(&range)
+                        && !functions.iter().any(|(existing, _)| existing == &name)
+                    {
+                        functions.push((name, node.clone()));
+                    }
+                }
+            }
             trace.step(path, "imports");
-            let imports = javascript_imports(path, &root);
+            let (imports, unresolved) = resolved_javascript_imports(path, &root, &modules);
+            context
+                .unresolved_imports_by_path
+                .insert((*path).to_string(), unresolved);
+            context
+                .imports_by_path
+                .insert((*path).to_string(), imports.clone());
             trace.step(path, "parameter_returns");
-            collect_parameter_return_summaries(path, &functions, &mut context.parameter_returns);
+            collect_parameter_return_summaries(
+                path,
+                &functions,
+                &mut context.parameter_returns,
+                &mut context.returned_objects,
+            );
             trace.step(path, "parameter_sinks");
             collect_parameter_sink_summaries(
                 path,
@@ -277,6 +451,7 @@ impl NodeProjectContext {
                 &functions,
                 &imports,
                 &mut context.parameter_sinks,
+                &mut context.http_effects,
             );
             if has_ejs_import(source) {
                 trace.step(path, "local_template_sinks");
@@ -534,7 +709,12 @@ impl NodeProjectContext {
         if !is_node_language(language) || self.parameter_returns.is_empty() {
             return;
         }
-        let imports = javascript_imports(path, root);
+        let bindings = SummaryBindingIndex::new(root);
+        let imports = self
+            .imports_by_path
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| javascript_imports(path, root));
         let current_module = module_path(path).unwrap_or_default();
         for node in root.dfs() {
             let Some(call) = call_site(node) else {
@@ -549,9 +729,31 @@ impl NodeProjectContext {
             let Some(canonical) = resolve_handler(&call.callee, &current_module, &imports) else {
                 continue;
             };
-            let Some(summary) = self.parameter_returns.get(&canonical) else {
+            let Some(key) = resolved_summary_key(path, &call.callee, &canonical, &imports) else {
                 continue;
             };
+            let Some(summary) = self.parameter_returns.get(&key) else {
+                continue;
+            };
+            if !continuation_binding_is_stable(
+                &bindings,
+                &call.node,
+                compact(&call.callee).split('.').next().unwrap_or(""),
+                true,
+            ) || (summary.asynchronous
+                && !call
+                    .node
+                    .parent()
+                    .is_some_and(|n| n.kind().as_ref() == "await_expression"))
+            {
+                continue;
+            }
+            if imports
+                .get(compact(&call.callee).as_str())
+                .is_some_and(|target| target.adapter.is_some())
+            {
+                continue;
+            }
             let Some(argument) = call.arguments.get(summary.parameter_index) else {
                 continue;
             };
@@ -614,7 +816,12 @@ impl NodeProjectContext {
         if !is_node_language(language) || self.parameter_sinks.is_empty() {
             return;
         }
-        let imports = javascript_imports(path, root);
+        let bindings = SummaryBindingIndex::new(root);
+        let imports = self
+            .imports_by_path
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| javascript_imports(path, root));
         let current_module = module_path(path).unwrap_or_default();
         for node in root.dfs() {
             let Some(call) = call_site(node) else {
@@ -626,10 +833,47 @@ impl NodeProjectContext {
             let Some(canonical) = resolve_handler(&call.callee, &current_module, &imports) else {
                 continue;
             };
-            let Some(summaries) = self.parameter_sinks.get(&canonical) else {
+            let Some(key) = resolved_summary_key(path, &call.callee, &canonical, &imports) else {
                 continue;
             };
+            let Some(summaries) = self.parameter_sinks.get(&key) else {
+                continue;
+            };
+            let Some(first) = summaries.first() else {
+                continue;
+            };
+            if summaries
+                .iter()
+                .any(|summary| summary.definition.location != first.definition.location)
+            {
+                continue; // Multiple declarations are not one exact callable.
+            }
+            if !continuation_binding_is_stable(
+                &bindings,
+                &call.node,
+                compact(&call.callee).split('.').next().unwrap_or(""),
+                true,
+            ) {
+                continue;
+            }
             for summary in summaries {
+                if let Some(adapter) = imports
+                    .get(compact(&call.callee).as_str())
+                    .and_then(|target| target.adapter)
+                {
+                    if summary.parameter_index >= adapter.input_count() {
+                        continue;
+                    }
+                    let expected = match adapter {
+                        super::node_modules::FunctionAdapter::Callbackify(count) => count + 1,
+                        super::node_modules::FunctionAdapter::Promisify(count) => {
+                            count.saturating_sub(1)
+                        }
+                    };
+                    if call.arguments.len() != expected {
+                        continue;
+                    }
+                }
                 let Some(argument) = call.arguments.get(summary.parameter_index) else {
                     continue;
                 };
@@ -637,8 +881,10 @@ impl NodeProjectContext {
                 let id = evidence_id(
                     path,
                     &format!(
-                        "{rule_id}-{}-parameter-{}",
+                        "{rule_id}-{:?}-{}-{}-parameter-{}",
+                        summary.sink.capability(),
                         summary.sink.role(),
+                        summary.operand,
                         summary.parameter_index
                     ),
                     call.node.range().start,
@@ -731,6 +977,15 @@ impl NodeProjectContext {
                     related_evidence.push(source_id);
                 }
                 let mut context = evidence_context(&call.node, comments, conditional, literals);
+                if !summary.non_html_controls.is_empty() {
+                    context.operand_facts.push(mehscan_core::OperandFact {
+                        role: "content".to_string(),
+                        kind: mehscan_core::OperandFactKind::NonHtmlResponse,
+                        location: location(path, argument),
+                        value: argument.text().into_owned(),
+                        remaining_checks: vec!["explicit_non_html_response".to_string()],
+                    });
+                }
                 if summary.sink == SummarySink::ResourceAccess && self.has_express_session {
                     let scope = function_scope(argument, root);
                     if resource_owner_value_is_authenticated(
@@ -758,15 +1013,30 @@ impl NodeProjectContext {
                     capability: summary.sink.capability(),
                     location: location(path, &call.node),
                     enclosing_symbol: enclosing_symbol(&call.node),
-                    captures: BTreeMap::from([(
-                        summary.sink.role().to_string(),
-                        capture(path, argument),
-                    )]),
+                    captures: BTreeMap::from([
+                        (summary.sink.role().to_string(), capture(path, argument)),
+                        // The target was already resolved for this exact call.
+                        // Preserve its AST location for review; do not resolve
+                        // aliases/barrels again using terminal-name guesses.
+                        ("helper_definition".to_string(), summary.definition.clone()),
+                    ])
+                    .into_iter()
+                    .chain(
+                        summary
+                            .non_html_controls
+                            .iter()
+                            .enumerate()
+                            .map(|(i, control)| {
+                                (format!("response_control_{i}_definition"), control.clone())
+                            }),
+                    )
+                    .collect(),
                     cwe_candidates: vec![summary.sink.cwe().to_string()],
                     tags: vec![
                         "interprocedural".to_string(),
                         "parameter-to-sink".to_string(),
                         "maximum-depth-1".to_string(),
+                        format!("helper-operand:{}", summary.operand),
                         match summary.sink {
                             SummarySink::TemplateEvaluation => "local-template-render",
                             SummarySink::SqlQuery => "postgres-js-unsafe-query",
@@ -776,7 +1046,35 @@ impl NodeProjectContext {
                             _ => "bounded-helper",
                         }
                         .to_string(),
-                    ],
+                    ]
+                    .into_iter()
+                    .chain(
+                        (matches!(
+                            summary.sink,
+                            SummarySink::Process
+                                | SummarySink::FilesystemRead
+                                | SummarySink::FilesystemWrite
+                                | SummarySink::TemplateEvaluation
+                                | SummarySink::OutboundRequest
+                        ) || imports
+                            .get(compact(&call.callee).as_str())
+                            .is_some_and(|target| target.adapter.is_some()))
+                        .then(|| "review-admission:source-sink-required".to_string()),
+                    )
+                    .chain(
+                        imports
+                            .get(compact(&call.callee).as_str())
+                            .and_then(|target| target.adapter)
+                            .map(|adapter| match adapter {
+                                super::node_modules::FunctionAdapter::Callbackify(_) => {
+                                    "helper-adapter:node-util-callbackify".to_string()
+                                }
+                                super::node_modules::FunctionAdapter::Promisify(_) => {
+                                    "helper-adapter:node-util-promisify".to_string()
+                                }
+                            }),
+                    )
+                    .collect(),
                     confidence: Confidence::Medium,
                     provenance: Provenance {
                         resolution: Resolution::Ast,
@@ -811,7 +1109,11 @@ impl NodeProjectContext {
         if !is_node_language(language) || self.xxe_parsers.is_empty() {
             return;
         }
-        let imports = javascript_imports(path, root);
+        let imports = self
+            .imports_by_path
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| javascript_imports(path, root));
         let current_module = module_path(path).unwrap_or_default();
         for node in root.dfs() {
             let Some(call) = call_site(node) else {
@@ -823,7 +1125,10 @@ impl NodeProjectContext {
             let Some(canonical) = resolve_handler(&call.callee, &current_module, &imports) else {
                 continue;
             };
-            let Some(summary) = self.xxe_parsers.get(&canonical) else {
+            let Some(key) = resolved_summary_key(path, &call.callee, &canonical, &imports) else {
+                continue;
+            };
+            let Some(summary) = self.xxe_parsers.get(&key) else {
                 continue;
             };
             let Some(payload) = call.arguments.get(summary.parameter_index) else {
@@ -962,7 +1267,12 @@ impl NodeProjectContext {
         if !is_node_language(language) {
             return;
         }
-        let imports = javascript_imports(path, root);
+        let bindings = SummaryBindingIndex::new(root);
+        let imports = self
+            .imports_by_path
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| javascript_imports(path, root));
         let current_module = module_path(path).unwrap_or_default();
         for node in root.dfs() {
             let Some(call) = call_site(node) else {
@@ -972,13 +1282,61 @@ impl NodeProjectContext {
                 continue;
             }
             if let Some(continuation) = promise_resolve_continuation(&call) {
+                if imports.contains_key("Promise")
+                    || !continuation_binding_is_stable(&bindings, &call.node, "Promise", false)
+                {
+                    continue;
+                }
                 if request_argument_matches(&continuation.value, &call.node, "") {
                     push_continuation_source(
                         path,
                         language,
                         &continuation.callback,
+                        0,
+                        &continuation.value,
                         continuation.canonical,
                         &call.callee,
+                        comments,
+                        conditional,
+                        literals,
+                        evidence,
+                    );
+                }
+                continue;
+            }
+            // A promisified error-first forwarder resolves only the success
+            // result. Its original callback argument is supplied by Node.
+            if call.arguments.len() == 1
+                && let Some(callee) = call.node.field("function")
+                && callee.field("property").is_some_and(|n| n.text() == "then")
+                && let Some(inner) = callee.field("object").and_then(call_site)
+                && let Some(target) = imports.get(&compact(&inner.callee))
+                && let Some(super::node_modules::FunctionAdapter::Promisify(arity)) = target.adapter
+            {
+                if let Some(canonical) = resolve_handler(&inner.callee, &current_module, &imports)
+                    && let Some(key) =
+                        resolved_summary_key(path, &inner.callee, &canonical, &imports)
+                    && let Some(summary) = self.callback_forwards.get(&key)
+                    && summary.result_index == 1
+                    && summary.callback_index + 1 == arity
+                    && inner.arguments.len() + 1 == arity
+                    && let Some(value) = inner.arguments.get(summary.value_index)
+                    && request_argument_matches(value, &inner.node, "")
+                    && continuation_binding_is_stable(
+                        &bindings,
+                        &inner.node,
+                        compact(&inner.callee).split('.').next().unwrap_or(""),
+                        true,
+                    )
+                {
+                    push_continuation_source(
+                        path,
+                        language,
+                        &call.arguments[0],
+                        0,
+                        value,
+                        &format!("node:util.promisify:{canonical}"),
+                        &inner.callee,
                         comments,
                         conditional,
                         literals,
@@ -990,7 +1348,43 @@ impl NodeProjectContext {
             let Some(canonical) = resolve_handler(&call.callee, &current_module, &imports) else {
                 continue;
             };
-            let Some(summary) = self.callback_forwards.get(&canonical) else {
+            let Some(key) = resolved_summary_key(path, &call.callee, &canonical, &imports) else {
+                continue;
+            };
+            let observed = compact(&call.callee);
+            if !continuation_binding_is_stable(
+                &bindings,
+                &call.node,
+                observed.split('.').next().unwrap_or(&observed),
+                true,
+            ) {
+                continue;
+            }
+            if let Some(adapter) = imports.get(&observed).and_then(|target| target.adapter) {
+                if let super::node_modules::FunctionAdapter::Callbackify(arity) = adapter
+                    && call.arguments.len() == arity + 1
+                    && let Some(summary) = self.parameter_returns.get(&key)
+                    && summary.parameter_index < arity
+                    && let Some(value) = call.arguments.get(summary.parameter_index)
+                    && request_argument_matches(value, &call.node, &summary.returned_suffix)
+                {
+                    push_continuation_source(
+                        path,
+                        language,
+                        &call.arguments[arity],
+                        1,
+                        value,
+                        &format!("node:util.callbackify:{canonical}"),
+                        &call.callee,
+                        comments,
+                        conditional,
+                        literals,
+                        evidence,
+                    );
+                }
+                continue;
+            }
+            let Some(summary) = self.callback_forwards.get(&key) else {
                 continue;
             };
             let (Some(value), Some(callback)) = (
@@ -1004,6 +1398,8 @@ impl NodeProjectContext {
                     path,
                     language,
                     callback,
+                    summary.result_index,
+                    value,
                     &summary.canonical,
                     &call.callee,
                     comments,
@@ -1029,7 +1425,11 @@ impl NodeProjectContext {
         if !is_node_language(language) || self.mongo_callback_results.is_empty() {
             return;
         }
-        let imports = javascript_imports(path, root);
+        let imports = self
+            .imports_by_path
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| javascript_imports(path, root));
         let current_module = module_path(path).unwrap_or_default();
         for node in root.dfs() {
             let Some(call) = call_site(node) else {
@@ -1041,7 +1441,10 @@ impl NodeProjectContext {
             let Some(canonical) = resolve_handler(&call.callee, &current_module, &imports) else {
                 continue;
             };
-            let Some(summary) = self.mongo_callback_results.get(&canonical) else {
+            let Some(key) = resolved_summary_key(path, &call.callee, &canonical, &imports) else {
+                continue;
+            };
+            let Some(summary) = self.mongo_callback_results.get(&key) else {
                 continue;
             };
             let Some(callback) = call.arguments.get(summary.callback_index) else {
@@ -2404,6 +2807,12 @@ fn express_route_is_under_mount(route: &str, mount: &str) -> bool {
 
 #[derive(Clone, Debug)]
 struct ImportTarget {
+    source_file: Option<String>,
+    source: bool,
+    instance: bool,
+    adapter: Option<super::node_modules::FunctionAdapter>,
+    default_import: bool,
+    mode: super::node_modules::ImportMode,
     module: String,
     export: Option<String>,
 }
@@ -2412,30 +2821,185 @@ fn javascript_imports(
     path: &str,
     root: &Node<'_, StrDoc<SupportLang>>,
 ) -> BTreeMap<String, ImportTarget> {
+    javascript_imports_raw(path, root)
+        .into_iter()
+        .filter_map(|(name, mut target)| {
+            target.source = target.module.starts_with('.');
+            target.module = resolve_module(path, &target.module)?;
+            Some((name, target))
+        })
+        .collect()
+}
+
+fn resolved_javascript_imports(
+    path: &str,
+    root: &Node<'_, StrDoc<SupportLang>>,
+    modules: &super::node_modules::NodeModuleIndex,
+) -> (BTreeMap<String, ImportTarget>, BTreeSet<String>) {
+    use super::node_modules::{ModuleTarget, module_key};
+    let mut result = BTreeMap::new();
+    // Preserve identity only: failed resolution provides no callable contract.
+    // Keep these bindings out of the resolved map used by summaries/models.
+    let mut unresolved = BTreeSet::new();
+    for (visible, mut target) in javascript_imports_raw(path, root) {
+        match modules.resolve(path, &target.module, target.mode) {
+            ModuleTarget::Source(file) => {
+                target.source = true;
+                target.source_file = Some(file.clone());
+                if target.instance {
+                    let Some(constructor) = modules
+                        .resolve_export(&file, target.export.as_deref().unwrap_or("default"))
+                    else {
+                        unresolved.insert(visible);
+                        continue;
+                    };
+                    for method in modules.instance_methods(&constructor.path, &constructor.name) {
+                        result.insert(
+                            format!("{visible}.{method}"),
+                            ImportTarget {
+                                source_file: Some(constructor.path.clone()),
+                                source: true,
+                                instance: false,
+                                adapter: None,
+                                default_import: false,
+                                mode: target.mode,
+                                module: module_key(&constructor.path),
+                                export: Some(method),
+                            },
+                        );
+                    }
+                    target.source_file = Some(constructor.path.clone());
+                    target.module = module_key(&constructor.path);
+                    target.export = Some(String::new());
+                    result.insert(visible, target);
+                    continue;
+                }
+                let names = modules.export_names(&file);
+                let prefix = if let Some(export) = &target.export {
+                    format!("{export}.")
+                } else if target.default_import && !modules.commonjs_object(&file) {
+                    "default.".to_string()
+                } else {
+                    String::new()
+                };
+                let mut members = 0;
+                for name in &names {
+                    let Some(member) = name.strip_prefix(&prefix).filter(|s| !s.is_empty()) else {
+                        continue;
+                    };
+                    if let Some(resolved) = modules.resolve_export(&file, name) {
+                        result.insert(
+                            format!("{visible}.{member}"),
+                            ImportTarget {
+                                source_file: Some(resolved.path.clone()),
+                                source: true,
+                                instance: false,
+                                default_import: false,
+                                adapter: resolved.adapter,
+                                mode: target.mode,
+                                module: module_key(&resolved.path),
+                                export: Some(resolved.name),
+                            },
+                        );
+                        members += 1;
+                    }
+                }
+                let export = target.export.clone().or_else(|| {
+                    (target.default_import
+                        || target.mode == super::node_modules::ImportMode::Require)
+                        .then(|| "default".to_string())
+                });
+                if let Some(export) = export {
+                    if let Some(resolved) = modules.resolve_export(&file, &export) {
+                        target.source_file = Some(resolved.path.clone());
+                        target.module = module_key(&resolved.path);
+                        target.export = Some(resolved.name);
+                        target.adapter = resolved.adapter;
+                    } else if members > 0 {
+                        target.module = module_key(&file);
+                        target.export = Some(String::new());
+                    } else {
+                        unresolved.insert(visible);
+                        continue;
+                    }
+                } else {
+                    target.module = module_key(&file);
+                    target.export = Some(String::new());
+                }
+            }
+            ModuleTarget::External(module) => target.module = module,
+            ModuleTarget::Unresolved(_) => {
+                unresolved.insert(visible);
+                continue;
+            }
+        }
+        result.insert(visible, target);
+    }
+    (result, unresolved)
+}
+
+fn javascript_imports_raw(
+    path: &str,
+    root: &Node<'_, StrDoc<SupportLang>>,
+) -> BTreeMap<String, ImportTarget> {
     let mut imports = BTreeMap::new();
     for node in root
         .dfs()
         .filter(|node| node.kind().as_ref() == "import_statement")
     {
-        let text = node.text();
-        let Some((clause, module_text)) = text
-            .trim()
-            .strip_prefix("import ")
-            .and_then(|rest| rest.rsplit_once(" from "))
+        if node.children().any(|n| n.kind().as_ref() == "type") {
+            continue;
+        }
+        let Some(module_node) = node.field("source") else {
+            continue;
+        };
+        let module_text = module_node.text();
+        let Some(imported) = exact_quoted(module_text.trim()) else {
+            continue;
+        };
+        let Some(clause_node) = node
+            .children()
+            .find(|n| n.kind().as_ref() == "import_clause")
         else {
             continue;
         };
-        let Some(imported) = exact_quoted(module_text.trim().trim_end_matches(';')) else {
-            continue;
+        let clause_text = clause_node.text();
+        let module = imported.to_string();
+        let clause = clause_text.trim();
+        let clause = if !clause.starts_with(['{', '*']) {
+            if let Some((default, rest)) = clause.split_once(',') {
+                if let Some(local) = simple_identifier(default.trim()) {
+                    imports.insert(
+                        local.to_string(),
+                        ImportTarget {
+                            source_file: None,
+                            source: false,
+                            instance: false,
+                            adapter: None,
+                            default_import: true,
+                            mode: super::node_modules::ImportMode::Import,
+                            module: module.clone(),
+                            export: None,
+                        },
+                    );
+                }
+                rest.trim()
+            } else {
+                clause
+            }
+        } else {
+            clause
         };
-        let Some(module) = resolve_module(path, imported) else {
-            continue;
-        };
-        let clause = clause.trim();
         if let Some(alias) = clause.strip_prefix("* as ") {
             imports.insert(
                 alias.trim().to_string(),
                 ImportTarget {
+                    source_file: None,
+                    source: false,
+                    instance: false,
+                    adapter: None,
+                    default_import: false,
+                    mode: super::node_modules::ImportMode::Import,
                     module,
                     export: None,
                 },
@@ -2446,6 +3010,9 @@ fn javascript_imports(
                 let Some(imported_name) = words.first().copied() else {
                     continue;
                 };
+                if imported_name == "type" {
+                    continue;
+                }
                 let visible = if words.get(1) == Some(&"as") {
                     words.get(2).copied().unwrap_or(imported_name)
                 } else {
@@ -2454,6 +3021,12 @@ fn javascript_imports(
                 imports.insert(
                     visible.to_string(),
                     ImportTarget {
+                        source_file: None,
+                        source: false,
+                        instance: false,
+                        adapter: None,
+                        default_import: false,
+                        mode: super::node_modules::ImportMode::Import,
                         module: module.clone(),
                         export: Some(imported_name.to_string()),
                     },
@@ -2463,6 +3036,12 @@ fn javascript_imports(
             imports.insert(
                 local.to_string(),
                 ImportTarget {
+                    source_file: None,
+                    source: false,
+                    instance: false,
+                    adapter: None,
+                    default_import: true,
+                    mode: super::node_modules::ImportMode::Import,
                     module,
                     export: None,
                 },
@@ -2485,7 +3064,19 @@ fn javascript_imports(
             continue;
         };
         if let Some(local) = simple_identifier(name.text().trim()) {
-            imports.insert(local.to_string(), ImportTarget { module, export });
+            imports.insert(
+                local.to_string(),
+                ImportTarget {
+                    source_file: None,
+                    source: false,
+                    instance: false,
+                    adapter: None,
+                    default_import: false,
+                    module,
+                    export,
+                    mode: super::node_modules::ImportMode::Require,
+                },
+            );
             continue;
         }
         if !matches!(name.kind().as_ref(), "object_pattern" | "object") {
@@ -2517,6 +3108,12 @@ fn javascript_imports(
             imports.insert(
                 local.to_string(),
                 ImportTarget {
+                    source_file: None,
+                    source: false,
+                    instance: false,
+                    adapter: None,
+                    default_import: false,
+                    mode: super::node_modules::ImportMode::Require,
                     module: module.clone(),
                     export: Some(imported.to_string()),
                 },
@@ -2552,8 +3149,14 @@ fn javascript_imports(
         imports.insert(
             local.to_string(),
             ImportTarget {
+                source_file: None,
+                source: false,
+                instance: true,
+                adapter: None,
+                default_import: false,
+                mode: target.mode,
                 module: target.module.clone(),
-                export: None,
+                export: target.export.clone(),
             },
         );
     }
@@ -2561,7 +3164,7 @@ fn javascript_imports(
 }
 
 fn commonjs_require_target(
-    path: &str,
+    _path: &str,
     value: &Node<'_, StrDoc<SupportLang>>,
 ) -> Option<(String, Option<String>)> {
     if let Some(call) = call_site(value.clone())
@@ -2570,7 +3173,7 @@ fn commonjs_require_target(
     {
         let imported_text = call.arguments[0].text();
         let imported = exact_quoted(imported_text.trim())?;
-        return Some((resolve_module(path, imported)?, None));
+        return Some((imported.to_string(), None));
     }
     if value.kind().as_ref() != "member_expression" {
         return None;
@@ -2585,7 +3188,7 @@ fn commonjs_require_target(
     let property_text = property.text();
     let imported = exact_quoted(imported_text.trim())?;
     let export = simple_identifier(property_text.trim())?.to_string();
-    Some((resolve_module(path, imported)?, Some(export)))
+    Some((imported.to_string(), Some(export)))
 }
 
 fn unwrap_handler(
@@ -2621,17 +3224,32 @@ fn unwrap_handler(
 fn collect_parameter_return_summaries(
     path: &str,
     functions: &[(String, Node<'_, StrDoc<SupportLang>>)],
-    summaries: &mut BTreeMap<String, ParameterReturnSummary>,
+    summaries: &mut BTreeMap<NodeSummaryKey, ParameterReturnSummary>,
+    returned_objects: &mut BTreeMap<(String, String), ReturnedObject>,
 ) {
     let Some(module) = module_path(path) else {
         return;
     };
+    let unique = returned_fields::unique_functions(functions);
     for (name, function) in functions.iter().cloned() {
         let parameters = function_parameter_names(&function);
         let Some(expression) = single_effective_return(&function) else {
             continue;
         };
+        if unique.contains(&name) {
+            returned_fields::collect_one(
+                path,
+                &format!("{module}.{name}"),
+                &function,
+                &expression,
+                &parameters,
+                returned_objects,
+            );
+        }
         for (parameter_index, parameter) in parameters.iter().enumerate() {
+            if !summary_parameter_is_unmodified(&function, parameter, expression.range().start) {
+                continue;
+            }
             let Some(returned_suffix) =
                 parameter_return_suffix(expression.text().as_ref(), parameter)
             else {
@@ -2639,11 +3257,12 @@ fn collect_parameter_return_summaries(
             };
             let canonical = format!("{module}.{name}");
             summaries.insert(
-                canonical.clone(),
+                (path.to_string(), canonical.clone()),
                 ParameterReturnSummary {
                     canonical,
                     parameter_index,
                     returned_suffix,
+                    asynchronous: function.children().any(|n| n.kind().as_ref() == "async"),
                 },
             );
             break;
@@ -2651,76 +3270,112 @@ fn collect_parameter_return_summaries(
     }
 }
 
-fn collect_parameter_sink_summaries(
+fn collect_parameter_sink_summaries<'tree>(
     path: &str,
-    root: &Node<'_, StrDoc<SupportLang>>,
-    functions: &[(String, Node<'_, StrDoc<SupportLang>>)],
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    functions: &[(String, Node<'tree, StrDoc<SupportLang>>)],
     imports: &BTreeMap<String, ImportTarget>,
-    summaries: &mut BTreeMap<String, Vec<ParameterSinkSummary>>,
+    summaries: &mut BTreeMap<NodeSummaryKey, Vec<ParameterSinkSummary>>,
+    http_effects: &mut BTreeMap<NodeSummaryKey, Vec<http_effects::HttpEffect>>,
 ) {
     let Some(module) = module_path(path) else {
         return;
     };
+    let bindings = SummaryBindingIndex::with_template_receivers(root, imports);
     for (name, function) in functions.iter().cloned() {
         let parameters = function_parameter_names(&function);
         let mut matches = Vec::new();
-        if !function_has_control_flow(&function) {
-            matches.extend(calls_in_function(&function).filter_map(|call| {
-                let sink = summary_sink(&call.callee)?;
-                if matches!(sink, SummarySink::Redirect | SummarySink::HtmlOutput) {
-                    let compact_callee = compact(&call.callee);
-                    let receiver = compact_callee
-                        .rsplit_once('.')
-                        .map(|(receiver, _)| receiver)?;
-                    if !parameters.iter().any(|parameter| parameter == receiver) {
-                        return None;
+        let straight_line = !function_has_control_flow(&function);
+        for call in calls_in_function(&function) {
+            // HTTP observations may sit behind controls. They are not the
+            // unconditional contracts consumed by the path-summary engine.
+            if straight_line || http_effects::known_fetch_api(&call.callee, imports).is_some() {
+                for (sink_argument, sink, operand) in
+                    parameter_sink_operands(&bindings, &function, &call, imports, &parameters)
+                {
+                    let text = compact(sink_argument.text().as_ref());
+                    let Some(index) = parameters.iter().position(|p| p == &text) else {
+                        continue;
+                    };
+                    // This is a direct parameter contract, not a dataflow claim
+                    // about values reassigned inside the helper.
+                    if summary_parameter_is_unmodified(&function, &text, call.node.range().start) {
+                        if sink == SummarySink::OutboundRequest {
+                            http_effects::collect(
+                                path,
+                                &module,
+                                &name,
+                                &function,
+                                &call,
+                                index,
+                                http_effects,
+                            );
+                        }
+                        if straight_line {
+                            matches.push((index, sink, operand));
+                        }
                     }
                 }
-                let sink_argument = call.arguments.first()?;
-                let sink_argument = compact(sink_argument.text().as_ref());
-                let parameter_index = parameters
-                    .iter()
-                    .position(|parameter| parameter == &sink_argument)?;
-                Some((parameter_index, sink))
-            }));
+            }
         }
-        matches.extend(legacy_mongo_parameter_sinks(root, &function, &parameters));
-        matches.extend(postgres_js_parameter_sinks(
-            root,
-            imports,
-            &function,
-            &parameters,
-        ));
-        matches.sort_by_key(|(index, sink)| (*index, *sink as u8));
+        matches.extend(
+            legacy_mongo_parameter_sinks(root, &function, &parameters)
+                .into_iter()
+                .map(|(index, sink)| (index, sink, sink.role())),
+        );
+        matches.extend(
+            postgres_js_parameter_sinks(root, imports, &function, &parameters)
+                .into_iter()
+                .map(|(index, sink)| (index, sink, sink.role())),
+        );
+        matches.sort_by_key(|(index, sink, operand)| (*index, *sink as u8, *operand));
         matches.dedup();
         if matches.is_empty() {
             continue;
         }
         let canonical = format!("{module}.{name}");
+        let definition = Capture {
+            text: name.clone(),
+            location: location(path, &function),
+        };
+        let non_html_controls = if matches
+            .iter()
+            .any(|(_, sink, _)| *sink == SummarySink::HtmlOutput)
+        {
+            response_contract::plain_text_controls(path, root, &function, &bindings)
+        } else {
+            Vec::new()
+        };
         summaries
-            .entry(canonical.clone())
+            .entry((path.to_string(), canonical.clone()))
             .or_default()
-            .extend(
-                matches
-                    .into_iter()
-                    .map(|(parameter_index, sink)| ParameterSinkSummary {
-                        canonical: canonical.clone(),
-                        parameter_index,
-                        sink,
-                    }),
-            );
+            .extend(matches.into_iter().map(|(parameter_index, sink, operand)| {
+                ParameterSinkSummary {
+                    canonical: canonical.clone(),
+                    definition: definition.clone(),
+                    parameter_index,
+                    sink,
+                    operand,
+                    non_html_controls: if sink == SummarySink::HtmlOutput {
+                        non_html_controls.clone()
+                    } else {
+                        Vec::new()
+                    },
+                }
+            }));
     }
 }
 
 fn collect_local_template_parameter_sinks(
     path: &str,
     root: &Node<'_, StrDoc<SupportLang>>,
-    summaries: &mut BTreeMap<String, Vec<ParameterSinkSummary>>,
+    summaries: &mut BTreeMap<NodeSummaryKey, Vec<ParameterSinkSummary>>,
 ) {
     let Some(module) = module_path(path) else {
         return;
     };
     let imports = javascript_imports(path, root);
+    let bindings = SummaryBindingIndex::new(root);
     for (name, function) in named_functions(root) {
         let parameters = function_parameter_names(&function);
         if parameters.is_empty() {
@@ -2730,20 +3385,34 @@ fn collect_local_template_parameter_sinks(
             if !is_ejs_render(&call.callee, &imports) {
                 continue;
             }
+            let binding = call.callee.split('.').next().unwrap_or(&call.callee);
+            if parameters.iter().any(|p| p == binding)
+                || !bindings.is_stable(&function, binding, call.node.range().start, true)
+            {
+                continue;
+            }
             let Some(template) = call.arguments.first() else {
                 continue;
             };
             for (parameter_index, parameter) in parameters.iter().enumerate() {
-                if !template_depends_on_parameter(root, &function, template, parameter) {
+                if !summary_parameter_is_unmodified(&function, parameter, call.node.range().start)
+                    || !template_depends_on_parameter(root, &function, template, parameter)
+                {
                     continue;
                 }
                 let canonical = format!("{module}.{name}");
                 let summary = ParameterSinkSummary {
                     canonical: canonical.clone(),
+                    definition: Capture {
+                        text: name.clone(),
+                        location: location(path, &function),
+                    },
                     parameter_index,
                     sink: SummarySink::TemplateEvaluation,
+                    operand: "template",
+                    non_html_controls: Vec::new(),
                 };
-                let entries = summaries.entry(canonical).or_default();
+                let entries = summaries.entry((path.to_string(), canonical)).or_default();
                 if !entries.contains(&summary) {
                     entries.push(summary);
                 }
@@ -2795,13 +3464,13 @@ fn named_functions<'tree>(
 fn is_ejs_render(callee: &str, imports: &BTreeMap<String, ImportTarget>) -> bool {
     if let Some((receiver, method)) = callee.split_once('.') {
         return method == "render"
-            && imports
-                .get(receiver)
-                .is_some_and(|target| target.module == "ejs" && target.export.is_none());
+            && imports.get(receiver).is_some_and(|target| {
+                !target.source && target.module == "ejs" && target.export.is_none()
+            });
     }
-    imports
-        .get(callee)
-        .is_some_and(|target| target.module == "ejs" && target.export.as_deref() == Some("render"))
+    imports.get(callee).is_some_and(|target| {
+        !target.source && target.module == "ejs" && target.export.as_deref() == Some("render")
+    })
 }
 
 fn template_depends_on_parameter(
@@ -2896,7 +3565,7 @@ fn legacy_mongo_parameter_sinks(
 fn collect_callback_forward_summaries(
     path: &str,
     functions: &[(String, Node<'_, StrDoc<SupportLang>>)],
-    summaries: &mut BTreeMap<String, CallbackForwardSummary>,
+    summaries: &mut BTreeMap<NodeSummaryKey, CallbackForwardSummary>,
 ) {
     let Some(module) = module_path(path) else {
         return;
@@ -2911,14 +3580,27 @@ fn collect_callback_forward_summaries(
                 let callback_index = parameters
                     .iter()
                     .position(|parameter| parameter == &call.callee)?;
-                if call.arguments.len() != 1 {
-                    return None;
-                }
-                let argument = compact(call.arguments[0].text().as_ref());
+                let result_index = match call.arguments.as_slice() {
+                    [_] => 0,
+                    [error, _] if error.text().trim() == "null" => 1,
+                    _ => return None,
+                };
+                let argument = compact(call.arguments[result_index].text().as_ref());
                 let value_index = parameters
                     .iter()
                     .position(|parameter| parameter == &argument)?;
-                (value_index != callback_index).then_some((value_index, callback_index))
+                (value_index != callback_index
+                    && summary_parameter_is_unmodified(
+                        &function,
+                        &parameters[value_index],
+                        call.node.range().start,
+                    )
+                    && summary_parameter_is_unmodified(
+                        &function,
+                        &parameters[callback_index],
+                        call.node.range().start,
+                    ))
+                .then_some((value_index, callback_index, result_index))
             })
             .collect::<Vec<_>>();
         if forwards.len() != 1 {
@@ -2926,11 +3608,12 @@ fn collect_callback_forward_summaries(
         }
         let canonical = format!("{module}.{name}");
         summaries.insert(
-            canonical.clone(),
+            (path.to_string(), canonical.clone()),
             CallbackForwardSummary {
                 canonical,
                 value_index: forwards[0].0,
                 callback_index: forwards[0].1,
+                result_index: forwards[0].2,
             },
         );
     }
@@ -2940,7 +3623,7 @@ fn collect_mongo_callback_result_summaries(
     path: &str,
     root: &Node<'_, StrDoc<SupportLang>>,
     functions: &[(String, Node<'_, StrDoc<SupportLang>>)],
-    summaries: &mut BTreeMap<String, MongoCallbackResultSummary>,
+    summaries: &mut BTreeMap<NodeSummaryKey, MongoCallbackResultSummary>,
 ) {
     if !root.text().contains(".collection(") {
         return;
@@ -2983,7 +3666,7 @@ fn collect_mongo_callback_result_summaries(
         }
         let canonical = format!("{module}.{name}");
         summaries.insert(
-            canonical.clone(),
+            (path.to_string(), canonical.clone()),
             MongoCallbackResultSummary {
                 canonical,
                 callback_index,
@@ -3011,7 +3694,7 @@ fn is_express_html_output_use(
 fn collect_xxe_parser_summaries(
     path: &str,
     root: &Node<'_, StrDoc<SupportLang>>,
-    summaries: &mut BTreeMap<String, XxeParserSummary>,
+    summaries: &mut BTreeMap<NodeSummaryKey, XxeParserSummary>,
 ) {
     let Some(module) = module_path(path) else {
         return;
@@ -3033,7 +3716,7 @@ fn collect_xxe_parser_summaries(
         };
         let canonical = format!("{module}.{name}");
         summaries.insert(
-            canonical.clone(),
+            (path.to_string(), canonical.clone()),
             XxeParserSummary {
                 canonical,
                 parameter_index,
@@ -3066,21 +3749,430 @@ fn function_has_control_flow(function: &Node<'_, StrDoc<SupportLang>>) -> bool {
     })
 }
 
+/// Explicit package contracts only: names such as `files.readFile` are not
+/// enough to establish a filesystem API. Local workspace exports are handled
+/// by the module index, never mistaken for external packages here.
+fn external_sink_api(callee: &str, imports: &BTreeMap<String, ImportTarget>) -> Option<String> {
+    let callee = compact(callee);
+    let (binding, suffix) = callee.split_once('.').unwrap_or((&callee, ""));
+    let target = imports.get(binding)?;
+    if target.source {
+        return None;
+    }
+    let package = target
+        .module
+        .strip_prefix("node:")
+        .unwrap_or(&target.module);
+    let package = if package == "fs/promises" {
+        "fs.promises"
+    } else {
+        package
+    };
+    let mut api = package.to_string();
+    if let Some(export) = &target.export
+        && export != "default"
+    {
+        api.push('.');
+        api.push_str(export);
+    }
+    if !suffix.is_empty() {
+        api.push('.');
+        api.push_str(suffix);
+    }
+    Some(api)
+}
+
+fn parameter_sink_operands<'tree>(
+    bindings: &SummaryBindingIndex,
+    function: &Node<'tree, StrDoc<SupportLang>>,
+    call: &CallSite<'tree>,
+    imports: &BTreeMap<String, ImportTarget>,
+    parameters: &[String],
+) -> Vec<(Node<'tree, StrDoc<SupportLang>>, SummarySink, &'static str)> {
+    let callee = compact(&call.callee);
+    let binding = callee.split('.').next().unwrap_or(&callee);
+    // A handler parameter can shadow a module-level import.
+    let receiver = (!parameters.iter().any(|p| p == binding)
+        && callee == format!("{binding}.renderString"))
+    .then(|| bindings.template_receiver(function, binding, call.node.range().start))
+    .unwrap_or(false);
+    let api = (!parameters.iter().any(|p| p == binding))
+        .then(|| external_sink_api(&callee, imports))
+        .flatten()
+        .or_else(|| receiver.then(|| "nunjucks.Environment.renderString".to_string()));
+    let legacy = summary_sink(&callee);
+    let process_operand = api.as_deref().and_then(process_sink_operand);
+    if legacy.is_none()
+        && process_operand.is_none()
+        && callee != "fetch"
+        && !api.as_deref().is_some_and(|api| {
+            [
+                "fs.",
+                "ejs.",
+                "nunjucks.",
+                "axios",
+                "http.",
+                "https.",
+                "undici.",
+                "node-fetch",
+                "needle.get",
+                "request.get",
+            ]
+            .iter()
+            .any(|prefix| api.starts_with(prefix))
+        })
+    {
+        return Vec::new();
+    }
+    if !receiver
+        && !bindings.is_stable(
+            function,
+            binding,
+            call.node.range().start,
+            imports.contains_key(binding),
+        )
+    {
+        return Vec::new();
+    }
+    let mut slots = Vec::new();
+    if process_operand.is_some() {
+        // Executable/module selection is distinct from argv or options.
+        // Those do not establish shell injection by themselves.
+        slots.push((0, SummarySink::Process));
+    }
+    if let Some(api) = api.as_deref() {
+        match api {
+            "fs.readFile" | "fs.readFileSync" | "fs.createReadStream" | "fs.promises.readFile" => {
+                slots.push((0, SummarySink::FilesystemRead))
+            }
+            "fs.copyFile" | "fs.copyFileSync" | "fs.promises.copyFile" => {
+                slots.push((0, SummarySink::FilesystemRead));
+                slots.push((1, SummarySink::FilesystemWrite));
+            }
+            "fs.rename" | "fs.renameSync" | "fs.promises.rename" => {
+                slots.push((0, SummarySink::FilesystemWrite));
+                slots.push((1, SummarySink::FilesystemWrite));
+            }
+            "fs.writeFile"
+            | "fs.writeFileSync"
+            | "fs.createWriteStream"
+            | "fs.promises.writeFile"
+            | "fs.unlink"
+            | "fs.unlinkSync"
+            | "fs.rm"
+            | "fs.rmSync"
+            | "fs.promises.unlink"
+            | "fs.promises.rm" => slots.push((0, SummarySink::FilesystemWrite)),
+            "ejs.render"
+            | "ejs.compile"
+            | "nunjucks.renderString"
+            | "nunjucks.compile"
+            | "nunjucks.Environment.renderString" => {
+                slots.push((0, SummarySink::TemplateEvaluation))
+            }
+            "node-fetch" | "undici.fetch" | "undici.request" | "axios.get" | "axios.post"
+            | "axios.put" | "axios.patch" | "axios.delete" | "axios.head" | "axios.options"
+            | "needle.get" | "request.get" => slots.push((0, SummarySink::OutboundRequest)),
+            "axios" | "axios.request" | "http.get" | "http.request" | "https.get"
+            | "https.request" => {
+                if let Some(argument) = call.arguments.first() {
+                    if matches!(argument.kind().as_ref(), "object" | "object_expression") {
+                        // Only explicit destination properties, never body,
+                        // headers or a fixed-authority request's path field.
+                        let keys: &[&'static str] = if api.starts_with("axios") {
+                            &["url"]
+                        } else if argument.children().any(|n| {
+                            n.field("key")
+                                .is_some_and(|k| k.text().trim_matches(['\'', '"']) == "hostname")
+                        }) {
+                            // Node gives hostname precedence over host.
+                            &["hostname"]
+                        } else {
+                            &["host"]
+                        };
+                        if argument
+                            .children()
+                            .filter(|n| n.is_named())
+                            .all(|n| n.kind().as_ref() == "pair")
+                        {
+                            return keys
+                                .iter()
+                                .filter_map(|key| {
+                                    let properties = argument
+                                        .children()
+                                        .filter(|n| {
+                                            n.field("key").is_some_and(|k| {
+                                                k.text().trim_matches(['\'', '"']) == *key
+                                            })
+                                        })
+                                        .collect::<Vec<_>>();
+                                    (properties.len() == 1)
+                                        .then(|| properties[0].field("value"))
+                                        .flatten()
+                                        .map(|value| (value, SummarySink::OutboundRequest, *key))
+                                })
+                                .collect();
+                        }
+                        return Vec::new();
+                    }
+                    if !api.starts_with("axios") {
+                        slots.push((0, SummarySink::OutboundRequest));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if callee == "fetch"
+        && !imports.contains_key("fetch")
+        && !parameters.iter().any(|p| p == "fetch")
+    {
+        slots.push((0, SummarySink::OutboundRequest));
+    }
+    if let Some(sink) = legacy {
+        if !matches!(sink, SummarySink::Redirect | SummarySink::HtmlOutput)
+            || parameters.iter().any(|p| {
+                callee
+                    .rsplit_once('.')
+                    .is_some_and(|(receiver, _)| receiver == p)
+            })
+        {
+            slots.push((0, sink));
+        }
+    }
+    slots
+        .into_iter()
+        .filter_map(|(index, sink)| {
+            let operand = if api.as_deref().is_some_and(|api| {
+                api.starts_with("fs.")
+                    && matches!(
+                        terminal_symbol(api),
+                        "copyFile" | "copyFileSync" | "rename" | "renameSync"
+                    )
+            }) {
+                if index == 0 {
+                    "source_path"
+                } else {
+                    "destination_path"
+                }
+            } else if sink == SummarySink::Process {
+                process_operand.unwrap_or(sink.role())
+            } else {
+                sink.role()
+            };
+            call.arguments
+                .get(index)
+                .cloned()
+                .map(|node| (node, sink, operand))
+        })
+        .collect()
+}
+
+#[derive(Default)]
+struct SummaryBindingEffects {
+    declared: bool,
+    declaration_count: usize,
+    template_environment: Option<usize>,
+    writes: Vec<usize>,
+}
+
+/// One lexical pass, shared by every helper/call in this file. This only
+/// rejects unstable bindings; it does not infer the value of an assignment.
+#[derive(Default)]
+struct SummaryBindingIndex {
+    scopes: BTreeMap<Option<(usize, usize)>, BTreeMap<String, SummaryBindingEffects>>,
+}
+
+impl SummaryBindingIndex {
+    fn new(root: &Node<'_, StrDoc<SupportLang>>) -> Self {
+        let mut index = Self::default();
+        for node in root.dfs() {
+            let declaration = matches!(
+                node.kind().as_ref(),
+                "variable_declarator" | "function_declaration"
+            );
+            let field = if declaration {
+                "name"
+            } else if matches!(
+                node.kind().as_ref(),
+                "assignment_expression" | "augmented_assignment_expression"
+            ) {
+                "left"
+            } else {
+                continue;
+            };
+            let Some(mut name) = node.field(field) else {
+                continue;
+            };
+            if !declaration {
+                while matches!(
+                    name.kind().as_ref(),
+                    "member_expression" | "subscript_expression"
+                ) {
+                    let Some(object) = name.field("object") else {
+                        break;
+                    };
+                    name = object;
+                }
+            }
+            if name.kind().as_ref() != "identifier" {
+                continue;
+            }
+            let scope = if node.kind().as_ref() == "function_declaration" {
+                node.parent()
+                    .and_then(|parent| nearest_function_range(&parent))
+            } else {
+                nearest_function_range(&node)
+            };
+            let effect = index
+                .scopes
+                .entry(scope.map(|r| (r.start, r.end)))
+                .or_default()
+                .entry(name.text().into_owned())
+                .or_default();
+            if declaration {
+                effect.declared = true;
+                effect.declaration_count += 1;
+            } else {
+                effect.writes.push(node.range().start);
+            }
+        }
+        index
+    }
+
+    fn with_template_receivers(
+        root: &Node<'_, StrDoc<SupportLang>>,
+        imports: &BTreeMap<String, ImportTarget>,
+    ) -> Self {
+        let mut index = Self::new(root);
+        if !imports
+            .values()
+            .any(|target| !target.source && target.module == "nunjucks")
+        {
+            return index;
+        }
+        for declaration in root
+            .dfs()
+            .filter(|n| n.kind().as_ref() == "variable_declarator")
+        {
+            let (Some(name), Some(value)) = (declaration.field("name"), declaration.field("value"))
+            else {
+                continue;
+            };
+            if name.kind().as_ref() != "identifier" {
+                continue;
+            }
+            let (field, expected) = match value.kind().as_ref() {
+                "new_expression" => ("constructor", "nunjucks.Environment"),
+                "call_expression" => ("function", "nunjucks.configure"),
+                _ => continue,
+            };
+            let Some(target) = value.field(field) else {
+                continue;
+            };
+            let observed = compact(target.text().as_ref());
+            if external_sink_api(target.text().as_ref(), imports).as_deref() != Some(expected)
+                || !continuation_binding_is_stable(
+                    &index,
+                    &value,
+                    observed.split('.').next().unwrap_or(""),
+                    true,
+                )
+            {
+                continue;
+            }
+            let scope = nearest_function_range(&declaration).map(|r| (r.start, r.end));
+            if let Some(effect) = index
+                .scopes
+                .get_mut(&scope)
+                .and_then(|s| s.get_mut(name.text().as_ref()))
+            {
+                effect.template_environment = Some(declaration.range().end);
+            }
+        }
+        index
+    }
+
+    fn template_receiver(
+        &self,
+        function: &Node<'_, StrDoc<SupportLang>>,
+        binding: &str,
+        before: usize,
+    ) -> bool {
+        let scope = function.range();
+        for key in [Some((scope.start, scope.end)), None] {
+            if let Some(effect) = self.scopes.get(&key).and_then(|s| s.get(binding)) {
+                return effect.declaration_count == 1
+                    && effect.writes.is_empty()
+                    && effect
+                        .template_environment
+                        .is_some_and(|end| key.is_none() || end <= before);
+            }
+        }
+        false
+    }
+
+    fn is_stable(
+        &self,
+        function: &Node<'_, StrDoc<SupportLang>>,
+        binding: &str,
+        before: usize,
+        imported: bool,
+    ) -> bool {
+        let range = function.range();
+        for (scope, module) in [(None, true), (Some((range.start, range.end)), false)] {
+            if let Some(effect) = self
+                .scopes
+                .get(&scope)
+                .and_then(|bindings| bindings.get(binding))
+                && ((effect.declared && (!module || !imported))
+                    || effect.writes.iter().any(|at| module || *at < before))
+            {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+fn summary_parameter_is_unmodified(
+    function: &Node<'_, StrDoc<SupportLang>>,
+    parameter: &str,
+    before: usize,
+) -> bool {
+    !function.dfs().any(|node| {
+        if node.range().start >= before {
+            return false;
+        }
+        let target = match node.kind().as_ref() {
+            "assignment_expression" | "augmented_assignment_expression" => node.field("left"),
+            "update_expression" => Some(node),
+            _ => None,
+        };
+        target.is_some_and(|target| {
+            target
+                .dfs()
+                .any(|n| n.kind().as_ref() == "identifier" && n.text().trim() == parameter)
+        })
+    })
+}
+
+fn process_sink_operand(api: &str) -> Option<&'static str> {
+    match api {
+        "child_process.exec" | "child_process.execSync" => Some("command"),
+        "child_process.execFile"
+        | "child_process.execFileSync"
+        | "child_process.spawn"
+        | "child_process.spawnSync" => Some("executable"),
+        "child_process.fork" => Some("module_path"),
+        _ => None,
+    }
+}
+
 fn summary_sink(callee: &str) -> Option<SummarySink> {
     let callee = compact(callee);
     match callee.as_str() {
-        "child_process.exec"
-        | "child_process.execSync"
-        | "child_process.execFile"
-        | "child_process.execFileSync"
-        | "child_process.spawn"
-        | "child_process.spawnSync"
-        | "child_process.fork" => Some(SummarySink::Process),
         "eval" | "global.eval" => Some(SummarySink::DynamicCode),
-        "fs.readFile" | "fs.readFileSync" => Some(SummarySink::FilesystemRead),
-        "fetch" | "axios.get" | "axios.post" | "axios.put" | "axios.patch" | "axios.delete"
-        | "axios.head" | "axios.options" | "http.get" | "https.get" | "request.get"
-        | "needle.get" => Some(SummarySink::OutboundRequest),
         "yaml.load" | "jsyaml.load" | "js_yaml.load" => Some(SummarySink::Deserialization),
         _ if terminal_symbol(&callee) == "redirect" => Some(SummarySink::Redirect),
         _ if matches!(terminal_symbol(&callee), "send" | "write") => Some(SummarySink::HtmlOutput),
@@ -3423,6 +4515,31 @@ fn request_argument_matches(
                 .is_some_and(|parameters| parameters.text().contains("Request")))
 }
 
+fn continuation_binding_is_stable(
+    bindings: &SummaryBindingIndex,
+    call: &Node<'_, StrDoc<SupportLang>>,
+    binding: &str,
+    allow_module_declaration: bool,
+) -> bool {
+    if call.ancestors().filter(is_function_node).any(|function| {
+        function_parameter_names(&function)
+            .iter()
+            .any(|p| p == binding)
+    }) {
+        return false;
+    }
+    let scope = call
+        .ancestors()
+        .find(is_function_node)
+        .unwrap_or_else(|| call.clone());
+    bindings.is_stable(
+        &scope,
+        binding,
+        call.range().start,
+        allow_module_declaration,
+    )
+}
+
 fn promise_resolve_continuation<'tree>(
     then_call: &CallSite<'tree>,
 ) -> Option<PromiseContinuation<'tree>> {
@@ -3749,6 +4866,8 @@ fn push_continuation_source<'tree>(
     path: &str,
     language: Language,
     callback: &Node<'tree, StrDoc<SupportLang>>,
+    result_index: usize,
+    origin: &Node<'tree, StrDoc<SupportLang>>,
     canonical: &str,
     observed: &str,
     comments: &CommentRanges,
@@ -3760,10 +4879,10 @@ fn push_continuation_source<'tree>(
         return;
     }
     let parameters = function_parameter_nodes(callback);
-    if parameters.len() != 1 {
+    if parameters.len() != result_index + 1 {
         return;
     }
-    let parameter = &parameters[0];
+    let parameter = &parameters[result_index];
     let parameter_name = parameter.text().into_owned();
     let uses = callback
         .dfs()
@@ -3772,6 +4891,20 @@ fn push_continuation_source<'tree>(
                 && node.range() != parameter.range()
                 && node.text().trim() == parameter_name
                 && nearest_function_range(node) == Some(callback.range())
+                && summary_parameter_is_unmodified(callback, &parameter_name, node.range().start)
+                && !node
+                    .ancestors()
+                    .take_while(|n| n.range() != callback.range())
+                    .any(|n| {
+                        matches!(
+                            n.kind().as_ref(),
+                            "assignment_expression"
+                                | "augmented_assignment_expression"
+                                | "update_expression"
+                        ) && n
+                            .field("left")
+                            .is_none_or(|left| left.range().contains(&node.range().start))
+                    })
         })
         .take(4)
         .collect::<Vec<_>>();
@@ -3792,13 +4925,17 @@ fn push_continuation_source<'tree>(
             capability: Capability::HttpRequestData,
             location: location(path, &value_use),
             enclosing_symbol: enclosing_symbol(callback),
-            captures: BTreeMap::from([("value".to_string(), capture(path, &value_use))]),
+            captures: BTreeMap::from([
+                ("value".to_string(), capture(path, &value_use)),
+                ("origin".to_string(), capture(path, origin)),
+            ]),
             cwe_candidates: Vec::new(),
             tags: vec![
                 "async-continuation".to_string(),
                 "callback-parameter-use".to_string(),
                 "maximum-depth-1".to_string(),
                 "maximum-uses-4".to_string(),
+                format!("callback-result-index:{result_index}"),
             ],
             confidence: Confidence::Medium,
             provenance: Provenance {
@@ -3878,13 +5015,43 @@ fn is_direct_return_value(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
     })
 }
 
+fn resolved_summary_key(
+    path: &str,
+    observed: &str,
+    canonical: &str,
+    imports: &BTreeMap<String, ImportTarget>,
+) -> Option<NodeSummaryKey> {
+    let observed = compact(observed);
+    let imported = imports.get(&observed).or_else(|| {
+        observed
+            .split_once('.')
+            .and_then(|(head, _)| imports.get(head))
+    });
+    let file = match imported {
+        Some(target) => target.source_file.as_deref()?,
+        None => path,
+    };
+    Some((file.to_string(), canonical.to_string()))
+}
+
 fn resolve_handler(
     observed: &str,
     current_module: &str,
     imports: &BTreeMap<String, ImportTarget>,
 ) -> Option<String> {
+    let normalized = compact(observed);
+    let observed = normalized.as_str();
+    if let Some(target) = imports.get(observed)
+        && target.source
+        && let Some(export) = &target.export
+    {
+        return Some(format!("{}.{}", target.module, export));
+    }
     if let Some((head, tail)) = observed.split_once('.') {
         let target = imports.get(head)?;
+        if !target.source {
+            return None;
+        }
         if target.export.is_some() || simple_identifier(tail).is_none() {
             return None;
         }
@@ -3892,6 +5059,9 @@ fn resolve_handler(
     }
     let observed = simple_identifier(observed)?;
     if let Some(target) = imports.get(observed) {
+        if !target.source {
+            return None;
+        }
         return Some(format!("{}.{}", target.module, target.export.as_deref()?));
     }
     Some(format!("{current_module}.{observed}"))
@@ -5733,8 +6903,8 @@ fn add_express_session_policy<'tree>(
                     "csrf".to_string(),
                     "cookie-authenticated".to_string(),
                     "state-changing-routes".to_string(),
-                    "project-csrf-middleware-not-observed".to_string(),
-                    "recommendation:fix-application".to_string(),
+                    "direct-csrf-middleware-not-observed".to_string(),
+                    "recommendation:review-effective-policy".to_string(),
                 ],
                 Confidence::Medium,
                 BTreeMap::from([
@@ -5813,13 +6983,8 @@ fn push_request_policy_evidence<'tree>(
 }
 
 fn module_path(path: &str) -> Option<String> {
-    let path = path.replace('\\', "/");
-    let path = path.trim_start_matches("./");
-    let path = [".tsx", ".jsx", ".ts", ".js"]
-        .iter()
-        .find_map(|extension| path.strip_suffix(extension))
-        .unwrap_or(path);
-    (!path.is_empty()).then_some(path.to_string())
+    let path = super::node_modules::module_key(path);
+    (!path.is_empty()).then_some(path)
 }
 
 fn resolve_module(importer: &str, imported: &str) -> Option<String> {

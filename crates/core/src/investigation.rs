@@ -546,8 +546,12 @@ pub struct ObservationReviewBasis {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PathReviewJob {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_catalog: Option<crate::ReviewIdentityCatalog>,
     pub schema_version: String,
     pub root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact_scope: Option<crate::ImpactScanScope>,
     pub operation: String,
     /// Deterministic identity of reviews, facts, questions, and contract. It
     /// deliberately excludes coverage and diagnostics.
@@ -596,6 +600,19 @@ pub struct ReviewPipelineCoverage {
     /// finding or review.
     #[serde(default)]
     pub admission_audit: ReviewAdmissionAudit,
+    #[serde(default)]
+    pub marker_admission: ReviewMarkerAdmission,
+}
+
+/// Synthetic review questions deferred by a budget are unresolved, never safe.
+/// Counts cover eligible recognized markers, not all application operations.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReviewMarkerAdmission {
+    pub page: usize,
+    pub recognized: usize,
+    pub previously_admitted: usize,
+    pub admitted: usize,
+    pub budget_deferred: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -737,9 +754,24 @@ pub struct PathReviewTriageResult {
     pub decision: ReviewDecision,
     pub confidence: ReviewConfidence,
     pub summary: String,
+    /// Reviewer assessment of the demonstrated failure, not the detector's
+    /// candidate classification. Missing assessment leaves report metadata unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnosis: Option<ReviewFindingDiagnosis>,
     pub checks: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub investigation: Option<ReviewInvestigationTrace>,
+}
+
+/// Reviewer-owned classification and impact, never deterministic scan proof.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewFindingDiagnosis {
+    pub title: String,
+    pub cwes: Vec<String>,
+    pub severity: crate::Severity,
+    pub impact: String,
+    pub remediation: String,
 }
 
 /// One model-sized task extracted from a review page. It repeats the page
@@ -800,9 +832,13 @@ pub enum PathReviewBundlePayload {
 /// there is deliberately no per-item response state in this format.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PathReviewBundle {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_catalog: Option<crate::ReviewIdentityCatalog>,
     pub schema_version: String,
     pub bundle_fingerprint: String,
     pub job_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact_scope: Option<crate::ImpactScanScope>,
     pub goal: String,
     pub category: PathReviewBundleCategory,
     pub part: usize,
@@ -853,6 +889,8 @@ pub struct PathReviewBundleManifestEntry {
 pub struct PathReviewBundleManifest {
     pub schema_version: String,
     pub root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact_scope: Option<crate::ImpactScanScope>,
     pub coverage: crate::CoverageTotals,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope: Vec<String>,

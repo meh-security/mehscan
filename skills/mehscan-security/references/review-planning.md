@@ -1,5 +1,9 @@
 # Plan a repository review
 
+For local changes, a PR or release delta, start with [Changed review](changed-review.md).
+Its scoped inventory replaces whole-repository preassessment; Value and
+Comprehensive still select review depth within that scope.
+
 ## Modes and queue
 
 For membership and rationale, use [review scope policy](review-scope.md).
@@ -172,6 +176,29 @@ closures. `scope_count` is the filtered, unreviewed population before selection;
 `matching_count` is the selected population and `deferred_count` its heuristic
 deferral population. Contract queues use `matching_review_count`.
 
+Synthetic operation-marker budgets are separate from Value deferrals. Read
+`marker_admission` in the overview: `recognized = previously_admitted + admitted
++ budget_deferred`. These counts cover eligible recognized mutation questions,
+not every authorization boundary in the app. A budget-deferred question has no
+verdict. Do not describe the initial Comprehensive inventory as exhaustive when
+`budget_deferred` is nonzero.
+
+When this lane warrants more review, generate a bounded continuation using the
+same validated scan, without rescanning or repeating ordinary reviews:
+
+```sh
+mehscan investigate review-inventory ROOT --continue-from RUN/inventory --marker-page 1 --output RUN/markers-1
+```
+
+Page zero is the original inventory; subsequent pages are deterministic,
+disjoint marker-only inventories, with the same 48-per-page and eight-per-file
+limits. List and bundle their exact IDs with their own inventory directory.
+Increase the page number only while additional review is justified; stop when
+`budget_deferred` is zero. Keep each page's inventory with its responses and
+report remaining budget deferrals separately from Value-only deferrals. Source
+or native-input changes invalidate continuation. Recognition still has syntax,
+file-size and language limits; draining these pages is not an exhaustive audit.
+
 ## Scope lanes
 
 Value focuses on authored application behavior. Before selecting bundles, separate
@@ -272,7 +299,7 @@ closure does not settle an independently identified record-authority question.
 See [database scope](review-scope.md#database-exclusions-and-remaining-cleanup).
 
 PHP queue conditions and their limits are in [review scope](review-scope.md).
-Inventory schema 22 requires a fresh scan; do not reuse an older inventory or its
+Inventory schema 25 requires a fresh scan; do not reuse an older inventory or its
 ledger. Use `--selection all` for `php_relationship_research`. Verify its bounded
 producer navigation against the actual writes, transformations, writer and actor.
 Same-file/rule `issue`, `needs_review` or conflicting verdicts reopen retained

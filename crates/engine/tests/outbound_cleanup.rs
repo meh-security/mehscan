@@ -23,6 +23,112 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn browser_relative_routes_defer_destination_research_but_preserve_other_boundaries() {
+    let fixture = Fixture::new(
+        "relative-browser",
+        &[
+            (
+                "browser.ts",
+                r#"
+'use client';
+import axios from 'axios';
+export function read(id: string) { return axios.get(`/items/${id}`); }
+export function write(id: string, data: unknown) { return axios.post('/items/' + id, data); }
+export function bodyUrl(id: string, url: string) { return axios.put(`/items/${id}`, {url}); }
+export function abort(id: string) { return fetch(`/items/${id}`, {signal: AbortSignal.timeout(500)}); }
+export function aliases(id: string) { const url = `/items/${id}`; return fetch(url); }
+export function alternatives(id: string, flag: boolean) { return fetch(flag ? `/a/${id}` : `/b/${id}`); }
+export function unknownAlternative(id: string, url: string, flag: boolean) { return fetch(flag ? `/a/${id}` : url); }
+export function host(url: string) { return fetch(`/${url}`); }
+export function protocolRelative(url: string) { return fetch(`//${url}/items`); }
+export function escaped(url: string) { return fetch(`/\${url}`); }
+export function mutation(id: string, other: string) { let url = `/items/${id}`; url = other; return fetch(url); }
+export function options(id: string, config: any) { return axios.get(`/items/${id}`, config); }
+export function adapter(id: string, adapter: any) { return axios.get(`/items/${id}`, {adapter}); }
+export function base(id: string, baseURL: string) { return axios.get(`/items/${id}`, {baseURL}); }
+export function headers(id: string) { return fetch(`/items/${id}`, {headers:{Authorization:'secret'}}); }
+export function spread(id: string, options: any[]) { return axios.post(`/items/${id}`, ...options); }
+export function connected(req: any) { return axios.get(`/items/${req.query.id}`); }
+export function shell(input: string) { eval(input); }
+"#,
+            ),
+            (
+                "server.js",
+                "const axios = require('axios'); function server(id) {return axios.get(`/items/${id}`);}",
+            ),
+            (
+                "mixed.js",
+                "'use client'; const fs = require('node:fs'); const axios = require('axios'); function mixed(id) {return axios.get(`/items/${id}`);}",
+            ),
+        ],
+    );
+    let inventory = build_review_inventory(&fixture.0, false).unwrap();
+    let observed = inventory
+        .entries
+        .iter()
+        .map(|e| (&e.symbol, &e.path, e.value_hint.as_ref().map(|h| &h.reason)))
+        .collect::<Vec<_>>();
+    for symbol in ["read", "write", "bodyUrl", "abort", "alternatives"] {
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|e| e.symbol.as_deref() == Some(symbol)
+                    && e.value_hint
+                        .as_ref()
+                        .is_some_and(|h| h.reason == "browser_relative_destination_research")),
+            "missing relative research {symbol}: {observed:?}"
+        );
+    }
+    for symbol in [
+        "unknownAlternative",
+        "host",
+        "protocolRelative",
+        "escaped",
+        "options",
+        "adapter",
+        "base",
+        "headers",
+        "spread",
+        "connected",
+        "server",
+        "mixed",
+        "shell",
+    ] {
+        assert!(
+            inventory
+                .entries
+                .iter()
+                .any(|e| e.symbol.as_deref() == Some(symbol) && e.value_hint.is_none()),
+            "lost Value {symbol}: {observed:?}"
+        );
+    }
+    assert!(inventory.scan.evidence.iter().any(|e| {
+        e.enclosing_symbol.as_deref() == Some("mutation")
+            && !e
+                .tags
+                .iter()
+                .any(|t| t == "url-shape:root-relative-request-target")
+    }));
+    // The existing fixed-local browser filter already omits this alias from
+    // reviews. Its raw construction still exercises the shared operand index.
+    assert!(inventory.scan.evidence.iter().any(|e| {
+        e.enclosing_symbol.as_deref() == Some("aliases")
+            && e.tags
+                .iter()
+                .any(|t| t == "url-shape:root-relative-request-target")
+    }));
+    assert!(
+        inventory
+            .entries
+            .iter()
+            .any(|e| e.symbol.as_deref() == Some("connected")
+                && e.evidence_strength == "source_sink_cooccurrence"
+                && e.value_hint.is_none())
+    );
+}
+
+#[test]
 fn builders_are_context_and_each_send_owns_its_endpoint_relationship() {
     let fixture = Fixture::new(
         "consumers",

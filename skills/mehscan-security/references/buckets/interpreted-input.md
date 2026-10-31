@@ -24,11 +24,14 @@ control-character and entity handling. A server-side parser's scheme result
 alone does not establish what a browser will execute.
 
 - **SQL:** A raw-query API or nonliteral `sql` parameter is an inventory
-  point. If it is a wrapper, find the wrapper's callers and inspect every
-  relevant argument. Fixed query text with bound values differs from text
-  concatenation. Search the actual identifier used at call sites and treat
-  text references as leads; check whether aliases, dynamic dispatch, or an
-  exposed wrapper leave a caller outside that inventory. Check the inserted
+  point. Establish whether the selected API expects scalar values or intentionally
+  accepts trusted SQL grammar. A query/template authoring capability alone is not
+  injection. If the actual template or the authority of interpolated inputs is
+  missing, retain that applicability question; do not promote the API alone or
+  declare its consumers safe. For wrappers, inspect the selected caller's actual
+  arguments and binding; expand only when another caller could change this
+  judgment. Fixed calls do not prove all callers safe, and a bad neighbor does
+  not condemn this call. Treat textual references as leads. Check the inserted
   values' declared types, conversions and formatting. Source-proven restrictions
   that prevent SQL grammar changes can settle this property without binding;
   parameterization can remain a hardening recommendation. When an application
@@ -88,22 +91,25 @@ alone does not establish what a browser will execute.
   keys/operators or only a value under a fixed key. Follow the exact decoded
   type, any preparation method, and filter passed to the database. If a
   reference identifies their common model file, read the declaration and
-  helper together within one bounded source window. When a lower-trust object
-  reaches an unconstrained selector position but the dependency's operator
-  behavior is unavailable, keep the unsafe construction as a lower-confidence
-  `issue` and name the unproved interpretation. Use high confidence for an
-  operator-injection claim only when a dependency contract, implementation, or
-  behavior test establishes how that object is interpreted.
+  helper together within one bounded source window. Selector shape alone does
+  not establish a security weakness. Bind the actual interpretation and a
+  protected effect: authentication bypass, unauthorized data/mutation, executable
+  predicate or disproportionate resource use. Unknown decisive interpretation or
+  effect remains a concrete lead/pending question, not a forced low-confidence
+  issue. Use [structured-query guidance](../categories/structured-query.md) for
+  operator/value distinctions and benign public-selection counterexamples.
 - **Template, HTML, deserialization, loader:** Identify the consuming parser
   and the representation supplied to it. Check whether the value is template
   source, escaped data, or an engine option such as a layout path; a fixed
   view name alone does not settle what the engine reads. Use the template,
   framework contract, or repository tests when its interpretation is decisive.
-  When a dependency transform decides the result, locate its manifest or resource
-  registration and version. Inspect the versioned primary implementation or
-  contract before declaring it unavailable. Record external contract evidence
-  separately from Mehscan source artifacts; a declared version is not proof of
-  the actual deployed asset, and a familiar helper name alone is not a contract.
+  Apply the common dependency-contract policy: verify the actual parser or
+  transform binding and relevant version/options, including custom schemas and
+  hooks. Established default semantics can settle the selected property without
+  vendored implementation; custom or genuinely uncertain behavior needs its own
+  evidence. Record contract knowledge separately from inspected source. A parser
+  that excludes executable types does not establish resource safety or authorize
+  downstream mutations.
   For unconstrained HTML output, identify who can write the exact rendered field. An
   admin-only publisher of intentionally rich content does not establish XSS
   merely because the renderer uses raw HTML. If the writer's trust or content

@@ -43,6 +43,14 @@ fn models_node_session_cookie_csrf_rotation_and_password_policy_without_comment_
     assert!(risk.evidence.iter().any(|item| {
         item.rule_id == "javascript-cookie-session-csrf-review"
             && item.captures["state_changing_routes"].text == "POST /profile"
+            && item
+                .tags
+                .iter()
+                .any(|tag| tag == "direct-csrf-middleware-not-observed")
+            && item
+                .tags
+                .iter()
+                .any(|tag| tag == "recommendation:review-effective-policy")
     }));
     assert!(risk.evidence.iter().any(|item| {
         item.rule_id == "javascript-session-cookie-policy-review"

@@ -84,6 +84,8 @@ pub struct FindingSarifResult {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct FindingSarifResultProperties {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub identities: Vec<crate::ReviewSubjectIdentity>,
     pub status: FindingStatus,
     pub confidence: ReviewConfidence,
     pub category: crate::Capability,
@@ -99,9 +101,15 @@ pub struct FindingSarifAutomationDetails {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FindingSarifRunProperties {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication: Option<crate::FindingSarifPublication>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewer: Option<String>,
     pub report_kind: String,
     pub finding_report_schema_version: String,
     pub scan_root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact_scope: Option<crate::ImpactScanScope>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope: Vec<String>,
     pub job_fingerprint: String,
@@ -143,12 +151,8 @@ impl FindingSarifLog {
             .iter()
             .map(|finding| finding_result(finding, rule_indexes[&finding.rule_id.as_str()]))
             .collect();
-        let automation_id = report
-            .triage
-            .reviewer
-            .as_deref()
-            .map(|reviewer| format!("mehscan/triaged/{reviewer}"))
-            .unwrap_or_else(|| "mehscan/triaged".to_string());
+        let publication = report.sarif_publication();
+        let automation_id = publication.automation.automation_id();
         Self {
             schema: SARIF_SCHEMA_URI.to_string(),
             version: SARIF_VERSION.to_string(),
@@ -164,9 +168,12 @@ impl FindingSarifLog {
                 column_kind: "unicodeCodePoints".to_string(),
                 results,
                 properties: FindingSarifRunProperties {
+                    publication: Some(publication),
+                    reviewer: report.triage.reviewer.clone(),
                     report_kind: report.report_kind.clone(),
                     finding_report_schema_version: report.schema_version.clone(),
                     scan_root: report.scan.root.clone(),
+                    impact_scope: report.scan.impact_scope.clone(),
                     scope: report.scan.scope.clone(),
                     job_fingerprint: report.scan.job_fingerprint.clone(),
                     response_schema_version: report.triage.response_schema_version.clone(),
@@ -222,6 +229,7 @@ fn finding_result(finding: &ReportedFinding, rule_index: usize) -> FindingSarifR
         .map(|(index, related)| {
             finding_location(
                 &related.location,
+                &finding.repository_path_prefix,
                 Some(index + 1),
                 Some(format!("{:?} evidence", related.role).to_ascii_lowercase()),
             )
@@ -229,7 +237,8 @@ fn finding_result(finding: &ReportedFinding, rule_index: usize) -> FindingSarifR
         .collect();
     let code_flows = finding
         .flow
-        .as_ref()
+        .iter()
+        .chain(&finding.additional_flows)
         .map(|flow| SarifCodeFlow {
             message: SarifMessage {
                 text: "Deterministic bounded security path".to_string(),
@@ -242,6 +251,7 @@ fn finding_result(finding: &ReportedFinding, rule_index: usize) -> FindingSarifR
                     .map(|(index, step)| SarifThreadFlowLocation {
                         location: finding_location(
                             &step.location,
+                            &finding.repository_path_prefix,
                             None,
                             Some(format!("{:?}", step.kind).to_ascii_lowercase()),
                         ),
@@ -267,7 +277,6 @@ fn finding_result(finding: &ReportedFinding, rule_index: usize) -> FindingSarifR
                     .collect(),
             }],
         })
-        .into_iter()
         .collect();
     FindingSarifResult {
         rule_id: finding.rule_id.clone(),
@@ -277,14 +286,17 @@ fn finding_result(finding: &ReportedFinding, rule_index: usize) -> FindingSarifR
         message: SarifMessage {
             text: format!("{}: {}", finding.title, finding.description),
         },
-        locations: vec![finding_location(&finding.primary_location, None, None)],
+        locations: vec![finding_location(
+            &finding.primary_location,
+            &finding.repository_path_prefix,
+            None,
+            None,
+        )],
         related_locations,
-        partial_fingerprints: BTreeMap::from([(
-            "mehscanFinding/v1".to_string(),
-            finding.id.clone(),
-        )]),
+        partial_fingerprints: finding_fingerprints(finding),
         code_flows,
         properties: FindingSarifResultProperties {
+            identities: finding.identities.clone(),
             status: finding.status,
             confidence: finding.confidence,
             category: finding.category,
@@ -292,6 +304,33 @@ fn finding_result(finding: &ReportedFinding, rule_index: usize) -> FindingSarifR
             review_ids: finding.provenance.review_ids.clone(),
         },
     }
+}
+
+fn finding_fingerprints(finding: &ReportedFinding) -> BTreeMap<String, String> {
+    let mut fingerprints = if let Some(identity) = finding.identities.first() {
+        if identity.continuity == crate::IdentityContinuity::Structural {
+            BTreeMap::from([("mehscanFinding/v2".into(), identity.occurrence_key.clone())])
+        } else if identity.continuity == crate::IdentityContinuity::Unscoped {
+            BTreeMap::from([("mehscanUnscopedFinding/v1".into(), finding.id.clone())])
+        } else {
+            BTreeMap::from([("mehscanSnapshotFinding/v1".into(), finding.id.clone())])
+        }
+    } else {
+        BTreeMap::from([("mehscanFinding/v1".into(), finding.id.clone())])
+    };
+    // Never project a hash from another operation or a preferred source line.
+    if let Some(hint) = finding
+        .identities
+        .iter()
+        .filter_map(|identity| identity.primary_location_fingerprint.as_ref())
+        .find(|hint| hint.location == finding.primary_location)
+    {
+        fingerprints.insert(
+            "primaryLocationLineHash".into(),
+            hint.primary_location_line_hash.clone(),
+        );
+    }
+    fingerprints
 }
 
 fn severity_level(severity: Severity) -> &'static str {
@@ -315,6 +354,7 @@ fn sarif_rule_name(rule_id: &str) -> String {
 
 fn finding_location(
     location: &Location,
+    repository_path_prefix: &str,
     id: Option<usize>,
     message: Option<String>,
 ) -> SarifLocation {
@@ -322,7 +362,11 @@ fn finding_location(
         id,
         physical_location: SarifPhysicalLocation {
             artifact_location: SarifArtifactLocation {
-                uri: uri_reference(&location.path),
+                uri: uri_reference(&if repository_path_prefix.is_empty() {
+                    location.path.clone()
+                } else {
+                    format!("{repository_path_prefix}/{}", location.path)
+                }),
             },
             region: SarifRegion {
                 start_line: location.start.line,

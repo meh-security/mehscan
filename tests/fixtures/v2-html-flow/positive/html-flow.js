@@ -12,3 +12,10 @@ function encoded(req, res, he) {
   const content = he.encode(req.query.encoded)
   return res.send(content)
 }
+
+function branchSink(req, res, enabled) {
+  const content = req.query.branchSink
+  if (enabled) {
+    return res.send(content)
+  }
+}

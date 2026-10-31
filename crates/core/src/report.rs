@@ -15,7 +15,11 @@ pub struct FindingReportTool {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct FindingReportScan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sarif_automation: Option<crate::SarifAutomationConfiguration>,
     pub root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact_scope: Option<crate::ImpactScanScope>,
     pub job_fingerprint: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coverage: Option<crate::CoverageTotals>,
@@ -58,6 +62,7 @@ pub enum FindingStatus {
 #[serde(rename_all = "snake_case")]
 pub enum SeveritySource {
     Unknown,
+    ReviewerAssessment,
     RuleDefault,
     /// Conservative consumer default used until a rule has an adjudicated
     /// impact level. This is deliberately distinct from model confidence.
@@ -89,6 +94,9 @@ pub struct FindingRelatedLocation {
 pub struct FindingProvenance {
     pub review_ids: Vec<String>,
     pub evidence_ids: Vec<String>,
+    /// Detection-time classification leads, distinct from the reviewed failure.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidate_cwes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -100,6 +108,8 @@ pub struct FindingRemediation {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ReportedFinding {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub identities: Vec<crate::ReviewSubjectIdentity>,
     pub id: String,
     pub rule_id: String,
     pub title: String,
@@ -113,6 +123,9 @@ pub struct ReportedFinding {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<Language>,
     pub primary_location: Location,
+    /// Prefix used to export scan-root-relative evidence from Git subdirectories.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub repository_path_prefix: String,
     #[serde(default, skip_serializing_if = "EvidenceContext::is_empty")]
     pub context: EvidenceContext,
     /// Policy references are not proof that the reported operation is gated.
@@ -120,6 +133,9 @@ pub struct ReportedFinding {
     pub related_feature_policies: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flow: Option<FindingFlow>,
+    /// Other complete native paths for this verdict; never concatenated together.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub additional_flows: Vec<FindingFlow>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related_locations: Vec<FindingRelatedLocation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -131,6 +147,8 @@ pub struct ReportedFinding {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DismissedReview {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<crate::ReviewSubjectIdentity>,
     pub review_id: String,
     pub confidence: ReviewConfidence,
     pub description: String,
@@ -142,6 +160,8 @@ pub struct DismissedReview {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct FindingReport {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decision_records: Vec<crate::ReviewDecisionRecord>,
     pub schema_version: String,
     pub report_kind: String,
     pub tool: FindingReportTool,
@@ -524,25 +544,26 @@ fn render_review_ids(output: &mut String, finding: &ReportedFinding) {
 }
 
 fn render_flow(output: &mut String, finding: &ReportedFinding) {
-    let Some(flow) = &finding.flow else { return };
-    let locations = flow
-        .steps
-        .iter()
-        .filter(|step| {
-            matches!(
-                step.kind,
-                crate::SecurityPathStepKind::Source | crate::SecurityPathStepKind::Sink
-            )
-        })
-        .map(|step| {
-            markdown_code_span(&format!(
-                "{}:{}:{}",
-                step.location.path, step.location.start.line, step.location.start.column
-            ))
-        })
-        .collect::<Vec<_>>();
-    if locations.len() > 1 {
-        output.push_str(&format!("\nFlow: {}\n", locations.join(" → ")));
+    for flow in finding.flow.iter().chain(&finding.additional_flows) {
+        let locations = flow
+            .steps
+            .iter()
+            .filter(|step| {
+                matches!(
+                    step.kind,
+                    crate::SecurityPathStepKind::Source | crate::SecurityPathStepKind::Sink
+                )
+            })
+            .map(|step| {
+                markdown_code_span(&format!(
+                    "{}:{}:{}",
+                    step.location.path, step.location.start.line, step.location.start.column
+                ))
+            })
+            .collect::<Vec<_>>();
+        if locations.len() > 1 {
+            output.push_str(&format!("\nFlow: {}\n", locations.join(" → ")));
+        }
     }
 }
 
@@ -689,6 +710,7 @@ mod tests {
 
     fn finding(status: FindingStatus, checks: Vec<String>) -> ReportedFinding {
         ReportedFinding {
+            identities: Vec::new(),
             id: "finding-1".to_string(),
             rule_id: "typescript-database-query".to_string(),
             title: "Unsafe query".to_string(),
@@ -703,13 +725,16 @@ mod tests {
             cwes: vec!["CWE-89".to_string()],
             language: None,
             primary_location: location("routes/search.ts", 23),
+            repository_path_prefix: String::new(),
             context: EvidenceContext::default(),
             related_feature_policies: Vec::new(),
             flow: None,
+            additional_flows: Vec::new(),
             related_locations: Vec::new(),
             checks,
             remediation: None,
             provenance: FindingProvenance {
+                candidate_cwes: Vec::new(),
                 review_ids: vec!["review-1".to_string()],
                 evidence_ids: vec!["evidence-1".to_string()],
             },
@@ -773,6 +798,7 @@ mod tests {
     #[test]
     fn markdown_prioritizes_review_checks_and_summarizes_all_outcomes() {
         let report = FindingReport {
+            decision_records: Vec::new(),
             schema_version: FINDING_REPORT_SCHEMA_VERSION.to_string(),
             report_kind: "triaged_findings".to_string(),
             tool: FindingReportTool {
@@ -780,6 +806,8 @@ mod tests {
                 version: "test".to_string(),
             },
             scan: FindingReportScan {
+                sarif_automation: None,
+                impact_scope: None,
                 root: ".".to_string(),
                 job_fingerprint: "job-1".to_string(),
                 coverage: None,
@@ -808,6 +836,7 @@ mod tests {
                 vec!["Confirm the effective query parameterization.".to_string()],
             )],
             dismissed: vec![DismissedReview {
+                identity: None,
                 review_id: "review-safe".to_string(),
                 confidence: ReviewConfidence::High,
                 description: "The value is a fixed repository literal.".to_string(),
@@ -868,6 +897,7 @@ mod tests {
         second.description = "A second decoder performs the same unchecked read.".to_string();
         second.provenance.review_ids = vec!["review-2".to_string()];
         let report = FindingReport {
+            decision_records: Vec::new(),
             schema_version: FINDING_REPORT_SCHEMA_VERSION.to_string(),
             report_kind: "triaged_findings".to_string(),
             tool: FindingReportTool {
@@ -875,6 +905,8 @@ mod tests {
                 version: "test".to_string(),
             },
             scan: FindingReportScan {
+                sarif_automation: None,
+                impact_scope: None,
                 root: ".".to_string(),
                 job_fingerprint: "job-1".to_string(),
                 coverage: None,

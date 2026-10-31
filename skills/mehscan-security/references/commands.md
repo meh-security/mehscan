@@ -1,9 +1,14 @@
 # Mehscan commands
 
+These are operator/manual CLI commands. For the controller's typed source tools,
+costs, limits and on-demand category guides, use [the worker API](worker-api.md).
+`definition` and `guidance` are broker operations, not native CLI subcommands.
+For execution diagnosis, use [the trace guide](execution-trace.md).
+
 Use the executable and root supplied for the task. `ROOT` is the source
 repository, not the directory containing a saved bundle.
 Regenerate older inventories with this executable: current admission uses
-inventory schema 22. Reuse verdicts only through a source-bound ledger.
+inventory schema 25. Reuse verdicts only through a source-bound ledger.
 Append `--journal JOURNAL.jsonl` to source, outline, references, paths, and
 other code-evidence lookups while reviewing a bundle. Bundle listing, cards,
 finalization, and validation do not accept `--journal`. Name the journal for
@@ -25,6 +30,9 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Need | Command |
 | --- | --- |
 | Candidate scan | `mehscan scan ROOT --format candidates` |
+| Changed-file scan | `mehscan scan ROOT --changed-from BASE --diff-mode files --format candidates` |
+| Changed inventory | `mehscan investigate review-inventory ROOT --changed-from BASE --diff-mode files --output RUN/inventory`; see [Changed review](changed-review.md) for PR/release comparisons, the change pass and freshness. |
+| Native repository identity | Add `--repository-key STABLE_ID` at inventory creation (or direct jobs/bundles); for a fork PR use the base product ID and optional `--source-repository-key FORK_ID`. Selected bundles inherit it. Unknown IDs remain unscoped; never invent a platform ID. |
 | Review requests | `mehscan investigate review-bundles ROOT --output DIR` |
 | Large-repo inventory | `mehscan investigate review-inventory ROOT --output RUN/inventory` |
 | Inventory with supplied Roslyn context | `mehscan investigate review-inventory ROOT --output RUN/inventory --csharp-context CONTEXT --csharp-backend BACKEND` |
@@ -51,6 +59,8 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Identifier or markup uses | `mehscan investigate references ROOT --symbol NAME --path-prefix DIR --limit 20 --summary true` (per-file locations/previews; `--path FILE` scopes one file; omit summary for full matches) |
 | Symbol definitions | `mehscan investigate symbol ROOT --name NAME --path FILE --limit 20` (omit `--path` only when the defining file is unknown) |
 | Import uses | `mehscan investigate imports ROOT --name NAME --limit 200` |
+| JS/TS import module targets | `mehscan investigate import-targets ROOT --path CALLER_FILE` (module navigation only; missing build outputs remain unresolved) |
+| One JS/TS exported implementation | `mehscan investigate export-target ROOT --path MODULE_FILE --name EXPORT` (bounded aliases/barrels; read the candidate body separately and preserve caller/build applicability gaps) |
 | Exact syntax | `mehscan investigate structural ROOT --language LANG --pattern PATTERN --path FILE` |
 | Native call syntax | `mehscan investigate native-call-sites ROOT --callee NAME --path FILE` |
 | Response shape | `mehscan investigate review-response-schema --bundle REQUEST --output SCHEMA` |
@@ -58,8 +68,16 @@ manifests too. Inspect its actual `reviewed_count` before reporting coverage.
 | Validate existing response | `mehscan investigate review-bundle-triage --bundle REQUEST --responses RESPONSE --source-root ROOT --summary true` |
 | Summarize run | `mehscan investigate review-bundle-summary --run DIR --responses RESPONSES_DIR --source-root ROOT` |
 | Final report | `mehscan report --run DIR --responses RESPONSES_DIR --source-root ROOT --format json --output findings.json` |
+| Inspect coordinator state | `mehscan state status --store STATE --stream KEY --repository-key ID`; `history` retains immutable all-verdict proof. See [local state](../../../docs/review-state.md) for claims, source-bound admission and explicit supersession. |
 
 Use `--format sarif` or `--format markdown` for those report projections.
+For configured SARIF partitions use `--sarif-category mehscan/triaged/pr-delta`
+or another stable analysis category; optional `--sarif-run-id attempt-2` identifies
+an attempt. Keep reviewer/model, PR number, revision and changing file sets out of
+category names. These are artifact exports: complete manifest work does not prove
+alert remediation, and Changed/partial reports must not replace an authoritative
+baseline. See [the output contract](../../../docs/output-contract.md) for defaults,
+category migration and the pending GitHub ingestion acceptance.
 Write response drafts as files instead of embedding prose JSON in shell command
 strings. If a report needs correction, change the reviewed response and rerun
 finalization and `mehscan report`; do not edit the generated report directly.
@@ -102,3 +120,118 @@ navigation, not code evidence: read a returned path before citing its contents.
 `--source-root` checks that every decisive artifact excerpt occurs in a file
 inside that root. It catches paraphrases presented as source text; it cannot
 prove that every executed query was recorded.
+Changed-scope finalization also requires the saved input binding, matching Git
+comparison and current repository source fingerprint. Keep `RUN` outside the
+source worktree and regenerate stale runs rather than editing their bindings.
+
+V11 source builds expose `state plan-template|plan|pending|fact|work` for the
+[stateful worker](../../../docs/review-worker.md). A work package contains exact
+current IDs, parents, pending questions and source-backed updates without an
+ownership token. Review all questions for each resumed ID; facts request fresh
+adjudication and never change verdicts automatically. Pass the package back to
+plan/record admission. If it is stale, refresh it; do not edit its generation,
+parents or fingerprints. Use normal queries and finalization for the new answer.
+
+For a provider-neutral worker, create the plan with the trusted skill package:
+`mehscan state plan-template --inventory DIR --source-root ROOT --policy value --selection policy --skill-root TRUSTED/mehscan-security`.
+`--selection policy` applies initial native Value hints as explicit unreviewed
+deferrals, with reasons/dependencies. Comprehensive keeps all IDs. The default
+without this option remains `all` for compatible manual/full-coverage templates.
+Deferred work has no verdict; promote it when stronger evidence warrants review.
+The native runtime binds the same per-conversation allowance for Value and
+Comprehensive: five research rounds (six total calls), 24 query units, 512 KiB and
+900 seconds. Coverage selection distinguishes the profiles. Set
+`--research-rounds`, `--research-queries`, `--research-bytes` or `--timeout` on
+that template to configure them explicitly. The worker consumes the admitted
+limits; changing policy, limits, engine or skill requires a new native plan/work
+package. Manual plans without a runtime remain usable in the CLI, but cannot
+be submitted to the AI worker. `state runtime-template --skill-root DIR --policy
+value` emits the same effective contract without an inventory.
+
+Runtime-bound `state plan`, `work` and `record` require `--skill-root DIR`.
+The native CLI checks the actual trusted package outside source against the
+contract digest; the AI worker supplies this argument automatically. Changed
+engine or skill bytes require a new contract and plan. Historical state remains
+readable without the old package.
+
+For the bundled BYOK Codex adapter, export its trusted `--contract` descriptor
+and supply `--provider-contract FILE` to the native runtime/plan and bound
+plan/work/record commands. The worker receives the same file and requires the
+bundled adapter configuration to match. Model/effort/client-version changes invalidate
+old work. Use provider descriptors; schema-1 execution needs a fresh plan.
+See the [BYOK adapter contract](../../../docs/codex-reviewer.md).
+The default workflow uses stable-schema/addressed-source configuration with exact local
+validation, and `--workers 1` for price-focused review (`2` for optional speed).
+Configure the validator requirements before stable mode; create fresh bound work
+after changing skill/code/config bytes.
+
+Without an orchestration policy, the worker runs the selected model directly
+across its parallel job pool. It exposes research and final decisions without
+handoff or automatic verification instructions. A failed provider process with
+no completed-turn receipt can retry once in a fresh conversation using the same
+remaining job budget. Exhausted budgets, rejected completed replies and source
+validation failures do not receive that automatic retry. Recovery preserves
+completed jobs; use the existing `--resume-from` workflow for an incomplete attempt.
+
+`worker.json` reports the review mode, provider retries and observed token/time
+totals by provider/profile/role. Failed-call timings remain in `timings_ms`.
+Missing counters remain null, including cache writes when not exposed. Check
+`usage_complete`, `cache_write_usage_complete` and `unknown_provider_calls`
+before interpreting totals as complete. Native-only admission does not complete
+a separately required change pass.
+
+## Tiered controller
+
+Opt in at `state runtime-template` or `state plan-template` with
+`--review-orchestration FILE`, alongside the normal primary `--provider-contract`.
+The trusted JSON declares `expert` (a different model's provider descriptor),
+`case_limits` and `run_limits` (`model_calls`, `queries`, `bytes`,
+`timeout_seconds`), `max_reviews_per_job`, `audit_percent` and `audit_seed`.
+Use small related bundles within that declared size. A case is one bundle;
+its limits cover both assessments and explicit recovery attempts. Budget for
+verification and audits, not only the first review. Limits are dispatch/source
+work bounds, not a hard token or currency cap.
+
+Pass `--expert-command FILE` to the installed worker, using a separate trusted
+argv/config for the pinned expert profile. `--workers` and `--expert-workers`
+reserve routine/expert capacity; either queue can borrow unused capacity, with
+their sum as the tiered run's total concurrent-call cap;
+`--expert-review-ids ID,ID` starts the containing bundles there directly. Otherwise
+typed routing, proposed issues and seeded closure audits select a second stage.
+Keep the normal primary descriptor on native work/record calls. Native tiered
+admission also requires the controller's `--review-execution FILE` and its
+`assessments/` artifacts. Do not hand-assemble execution receipts to bypass review.
+Routine investigation allows up to two model turns for clear local work or a
+source-backed dependency request. Matching questions, scope and evidence, or an
+explicitly selected existing request, share scoped expert research by default.
+Experimental `--source-collector-profile routine` selects raw-source collection
+instead; `expert` selects the already bound expert profile for that collection.
+The profile is recorded in recovery bindings; it cannot change during recovery.
+Collection uses the bound runtime's research turns and shared budgets to locate
+then read relevant source; set research-rounds to permit dependent navigation.
+`research-knowledge.json` retains navigation summaries, unread edges and raw
+source support for the same snapshot and runtime, never a shared safe verdict.
+Collector narrative summaries stay in the audit register; callers receive raw
+source and explicit gaps, not the collector's description of effective checks.
+Each waiting caller resumes without new source queries; one further
+turn permits citation repair or interrupted-call recovery. All calls retain the
+original shared case/run ledger. Incomplete collection is valid pending work, not
+a trigger to repeat the same expert investigation. Ordinary pending-to-resolved
+progress is terminal; affirmative contrary verdicts still need resolution.
+If a routine draft's citation fails after its last normal turn, one unused turn
+in the original runtime and shared budgets may correct citations only. It cannot
+start more research or expand the case budget. Source-note schemas expose only
+eligible inspected-source handles; navigation stays available for locating code.
+The controller batches adjacent pending-question registrations into native
+`state pending-batch` transactions (up to 256 exact questions per transaction),
+preserving source/ownership checks and idempotent recovery.
+Optionally add `quality: {"adjudicate_disagreements": true, "final_qa": true}`
+to the orchestration JSON. Budget for up to four conversations per bundle plus
+their research turns. Adjudication retains the independent assessments and names
+the disputed claim and source resolution; unavailable external facts stay pending.
+Final QA can reopen exact IDs but cannot dismiss or promote a finding. It checks
+bounded bundles with a capped set of same-file peers, not a whole-run transcript;
+peer omissions remain explicit. Preserve `quality-summary.json` with the stage
+receipts. Without this policy, contrary verdicts remain pending for later review.
+The Action's automatic single-profile setup does not configure this
+local opt-in workflow. Preserve the run's checkpoints, receipts and stage files.

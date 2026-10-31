@@ -1,4 +1,5 @@
 use super::*;
+mod javascript_boundaries;
 
 const AUTHORIZATION_REVIEW_MARKER_RULE_ID: &str = "framework-authorization-review-marker";
 const CREDENTIAL_LIFECYCLE_REVIEW_MARKER_RULE_ID: &str =
@@ -51,11 +52,29 @@ enum OperationReviewFamily {
 fn server_mutation_review_marker_groups(
     sources: &RepositorySources,
     existing_evidence: &[Evidence],
-) -> Vec<ObservationGroup> {
+    scope: Option<&mehscan_core::ImpactScanScope>,
+    page: usize,
+    include_review_material: bool,
+) -> (Vec<ObservationGroup>, mehscan_core::ReviewMarkerAdmission) {
     let mut groups = Vec::new();
     let mut seen = BTreeSet::new();
-    let mut family_counts = BTreeMap::new();
     for file in sources.files.values() {
+        if !include_review_material && is_review_material_path(&file.path) {
+            continue;
+        }
+        if scope.is_some_and(|scope| match scope.result_policy.as_str() {
+            "changed_files" | "impact_scope" => !scope
+                .included_files
+                .iter()
+                .any(|item| item.path == file.path),
+            "changed_locations" => !scope
+                .changed_files
+                .iter()
+                .any(|item| item.path == file.path),
+            _ => false,
+        }) {
+            continue;
+        }
         if file.source.len() > MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES {
             continue;
         }
@@ -78,25 +97,26 @@ fn server_mutation_review_marker_groups(
             continue;
         }
         let spans = line_spans(&file.source);
-        let comment_ranges = file
-            .source
-            .contains("/*")
-            .then(|| StrDoc::try_new(&file.source, parser_language(language)).ok())
-            .flatten()
-            .map(|document| {
-                let ast = AstGrep::doc(document);
-                let root = ast.root();
-                root.dfs()
-                    .filter(|node| node.kind().as_ref().contains("comment"))
-                    .map(|node| node.range())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let mut file_count = 0;
+        let mut javascript_boundaries = javascript_boundaries::inspect(file, &spans);
+        let comment_ranges = javascript_boundaries
+            .as_ref()
+            .map(|index| index.comments.clone())
+            .unwrap_or_else(|| {
+                file.source
+                    .contains("/*")
+                    .then(|| StrDoc::try_new(&file.source, parser_language(language)).ok())
+                    .flatten()
+                    .map(|document| {
+                        let ast = AstGrep::doc(document);
+                        let root = ast.root();
+                        root.dfs()
+                            .filter(|node| node.kind().as_ref().contains("comment"))
+                            .map(|node| node.range())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            });
         for line_index in 0..spans.len() {
-            if file_count >= MAX_REVIEW_ADMISSION_MARKERS_PER_FILE {
-                break;
-            }
             let (line_start, line_end) = spans[line_index];
             let first_content = line_start + file.source[line_start..line_end].len()
                 - file.source[line_start..line_end].trim_start().len();
@@ -106,7 +126,31 @@ fn server_mutation_review_marker_groups(
             {
                 continue;
             }
-            let Some(marker) = server_mutation_review_marker(file, &spans, line_index) else {
+            let line = file.source[line_start..line_end].trim();
+            let marker = if let Some(index) = javascript_boundaries.as_mut() {
+                if ["@Post(", "@Put(", "@Patch(", "@Delete(", "@Mutation("]
+                    .iter()
+                    .any(|s| line.starts_with(s))
+                {
+                    index.decorated.remove(&line_index)
+                } else {
+                    server_mutation_review_marker(
+                        file,
+                        &spans,
+                        line_index,
+                        Some(index.mutation_members.contains(&line_index)),
+                        Some(index.route_invocations.get(&line_index).copied().unwrap_or(
+                            javascript_boundaries::RouteInvocation {
+                                possible_route: false,
+                                end_line: line_index,
+                            },
+                        )),
+                    )
+                }
+            } else {
+                server_mutation_review_marker(file, &spans, line_index, None, None)
+            };
+            let Some(marker) = marker else {
                 continue;
             };
             let start = spans[marker.start_index].0;
@@ -115,6 +159,12 @@ fn server_mutation_review_marker_groups(
                 continue;
             }
             let location = location_from_offsets(&file.path, &file.source, start, end);
+            if scope.is_some_and(|scope| {
+                scope.result_policy == "changed_locations"
+                    && !crate::impact::location_is_changed(&location, &scope.changed_files)
+            }) {
+                continue;
+            }
             let excerpt = &file.source[start..end];
             let descriptor = review_admission_descriptor(&marker, excerpt);
             if marker_covered_by_existing_evidence(
@@ -124,10 +174,6 @@ fn server_mutation_review_marker_groups(
                 end,
                 &descriptor,
             ) {
-                continue;
-            }
-            let family_count = family_counts.entry(descriptor.rule_id).or_insert(0usize);
-            if *family_count >= MAX_REVIEW_ADMISSION_MARKERS_PER_FAMILY {
                 continue;
             }
             let mut captures = BTreeMap::new();
@@ -183,11 +229,88 @@ fn server_mutation_review_marker_groups(
                 anchor_evidence_ids: vec![id],
                 priority: 1,
             });
-            *family_count += 1;
-            file_count += 1;
         }
     }
-    fair_marker_limit(groups, MAX_REVIEW_ADMISSION_MARKERS)
+    let recognized = groups.len();
+    let mut previously_admitted = 0;
+    let mut selected = Vec::new();
+    for current_page in 0..=page {
+        let mut files = BTreeMap::new();
+        let mut families = BTreeMap::new();
+        let eligible = groups
+            .iter()
+            .filter(|group| {
+                let file = files.entry(group.path.as_str()).or_insert(0usize);
+                let family = families
+                    .entry(group.evidence[0].rule_id.as_str())
+                    .or_insert(0usize);
+                if *file >= MAX_REVIEW_ADMISSION_MARKERS_PER_FILE
+                    || *family >= MAX_REVIEW_ADMISSION_MARKERS_PER_FAMILY
+                {
+                    return false;
+                }
+                *file += 1;
+                *family += 1;
+                true
+            })
+            .cloned()
+            .collect();
+        selected = fair_marker_limit(eligible, MAX_REVIEW_ADMISSION_MARKERS);
+        if current_page == page || selected.is_empty() {
+            break;
+        }
+        let ids = selected
+            .iter()
+            .map(|g| g.anchor_evidence_ids[0].clone())
+            .collect::<BTreeSet<_>>();
+        previously_admitted += selected.len();
+        groups.retain(|g| !ids.contains(&g.anchor_evidence_ids[0]));
+    }
+    let accounting = mehscan_core::ReviewMarkerAdmission {
+        page,
+        recognized,
+        previously_admitted,
+        admitted: selected.len(),
+        budget_deferred: recognized - previously_admitted - selected.len(),
+    };
+    let mut groups = selected;
+    // Presentation must not affect marker classification, coverage checks or
+    // bounded selection. An adjacent middleware name is not an inline handler.
+    for group in &mut groups {
+        let Some(file) = sources.files.get(&group.path) else {
+            continue;
+        };
+        if !matches!(
+            file.language,
+            Some(Language::Javascript | Language::Typescript | Language::Tsx)
+        ) {
+            continue;
+        }
+        let Some(evidence) = group.evidence.first_mut() else {
+            continue;
+        };
+        let Some(excerpt) = file
+            .source
+            .get(evidence.location.start.byte_offset..evidence.location.end.byte_offset)
+        else {
+            continue;
+        };
+        if let Some(label) = inline_route_label(excerpt) {
+            group.symbol = label.clone();
+            evidence.enclosing_symbol = Some(label.clone());
+            if let Some(operation) = evidence.captures.get_mut("operation") {
+                operation.text = label;
+            }
+        }
+    }
+    (groups, accounting)
+}
+
+fn inline_route_label(excerpt: &str) -> Option<String> {
+    let prefix = excerpt.lines().take(12).collect::<Vec<_>>().join("\n");
+    (prefix.contains("=>") || prefix.contains("function"))
+        .then(|| http_mutation_symbol(prefix.lines().next().unwrap_or_default()))
+        .flatten()
 }
 
 fn fair_marker_limit(groups: Vec<ObservationGroup>, limit: usize) -> Vec<ObservationGroup> {
@@ -228,6 +351,7 @@ fn fair_marker_limit(groups: Vec<ObservationGroup>, limit: usize) -> Vec<Observa
     selected
 }
 
+#[cfg(test)]
 pub(super) fn marker_groups(
     sources: &RepositorySources,
     existing_evidence: &[Evidence],
@@ -235,7 +359,32 @@ pub(super) fn marker_groups(
     // Marker families share the admission contract but keep separate, narrow
     // deterministic predicates. Add a new family here only when the engine can
     // establish its boundary and dangerous effect without AI inference.
-    server_mutation_review_marker_groups(sources, existing_evidence)
+    scoped_marker_groups(sources, existing_evidence, None)
+}
+
+#[cfg(test)]
+pub(super) fn scoped_marker_groups(
+    sources: &RepositorySources,
+    existing_evidence: &[Evidence],
+    scope: Option<&mehscan_core::ImpactScanScope>,
+) -> Vec<ObservationGroup> {
+    marker_page(sources, existing_evidence, scope, 0, true).0
+}
+
+pub(super) fn marker_page(
+    sources: &RepositorySources,
+    existing_evidence: &[Evidence],
+    scope: Option<&mehscan_core::ImpactScanScope>,
+    page: usize,
+    include_review_material: bool,
+) -> (Vec<ObservationGroup>, mehscan_core::ReviewMarkerAdmission) {
+    server_mutation_review_marker_groups(
+        sources,
+        existing_evidence,
+        scope,
+        page,
+        include_review_material,
+    )
 }
 
 fn marker_covered_by_existing_evidence(
@@ -246,7 +395,13 @@ fn marker_covered_by_existing_evidence(
     descriptor: &ReviewAdmissionDescriptor,
 ) -> bool {
     evidence.iter().any(|item| {
-        item.location.path == path
+        // A source-gated lookup is not coverage of the surrounding mutation's
+        // policy question, even when it remains available as raw evidence.
+        !item
+            .tags
+            .iter()
+            .any(|tag| tag == "review:source-flow-required")
+            && item.location.path == path
             && item.location.start.byte_offset < end
             && item.location.end.byte_offset > start
             && matches!(
@@ -328,12 +483,12 @@ pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewCo
     match operation_review_family(evidence)? {
         OperationReviewFamily::Authorization => Some(OperationReviewContract {
             relationship: "bounded_action_resource_authorization_review",
-            security_question: "Does the supplied operation, subject, selected resource, and applicable policy establish effective authorization for this exact action?",
+            security_question: "Does this action actually select, mutate, disclose, or issue authority over a protected resource? Trace its real effect and effective application/inherited policy; a logged action name or success-shaped response alone does not establish a protected mutation. Does authorization reject the exact unauthorized action before that effect?",
             title: "Review action and resource authorization",
         }),
         OperationReviewFamily::CredentialLifecycle => Some(OperationReviewContract {
             relationship: "bounded_credential_lifecycle_review",
-            security_question: "Does the supplied credential or authenticator transition enforce the required subject proof, recovery authority, current credential, or step-up authentication?",
+            security_question: "Is there an actual credential transition or an authority-bearing token with account binding and a validating consumer? A random token or success message alone proves neither. For the shown effect, is required subject proof, recovery authority, current credential, or step-up authentication enforced before mutation or authority issuance?",
             title: "Review credential lifecycle state transition",
         }),
         OperationReviewFamily::ObjectBinding => Some(OperationReviewContract {
@@ -491,7 +646,9 @@ pub(super) fn decision_questions(
             if facts.iter().any(|fact| {
                 matches!(
                     fact.role.as_str(),
-                    "helper_definition_context" | "captured_definition_context"
+                    "helper_definition_context"
+                        | "captured_definition_context"
+                        | "imported_member_definition_context"
                 ) && fact.symbol == helper
             }) {
                 Vec::new()
@@ -518,7 +675,9 @@ pub(super) fn decision_questions(
             if facts.iter().any(|fact| {
                 matches!(
                     fact.role.as_str(),
-                    "helper_definition_context" | "captured_definition_context"
+                    "helper_definition_context"
+                        | "captured_definition_context"
+                        | "imported_member_definition_context"
                 ) && fact.symbol == helper
             }) {
                 Vec::new()
@@ -547,8 +706,11 @@ fn fact_supplies_mutation_helper(fact: &ReviewNeighborhoodFact, handler: &str) -
         .saturating_add(1);
     matches!(
         fact.role.as_str(),
-        "review_admission_helper_context" | "helper_definition_context"
-    ) && supplied_lines < MAX_REVIEW_HELPER_LINES
+        "review_admission_helper_context"
+            | "helper_definition_context"
+            | "imported_member_definition_context"
+    ) && !fact.excerpt.trim().is_empty()
+        && supplied_lines < MAX_REVIEW_HELPER_LINES
 }
 
 pub(super) fn preferred_lookup_symbol(evidence: &[Evidence]) -> Option<String> {
@@ -589,77 +751,12 @@ fn preferred_capture(evidence: &[Evidence], names: &[&str]) -> Option<String> {
     })
 }
 
-pub(super) fn helper_facts(
-    sources: &RepositorySources,
-    group: &ObservationGroup,
-    existing: &[ReviewNeighborhoodFact],
-    limit: usize,
-) -> (Vec<ReviewNeighborhoodFact>, bool) {
-    if !group.evidence.iter().any(is_marker) {
-        return (Vec::new(), false);
-    }
-    let Ok(anchor_file) = sources.file(&group.path) else {
-        return (Vec::new(), false);
-    };
-    let handlers = group
-        .evidence
-        .iter()
-        .flat_map(|item| item.captures.iter())
-        .filter(|(name, _)| name.starts_with("related_handler_"))
-        .map(|(_, capture)| capture.text.as_str())
-        .collect::<BTreeSet<_>>();
-    let mut facts = Vec::new();
-    for handler in handlers {
-        for file in sources
-            .files
-            .values()
-            .filter(|file| file.language == anchor_file.language)
-            .filter(|file| !is_generic_mutation_reference(&handler) || file.path == group.path)
-            .filter(|file| file.source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES)
-        {
-            let spans = line_spans(&file.source);
-            for (line_index, (start, end)) in spans.iter().copied().enumerate() {
-                if authorization_definition_identifier(&file.source[start..end]).as_deref()
-                    != Some(handler)
-                {
-                    continue;
-                }
-                let end_index = textual_definition_end_with_limit(
-                    &file.source,
-                    &spans,
-                    line_index,
-                    MAX_REVIEW_HELPER_LINES,
-                );
-                let location =
-                    location_from_offsets(&file.path, &file.source, start, spans[end_index].1);
-                if facts_cover_location(existing, &location)
-                    || facts_cover_location(&facts, &location)
-                {
-                    continue;
-                }
-                if facts.len() == limit {
-                    return (facts, true);
-                }
-                facts.push(ReviewNeighborhoodFact {
-                    role: "review_admission_helper_context".to_string(),
-                    symbol: handler.to_string(),
-                    location,
-                    excerpt: file.source[start..spans[end_index].1].to_string(),
-                    evidence_id: group.anchor_evidence_ids.first().cloned(),
-                    provenance: textual_provenance(
-                        "bounded exact review-admission helper definition, lexical non-flow 1",
-                    ),
-                });
-            }
-        }
-    }
-    (facts, false)
-}
-
 fn server_mutation_review_marker(
     file: &SourceFile,
     spans: &[(usize, usize)],
     line_index: usize,
+    javascript_mutation_member: Option<bool>,
+    javascript_route_invocation: Option<javascript_boundaries::RouteInvocation>,
 ) -> Option<ServerMutationMarker> {
     let (start, end) = spans[line_index];
     let line = file.source[start..end].trim();
@@ -675,7 +772,14 @@ fn server_mutation_review_marker(
         }
         Language::Kotlin => kotlin_server_mutation_marker(file, spans, line_index, line),
         Language::Javascript | Language::Typescript | Language::Tsx => {
-            javascript_server_mutation_marker(file, spans, line_index, line)
+            javascript_server_mutation_marker(
+                file,
+                spans,
+                line_index,
+                line,
+                javascript_mutation_member,
+                javascript_route_invocation,
+            )
         }
         Language::Php => php_server_mutation_marker(file, spans, line_index, line),
         Language::Go => go_server_mutation_marker(file, spans, line_index, line),
@@ -776,6 +880,8 @@ fn javascript_server_mutation_marker(
     spans: &[(usize, usize)],
     line_index: usize,
     line: &str,
+    mutation_member: Option<bool>,
+    route_invocation: Option<javascript_boundaries::RouteInvocation>,
 ) -> Option<ServerMutationMarker> {
     if ["@Post(", "@Put(", "@Patch(", "@Delete(", "@Mutation("]
         .iter()
@@ -799,10 +905,18 @@ fn javascript_server_mutation_marker(
     } else {
         false
     };
-    if javascript_http_mutation_route(line) || chained_mutation_route {
+    if (javascript_http_mutation_route(line) || chained_mutation_route)
+        && route_invocation.is_none_or(|call| call.possible_route)
+    {
         let symbol =
             http_mutation_symbol(line).unwrap_or_else(|| "HTTP mutation route".to_string());
-        return marker_from_inline_boundary(file, spans, line_index, &symbol);
+        return marker_from_inline_boundary_through(
+            file,
+            spans,
+            line_index,
+            &symbol,
+            route_invocation.map(|call| call.end_line),
+        );
     }
 
     if (line.contains("validatedActionWithUser(")
@@ -814,7 +928,9 @@ fn javascript_server_mutation_marker(
     }
 
     if line.contains(": async")
-        && javascript_inside_mutation_object(&file.source, start_of(spans, line_index))
+        && mutation_member.unwrap_or_else(|| {
+            javascript_inside_mutation_object(&file.source, start_of(spans, line_index))
+        })
     {
         return marker_from_inline_boundary(file, spans, line_index, "graphql-mutation");
     }
@@ -933,7 +1049,22 @@ fn marker_from_inline_boundary(
     line_index: usize,
     fallback_symbol: &str,
 ) -> Option<ServerMutationMarker> {
-    let end_index = textual_definition_end_with_limit(&file.source, spans, line_index, 120);
+    marker_from_inline_boundary_through(file, spans, line_index, fallback_symbol, None)
+}
+
+fn marker_from_inline_boundary_through(
+    file: &SourceFile,
+    spans: &[(usize, usize)],
+    line_index: usize,
+    fallback_symbol: &str,
+    call_end_line: Option<usize>,
+) -> Option<ServerMutationMarker> {
+    let mut end_index = textual_definition_end_with_limit(&file.source, spans, line_index, 120);
+    if let Some(call_end_line) = call_end_line {
+        // A multiline route chain can continue after the first balanced call.
+        // Extend through its invocation without widening the source budget.
+        end_index = end_index.max(call_end_line.min(line_index + 119).min(spans.len() - 1));
+    }
     let excerpt = &file.source[spans[line_index].0..spans[end_index].1];
     let mut handlers = terminal_call_identifiers(excerpt, "");
     let boundary_line = &file.source[spans[line_index].0..spans[line_index].1];
@@ -1180,6 +1311,20 @@ mod route_handler_tests {
     use super::terminal_route_handlers;
 
     #[test]
+    fn inline_route_label_does_not_claim_a_middleware_identity() {
+        assert_eq!(
+            super::inline_route_label(
+                "router.patch(\n '/:collection',\n collectionExists,\n asyncHandler(async (req) => {\n service.update(req.body);"
+            ),
+            Some("PATCH route".into())
+        );
+        assert_eq!(
+            super::inline_route_label("app.post('/items', authenticate, updateItem)"),
+            None
+        );
+    }
+
+    #[test]
     fn uses_invoked_handler_instead_of_module_or_wrapper() {
         assert_eq!(
             terminal_route_handlers("app.delete('/api/Products/:id', security.denyAll())")
@@ -1226,6 +1371,9 @@ mod route_handler_tests {
 }
 
 fn javascript_http_mutation_route(line: &str) -> bool {
+    if !line.contains('.') || !line.contains('(') {
+        return false;
+    }
     let compact = line
         .split_whitespace()
         .collect::<String>()
@@ -1309,4 +1457,42 @@ fn review_admission_marker_id(path: &str, rule_id: &str, start: usize, end: usiz
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("ev-{hash:016x}")
+}
+
+#[cfg(test)]
+mod effect_cases {
+    use super::*;
+
+    #[test]
+    fn simulated_and_actual_transitions_keep_separate_source_bound_questions() {
+        let source = include_str!("../../../../tests/fixtures/v11-review-effects/Actions.cs");
+        let sources = RepositorySources {
+            node_modules: Default::default(),
+            root: ".".into(),
+            files: BTreeMap::from([(
+                "Actions.cs".into(),
+                SourceFile {
+                    path: "Actions.cs".into(),
+                    language: Some(Language::Csharp),
+                    source: source.into(),
+                },
+            )]),
+        };
+        let groups = server_mutation_review_marker_groups(&sources, &[], None, 0, true).0;
+        assert_eq!(groups.len(), 3);
+        let mut identities = BTreeSet::new();
+        for symbol in ["ResetPasswordDemo", "ResetPassword", "DeleteUser"] {
+            let group = groups.iter().find(|group| group.symbol == symbol).unwrap();
+            let marker = &group.evidence[0];
+            assert_eq!(marker.kind, EvidenceKind::SensitiveOperation);
+            assert!(identities.insert(marker.id.clone()));
+            let location = &marker.location;
+            let text = &source[location.start.byte_offset..location.end.byte_offset];
+            assert!(text.contains("return Ok"));
+            assert_eq!(text.contains("password = next"), symbol == "ResetPassword");
+            // Admission retains questions for both. It must not classify a
+            // response-shaped action as a proven state transition or safe code.
+            assert!(review_contract(&group.evidence).is_some());
+        }
+    }
 }

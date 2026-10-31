@@ -52,6 +52,15 @@ pub(super) fn inventory_only(
     if crate::code::closed_query(item) {
         return true;
     }
+    if item.capability == Capability::HtmlOutput
+        && item.cwe_candidates == ["CWE-79"]
+        && item
+            .tags
+            .iter()
+            .any(|tag| tag == "html-url:non-executable-link-prefix")
+    {
+        return true;
+    }
     if matches!(
         item.rule_id.as_str(),
         "php-html-output" | "php-file-inclusion"
@@ -532,7 +541,10 @@ pub(super) fn filesystem_research_hint(item: &Evidence) -> Option<ValueReviewHin
 /// Standalone frontend occurrences need a useful producer/context question,
 /// rather than inheriting Value merely from the XSS capability. Connected paths
 /// and source/sink groups call the stronger admission policy instead.
-pub(super) fn frontend_research_hint(item: &Evidence) -> Option<ValueReviewHint> {
+pub(super) fn frontend_research_hint(
+    item: &Evidence,
+    evidence: &[Evidence],
+) -> Option<ValueReviewHint> {
     if item.capability != Capability::HtmlOutput || item.cwe_candidates != ["CWE-79"] {
         return None;
     }
@@ -544,6 +556,23 @@ pub(super) fn frontend_research_hint(item: &Evidence) -> Option<ValueReviewHint>
         )
     }) {
         return None;
+    }
+    // An unresolved v-html expression alone is not a demonstrated input flow.
+    // Keep its exact Comprehensive ID and producer question, rather than
+    // interpreting an asset/property/helper name as either tainted or safe.
+    // Vue script and template scopes differ: any observed component input
+    // conservatively prevents this cut, even without a linked template path.
+    if item.rule_id == "vue-sfc-v-html-output"
+        && !evidence.iter().any(|other| {
+            other.kind == EvidenceKind::Source && other.location.path == item.location.path
+        })
+    {
+        return Some(ValueReviewHint {
+            reason: "frontend_html_producer_research".into(),
+            target: item.location.path.clone(),
+            assumption: "Unconnected Vue raw-HTML consumer with no observed component input or bound operand origin. Value defers producer research; Comprehensive retains the exact ID. This is a cost/scope decision, not proof of static assets, sanitization or safety. Reopen for a demonstrated untrusted writer/caller or input relationship; stored content, props and reactive updates may require source review.".into(),
+            depends_on: None,
+        });
     }
     let link = (item.rule_id.ends_with("url-attribute-output")
         && item
@@ -592,7 +621,46 @@ pub(super) fn frontend_research_hint(item: &Evidence) -> Option<ValueReviewHint>
     })
 }
 
+/// Called only for a standalone, single-anchor sink observation. Connected
+/// input relationships retain their existing Value priority.
+pub(super) fn browser_relative_research_hint(item: &Evidence) -> Option<ValueReviewHint> {
+    if item.capability == Capability::OutboundNetworkRequest
+        && item.cwe_candidates == ["CWE-918"]
+        && item.context.runtime_environment == Some(RuntimeEnvironment::Browser)
+        && item
+            .tags
+            .iter()
+            .any(|t| t == "url-shape:root-relative-request-target")
+    {
+        Some(ValueReviewHint {
+            reason: "browser_relative_destination_research".into(),
+            target: item.location.path.clone(),
+            assumption: "Bounded URL construction retains a fixed root-relative prefix at an ordinary browser request. Variable route/query data alone does not demonstrate a network-authority change. Comprehensive retains the exact destination question: inspect client defaults/base/hooks and any actual credential/data disclosure or protected endpoint effect. No same-origin, authorization or safety verdict is inferred.".into(),
+            depends_on: None,
+        })
+    } else {
+        None
+    }
+}
+
 pub(super) fn comprehensive_hint(item: &Evidence) -> Option<ValueReviewHint> {
+    if item.capability == Capability::OutboundNetworkRequest
+        && item
+            .tags
+            .iter()
+            .any(|t| t == "url-shape:fixed-http-authority")
+        && item
+            .tags
+            .iter()
+            .any(|t| t == "outbound-request:unresolved-client-options")
+    {
+        return Some(ValueReviewHint {
+            reason: "fixed_destination_client_options_research".into(),
+            target: item.location.path.clone(),
+            assumption: "The observed URL has fixed authority; inspect the separately supplied client options/hooks before closing destination selection. No attacker-selected destination or safe client configuration is established.".into(),
+            depends_on: None,
+        });
+    }
     // An origin can decide the redirect verdict without making ordinary
     // navigation high-value. Keep the question and exact Comprehensive ID.
     if item
