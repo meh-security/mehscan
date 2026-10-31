@@ -1255,6 +1255,7 @@ sys.exit(2)
         self.assertTrue(json.loads((Path(args.output) / "native-writes/change-questions.json").read_text())["receipts"][0]["replayed"])
 
     def test_recovery_cannot_reset_exhausted_turn_budget_or_fork_an_old_attempt(self):
+        expected_calls = json.loads(self.package.read_text())["payload"]["runtime"]["limits"]["rounds"] + 1
         normal = self.base / "normal.py"
         normal.write_text(self.reviewer.read_text())
         self.reviewer.write_text('import json,sys,subprocess\nfrom pathlib import Path\ntask=json.load(sys.stdin)\n'
@@ -1268,7 +1269,7 @@ sys.exit(2)
         first = self.base / "budget-first"
         result = self.invoke(first.name, ["--phase", "native", "--workers", "1"])
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(len((self.base / "model-calls.jsonl").read_text().splitlines()), 4)
+        self.assertEqual(len((self.base / "model-calls.jsonl").read_text().splitlines()), expected_calls)
         (self.base / "release-budget").touch()
         result = self.invoke("budget-retry", ["--phase", "native", "--resume-from", str(first)])
         self.assertNotEqual(result.returncode, 0)
@@ -1278,7 +1279,7 @@ sys.exit(2)
         self.assertNotEqual(result.returncode, 0)
         record = json.loads((self.base / "budget-fork/worker.json").read_text())
         self.assertIn("already continued", record["detail"])
-        self.assertEqual(len((self.base / "model-calls.jsonl").read_text().splitlines()), 4)
+        self.assertEqual(len((self.base / "model-calls.jsonl").read_text().splitlines()), expected_calls)
         self.assert_no_decisions()
 
     def test_native_csharp_policy_source_reaches_reviewer_and_admits_both_verdicts(self):
