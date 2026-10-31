@@ -3,8 +3,7 @@
 Changed scope combines with Value (default) or Comprehensive. Scan whole changed
 files, prioritize the changed relationships, and research decisive context within
 the authorized source root. It does not establish whole-application coverage or
-that every result was introduced by this diff. These flags require a build that
-supports `--diff-mode files`; they are not in the released 0.8.0 executable.
+that every result was introduced by this diff. These flags require Mehscan 0.9.0 or newer.
 
 ## Select the comparison
 

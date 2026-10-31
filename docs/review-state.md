@@ -1,8 +1,7 @@
 # Local review state and decision history
 
-V11 source builds provide `mehscan state` for a trusted local coordinator. It
-keeps generation ownership and immutable native decisions across processes. The
-released 0.8.0 executable does not provide these commands. The advisory GitHub
+Mehscan 0.9.0 and newer provide `mehscan state` for a trusted local coordinator. It
+keeps generation ownership and immutable native decisions across processes. The advisory GitHub
 Action can optionally call them on one configured persistent host. Independent
 ephemeral runners do not share a store; see [Action coordination](github-action.md#persistent-host-coordination).
 

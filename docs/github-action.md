@@ -11,8 +11,7 @@ or approve a merge. Native preparation can complete while security questions and
 unsupported/deleted contracts still need review. Do not configure this job as a
 required security gate.
 
-This implementation requires the V11 CLI in a reviewed source build. The released
-0.8.0 executable lacks these options. Set repository variable `MEHSCAN_V11_COMMIT`
+This implementation requires Mehscan 0.9.0 or newer. Set repository variable `MEHSCAN_V11_COMMIT`
 to a reviewed full commit SHA containing both the Action and CLI, then copy
 [the caller workflow](examples/mehscan-advisory.yml) into the target repository.
 The example builds that pinned tool in its own checkout and places the executable

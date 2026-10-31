@@ -21,13 +21,13 @@ Download a package from [GitHub Releases](https://github.com/meh-security/mehsca
 **Linux and macOS**
 
 ```sh
-bash ./skills/mehscan-security/scripts/install-mehscan.sh --version 0.8.0
+bash ./skills/mehscan-security/scripts/install-mehscan.sh --version 0.9.0
 ```
 
 **Windows**
 
 ```powershell
-pwsh -NoProfile -File ./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.8.0
+pwsh -NoProfile -File ./skills/mehscan-security/scripts/install-mehscan.ps1 -Version 0.9.0
 ```
 
 The installers require GitHub CLI (`gh`). Linux/macOS also need Bash and Python 3.9+; Windows needs PowerShell 7. See the [installation guide](docs/installation.md) for platform setup and installation options.
@@ -57,13 +57,13 @@ mehscan scan path/to/repository --format sarif-candidates > candidates.sarif
 
 Candidates are starting points for investigation. Review them before treating them as confirmed vulnerabilities.
 
-The development source also supports changed-file review:
+Review changed files:
 
 ```sh
 mehscan scan path/to/repository --changed-from HEAD --diff-mode files --format candidates
 ```
 
-Changed-file review and the updated AI workflow are not yet available in the released 0.8.0 package. See the [Changed review guide](skills/mehscan-security/references/changed-review.md) for local changes, pull requests and release comparisons.
+See the [Changed review guide](skills/mehscan-security/references/changed-review.md) for local changes, pull requests and release comparisons.
 
 ## AI-assisted review
 
@@ -94,7 +94,7 @@ For scripted use, the [local AI worker](docs/review-worker.md) runs a configured
 - [Review state and history](docs/review-state.md)
 - [GitHub Action](docs/github-action.md)
 - [Extended SQL and NoSQL coverage](docs/extended-database-coverage.md)
-- [Release notes](docs/release-notes-v0.8.0.md)
+- [Release notes](docs/release-notes-v0.9.0.md)
 
 Optional experimental backends provide additional compiler context for [C# through Roslyn](backends/roslyn/README.md) and [JavaScript/TypeScript](backends/typescript/README.md). Standard scanning requires neither backend.
 

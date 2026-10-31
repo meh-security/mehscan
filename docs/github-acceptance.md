@@ -18,8 +18,7 @@ in this repository; all security findings are deliberate test cases.
    credentials, PAT or self-hosted runner is required for native artifact tests.
 4. After a reviewed V11 commit is published to `meh-security/mehscan`, add the
    repository Actions variable `MEHSCAN_V11_COMMIT` containing its full 40-character
-   SHA. The currently released 0.8.0 and the local uncommitted implementation are
-   not valid substitutes. A reviewed branch commit is sufficient; no release tag
+   SHA. Use a reviewed commit from Mehscan 0.9.0 or newer. A reviewed branch commit is sufficient; no release tag
    is needed. Wait for its CI/review before enabling the caller.
 5. Copy [mehscan-advisory.yml](examples/mehscan-advisory.yml) into the test repo as
    `.github/workflows/mehscan-advisory.yml`, on `main`, with the variable configured.

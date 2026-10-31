@@ -347,7 +347,7 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "mehscan-cli"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "fs2",
  "mehscan-core",
@@ -359,7 +359,7 @@ dependencies = [
 
 [[package]]
 name = "mehscan-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -367,7 +367,7 @@ dependencies = [
 
 [[package]]
 name = "mehscan-engine"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "ast-grep-config",
  "ast-grep-core",
