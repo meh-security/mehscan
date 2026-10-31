@@ -1,134 +1,73 @@
-# Changed review release readiness
+# App and AI review release readiness
 
-## Paired product acceptance — 2026-10-31
+Updated 2026-10-31. The release unit is the executable plus its matching security
+skill, worker and adapter. The released version remains **0.8.0**; the Changed
+workflow and finalized AI defaults described here are in the development source.
+No new version, tag or publication has been created.
 
-The release includes the app and AI review through the skill. The
-[latest defaults and release plan](ai-defaults-and-release-plan-2026-10-31.md)
-identifies a gap between native/adapter defaults and the configuration used by
-recent live studies. Align and accept one effective Value configuration before
-claiming the paired product is ready. Default completion/source checks, selective
-model follow-up and opt-in reasoning audits have different acceptance requirements.
-The default settings are now implemented and locally checked through a development
-archive. CI records complete test classifications/timings while retaining every
-test. The [installed live acceptance](experiments/review-installed-defaults-2026-10-31.md)
-found and corrected a mandatory diagnostic-table failure; its targeted retest
-admits all six claims with supported findings and explicit uncertainty. Hosted
-candidate checks and versioned optimized asset verification remain pending;
-automatic selective follow-up is still a promotion candidate. This bounded result
-does not establish broad precision or resolve historical intermittent provider errors.
+## Current product behavior
 
-The preparation study is closed; its deterministic replay is not fresh live
-acceptance. Ordinary skill acceptance and company-auth/GitHub automation are
-distinct paths. Preserve the earlier local results and provider failures below,
-but do not substitute native-only release acceptance for the paired product.
+- The scanner runs locally without a model. AI review starts explicitly through
+  the security skill or a configured worker. The Action remains native by default.
+- Value is the ordinary AI profile: policy-based selection, explicit unreviewed
+  deferrals and one configured reviewer. Comprehensive selects every admitted ID.
+- Both worker profiles allow five research rounds (six total model calls),
+  24 query units, 512 KiB and 900 seconds per investigation. Effective overrides
+  are bound into the plan. A completed investigation may retain uncertainty.
+- The bundled adapter defaults to stable schemas and addressed source. Native
+  evidence validation, finalization, execution traces and usage/cache accounting
+  remain active. Install the adapter's Python requirements before use.
+- Detailed authority/token tables require `"boundary_checks": true`. They are
+  optional diagnostics. Selective automatic second review, broad workspace routing
+  and dependency preloading have not been promoted into the ordinary profile.
 
-## Current candidate — 2026-10-30
+See [worker setup](review-worker.md), [adapter configuration](codex-reviewer.md),
+[installation](installation.md) and [state/history](review-state.md).
 
-The review preparation/navigation study is closed for release. Ship the tested
-native navigation and recovery fixes; retain native plus selective workspace and
-keep preparation experiments opt-in. The [closure report](experiments/review-release-closure-2026-10-30.md)
-records the retained scope limits, TypeScript alias fix, bounded query correction
-and corrected caller-attribution replay. Semantic verdict rewriting and another
-app/model comparison are not release prerequisites.
+## Acceptance completed locally
 
-The remaining release gates are full hosted CI on the exact reviewed commit,
-including MSRV/platform acceptance, followed by the selected version's paired
-assets and installer/pin verification. Existing provider-403 failures and real
-company-auth acceptance remain open for the optional AI reviewer: do not promote
-it by default or claim reliable unattended completion. No tag or publication has
-been performed. The sections below retain the broader workflow's acceptance history.
+The installed 12-claim live package finalized 11 claims. One uncertainty draft
+failed a mandatory auxiliary table citation check. Those detailed tables are now
+opt-in; the ordinary source/evidence guards remain. A fresh six-claim targeted
+retest completed normal admission in isolated acceptance state, retained two
+complex authority findings and the own-profile/parameterized-SQL controls, and
+preserved two explicit dependency questions.
 
-## Earlier workflow acceptance
+All 49 calls across the two runs have receipts. Total frozen Standard API-equivalent
+cost was $0.6127784; no provider 403s occurred. These are bounded development
+results, not an invoice, general precision/recall estimate or proof that historical
+intermittent provider failures are resolved. Some available helpers remain unread.
 
-The Changed scope and advisory workflow are implemented on the V11 development
-branch. They are experimental until the reviewed commit passes hosted acceptance.
-The released 0.8.0 executable does not include these options. No version bump or
-new release is included in this change.
+Development archives pass exact membership, scanner/report/finalization and
+installed Changed-worker smoke checks. Focused native/profile checks and the
+full adapter suite pass locally. CI records worker test classifications and
+per-test durations while retaining all tests. These results do not substitute
+for platform CI or acceptance of versioned optimized release assets.
 
-## What is implemented
+## Remaining release gates
 
-- Whole changed-file scope with pinned PR merge-base/head and direct release endpoints.
-- Paired CLI/skill workflow, repo-scoped native fingerprints, review history and
-  exact supersession. History never makes an answer valid for changed evidence.
-- Native default; optional Value/Comprehensive review with bounded unchanged-source
-  research, native finalization and explicit pending/deferred work.
-- Read-only advisory Action with an opt-in BYOK Codex/Luna reviewer, explicit auth,
-  manual fork authorization, and JSON/SARIF/usage/completion artifacts.
-- SARIF locations, fingerprints and native-supported flows. Missing flows are not
-  invented; successful execution or an empty SARIF does not establish safety.
+1. Run full CI against the final reviewed commit, including the minimum supported
+   Rust version and supported operating systems. Verify both macOS release targets.
+2. Choose the release version, build the optimized paired archives and verify
+   installation, checksums, source pins and client compatibility from those exact
+   assets. Confirm package documentation matches the chosen version.
+3. Review the concise release notes and publish only after those gates pass.
 
-Local Rust 1.88 workspace tests/doctests, Windows and Ubuntu orchestration suites,
-installer checks and installed-package workflows pass. Ubuntu package acceptance
-uses a freshly built optimized binary. Local live Luna/medium simulations used
-ChatGPT auth; they do not establish company-key or actual GitHub acceptance.
-Optional corpus tests remain explicitly ignored when those corpora are absent.
+Further app/model tournaments, automatic semantic verdict rewriting and a
+universal second reviewer are not prerequisites for this release. Preserve
+coverage boundaries, actionable uncertainty and explicit execution failures.
+The experiment records and older acceptance history remain in repository history
+and the repository's development plans/reports.
 
-## Before merging and releasing
+## Separate automation acceptance
 
-1. Review the paired engine/skill/controller diff and run full hosted CI on its
-   exact commit, including Windows/MSRV and both macOS release architectures.
-2. Pin that reviewed commit in one synthetic integration repository. Start with
-   native artifacts, then test real company-auth Value/Comprehensive review.
-   Follow [GitHub acceptance setup](github-acceptance.md); no GitHub App is needed.
-3. Observe real delivery/fetch, force push, base movement/retarget, duplicate/late
-   runs, cancellation, missing/bad auth, malformed model output, deadlines and
-   explicitly authorized manual fork review. Automatic forks remain native-only.
-4. Close the supported-scope quality matrix and measure matched Changed/full costs
-   on backend and frontend/monorepo changes. The earlier Go/Owncast removed-guard
-   case has no established native finding representation; keep its source-only
-   effect pending and qualify coverage. Unresolved work must never become clean.
-5. Choose the release version, build the exact assets and verify installers,
-   source pins, client compatibility and documentation before tagging.
+Local skill/worker acceptance and real company-auth GitHub execution are distinct.
+Before promoting unattended BYOK automation, use one pinned synthetic integration
+repository and follow [GitHub acceptance setup](github-acceptance.md). Exercise
+actual delivery, endpoint drift, cancellation, duplicate/late runs, missing/bad
+auth and explicitly authorized manual fork review. Automatic forks remain native-only.
+Existing local simulations do not certify real company-key or hosted acceptance.
 
-Battle testing follows release acceptance: use varied real PRs/release deltas,
-spot-check verdicts and track missed effects, false positives, pending burden,
-latency and tokens. Synthetic passing tests are not a recall rate or token-savings
-claim. Current limits do not cap currency/total tokens; failed-call usage can be
-incomplete.
-
-## Later integrations
-
-SARIF files are available now. A trusted publisher, automatic GHAS upload,
-comment commands, Copilot/Claude parity and required merge gates need separate
-implementation and acceptance. GHAS dismissal must not import a native safe verdict.
-Org memory, hosted inference and automatic fixes are outside this release scope.
-
-## Review-evidence follow-up
-
-The `feat/v11-review-evidence` branch adds inferred C# ZIP extraction questions
-and bounded ASP.NET startup/base-class source preparation for the reviewer.
-Credential and authorization guidance requires actual effects. Extraction and
-temporary-file deletion retain separate native identities; source preparation
-supplies navigation evidence, not proof that a policy is active.
-
-Local acceptance covers inferred ZIP and existing C# filesystem regressions,
-source-bound policy preparation through worker admission, and Windows/Ubuntu
-provider and worker tests. These tests verify evidence delivery and admission;
-they do not certify the model's security reasoning.
-
-The paired Luna/medium run at vulnerable .NET revision
-`60d060faf08079887e71a98498fe9a9d623e8ffc` passed normal native admission.
-Value settled 45 of 47 selected questions with two pending and two deferred;
-Comprehensive settled 46 of 49 with three pending. Both dismissed the simulated
-password-reset operations and exported the new extraction sink at its actual
-line. Structural SARIF checks passed, including unique fingerprint sets within
-each run and identical maps for all 15 issue IDs shared between modes on that
-snapshot. Input tokens increased relative to the saved baseline in both modes.
-
-Live Luna/medium review of a pinned vulnerable .NET application found remaining
-quality gaps: a ZIP defect can still be attributed to adjacent cleanup, shell
-allowlist reasoning can miss permitted newlines, and public operations can be
-flagged without establishing a required access policy. Executable C# inside Razor
-and non-UTF-8 LDAP source remain coverage gaps. Treat these as release evaluation
-work, and do not infer safety or token savings from fewer pending questions.
-
-## Development builds and reruns
-
-Reuse the checkout's `target` directory and overwrite the existing executable,
-archive and run logs. Do not create a target, source clone or binary per rerun.
-For local test builds use `CARGO_INCREMENTAL=0` and `CARGO_PROFILE_TEST_DEBUG=0`,
-as CI does; full debug metadata can make this workspace's test executables large.
-Keep one build cache during validation. Afterward use Cargo's scoped clean command
-for that cache, retaining only the current CLI/archive and compact acceptance
-records. Check free space on the host volume as well as inside WSL: its virtual
-disk consumes host space even when the guest reports a large available capacity.
+JSON, Markdown and SARIF are advisory outputs. Automatic GHAS publication,
+protected merge gates, hosted persistence and automatic fixes need separate work.
+Successful execution or an empty SARIF does not establish security clearance.

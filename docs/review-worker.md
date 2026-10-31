@@ -3,11 +3,29 @@
 V11 source builds include `scripts/review_worker.py`, a provider-neutral local
 controller. It uses the same inventory, bundle finalizer, report importer and
 [state journal](review-state.md) as manual review. It does not publish to GitHub.
-The advisory Action defaults to native preparation; its optional Value/Comprehensive
+The advisory Action defaults to native preparation. Its optional Value/Comprehensive
 mode prepares an active private [review handoff](github-action.md#active-review-handoff-local-integration-preview).
-No automatic model launch is enabled in the composite Action.
+Supplying `provider-config` explicitly enables the bundled reviewer; without it,
+a trusted local consumer can execute the handoff.
 
 ## Ordinary review profile
+
+Use `--policy value --selection policy` for ordinary AI review. Comprehensive
+selects every admitted ID. Both use five research rounds (six total model calls),
+24 query units, 512 KiB and 900 seconds per investigation, with native-bound
+overrides available. Finish settled relationships early; deferrals remain unreviewed.
+
+The [bundled adapter](codex-reviewer.md) defaults to stable schema and addressed
+source. Execution traces, source validation and usage/cache accounting are part
+of ordinary review. Detailed boundary tables require `"boundary_checks": true`;
+they are diagnostic observations, not an independent second reviewer. Automatic
+selective follow-up, broad workspace routing and dependency preloading remain
+experimental. Manual skill use runs in the host agent and does not require this adapter.
+
+See [Prepare review work](#prepare-review-work) for the ordinary setup. The
+following preparation options are optional experiments.
+
+## Optional source preparation
 
 An opt-in preparation experiment can build an ordinary `--source-profile` from
 native sweep helper/context leads. Save the selected bundles' `review-sweep`
@@ -110,10 +128,8 @@ jobs. An orchestration policy, collection agent or automatic second review is
 not required. Group claims only when they share the actual operation and
 implementation; a shared file or CWE alone is insufficient.
 
-Value and Comprehensive now use the same per-investigation defaults:
-`--research-rounds 5 --research-queries 24 --research-bytes 524288 --timeout 900`.
-These are six total model calls and ceilings, not instructions to spend the entire
-allowance. Comprehensive widens coverage selection. Finish settled
+The profile allowances above are ceilings, not instructions to spend the entire
+budget. Finish settled
 relationships early. An essential unresolved fact remains pending. Request a
 separate claim challenge only for a specific material assumption, rather than
 routinely repeating the investigation or routing by a confidence threshold.

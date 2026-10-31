@@ -20,7 +20,7 @@ The adapter defaults to `"schema_mode": "stable"` and
 `"source_presentation": "line-addressed-v1"`. The setup example selects Terra 6.1
 medium; explicit model overrides remain supported.
 Model access still depends on the configured account. Install the adapter's own
-Python requirements before enabling stable mode:
+Python requirements before using the default adapter configuration:
 
 ```text
 python -m pip install --requirement skills/mehscan-security/scripts/requirements.txt

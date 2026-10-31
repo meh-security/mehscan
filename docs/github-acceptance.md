@@ -48,7 +48,7 @@ in this checkout. Keep the same reviewed `MEHSCAN_V11_COMMIT` pin.
 Add repository Actions secret `MEHSCAN_CODEX_AUTH_JSON`: the explicit authentication
 JSON supported by the chosen company Codex client. Do not put it in repository
 files, workflow inputs, artifacts or chat. The example uses the tested Linux x64
-client version `0.162.0-alpha.17.2`, Luna/medium and Value by default. Repository
+client version `0.162.0-alpha.17.2`, Terra 6.1/medium and Value by default. Repository
 variables `MEHSCAN_CODEX_VERSION` and `MEHSCAN_REVIEW_MODEL` can select an approved
 compatible client/model; unsupported authentication/model access fails without
 substitution. Actual company API-key use still needs hosted acceptance.
@@ -59,7 +59,9 @@ auth/config root under runner temp. It does not create the adapter's session sto
 the adapter owns that initialization. Companies can replace this installation
 step with their approved client provisioner and the same explicit config contract.
 The setup helper is for this Linux x64 example; the reviewer adapter itself remains
-portable. Setup is not a model scan or a provider-containment boundary.
+portable. The example installs the bundled adapter's pinned Python validation
+requirements before credential setup and selects stable/addressed input. Setup
+is not a model scan or a provider-containment boundary.
 
 Before credential setup, `github_action.py model-lane` reads authoritative GitHub
 metadata through the same resolver used by Action preparation. Automatic forks,

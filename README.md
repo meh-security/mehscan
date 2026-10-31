@@ -83,7 +83,30 @@ and new endpoints without `--merge-base`.
 
 ## AI-assisted review
 
-Prepare review bundles for your agent:
+Use the [security skill](skills/mehscan-security/SKILL.md) in your coding agent
+to review a repository or a change. AI review starts when requested; the scanner
+works independently. The skill uses your agent's model, while the optional
+[local worker and adapter](docs/review-worker.md) run a configured reviewer.
+
+The current source checkout includes these AI review defaults; they are not yet
+available in the released 0.8.0 package:
+
+| Mode | Behavior |
+| --- | --- |
+| **Value — default AI review** | Prioritizes useful security relationships, preserves explicit unreviewed deferrals, and returns findings, scoped dismissals or specific unresolved questions. |
+| **Comprehensive — optional** | Reviews every admitted ID with the same evidence standards. |
+| **Detailed flow diagnostics — opt-in** | Adds control and authority-value tables to the bundled adapter with `"boundary_checks": true`. |
+| **Targeted revalidation / report-quality review — optional** | Revisits a specific decision-changing fact or checks report actionability. Automatic selective second review remains experimental. |
+
+The bundled worker allows up to six model calls, 24 query units, 512 KiB of
+research results and 900 seconds per investigation. These are ceilings;
+explicit overrides remain supported. Its Codex adapter defaults to stable schemas
+and line-addressed source, with execution traces and cache/usage accounting.
+The setup example selects Terra 6.1 medium; other configured models remain supported.
+See [reviewer setup and Python dependencies](docs/codex-reviewer.md). Unresolved
+and deferred work stays visible; completed execution does not certify an app safe.
+
+For manual bundle review, prepare requests for your agent:
 
 ```text
 mehscan investigate review-bundles path/to/repository --output mehscan-review --max-reviews 20 --max-bytes 524288

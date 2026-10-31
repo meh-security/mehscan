@@ -7,7 +7,17 @@ PowerShell, pip packages, `jq`, or separate unzip tool is needed. Windows uses
 installers require GitHub CLI (`gh`) with `attestation verify`. Mehscan itself
 needs none of these tools after installation. The optional Changed review worker
 requires Python 3.11+ and Git; it uses the standard library without pip dependencies.
-BYOK additionally requires a compatible trusted Codex client and explicit auth.
+The bundled BYOK adapter additionally requires a compatible trusted Codex client,
+explicit auth and its pinned Python requirements for the default stable-schema
+validation:
+
+```text
+python -m pip install --requirement skills/mehscan-security/scripts/requirements.txt
+```
+
+Use the same Python environment for installation and the adapter. Manual review
+through the security skill uses the host coding agent and does not require this
+BYOK setup. See [reviewer configuration](codex-reviewer.md).
 The CI-only PyYAML dependency is not needed to run the installed worker.
 Installing or upgrading prerequisites changes the host; use an existing
 installation where possible and follow the user's host-management preferences.
@@ -166,7 +176,7 @@ of an existing binary on `PATH` only for explicitly requested reinstallation
 (PowerShell: `-ForceDownload`).
 `--source-digest COMMIT` requires an exact version and an independently trusted
 source commit (PowerShell: `-SourceDigest COMMIT`). Source commit pinning and
-failure handling remain as specified in [the skill](../SKILL.md).
+failure handling remain as specified in [the skill](../skills/mehscan-security/SKILL.md).
 
 The default installation location is
 `~/.mehscan/cli/<tag>/<platform>-<architecture>/`. On Linux/macOS the installer

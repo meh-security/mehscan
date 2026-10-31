@@ -573,8 +573,9 @@ are explicitly marked and acquire no missing prefix, columns or whole-line
 authority; terminal EOF positions are not padded. The entire package source
 catalog remains available in a focused view. This is human navigation, not a
 smaller model context or a fix to earlier model-selected caller citations. The
-human renderer does not select the provider's separate opt-in addressed-input
-mode. The source broker is unchanged. CLI output is UTF-8.
+human renderer does not select the provider's separate source-presentation
+setting, which now defaults to addressed input in the bundled adapter. The source
+broker is unchanged. CLI output is UTF-8.
 
 Native-bound `finalize` writes `review-package.json` and `review-package.md`
 beside the original `draft.json` and `response.json`. `validated.json` binds their

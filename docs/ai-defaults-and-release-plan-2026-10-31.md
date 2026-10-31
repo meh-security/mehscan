@@ -65,7 +65,7 @@ paired product. Optional automated GitHub/company-auth execution has its own
 acceptance requirements. Its failures do not establish that manual skill use is
 broken, and native-only acceptance does not certify the AI phase.
 
-## What the code actually does today
+## Previous gaps — before implementation
 
 | Setting | Current behavior | Consequence |
 | --- | --- | --- |

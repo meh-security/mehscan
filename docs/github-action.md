@@ -234,8 +234,9 @@ client-version metadata.
 
 The existing command deadline bounds the consumer launch to 900 seconds; native
 conversation limits are bound independently. Opt-in model execution is wired;
-live hosted acceptance remains pending. The provided caller example remains native-only; no SARIF upload, PR
-publication or required check is enabled. Automatic model scans will begin with
+live hosted acceptance remains pending. The native caller example stays native-only;
+the separate BYOK example explicitly enables its authorized model lane. No SARIF
+upload, PR publication or required check is enabled. Automatic model scans begin with
 authorized same-repository PRs; external fork scans require maintainer authorization
 before receiving company model credentials.
 
