@@ -170,8 +170,14 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
                 | "test_utils"
                 | "test_crates"
                 | "__tests__"
+                | "__specs__"
                 | "spec"
                 | "specs"
+                | "e2e"
+                | "e2e-tests"
+                | "e2e_tests"
+                | "end-to-end"
+                | "end_to_end"
                 | "fixture"
                 | "fixtures"
                 | "testdata"
@@ -205,6 +211,13 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
     let lower = name.to_ascii_lowercase();
     lower.contains(".spec.")
         || lower.contains(".test.")
+        || lower.contains(".specs.")
+        || lower.contains(".tests.")
+        || lower.contains(".e2e.")
+        || lower.contains(".e2e-spec.")
+        || lower.contains(".e2e-test.")
+        || lower.contains(".integration-spec.")
+        || lower.contains(".unit-spec.")
         || lower.ends_with("_test.go")
         || ((lower.ends_with(".py") || lower.ends_with(".pyw"))
             && (lower.starts_with("test_")
@@ -371,6 +384,19 @@ mod tests {
             "test_helpers/process.go",
             "src/login.spec.ts",
             "src/login.test.js",
+            "src/login.e2e-spec.ts",
+            "src/login.e2e-test.js",
+            "src/login.integration-spec.ts",
+            "src/login.unit-spec.ts",
+            "src/login.specs.tsx",
+            "src/login.tests.mts",
+            "src/login.e2e.cts",
+            "packages/api/e2e/helpers/client.ts",
+            "packages/api/e2e-tests/client.js",
+            "packages/api/e2e_tests/client.py",
+            "packages/api/end-to-end/client.go",
+            "packages/api/end_to_end/client.rs",
+            "packages/api/__specs__/client.vue",
             "pkg/login_test.go",
             "src/test_login.py",
             "src/login_test.py",
@@ -405,6 +431,18 @@ mod tests {
             classify_path(Path::new("src/login.ts")),
             FileClass::Supported(Language::Typescript)
         );
+        for path in [
+            "src/e2e-status.ts",
+            "src/specification.ts",
+            "src/contest.ts",
+            "src/app/api/e2e/route.ts",
+        ] {
+            assert_eq!(
+                classify_path(Path::new(path)),
+                FileClass::Supported(Language::Typescript),
+                "production lookalike must remain source: {path}"
+            );
+        }
         assert_eq!(
             classify_path(Path::new("apps/unit_testsupport/parser.c")),
             FileClass::Supported(Language::C),
