@@ -87,6 +87,18 @@ def relative_file(root, path):
     return result
 
 
+def source_file(root, path):
+    """Allow host aliases above the source root, but no links within it."""
+    root = Path(root).resolve()
+    result = relative_file(root, path)
+    current = root
+    for part in result.relative_to(root).parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("source symlinks are not supported")
+    return result
+
+
 def base_object(root, base, path, env, timeout):
     relative_file(root, path)
     prefix = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-prefix"], env=env,

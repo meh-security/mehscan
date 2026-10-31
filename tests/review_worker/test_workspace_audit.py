@@ -2,6 +2,7 @@
 import copy
 from contextlib import closing
 import json
+import os
 from pathlib import Path
 import sqlite3
 import sys
@@ -105,6 +106,29 @@ class AuditTests(unittest.TestCase):
         report=audit.audit_directory(self.directory)
         self.assertEqual(report['source_status']['files'][0]['status'],'stale')
         self.assertEqual(report['previous_judgments'][audit.digest(self.result)],self.result)
+
+    @unittest.skipIf(os.name == 'nt', 'POSIX directory aliases')
+    def test_root_alias_preserves_source_status_without_trusting_source_links(self):
+        self.save()
+        alias = self.base / 'host-alias'
+        alias.symlink_to(self.base.resolve(), target_is_directory=True)
+        self.state['source_root'] = str(alias / 'source')
+        def status():
+            return audit.source_status(self.state)['files'][0]['status']
+        self.assertEqual(status(), 'current')
+        self.file.write_text('changed\n')
+        self.assertEqual(status(), 'stale')
+        self.file.unlink()
+        self.assertEqual(status(), 'unavailable')
+        target = self.root / 'other.ts'
+        target.write_text('inside')
+        self.file.symlink_to(target.resolve())
+        self.assertEqual(status(), 'unavailable')
+        self.file.unlink()
+        outside = self.base / 'outside.ts'
+        outside.write_text('outside')
+        self.file.symlink_to(outside.resolve())
+        self.assertEqual(status(), 'unavailable')
 
     def test_bound_artifact_tampering_is_rejected(self):
         self.save();(self.directory/'sessions'/self.sid/'task.json').write_text('{}')

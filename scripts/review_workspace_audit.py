@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import sqlite3
 
+import review_context as context
+
 VERSION = "mehscanWorkspaceTurnAudit/v1"
 AUTHORITY = "Read-only audit of archived records; no runtime revalidation, native admission or permission to dispatch. Reviewer judgments remain interpretations."
 
@@ -73,12 +75,8 @@ def source_status(state):
     rows = []
     for relative,hashes in sorted(expected.items()):
         item = {"path":relative,"recorded_sha256":sorted(hashes)}
-        path = root / relative
         try:
-            if (Path(relative).is_absolute() or ".." in Path(relative).parts or
-                    not path.resolve().is_relative_to(root.resolve()) or
-                    any(p.is_symlink() for p in (path,*path.parents))):
-                raise ValueError("unsafe source path")
+            path = context.source_file(root, relative)
             actual = file_digest(path)
             item.update(status="current" if hashes=={actual} else "stale",current_sha256=actual)
         except (OSError,ValueError):
