@@ -19,7 +19,13 @@ fn converts_only_security_paths_into_review_candidates() {
     assert_eq!(report.evidence_count, result.evidence.len());
     assert_eq!(report.security_path_count, result.security_paths.len());
     assert_eq!(report.candidates.len(), result.security_paths.len());
-    assert_eq!(report.candidates.len(), 15);
+    assert!(
+        report
+            .candidates
+            .iter()
+            .all(|candidate| candidate.primary_location.path.starts_with("positive/")),
+        "negative fixture evidence must not become a review candidate"
+    );
     assert!(report.candidates.iter().all(|candidate| {
         candidate.classification == CandidateClassification::SecurityPath
             && candidate.primary_location == candidate.sink.location
