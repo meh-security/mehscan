@@ -1,6 +1,6 @@
 # Local AI review worker
 
-V11 source builds include `scripts/review_worker.py`, a provider-neutral local
+The release package includes `scripts/review_worker.py`, a provider-neutral local
 controller. It uses the same inventory, bundle finalizer, report importer and
 [state journal](review-state.md) as manual review. It does not publish to GitHub.
 The advisory Action defaults to native preparation. Its optional Value/Comprehensive
@@ -22,104 +22,8 @@ they are diagnostic observations, not an independent second reviewer. Automatic
 selective follow-up, broad workspace routing and dependency preloading remain
 experimental. Manual skill use runs in the host agent and does not require this adapter.
 
-See [Prepare review work](#prepare-review-work) for the ordinary setup. The
-following preparation options are optional experiments.
-
-## Optional source preparation
-
-An opt-in preparation experiment can build an ordinary `--source-profile` from
-native sweep helper/context leads. Save the selected bundles' `review-sweep`
-objects as one JSON array, then run:
-
-```powershell
-python scripts/review_source_profile.py --scanner C:/tools/mehscan.exe --source-root C:/src/app --work-package C:/review/work.json --sweeps C:/review/sweeps.json --output C:/review/source-profile.json --trace C:/review/preparation-trace.json
-```
-
-Pass the resulting profile through the worker's existing `--source-profile`
-option. The builder prepares up to eight complete bounded windows per bundle,
-using exact native source leads and unambiguous named declarations. It records
-ambiguity, missing source and size limits instead of selecting an arbitrary
-declaration or silently clipping a body. Expanded context ranges may end at the
-actual file end; the trace records both requested and returned ranges.
-Declaration uniqueness does not establish import, dispatch or caller applicability.
-Profiles retain exact bundle IDs, inventory binding and whole-file hashes; changed
-source fails normal profile validation. The trace contains navigation/provenance,
-not verdicts. A no-window result exits with code 2 and leaves the trace available;
-continue with ordinary preparation. This experiment does not change default
-preparation or enable a model call.
-
-Add `--dependencies` to opt into JS/TS explicit-import navigation. It follows
-the anchored operation's declared constructor dependencies and literal Nest
-Passport guard/strategy keys, including import aliases. Invoked dependencies
-precede passive type imports within the same window budget. Duplicate strategy
-registrations remain candidates; dynamic keys and missing modules are not guessed.
-The trace distinguishes module resolution, registration candidates, lookup
-failures and budget omissions. This is source navigation, not proof that an
-exported member, injected provider or registration is active at runtime.
-
-The underlying read-only command is
-`mehscan investigate import-targets ROOT --path relative/file.ts`. It returns
-actual static import statements with `source`, `external` or `unresolved` module
-targets using the existing resolver. It does not infer CommonJS bindings or
-follow arbitrary recursive imports. Preparation caches navigation queries within
-a work package, caps new dependency queries at 80, and retains normal source
-hash checks. Both the builder and this query remain opt-in.
-
-`--dependency-chains` is a further opt-in experiment and implies `--dependencies`.
-It schedules each discovered dependency chain as a unit under the same eight-window
-and 64-KiB limits. One same-named operation delegate per claim receives priority,
-followed by shared credential-registration candidates, remaining declared receivers
-and other imports. If a chain cannot fit, the trace records the omitted chain and
-reason; independent source can still be prepared. No member is silently preferred
-from an oversized ambiguous registration set.
-
-Each chain trace records its caller, navigation question, requested windows,
-delivered source/hash bindings or omission reason, and source reuse. Delivery does
-not answer the security question or establish active provider registration. Shared
-bytes never transfer a caller's verdict to another claim. This option does not yet
-follow re-export chains or replace reviewer-directed deciding lookups; the older
-`--dependencies` behavior remains available unchanged.
-
-For one known exported name, the read-only native CLI now supports:
-
-```powershell
-mehscan investigate export-target C:/src/app --path src/helpers/index.ts --name sanitizeUrl --journal C:/review/queries.jsonl
-```
-
-Use `import-targets` first when the question concerns a caller's import; an
-explicit source path is not a substitute for a missing package/build binding.
-`export-target` follows named aliases and star exports using the native module
-resolver, returning a unique static source candidate or explicit ambiguity/gaps.
-The result includes visited nodes, successfully summarized files, parsed bytes
-and bounds. Missing modules, parse errors, namespace objects, erased imports,
-reassigned bindings and incomplete branches cannot establish a unique target.
-Inspected nodes remain available as leads when the overall answer is incomplete.
-
-Traversal is bounded to eight levels, 128 nodes/edges, 32 summarized files,
-256 KiB per file and 1 MiB of parsed source. Repository discovery/source loading
-still occurs outside these graph limits. Only the traversed modules receive export
-AST summaries; unrelated imports inside an implementation are not recursively
-loaded into the graph. Read the candidate's source with `outline`/`source` before
-assessing its behavior. Runtime provider selection, build conditions and caller
-applicability remain separate questions. The command accepts simple ASCII export
-identifiers or `default`.
-
-Both `import-targets(path)` and `export-target(path, name)` are available in the
-worker's typed research API, at one query unit each. Both require a bounded
-`purpose` stating the deciding question. The broker shares identical lookups
-within the pinned snapshot while recording each requesting claim and purpose;
-cache hits still consume recipient query/byte budgets and pass freshness checks.
-Navigation facts are not source-body proof handles. Use `definition` or `source`
-to inspect behavior after locating an implementation. Missing files and unsupported
-import-navigation languages return explicit non-source lookup results; unrelated
-execution errors still fail normally. Automatic source-profile preparation does
-not yet follow these export chains.
-
-For experimental routed execution, `--validate-only --phase native` performs
-ordinary review/finalization/report checks without recording decisions or pending
-questions. It returns `source_validated`; supersession and change-pass modes are
-rejected. This mode can assemble complete original bundles from native and
-workspace results. Ordinary admission remains the default.
+See [Prepare review work](#prepare-review-work) for the ordinary setup.
+[Source preparation](#optional-source-preparation) is an optional experiment.
 
 Use one configured capable model with direct source lookups and native
 finalization. Start with `--workers 4 --query-workers 2` and small source-bound
@@ -208,7 +112,7 @@ Instead of returning a final draft immediately, an adapter can request the next
 missing source fact through the controller:
 
 ```json
-{"research":[{"tool":"source","review_id":"EXACT_BUNDLE_ID","arguments":{"path":"src/entry.js","start_line":1,"end_line":20}}]}
+{"research":[{"tool":"source","review_id":"EXACT_BUNDLE_ID","purpose":"Inspect the input and rejection before the selected operation.","arguments":{"path":"src/entry.js","start_line":1,"end_line":20}}]}
 ```
 
 The next task contains `research.results` with the actual queries and native
@@ -228,8 +132,9 @@ reject the entire batch. Deferrals do not grant extra calls or increase limits.
 
 The [worker API reference](../skills/mehscan-security/references/worker-api.md)
 is generated from the same catalog as the runtime schema and argument validator.
-Available tools are `source`, `base_source`, `outline`, `symbol`, `definition`,
-`references`, `paths` and `guidance`. The last loads an allowlisted trusted category
+Basic tools are `source`, `base_source`, `outline`, `symbol`, `definition`,
+`references`, `paths` and `guidance`. The API also offers `import-targets` and
+`export-target` for explicit JavaScript/TypeScript navigation. `guidance` loads an allowlisted trusted category
 guide when needed; it never supplies application evidence. Paths use relative forward-slash
 syntax within the authorized root; traversal, Git metadata and symlink escapes
 are rejected. Source windows are at most 400 lines and discovery limits at most
@@ -418,6 +323,27 @@ is complete. A timeout, malformed result, stale handoff or admission error leave
 an incomplete attempt. Earlier successful journal transactions remain intact;
 there is no rollback or synthetic verdict. Refresh work before retrying.
 
+## Usage and cache accounting
+
+After an attempt stops, `worker.json` contains `provider_usage`, `usage_complete`
+and `unknown_provider_calls`. Unknown usage stays unknown; an admitted result is
+not proof that every remote call was observed. The bundled adapter reports actual
+input, cached input and output tokens when the provider supplies them.
+
+Use the consolidated `provider-metrics.jsonl` for per-call analysis. The separate
+`provider-metrics-<conversation>.jsonl` files contain the same receipts; summing
+both forms double-counts calls. Across recovery attempts, deduplicate by
+`conversation_id` and `round` and retain failed-attempt usage. Compare initial
+calls (`round: 0`) with continuations separately when assessing cache behavior.
+The cached fraction is cached input divided by total input, not a discount on
+output tokens. Cache hits depend on the configured provider and actual requests.
+
+For price estimates, apply the configured model's applicable rates and context
+multipliers to uncached input, cached input, output and any reported cache writes.
+Include retries and follow-ups. Provider elapsed times can overlap in parallel;
+use attempt start/end times for wall time instead of summing call durations.
+The controller does not turn these counters into a provider invoice.
+
 ## Resume missing facts
 
 Register a question against an exact current needs_review decision/check or a
@@ -478,6 +404,102 @@ fixtures accompany the paired engine and skill changes.
 This increment does not add full Razor/C# parsing, cross-revision verdict reuse,
 or a token-saving guarantee. Corpus and live model acceptance are separate from
 deterministic evidence/preparation tests.
+
+## Optional source preparation
+
+An opt-in preparation experiment can build an ordinary `--source-profile` from
+native sweep helper/context leads. Save the selected bundles' `review-sweep`
+objects as one JSON array, then run:
+
+```powershell
+python scripts/review_source_profile.py --scanner C:/tools/mehscan.exe --source-root C:/src/app --work-package C:/review/work.json --sweeps C:/review/sweeps.json --output C:/review/source-profile.json --trace C:/review/preparation-trace.json
+```
+
+Pass the resulting profile through the worker's existing `--source-profile`
+option. The builder prepares up to eight complete bounded windows per bundle,
+using exact native source leads and unambiguous named declarations. It records
+ambiguity, missing source and size limits instead of selecting an arbitrary
+declaration or silently clipping a body. Expanded context ranges may end at the
+actual file end; the trace records both requested and returned ranges.
+Declaration uniqueness does not establish import, dispatch or caller applicability.
+Profiles retain exact bundle IDs, inventory binding and whole-file hashes; changed
+source fails normal profile validation. The trace contains navigation/provenance,
+not verdicts. A no-window result exits with code 2 and leaves the trace available;
+continue with ordinary preparation. This experiment does not change default
+preparation or enable a model call.
+
+Add `--dependencies` to opt into JS/TS explicit-import navigation. It follows
+the anchored operation's declared constructor dependencies and literal Nest
+Passport guard/strategy keys, including import aliases. Invoked dependencies
+precede passive type imports within the same window budget. Duplicate strategy
+registrations remain candidates; dynamic keys and missing modules are not guessed.
+The trace distinguishes module resolution, registration candidates, lookup
+failures and budget omissions. This is source navigation, not proof that an
+exported member, injected provider or registration is active at runtime.
+
+The underlying read-only command is
+`mehscan investigate import-targets ROOT --path relative/file.ts`. It returns
+actual static import statements with `source`, `external` or `unresolved` module
+targets using the existing resolver. It does not infer CommonJS bindings or
+follow arbitrary recursive imports. Preparation caches navigation queries within
+a work package, caps new dependency queries at 80, and retains normal source
+hash checks. Both the builder and this query remain opt-in.
+
+`--dependency-chains` is a further opt-in experiment and implies `--dependencies`.
+It schedules each discovered dependency chain as a unit under the same eight-window
+and 64-KiB limits. One same-named operation delegate per claim receives priority,
+followed by shared credential-registration candidates, remaining declared receivers
+and other imports. If a chain cannot fit, the trace records the omitted chain and
+reason; independent source can still be prepared. No member is silently preferred
+from an oversized ambiguous registration set.
+
+Each chain trace records its caller, navigation question, requested windows,
+delivered source/hash bindings or omission reason, and source reuse. Delivery does
+not answer the security question or establish active provider registration. Shared
+bytes never transfer a caller's verdict to another claim. This option does not yet
+follow re-export chains or replace reviewer-directed deciding lookups; the older
+`--dependencies` behavior remains available unchanged.
+
+For one known exported name, the read-only native CLI now supports:
+
+```powershell
+mehscan investigate export-target C:/src/app --path src/helpers/index.ts --name sanitizeUrl --journal C:/review/queries.jsonl
+```
+
+Use `import-targets` first when the question concerns a caller's import; an
+explicit source path is not a substitute for a missing package/build binding.
+`export-target` follows named aliases and star exports using the native module
+resolver, returning a unique static source candidate or explicit ambiguity/gaps.
+The result includes visited nodes, successfully summarized files, parsed bytes
+and bounds. Missing modules, parse errors, namespace objects, erased imports,
+reassigned bindings and incomplete branches cannot establish a unique target.
+Inspected nodes remain available as leads when the overall answer is incomplete.
+
+Traversal is bounded to eight levels, 128 nodes/edges, 32 summarized files,
+256 KiB per file and 1 MiB of parsed source. Repository discovery/source loading
+still occurs outside these graph limits. Only the traversed modules receive export
+AST summaries; unrelated imports inside an implementation are not recursively
+loaded into the graph. Read the candidate's source with `outline`/`source` before
+assessing its behavior. Runtime provider selection, build conditions and caller
+applicability remain separate questions. The command accepts simple ASCII export
+identifiers or `default`.
+
+Both `import-targets(path)` and `export-target(path, name)` are available in the
+worker's typed research API, at one query unit each. Both require a bounded
+`purpose` stating the deciding question. The broker shares identical lookups
+within the pinned snapshot while recording each requesting claim and purpose;
+cache hits still consume recipient query/byte budgets and pass freshness checks.
+Navigation facts are not source-body proof handles. Use `definition` or `source`
+to inspect behavior after locating an implementation. Missing files and unsupported
+import-navigation languages return explicit non-source lookup results; unrelated
+execution errors still fail normally. Automatic source-profile preparation does
+not yet follow these export chains.
+
+For experimental routed execution, `--validate-only --phase native` performs
+ordinary review/finalization/report checks without recording decisions or pending
+questions. It returns `source_validated`; supersession and change-pass modes are
+rejected. This mode can assemble complete original bundles from native and
+workspace results. Ordinary admission remains the default.
 
 ## Explicit source profiles
 
