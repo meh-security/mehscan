@@ -67,6 +67,7 @@ pub(crate) struct GoProjectContext {
     session_value_helpers: BTreeSet<String>,
     uses_cookie_session_auth: bool,
     has_csrf_control: bool,
+    cookie_identity: super::go_cookie_identity::CookieIdentityContext,
 }
 
 impl GoProjectContext {
@@ -142,6 +143,9 @@ impl GoProjectContext {
             session_value_helpers,
             uses_cookie_session_auth,
             has_csrf_control,
+            cookie_identity: super::go_cookie_identity::CookieIdentityContext::from_sources(
+                sources.iter().map(|(path, _, source)| (*path, *source)),
+            ),
         }
     }
 
@@ -159,6 +163,14 @@ impl GoProjectContext {
         if language != Language::Go {
             return;
         }
+        self.cookie_identity.add_observations(
+            path,
+            root,
+            comments,
+            conditional,
+            literals,
+            evidence,
+        );
         let calls = root.dfs().filter_map(call_site).collect::<Vec<_>>();
         let file_text = root.text();
         let uses_mongo = file_text.contains("go.mongodb.org/mongo-driver/mongo")

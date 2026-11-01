@@ -31,6 +31,7 @@ mod extended_database;
 mod file_roles;
 mod filesystem_operands;
 mod go_context;
+mod go_cookie_identity;
 mod go_filesystem;
 mod go_grpc;
 mod go_ldap;
