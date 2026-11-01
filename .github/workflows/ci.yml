@@ -67,8 +67,11 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
 
+      - name: Test Cargo batch orchestration
+        run: python -m unittest discover -s tests/ci -v
+
       - name: Build and test all targets
-        run: cargo test --all-targets --locked
+        run: python scripts/test-cargo-batches.py
 
       - name: Build the optimized scanner for native integration tests
         shell: pwsh

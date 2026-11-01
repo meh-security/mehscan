@@ -227,7 +227,204 @@ fn proven_family(
             }
         }
     }
-    known(root, receiver, &modules, &factories, 8)
+    (language == Language::Python && !document && python_typed_cursor(root, receiver))
+        || known(root, receiver, &modules, &factories, 8)
+}
+
+// A declared driver connection and its lexical context-manager cursor establish
+// an API observation, not attacker influence or interprocedural value transfer.
+fn python_typed_cursor(root: &DbNode<'_>, receiver: &DbNode<'_>) -> bool {
+    if receiver.kind().as_ref() != "identifier" {
+        return false;
+    }
+    if !receiver
+        .parent()
+        .and_then(|n| n.field("attribute"))
+        .is_some_and(|n| matches!(n.text().as_ref(), "execute" | "executemany" | "callproc"))
+    {
+        return false;
+    }
+    let Some(function) = receiver
+        .ancestors()
+        .find(|n| n.kind().as_ref() == "function_definition")
+    else {
+        return false;
+    };
+    let Some(parameters) = function.field("parameters") else {
+        return false;
+    };
+    for statement in receiver
+        .ancestors()
+        .take_while(|n| n.range() != function.range())
+        .filter(|n| n.kind().as_ref() == "with_statement")
+    {
+        if !statement.text().trim_start().starts_with("async with ") {
+            continue;
+        }
+        let mut bound_here = false;
+        for binding in statement
+            .dfs()
+            .filter(|n| n.kind().as_ref() == "as_pattern")
+        {
+            if lexical_owner(&binding) != lexical_owner(receiver)
+                || !binding
+                    .ancestors()
+                    .find(|n| n.kind().as_ref() == "with_statement")
+                    .is_some_and(|n| n.range() == statement.range())
+                || !binding
+                    .field("alias")
+                    .is_some_and(|n| compact(n.text().as_ref()) == receiver.text())
+            {
+                continue;
+            }
+            if bound_here {
+                return false;
+            }
+            bound_here = true;
+            if statement
+                .dfs()
+                .filter(|n| {
+                    n.kind().as_ref() == "as_pattern"
+                        && n.field("alias")
+                            .is_some_and(|a| compact(a.text().as_ref()) == receiver.text())
+                        && n.ancestors()
+                            .find(|p| p.kind().as_ref() == "with_statement")
+                            .is_some_and(|p| p.range() == statement.range())
+                })
+                .count()
+                != 1
+            {
+                return false;
+            }
+            let Some(call) = binding.children().find(|n| n.kind().as_ref() == "call") else {
+                continue;
+            };
+            let Some(callee) = call.field("function") else {
+                continue;
+            };
+            if !callee
+                .field("attribute")
+                .is_some_and(|n| n.text() == "cursor")
+                || !call
+                    .field("arguments")
+                    .is_some_and(|n| !n.children().any(|c| c.is_named()))
+            {
+                continue;
+            }
+            let Some(connection) = callee
+                .field("object")
+                .filter(|n| n.kind().as_ref() == "identifier")
+            else {
+                continue;
+            };
+            // Do not reuse an annotation after either binding has been replaced.
+            if function.dfs().any(|n| {
+                n.kind().as_ref() == "assignment"
+                    && n.field("left").is_some_and(|left| {
+                        left.text() == receiver.text()
+                            || left.text() == connection.text()
+                            || compact(left.text().as_ref())
+                                .starts_with(&format!("{}.", receiver.text()))
+                            || compact(left.text().as_ref())
+                                .starts_with(&format!("{}.", connection.text()))
+                    })
+            }) {
+                continue;
+            }
+            for parameter in parameters
+                .children()
+                .filter(|n| n.kind().as_ref() == "typed_parameter")
+            {
+                if !parameter
+                    .children()
+                    .any(|n| n.kind().as_ref() == "identifier" && n.text() == connection.text())
+                {
+                    continue;
+                }
+                let Some(annotation) = parameter.field("type") else {
+                    continue;
+                };
+                let annotation = compact(annotation.text().as_ref());
+                for import in root
+                    .dfs()
+                    .filter(|n| n.kind().as_ref() == "import_from_statement")
+                {
+                    if lexical_owner(&import).is_some_and(|scope| {
+                        !(scope.start <= receiver.range().start
+                            && receiver.range().end <= scope.end)
+                    }) {
+                        continue;
+                    }
+                    let source = import.text();
+                    for (module, class) in [
+                        ("aiopg", "Connection"),
+                        ("aiopg.connection", "Connection"),
+                        ("psycopg", "AsyncConnection"),
+                    ] {
+                        let Some(names) = source.strip_prefix(&format!("from {module} import "))
+                        else {
+                            continue;
+                        };
+                        for name in names.split(',') {
+                            let name = name.trim();
+                            let (original, alias) = name.split_once(" as ").unwrap_or((name, name));
+                            if original != class
+                                || alias != annotation
+                                || python_import_count(root, receiver, alias) != 1
+                                || !producer_unshadowed(root, receiver, alias)
+                            {
+                                continue;
+                            }
+                            if root.dfs().any(|n| {
+                                n.kind().as_ref() == "class_definition"
+                                    && n.field("name").is_some_and(|name| name.text() == alias)
+                            }) {
+                                continue;
+                            }
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        if bound_here {
+            return false;
+        }
+    }
+    false
+}
+
+fn python_import_count(root: &DbNode<'_>, site: &DbNode<'_>, symbol: &str) -> usize {
+    root.dfs()
+        .filter(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "import_statement" | "import_from_statement"
+            )
+        })
+        .filter(|n| {
+            lexical_owner(n)
+                .is_none_or(|s| s.start <= site.range().start && site.range().end <= s.end)
+        })
+        .map(|n| {
+            let text = n.text();
+            let names = text
+                .split_once(" import ")
+                .map(|(_, names)| names)
+                .or_else(|| text.strip_prefix("import "))
+                .unwrap_or("");
+            names
+                .split(',')
+                .filter(|name| {
+                    let name = name.trim().trim_matches(['(', ')']).trim();
+                    let binding = name
+                        .split_once(" as ")
+                        .map_or(name, |(_, alias)| alias.trim());
+                    binding == symbol
+                })
+                .count()
+        })
+        .sum()
 }
 
 fn known(
