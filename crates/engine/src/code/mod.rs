@@ -22,6 +22,7 @@ mod csharp_streaming_upload;
 mod database_cleanup;
 mod database_receiver;
 mod decision_origins;
+pub(crate) mod rust_tests;
 pub(crate) use decision_origins::executable_deserializer;
 mod dotnet_project;
 mod embedded_javascript;

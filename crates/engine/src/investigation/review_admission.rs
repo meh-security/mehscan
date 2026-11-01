@@ -289,6 +289,32 @@ fn server_mutation_review_marker_groups(
             });
         }
     }
+    if !include_review_material {
+        let excluded: BTreeMap<_, _> = sources
+            .files
+            .values()
+            .filter(|file| file.language == Some(Language::Rust))
+            .map(|file| {
+                (
+                    file.path.as_str(),
+                    crate::code::rust_tests::ranges(&file.source),
+                )
+            })
+            .filter(|(_, ranges)| !ranges.is_empty())
+            .collect();
+        groups.retain(|group| {
+            !group.evidence.iter().any(|e| {
+                excluded
+                    .get(e.location.path.as_str())
+                    .is_some_and(|ranges| {
+                        ranges.iter().any(|r| {
+                            r.start <= e.location.start.byte_offset
+                                && e.location.end.byte_offset <= r.end
+                        })
+                    })
+            })
+        });
+    }
     let recognized = groups.len();
     let mut previously_admitted = 0;
     let mut selected = Vec::new();
