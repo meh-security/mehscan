@@ -19,6 +19,47 @@ spec.loader.exec_module(worker)
 
 
 class ArtifactCopy(unittest.TestCase):
+    def test_checkpoint_replacement_retries_windows_locks_atomically(self):
+        for code in (5, 32, 33):
+            with self.subTest(winerror=code), tempfile.TemporaryDirectory() as name:
+                target = Path(name) / "checkpoint.json"
+                target.write_text("old", encoding="utf-8")
+                replace = os.replace
+                failures = 2
+                def locked_then_replace(source, destination):
+                    nonlocal failures
+                    self.assertEqual(target.read_text(encoding="utf-8"), "old")
+                    if failures:
+                        failures -= 1
+                        error = PermissionError("temporarily held by a reader")
+                        error.winerror = code
+                        raise error
+                    replace(source, destination)
+                with patch.object(worker.os, "replace", side_effect=locked_then_replace) as operation, \
+                        patch.object(worker.time, "sleep") as sleep:
+                    worker.write_text(target, "new")
+                self.assertEqual(operation.call_count, 3)
+                self.assertEqual(sleep.call_count, 2)
+                self.assertEqual(target.read_text(encoding="utf-8"), "new")
+                self.assertEqual(list(Path(name).glob("*.tmp")), [])
+
+    def test_checkpoint_persistent_denial_preserves_old_state_and_fails(self):
+        for code, attempts in ((5, 6), (None, 1)):
+            with self.subTest(winerror=code), tempfile.TemporaryDirectory() as name:
+                target = Path(name) / "checkpoint.json"
+                target.write_text("old", encoding="utf-8")
+                error = PermissionError("replacement denied")
+                if code is not None:
+                    error.winerror = code
+                with patch.object(worker.os, "replace", side_effect=error) as operation, \
+                        patch.object(worker.time, "sleep") as sleep:
+                    with self.assertRaises(PermissionError):
+                        worker.write_text(target, "new")
+                self.assertEqual(operation.call_count, attempts)
+                self.assertEqual(sleep.call_count, attempts - 1)
+                self.assertEqual(target.read_text(encoding="utf-8"), "old")
+                self.assertEqual(list(Path(name).glob("*.tmp")), [])
+
     def test_late_usage_survives_multiple_recovery_attempts_and_keeps_deadline(self):
         with tempfile.TemporaryDirectory(prefix='mehscan-recovery-') as name:
             root=Path(name)

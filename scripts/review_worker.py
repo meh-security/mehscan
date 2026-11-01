@@ -247,7 +247,16 @@ def write_text(path, body):
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(body)
-        os.replace(pending, path)
+        for attempt in range(6):
+            try:
+                os.replace(pending, path)
+                break
+            except PermissionError as error:
+                # Windows readers and antivirus can briefly deny replacement.
+                # Keep the old checkpoint intact and fail on persistent denial.
+                if getattr(error, "winerror", None) not in (5, 32, 33) or attempt == 5:
+                    raise
+                time.sleep(0.02 * 2 ** attempt)
     finally:
         if os.path.exists(pending):
             os.unlink(pending)
