@@ -157,6 +157,8 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
             component.as_str(),
             "test"
                 | "tests"
+                | "libtest"
+                | "libtests"
                 | "unit_test"
                 | "unit_tests"
                 | "unit-test"
@@ -417,6 +419,8 @@ mod tests {
             "public/app.min.js",
             "internal/api/messages.pb.go",
             "tests/native_test.c",
+            "contrib/libtests/image_check.c",
+            "tools/libtest/check_connection.cpp",
             "fuzz/parser.cpp",
             "apps/oss-fuzz/parser.c",
             "Form.Designer.cs",
@@ -439,6 +443,7 @@ mod tests {
             "src/e2e-status.ts",
             "src/specification.ts",
             "src/contest.ts",
+            "src/libtests_adapter.ts",
             "src/app/api/e2e/route.ts",
         ] {
             assert_eq!(

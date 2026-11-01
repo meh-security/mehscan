@@ -575,6 +575,85 @@ void cases(Widget *other, void *storage) {
 }
 
 #[test]
+fn conditional_unique_owners_keep_all_origins_without_duplicate_facts_or_cross_branch_protection() {
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-conditional-owner-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("owners.cpp"),
+        r#"
+namespace std {
+template<class T> class unique_ptr { public: explicit unique_ptr(T*); };
+template<class T> unique_ptr<T> make_unique();
+}
+struct Item {};
+void cases(bool choose) {
+    auto scalar = choose ? std::make_unique<Item>() : std::make_unique<Item>();
+    auto array = choose ? std::make_unique<Item[]>(2) : std::make_unique<Item[]>(3);
+    std::unique_ptr<Item> mixed(choose ? new Item[2] : new Item);
+}
+"#,
+    )
+    .unwrap();
+    let result = mehscan_engine::scan_path(&root).unwrap();
+    let repeated = mehscan_engine::scan_path(&root).unwrap();
+    assert_eq!(result.evidence, repeated.evidence);
+    assert_eq!(result.security_paths, repeated.security_paths);
+    CandidateReport::from_scan(&result).expect("conditional owners must export candidates");
+    assert_eq!(
+        result.evidence.len(),
+        result
+            .evidence
+            .iter()
+            .map(|e| &e.id)
+            .collect::<BTreeSet<_>>()
+            .len()
+    );
+    let owners = result
+        .evidence
+        .iter()
+        .filter(|e| e.capability == Capability::CppRaiiOwner)
+        .collect::<Vec<_>>();
+    assert_eq!(owners.len(), 3);
+    assert!(owners.iter().all(|owner| owner.related_evidence.len() == 2));
+    let paths = result
+        .security_paths
+        .iter()
+        .filter(|p| p.capability == Capability::CppRaiiOwner)
+        .collect::<Vec<_>>();
+    assert_eq!(paths.len(), 6);
+    assert_eq!(
+        paths
+            .iter()
+            .filter(|p| p.state == SecurityPathState::Protected)
+            .count(),
+        5
+    );
+    assert_eq!(
+        paths
+            .iter()
+            .filter(|p| p.state == SecurityPathState::Unknown)
+            .count(),
+        1,
+        "matching scalar branch must not protect the array allocation"
+    );
+    for path in paths {
+        let owner = owners
+            .iter()
+            .find(|e| e.id == path.sink_evidence_id)
+            .unwrap();
+        assert!(owner.related_evidence.contains(&path.source_evidence_id));
+    }
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn local_heap_lifetime_requires_an_established_release_contract() {
     let root = std::env::temp_dir().join(format!(
         "mehscan-native-heap-lifetime-{}-{}",
