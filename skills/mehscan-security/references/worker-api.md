@@ -6,7 +6,7 @@ This is the model's bounded research API, not the full operator CLI.
 The controller supplies its typed schema and remaining budgets each turn.
 For scans, plans, finalization and reports use [commands](commands.md).
 
-Every query includes tool, exact prompting review_id (null for change pass), purpose and arguments. Use relative forward-slash source paths. The strict wire shape includes optional path filters as null when unused and an explicit discovery limit (normally 20, maximum 100). Native/defaulted requests may omit those fields. Batch only already-known independent lookups; use their results before dependent reads. Budget ceilings are not spending targets. Only the controller finalizes and admits responses.
+Every query includes tool, exact prompting review_id (null for change pass), purpose and arguments. Use relative forward-slash source paths. The strict wire shape includes optional path filters as null when unused and an explicit discovery limit (normally 20, maximum 100). Native/defaulted requests may omit those fields. Batch only already-known independent lookups in deciding priority order; use their results before dependent reads. All arguments are validated before any lookup executes. Whole requests that fit the remaining query units execute in order; unaffordable requests are explicitly deferred, never source facts or inspected progress. A malformed request rejects the entire batch. Budget ceilings are not spending targets. Only the controller finalizes and admits responses.
 
 | Tool | Arguments | Units | Purpose and limits |
 | --- | --- | ---: | --- |

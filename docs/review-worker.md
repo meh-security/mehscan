@@ -218,6 +218,14 @@ bundle; change-pass queries use `review_id: null` and are audited separately.
 The controller journals newly executed native queries under that ID for finalization. Shared
 facts can inform sibling IDs without fabricating a query for each one.
 
+Order independent lookups by deciding priority. The controller validates every
+request before running any lookup. It then reserves whole requests that fit the
+remaining query units in that order, skipping requests that cannot fit. Budget
+deferrals appear in `research.feedback` and the execution trace; they have no
+source result or evidence handle. A definition costs two units and is never
+split into a locator-only query to fit a single unit. Malformed arguments still
+reject the entire batch. Deferrals do not grant extra calls or increase limits.
+
 The [worker API reference](../skills/mehscan-security/references/worker-api.md)
 is generated from the same catalog as the runtime schema and argument validator.
 Available tools are `source`, `base_source`, `outline`, `symbol`, `definition`,
