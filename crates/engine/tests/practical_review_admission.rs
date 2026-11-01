@@ -470,3 +470,79 @@ fn kotlin_mapper_policy_vetoes_the_ordinary_decoder_cut() {
         inventory.entries
     );
 }
+
+#[test]
+fn rust_local_limit_relationship_is_inventory_work_with_exact_helper_source() {
+    let fixture = Fixture::new(
+        "rust-local-limit",
+        &[
+            (
+                "model.rs",
+                r#"
+pub struct Budget { used: i32, maximum: i32 }
+impl Budget {
+    pub fn fetch(conn: &mut Connection) -> Option<Self> {
+        db! { budgets::table.first::<BudgetRow>(conn).ok() }
+    }
+    pub fn store(&mut self, conn: &mut Connection) {
+        db! { diesel::update(budgets::table).set(self).execute(conn) }
+    }
+}
+"#,
+            ),
+            (
+                "api.rs",
+                r#"
+use crate::model::Budget;
+fn consume(conn: &mut Connection) -> Result<(), Error> {
+    let mut item = Budget::fetch(conn).unwrap();
+    if item.used >= item.maximum { return Err(Error::Exceeded); }
+    item.used += 1;
+    item.store(conn);
+    Ok(())
+}
+"#,
+            ),
+        ],
+    );
+    let inventory = build_review_inventory(&fixture.0, false).unwrap();
+    let entries = inventory
+        .entries
+        .iter()
+        .filter(|e| e.rule_id == "rust-shared-state-limit-review-marker")
+        .collect::<Vec<_>>();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].symbol.as_deref(), Some("consume"));
+    assert_eq!(entries[0].cwe_candidates, ["CWE-362"]);
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture.0, None, false).unwrap();
+    let review = jobs
+        .observation_reviews
+        .iter()
+        .find(|r| {
+            r.evidence
+                .iter()
+                .any(|e| e.rule_id == "rust-shared-state-limit-review-marker")
+        })
+        .unwrap();
+    let anchor = review
+        .evidence
+        .iter()
+        .find(|e| e.rule_id == "rust-shared-state-limit-review-marker")
+        .unwrap();
+    assert!(
+        anchor
+            .tags
+            .iter()
+            .any(|t| t == "review-invariant:shared-state-limit-enforcement")
+    );
+    assert!(
+        anchor.captures["persistence_definition"]
+            .text
+            .contains("diesel::update")
+    );
+    assert!(
+        !review.decision_facts.unresolved.is_empty(),
+        "a marker must not close the atomicity question"
+    );
+}

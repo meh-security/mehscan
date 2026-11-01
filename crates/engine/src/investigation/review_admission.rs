@@ -2,6 +2,7 @@ use super::*;
 mod csharp_boundaries;
 mod javascript_boundaries;
 mod python_credentials;
+mod rust_shared_state;
 
 const AUTHORIZATION_REVIEW_MARKER_RULE_ID: &str = "framework-authorization-review-marker";
 const CREDENTIAL_LIFECYCLE_REVIEW_MARKER_RULE_ID: &str =
@@ -59,7 +60,8 @@ fn server_mutation_review_marker_groups(
     page: usize,
     include_review_material: bool,
 ) -> (Vec<ObservationGroup>, mehscan_core::ReviewMarkerAdmission) {
-    let mut groups = Vec::new();
+    let mut groups =
+        rust_shared_state::groups(sources, existing_evidence, scope, include_review_material);
     let mut seen = BTreeSet::new();
     for file in sources.files.values() {
         if !include_review_material && is_review_material_path(&file.path) {
