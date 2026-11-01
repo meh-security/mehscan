@@ -7,6 +7,7 @@ members = [
   "crates/ast-grep/config",
   "crates/ast-grep/language",
   "crates/ast-grep/outline",
+  "crates/grammars/tree-sitter-go",
 ]
 default-members = ["crates/core", "crates/engine", "crates/cli"]
 resolver = "2"

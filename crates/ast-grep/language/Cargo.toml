@@ -24,7 +24,7 @@ tree-sitter-css = { version = "0.25.0", optional = true }
 tree-sitter-dart = { version = "0.2.0", optional = true }
 tree-sitter-c = { version = "0.24.0", optional = true }
 tree-sitter-elixir = { version = "0.3.0", optional = true }
-tree-sitter-go = { version = "0.25.0", optional = true }
+tree-sitter-go = { path = "../../grammars/tree-sitter-go", version = "0.25.0", optional = true }
 tree-sitter-haskell = { version = "0.23.0", optional = true }
 tree-sitter-html = { version = "0.23.0", optional = true }
 tree-sitter-javascript = { version = "0.25.0", optional = true }
