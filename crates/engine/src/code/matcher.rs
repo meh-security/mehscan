@@ -287,12 +287,19 @@ pub(crate) fn scan_source(
                 {
                     continue;
                 }
-                if language == Language::Rust
+                let typed_http_support = if language == Language::Rust
                     && compiled_rule.rule.id == "rust-outbound-http"
                     && !super::rust_context::is_exact_reqwest_request(&root, matched.get_node())
                 {
-                    continue;
-                }
+                    let Some(support) =
+                        rust_project_context.http_support(path, &root, matched.get_node())
+                    else {
+                        continue;
+                    };
+                    Some(support)
+                } else {
+                    None
+                };
                 if language == Language::Rust
                     && compiled_rule.rule.id == "rust-iron-response-body"
                     && !super::rust_context::is_exact_iron_response(&root, matched.get_node())
@@ -457,6 +464,9 @@ pub(crate) fn scan_source(
                 }
                 let evidence_location = location(path, matched.get_node());
                 let mut captures = BTreeMap::new();
+                if let Some(support) = typed_http_support {
+                    captures.extend(support);
+                }
                 let mut literal_values = BTreeMap::new();
                 for (semantic_name, variable_name) in &compiled_pattern.specification.captures {
                     if compiled_rule.rule.capability == Capability::ProcessExecution {

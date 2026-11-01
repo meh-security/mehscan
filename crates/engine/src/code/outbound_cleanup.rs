@@ -91,7 +91,8 @@ pub(super) fn annotate<'a>(
             );
             e.enclosing_symbol = super::context::enclosing_symbol(call);
             e.context.reachability = Some(super::reachability::classify(call, literals));
-            e.captures.clear();
+            e.captures
+                .retain(|name, _| name.starts_with("http_client_"));
             e.context.literals.clear();
             e.context.operand_facts.clear();
             e

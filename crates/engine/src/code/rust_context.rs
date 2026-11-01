@@ -999,7 +999,11 @@ pub(crate) fn rust_imports(root: &Node<'_, StrDoc<SupportLang>>) -> BTreeMap<Str
     imports
 }
 
-fn expand_use(prefix: &str, specification: &str, imports: &mut BTreeMap<String, String>) {
+pub(super) fn expand_use(
+    prefix: &str,
+    specification: &str,
+    imports: &mut BTreeMap<String, String>,
+) {
     let specification = specification.trim();
     if let Some(open) = specification.find('{') {
         let Some(close) = matching_brace(specification, open) else {
