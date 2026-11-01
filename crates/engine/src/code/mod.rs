@@ -37,6 +37,7 @@ mod go_grpc;
 mod go_ldap;
 mod go_operands;
 mod go_policy;
+mod go_summary_binding;
 mod go_vulnerability;
 mod go_web;
 mod identity_boundary;

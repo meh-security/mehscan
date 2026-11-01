@@ -358,6 +358,12 @@ pub(crate) fn scan_source(
                     continue;
                 }
                 if language == Language::Go
+                    && compiled_rule.rule.id == "go-outbound-http"
+                    && !super::go_summary_binding::compatible_http_call(&root, matched.get_node())
+                {
+                    continue;
+                }
+                if language == Language::Go
                     && matches!(
                         compiled_rule.rule.id.as_str(),
                         "go-database-query" | "go-sql-parameterization"

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use ast_grep_core::Node;
 use ast_grep_core::tree_sitter::StrDoc;
+use ast_grep_core::{AstGrep, Node};
 use ast_grep_language::SupportLang;
 use mehscan_core::{
     Capability, Capture, Confidence, Evidence, EvidenceContext, EvidenceKind, HttpRouteAccess,
@@ -46,6 +46,7 @@ enum SqlParameterRole {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SqlParameterSummary {
+    binding: super::go_summary_binding::Scope,
     indices: Vec<usize>,
     role: SqlParameterRole,
     resource_filter_indices: Vec<usize>,
@@ -62,6 +63,7 @@ pub(crate) struct GoProjectContext {
     routes_by_handler: BTreeMap<String, Vec<GoRoute>>,
     mongo_parameter_summaries: BTreeMap<String, Vec<MongoParameterSummary>>,
     sql_parameter_summaries: BTreeMap<String, SqlParameterSummary>,
+    sql_bindings: super::go_summary_binding::Bindings,
     ldap_parameter_summaries: BTreeMap<String, LdapParameterSummary>,
     cookie_return_helpers: BTreeSet<String>,
     session_value_helpers: BTreeSet<String>,
@@ -86,6 +88,7 @@ impl GoProjectContext {
             BTreeMap::new();
         let mut sql_summary_candidates: BTreeMap<String, Vec<SqlParameterSummary>> =
             BTreeMap::new();
+        let mut sql_bindings = super::go_summary_binding::Bindings::default();
         let mut ldap_summary_candidates: BTreeMap<String, Vec<LdapParameterSummary>> =
             BTreeMap::new();
         let mut cookie_return_helpers = BTreeSet::new();
@@ -98,10 +101,10 @@ impl GoProjectContext {
             .iter()
             .any(|(_, _, source)| source_has_csrf_control(source));
 
-        for (_, _, source) in &sources {
+        for (path, _, source) in &sources {
             collect_routes(source, &function_names, &mut routes_by_handler);
             collect_mongo_summaries(source, &mut summary_candidates);
-            collect_sql_summaries(source, &mut sql_summary_candidates);
+            collect_sql_summaries(path, source, &mut sql_summary_candidates, &mut sql_bindings);
             collect_ldap_summaries(source, &mut ldap_summary_candidates);
             collect_cookie_return_helpers(source, &mut cookie_return_helpers);
             collect_session_value_helpers(source, &mut session_value_helpers);
@@ -138,6 +141,7 @@ impl GoProjectContext {
             routes_by_handler,
             mongo_parameter_summaries,
             sql_parameter_summaries,
+            sql_bindings,
             ldap_parameter_summaries,
             cookie_return_helpers,
             session_value_helpers,
@@ -493,6 +497,9 @@ impl GoProjectContext {
                 }
             }
             if let Some(summary) = self.sql_parameter_summaries.get(target)
+                && self
+                    .sql_bindings
+                    .matches(&summary.binding, path, root, &call.node)
                 && let Some((index, argument)) = summary.indices.iter().find_map(|index| {
                     call.arguments
                         .get(*index)
@@ -561,7 +568,11 @@ impl GoProjectContext {
                     evidence,
                 );
             }
-            if let Some(summary) = self.sql_parameter_summaries.get(target) {
+            if let Some(summary) = self.sql_parameter_summaries.get(target)
+                && self
+                    .sql_bindings
+                    .matches(&summary.binding, path, root, &call.node)
+            {
                 for index in &summary.resource_filter_indices {
                     let Some(argument) = call.arguments.get(*index) else {
                         continue;
@@ -1030,27 +1041,65 @@ fn go_route_attachments(arguments: &str, handler: &str) -> Vec<String> {
     names.into_iter().collect()
 }
 
-fn collect_sql_summaries(source: &str, summaries: &mut BTreeMap<String, Vec<SqlParameterSummary>>) {
-    let mut cursor = 0usize;
-    while let Some(relative) = source[cursor..].find("func ") {
-        let start = cursor + relative;
-        let Some(open_body_relative) = source[start..].find('{') else {
-            break;
-        };
-        let open_body = start + open_body_relative;
-        let Some(close_body) = matching_brace(source, open_body) else {
-            break;
-        };
-        let header = &source[start + 5..open_body];
-        let Some((name, parameters)) = parse_function_header(header) else {
-            cursor = close_body + 1;
+fn collect_sql_summaries(
+    path: &str,
+    source: &str,
+    summaries: &mut BTreeMap<String, Vec<SqlParameterSummary>>,
+    bindings: &mut super::go_summary_binding::Bindings,
+) {
+    let Ok(doc) = StrDoc::try_new(source, SupportLang::Go) else {
+        return;
+    };
+    let ast = AstGrep::doc(doc);
+    let root = ast.root();
+    bindings.collect(path, &root);
+    for declaration in root.children().filter(|n| {
+        matches!(
+            n.kind().as_ref(),
+            "function_declaration" | "method_declaration"
+        )
+    }) {
+        let Some(body_node) = declaration.field("body") else {
             continue;
         };
-        let body = &source[open_body..=close_body];
-        let has_execution = [".Query(", ".QueryRow(", ".ExecContext("]
-            .iter()
-            .any(|operation| body.contains(operation))
-            || has_non_process_exec_call(body);
+        let text = declaration.text();
+        let header_length = body_node.range().start - declaration.range().start;
+        let header = &text[5..header_length];
+        let Some((name, parameters)) = parse_function_header(header) else {
+            continue;
+        };
+        let body_text = body_node.text();
+        let body = body_text.as_ref();
+        let calls = body_node.dfs().filter_map(call_site).collect::<Vec<_>>();
+        // SQL text is mandatory in these APIs (after context for ExecContext).
+        // Zero-argument URL.Query and source text in comments are not SQL sinks.
+        let has_execution = calls.iter().any(|call| {
+            let arity = match terminal_name(&call.callee) {
+                "Query" | "QueryRow" | "Exec" => 1,
+                "ExecContext" => 2,
+                _ => return false,
+            };
+            if is_known_process_exec(&call.node) {
+                return false;
+            }
+            call.arguments.len() >= arity
+                || call.callee.rsplit_once('.').is_some_and(|(receiver, _)| {
+                    // A prepared statement can execute with zero bound values; its
+                    // query text came from the connected Prepare, not Query().
+                    calls.iter().any(|producer| {
+                        matches!(
+                            terminal_name(&producer.callee),
+                            "Prepare" | "PrepareContext"
+                        ) && producer.arguments.len()
+                            >= if producer.callee.ends_with("Context") {
+                                2
+                            } else {
+                                1
+                            }
+                            && assigned_identifier(&producer.node).as_deref() == Some(receiver)
+                    })
+                })
+        });
         let parameterized = body.contains(".Prepare(")
             || ((body.contains(".Query(") || body.contains(".Exec(")) && body.contains('?'));
         let unsafe_query = body.contains("fmt.Sprintf(")
@@ -1086,6 +1135,8 @@ fn collect_sql_summaries(source: &str, summaries: &mut BTreeMap<String, Vec<SqlP
                     .entry(name)
                     .or_default()
                     .push(SqlParameterSummary {
+                        binding: super::go_summary_binding::scope(path, &root, &declaration)
+                            .unwrap(),
                         indices,
                         role: if unsafe_query {
                             SqlParameterRole::UnsafeQuery
@@ -1099,29 +1150,12 @@ fn collect_sql_summaries(source: &str, summaries: &mut BTreeMap<String, Vec<SqlP
                     });
             }
         }
-        cursor = close_body + 1;
     }
 }
 
 pub(crate) fn is_known_process_exec(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
     node.field("function")
         .is_some_and(|function| matches!(function.text().trim(), "unix.Exec" | "syscall.Exec"))
-}
-
-fn has_non_process_exec_call(source: &str) -> bool {
-    let mut rest = source;
-    while let Some(index) = rest.find(".Exec(") {
-        let prefix = &rest[..index];
-        let receiver = prefix
-            .rsplit(|character: char| character != '_' && !character.is_ascii_alphanumeric())
-            .next()
-            .unwrap_or_default();
-        if !matches!(receiver, "unix" | "syscall") {
-            return true;
-        }
-        rest = &rest[index + ".Exec(".len()..];
-    }
-    false
 }
 
 fn collect_ldap_summaries(
