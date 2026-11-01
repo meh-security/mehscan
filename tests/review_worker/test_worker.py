@@ -203,6 +203,14 @@ class LookupFailures(unittest.TestCase):
                           (2,"error: invalid reviewer work: diagnosis severity is invalid")):
             self.assertIsNone(worker.finalization_feedback(worker.CommandFailure(code,text),["id"]))
 
+    def test_check_format_feedback_requires_exact_diagnostic_and_selected_id(self):
+        message='error: invalid reviewer work: review triage checks must be one non-empty line of at most 300 characters for "id"'
+        self.assertIn('checks must be', worker.finalization_feedback(worker.CommandFailure(2,message),['id']))
+        for code,text,ids in ((1,message,['id']), (2,message,['other']),
+                              (2,message+'\nsource changed',['id']),
+                              (2,'error: invalid reviewer work: needs_review requires at least one decisive check for "id"',['id'])):
+            self.assertIsNone(worker.finalization_feedback(worker.CommandFailure(code,text),ids))
+
     def test_guidance_is_an_allowlisted_skill_read_not_a_source_command(self):
         import review_context as context
         guide = {"tool":"guidance", "review_id":"id", "arguments":{"name":"mass-assignment"}}
@@ -708,7 +716,7 @@ else:
         self.assertEqual(calls,["routine","routine","routine"])
         self.assertEqual(json.loads((Path(args.output) / "budget.json").read_text())["totals"]["model_calls"],3)
 
-    def run_cwe_repair_case(self, *, interrupt=False, repeat_invalid=False):
+    def run_cwe_repair_case(self, *, interrupt=False, repeat_invalid=False, invalid_checks=False):
         from argparse import Namespace
         plan=self.native("state","plan-template","--inventory",str(self.inventory),"--source-root",str(self.root),
             "--policy","comprehensive","--skill-root",str(ROOT/"skills/mehscan-security"),
@@ -731,16 +739,27 @@ else:
                 if len(calls)>1:
                     self.assertEqual(task["research"]["queries_remaining"],0)
                     self.assertEqual(task["research"]["rounds_remaining"],0)
-                    self.assertIn("distinct CWE-N",task["research"]["feedback"]["reason"])
-                    self.assertEqual(task["research"]["feedback"]["rejected_draft"]["results"][0]["diagnosis"]["cwes"],
-                                     ["CWE- mass-assignment","CWE-94"])
+                    if invalid_checks:
+                        self.assertIn("checks must be",task["research"]["feedback"]["reason"])
+                        self.assertEqual(task["research"]["feedback"]["rejected_draft"]["results"][0]["checks"],
+                                         ["Establish the deployed entrypoint for this handler."," "])
+                    else:
+                        self.assertIn("distinct CWE-N",task["research"]["feedback"]["reason"])
+                        self.assertEqual(task["research"]["feedback"]["rejected_draft"]["results"][0]["diagnosis"]["cwes"],
+                                         ["CWE- mass-assignment","CWE-94"])
                 cwes=["CWE- mass-assignment","CWE-94"] if len(calls)==1 or repeat_invalid else ["CWE-94"]
-                return {"draft":{"results":[{"review_id":rid,"decision":"issue","confidence":"medium",
+                reply = {"draft":{"results":[{"review_id":rid,"decision":"issue","confidence":"medium",
                     "summary":"Request data reaches eval.","reason":"The supplied handler evaluates request.query.code.",
                     "checks":[],"blockers":[],"evidence":[{"path":"app.js","start_line":1,"end_line":1}],
                     "diagnosis":{"title":"Request data is evaluated","cwes":cwes,"severity":"high",
                                  "impact":"A caller can supply evaluated code.","remediation":"Remove evaluation of caller-supplied code."}}
                     for rid in task["review_ids"]]},"working_chain":"","progress":[],"routing":[]}
+                if invalid_checks:
+                    for row in reply["draft"]["results"]:
+                        row.update(decision="needs_review",diagnosis=None,
+                                   checks=["Establish the deployed entrypoint for this handler."]
+                                   + ([" "] if len(calls)==1 or repeat_invalid else []))
+                return reply
             if interrupt and not interrupted and command[1:3]==["investigate","review-bundle-finalize"]:
                 interrupted.append(True)
                 raise worker.CommandFailure(1,"injected interruption after saving the candidate")
@@ -769,6 +788,22 @@ else:
 
     def test_second_invalid_cwe_reply_stops_without_extra_calls_or_admission(self):
         result,_=self.run_cwe_repair_case(repeat_invalid=True)
+        self.assertEqual(result["status"],"incomplete",result)
+
+    def test_blank_check_repairs_once_preserving_uncertainty_and_real_validation(self):
+        result,args=self.run_cwe_repair_case(invalid_checks=True)
+        self.assertEqual(result["status"],"admitted",result)
+        jobs=[json.loads(p.read_text())for p in(Path(args.output)/"jobs").glob("*.json")]
+        row=jobs[0]["draft"]["results"][0]
+        self.assertEqual(row["decision"],"needs_review")
+        self.assertEqual(row["checks"],["Establish the deployed entrypoint for this handler."])
+
+    def test_recovered_blank_check_uses_only_remaining_format_repair_turn(self):
+        result,_=self.run_cwe_repair_case(invalid_checks=True,interrupt=True)
+        self.assertEqual(result["status"],"admitted",result)
+
+    def test_repeated_blank_check_stops_without_extra_calls_or_admission(self):
+        result,_=self.run_cwe_repair_case(invalid_checks=True,repeat_invalid=True)
         self.assertEqual(result["status"],"incomplete",result)
 
     def run_revalidation_case(self, reopening=False, interrupt=False):

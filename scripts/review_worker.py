@@ -180,19 +180,24 @@ def citation_feedback(error, ids):
 
 
 def finalization_feedback(error, ids):
-    """Allow one bounded correction of citations or CWE syntax, never a verdict."""
+    """Allow one bounded correction of citations or text format, never a verdict."""
     message = citation_feedback(error, ids)
     if message is not None:
         return message
     cwes = "diagnosis CWEs must be at most five distinct CWE-N identifiers"
     if error.returncode == 2 and error.stderr.strip() == "error: invalid reviewer work: " + cwes:
         return cwes
+    checks = "review triage checks must be one non-empty line of at most 300 characters for "
+    if error.returncode == 2 and error.stderr.strip() in {
+            "error: invalid reviewer work: " + checks + json.dumps(identity) for identity in ids}:
+        return error.stderr.strip().removeprefix("error: invalid reviewer work: ")
     return None
 
 
 def finalization_correction(message, draft):
     return {"reason":message, "rejected_draft":draft,
-            "instruction":"Correct only the rejected citation or diagnosis.cwes format. Preserve every result's verdict, "
+            "instruction":"Correct only the rejected citation, diagnosis.cwes or checks text format named in the reason. "
+                          "Remove blank checks but retain all substantive deciding questions; do not invent new checks. Preserve every result's verdict, "
                           "source evidence, mechanism, qualifications and honest uncertainty. Do not research or invent a replacement CWE. "
                           "The draft was not admitted."}
 
