@@ -1,8 +1,9 @@
 # Credential state
 
 Trace **requester → required current proof or recovery authority → exact
-credential transition → rejection before mutation**. This applies to
-password, passcode, MFA, authenticator, recovery code and API-key changes.
+credential transition or renewal → rejection before the effect**. This applies to
+password, passcode, MFA, authenticator, recovery code and API-key changes,
+and token renewal.
 
 A valid session identifies a subject but may not satisfy the proof required
 for this particular change. Check whether old-secret confirmation, verified
@@ -34,6 +35,11 @@ of token deletion alone is not a defect. If delegated semantics remain unread,
 keep that deciding gap. This does not impose single use on ordinary sessions or
 operator administration. Load [credential lifecycle](../categories/credential-lifecycle.md)
 and [token review](../token-review.md) when that relationship needs further guidance.
+
+For a renewal exchange, follow the accepted proof into the authority issuer and
+load [token review](../token-review.md). Keep the refresh proof's lifetime and
+revocation separate from checks on the access token it produces. An access-token
+state check does not alone settle whether the exchange still accepts old proof.
 
 Stop when the required authority, rejection and applicable consumption are shown
 for this exact change, or a concrete violation is established under stated

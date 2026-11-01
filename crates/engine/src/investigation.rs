@@ -1855,15 +1855,7 @@ fn build_path_review_jobs_internal(
     // review counts only to this continuation's selected marker questions.
     if marker_page > 0 {
         candidates.clear();
-        observation_groups.retain(|group| {
-            group.evidence.first().is_some_and(|fact| {
-                matches!(
-                    fact.rule_id.as_str(),
-                    "framework-authorization-review-marker"
-                        | "framework-credential-lifecycle-review-marker"
-                )
-            })
-        });
+        observation_groups.retain(|group| group.evidence.iter().any(review_admission::is_marker));
     }
     let mut identity_catalog =
         identity::build_catalog(root, &sources, &candidates, &observation_groups)?;

@@ -488,6 +488,7 @@ impl Budget {
         db! { diesel::update(budgets::table).set(self).execute(conn) }
     }
 }
+
 "#,
             ),
             (
@@ -545,4 +546,168 @@ fn consume(conn: &mut Connection) -> Result<(), Error> {
         !review.decision_facts.unresolved.is_empty(),
         "a marker must not close the atomicity question"
     );
+}
+
+#[test]
+fn rust_renewal_remains_an_explicit_lifecycle_question_in_inventory_and_review_jobs() {
+    let fixture = Fixture::new(
+        "rust-renewal",
+        &[
+            (
+                "crypto.rs",
+                r#"
+pub struct Claims { sub: String }
+pub fn sign(claims: &Claims) -> String {
+    match jsonwebtoken::encode(&HEADER, claims, &KEY) { Ok(token) => token, Err(e) => panic!("signing failed") }
+}
+pub fn verify(token: &str) -> Result<Claims, Error> {
+    match jsonwebtoken::decode(token, &KEY, &VALIDATION) { Ok(data) => Ok(data.claims), Err(e) => Err(e) }
+}
+"#,
+            ),
+            (
+                "model.rs",
+                r#"
+pub struct Lease { account: String }
+pub struct Account { id: String }
+impl Lease {
+    pub fn find(secret: &str, db: &mut Connection) -> Option<Self> {
+        db! { leases::table.filter(leases::secret.eq(secret)).first::<LeaseRow>(db).ok() }
+    }
+    pub fn issue(&mut self, account: &Account) -> (String, i64) {
+        use crate::crypto::{Claims, sign};
+        let claims = Claims { sub: account.id.clone() };
+        (sign(&claims), 600)
+    }
+}
+impl Account {
+    pub fn find(id: &str, db: &mut Connection) -> Option<Self> {
+        db! { accounts::table.filter(accounts::id.eq(id)).first::<AccountRow>(db).ok() }
+    }
+}
+"#,
+            ),
+            (
+                "api.rs",
+                r#"
+use rocket::form::Form;
+use crate::model::{Lease, Account};
+fn token(data: Form<Grant>, db: &mut Connection) -> JsonResult {
+    match data.grant_type.as_ref() { "refresh_token" => renew(data, db), _ => Err(Error::Grant) }
+}
+fn renew(data: Grant, db: &mut Connection) -> JsonResult {
+    let mut lease = Lease::find(&data.refresh_token.unwrap(), db).unwrap();
+    let account = Account::find(&lease.account, db).unwrap();
+    let (access, ttl) = lease.issue(&account);
+    Ok(Json(json!({"access_token": access, "expires_in": ttl})))
+}
+"#,
+            ),
+            (
+                "guard.rs",
+                r#"
+use rocket::request::FromRequest;
+use crate::{crypto::verify, model::Account};
+pub struct Principal { user: Account }
+impl FromRequest for Principal {
+    fn from_request(request: &Request) -> Outcome<Self, Error> {
+        let claims = verify(request.token()).unwrap();
+        let user = Account::find(&claims.sub, request.db()).unwrap();
+        Outcome::Success(Principal { user })
+    }
+}
+"#,
+            ),
+        ],
+    );
+    let inventory = build_review_inventory(&fixture.0, false).unwrap();
+    let entries: Vec<_> = inventory
+        .entries
+        .iter()
+        .filter(|e| e.rule_id == "rust-credential-renewal-review-marker")
+        .collect();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].cwe_candidates, ["CWE-613"]);
+    let jobs =
+        mehscan_engine::investigation::build_all_path_review_jobs(&fixture.0, None, false).unwrap();
+    let review = jobs
+        .observation_reviews
+        .iter()
+        .find(|r| {
+            r.evidence
+                .iter()
+                .any(|e| e.rule_id == "rust-credential-renewal-review-marker")
+        })
+        .unwrap();
+    let evidence = review
+        .evidence
+        .iter()
+        .find(|e| e.rule_id == "rust-credential-renewal-review-marker")
+        .unwrap();
+    assert!(
+        evidence.captures["credential_consumer_definition"]
+            .text
+            .contains("secret.eq(secret)")
+    );
+    assert!(
+        evidence.captures["token_validator_definition"]
+            .text
+            .contains("jsonwebtoken::decode")
+    );
+    assert!(
+        evidence
+            .tags
+            .iter()
+            .any(|t| t == "credential-revocation-unresolved")
+    );
+    assert!(!review.decision_facts.unresolved.is_empty());
+
+    // Exercise the shared marker admission contract beyond the per-file page
+    // ceiling. New rule families must remain actionable on continuation pages.
+    let api = fs::read_to_string(fixture.0.join("api.rs")).unwrap();
+    let (imports, functions) = api.split_once("fn token(").unwrap();
+    let functions = format!("fn token({functions}");
+    let mut expanded = imports.to_string();
+    for i in 0..10 {
+        expanded.push_str(
+            &functions
+                .replace("fn token(", &format!("fn token{i}("))
+                .replace("renew(", &format!("renew{i}(")),
+        );
+    }
+    fs::write(fixture.0.join("api.rs"), expanded).unwrap();
+    let mut initial = build_review_inventory(&fixture.0, false).unwrap();
+    mehscan_engine::investigation::bind_inventory_repository(
+        &mut initial,
+        Some("regression:renewal-pages".into()),
+        None,
+    )
+    .unwrap();
+    assert_eq!(initial.marker_admission.recognized, 10);
+    assert_eq!(initial.marker_admission.admitted, 8);
+    assert_eq!(initial.marker_admission.budget_deferred, 2);
+    let next =
+        mehscan_engine::investigation::continue_review_markers(&fixture.0, &initial, 1).unwrap();
+    assert_eq!(next.entries.len(), 2);
+    assert_eq!(next.marker_admission.admitted, next.entries.len());
+    assert_eq!(next.marker_admission.budget_deferred, 0);
+    assert!(next.entries.iter().all(|e| {
+        e.rule_id == "rust-credential-renewal-review-marker"
+            && !initial
+                .entries
+                .iter()
+                .any(|old| old.review_id == e.review_id)
+    }));
+    let ids = next.entries.iter().map(|e| e.review_id.clone()).collect();
+    let selected =
+        mehscan_engine::investigation::build_selected_review_jobs(&fixture.0, &next, &ids, None)
+            .unwrap();
+    assert_eq!(selected.total_reviews, 2);
+    let bundles =
+        mehscan_engine::investigation::build_path_review_bundles(&selected, None).unwrap();
+    let validator =
+        mehscan_engine::investigation::ReviewHistoryValidator::new(&fixture.0, &next).unwrap();
+    for bundle in bundles.bundles {
+        validator.validate_bundle(&bundle).unwrap();
+    }
 }

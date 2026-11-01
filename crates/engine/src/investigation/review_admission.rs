@@ -2,6 +2,7 @@ use super::*;
 mod csharp_boundaries;
 mod javascript_boundaries;
 mod python_credentials;
+mod rust_credential_renewal;
 mod rust_shared_state;
 
 const AUTHORIZATION_REVIEW_MARKER_RULE_ID: &str = "framework-authorization-review-marker";
@@ -62,6 +63,12 @@ fn server_mutation_review_marker_groups(
 ) -> (Vec<ObservationGroup>, mehscan_core::ReviewMarkerAdmission) {
     let mut groups =
         rust_shared_state::groups(sources, existing_evidence, scope, include_review_material);
+    groups.extend(rust_credential_renewal::groups(
+        sources,
+        existing_evidence,
+        scope,
+        include_review_material,
+    ));
     let mut seen = BTreeSet::new();
     for file in sources.files.values() {
         if !include_review_material && is_review_material_path(&file.path) {
@@ -532,6 +539,18 @@ pub(super) fn is_marker(evidence: &Evidence) -> bool {
 }
 
 pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewContract> {
+    // A renewal marker selects renewal validity, not only initial sign-in proof.
+    // Review procedure and token semantics remain in the routed skill guides.
+    if evidence
+        .iter()
+        .any(|e| e.tags.iter().any(|t| t == "credential-renewal"))
+    {
+        return Some(OperationReviewContract {
+            relationship: "bounded_credential_renewal_review",
+            security_question: "Which presented credential does this exchange accept, which subject and authority does it issue, and do applicable expiry, rotation, revocation and security-state changes invalidate that same renewal proof before further authority is issued?",
+            title: "Review credential renewal validity",
+        });
+    }
     match operation_review_family(evidence)? {
         OperationReviewFamily::Authorization => Some(OperationReviewContract {
             relationship: "bounded_action_resource_authorization_review",
@@ -647,6 +666,12 @@ pub(super) fn decision_questions(
     evidence: &[Evidence],
     facts: &[ReviewNeighborhoodFact],
 ) -> Vec<String> {
+    if evidence
+        .iter()
+        .any(|e| e.tags.iter().any(|t| t == "credential-renewal"))
+    {
+        return vec!["Does the accepting record invalidate the same presented renewal proof under applicable expiry, rotation, revocation and security-state changes before further authority is issued, and is this exchange exposed by the registered application?".into()];
+    }
     match operation_review_family(evidence) {
         Some(OperationReviewFamily::Authorization | OperationReviewFamily::CredentialLifecycle)
             if evidence.iter().any(is_marker) =>

@@ -4,7 +4,7 @@ use super::*;
 use ast_grep_core::Node;
 use ast_grep_language::SupportLang;
 
-type AstNode<'a> = Node<'a, StrDoc<SupportLang>>;
+pub(super) type AstNode<'a> = Node<'a, StrDoc<SupportLang>>;
 const RULE: &str = "rust-shared-state-limit-review-marker";
 
 #[derive(Default)]
@@ -32,11 +32,11 @@ struct Index {
     rejecting_macros: BTreeMap<String, Vec<Capture>>,
 }
 
-fn compact(text: &str) -> String {
+pub(super) fn compact(text: &str) -> String {
     text.split_whitespace().collect()
 }
 
-fn module(path: &str) -> String {
+pub(super) fn module(path: &str) -> String {
     let (prefix, tail) = path.strip_prefix("src/").map_or_else(
         || path.split_once("/src/").unwrap_or(("", path)),
         |tail| ("", tail),
@@ -56,7 +56,7 @@ fn module(path: &str) -> String {
     )
 }
 
-fn qualified(current: &str, name: &str) -> String {
+pub(super) fn qualified(current: &str, name: &str) -> String {
     let crate_root = current.split("::").next().unwrap_or(current);
     if let Some(rest) = name.strip_prefix("crate::") {
         return format!("{crate_root}::{rest}");
@@ -82,13 +82,13 @@ fn capture(file: &SourceFile, node: &AstNode<'_>) -> Capture {
     }
 }
 
-fn owns(node: &AstNode<'_>, function: &AstNode<'_>) -> bool {
+pub(super) fn owns(node: &AstNode<'_>, function: &AstNode<'_>) -> bool {
     node.ancestors()
         .find(|n| matches!(n.kind().as_ref(), "function_item" | "closure_expression"))
         .is_some_and(|n| n.range() == function.range())
 }
 
-fn block_contains(node: &AstNode<'_>, target: &AstNode<'_>) -> bool {
+pub(super) fn block_contains(node: &AstNode<'_>, target: &AstNode<'_>) -> bool {
     node.ancestors()
         .find(|n| n.kind().as_ref() == "block")
         .is_some_and(|b| {
@@ -98,7 +98,7 @@ fn block_contains(node: &AstNode<'_>, target: &AstNode<'_>) -> bool {
 
 // Ignore strings and comments even inside macro token trees. This preserves
 // token spelling; it does not expand macros or establish backend semantics.
-fn tokens(node: &AstNode<'_>) -> String {
+pub(super) fn tokens(node: &AstNode<'_>) -> String {
     if node.kind().as_ref().contains("comment")
         || matches!(
             node.kind().as_ref(),
@@ -142,7 +142,7 @@ fn has_self_argument(text: &str) -> bool {
     })
 }
 
-fn imports(
+pub(super) fn imports(
     node: &AstNode<'_>,
     prefix: &str,
     public: bool,
@@ -426,6 +426,38 @@ impl Index {
                 chain.insert(0, method);
                 chain
             })
+    }
+}
+
+/// Share bounded source bindings and method locations, never state verdicts.
+pub(super) struct ModelBindings(Index);
+
+impl ModelBindings {
+    pub(super) fn build(sources: &RepositorySources) -> Self {
+        Self(Index::build(sources))
+    }
+
+    pub(super) fn resolve_type(&self, path: &str, name: &str) -> Option<String> {
+        self.0
+            .resolve(&self.0.files.get(path)?.module, name, 0, false)
+    }
+
+    pub(super) fn lookup(&self, owner: &str, method: &str) -> Option<&Capture> {
+        let method = self.0.method(owner, method)?;
+        (method.returns_self && method.reads).then_some(&method.definition)
+    }
+
+    pub(super) fn method(&self, owner: &str, method: &str) -> Option<&Capture> {
+        Some(&self.0.method(owner, method)?.definition)
+    }
+
+    pub(super) fn methods(&self, owner: &str) -> Vec<&Capture> {
+        self.0
+            .methods
+            .iter()
+            .filter(|((o, _), methods)| o == owner && methods.len() == 1)
+            .map(|(_, methods)| &methods[0].definition)
+            .collect()
     }
 }
 
