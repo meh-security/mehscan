@@ -126,6 +126,46 @@ void macro_copy(const char *src) { char dst[8]; strncpy(dst,src,8); dst[7]=0; }
 }
 
 #[test]
+fn mutable_function_pointer_with_const_parameters_does_not_close_a_buffer_copy() {
+    let result = scan_source(
+        "pointer-storage",
+        "cpp",
+        r#"#include <cstring>
+char *replacement(char *dst,const char *src,std::size_t ignored) {
+    for(unsigned i=0;i<64;++i) dst[i]=src[i];
+    return dst;
+}
+void mutable_copy(const char *src) {
+    char dst[8]; char *(*copy)(char*,const char*,std::size_t)=std::strncpy;
+    copy=replacement; copy(dst,src,8); dst[7]=0;
+}
+void constant_copy(const char *src) {
+    char dst[8]; char *(* const copy)(char*,const char*,std::size_t)=std::strncpy;
+    copy(dst,src,8); dst[7]=0;
+}
+"#,
+    );
+    let copies = result
+        .evidence
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.capability,
+                Capability::BufferWrite
+                    | Capability::BufferCapacityValidation
+                    | Capability::StringTerminationValidation
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(copies.len(), 3, "{copies:#?}");
+    assert!(
+        copies
+            .iter()
+            .all(|item| item.enclosing_symbol.as_deref() == Some("constant_copy"))
+    );
+}
+
+#[test]
 fn termination_requires_a_positive_extent_and_uninterrupted_straight_line_use() {
     let source = r#"
 void zero(const char *src) { char dst[0]; strncpy(dst,src,sizeof(dst)); dst[0]=0; }

@@ -163,14 +163,8 @@ impl NativeApiContext {
             let Some(name) = declaration_name(&declarator) else {
                 continue;
             };
-            let target = if kind.as_ref() == "init_declarator"
-                && (declarator.dfs().any(|child| {
-                    child.kind().as_ref() == "type_qualifier" && child.text().trim() == "const"
-                }) || node.parent().is_some_and(|parent| {
-                    parent.children().any(|child| {
-                        child.kind().as_ref() == "type_qualifier" && child.text().trim() == "const"
-                    })
-                })) {
+            let target = if kind.as_ref() == "init_declarator" && constant_alias(&node, &declarator)
+            {
                 node.field("value").map(|value| {
                     let value = compact(value.text().as_ref());
                     value.strip_prefix('&').unwrap_or(&value).to_string()
@@ -418,6 +412,48 @@ impl NativeApiContext {
                 );
         }
     }
+}
+
+fn constant_alias(
+    node: &Node<'_, StrDoc<SupportLang>>,
+    declarator: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    let mut current = declarator.clone();
+    let mut pointer_const = None;
+    for _ in 0..16 {
+        if current.kind().as_ref() == "pointer_declarator" {
+            pointer_const = Some(current.children().any(|child| {
+                child.kind().as_ref() == "type_qualifier" && child.text().trim() == "const"
+            }));
+        }
+        if current.kind().as_ref() == "identifier" {
+            // Only the pointer nearest the bound name qualifies its storage.
+            // Const pointees, return types and parameters cannot make a
+            // mutable function pointer an immutable standard-library alias.
+            return pointer_const.unwrap_or_else(|| {
+                node.parent().is_some_and(|parent| {
+                    parent.children().any(|child| {
+                        child.kind().as_ref() == "type_qualifier" && child.text().trim() == "const"
+                    })
+                })
+            });
+        }
+        let next = current.field("declarator").or_else(|| {
+            matches!(
+                current.kind().as_ref(),
+                "parenthesized_declarator" | "reference_declarator"
+            )
+            .then(|| {
+                current
+                    .children()
+                    .find(|child| child.is_named() && child.kind().as_ref() != "type_qualifier")
+            })
+            .flatten()
+        });
+        let Some(next) = next else { return false };
+        current = next;
+    }
+    false
 }
 
 fn function_name(node: &Node<'_, StrDoc<SupportLang>>) -> Option<String> {
@@ -761,6 +797,38 @@ mod tests {
         "#
             ),
             vec![None, None]
+        );
+    }
+
+    #[test]
+    fn alias_immutability_belongs_to_the_pointer_not_its_parameter_or_return_types() {
+        assert_eq!(
+            names(
+                r#"
+            void run() {
+                char *(*mutable_copy)(char*,const char*,unsigned long)=std::strncpy;
+                mutable_copy=replacement; mutable_copy(dst,src,n);
+                char *(* const fixed_copy)(char*,const char*,unsigned long)=std::strncpy;
+                fixed_copy(dst,src,n);
+                const auto *mutable_auto=std::memcpy;
+                mutable_auto=replacement; mutable_auto(dst,src,n);
+                auto * const fixed_auto=std::memcpy; fixed_auto(dst,src,n);
+                const auto * const fixed_both=std::memcpy; fixed_both(dst,src,n);
+                const void *(*returned_const)(void*,const void*,unsigned)=std::memcpy;
+                returned_const(dst,src,n);
+                const auto &reference=std::memcpy; reference(dst,src,n);
+            }
+        "#
+            ),
+            vec![
+                None,
+                Some("strncpy"),
+                None,
+                Some("memcpy"),
+                Some("memcpy"),
+                None,
+                Some("memcpy")
+            ]
         );
     }
 }
