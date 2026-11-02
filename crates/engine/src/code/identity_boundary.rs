@@ -174,18 +174,19 @@ fn add_jwt_observations<'tree>(
             continue;
         }
         let callee = compact(&call.callee);
-        let method = ["sign", "verify", "decode"].into_iter().find(|method| {
+        let method = ["sign", "verify"].into_iter().find(|method| {
             symbols
                 .resolve(&callee, &format!("jsonwebtoken.{method}"))
                 .is_some_and(|r| r.confidence != mehscan_core::SymbolConfidence::Ambiguous)
                 && !symbols.has_shadowing_parameter(&call.node, &callee, language)
         });
-        let Some(method) = method else { continue };
-        let keys = keys.get_or_insert_with(|| keys::KeyIndex::new(root));
-        if !keys.api_owned(&call.node, &callee, symbols) {
-            continue;
+        if method.is_some() {
+            let keys = keys.get_or_insert_with(|| keys::KeyIndex::new(root));
+            if !keys.api_owned(&call.node, &callee, symbols) {
+                continue;
+            }
         }
-        if method == "sign" {
+        if method == Some("sign") {
             if let Some(key) = call.arguments.get(1) {
                 let options = call
                     .arguments
@@ -246,7 +247,7 @@ fn add_jwt_observations<'tree>(
                         evidence,
                     );
                 }
-                if keys.hardcoded(key, symbols) {
+                if keys.as_ref().unwrap().hardcoded(key, symbols) {
                     push_pair(
                         path,
                         language,
@@ -266,7 +267,7 @@ fn add_jwt_observations<'tree>(
                     );
                 }
             }
-        } else if method == "verify" {
+        } else if method == Some("verify") {
             let Some(token) = call.arguments.first() else {
                 continue;
             };
@@ -384,6 +385,9 @@ fn add_jwt_observations<'tree>(
             || callee == "jwt.decode"
             || callee.ends_with("security.decode")
         {
+            // This existing syntactic decode/use relationship also covers local
+            // wrappers. SDK key/configuration ownership does not prove or refute
+            // it; downstream flow keeps its applicability explicitly unknown.
             let Some(token) = call.arguments.first() else {
                 continue;
             };

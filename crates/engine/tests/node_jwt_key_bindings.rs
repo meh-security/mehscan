@@ -133,3 +133,34 @@ fn sdk_producers_and_captured_mutations_are_resolved_in_their_own_scope() {
         assert!(signing_symbols(&result).is_empty(), "{source}");
     }
 }
+
+#[test]
+fn sdk_key_proof_does_not_remove_syntactic_decoder_identity_relationships() {
+    for extension in ["js", "ts", "tsx"] {
+        let result = scan(
+            extension,
+            "import * as security from './token-utils';\nfunction subject(token){const decoded=security.decode(token);return decoded?.data?.subject;}",
+        );
+        let sink = result
+            .evidence
+            .iter()
+            .find(|e| e.rule_id.ends_with("-jwt-decode-as-identity"))
+            .expect("the local decoder use remains an investigation lead");
+        assert!(signing_symbols(&result).is_empty());
+        assert!(result.security_paths.iter().any(|path| {
+            path.sink_evidence_id == sink.id
+                && path.state == mehscan_core::SecurityPathState::Unknown
+        }));
+        for source in [
+            "import * as security from './token-utils';function subject(token){const decoded=security.decode(token);return decoded;}",
+            "import * as security from './token-utils';function subject(token){security.verify(token);const decoded=security.decode(token);return decoded?.data?.subject;}",
+        ] {
+            assert!(
+                !scan(extension, source)
+                    .evidence
+                    .iter()
+                    .any(|e| e.rule_id.ends_with("-jwt-decode-as-identity"))
+            );
+        }
+    }
+}
