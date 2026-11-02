@@ -22,7 +22,7 @@ pub(crate) struct NativeApiContext {
     macros: BTreeMap<String, usize>,
     call_aliases: BTreeSet<String>,
     global_scope: (usize, usize),
-    namespace_imports: BTreeMap<(usize, usize), bool>,
+    namespace_imports: BTreeMap<(usize, usize), BTreeMap<String, usize>>,
 }
 
 impl NativeApiContext {
@@ -91,11 +91,58 @@ impl NativeApiContext {
                             "compound_statement" | "namespace_definition" | "translation_unit"
                         )
                     }) {
-                        let foreign = target != "std" && target != "::std";
-                        *result
+                        let scopes = node
+                            .ancestors()
+                            .map(|n| (n.range().start, n.range().end))
+                            .collect::<Vec<_>>();
+                        let mut target = target.to_string();
+                        for _ in 0..4 {
+                            let Some(binding) = result
+                                .binding(&target, node.range().start, &scopes)
+                                .filter(|binding| binding.namespace)
+                            else {
+                                break;
+                            };
+                            let Some(next) =
+                                binding.target.as_ref().filter(|next| **next != target)
+                            else {
+                                break;
+                            };
+                            target = next.clone();
+                        }
+                        let mut prefixes = node
+                            .ancestors()
+                            .filter(|n| n.kind().as_ref() == "namespace_definition")
+                            .filter_map(|n| {
+                                n.field("name").map(|name| compact(name.text().as_ref()))
+                            })
+                            .collect::<Vec<_>>();
+                        prefixes.reverse();
+                        let imports = result
                             .namespace_imports
                             .entry((scope.range().start, scope.range().end))
-                            .or_default() |= foreign;
+                            .or_default();
+                        if let Some(target) = target.strip_prefix("::") {
+                            imports
+                                .entry(target.to_string())
+                                .or_insert(node.range().start);
+                        } else {
+                            loop {
+                                imports
+                                    .entry(
+                                        prefixes
+                                            .iter()
+                                            .map(String::as_str)
+                                            .chain([target.as_str()])
+                                            .collect::<Vec<_>>()
+                                            .join("::"),
+                                    )
+                                    .or_insert(node.range().start);
+                                if prefixes.pop().is_none() {
+                                    break;
+                                }
+                            }
+                        }
                     }
                     continue;
                 }
@@ -197,8 +244,13 @@ impl NativeApiContext {
                 .is_some_and(|b| b.local && b.target.is_some());
         if unqualified && !local_alias {
             if scopes.iter().any(|scope| {
-                self.namespace_imports.get(scope).is_some_and(|foreign| {
-                    *foreign || self.definitions.contains_key(&format!("std::{text}"))
+                self.namespace_imports.get(scope).is_some_and(|imports| {
+                    imports.iter().any(|(namespace, start)| {
+                        *start <= call.range().start
+                            && self
+                                .definitions
+                                .contains_key(&format!("{namespace}::{text}"))
+                    })
                 })
             }) || call.ancestors().any(|node| {
                 matches!(node.kind().as_ref(), "class_specifier" | "struct_specifier")
@@ -272,6 +324,20 @@ impl NativeApiContext {
                 return None;
             }
             if prefix.is_empty() {
+                if let Some(binding) = self
+                    .bindings
+                    .get(name)
+                    .and_then(|scopes| scopes.get(&self.global_scope))
+                    .and_then(|bindings| {
+                        bindings
+                            .range(..=offset)
+                            .next_back()
+                            .map(|(_, binding)| binding)
+                    })
+                {
+                    let target = binding.target.as_deref()?;
+                    return self.resolve(target, offset, scopes, depth + 1);
+                }
                 return (!matches!(canonical, "copy" | "copy_n")
                     && !self.global_definition_shadows(name, offset))
                 .then_some(canonical);
@@ -386,6 +452,21 @@ impl NativeApiContext {
                 )
         });
         if let Some(scope) = scope {
+            if !namespace
+                && standard_name(name).is_some()
+                && node.kind().as_ref() != "using_declaration"
+                && scope.kind().as_ref() == "namespace_definition"
+            {
+                let mut namespaces = std::iter::once(scope.clone())
+                    .chain(scope.ancestors())
+                    .filter(|node| node.kind().as_ref() == "namespace_definition")
+                    .filter_map(|node| node.field("name").map(|name| compact(name.text().as_ref())))
+                    .collect::<Vec<_>>();
+                namespaces.reverse();
+                namespaces.push(name.to_string());
+                self.definitions
+                    .insert(namespaces.join("::"), node.range().start);
+            }
             if target.is_some() && !namespace {
                 self.call_aliases.insert(name.to_string());
             }
@@ -873,6 +954,42 @@ mod tests {
         "#
             ),
             vec![None, None]
+        );
+    }
+
+    #[test]
+    fn namespace_imports_block_observed_collisions_and_keep_unrelated_sdk_calls() {
+        assert_eq!(
+            names(
+                r#"
+            namespace app {
+                namespace internal { void helper(); }
+                using namespace internal;
+                void run() { memcpy(dst,src,n); }
+            }
+            namespace custom { extern void (*memcpy)(void*,const void*,unsigned); }
+            namespace imported=custom;
+            void shadow() { using namespace imported; memcpy(dst,src,n); ::memcpy(dst,src,n); }
+            namespace std { extern void (*strncpy)(char*,const char*,unsigned); }
+            void member() { std::strncpy(dst,src,n); }
+        "#
+            ),
+            vec![Some("memcpy"), None, Some("memcpy"), None]
+        );
+    }
+
+    #[test]
+    fn namespace_imports_do_not_retroactively_change_earlier_calls() {
+        assert_eq!(
+            names(
+                r#"
+            namespace custom { void memcpy(void*,const void*,unsigned); }
+            void earlier() { memcpy(dst,src,n); }
+            using namespace custom;
+            void later() { memcpy(dst,src,n); }
+        "#
+            ),
+            vec![Some("memcpy"), None]
         );
     }
 }

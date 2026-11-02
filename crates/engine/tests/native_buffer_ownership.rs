@@ -154,6 +154,13 @@ void constant_object(const char *src) {
     char dst[8]; const Adapter copy=std::strncpy;
     copy(dst,src,8); dst[7]=0;
 }
+namespace application {
+namespace detail { void helper(); }
+using namespace detail;
+void unrelated_import(const char *src) {
+    char dst[5]; memcpy(dst,src,4); dst[4]=0;
+}
+}
 "#,
     );
     let copies = result
@@ -168,11 +175,24 @@ void constant_object(const char *src) {
             )
         })
         .collect::<Vec<_>>();
-    assert_eq!(copies.len(), 3, "{copies:#?}");
-    assert!(
+    assert_eq!(copies.len(), 5, "{copies:#?}");
+    assert!(copies.iter().all(|item| matches!(
+        item.enclosing_symbol.as_deref(),
+        Some("constant_copy" | "unrelated_import")
+    )));
+    assert_eq!(
         copies
             .iter()
-            .all(|item| item.enclosing_symbol.as_deref() == Some("constant_copy"))
+            .filter(|item| item.enclosing_symbol.as_deref() == Some("constant_copy"))
+            .count(),
+        3
+    );
+    assert_eq!(
+        copies
+            .iter()
+            .filter(|item| item.enclosing_symbol.as_deref() == Some("unrelated_import"))
+            .count(),
+        2
     );
 }
 
