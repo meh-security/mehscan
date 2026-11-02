@@ -1,100 +1,8 @@
 //! Provably test-only Rust items; unknown production cfg branches remain visible.
 use std::ops::Range;
 
-use ast_grep_core::{AstGrep, Node, tree_sitter::StrDoc};
+use ast_grep_core::{AstGrep, tree_sitter::StrDoc};
 use ast_grep_language::SupportLang;
-
-type AstNode<'a> = Node<'a, StrDoc<SupportLang>>;
-
-#[derive(Clone, Copy)]
-enum Truth {
-    Yes,
-    No,
-    Unknown,
-}
-
-fn tokens(node: &AstNode<'_>, out: &mut Vec<String>) {
-    let kind = node.kind();
-    if kind.contains("comment") {
-        return;
-    }
-    if matches!(
-        kind.as_ref(),
-        "string_literal" | "raw_string_literal" | "char_literal"
-    ) {
-        out.push(node.text().into_owned());
-        return;
-    }
-    let children: Vec<_> = node.children().collect();
-    if children.is_empty() {
-        out.push(node.text().into_owned());
-    } else {
-        for child in children {
-            tokens(&child, out);
-        }
-    }
-}
-
-fn expression(tokens: &[String], cursor: &mut usize, depth: usize) -> Option<Truth> {
-    if depth > 32 {
-        return None;
-    }
-    let name = tokens.get(*cursor)?.as_str();
-    *cursor += 1;
-    if tokens.get(*cursor).is_some_and(|s| s == "=") {
-        *cursor += 1;
-        tokens.get(*cursor)?;
-        *cursor += 1;
-        return Some(Truth::Unknown);
-    }
-    if !tokens.get(*cursor).is_some_and(|s| s == "(") {
-        return Some(if name == "test" {
-            Truth::No
-        } else {
-            Truth::Unknown
-        });
-    }
-    *cursor += 1;
-    let mut values = Vec::new();
-    while !tokens.get(*cursor).is_some_and(|s| s == ")") {
-        values.push(expression(tokens, cursor, depth + 1)?);
-        if tokens.get(*cursor).is_some_and(|s| s == ",") {
-            *cursor += 1;
-        } else if !tokens.get(*cursor).is_some_and(|s| s == ")") {
-            return None;
-        }
-    }
-    *cursor += 1;
-    Some(match name {
-        "all" if values.iter().any(|v| matches!(v, Truth::No)) => Truth::No,
-        "all" if values.iter().all(|v| matches!(v, Truth::Yes)) => Truth::Yes,
-        "any" if values.iter().any(|v| matches!(v, Truth::Yes)) => Truth::Yes,
-        "any" if values.iter().all(|v| matches!(v, Truth::No)) => Truth::No,
-        "not" if values.len() == 1 => match values[0] {
-            Truth::Yes => Truth::No,
-            Truth::No => Truth::Yes,
-            Truth::Unknown => Truth::Unknown,
-        },
-        _ => Truth::Unknown,
-    })
-}
-
-fn test_attribute(node: &AstNode<'_>) -> bool {
-    if node.range().len() > 4096 {
-        return false;
-    }
-    let mut parts = Vec::new();
-    tokens(node, &mut parts);
-    if parts == ["#", "[", "test", "]"] {
-        return true;
-    }
-    if parts.get(..4).is_none_or(|p| p != ["#", "[", "cfg", "("]) {
-        return false;
-    }
-    let mut cursor = 4;
-    matches!(expression(&parts, &mut cursor, 0), Some(Truth::No))
-        && parts.get(cursor..).is_some_and(|p| p == [")", "]"])
-}
 
 pub(crate) fn ranges(source: &str) -> Vec<Range<usize>> {
     if !source.contains("test") {
@@ -106,19 +14,33 @@ pub(crate) fn ranges(source: &str) -> Vec<Range<usize>> {
     let ast = AstGrep::doc(doc);
     let root = ast.root();
     let mut found: Vec<Range<usize>> = Vec::new();
-    for attribute in root.dfs().filter(|n| n.kind().as_ref() == "attribute_item") {
+    for attribute in root
+        .dfs()
+        .filter(|n| matches!(n.kind().as_ref(), "attribute_item" | "inner_attribute_item"))
+    {
         if found
             .iter()
             .any(|r| r.start <= attribute.range().start && attribute.range().end <= r.end)
         {
             continue;
         }
-        if !test_attribute(&attribute) {
+        if !super::rust_cfg::test_only(&attribute) {
             continue;
         }
         let Some(parent) = attribute.parent() else {
             continue;
         };
+        if attribute.kind().as_ref() == "inner_attribute_item" {
+            if parent.kind().as_ref() == "source_file" {
+                found.push(parent.range());
+            } else if let Some(module) = parent
+                .parent()
+                .filter(|node| node.kind().as_ref() == "mod_item")
+            {
+                found.push(module.range());
+            }
+            continue;
+        }
         let siblings: Vec<_> = parent.children().collect();
         let mut start = attribute.range().start;
         for previous in siblings
@@ -267,5 +189,16 @@ mod tests {
             assert!(ranges(source).is_empty(), "{source}");
         }
         assert_eq!(ranges("#[test] fn check() {} fn live() {}").len(), 1);
+    }
+
+    #[test]
+    fn inner_test_cfg_excludes_its_module_without_breaking_following_source() {
+        let source = "mod fixture { #![cfg(test)] fn hidden() {} } fn production() {}";
+        let masked = production_source(source).expect("test module");
+        assert!(!masked.contains("hidden"));
+        assert!(!masked.contains("mod fixture"));
+        assert!(masked.contains("fn production()"));
+        let crate_source = "#![cfg(test)] fn hidden() {}";
+        assert_eq!(ranges(crate_source), [0..crate_source.len()]);
     }
 }

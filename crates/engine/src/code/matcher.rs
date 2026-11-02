@@ -182,7 +182,8 @@ pub(crate) fn scan_source(
         .filter(|node| super::typescript_syntax::unsupported_error(node, language))
         .map(|node| node.range())
         .collect::<Vec<_>>();
-    let conditional = ConditionalRegions::from_source(language, source, build_symbols);
+    let conditional = ConditionalRegions::from_source(language, source, build_symbols)
+        .with_rust_cfg(language, &root);
     let literals = LiteralEnvironment::build(&root, language);
     let symbol_environment =
         FileSymbolEnvironment::build(path, &root, language, source, project_symbols);
