@@ -23,6 +23,11 @@ The [database coverage guide](extended-database-coverage.md) lists supported
 receiver and query shapes in more detail. Optional compiler backends are separate
 from standard scanning and do not make unsupported relationships complete.
 
+C++ buffer wrappers can hide memory effects behind constructors, braced returns
+or standard algorithms. The scanner does not generally summarize those effects
+across arbitrary types and callers. A buffer copy in source can therefore lack a
+review question even when a related low-level API is recognized elsewhere.
+
 ## Choose the source you intend to review
 
 Directory scans honor repository ignore files and built-in dependency/build
