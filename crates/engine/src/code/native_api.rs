@@ -30,6 +30,20 @@ impl NativeApiContext {
         let mut result = Self::default();
         for node in root.dfs() {
             let kind = node.kind();
+            if kind.as_ref() == "namespace_definition"
+                && let Some(name) = node.field("name").filter(|n| identifier(n.text().as_ref()))
+            {
+                let global_std = name.text().trim() == "std"
+                    && !node
+                        .ancestors()
+                        .any(|n| n.kind().as_ref() == "namespace_definition");
+                result.insert(
+                    &node,
+                    name.text().as_ref(),
+                    global_std.then(|| "std".to_string()),
+                    true,
+                );
+            }
             if kind.as_ref() == "function_definition"
                 && let Some(name) = node.field("declarator").and_then(|d| declaration_name(&d))
             {
@@ -151,10 +165,14 @@ impl NativeApiContext {
                 if self.definitions.contains_key(&format!("std::{name}")) {
                     return None;
                 }
-                if self
-                    .binding("std", offset)
-                    .is_some_and(|b| !b.namespace || b.target.as_deref() != Some("std"))
-                {
+                let std_binding = if text.starts_with("::") {
+                    self.bindings
+                        .get("std")
+                        .and_then(|bindings| bindings.iter().find(|b| b.global))
+                } else {
+                    self.binding("std", offset)
+                };
+                if std_binding.is_some_and(|b| !b.namespace || b.target.as_deref() != Some("std")) {
                     return None;
                 }
                 return standard_namespace_name(canonical).then_some(canonical);
@@ -440,6 +458,23 @@ mod tests {
         "#
             ),
             vec![Some("memcpy"), None, None, Some("memcpy")]
+        );
+    }
+
+    #[test]
+    fn explicit_global_namespace_bypasses_local_shadow_but_nested_std_does_not() {
+        assert_eq!(
+            names(
+                r#"
+            namespace std { void *memcpy(void*, const void*, unsigned); }
+            namespace project {
+                namespace std { void *memcpy(void*, const void*, unsigned); }
+                void run() { std::memcpy(dst, src, len); ::std::memcpy(dst, src, len); }
+            }
+            void other(int std) { std::memcpy(dst, src, len); ::std::memcpy(dst, src, len); }
+        "#
+            ),
+            vec![None, Some("memcpy"), None, Some("memcpy")]
         );
     }
 }
