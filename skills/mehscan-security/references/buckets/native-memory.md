@@ -16,6 +16,7 @@ all caller preconditions. A boundary names the unresolved binding or caller.
 | Parser remaining input | Cursor bound and `length <= total - cursor` before the read; `cursor + length` may wrap. |
 | Fixed-layout blob | Reported source length against the exact copy extent. Allocation size is a different invariant. |
 | Subtracted copy count | The original integer's lower bound before subtraction, its promotions and conversion into the actual copy-count parameter. |
+| Rust raw slice | A concrete pointer state, the same owned field and a rejecting non-null boundary before construction, including zero length. |
 | Ownership/lifetime | Same allocation, pointer, release family and reachable path. A failed-allocation return is not a post-allocation leak. |
 | Format string | Whether the complete format is compile-time fixed; runtime text should be a data argument or constrained as a whole format. |
 
@@ -38,3 +39,11 @@ tag identify remaining applicability questions. Check those definitions when
 they could change the verdict. Also distinguish a negative count passed to a
 generic `std::copy_n` from a negative value converted into an unsigned count
 before that call; their effects differ. See the [standard copy-count semantics](https://eel.is/c++draft/alg.copy#lib:copy_n).
+
+For Rust raw slices, use `null_pointer`, `safe_constructor`, `field_transfer`
+and `safe_accessor` to check that a possible null state belongs to the same
+object field. A raw slice requires a non-null pointer even for zero length.
+Returning an empty slice before construction can settle this invariant;
+alignment, initialized extent, single-allocation range, lifetime and aliasing
+remain separate. A generic `unsafe` block or FFI declaration alone establishes
+no such relationship. See the [raw-slice safety requirements](https://doc.rust-lang.org/std/slice/fn.from_raw_parts.html#safety).

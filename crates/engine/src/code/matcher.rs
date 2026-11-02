@@ -1905,6 +1905,15 @@ pub(crate) fn scan_source(
         }
     }
     super::url_shape::annotate(&root, language, &mut evidence);
+    let mut rust_raw_slice_paths = super::rust_raw_slice::add_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &mut evidence,
+    );
     let summaries_microseconds = summaries_started.elapsed().as_micros();
     let paths_started = Instant::now();
     let mut security_paths = super::security_paths::build_security_paths(
@@ -2058,6 +2067,7 @@ pub(crate) fn scan_source(
                 .iter()
                 .all(|id| retained_evidence_ids.contains(id.as_str()))
     });
+    security_paths.append(&mut rust_raw_slice_paths);
     security_paths.append(&mut native_copy_paths);
     security_paths.append(&mut native_arithmetic_paths);
     security_paths.append(&mut native_domain_bound_paths);

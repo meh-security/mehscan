@@ -64,6 +64,12 @@ pub enum Capability {
     /// A native memory-writing operation whose safety depends on destination
     /// capacity, source extent, size arithmetic, or termination semantics.
     BufferWrite,
+    /// A concrete possible null field state produced by a source-defined safe constructor.
+    RawNullPointerState,
+    /// A safe wrapper constructs a standard raw slice from that same owned field.
+    RustRawSliceConstruction,
+    /// A rejecting check establishes the raw slice pointer's non-null invariant only.
+    RawSliceNonNullValidation,
     /// Exact local evidence that a native byte-copy size does not exceed a
     /// statically declared destination array capacity.
     BufferCapacityValidation,

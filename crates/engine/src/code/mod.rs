@@ -135,6 +135,7 @@ mod rust_cfg;
 mod rust_context;
 mod rust_http;
 mod rust_project;
+mod rust_raw_slice;
 mod scanner;
 #[path = "sql_flow.rs"]
 mod security_paths;

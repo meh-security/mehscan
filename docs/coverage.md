@@ -33,6 +33,12 @@ Arbitrary wrappers, overload resolution, implicit member lookup, virtual calls
 and cross-function ranges remain limited. A buffer copy in source can therefore
 lack a review question even when a related low-level API is recognized elsewhere.
 
+Rust raw-slice analysis follows selected null field initializers from safe
+constructors, including a defined raw-record transfer, into a safe accessor of
+the same owned type. A rejecting null check closes only the non-null invariant.
+Arbitrary trait dispatch, cross-file state changes, macro expansion, alignment,
+initialization and general unsafe-code correctness remain outside that proof.
+
 ## Choose the source you intend to review
 
 Directory scans honor repository ignore files and built-in dependency/build

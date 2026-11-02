@@ -352,7 +352,11 @@ fn unwrap_type<'a>(root: &N<'a>, ty: &N<'a>) -> Option<N<'a>> {
 
 // Resolve only visible explicit imports. Inline modules do not inherit a
 // parent's uses, and local/generic type shadows cannot certify a library type.
-fn canonical<'a>(_root: &N<'a>, site: &N<'a>, text: &str) -> Option<(String, Option<N<'a>>)> {
+pub(super) fn canonical<'a>(
+    _root: &N<'a>,
+    site: &N<'a>,
+    text: &str,
+) -> Option<(String, Option<N<'a>>)> {
     let text = compact(text);
     let first = text.split("::").next()?;
     for ancestor in site.ancestors() {
@@ -449,7 +453,7 @@ fn lexical_scopes<'a>(site: &N<'a>) -> Vec<N<'a>> {
     scopes
 }
 
-fn local_key(path: &str, site: &N<'_>, ty: &str) -> String {
+pub(super) fn local_key(path: &str, site: &N<'_>, ty: &str) -> String {
     let path = path.replace('\\', "/");
     let (crate_root, relative) = path
         .rsplit_once("/src/")

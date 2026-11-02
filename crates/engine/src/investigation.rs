@@ -2583,6 +2583,7 @@ fn is_closed_native_invariant(capability: Capability, state: SecurityPathState) 
                 | Capability::CppHeapDeallocation
                 | Capability::CppRaiiOwner
                 | Capability::SubtractedMemoryExtent
+                | Capability::RustRawSliceConstruction
         )
 }
 
@@ -4349,6 +4350,7 @@ fn report_remediation(
             | Capability::LocalHeapDeallocation
             | Capability::RemainingInputRead
             | Capability::SubtractedMemoryExtent
+            | Capability::RustRawSliceConstruction
     ) || (capability == Capability::FilesystemWrite && cwes.iter().any(|cwe| cwe == "CWE-367"))
         || (capability == Capability::FileUpload && cwes.iter().any(|cwe| cwe == "CWE-434"))
     {
@@ -4393,6 +4395,9 @@ fn human_finding_title(rule_id: &str, fallback: &str) -> String {
         }
         "c-family-subtracted-copy-extent" => {
             "Subtraction can produce an invalid copy count".to_string()
+        }
+        "rust-nullable-field-raw-slice" => {
+            "Safe wrapper can construct a slice from a null pointer".to_string()
         }
         "c-family-remaining-input-read" => {
             "Decoded length can exceed the remaining parser input".to_string()
@@ -4550,6 +4555,9 @@ fn finding_remediation(capability: Capability, cwes: &[String]) -> FindingRemedi
         }
         Capability::SubtractedMemoryExtent => {
             "Validate the original count against the subtracted offset before arithmetic and preserve its effective type through the copy helper or constructor; confirm source and destination extents separately."
+        }
+        Capability::RustRawSliceConstruction => {
+            "Handle the null field before constructing a raw slice, including zero-length input; return an empty slice or use a suitable non-null sentinel, and verify alignment, initialized extent, lifetime and aliasing separately."
         }
         Capability::RemainingInputRead => {
             "First prove the cursor is within the input, then reject any decoded extent greater than total_size - cursor before reading or advancing; do not validate with cursor + extent in a type where it can wrap."
@@ -5607,6 +5615,7 @@ fn review_playbook_bucket(
         && matches!(
             capability,
             Capability::BufferWrite
+                | Capability::RustRawSliceConstruction
                 | Capability::SignedSizeMemoryOperation
                 | Capability::SubtractedMemoryExtent
                 | Capability::LocalHeapAllocation
@@ -16277,6 +16286,9 @@ fn missing_protection_question(capability: Capability) -> &'static str {
         }
         Capability::SubtractedMemoryExtent => {
             "Can subtracting this offset produce an invalid copy count through underflow or a negative-to-size conversion, using the actual helper/constructor mapping and rejecting lower bound? This settles subtraction only; confirm copy execution, initializer effects, source accessibility and other conversions separately."
+        }
+        Capability::RustRawSliceConstruction => {
+            "Can the concrete null field state produced by this safe constructor reach this safe accessor's raw slice? Non-null is required even for zero length. Confirm the actual field transfer and runtime applicability; alignment, allocation extent, initialization and aliasing remain separate invariants."
         }
         Capability::LoadedMemoryExtent => {
             "Can the shown serialized scalar and other operands overflow this exact allocation-and-memory-operation extent under their effective C/C++ types, and do the rejecting checks safely cover zero and SIZE_MAX before computation?"
