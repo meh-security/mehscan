@@ -163,7 +163,10 @@ impl NativeApiContext {
             let Some(name) = declaration_name(&declarator) else {
                 continue;
             };
-            let target = if kind.as_ref() == "init_declarator" && constant_alias(&node, &declarator)
+            let target = if kind.as_ref() == "init_declarator"
+                && !result.macro_precedes("auto", node.range().start)
+                && !result.macro_precedes("const", node.range().start)
+                && constant_alias(&node, &declarator)
             {
                 node.field("value").map(|value| {
                     let value = compact(value.text().as_ref());
@@ -420,13 +423,25 @@ fn constant_alias(
 ) -> bool {
     let mut current = declarator.clone();
     let mut pointer_const = None;
+    let mut function_pointer = false;
+    let inferred = node
+        .parent()
+        .and_then(|parent| parent.field("type"))
+        .is_some_and(|ty| ty.text().trim() == "auto");
     for _ in 0..16 {
+        function_pointer |= current.kind().as_ref() == "function_declarator";
         if current.kind().as_ref() == "pointer_declarator" {
             pointer_const = Some(current.children().any(|child| {
                 child.kind().as_ref() == "type_qualifier" && child.text().trim() == "const"
             }));
         }
         if current.kind().as_ref() == "identifier" {
+            // A const class object can be initialized from a library pointer
+            // and implement an unrelated operator(). Const storage alone does
+            // not establish a function-pointer type.
+            if !inferred && !function_pointer {
+                return false;
+            }
             // Only the pointer nearest the bound name qualifies its storage.
             // Const pointees, return types and parameters cannot make a
             // mutable function pointer an immutable standard-library alias.
@@ -829,6 +844,35 @@ mod tests {
                 None,
                 Some("memcpy")
             ]
+        );
+    }
+
+    #[test]
+    fn const_callable_objects_do_not_inherit_their_constructor_arguments_contract() {
+        assert_eq!(
+            names(
+                r#"
+            struct Adapter { Adapter(decltype(&std::memcpy)); void operator()(void*,const void*,unsigned) const; };
+            void run() { const Adapter copy=std::memcpy; copy(dst,src,n); }
+        "#
+            ),
+            vec![None]
+        );
+    }
+
+    #[test]
+    fn rewritten_alias_storage_keywords_leave_the_contract_open() {
+        assert_eq!(
+            names(
+                r#"
+            #define const
+            void run() { const auto copy=std::memcpy; copy(dst,src,n); }
+            #undef const
+            #define auto Adapter
+            void other() { const auto copy=std::memcpy; copy(dst,src,n); }
+        "#
+            ),
+            vec![None, None]
         );
     }
 }

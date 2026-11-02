@@ -131,6 +131,13 @@ fn mutable_function_pointer_with_const_parameters_does_not_close_a_buffer_copy()
         "pointer-storage",
         "cpp",
         r#"#include <cstring>
+struct Adapter {
+    Adapter(decltype(&std::strncpy)) {}
+    char *operator()(char *dst,const char *src,std::size_t ignored) const {
+        for(unsigned i=0;i<64;++i) dst[i]=src[i];
+        return dst;
+    }
+};
 char *replacement(char *dst,const char *src,std::size_t ignored) {
     for(unsigned i=0;i<64;++i) dst[i]=src[i];
     return dst;
@@ -141,6 +148,10 @@ void mutable_copy(const char *src) {
 }
 void constant_copy(const char *src) {
     char dst[8]; char *(* const copy)(char*,const char*,std::size_t)=std::strncpy;
+    copy(dst,src,8); dst[7]=0;
+}
+void constant_object(const char *src) {
+    char dst[8]; const Adapter copy=std::strncpy;
     copy(dst,src,8); dst[7]=0;
 }
 "#,
