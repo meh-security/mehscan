@@ -14,6 +14,21 @@ pub(crate) struct ConditionalRegions {
     regions: Vec<ConditionalRegion>,
 }
 
+/// Whether any excluded region completely contains a source range. Prefix
+/// maximum ends permit one binary lookup even for overlapping/nested regions.
+pub(crate) struct ExclusionIndex {
+    ranges: Vec<Range<usize>>,
+}
+
+impl ExclusionIndex {
+    pub(crate) fn contains(&self, range: Range<usize>) -> bool {
+        let end = self
+            .ranges
+            .partition_point(|region| region.start <= range.start);
+        end > 0 && self.ranges[end - 1].end >= range.end
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Frame {
     parent: Availability,
@@ -30,6 +45,22 @@ enum Truth {
 }
 
 impl ConditionalRegions {
+    pub(crate) fn exclusion_index(&self) -> ExclusionIndex {
+        let mut ranges = self
+            .regions
+            .iter()
+            .filter(|region| region.availability.state == AvailabilityState::Excluded)
+            .map(|region| region.range.clone())
+            .collect::<Vec<_>>();
+        ranges.sort_by_key(|range| range.start);
+        let mut furthest = 0;
+        for range in &mut ranges {
+            furthest = furthest.max(range.end);
+            range.end = furthest;
+        }
+        ExclusionIndex { ranges }
+    }
+
     pub(crate) fn with_rust_cfg(
         mut self,
         language: Language,

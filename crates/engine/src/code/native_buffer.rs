@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ast_grep_core::Node;
 use ast_grep_core::tree_sitter::StrDoc;
@@ -10,14 +10,36 @@ use mehscan_core::{
 
 use super::conditional::ConditionalRegions;
 use super::context::enclosing_symbol;
+use super::native_api::NativeApiContext;
 
 const CAPACITY_RULE_ID: &str = "c-family-local-buffer-capacity";
+
+pub(super) fn accepts_write(call: &BufferNode<'_>, api: &NativeApiContext) -> bool {
+    let Some(function) = call.field("function") else {
+        return false;
+    };
+    let raw = function.text();
+    let name = api.call_name(call).unwrap_or(raw.trim());
+    let Some(arguments) = call.field("arguments") else {
+        return false;
+    };
+    let arity = arguments
+        .children()
+        .filter(|n| n.is_named() && n.kind().as_ref() != "comment")
+        .count();
+    match name {
+        "strcpy" | "strcat" => arity == 2,
+        "memcpy" | "memmove" | "strncpy" | "strncat" => arity == 3,
+        _ => false,
+    }
+}
 
 pub(crate) fn annotate_native_buffer_capacity(
     path: &str,
     root: &Node<'_, StrDoc<SupportLang>>,
     language: Language,
     conditional: &ConditionalRegions,
+    api: &NativeApiContext,
     evidence: &mut Vec<Evidence>,
 ) {
     if !matches!(language, Language::C | Language::Cpp) {
@@ -29,7 +51,7 @@ pub(crate) fn annotate_native_buffer_capacity(
     {
         return;
     }
-    let index = BufferIndex::new(path, root);
+    let index = BufferIndex::new(path, root, api, conditional);
 
     let mut validations = Vec::new();
     for sink in evidence
@@ -37,7 +59,12 @@ pub(crate) fn annotate_native_buffer_capacity(
         .filter(|item| item.capability == Capability::BufferWrite)
     {
         let call = index.calls.get(&sink.location.start.byte_offset);
-        let string_copy = call.and_then(|call| call.string_copy);
+        let Some(name @ ("memcpy" | "memmove" | "strncpy" | "strncat")) =
+            call.and_then(|call| call.api_name)
+        else {
+            continue;
+        };
+        let string_copy = matches!(name, "strncpy" | "strncat").then_some(name);
         let Some(destination) = sink.captures.get("destination").cloned() else {
             continue;
         };
@@ -48,25 +75,16 @@ pub(crate) fn annotate_native_buffer_capacity(
         if string_copy.is_some() {
             sink.tags.push("string-termination:unproven".to_string());
         }
-        let Some(array) = index
-            .arrays
-            .get(&(sink.enclosing_symbol.clone(), destination_name.to_string()))
-            .and_then(|arrays| arrays.range(..sink.location.start.byte_offset).next_back())
-            .and_then(|(_, arrays)| arrays.last())
-        else {
-            continue;
-        };
-        let capacity = array.capacity;
         let Some(call_node) = call.map(|call| &call.node) else {
             continue;
         };
-        if index
-            .destination_binding(call_node, destination_name)
-            .as_ref()
-            != Some(&array.binding)
-        {
+        let Some(binding) = index.destination_binding(call_node, destination_name) else {
             continue;
-        }
+        };
+        let Some(array) = index.arrays.get(&(binding.start, binding.end)) else {
+            continue;
+        };
+        let capacity = array.capacity;
         let availability = conditional.availability_for(array.range.clone());
         if availability.state == AvailabilityState::Excluded
             || availability.state != AvailabilityState::Always
@@ -103,6 +121,7 @@ pub(crate) fn annotate_native_buffer_capacity(
                         conditional,
                         availability: sink.context.availability.as_ref(),
                         binding: array.binding.clone(),
+                        call: call_node,
                     },
                 )
             })
@@ -191,7 +210,7 @@ pub(crate) fn annotate_native_buffer_capacity(
 
 struct CallInfo<'tree> {
     node: BufferNode<'tree>,
-    string_copy: Option<&'static str>,
+    api_name: Option<&'static str>,
     function_scope: Option<std::ops::Range<usize>>,
 }
 
@@ -207,24 +226,41 @@ type Terminators<'tree> = BTreeMap<usize, Vec<(usize, BufferNode<'tree>)>>;
 
 struct BufferIndex<'tree> {
     calls: BTreeMap<usize, CallInfo<'tree>>,
-    arrays: BTreeMap<(Option<String>, String), BTreeMap<usize, Vec<ArrayCapacity>>>,
+    arrays: BTreeMap<(usize, usize), ArrayCapacity>,
     terminators: BTreeMap<(Option<String>, usize, usize, String), Terminators<'tree>>,
     bindings: DestinationBindings,
+    statement_starts: BTreeSet<usize>,
 }
 
 type DestinationBindings =
     BTreeMap<String, BTreeMap<(usize, usize), BTreeMap<usize, std::ops::Range<usize>>>>;
 
 impl<'tree> BufferIndex<'tree> {
-    fn new(path: &str, root: &BufferNode<'tree>) -> Self {
+    fn new(
+        path: &str,
+        root: &BufferNode<'tree>,
+        api: &NativeApiContext,
+        conditional: &ConditionalRegions,
+    ) -> Self {
         let mut index = Self {
             calls: BTreeMap::new(),
             arrays: BTreeMap::new(),
             terminators: BTreeMap::new(),
             bindings: BTreeMap::new(),
+            statement_starts: BTreeSet::new(),
         };
         let mut terminators = Vec::new();
+        let excluded = conditional.exclusion_index();
         for (order, node) in root.dfs().enumerate() {
+            if excluded.contains(node.range()) {
+                continue;
+            }
+            let kind = node.kind();
+            if kind.as_ref() == "declaration"
+                || kind.ends_with("_statement") && kind.as_ref() != "compound_statement"
+            {
+                index.statement_starts.insert(node.range().start);
+            }
             match node.kind().as_ref() {
                 "declaration"
                 | "field_declaration"
@@ -274,13 +310,7 @@ impl<'tree> BufferIndex<'tree> {
                         .entry(node.range().start)
                         .or_insert_with(|| CallInfo {
                             node: node.clone(),
-                            string_copy: node.field("function").and_then(|callee| {
-                                match callee.text().trim() {
-                                    "strncpy" => Some("strncpy"),
-                                    "strncat" => Some("strncat"),
-                                    _ => None,
-                                }
-                            }),
+                            api_name: api.call_name(&node),
                             function_scope: None,
                         });
                     if info.function_scope.is_none() {
@@ -288,36 +318,29 @@ impl<'tree> BufferIndex<'tree> {
                     }
                 }
                 "array_declarator" => {
-                    let (Some(declarator), Some(size)) =
-                        (node.field("declarator"), node.field("size"))
-                    else {
+                    let Some(size) = node.field("size") else {
                         continue;
                     };
                     if !is_byte_array_declaration(&node) {
                         continue;
                     }
-                    index
-                        .arrays
-                        .entry((
-                            enclosing_symbol(&node),
-                            declarator.text().trim().to_string(),
-                        ))
-                        .or_default()
-                        .entry(node.range().start)
-                        .or_default()
-                        .push(ArrayCapacity {
+                    let binding = std::iter::once(node.clone())
+                        .chain(node.ancestors())
+                        .take_while(|n| n.kind().as_ref() != "declaration")
+                        .last()
+                        .map_or_else(|| node.range(), |n| n.range());
+                    index.arrays.insert(
+                        (binding.start, binding.end),
+                        ArrayCapacity {
                             capacity: parse_integer(size.text().trim()),
                             capture: Capture {
                                 text: size.text().into_owned(),
                                 location: location(path, &size),
                             },
                             range: node.range(),
-                            binding: std::iter::once(node.clone())
-                                .chain(node.ancestors())
-                                .take_while(|n| n.kind().as_ref() != "declaration")
-                                .last()
-                                .map_or_else(|| node.range(), |n| n.range()),
-                        });
+                            binding,
+                        },
+                    );
                 }
                 "assignment_expression" => {
                     let (Some(left), Some(right)) = (node.field("left"), node.field("right"))
@@ -369,7 +392,7 @@ impl<'tree> BufferIndex<'tree> {
     }
 }
 
-struct TerminationSearch<'a> {
+struct TerminationSearch<'a, 'tree> {
     path: &'a str,
     destination: &'a str,
     capacity: Option<usize>,
@@ -379,21 +402,27 @@ struct TerminationSearch<'a> {
     conditional: &'a ConditionalRegions,
     availability: Option<&'a Availability>,
     binding: std::ops::Range<usize>,
+    call: &'a BufferNode<'tree>,
 }
 
-fn explicit_terminator(index: &BufferIndex<'_>, search: &TerminationSearch<'_>) -> Option<Capture> {
+fn explicit_terminator(
+    index: &BufferIndex<'_>,
+    search: &TerminationSearch<'_, '_>,
+) -> Option<Capture> {
     use std::ops::Bound::{Excluded, Included, Unbounded};
     let destination = search.destination;
+    // sizeof(VLA)-1 and a zero-length extension do not establish an in-bounds
+    // byte. Keep those cases open rather than saturating zero into index zero.
+    let capacity = search.capacity.filter(|capacity| *capacity > 0)?;
+    let block = straight_line_block(search.call)?;
     let mut expressions = vec![
         format!("{destination}[sizeof({destination})-1]"),
         format!("{destination}[sizeof{destination}-1]"),
         format!("{destination}[(sizeof({destination}))-1]"),
         format!("{destination}[(sizeof{destination})-1]"),
     ];
-    if let Some(capacity) = search.capacity {
-        expressions.push(format!("{destination}[{}]", capacity.saturating_sub(1)));
-    }
-    expressions
+    expressions.push(format!("{destination}[{}]", capacity - 1));
+    let candidates = expressions
         .into_iter()
         .filter_map(|text| {
             index.terminators.get(&(
@@ -403,6 +432,21 @@ fn explicit_terminator(index: &BufferIndex<'_>, search: &TerminationSearch<'_>) 
                 text,
             ))
         })
+        .collect::<Vec<_>>();
+    // Stop at the first intervening effect. Earlier optional assignments of
+    // the same final zero byte are harmless, but a read, handoff, return or
+    // runtime branch cannot be crossed to find a more convenient terminator.
+    let barrier = index
+        .statement_starts
+        .range((Excluded(search.sink_end), Unbounded))
+        .find(|start| {
+            !candidates
+                .iter()
+                .any(|assignments| assignments.contains_key(start))
+        })
+        .copied();
+    candidates
+        .into_iter()
         .filter_map(|assignments| {
             if search
                 .function_scope
@@ -415,22 +459,31 @@ fn explicit_terminator(index: &BufferIndex<'_>, search: &TerminationSearch<'_>) 
                 .function_scope
                 .as_ref()
                 .map_or(Unbounded, |scope| Included(scope.end));
+            let end = match (end, barrier) {
+                (Included(end), Some(barrier)) => Excluded(end.min(barrier)),
+                (end, None) => end,
+                (_, Some(barrier)) => Excluded(barrier),
+            };
             assignments
                 .range((Excluded(search.sink_end), end))
                 .flat_map(|(_, nodes)| nodes)
                 .find(|(_, node)| {
-                    search.function_scope.as_ref().is_none_or(|scope| {
-                        scope.start <= node.range().start && node.range().end <= scope.end
-                    }) && {
-                        let availability = search.conditional.availability_for(node.range());
-                        match availability.state {
-                            AvailabilityState::Always => true,
-                            AvailabilityState::Conditional | AvailabilityState::Unknown => search
-                                .availability
-                                .is_some_and(|sink| sink == &availability),
-                            AvailabilityState::Excluded => false,
+                    straight_line_block(node).as_ref() == Some(&block)
+                        && search.function_scope.as_ref().is_none_or(|scope| {
+                            scope.start <= node.range().start && node.range().end <= scope.end
+                        })
+                        && {
+                            let availability = search.conditional.availability_for(node.range());
+                            match availability.state {
+                                AvailabilityState::Always => true,
+                                AvailabilityState::Conditional | AvailabilityState::Unknown => {
+                                    search
+                                        .availability
+                                        .is_some_and(|sink| sink == &availability)
+                                }
+                                AvailabilityState::Excluded => false,
+                            }
                         }
-                    }
                 })
         })
         .min_by_key(|(order, _)| *order)
@@ -438,6 +491,21 @@ fn explicit_terminator(index: &BufferIndex<'_>, search: &TerminationSearch<'_>) 
             text: assignment.text().into_owned(),
             location: location(search.path, &assignment),
         })
+}
+
+fn straight_line_block(node: &BufferNode<'_>) -> Option<std::ops::Range<usize>> {
+    for parent in node.ancestors() {
+        match parent.kind().as_ref() {
+            "compound_statement" => return Some(parent.range()),
+            "expression_statement"
+            | "preproc_if"
+            | "preproc_ifdef"
+            | "preproc_elif"
+            | "preproc_else" => {}
+            _ => return None,
+        }
+    }
+    None
 }
 
 fn is_destination_sizeof(value: &str, destination: &str) -> bool {
@@ -449,6 +517,15 @@ fn is_destination_sizeof(value: &str, destination: &str) -> bool {
 }
 
 fn is_byte_array_declaration(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    if !node
+        .field("declarator")
+        .is_some_and(|declarator| declarator.kind().as_ref() == "identifier")
+        || !node.parent().is_some_and(|parent| {
+            matches!(parent.kind().as_ref(), "declaration" | "init_declarator")
+        })
+    {
+        return false;
+    }
     let Some(declaration) = node
         .ancestors()
         .find(|ancestor| ancestor.kind().as_ref() == "declaration")
@@ -476,6 +553,8 @@ fn parse_integer(value: &str) -> Option<usize> {
         .or_else(|| value.strip_prefix("0X"))
     {
         usize::from_str_radix(hex, 16).ok()
+    } else if value.len() > 1 && value.starts_with('0') {
+        usize::from_str_radix(value, 8).ok()
     } else {
         value.parse().ok()
     }

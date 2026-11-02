@@ -197,6 +197,13 @@ pub(crate) fn scan_source(
         .then(|| super::php::PhpContext::build(&root).with_project(path, php_project_context));
     let parse_context_microseconds = parse_started.elapsed().as_micros();
 
+    // Admission and native invariant passes share the same file-owned identity
+    // index. Qualified calls must not acquire a different contract downstream.
+    let mut native_pass_microseconds = [0; 22];
+    let native_started = Instant::now();
+    let native_api = super::native_api::NativeApiContext::new(&root, language);
+    native_pass_microseconds[0] = native_started.elapsed().as_micros();
+
     let mut evidence = Vec::new();
     let mut php_operand_nodes = BTreeMap::new();
     let mut seen = BTreeSet::new();
@@ -239,6 +246,13 @@ pub(crate) fn scan_source(
             for matched in root.find_all(&compiled_pattern.pattern) {
                 let range = matched.range();
                 if comments.is_in_comment(range.clone()) {
+                    continue;
+                }
+                if matches!(
+                    compiled_rule.rule.id.as_str(),
+                    "c-native-buffer-write" | "cpp-native-buffer-write"
+                ) && !super::native_buffer::accepts_write(matched.get_node(), &native_api)
+                {
                     continue;
                 }
                 if super::extended_database::is_rule(&compiled_rule.rule.id)
@@ -1919,11 +1933,7 @@ pub(crate) fn scan_source(
         "super::rust_context::annotate_rust_build_script",
         summary_pass_started,
     );
-    let mut native_pass_microseconds = [0; 22];
     let mut native_started = Instant::now();
-    let native_api = super::native_api::NativeApiContext::new(&root, language);
-    native_pass_microseconds[0] = native_started.elapsed().as_micros();
-    native_started = Instant::now();
     let mut native_arithmetic_paths = super::native_arithmetic::add_native_arithmetic_observations(
         path,
         &root,
@@ -2155,6 +2165,7 @@ pub(crate) fn scan_source(
         &root,
         language,
         &conditional,
+        &native_api,
         &mut evidence,
     );
     native_pass_microseconds[20] = native_started.elapsed().as_micros();
@@ -2390,7 +2401,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
-    let summaries_microseconds = summaries_started.elapsed().as_micros();
+    let summaries_microseconds =
+        summaries_started.elapsed().as_micros() + native_pass_microseconds[0];
     let paths_started = Instant::now();
     let mut security_paths = super::security_paths::build_security_paths(
         path,

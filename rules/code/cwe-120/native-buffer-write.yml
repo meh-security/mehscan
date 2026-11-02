@@ -8,34 +8,16 @@
   cwe: [CWE-120, CWE-170, CWE-787, CWE-805]
   match: &native_buffer_match
     any:
-      - pattern: strcpy($DESTINATION, $SOURCE)
+      # The native API index resolves standard qualifications and aliases.
+      # Raw unqualified lookalikes remain observations, never capacity proofs.
+      - pattern: $COPY($DESTINATION, $SOURCE)
         context: |
-          void pattern_context() { strcpy($DESTINATION, $SOURCE); }
+          void pattern_context() { $COPY($DESTINATION, $SOURCE); }
         selector: call_expression
         captures: { destination: DESTINATION, source: SOURCE }
-      - pattern: strcat($DESTINATION, $SOURCE)
+      - pattern: $COPY($DESTINATION, $SOURCE, $SIZE)
         context: |
-          void pattern_context() { strcat($DESTINATION, $SOURCE); }
-        selector: call_expression
-        captures: { destination: DESTINATION, source: SOURCE }
-      - pattern: memcpy($DESTINATION, $SOURCE, $SIZE)
-        context: |
-          void pattern_context() { memcpy($DESTINATION, $SOURCE, $SIZE); }
-        selector: call_expression
-        captures: { destination: DESTINATION, source: SOURCE, size: SIZE }
-      - pattern: memmove($DESTINATION, $SOURCE, $SIZE)
-        context: |
-          void pattern_context() { memmove($DESTINATION, $SOURCE, $SIZE); }
-        selector: call_expression
-        captures: { destination: DESTINATION, source: SOURCE, size: SIZE }
-      - pattern: strncpy($DESTINATION, $SOURCE, $SIZE)
-        context: |
-          void pattern_context() { strncpy($DESTINATION, $SOURCE, $SIZE); }
-        selector: call_expression
-        captures: { destination: DESTINATION, source: SOURCE, size: SIZE }
-      - pattern: strncat($DESTINATION, $SOURCE, $SIZE)
-        context: |
-          void pattern_context() { strncat($DESTINATION, $SOURCE, $SIZE); }
+          void pattern_context() { $COPY($DESTINATION, $SOURCE, $SIZE); }
         selector: call_expression
         captures: { destination: DESTINATION, source: SOURCE, size: SIZE }
   tags: [native, memory, buffer-write]

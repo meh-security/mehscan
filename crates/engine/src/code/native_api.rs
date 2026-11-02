@@ -1,5 +1,5 @@
 //! Bounded identities for standard native APIs, including visible shadows.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use ast_grep_core::Node;
@@ -10,16 +10,19 @@ use mehscan_core::Language;
 #[derive(Clone)]
 struct Binding {
     scope: Range<usize>,
-    global: bool,
-    start: usize,
+    local: bool,
     target: Option<String>,
     namespace: bool,
 }
 
 #[derive(Default)]
 pub(crate) struct NativeApiContext {
-    bindings: BTreeMap<String, Vec<Binding>>,
+    bindings: BTreeMap<String, BTreeMap<(usize, usize), BTreeMap<usize, Binding>>>,
     definitions: BTreeMap<String, usize>,
+    macros: BTreeMap<String, usize>,
+    call_aliases: BTreeSet<String>,
+    global_scope: (usize, usize),
+    namespace_imports: BTreeMap<(usize, usize), bool>,
 }
 
 impl NativeApiContext {
@@ -28,6 +31,7 @@ impl NativeApiContext {
             return Self::default();
         }
         let mut result = Self::default();
+        result.global_scope = (root.range().start, root.range().end);
         for node in root.dfs() {
             let kind = node.kind();
             if kind.as_ref() == "namespace_definition"
@@ -45,11 +49,16 @@ impl NativeApiContext {
                 );
             }
             if kind.as_ref() == "function_definition"
-                && let Some(name) = node.field("declarator").and_then(|d| declaration_name(&d))
+                && let Some(name) = node.field("declarator").and_then(|d| function_name(&d))
             {
                 let mut namespaces = node
                     .ancestors()
-                    .filter(|n| n.kind().as_ref() == "namespace_definition")
+                    .filter(|n| {
+                        matches!(
+                            n.kind().as_ref(),
+                            "namespace_definition" | "class_specifier" | "struct_specifier"
+                        )
+                    })
                     .filter_map(|n| n.field("name").map(|n| compact(n.text().as_ref())))
                     .collect::<Vec<_>>();
                 namespaces.reverse();
@@ -72,6 +81,24 @@ impl NativeApiContext {
             }
             if kind.as_ref() == "using_declaration" {
                 let text = compact(node.text().as_ref());
+                if let Some(target) = text
+                    .strip_prefix("usingnamespace")
+                    .and_then(|s| s.strip_suffix(';'))
+                {
+                    if let Some(scope) = node.ancestors().find(|n| {
+                        matches!(
+                            n.kind().as_ref(),
+                            "compound_statement" | "namespace_definition" | "translation_unit"
+                        )
+                    }) {
+                        let foreign = target != "std" && target != "::std";
+                        *result
+                            .namespace_imports
+                            .entry((scope.range().start, scope.range().end))
+                            .or_default() |= foreign;
+                    }
+                    continue;
+                }
                 if let Some(target) = text.strip_prefix("using").and_then(|s| s.strip_suffix(';'))
                     && let Some((_, name)) = target.rsplit_once("::")
                     && identifier(name)
@@ -82,12 +109,36 @@ impl NativeApiContext {
             }
             if matches!(kind.as_ref(), "preproc_def" | "preproc_function_def") {
                 if let Some(name) = node.field("name") {
+                    // Preprocessing names are not confined to C/C++ lexical
+                    // scopes. Without expansion, even an undefined or
+                    // conditional macro leaves the contract unproven.
+                    result
+                        .macros
+                        .entry(name.text().into_owned())
+                        .or_insert(node.range().start);
                     result.insert(&node, name.text().as_ref(), None, false);
                 }
                 continue;
             }
             if matches!(kind.as_ref(), "declaration" | "field_declaration") {
                 for declarator in node.field_children("declarator") {
+                    if kind.as_ref() == "declaration" && function_prototype(&declarator) {
+                        let mut namespaces = node
+                            .ancestors()
+                            .filter(|n| n.kind().as_ref() == "namespace_definition")
+                            .filter_map(|n| n.field("name").map(|n| compact(n.text().as_ref())))
+                            .collect::<Vec<_>>();
+                        namespaces.reverse();
+                        if !namespaces.is_empty()
+                            && namespaces != ["std"]
+                            && let Some(name) = declaration_name(&declarator)
+                        {
+                            namespaces.push(name);
+                            result
+                                .definitions
+                                .insert(namespaces.join("::"), node.range().start);
+                        }
+                    }
                     if declarator.kind().as_ref() != "init_declarator"
                         && (kind.as_ref() == "field_declaration"
                             || !function_prototype(&declarator))
@@ -135,19 +186,53 @@ impl NativeApiContext {
     pub(crate) fn call_name(&self, call: &Node<'_, StrDoc<SupportLang>>) -> Option<&'static str> {
         let function = call.field("function")?;
         let text = compact(function.text().as_ref());
-        if identifier(&text) {
+        let unqualified = identifier(&text);
+        if unqualified && standard_name(&text).is_none() && !self.call_aliases.contains(&text) {
+            return None;
+        }
+        let scopes = call
+            .ancestors()
+            .map(|node| (node.range().start, node.range().end))
+            .collect::<Vec<_>>();
+        let local_alias = unqualified
+            && self
+                .binding(&text, call.range().start, &scopes)
+                .is_some_and(|b| b.local && b.target.is_some());
+        if unqualified && !local_alias {
+            if scopes.iter().any(|scope| {
+                self.namespace_imports.get(scope).is_some_and(|foreign| {
+                    *foreign || self.definitions.contains_key(&format!("std::{text}"))
+                })
+            }) || call.ancestors().any(|node| {
+                matches!(node.kind().as_ref(), "class_specifier" | "struct_specifier")
+                    && node
+                        .children()
+                        .any(|child| child.kind().as_ref() == "base_class_clause")
+            }) {
+                return None;
+            }
             let mut namespaces = call
                 .ancestors()
                 .filter(|n| n.kind().as_ref() == "namespace_definition")
                 .filter_map(|n| n.field("name").map(|n| compact(n.text().as_ref())))
                 .collect::<Vec<_>>();
             namespaces.reverse();
-            namespaces.push(text.clone());
-            if self.definitions.contains_key(&namespaces.join("::")) {
-                return None;
+            loop {
+                let key = namespaces
+                    .iter()
+                    .map(String::as_str)
+                    .chain([text.as_str()])
+                    .collect::<Vec<_>>()
+                    .join("::");
+                if self.definitions.contains_key(&key) {
+                    return None;
+                }
+                if namespaces.pop().is_none() {
+                    break;
+                }
             }
         }
-        self.resolve(&text, call.range().start, 0)
+        self.resolve(&text, call.range().start, &scopes, 0)
     }
 
     pub(super) fn local_shadow(&self, call: &Node<'_, StrDoc<SupportLang>>, name: &str) -> bool {
@@ -159,20 +244,36 @@ impl NativeApiContext {
         }) else {
             return false;
         };
-        self.binding(name, call.range().start)
+        let scopes = call
+            .ancestors()
+            .map(|node| (node.range().start, node.range().end))
+            .collect::<Vec<_>>();
+        self.binding(name, call.range().start, &scopes)
             .is_some_and(|binding| {
                 function.range().start <= binding.scope.start
                     && binding.scope.end <= function.range().end
             })
     }
 
-    fn resolve(&self, text: &str, offset: usize, depth: usize) -> Option<&'static str> {
+    fn resolve(
+        &self,
+        text: &str,
+        offset: usize,
+        scopes: &[(usize, usize)],
+        depth: usize,
+    ) -> Option<&'static str> {
         if depth > 4 {
             return None;
         }
         if let Some((prefix, name)) = text.rsplit_once("::") {
+            if self.macro_precedes(name, offset) {
+                return None;
+            }
             let canonical = standard_name(name)?;
             let prefix = prefix.strip_prefix("::").unwrap_or(prefix);
+            if self.macro_precedes(prefix, offset) {
+                return None;
+            }
             if prefix.is_empty() {
                 return (!matches!(canonical, "copy" | "copy_n")
                     && !self.global_definition_shadows(name, offset))
@@ -185,26 +286,35 @@ impl NativeApiContext {
                 let std_binding = if text.starts_with("::") {
                     self.bindings
                         .get("std")
-                        .and_then(|bindings| bindings.iter().find(|b| b.global))
+                        .and_then(|bindings| bindings.get(&self.global_scope))
+                        .and_then(|bindings| {
+                            bindings
+                                .range(..=offset)
+                                .next_back()
+                                .map(|(_, binding)| binding)
+                        })
                 } else {
-                    self.binding("std", offset)
+                    self.binding("std", offset, scopes)
                 };
                 if std_binding.is_some_and(|b| !b.namespace || b.target.as_deref() != Some("std")) {
                     return None;
                 }
                 return standard_namespace_name(canonical).then_some(canonical);
             }
-            let binding = self.binding(prefix, offset)?;
+            let binding = self.binding(prefix, offset, scopes)?;
             if !binding.namespace {
                 return None;
             }
             let target = binding.target.as_deref()?;
-            return self.resolve(&format!("{target}::{name}"), offset, depth + 1);
+            return self.resolve(&format!("{target}::{name}"), offset, scopes, depth + 1);
         }
         if !identifier(text) {
             return None;
         }
-        if let Some(binding) = self.binding(text, offset) {
+        if self.macro_precedes(text, offset) {
+            return None;
+        }
+        if let Some(binding) = self.binding(text, offset, scopes) {
             if binding.namespace {
                 return None;
             }
@@ -212,25 +322,32 @@ impl NativeApiContext {
             if !target.contains("::") {
                 return None;
             }
-            return self.resolve(target, offset, depth + 1);
+            return self.resolve(target, offset, scopes, depth + 1);
         }
         standard_name(text).filter(|name| !matches!(*name, "copy" | "copy_n"))
     }
 
-    fn binding(&self, name: &str, offset: usize) -> Option<&Binding> {
-        self.bindings
-            .get(name)?
-            .iter()
-            .filter(|b| b.start <= offset && b.scope.start <= offset && offset < b.scope.end)
-            .min_by_key(|b| (b.scope.end - b.scope.start, usize::MAX - b.start))
+    fn macro_precedes(&self, name: &str, offset: usize) -> bool {
+        self.macros.get(name).is_some_and(|start| *start <= offset)
+    }
+
+    fn binding(&self, name: &str, offset: usize, scopes: &[(usize, usize)]) -> Option<&Binding> {
+        let bindings = self.bindings.get(name)?;
+        scopes.iter().find_map(|scope| {
+            bindings
+                .get(scope)?
+                .range(..=offset)
+                .next_back()
+                .map(|(_, binding)| binding)
+        })
     }
 
     fn global_definition_shadows(&self, name: &str, offset: usize) -> bool {
         self.definitions.contains_key(name)
             || self.bindings.get(name).is_some_and(|bindings| {
-                bindings
-                    .iter()
-                    .any(|b| b.global && b.start <= offset && b.target.is_none())
+                bindings.get(&self.global_scope).is_some_and(|bindings| {
+                    bindings.range(..=offset).any(|(_, b)| b.target.is_none())
+                })
             })
     }
 
@@ -272,24 +389,51 @@ impl NativeApiContext {
                 )
         });
         if let Some(scope) = scope {
+            if target.is_some() && !namespace {
+                self.call_aliases.insert(name.to_string());
+            }
+            let start = if scope.kind().as_ref() == "field_declaration_list" {
+                scope.range().start
+            } else {
+                node.range().start
+            };
             self.bindings
                 .entry(name.to_string())
                 .or_default()
-                .push(Binding {
-                    global: scope.kind().as_ref() == "translation_unit",
-                    scope: scope.range(),
-                    // C++ member declarations are visible throughout the class,
-                    // including bodies preceding their textual declaration.
-                    start: if scope.kind().as_ref() == "field_declaration_list" {
-                        scope.range().start
-                    } else {
-                        node.range().start
+                .entry((scope.range().start, scope.range().end))
+                .or_default()
+                .insert(
+                    start,
+                    Binding {
+                        scope: scope.range(),
+                        local: !matches!(
+                            scope.kind().as_ref(),
+                            "namespace_definition" | "translation_unit" | "field_declaration_list"
+                        ),
+                        // C++ member declarations are visible throughout the class,
+                        // including bodies preceding their textual declaration.
+                        target,
+                        namespace,
                     },
-                    target,
-                    namespace,
-                });
+                );
         }
     }
+}
+
+fn function_name(node: &Node<'_, StrDoc<SupportLang>>) -> Option<String> {
+    let function = node
+        .dfs()
+        .find(|n| n.kind().as_ref() == "function_declarator")?;
+    let name = function.field("declarator")?;
+    matches!(
+        name.kind().as_ref(),
+        "identifier" | "field_identifier" | "qualified_identifier"
+    )
+    .then(|| {
+        compact(name.text().as_ref())
+            .trim_start_matches("::")
+            .to_string()
+    })
 }
 
 fn function_prototype(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
@@ -330,6 +474,10 @@ fn standard_name(name: &str) -> Option<&'static str> {
     Some(match name {
         "memcpy" => "memcpy",
         "memmove" => "memmove",
+        "strcpy" => "strcpy",
+        "strcat" => "strcat",
+        "strncpy" => "strncpy",
+        "strncat" => "strncat",
         "memset" => "memset",
         "bcopy" => "bcopy",
         "malloc" => "malloc",
@@ -513,6 +661,106 @@ mod tests {
         "#
             ),
             vec![None, Some("memcpy")]
+        );
+    }
+
+    #[test]
+    fn string_qualifications_imports_and_constant_aliases_share_identity() {
+        assert_eq!(
+            names(
+                r#"
+            namespace runtime = std;
+            using std::strncat;
+            void run() {
+                strncpy(dst, src, n); ::strncpy(dst, src, n);
+                std::strncpy(dst, src, n); ::std::strncpy(dst, src, n);
+                runtime::strncpy(dst, src, n);
+                const auto copier = std::strncpy; copier(dst, src, n);
+                strncat(dst, src, n); std::strcpy(dst, src); std::strcat(dst, src);
+            }
+        "#
+            ),
+            [
+                vec![Some("strncpy"); 6],
+                vec![Some("strncat"), Some("strcpy"), Some("strcat")]
+            ]
+            .concat()
+        );
+    }
+
+    #[test]
+    fn namespace_prototypes_reopenings_and_macros_cannot_supply_standard_effects() {
+        assert_eq!(
+            names(
+                r#"
+            char *strncpy(char*, const char*, unsigned);
+            namespace app { char *strncpy(char*, const char*, unsigned); }
+            namespace app {
+                namespace inner { void run() { strncpy(dst, src, n); std::strncpy(dst, src, n); } }
+                void run() { strncpy(dst, src, n); using std::strncpy; strncpy(dst, src, n); }
+            }
+            void clean() { strncpy(dst, src, n); }
+            void install() {
+                #define strncpy(a,b,c) custom(a,b,c)
+            }
+            void expanded() { strncpy(dst, src, n); std::strncpy(dst, src, n); ::strncpy(dst, src, n); }
+        "#
+            ),
+            vec![
+                None,
+                Some("strncpy"),
+                None,
+                Some("strncpy"),
+                Some("strncpy"),
+                None,
+                None,
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn imported_overloads_foreign_namespaces_and_unknown_bases_keep_contracts_open() {
+        assert_eq!(
+            names(
+                r#"
+            namespace app {
+                using std::strncpy;
+                char *strncpy(char*,const char*,unsigned);
+                void run() { strncpy(dst,src,n); }
+                void explicit_import() { using std::strncpy; strncpy(dst,src,n); }
+            }
+            namespace other { void memcpy(void*,const void*,unsigned); }
+            void imported() { using namespace other; memcpy(dst,src,n); ::memcpy(dst,src,n); }
+            struct Derived : Unknown {
+                void run() { strncpy(dst,src,n); std::strncpy(dst,src,n); }
+                void explicit_import() { using std::strncpy; strncpy(dst,src,n); }
+            };
+        "#
+            ),
+            vec![
+                None,
+                Some("strncpy"),
+                None,
+                Some("memcpy"),
+                None,
+                Some("strncpy"),
+                Some("strncpy")
+            ]
+        );
+    }
+
+    #[test]
+    fn out_of_line_standard_definitions_are_not_builtin_effects() {
+        assert_eq!(
+            names(
+                r#"
+            namespace std { char *strncpy(char*,const char*,unsigned); }
+            char *std::strncpy(char *dst,const char *src,unsigned n) { return dst; }
+            void run() { std::strncpy(dst,src,n); ::std::strncpy(dst,src,n); }
+        "#
+            ),
+            vec![None, None]
         );
     }
 }
