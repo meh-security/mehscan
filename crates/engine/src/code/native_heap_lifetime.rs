@@ -13,6 +13,7 @@ use super::comments::CommentRanges;
 use super::conditional::ConditionalRegions;
 use super::context::enclosing_symbol;
 use super::literals::LiteralEnvironment;
+use super::native_api::NativeApiContext;
 use super::reachability;
 
 const ALLOCATION_RULE_ID: &str = "c-family-local-heap-allocation";
@@ -27,6 +28,7 @@ pub(crate) fn add_native_heap_lifetime_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    api: &NativeApiContext,
     evidence: &mut Vec<Evidence>,
 ) -> Vec<SecurityPath> {
     if !matches!(language, Language::C | Language::Cpp) {
@@ -39,7 +41,7 @@ pub(crate) fn add_native_heap_lifetime_observations<'tree>(
         .dfs()
         .filter(|node| node.kind().as_ref() == "call_expression")
         .filter(|node| !comments.is_in_comment(node.range()))
-        .filter(|node| is_allocator(node))
+        .filter(|node| is_allocator(node, api))
     {
         let Some((binding, local)) = allocation_binding(&allocation_call) else {
             continue;
@@ -54,7 +56,7 @@ pub(crate) fn add_native_heap_lifetime_observations<'tree>(
             .dfs()
             .filter(|node| node.kind().as_ref() == "call_expression")
             .filter(|node| node.range().start > allocation_call.range().end)
-            .filter(|node| exact_free(node, &local))
+            .filter(|node| exact_free(node, &local, api))
             .collect::<Vec<_>>();
         let Some(contract_release) = releases
             .iter()
@@ -82,7 +84,7 @@ pub(crate) fn add_native_heap_lifetime_observations<'tree>(
             .filter(|node| node.range().end < contract_release.range().start)
             .filter(|node| is_controlled_exit(node))
             .filter(|node| !return_transfers_local(node, &local))
-            .filter(|node| !null_allocation_exit(node, &local, &allocation_call))
+            .filter(|node| !null_allocation_exit(node, &local, &allocation_call, api))
             .filter(|node| !ownership_escaped_before(&scope, node, &local, binding.range().end))
             .filter(|node| availability_compatible(&allocation_call, node, conditional))
             .collect::<Vec<_>>();
@@ -141,13 +143,11 @@ pub(crate) fn add_native_heap_lifetime_observations<'tree>(
     paths
 }
 
-fn is_allocator(call: &Node<'_, StrDoc<SupportLang>>) -> bool {
-    call.field("function").is_some_and(|function| {
-        matches!(
-            function.text().trim(),
-            "malloc" | "calloc" | "realloc" | "aligned_alloc" | "strdup" | "strndup"
-        )
-    })
+fn is_allocator(call: &Node<'_, StrDoc<SupportLang>>, api: &NativeApiContext) -> bool {
+    matches!(
+        api.call_name(call),
+        Some("malloc" | "calloc" | "realloc" | "aligned_alloc" | "strdup" | "strndup")
+    )
 }
 
 fn allocation_binding<'tree>(
@@ -189,11 +189,8 @@ fn simple_declarator_identifier(node: &Node<'_, StrDoc<SupportLang>>) -> Option<
     (identifiers.len() == 1).then(|| identifiers[0].text().trim().to_string())
 }
 
-fn exact_free(call: &Node<'_, StrDoc<SupportLang>>, local: &str) -> bool {
-    if call
-        .field("function")
-        .is_none_or(|function| function.text().trim() != "free")
-    {
+fn exact_free(call: &Node<'_, StrDoc<SupportLang>>, local: &str, api: &NativeApiContext) -> bool {
+    if api.call_name(call) != Some("free") {
         return false;
     }
     call.field("arguments").is_some_and(|arguments| {
@@ -277,6 +274,7 @@ fn null_allocation_exit(
     exit: &Node<'_, StrDoc<SupportLang>>,
     local: &str,
     allocation_call: &Node<'_, StrDoc<SupportLang>>,
+    api: &NativeApiContext,
 ) -> bool {
     let allocation_results = allocation_result_names(allocation_call, local);
     exit.ancestors()
@@ -306,7 +304,7 @@ fn null_allocation_exit(
                             .field("left")
                             .is_some_and(|left| left.text().trim() == local)
                             && assignment.field("right").is_some_and(|right| {
-                                right.dfs().any(|candidate| is_allocator(&candidate))
+                                right.dfs().any(|candidate| is_allocator(&candidate, api))
                             })
                     })
                     .is_some_and(|assignment| {

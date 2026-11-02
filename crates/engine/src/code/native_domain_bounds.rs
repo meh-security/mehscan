@@ -13,6 +13,7 @@ use super::comments::CommentRanges;
 use super::conditional::ConditionalRegions;
 use super::context::enclosing_symbol;
 use super::literals::LiteralEnvironment;
+use super::native_api::NativeApiContext;
 use super::reachability;
 
 const INPUT_RULE_ID: &str = "c-family-domain-limited-input-quantity";
@@ -28,6 +29,7 @@ pub(crate) fn add_native_domain_bound_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    api: &NativeApiContext,
     evidence: &mut Vec<Evidence>,
 ) -> Vec<SecurityPath> {
     if !matches!(language, Language::C | Language::Cpp) {
@@ -55,7 +57,7 @@ pub(crate) fn add_native_domain_bound_observations<'tree>(
                     node.range().start > limit.declaration.range().end
                         && node.range().end < scope_end
                 })
-                .filter(|node| is_memory_operation(node))
+                .filter(|node| is_memory_operation(node, api))
             {
                 if comments.is_in_comment(sink_node.range()) {
                     continue;
@@ -246,13 +248,10 @@ fn parameter_names(function: &Node<'_, StrDoc<SupportLang>>) -> Vec<String> {
         .collect()
 }
 
-fn is_memory_operation(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
-    let Some(function) = node.field("function") else {
-        return false;
-    };
+fn is_memory_operation(node: &Node<'_, StrDoc<SupportLang>>, api: &NativeApiContext) -> bool {
     matches!(
-        function.text().trim(),
-        "memcpy" | "memmove" | "memset" | "bcopy"
+        api.call_name(node),
+        Some("memcpy" | "memmove" | "memset" | "bcopy")
     )
 }
 

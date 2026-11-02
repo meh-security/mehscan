@@ -13,6 +13,7 @@ use super::comments::CommentRanges;
 use super::conditional::ConditionalRegions;
 use super::context::enclosing_symbol;
 use super::literals::LiteralEnvironment;
+use super::native_api::NativeApiContext;
 use super::reachability;
 
 const WIDTH_RULE_ID: &str = "c-family-fixed-width-arithmetic-accumulator";
@@ -27,6 +28,7 @@ pub(crate) fn add_native_multiplication_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    api: &NativeApiContext,
     evidence: &mut Vec<Evidence>,
 ) -> Vec<SecurityPath> {
     if !matches!(language, Language::C | Language::Cpp) {
@@ -48,7 +50,8 @@ pub(crate) fn add_native_multiplication_observations<'tree>(
         let Some(multiplication) = linked_multiplication(root, &accumulator, comments) else {
             continue;
         };
-        let Some(memory_use) = downstream_memory_use(root, &accumulator, &multiplication) else {
+        let Some(memory_use) = downstream_memory_use(root, &accumulator, &multiplication, api)
+        else {
             continue;
         };
 
@@ -183,6 +186,7 @@ fn downstream_memory_use<'tree>(
     root: &Node<'tree, StrDoc<SupportLang>>,
     accumulator: &Accumulator<'tree>,
     multiplication: &Multiplication<'tree>,
+    api: &NativeApiContext,
 ) -> Option<MemoryUse<'tree>> {
     let symbol = enclosing_symbol(&accumulator.declaration);
     for assignment in root
@@ -211,7 +215,7 @@ fn downstream_memory_use<'tree>(
             .filter(|node| node.kind().as_ref() == "call_expression")
             .filter(|node| node.range().start > assignment.range().end)
             .filter(|node| enclosing_symbol(node) == symbol)
-            .filter(|node| is_memory_operation(node))
+            .filter(|node| is_memory_operation(node, api))
             .find(|node| {
                 memory_size_argument(node).is_some_and(|argument| {
                     contains_identifier(argument.text().as_ref(), intermediate)
@@ -510,13 +514,11 @@ fn multiplication_path(
     }
 }
 
-fn is_memory_operation(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
-    node.field("function").is_some_and(|function| {
-        matches!(
-            function.text().trim(),
-            "memcpy" | "memmove" | "memset" | "bcopy"
-        )
-    })
+fn is_memory_operation(node: &Node<'_, StrDoc<SupportLang>>, api: &NativeApiContext) -> bool {
+    matches!(
+        api.call_name(node),
+        Some("memcpy" | "memmove" | "memset" | "bcopy")
+    )
 }
 
 fn memory_size_argument<'tree>(

@@ -81,6 +81,7 @@ pub struct FileAnalysisProfile {
     pub declarative_rules_microseconds: u128,
     pub symbol_rules_microseconds: u128,
     pub summaries_microseconds: u128,
+    pub native_pass_microseconds: BTreeMap<&'static str, u128>,
     pub security_paths_microseconds: u128,
     pub declarative_patterns_considered: usize,
     pub declarative_patterns_skipped: usize,
@@ -1257,6 +1258,7 @@ fn scan_prepared_file(
                 "declarative_rules_microseconds": timing.declarative_rules_microseconds,
                 "symbol_rules_microseconds": timing.symbol_rules_microseconds,
                 "summaries_microseconds": timing.summaries_microseconds,
+                "native_pass_microseconds": crate::code::matcher::NATIVE_PASS_NAMES.into_iter().zip(timing.native_pass_microseconds).collect::<BTreeMap<_, _>>(),
                 "security_paths_microseconds": timing.security_paths_microseconds,
             })
         );
@@ -1285,6 +1287,12 @@ fn add_file_timing(
     aggregate.declarative_rules_microseconds += timing.declarative_rules_microseconds;
     aggregate.symbol_rules_microseconds += timing.symbol_rules_microseconds;
     aggregate.summaries_microseconds += timing.summaries_microseconds;
+    for (name, micros) in crate::code::matcher::NATIVE_PASS_NAMES
+        .into_iter()
+        .zip(timing.native_pass_microseconds)
+    {
+        *aggregate.native_pass_microseconds.entry(name).or_default() += micros;
+    }
     aggregate.security_paths_microseconds += timing.security_paths_microseconds;
     aggregate.declarative_patterns_considered += timing.declarative_patterns_considered;
     aggregate.declarative_patterns_skipped += timing.declarative_patterns_skipped;

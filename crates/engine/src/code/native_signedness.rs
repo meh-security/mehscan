@@ -13,6 +13,7 @@ use super::comments::CommentRanges;
 use super::conditional::ConditionalRegions;
 use super::context::enclosing_symbol;
 use super::literals::LiteralEnvironment;
+use super::native_api::NativeApiContext;
 use super::reachability;
 
 const CONVERSION_RULE_ID: &str = "c-family-signed-to-size-conversion";
@@ -27,6 +28,7 @@ pub(crate) fn add_native_signedness_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    api: &NativeApiContext,
     evidence: &mut Vec<Evidence>,
 ) -> Vec<SecurityPath> {
     if !matches!(language, Language::C | Language::Cpp) {
@@ -40,7 +42,7 @@ pub(crate) fn add_native_signedness_observations<'tree>(
         .filter(|node| node.kind().as_ref() == "call_expression")
         .filter(|node| !comments.is_in_comment(node.range()))
     {
-        let Some((operation, extent)) = memory_extent(&call) else {
+        let Some((operation, extent)) = memory_extent(&call, api) else {
             continue;
         };
         let Some(conversion) = signed_size_cast(&extent) else {
@@ -111,9 +113,9 @@ struct SignedSizeCast<'tree> {
 
 fn memory_extent<'tree>(
     call: &Node<'tree, StrDoc<SupportLang>>,
+    api: &NativeApiContext,
 ) -> Option<(&'static str, Node<'tree, StrDoc<SupportLang>>)> {
-    let function = call.field("function")?;
-    let operation = match function.text().trim() {
+    let operation = match api.call_name(call)? {
         "memcpy" => "memcpy",
         "memmove" => "memmove",
         "memset" => "memset",
