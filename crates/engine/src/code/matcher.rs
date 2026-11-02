@@ -250,11 +250,12 @@ pub(crate) fn scan_source(
                         language,
                         matched.get_env().get_match("DATABASE"),
                         matched.get_env().get_match("TYPE"),
-                        matched.get_env().get_match("TYPE").map(|_| {
-                            extended_symbols.get_or_insert_with(|| {
-                                super::extended_database::ExactSymbolIndex::new(&root)
-                            }) as &_
-                        }),
+                        (matched.get_env().get_match("TYPE").is_some() || language == Language::Go)
+                            .then(|| {
+                                extended_symbols.get_or_insert_with(|| {
+                                    super::extended_database::ExactSymbolIndex::new(&root)
+                                }) as &_
+                            }),
                         matches!(
                             language,
                             Language::Javascript
@@ -473,7 +474,14 @@ pub(crate) fn scan_source(
                         "go-database-query" | "go-sql-parameterization"
                     )
                     && matched.get_env().get_match("DB").is_some_and(|receiver| {
-                        super::extended_database::pgx_receiver(&root, matched.get_node(), receiver)
+                        super::extended_database::pgx_receiver(
+                            &root,
+                            matched.get_node(),
+                            receiver,
+                            extended_symbols.get_or_insert_with(|| {
+                                super::extended_database::ExactSymbolIndex::new(&root)
+                            }),
+                        )
                     })
                 {
                     continue;

@@ -23,13 +23,21 @@ pub(crate) fn annotate_native_buffer_capacity(
     if !matches!(language, Language::C | Language::Cpp) {
         return;
     }
+    if !evidence
+        .iter()
+        .any(|item| item.capability == Capability::BufferWrite)
+    {
+        return;
+    }
+    let index = BufferIndex::new(path, root);
 
     let mut validations = Vec::new();
     for sink in evidence
         .iter_mut()
         .filter(|item| item.capability == Capability::BufferWrite)
     {
-        let string_copy = string_copy_kind(root, sink.location.start.byte_offset);
+        let call = index.calls.get(&sink.location.start.byte_offset);
+        let string_copy = call.and_then(|call| call.string_copy);
         let Some(destination) = sink.captures.get("destination").cloned() else {
             continue;
         };
@@ -40,15 +48,33 @@ pub(crate) fn annotate_native_buffer_capacity(
         if string_copy.is_some() {
             sink.tags.push("string-termination:unproven".to_string());
         }
-        let Some((capacity, capacity_capture)) = declared_byte_array_capacity(
-            path,
-            root,
-            destination_name,
-            sink.enclosing_symbol.as_deref(),
-            sink.location.start.byte_offset,
-        ) else {
+        let Some(array) = index
+            .arrays
+            .get(&(sink.enclosing_symbol.clone(), destination_name.to_string()))
+            .and_then(|arrays| arrays.range(..sink.location.start.byte_offset).next_back())
+            .and_then(|(_, arrays)| arrays.last())
+        else {
             continue;
         };
+        let capacity = array.capacity;
+        let Some(call_node) = call.map(|call| &call.node) else {
+            continue;
+        };
+        if index
+            .destination_binding(call_node, destination_name)
+            .as_ref()
+            != Some(&array.binding)
+        {
+            continue;
+        }
+        let availability = conditional.availability_for(array.range.clone());
+        if availability.state == AvailabilityState::Excluded
+            || availability.state != AvailabilityState::Always
+                && sink.context.availability.as_ref() != Some(&availability)
+        {
+            continue;
+        }
+        let capacity_capture = array.capture.clone();
         sink.captures
             .insert("capacity".to_string(), capacity_capture.clone());
 
@@ -61,12 +87,12 @@ pub(crate) fn annotate_native_buffer_capacity(
             || capacity.is_some_and(|capacity| exact_size.is_some_and(|size| size <= capacity));
         let insufficient =
             capacity.is_some_and(|capacity| exact_size.is_some_and(|size| size > capacity));
-        let function_scope = enclosing_function_range(root, sink.location.start.byte_offset);
+        let function_scope = call.and_then(|call| call.function_scope.clone());
         let terminator = string_copy
             .is_some()
             .then(|| {
                 explicit_terminator(
-                    root,
+                    &index,
                     &TerminationSearch {
                         path,
                         destination: destination_name,
@@ -76,6 +102,7 @@ pub(crate) fn annotate_native_buffer_capacity(
                         sink_end: sink.location.end.byte_offset,
                         conditional,
                         availability: sink.context.availability.as_ref(),
+                        binding: array.binding.clone(),
                     },
                 )
             })
@@ -162,18 +189,184 @@ pub(crate) fn annotate_native_buffer_capacity(
     evidence.extend(validations);
 }
 
-fn string_copy_kind(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    sink_offset: usize,
-) -> Option<&'static str> {
-    root.dfs()
-        .find(|node| node.kind().as_ref() == "call_expression" && node.range().start == sink_offset)
-        .and_then(|call| call.field("function"))
-        .and_then(|callee| match callee.text().trim() {
-            "strncpy" => Some("strncpy"),
-            "strncat" => Some("strncat"),
-            _ => None,
-        })
+struct CallInfo<'tree> {
+    node: BufferNode<'tree>,
+    string_copy: Option<&'static str>,
+    function_scope: Option<std::ops::Range<usize>>,
+}
+
+struct ArrayCapacity {
+    capacity: Option<usize>,
+    capture: Capture,
+    range: std::ops::Range<usize>,
+    binding: std::ops::Range<usize>,
+}
+
+type BufferNode<'tree> = Node<'tree, StrDoc<SupportLang>>;
+type Terminators<'tree> = BTreeMap<usize, Vec<(usize, BufferNode<'tree>)>>;
+
+struct BufferIndex<'tree> {
+    calls: BTreeMap<usize, CallInfo<'tree>>,
+    arrays: BTreeMap<(Option<String>, String), BTreeMap<usize, Vec<ArrayCapacity>>>,
+    terminators: BTreeMap<(Option<String>, usize, usize, String), Terminators<'tree>>,
+    bindings: DestinationBindings,
+}
+
+type DestinationBindings =
+    BTreeMap<String, BTreeMap<(usize, usize), BTreeMap<usize, std::ops::Range<usize>>>>;
+
+impl<'tree> BufferIndex<'tree> {
+    fn new(path: &str, root: &BufferNode<'tree>) -> Self {
+        let mut index = Self {
+            calls: BTreeMap::new(),
+            arrays: BTreeMap::new(),
+            terminators: BTreeMap::new(),
+            bindings: BTreeMap::new(),
+        };
+        let mut terminators = Vec::new();
+        for (order, node) in root.dfs().enumerate() {
+            match node.kind().as_ref() {
+                "declaration"
+                | "field_declaration"
+                | "parameter_declaration"
+                | "optional_parameter_declaration" => {
+                    let parameter = matches!(
+                        node.kind().as_ref(),
+                        "parameter_declaration" | "optional_parameter_declaration"
+                    );
+                    let scope = node.ancestors().find(|n| {
+                        matches!(
+                            n.kind().as_ref(),
+                            "compound_statement"
+                                | "field_declaration_list"
+                                | "namespace_definition"
+                                | "translation_unit"
+                                | "for_statement"
+                                | "for_range_loop"
+                                | "catch_clause"
+                        ) || parameter
+                            && matches!(
+                                n.kind().as_ref(),
+                                "function_definition" | "lambda_expression"
+                            )
+                    });
+                    let Some(scope) = scope else { continue };
+                    for declarator in node.field_children("declarator") {
+                        let Some(name) = super::native_api::declaration_name(&declarator) else {
+                            continue;
+                        };
+                        index
+                            .bindings
+                            .entry(name)
+                            .or_default()
+                            .entry((scope.range().start, scope.range().end))
+                            .or_default()
+                            .insert(declarator.range().start, declarator.range());
+                    }
+                }
+                "call_expression" => {
+                    let scope = node
+                        .ancestors()
+                        .find(|n| n.kind().as_ref() == "function_definition")
+                        .map(|n| n.range());
+                    let info = index
+                        .calls
+                        .entry(node.range().start)
+                        .or_insert_with(|| CallInfo {
+                            node: node.clone(),
+                            string_copy: node.field("function").and_then(|callee| {
+                                match callee.text().trim() {
+                                    "strncpy" => Some("strncpy"),
+                                    "strncat" => Some("strncat"),
+                                    _ => None,
+                                }
+                            }),
+                            function_scope: None,
+                        });
+                    if info.function_scope.is_none() {
+                        info.function_scope = scope;
+                    }
+                }
+                "array_declarator" => {
+                    let (Some(declarator), Some(size)) =
+                        (node.field("declarator"), node.field("size"))
+                    else {
+                        continue;
+                    };
+                    if !is_byte_array_declaration(&node) {
+                        continue;
+                    }
+                    index
+                        .arrays
+                        .entry((
+                            enclosing_symbol(&node),
+                            declarator.text().trim().to_string(),
+                        ))
+                        .or_default()
+                        .entry(node.range().start)
+                        .or_default()
+                        .push(ArrayCapacity {
+                            capacity: parse_integer(size.text().trim()),
+                            capture: Capture {
+                                text: size.text().into_owned(),
+                                location: location(path, &size),
+                            },
+                            range: node.range(),
+                            binding: std::iter::once(node.clone())
+                                .chain(node.ancestors())
+                                .take_while(|n| n.kind().as_ref() != "declaration")
+                                .last()
+                                .map_or_else(|| node.range(), |n| n.range()),
+                        });
+                }
+                "assignment_expression" => {
+                    let (Some(left), Some(right)) = (node.field("left"), node.field("right"))
+                    else {
+                        continue;
+                    };
+                    if !matches!(compact(right.text().as_ref()).as_str(), "0" | "'\\0'") {
+                        continue;
+                    }
+                    terminators.push((order, compact(left.text().as_ref()), node));
+                }
+                _ => {}
+            }
+        }
+        for (order, text, node) in terminators {
+            let Some((destination, _)) =
+                text.split_once('[').filter(|(name, _)| is_identifier(name))
+            else {
+                continue;
+            };
+            let Some(binding) = index.destination_binding(&node, destination) else {
+                continue;
+            };
+            index
+                .terminators
+                .entry((enclosing_symbol(&node), binding.start, binding.end, text))
+                .or_default()
+                .entry(node.range().start)
+                .or_default()
+                .push((order, node));
+        }
+        index
+    }
+
+    fn destination_binding(
+        &self,
+        site: &BufferNode<'_>,
+        name: &str,
+    ) -> Option<std::ops::Range<usize>> {
+        let scopes = self.bindings.get(name)?;
+        site.ancestors()
+            .filter_map(|scope| {
+                let bindings = scopes.get(&(scope.range().start, scope.range().end))?;
+                let (_, declaration) = bindings.range(..=site.range().start).next_back()?;
+                Some((scope.range().len(), declaration))
+            })
+            .min_by_key(|(width, declaration)| (*width, usize::MAX - declaration.start))
+            .map(|(_, declaration)| declaration.clone())
+    }
 }
 
 struct TerminationSearch<'a> {
@@ -185,96 +378,66 @@ struct TerminationSearch<'a> {
     sink_end: usize,
     conditional: &'a ConditionalRegions,
     availability: Option<&'a Availability>,
+    binding: std::ops::Range<usize>,
 }
 
-fn explicit_terminator(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    search: &TerminationSearch<'_>,
-) -> Option<Capture> {
-    root.dfs()
-        .filter(|node| node.kind().as_ref() == "assignment_expression")
-        .filter(|node| node.range().start > search.sink_end)
-        .filter(|node| {
-            search.function_scope.as_ref().is_none_or(|scope| {
-                scope.start <= node.range().start && node.range().end <= scope.end
-            })
-        })
-        .filter(|node| enclosing_symbol(node).as_deref() == search.symbol)
-        .filter(|node| {
-            let availability = search.conditional.availability_for(node.range());
-            match availability.state {
-                AvailabilityState::Always => true,
-                AvailabilityState::Conditional | AvailabilityState::Unknown => search
-                    .availability
-                    .is_some_and(|sink| sink == &availability),
-                AvailabilityState::Excluded => false,
-            }
-        })
-        .find_map(|assignment| {
-            let left = assignment.field("left")?;
-            let right = assignment.field("right")?;
-            let text = compact(left.text().as_ref());
-            let destination = search.destination;
-            let sizeof_indices = [
-                format!("{destination}[sizeof({destination})-1]"),
-                format!("{destination}[sizeof{destination}-1]"),
-                format!("{destination}[(sizeof({destination}))-1]"),
-                format!("{destination}[(sizeof{destination})-1]"),
-            ];
-            let matches_literal = search.capacity.is_some_and(|capacity| {
-                text == format!("{destination}[{}]", capacity.saturating_sub(1))
-            });
-            let zero = compact(right.text().as_ref());
-            ((matches_literal || sizeof_indices.contains(&text))
-                && matches!(zero.as_str(), "0" | "'\\0'"))
-            .then(|| Capture {
-                text: assignment.text().into_owned(),
-                location: location(search.path, &assignment),
-            })
-        })
-}
-
-fn enclosing_function_range(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    sink_offset: usize,
-) -> Option<std::ops::Range<usize>> {
-    root.dfs()
-        .filter(|node| {
-            node.kind().as_ref() == "call_expression" && node.range().start == sink_offset
-        })
-        .find_map(|call| {
-            call.ancestors()
-                .find(|ancestor| ancestor.kind().as_ref() == "function_definition")
-                .map(|function| function.range())
-        })
-}
-
-fn declared_byte_array_capacity(
-    path: &str,
-    root: &Node<'_, StrDoc<SupportLang>>,
-    destination: &str,
-    symbol: Option<&str>,
-    sink_offset: usize,
-) -> Option<(Option<usize>, Capture)> {
-    root.dfs()
-        .filter(|node| node.kind().as_ref() == "array_declarator")
-        .filter(|node| node.range().start < sink_offset)
-        .filter(|node| enclosing_symbol(node).as_deref() == symbol)
-        .filter_map(|node| {
-            let declarator = node.field("declarator")?;
-            let size = node.field("size")?;
-            if declarator.text().trim() != destination || !is_byte_array_declaration(&node) {
-                return None;
-            }
-            Some((
-                parse_integer(size.text().trim()),
-                Capture {
-                    text: size.text().into_owned(),
-                    location: location(path, &size),
-                },
+fn explicit_terminator(index: &BufferIndex<'_>, search: &TerminationSearch<'_>) -> Option<Capture> {
+    use std::ops::Bound::{Excluded, Included, Unbounded};
+    let destination = search.destination;
+    let mut expressions = vec![
+        format!("{destination}[sizeof({destination})-1]"),
+        format!("{destination}[sizeof{destination}-1]"),
+        format!("{destination}[(sizeof({destination}))-1]"),
+        format!("{destination}[(sizeof{destination})-1]"),
+    ];
+    if let Some(capacity) = search.capacity {
+        expressions.push(format!("{destination}[{}]", capacity.saturating_sub(1)));
+    }
+    expressions
+        .into_iter()
+        .filter_map(|text| {
+            index.terminators.get(&(
+                search.symbol.map(str::to_string),
+                search.binding.start,
+                search.binding.end,
+                text,
             ))
         })
-        .last()
+        .filter_map(|assignments| {
+            if search
+                .function_scope
+                .as_ref()
+                .is_some_and(|scope| scope.end <= search.sink_end)
+            {
+                return None;
+            }
+            let end = search
+                .function_scope
+                .as_ref()
+                .map_or(Unbounded, |scope| Included(scope.end));
+            assignments
+                .range((Excluded(search.sink_end), end))
+                .flat_map(|(_, nodes)| nodes)
+                .find(|(_, node)| {
+                    search.function_scope.as_ref().is_none_or(|scope| {
+                        scope.start <= node.range().start && node.range().end <= scope.end
+                    }) && {
+                        let availability = search.conditional.availability_for(node.range());
+                        match availability.state {
+                            AvailabilityState::Always => true,
+                            AvailabilityState::Conditional | AvailabilityState::Unknown => search
+                                .availability
+                                .is_some_and(|sink| sink == &availability),
+                            AvailabilityState::Excluded => false,
+                        }
+                    }
+                })
+        })
+        .min_by_key(|(order, _)| *order)
+        .map(|(_, assignment)| Capture {
+            text: assignment.text().into_owned(),
+            location: location(search.path, &assignment),
+        })
 }
 
 fn is_destination_sizeof(value: &str, destination: &str) -> bool {

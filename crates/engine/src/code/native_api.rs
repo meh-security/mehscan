@@ -304,7 +304,7 @@ fn function_prototype(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
         })
 }
 
-fn declaration_name(node: &Node<'_, StrDoc<SupportLang>>) -> Option<String> {
+pub(super) fn declaration_name(node: &Node<'_, StrDoc<SupportLang>>) -> Option<String> {
     if matches!(
         node.kind().as_ref(),
         "identifier" | "type_identifier" | "field_identifier"

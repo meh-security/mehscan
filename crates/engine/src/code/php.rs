@@ -30,7 +30,7 @@ pub(super) fn add_operand_facts<'a>(
     let producers = evidence
         .iter()
         .any(|item| item.rule_id == "php-html-output")
-        .then(|| review::Producers::collect(&context.root));
+        .then(|| review::Producers::collect(context));
     for item in evidence {
         if item.rule_id == "php-command-execution" {
             if let Some(node) = item.captures.get("command").and_then(|c| {
@@ -126,7 +126,7 @@ pub(super) fn add_operand_facts<'a>(
             if node
                 .field("function")
                 .is_some_and(|function| !function.text().starts_with('\\'))
-                && context.namespaced_scope(&namespace_scope(&node, &context.root))
+                && context.namespaced_scope(&context.namespace_scope(&node))
             {
                 output_context = format!("unknown_binding:{output_context}");
             }
@@ -649,6 +649,7 @@ pub(super) struct PhpContext<'a> {
     declarations: BTreeMap<(String, bool), BTreeSet<(usize, usize)>>,
     global_declarations: BTreeSet<(String, bool)>,
     namespaced_scopes: BTreeSet<(usize, usize)>,
+    namespace_index: NamespaceIndex,
     included: Vec<IncludedDatabase>,
     json_candidates: BTreeSet<(usize, usize, String)>,
     constants: std::sync::Arc<value::Constants>,
@@ -658,6 +659,7 @@ pub(super) struct PhpContext<'a> {
 
 impl<'a> PhpContext<'a> {
     pub(super) fn build(root: &PhpNode<'a>) -> Self {
+        let namespace_index = NamespaceIndex::new(root);
         let mut imports = Vec::new();
         for declaration in root
             .dfs()
@@ -698,7 +700,7 @@ impl<'a> PhpContext<'a> {
                         || clause
                             .field("type")
                             .is_some_and(|n| n.text().trim() == "function"),
-                    scope: namespace_scope(&declaration, root),
+                    scope: namespace_index.scope(&declaration),
                 });
             }
         }
@@ -713,7 +715,7 @@ impl<'a> PhpContext<'a> {
                 Some((
                     node.field("name")?.text().to_ascii_lowercase(),
                     function,
-                    namespace_scope(&node, root),
+                    namespace_index.scope(&node),
                 ))
             })
             .collect();
@@ -723,7 +725,7 @@ impl<'a> PhpContext<'a> {
                 node.kind().as_ref() == "namespace_definition" && node.field("name").is_some()
             })
             .map(|node| {
-                let scope = namespace_scope(&node, root);
+                let scope = namespace_index.scope(&node);
                 (scope.start, scope.end)
             })
             .collect();
@@ -743,6 +745,7 @@ impl<'a> PhpContext<'a> {
             declarations: declaration_scopes,
             global_declarations,
             namespaced_scopes,
+            namespace_index,
             included: Vec::new(),
             json_candidates: BTreeSet::new(),
             constants: std::sync::Arc::default(),
@@ -1226,7 +1229,7 @@ impl<'a> PhpContext<'a> {
 
     fn sdk_class_exact(&self, name: &PhpNode<'a>, canonical: &str) -> bool {
         let observed = name.text().trim().to_ascii_lowercase();
-        let scope = namespace_scope(name, &self.root);
+        let scope = self.namespace_scope(name);
         if self.declaration_in_scope(&observed, false, &scope) {
             return false;
         }
@@ -1352,7 +1355,7 @@ impl<'a> PhpContext<'a> {
 
     fn resolve(&self, name: &PhpNode<'a>, function: bool) -> Option<String> {
         let observed = name.text().trim().to_ascii_lowercase();
-        let scope = namespace_scope(name, &self.root);
+        let scope = self.namespace_scope(name);
         let collision = self.declaration_in_scope(&observed, function, &scope);
         if collision {
             return None;
@@ -1600,7 +1603,7 @@ impl<'a> PhpContext<'a> {
     }
 
     fn curl_origin(&self, call: &PhpNode<'a>) -> Option<(PhpNode<'a>, PhpNode<'a>)> {
-        if self.namespaced_scope(&namespace_scope(call, &self.root)) {
+        if self.namespaced_scope(&self.namespace_scope(call)) {
             return None;
         }
         let arguments = call.field("arguments")?;
@@ -1792,6 +1795,10 @@ impl<'a> PhpContext<'a> {
 
     fn namespaced_scope(&self, scope: &Range<usize>) -> bool {
         self.namespaced_scopes.contains(&(scope.start, scope.end))
+    }
+
+    fn namespace_scope(&self, node: &PhpNode<'_>) -> Range<usize> {
+        self.namespace_index.scope(node)
     }
 
     fn declaration_in_scope(&self, name: &str, function: bool, scope: &Range<usize>) -> bool {
@@ -2042,29 +2049,38 @@ impl<'a> PhpContext<'a> {
     }
 }
 
-fn namespace_scope(node: &PhpNode<'_>, root: &PhpNode<'_>) -> Range<usize> {
-    if let Some(namespace) = std::iter::once(node.clone())
-        .chain(node.ancestors())
-        .find(|n| n.kind().as_ref() == "namespace_definition" && n.field("body").is_some())
-    {
-        return namespace.range();
+struct NamespaceIndex {
+    root: Range<usize>,
+    starts: Vec<usize>,
+}
+
+impl NamespaceIndex {
+    fn new(root: &PhpNode<'_>) -> Self {
+        Self {
+            root: root.range(),
+            starts: root
+                .children()
+                .filter(|n| n.kind().as_ref() == "namespace_definition")
+                .map(|n| n.range().start)
+                .collect(),
+        }
     }
-    let namespaces: Vec<_> = root
-        .children()
-        .filter(|n| n.kind().as_ref() == "namespace_definition")
-        .collect();
-    let Some(current) = namespaces
-        .iter()
-        .rev()
-        .find(|n| n.range().start <= node.range().start)
-    else {
-        return root.range();
-    };
-    current.range().start
-        ..namespaces
-            .iter()
-            .find(|n| n.range().start > current.range().start)
-            .map_or(root.range().end, |next| next.range().start)
+
+    fn scope(&self, node: &PhpNode<'_>) -> Range<usize> {
+        if let Some(namespace) = std::iter::once(node.clone())
+            .chain(node.ancestors())
+            .find(|n| n.kind().as_ref() == "namespace_definition" && n.field("body").is_some())
+        {
+            return namespace.range();
+        }
+        let position = self
+            .starts
+            .partition_point(|start| *start <= node.range().start);
+        if position == 0 {
+            return self.root.clone();
+        }
+        self.starts[position - 1]..self.starts.get(position).copied().unwrap_or(self.root.end)
+    }
 }
 
 fn function_scope(node: &PhpNode<'_>, root: &PhpNode<'_>) -> Range<usize> {

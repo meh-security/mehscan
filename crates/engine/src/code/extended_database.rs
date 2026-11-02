@@ -504,15 +504,37 @@ fn returned_document_origin(
 pub(super) struct ExactSymbolIndex<'a> {
     declarations: BTreeMap<String, Vec<DbNode<'a>>>,
     imports: Vec<DbNode<'a>>,
+    typed_bindings: TypedBindings<'a>,
 }
+
+type ScopeKey = Option<(usize, usize)>;
+type OrderedBindings<'a> = BTreeMap<usize, Vec<(usize, DbNode<'a>)>>;
+type TypedBindings<'a> = BTreeMap<String, BTreeMap<ScopeKey, OrderedBindings<'a>>>;
 
 impl<'a> ExactSymbolIndex<'a> {
     pub(super) fn new(root: &DbNode<'a>) -> Self {
         let mut index = Self {
             declarations: BTreeMap::new(),
             imports: Vec::new(),
+            typed_bindings: BTreeMap::new(),
         };
-        for node in root.dfs() {
+        for (order, node) in root.dfs().enumerate() {
+            if typed_binding_kind(node.kind().as_ref()) {
+                let names = typed_binding_names(&node);
+                let scope =
+                    binding_scope(&node).map(|scope| (scope.range().start, scope.range().end));
+                for name in names {
+                    index
+                        .typed_bindings
+                        .entry(name)
+                        .or_default()
+                        .entry(scope)
+                        .or_default()
+                        .entry(node.range().start)
+                        .or_default()
+                        .push((order, node.clone()));
+                }
+            }
             if let Some(name) = declaration_name(&node) {
                 index
                     .declarations
@@ -737,7 +759,7 @@ pub(super) fn accepts(
         if language == Language::Java {
             super::java_persistence::typed_database_receiver(root, receiver, canonical, 8)
         } else {
-            typed_receiver(root, node, receiver, canonical, language)
+            typed_receiver_with_index(root, node, receiver, canonical, language, symbols)
         }
     })
 }
@@ -993,38 +1015,117 @@ pub(super) fn typed_receiver(
     canonical: &str,
     language: Language,
 ) -> bool {
+    typed_receiver_with_index(root, use_site, receiver, canonical, language, None)
+}
+
+fn typed_binding_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "parameter"
+            | "parameter_declaration"
+            | "let_declaration"
+            | "declaration"
+            | "variable_declaration"
+            | "short_var_declaration"
+            | "var_spec"
+            | "range_clause"
+    )
+}
+
+fn typed_binding_names(node: &DbNode<'_>) -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    if let Some(name) = node
+        .field("name")
+        .or_else(|| node.field("pattern"))
+        .or_else(|| node.field("declarator"))
+        .or_else(|| node.field("left"))
+    {
+        names.insert(
+            compact(name.text().as_ref())
+                .trim_start_matches(['&', '*'])
+                .to_string(),
+        );
+        if matches!(
+            node.kind().as_ref(),
+            "short_var_declaration" | "range_clause"
+        ) && name.kind().as_ref() == "expression_list"
+        {
+            names.extend(
+                name.children()
+                    .filter(|n| n.kind().as_ref() == "identifier")
+                    .map(|n| n.text().to_string()),
+            );
+        }
+    }
+    if matches!(node.kind().as_ref(), "parameter_declaration" | "var_spec") {
+        names.extend(node.field_children("name").map(|n| n.text().to_string()));
+    }
+    for child in node
+        .children()
+        .filter(|n| n.kind().as_ref() == "variable_declarator")
+    {
+        if let Some(name) = child.field("name") {
+            names.insert(name.text().to_string());
+        }
+    }
+    names
+}
+
+fn typed_receiver_with_index(
+    root: &DbNode<'_>,
+    use_site: &DbNode<'_>,
+    receiver: &DbNode<'_>,
+    canonical: &str,
+    language: Language,
+    symbols: Option<&ExactSymbolIndex<'_>>,
+) -> bool {
     let name = compact(receiver.text().as_ref());
     if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
         return false;
     }
+    if let Some(symbols) = symbols {
+        let Some(bindings) = symbols.typed_bindings.get(&name) else {
+            return false;
+        };
+        let mut scopes = std::collections::BTreeSet::from([None]);
+        scopes.extend(
+            std::iter::once(use_site.clone())
+                .chain(use_site.ancestors())
+                .map(|node| Some((node.range().start, node.range().end))),
+        );
+        let target = scopes
+            .iter()
+            .filter_map(|scope| bindings.get(scope))
+            .filter_map(|bindings| {
+                bindings
+                    .range(..=use_site.range().start)
+                    .rev()
+                    .flat_map(|(_, nodes)| nodes.iter().rev())
+                    .find(|(_, node)| visible(node, use_site))
+            })
+            .max_by_key(|(order, node)| (node.range().start, *order));
+        return target
+            .and_then(|(_, node)| node.field("type"))
+            .is_some_and(|ty| {
+                let text = compact(ty.text().as_ref());
+                exact_symbol_with_index(
+                    root,
+                    use_site,
+                    text.trim_start_matches(['&', '*'])
+                        .trim_start_matches("mut"),
+                    canonical,
+                    language,
+                    Some(symbols),
+                )
+            });
+    }
     let mut bindings = Vec::new();
-    for n in root.dfs().filter(|n| {
-        matches!(
-            n.kind().as_ref(),
-            "parameter"
-                | "parameter_declaration"
-                | "let_declaration"
-                | "declaration"
-                | "variable_declaration"
-                | "short_var_declaration"
-        )
-    }) {
+    for n in root.dfs().filter(|n| typed_binding_kind(n.kind().as_ref())) {
         if !visible(&n, use_site) {
             continue;
         }
         let ty = n.field("type");
-        let declarator = n
-            .field("name")
-            .or_else(|| n.field("pattern"))
-            .or_else(|| n.field("declarator"));
-        let declarator = declarator.or_else(|| n.field("left"));
-        let matches = declarator
-            .is_some_and(|d| compact(d.text().as_ref()).trim_start_matches(['&', '*']) == name)
-            || n.children().any(|d| {
-                d.kind().as_ref() == "variable_declarator"
-                    && d.field("name").is_some_and(|v| v.text() == name)
-            });
-        if matches {
+        if typed_binding_names(&n).contains(&name) {
             bindings.push((n.range().start, ty));
         }
     }
@@ -1044,10 +1145,19 @@ fn visible(binding: &DbNode<'_>, use_site: &DbNode<'_>) -> bool {
     if binding.range().start > use_site.range().start {
         return false;
     }
-    binding
-        .ancestors()
-        .find(|n| {
-            matches!(
+    binding_scope(binding).is_none_or(|scope| {
+        scope.range().start <= use_site.range().start && use_site.range().end <= scope.range().end
+    })
+}
+
+fn binding_scope<'a>(binding: &DbNode<'a>) -> Option<DbNode<'a>> {
+    let go_local = matches!(
+        binding.kind().as_ref(),
+        "short_var_declaration" | "var_spec" | "range_clause"
+    );
+    binding.ancestors().find(|n| {
+        go_local && n.kind().as_ref() == "for_statement"
+            || matches!(
                 n.kind().as_ref(),
                 "function_definition"
                     | "function_declaration"
@@ -1059,11 +1169,7 @@ fn visible(binding: &DbNode<'_>, use_site: &DbNode<'_>) -> bool {
                     | "arrow_function"
                     | "block"
             )
-        })
-        .is_none_or(|scope| {
-            scope.range().start <= use_site.range().start
-                && use_site.range().end <= scope.range().end
-        })
+    })
 }
 
 fn compact(text: &str) -> String {
@@ -1177,7 +1283,12 @@ pub(super) fn request_objects<'a>(root: &DbNode<'a>, sink: &DbNode<'a>) -> Vec<D
         .collect()
 }
 
-pub(super) fn pgx_receiver(root: &DbNode<'_>, node: &DbNode<'_>, receiver: &DbNode<'_>) -> bool {
+pub(super) fn pgx_receiver(
+    root: &DbNode<'_>,
+    node: &DbNode<'_>,
+    receiver: &DbNode<'_>,
+    symbols: &ExactSymbolIndex<'_>,
+) -> bool {
     accepts(
         root,
         node,
@@ -1185,13 +1296,77 @@ pub(super) fn pgx_receiver(root: &DbNode<'_>, node: &DbNode<'_>, receiver: &DbNo
         Language::Go,
         Some(receiver),
         None,
-        None,
+        Some(symbols),
         None,
     )
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn typed_receiver_index_keeps_sibling_block_and_untyped_shadow_boundaries() {
+        use super::*;
+        use ast_grep_core::tree_sitter::LanguageExt;
+        let source = r#"package p
+import sqlx "github.com/jmoiron/sqlx"
+func first(db *sqlx.DB) { db.Query(q) }
+func other(db *foreign.DB) { db.Query(q) }
+func blocks(db *sqlx.DB) {
+ db.Query(q)
+ { var db *foreign.DB; db.Query(q) }
+ db.Query(q)
+ { db := foreignFactory(); db.Query(q) }
+ db.Query(q)
+ for _, db := range foreignValues { db.Query(q) }
+ db.Query(q)
+ { _, db := foreignPair(); db.Query(q) }
+ db.Query(q)
+}
+func typedLocal() { var first, db *sqlx.DB; db.Query(q) }
+"#;
+        let ast = SupportLang::Go.ast_grep(source);
+        let root = ast.root();
+        let index = ExactSymbolIndex::new(&root);
+        let mut observed = Vec::new();
+        for call in root
+            .dfs()
+            .filter(|node| node.kind().as_ref() == "call_expression")
+        {
+            let Some(function) = call
+                .field("function")
+                .filter(|node| node.text() == "db.Query")
+            else {
+                continue;
+            };
+            let receiver = function.field("operand").unwrap();
+            let indexed = typed_receiver_with_index(
+                &root,
+                &call,
+                &receiver,
+                "github.com/jmoiron/sqlx.DB",
+                Language::Go,
+                Some(&index),
+            );
+            assert_eq!(
+                indexed,
+                typed_receiver(
+                    &root,
+                    &call,
+                    &receiver,
+                    "github.com/jmoiron/sqlx.DB",
+                    Language::Go
+                )
+            );
+            observed.push(indexed);
+        }
+        assert_eq!(
+            observed,
+            [
+                true, false, true, false, true, false, true, false, true, false, true, true
+            ]
+        );
+    }
+
     #[test]
     fn identity_registry_covers_the_catalog_without_intercepting_custom_rule_names() {
         let rules = crate::rules::load_builtin_rules().unwrap();
