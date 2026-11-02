@@ -23,10 +23,10 @@ fn owned_receiver<'a>(root: &KNode<'a>, imports: &Imports, node: &KNode<'a>, dep
                 .is_some_and(|head| imports.exact(root, node, head, MANAGER));
     }
     let symbol = node.text();
-    if !identity::receiver_unchanged(root, node, &symbol) {
+    if !imports.receiver_unchanged(root, node, &symbol) {
         return false;
     }
-    let Some(binding) = identity::binding(root, node, &symbol) else {
+    let Some(binding) = imports.binding(root, node, &symbol) else {
         return false;
     };
     if identity::callable(&binding).map(|n| n.range())
@@ -99,7 +99,8 @@ pub(super) fn accepts_with_imports<'a>(
                 | "null_literal"
                 | "character_literal"
         )
-        || identity::binding_type(root, &sql.value, &sql.value.text())
+        || imports
+            .binding_type(root, &sql.value, &sql.value.text())
             .is_some_and(|ty| !matches!(ty.as_str(), "String" | "kotlin.String"))
     {
         return false;

@@ -94,10 +94,10 @@ pub(crate) fn owned_with_imports<'a>(
             .strip_prefix("this.")
             .is_some_and(|s| !s.contains('.'))
     {
-        if !identity::receiver_unchanged(root, expression, &symbol) {
+        if !imports.receiver_unchanged(root, expression, &symbol) {
             return false;
         }
-        if let Some(ty) = identity::binding_type(root, expression, &symbol) {
+        if let Some(ty) = imports.binding_type(root, expression, &symbol) {
             if matches!(
                 canonical,
                 "org.springframework.web.reactive.function.client.WebClient.RequestHeadersUriSpec"
@@ -113,7 +113,7 @@ pub(crate) fn owned_with_imports<'a>(
             }
             return imports.exact(root, expression, &ty, canonical);
         }
-        let Some(binding) = identity::binding(root, expression, &symbol) else {
+        let Some(binding) = imports.binding(root, expression, &symbol) else {
             return false;
         };
         if identity::callable(&binding).is_none()

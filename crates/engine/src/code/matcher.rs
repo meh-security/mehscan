@@ -81,6 +81,7 @@ pub(crate) struct FileScanTiming {
     pub summaries_microseconds: u128,
     pub native_pass_microseconds: [u128; 22],
     pub security_paths_microseconds: u128,
+    pub postprocessing_microseconds: u128,
     pub declarative_patterns_considered: usize,
     pub declarative_patterns_skipped: usize,
 }
@@ -192,12 +193,12 @@ pub(crate) fn scan_source(
     let literals = LiteralEnvironment::build(&root, language);
     let symbol_environment =
         FileSymbolEnvironment::build(path, &root, language, source, project_symbols);
+    let php_context = (language == Language::Php)
+        .then(|| super::php::PhpContext::build(&root).with_project(path, php_project_context));
     let parse_context_microseconds = parse_started.elapsed().as_micros();
 
     let mut evidence = Vec::new();
     let mut php_operand_nodes = BTreeMap::new();
-    let php_context = (language == Language::Php)
-        .then(|| super::php::PhpContext::build(&root).with_project(path, php_project_context));
     let mut seen = BTreeSet::new();
     let trace_summary_passes = std::env::var_os("MEHSCAN_TRACE_PASSES").is_some();
     let start_summary_pass = || trace_summary_passes.then(Instant::now);
@@ -2561,13 +2562,26 @@ pub(crate) fn scan_source(
     security_paths.append(&mut native_remaining_input_paths);
     security_paths.sort_by(|left, right| left.id.cmp(&right.id));
     let security_paths_microseconds = paths_started.elapsed().as_micros();
+    let postprocessing_started = Instant::now();
+    let pass_started = start_summary_pass();
     super::go_operands::annotate(language, &root, &mut evidence);
+    finish_summary_pass("post.go_operands", pass_started);
+    let pass_started = start_summary_pass();
     super::decision_origins::annotate(language, source, &root, &mut evidence);
+    finish_summary_pass("post.decision_origins", pass_started);
+    let pass_started = start_summary_pass();
     super::csharp_operands::annotate(language, &root, &mut evidence);
+    finish_summary_pass("post.csharp_operands", pass_started);
+    let pass_started = start_summary_pass();
     super::native_operands::annotate(language, &root, &mut evidence);
+    finish_summary_pass("post.native_operands", pass_started);
+    let pass_started = start_summary_pass();
     super::java_prepared::annotate(language, &root, &mut evidence);
+    finish_summary_pass("post.java_prepared", pass_started);
     if let Some(imports) = kotlin_imports.as_ref() {
+        let pass_started = start_summary_pass();
         super::kotlin::annotate_prepared(&root, imports, &mut evidence);
+        finish_summary_pass("post.kotlin_prepared", pass_started);
     }
     evidence.extend(secret_evidence);
     evidence.sort_by(|left, right| {
@@ -2577,6 +2591,7 @@ pub(crate) fn scan_source(
             .cmp(&right.location.start.byte_offset)
             .then_with(|| left.rule_id.cmp(&right.rule_id))
     });
+    let postprocessing_microseconds = postprocessing_started.elapsed().as_micros();
     let timing = FileScanTiming {
         parse_context_microseconds,
         declarative_rules_microseconds,
@@ -2584,6 +2599,7 @@ pub(crate) fn scan_source(
         summaries_microseconds,
         native_pass_microseconds,
         security_paths_microseconds,
+        postprocessing_microseconds,
         declarative_patterns_considered,
         declarative_patterns_skipped,
     };

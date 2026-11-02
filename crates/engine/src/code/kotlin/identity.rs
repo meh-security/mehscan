@@ -10,6 +10,7 @@ pub(in crate::code) struct Imports {
     aliases: BTreeMap<String, BTreeSet<String>>,
     wildcards: BTreeSet<String>,
     declarations: BTreeMap<String, Vec<DeclarationScope>>,
+    assignments: BTreeMap<Option<(usize, usize)>, Vec<Range<usize>>>,
 }
 
 struct DeclarationScope {
@@ -29,6 +30,69 @@ impl DeclarationScope {
 }
 
 impl Imports {
+    pub(super) fn binding<'a>(
+        &self,
+        root: &KNode<'a>,
+        use_site: &KNode<'a>,
+        symbol: &str,
+    ) -> Option<KNode<'a>> {
+        let symbol_key = symbol.trim_end_matches("!!");
+        let symbol_key = symbol_key.strip_prefix("this.").unwrap_or(symbol_key);
+        let candidates = self
+            .declarations
+            .get(symbol_key)
+            .into_iter()
+            .flatten()
+            .filter(|entry| entry.visible(use_site))
+            .filter(|entry| {
+                matches!(
+                    entry.kind.as_str(),
+                    "variable_declaration" | "parameter" | "class_parameter"
+                )
+            })
+            .filter_map(|entry| node_of_kind(root, entry.declaration.clone(), &entry.kind));
+        select_binding(candidates, use_site, symbol)
+    }
+
+    pub(super) fn binding_type<'a>(
+        &self,
+        root: &KNode<'a>,
+        use_site: &KNode<'a>,
+        symbol: &str,
+    ) -> Option<String> {
+        self.binding(root, use_site, symbol)?
+            .children()
+            .find(|n| matches!(n.kind().as_ref(), "user_type" | "nullable_type"))
+            .map(|n| n.text().trim_end_matches('?').to_string())
+    }
+
+    pub(super) fn receiver_unchanged<'a>(
+        &self,
+        root: &KNode<'a>,
+        use_site: &KNode<'a>,
+        symbol: &str,
+    ) -> bool {
+        let symbol = symbol.trim_end_matches("!!");
+        let target = self.binding(root, use_site, symbol).map(|n| n.range());
+        let owner = callable(use_site).map(|n| (n.range().start, n.range().end));
+        !self
+            .assignments
+            .get(&owner)
+            .into_iter()
+            .flatten()
+            .filter(|range| range.start < use_site.range().start)
+            .filter_map(|range| node_of_kind(root, range.clone(), "assignment"))
+            .any(|n| {
+                n.children().find(|n| n.is_named()).is_some_and(|n| {
+                    let assigned = n.text();
+                    let assigned = assigned.trim();
+                    assigned == symbol
+                        || target.is_some()
+                            && self.binding(root, &n, assigned).map(|n| n.range()) == target
+                })
+            })
+    }
+
     pub(super) fn default_extension(
         &self,
         root: &KNode<'_>,
@@ -107,6 +171,14 @@ impl Imports {
     pub(in crate::code) fn build(root: &KNode<'_>) -> Self {
         let mut result = Self::default();
         for import in root.dfs() {
+            if import.kind().as_ref() == "assignment" {
+                let owner = callable(&import).map(|n| (n.range().start, n.range().end));
+                result
+                    .assignments
+                    .entry(owner)
+                    .or_default()
+                    .push(import.range());
+            }
             if matches!(
                 import.kind().as_ref(),
                 "variable_declaration"
@@ -311,6 +383,21 @@ pub(super) fn binding<'a>(
     use_site: &KNode<'a>,
     symbol: &str,
 ) -> Option<KNode<'a>> {
+    select_binding(root.dfs(), use_site, symbol)
+}
+
+fn node_of_kind<'a>(root: &KNode<'a>, range: Range<usize>, kind: &str) -> Option<KNode<'a>> {
+    let node = super::super::node_lookup::last_exact(root, range.clone())?;
+    std::iter::once(node.clone())
+        .chain(node.ancestors())
+        .find(|n| n.range() == range && n.kind().as_ref() == kind)
+}
+
+fn select_binding<'a>(
+    candidates: impl Iterator<Item = KNode<'a>>,
+    use_site: &KNode<'a>,
+    symbol: &str,
+) -> Option<KNode<'a>> {
     let symbol = symbol.trim_end_matches("!!");
     let explicit_this = symbol.starts_with("this.");
     let symbol = symbol.strip_prefix("this.").unwrap_or(symbol);
@@ -350,27 +437,27 @@ pub(super) fn binding<'a>(
     } else {
         None
     };
-    let mut declarations =
-        root.dfs()
-            .filter(|n| {
-                matches!(
-                    n.kind().as_ref(),
-                    "variable_declaration" | "parameter" | "class_parameter"
-                ) && name(n).as_deref() == Some(symbol)
-                    && visible(n, use_site)
-                    && member_owner.as_ref().is_none_or(|member_owner| {
-                        owner(n).is_some_and(|owner| owner.range() == member_owner.range())
-                            && match n.kind().as_ref() {
-                                "class_parameter" => n
-                                    .children()
-                                    .any(|child| matches!(child.text().as_ref(), "val" | "var")),
-                                "variable_declaration" => scope(n)
-                                    .is_some_and(|scope| scope.kind().as_ref() == "class_body"),
-                                _ => false,
+    let mut declarations = candidates
+        .filter(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "variable_declaration" | "parameter" | "class_parameter"
+            ) && name(n).as_deref() == Some(symbol)
+                && visible(n, use_site)
+                && member_owner.as_ref().is_none_or(|member_owner| {
+                    owner(n).is_some_and(|owner| owner.range() == member_owner.range())
+                        && match n.kind().as_ref() {
+                            "class_parameter" => n
+                                .children()
+                                .any(|child| matches!(child.text().as_ref(), "val" | "var")),
+                            "variable_declaration" => {
+                                scope(n).is_some_and(|scope| scope.kind().as_ref() == "class_body")
                             }
-                    })
-            })
-            .collect::<Vec<_>>();
+                            _ => false,
+                        }
+                })
+        })
+        .collect::<Vec<_>>();
     declarations.sort_by_key(|n| {
         (
             scope(n).map_or(usize::MAX, |s| s.range().len()),
@@ -481,6 +568,53 @@ pub(super) fn annotation(
 mod tests {
     use super::*;
     use ast_grep_core::tree_sitter::LanguageExt;
+
+    #[test]
+    fn indexed_bindings_keep_member_local_lambda_and_mutation_ownership() {
+        let source = r#"
+class C(var tx: Transaction, val q: String) {
+    fun outer(tx: Other, q: String) {
+        tx.exec(q)
+        run {
+            val tx = unknown()
+            tx.exec(q)
+        }
+        tx = other
+        tx.exec(q)
+        this.tx.exec(this.q)
+    }
+    fun member(q: String) { tx.exec(q) }
+    fun Transaction.extension(q: String) { this.tx.exec(q) }
+}
+fun separate(tx: Transaction, q: String) { tx.exec(q) }
+"#;
+        let ast = SupportLang::Kotlin.ast_grep(source);
+        let root = ast.root();
+        assert!(!root.dfs().any(|node| node.is_error() || node.is_missing()));
+        let imports = Imports::build(&root);
+        let sites: Vec<_> = root
+            .dfs()
+            .filter(|node| node.kind().as_ref() == "call_expression")
+            .collect();
+        for site in sites {
+            for symbol in ["tx", "q", "this.tx", "this.q", "unknown"] {
+                assert_eq!(
+                    imports.binding(&root, &site, symbol).map(|n| n.node_id()),
+                    binding(&root, &site, symbol).map(|n| n.node_id()),
+                    "{symbol}: {}",
+                    site.text()
+                );
+                assert_eq!(
+                    imports.binding_type(&root, &site, symbol),
+                    binding_type(&root, &site, symbol)
+                );
+                assert_eq!(
+                    imports.receiver_unchanged(&root, &site, symbol),
+                    receiver_unchanged(&root, &site, symbol)
+                );
+            }
+        }
+    }
 
     #[test]
     fn generic_types_do_not_borrow_local_classes_or_default_scalar_identity() {

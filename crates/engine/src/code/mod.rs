@@ -111,6 +111,7 @@ mod node_express;
 mod node_fastify;
 mod node_http_clients;
 mod node_identity;
+mod node_lookup;
 pub(crate) mod node_modules;
 mod node_nest;
 mod node_next_policy;

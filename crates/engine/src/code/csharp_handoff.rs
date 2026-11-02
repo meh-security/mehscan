@@ -387,7 +387,7 @@ fn catalog_method_forwards(
         ) else {
             continue;
         };
-        let Some(receiver_type) = receiver_types.get(&receiver) else {
+        let Some(receiver_type) = receiver_types.get(&receiver, &invocation) else {
             continue;
         };
         if !looks_like_service_type(receiver_type) {
@@ -473,7 +473,7 @@ fn catalog_controller_calls(
             ) else {
                 continue;
             };
-            let Some(receiver_type) = receiver_types.get(&receiver) else {
+            let Some(receiver_type) = receiver_types.get(&receiver, &invocation) else {
                 continue;
             };
             if !looks_like_service_type(receiver_type) {
@@ -707,14 +707,34 @@ impl MemberTypes {
 
 struct ReceiverTypes<'a> {
     members: Option<&'a BTreeMap<String, String>>,
-    locals: BTreeMap<String, String>,
+    locals: BTreeMap<String, Vec<LocalReceiverType>>,
+}
+
+struct LocalReceiverType {
+    scope: std::ops::Range<usize>,
+    declaration_end: usize,
+    kind: Option<String>,
 }
 
 impl ReceiverTypes<'_> {
-    fn get(&self, name: &str) -> Option<&String> {
-        self.locals
+    fn get(&self, name: &str, site: &Node<'_, StrDoc<SupportLang>>) -> Option<&String> {
+        if let Some(local) = self
+            .locals
             .get(name)
-            .or_else(|| self.members.and_then(|members| members.get(name)))
+            .into_iter()
+            .flatten()
+            .filter(|local| {
+                local.scope.start <= site.range().start && site.range().end <= local.scope.end
+            })
+            .min_by_key(|local| (local.scope.len(), usize::MAX - local.declaration_end))
+        {
+            // Unknown locals shadow members. A use before a local declaration
+            // cannot borrow a member type either, even in recovered syntax.
+            return (local.declaration_end <= site.range().start)
+                .then_some(local.kind.as_ref())
+                .flatten();
+        }
+        self.members.and_then(|members| members.get(name))
     }
 }
 
@@ -731,35 +751,55 @@ fn receiver_types<'a>(
             )
         })
         .and_then(|owner| members.0.get(&(owner.range().start, owner.range().end)));
-    let mut result = BTreeMap::new();
+    let mut result = BTreeMap::<String, Vec<LocalReceiverType>>::new();
     for parameter in method_parameters_nodes(method) {
-        if let (Some(name), Some(kind)) = (
-            parameter
-                .field("name")
-                .and_then(|node| simple_identifier(node.text().as_ref())),
-            parameter
+        if let Some(name) = parameter
+            .field("name")
+            .and_then(|node| simple_identifier(node.text().as_ref()))
+        {
+            let kind = parameter
                 .field("type")
-                .and_then(|node| type_name(node.text().as_ref())),
-        ) {
-            result.insert(name, kind);
+                .and_then(|node| type_name(node.text().as_ref()));
+            result.entry(name).or_default().push(LocalReceiverType {
+                scope: method.range(),
+                declaration_end: 0,
+                kind,
+            });
         }
     }
     for variable in method
         .dfs()
         .filter(|node| node.kind().as_ref() == "variable_declarator")
+        .filter(|node| !nested_callable_between(node, method))
     {
-        if let (Some(name), Some(kind)) = (
-            variable
-                .field("name")
-                .and_then(|node| simple_identifier(node.text().as_ref())),
-            variable
+        if let Some(name) = variable
+            .field("name")
+            .and_then(|node| simple_identifier(node.text().as_ref()))
+        {
+            let kind = variable
                 .parent()
                 .filter(|parent| parent.kind().as_ref() == "variable_declaration")
                 .and_then(|declaration| declaration.field("type"))
                 .and_then(|node| type_name(node.text().as_ref()))
-                .filter(|kind| kind != "var"),
-        ) {
-            result.insert(name, kind);
+                .filter(|kind| kind != "var");
+            let scope = variable
+                .ancestors()
+                .find(|node| {
+                    matches!(
+                        node.kind().as_ref(),
+                        "block"
+                            | "for_statement"
+                            | "for_each_statement"
+                            | "using_statement"
+                            | "fixed_statement"
+                    )
+                })
+                .map_or_else(|| method.range(), |node| node.range());
+            result.entry(name).or_default().push(LocalReceiverType {
+                scope,
+                declaration_end: variable.range().end,
+                kind,
+            });
         }
     }
     ReceiverTypes {
@@ -938,4 +978,51 @@ fn evidence_id(handoff: &ParameterHandoff) -> String {
         (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
     });
     format!("ev-{hash:016x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ast_grep_core::tree_sitter::LanguageExt;
+
+    #[test]
+    fn receiver_catalogue_does_not_lend_member_types_to_unknown_locals() {
+        let ast = SupportLang::CSharp.ast_grep(
+            r#"
+class Controller {
+    Service service;
+    void Good(string x) { service.Call(x); }
+    void Unknown(string x) { var service = Factory(); service.Call(x); }
+    void Sibling(string x) {
+        { var service = Factory(); service.Call(x); }
+        service.Call(x);
+    }
+}
+"#,
+        );
+        let root = ast.root();
+        let members = MemberTypes::new(&root);
+        let mut types = Vec::new();
+        for method in root
+            .dfs()
+            .filter(|node| node.kind().as_ref() == "method_declaration")
+        {
+            let receivers = receiver_types(&method, &members);
+            for call in method.dfs().filter(|node| {
+                node.kind().as_ref() == "invocation_expression"
+                    && node.text().starts_with("service.Call")
+            }) {
+                types.push(receivers.get("service", &call).cloned());
+            }
+        }
+        assert_eq!(
+            types,
+            [
+                Some("Service".to_string()),
+                None,
+                None,
+                Some("Service".to_string())
+            ]
+        );
+    }
 }

@@ -59,6 +59,8 @@ pub struct ScanProfile {
     pub discovery_microseconds: u128,
     pub rule_compilation_microseconds: u128,
     pub source_loading_and_secret_scan_microseconds: u128,
+    pub source_read_microseconds: u128,
+    pub loading_secret_scan_microseconds: u128,
     pub project_symbols_microseconds: u128,
     pub node_project_context_microseconds: u128,
     pub object_input_context_microseconds: u128,
@@ -85,6 +87,7 @@ pub struct FileAnalysisProfile {
     pub summaries_microseconds: u128,
     pub native_pass_microseconds: BTreeMap<&'static str, u128>,
     pub security_paths_microseconds: u128,
+    pub postprocessing_microseconds: u128,
     pub declarative_patterns_considered: usize,
     pub declarative_patterns_skipped: usize,
     pub declarative_patterns_executed: usize,
@@ -223,6 +226,28 @@ pub(crate) fn scan_profiled(
     trace_scan_phase("rule_compilation", rule_compilation_microseconds);
 
     let source_started = Instant::now();
+    let mut source_read_microseconds = 0;
+    let mut secret_read_microseconds = 0;
+    let mut loading_secret_scan_microseconds = 0;
+    let mut read_source_text = |path: &Path| {
+        let started = Instant::now();
+        let result = fs::read_to_string(path);
+        source_read_microseconds += started.elapsed().as_micros();
+        result
+    };
+    let mut read_secret_source = |path: &Path| {
+        let started = Instant::now();
+        let result = read_secret_text(path);
+        secret_read_microseconds += started.elapsed().as_micros();
+        result
+    };
+    let mut scan_loading_secrets = |path: &str, source: &str| {
+        let started = Instant::now();
+        let result =
+            crate::secrets::scan_source(path, source, &CommentRanges::default(), &secret_allowlist);
+        loading_secret_scan_microseconds += started.elapsed().as_micros();
+        result
+    };
     let mut prepared = Vec::new();
     let mut specialized_files = 0usize;
     let single_file_scan = discovery.root.is_file();
@@ -307,14 +332,9 @@ pub(crate) fn scan_profiled(
                     });
                 }
             }
-            FileClass::SecretOnly => match read_secret_text(&file.absolute) {
+            FileClass::SecretOnly => match read_secret_source(&file.absolute) {
                 Ok(source) => {
-                    let mut secret_scan = crate::secrets::scan_source(
-                        &file.relative,
-                        &source,
-                        &CommentRanges::default(),
-                        &secret_allowlist,
-                    );
+                    let mut secret_scan = scan_loading_secrets(&file.relative, &source);
                     coverage.totals.secret_scanned += 1;
                     coverage.totals.secret_suppressed += secret_scan.suppressed;
                     coverage.files.push(FileCoverage {
@@ -345,7 +365,7 @@ pub(crate) fn scan_profiled(
                 });
             }
             FileClass::Vue => {
-                let source = match read_secret_text(&file.absolute) {
+                let source = match read_secret_source(&file.absolute) {
                     Ok(source) => source,
                     Err(reason) => {
                         record_parse_failure(
@@ -360,12 +380,7 @@ pub(crate) fn scan_profiled(
                 };
                 let sfc = super::vue::parse(&file.relative, &source);
                 if options.scan_secrets {
-                    let mut secret_scan = crate::secrets::scan_source(
-                        &file.relative,
-                        &source,
-                        &CommentRanges::default(),
-                        &secret_allowlist,
-                    );
+                    let mut secret_scan = scan_loading_secrets(&file.relative, &source);
                     coverage.totals.secret_scanned += 1;
                     coverage.totals.secret_suppressed += secret_scan.suppressed;
                     evidence.append(&mut secret_scan.evidence);
@@ -390,7 +405,7 @@ pub(crate) fn scan_profiled(
                 });
             }
             FileClass::EmbeddedJavascriptTemplate => {
-                let source = match fs::read_to_string(&file.absolute) {
+                let source = match read_source_text(&file.absolute) {
                     Ok(source) => source,
                     Err(error) => {
                         coverage.totals.ignored += 1;
@@ -440,7 +455,7 @@ pub(crate) fn scan_profiled(
                     reason: Some("outside impact scan scope".to_string()),
                 });
             }
-            FileClass::Razor => match read_secret_text(&file.absolute) {
+            FileClass::Razor => match read_secret_source(&file.absolute) {
                 Ok(source) => {
                     let mut razor_evidence =
                         crate::code::razor::scan_escape_hatches(&file.relative, &source);
@@ -451,12 +466,7 @@ pub(crate) fn scan_profiled(
                     specialized_files += 1;
                     coverage.totals.scanned += 1;
                     if options.scan_secrets {
-                        let mut secret_scan = crate::secrets::scan_source(
-                            &file.relative,
-                            &source,
-                            &CommentRanges::default(),
-                            &secret_allowlist,
-                        );
+                        let mut secret_scan = scan_loading_secrets(&file.relative, &source);
                         coverage.totals.secret_scanned += 1;
                         coverage.totals.secret_suppressed += secret_scan.suppressed;
                         evidence.append(&mut secret_scan.evidence);
@@ -490,7 +500,7 @@ pub(crate) fn scan_profiled(
                     reason: Some("outside impact scan scope".to_string()),
                 });
             }
-            FileClass::WebForms => match read_secret_text(&file.absolute) {
+            FileClass::WebForms => match read_secret_source(&file.absolute) {
                 Ok(source) => {
                     let (mut webforms_evidence, mut webforms_paths) =
                         crate::code::webforms::scan_inline_output(&file.relative, &source);
@@ -501,12 +511,7 @@ pub(crate) fn scan_profiled(
                     specialized_files += 1;
                     coverage.totals.scanned += 1;
                     if options.scan_secrets {
-                        let mut secret_scan = crate::secrets::scan_source(
-                            &file.relative,
-                            &source,
-                            &CommentRanges::default(),
-                            &secret_allowlist,
-                        );
+                        let mut secret_scan = scan_loading_secrets(&file.relative, &source);
                         coverage.totals.secret_scanned += 1;
                         coverage.totals.secret_suppressed += secret_scan.suppressed;
                         evidence.append(&mut secret_scan.evidence);
@@ -544,7 +549,7 @@ pub(crate) fn scan_profiled(
                     });
                     continue;
                 }
-                let source = match fs::read_to_string(&file.absolute) {
+                let source = match read_source_text(&file.absolute) {
                     Ok(source) => source,
                     Err(error) => {
                         record_parse_failure(
@@ -562,14 +567,10 @@ pub(crate) fn scan_profiled(
                 {
                     let reason = "generated or bundled frontend source excluded from SAST; secret scan retained";
                     if options.scan_secrets {
-                        match read_secret_text(&file.absolute) {
+                        match read_secret_source(&file.absolute) {
                             Ok(secret_source) => {
-                                let mut secret_scan = crate::secrets::scan_source(
-                                    &file.relative,
-                                    &secret_source,
-                                    &CommentRanges::default(),
-                                    &secret_allowlist,
-                                );
+                                let mut secret_scan =
+                                    scan_loading_secrets(&file.relative, &secret_source);
                                 coverage.totals.secret_scanned += 1;
                                 coverage.totals.secret_suppressed += secret_scan.suppressed;
                                 coverage.files.push(FileCoverage {
@@ -627,6 +628,11 @@ pub(crate) fn scan_profiled(
         "source_loading_and_secret_scan",
         source_loading_and_secret_scan_microseconds,
     );
+    trace_scan_phase(
+        "source_read",
+        source_read_microseconds + secret_read_microseconds,
+    );
+    trace_scan_phase("loading_secret_scan", loading_secret_scan_microseconds);
 
     let project_symbols_started = Instant::now();
     let node_modules_started = Instant::now();
@@ -963,6 +969,8 @@ pub(crate) fn scan_profiled(
         discovery_microseconds,
         rule_compilation_microseconds,
         source_loading_and_secret_scan_microseconds,
+        source_read_microseconds: source_read_microseconds + secret_read_microseconds,
+        loading_secret_scan_microseconds,
         project_symbols_microseconds,
         node_project_context_microseconds,
         object_input_context_microseconds,
@@ -1280,6 +1288,7 @@ fn scan_prepared_file(
                 "summaries_microseconds": timing.summaries_microseconds,
                 "native_pass_microseconds": crate::code::matcher::NATIVE_PASS_NAMES.into_iter().zip(timing.native_pass_microseconds).collect::<BTreeMap<_, _>>(),
                 "security_paths_microseconds": timing.security_paths_microseconds,
+                "postprocessing_microseconds": timing.postprocessing_microseconds,
             })
         );
     }
@@ -1314,6 +1323,7 @@ fn add_file_timing(
         *aggregate.native_pass_microseconds.entry(name).or_default() += micros;
     }
     aggregate.security_paths_microseconds += timing.security_paths_microseconds;
+    aggregate.postprocessing_microseconds += timing.postprocessing_microseconds;
     aggregate.declarative_patterns_considered += timing.declarative_patterns_considered;
     aggregate.declarative_patterns_skipped += timing.declarative_patterns_skipped;
     aggregate.declarative_patterns_executed = aggregate
