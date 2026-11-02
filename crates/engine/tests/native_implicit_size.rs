@@ -26,6 +26,21 @@ fn implicit_standard_counts_require_a_visible_signed_scalar_and_unchanged_guard(
             Some(SecurityPathState::Protected),
         ),
         (
+            "inner_signed",
+            "if(count<0)return; {int count=-1; COPY(dst,src,count);}",
+            Some(SecurityPathState::Unknown),
+        ),
+        (
+            "volatile_count",
+            "volatile int amount=count; if(amount<0)return; COPY(dst,src,amount);",
+            Some(SecurityPathState::Unknown),
+        ),
+        (
+            "volatile_alias",
+            "typedef volatile int Counter; typedef Counter Amount; Amount amount=count; if(amount<0)return; COPY(dst,src,amount);",
+            Some(SecurityPathState::Unknown),
+        ),
+        (
             "conditional_exit",
             "if(count<0){if(enabled)return;} COPY(dst,src,count);",
             Some(SecurityPathState::Unknown),

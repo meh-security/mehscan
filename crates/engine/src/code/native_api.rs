@@ -89,7 +89,8 @@ impl NativeApiContext {
             if matches!(kind.as_ref(), "declaration" | "field_declaration") {
                 for declarator in node.field_children("declarator") {
                     if declarator.kind().as_ref() != "init_declarator"
-                        && !function_prototype(&declarator)
+                        && (kind.as_ref() == "field_declaration"
+                            || !function_prototype(&declarator))
                         && let Some(name) = declaration_name(&declarator)
                     {
                         result.insert(&node, &name, None, false);
@@ -277,7 +278,13 @@ impl NativeApiContext {
                 .push(Binding {
                     global: scope.kind().as_ref() == "translation_unit",
                     scope: scope.range(),
-                    start: node.range().start,
+                    // C++ member declarations are visible throughout the class,
+                    // including bodies preceding their textual declaration.
+                    start: if scope.kind().as_ref() == "field_declaration_list" {
+                        scope.range().start
+                    } else {
+                        node.range().start
+                    },
                     target,
                     namespace,
                 });
@@ -491,6 +498,21 @@ mod tests {
         "#
             ),
             vec![None, Some("memcpy"), None, Some("memcpy")]
+        );
+    }
+
+    #[test]
+    fn class_method_prototypes_do_not_borrow_standard_api_contracts() {
+        assert_eq!(
+            names(
+                r#"
+            struct Custom {
+                void run() { memcpy(dst,src,n); std::memcpy(dst,src,n); }
+                virtual void memcpy(void*,const void*,unsigned);
+            };
+        "#
+            ),
+            vec![None, Some("memcpy")]
         );
     }
 }

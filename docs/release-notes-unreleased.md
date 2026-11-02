@@ -4,6 +4,7 @@
 
 - Broader Python credential, Rust state and HTTP, and Go identity review.
 - Source lookups support directory-scoped helper discovery.
+- Follow copy-count arithmetic through selected C/C++ constructors and helpers.
 
 ## Bug fixes
 

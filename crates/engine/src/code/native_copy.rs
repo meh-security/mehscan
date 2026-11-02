@@ -206,12 +206,17 @@ impl NativeCopyProjectContext {
                     .then(|| values.into_iter().next().flatten())
                     .flatten()
                     .filter(|effect| {
-                        !effect.count_types.iter().any(|name| non_integer_types.contains(name))
-                            && signatures.get(&key).is_some_and(|declared| {
+                        // Nonconstructor member calls need receiver/dispatch
+                        // binding beyond this free-helper effect index.
+                        let bound_target = effect.constructor
+                            || key.0.rsplit_once("::").is_none_or(|(owner, _)| !non_integer_types.contains(owner));
+                        let integer_count = !effect.count_types.iter().any(|name| non_integer_types.contains(name));
+                        let matching_declarations = signatures.get(&key).is_some_and(|declared| {
                             declared
                                 .iter()
                                 .all(|signature| signature == &effect.parameter_types)
-                        })
+                        });
+                        bound_target && integer_count && matching_declarations
                     })
                     .map(|effect| (key, effect))
             })
@@ -326,7 +331,7 @@ impl NativeCopyProjectContext {
             }) else {
                 continue;
             };
-            let stable_operands = operand_evaluation_is_pure(&node, &source);
+            let stable_operands = !integer.volatile && operand_evaluation_is_pure(&node, &source);
             let guard = stable_operands
                 .then(|| {
                     self.lower_bound(
@@ -525,6 +530,11 @@ impl NativeCopyProjectContext {
             return None;
         }
         if let Some(operation) = api.call_name(node) {
+            if !node.field("function")?.text().contains("::") && self.class_context(path, node) {
+                // A separately declared member can shadow a free standard API.
+                // This pass does not bind an implicit receiver across headers.
+                return None;
+            }
             // copy_n's signed count has different semantics from a C size_t
             // parameter. Its typed helper/constructor mapping is handled above.
             if operation == "copy_n" {
@@ -539,6 +549,9 @@ impl NativeCopyProjectContext {
             ));
         }
         let observed = callable_name(node.field("function")?.text().as_ref())?;
+        if !observed.contains("::") && self.class_context(path, node) {
+            return None;
+        }
         if api.local_shadow(node, observed.split("::").next()?) {
             return None;
         }
@@ -580,6 +593,17 @@ impl NativeCopyProjectContext {
             }
         }
         None
+    }
+
+    fn class_context(&self, path: &str, node: &N<'_>) -> bool {
+        node.ancestors()
+            .any(|n| matches!(n.kind().as_ref(), "class_specifier" | "struct_specifier"))
+            || node
+                .ancestors()
+                .find(|n| n.kind().as_ref() == "function_definition")
+                .and_then(|n| function_name(path, &n))
+                .and_then(|name| name.rsplit_once("::").map(|(owner, _)| owner.to_string()))
+                .is_some_and(|owner| self.non_integer_types.contains(&owner))
     }
 
     fn lookup_groups(
@@ -843,6 +867,9 @@ impl NativeCopyProjectContext {
             else {
                 continue;
             };
+            if !function.contains("::") && self.class_context(path, &call) {
+                continue;
+            }
             if api.local_shadow(&call, function.split("::").next()?) {
                 continue;
             }

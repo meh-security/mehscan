@@ -256,13 +256,14 @@ pub(super) struct IntegerDeclaration<'tree> {
     pub alias: Option<Node<'tree, StrDoc<SupportLang>>>,
     pub signed: bool,
     pub nominal: bool,
+    pub volatile: bool,
 }
 
 pub(super) fn integer_declaration<'tree>(
     call: &Node<'tree, StrDoc<SupportLang>>,
     value: &str,
 ) -> Option<IntegerDeclaration<'tree>> {
-    let (source_type, resolved, declaration, alias) = scalar_declaration(call, value)?;
+    let (source_type, resolved, declaration, alias, volatile) = scalar_declaration(call, value)?;
     let base = resolved.strip_prefix("std::").unwrap_or(&resolved);
     if identifier_like_type(base)
         && call.ancestors().last()?.dfs().any(|node| {
@@ -289,6 +290,7 @@ pub(super) fn integer_declaration<'tree>(
         alias,
         signed,
         nominal,
+        volatile,
     })
 }
 
@@ -326,6 +328,7 @@ type ScalarDeclaration<'tree> = (
     String,
     Node<'tree, StrDoc<SupportLang>>,
     Option<Node<'tree, StrDoc<SupportLang>>>,
+    bool,
 );
 
 fn scalar_declaration<'tree>(
@@ -333,6 +336,7 @@ fn scalar_declaration<'tree>(
     value: &str,
 ) -> Option<ScalarDeclaration<'tree>> {
     let (declaration, declared) = declarator_at(call, value)?;
+    let mut volatile = volatile_qualifier(&declaration);
     if declared.dfs().any(|node| {
         matches!(
             node.kind().as_ref(),
@@ -351,7 +355,13 @@ fn scalar_declaration<'tree>(
             "signed" | "unsigned" | "char" | "short" | "int" | "long"
         )
     }) {
-        return Some((source_type.clone(), source_type, declaration, None));
+        return Some((
+            source_type.clone(),
+            source_type,
+            declaration,
+            None,
+            volatile,
+        ));
     }
     let root = call.ancestors().last()?;
     let mut resolved = source_type.clone();
@@ -371,7 +381,7 @@ fn scalar_declaration<'tree>(
             })
             .collect::<Vec<_>>();
         if aliases.is_empty() {
-            return Some((source_type, resolved, declaration, definition));
+            return Some((source_type, resolved, declaration, definition, volatile));
         }
         let targets = aliases
             .iter()
@@ -385,9 +395,15 @@ fn scalar_declaration<'tree>(
             return None;
         }
         resolved = targets[0].clone();
+        volatile |= aliases.iter().any(volatile_qualifier);
         definition = aliases.last().cloned();
     }
     None
+}
+
+fn volatile_qualifier(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    node.children()
+        .any(|n| n.kind().as_ref() == "type_qualifier" && n.text().trim() == "volatile")
 }
 
 pub(super) fn declarator_at<'tree>(
@@ -489,6 +505,14 @@ fn nonnegative_guard<'tree>(
     value: &str,
     conditional: &ConditionalRegions,
 ) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    let integer = integer_declaration(call, value)?;
+    if integer.volatile {
+        return None;
+    }
+    let same_binding = |check: &Node<'_, StrDoc<SupportLang>>| {
+        declarator_at(check, value)
+            .is_some_and(|(binding, _)| binding.range() == integer.declaration.range())
+    };
     let scope = call.ancestors().find(|node| {
         matches!(
             node.kind().as_ref(),
@@ -500,6 +524,7 @@ fn nonnegative_guard<'tree>(
             let condition = statement.field("condition")?;
             let consequence = statement.field("consequence")?;
             if contains(&consequence, call)
+                && same_binding(&condition)
                 && positive_condition(condition.text().as_ref(), value)
                 && availability_compatible(call, &condition, conditional)
                 && !guard_bypassed(&scope, &condition, call)
@@ -520,7 +545,8 @@ fn nonnegative_guard<'tree>(
         .find_map(|statement| {
             let condition = statement.field("condition")?;
             let consequence = statement.field("consequence")?;
-            (availability_compatible(call, &condition, conditional)
+            (same_binding(&condition)
+                && availability_compatible(call, &condition, conditional)
                 && negative_condition(condition.text().as_ref(), value)
                 && rejecting_branch(&consequence)
                 && !guard_bypassed(&scope, &condition, call)

@@ -517,6 +517,20 @@ fn helpers_preserve_parameter_roles_and_do_not_certify_argument_side_effects() {
             void conversion(const char* src,unsigned count) { Proxy proxy{count}; if(count<3)return; std::memcpy(proxy,src,count-3); }
             void shadowed_lambda(char* dst,const char* src,unsigned count) { if(count<3)return; auto run=[](char* dst,const char* src,unsigned count) { std::memcpy(dst,src,count-3); }; run(dst,src,0); }
             void shadowed_block(char* dst,const char* src,unsigned count) { if(count<3)return; { unsigned count=0; std::memcpy(dst,src,count-3); } }
+            void volatile_read(char* dst,const char* src,volatile unsigned count) { if(count<3)return; std::memcpy(dst,src,count-3); }
+            typedef volatile unsigned DeviceCount;
+            typedef DeviceCount Extent;
+            void volatile_alias(char* dst,const char* src,Extent count) { if(count<3)return; std::memcpy(dst,src,count-3); }
+            void reject(bool ok) { if(!ok)throw 0; }
+            struct Dispatcher {
+                virtual void copy_bytes(const char*,unsigned,char*);
+                virtual void reject(bool);
+                void member_dispatch(char* dst,const char* src,unsigned count) { copy_bytes(src,count-3,dst); }
+                void member_guard(char* dst,const char* src,unsigned count) { reject(count>=3); std::memcpy(dst,src,count-3); }
+                void outside_dispatch(char*,const char*,unsigned);
+            };
+            void Dispatcher::copy_bytes(const char* src,unsigned count,char* dst) { std::memcpy(dst,src,count); }
+            void Dispatcher::outside_dispatch(char* dst,const char* src,unsigned count) { copy_bytes(src,count-3,dst); }
             struct uint32_t { unsigned operator-(int)const; };
             void nominal(char* dst,const char* src,uint32_t count) { std::memcpy(dst,src,count-3); }
         }
@@ -546,6 +560,9 @@ fn helpers_preserve_parameter_roles_and_do_not_certify_argument_side_effects() {
         "conversion",
         "shadowed_lambda",
         "shadowed_block",
+        "volatile_read",
+        "volatile_alias",
+        "member_guard",
     ] {
         assert_eq!(
             lookup(name).unwrap().state,
@@ -558,6 +575,8 @@ fn helpers_preserve_parameter_roles_and_do_not_certify_argument_side_effects() {
         "nominal",
         "cross_file_nominal",
         "foreign_count_helper",
+        "member_dispatch",
+        "outside_dispatch",
     ] {
         assert!(lookup(name).is_none(), "{name}");
     }

@@ -23,10 +23,15 @@ The [database coverage guide](extended-database-coverage.md) lists supported
 receiver and query shapes in more detail. Optional compiler backends are separate
 from standard scanning and do not make unsupported relationships complete.
 
-C++ buffer wrappers can hide memory effects behind constructors, braced returns
-or standard algorithms. The scanner does not generally summarize those effects
-across arbitrary types and callers. A buffer copy in source can therefore lack a
-review question even when a related low-level API is recognized elsewhere.
+C and C++ copy-count analysis follows selected source-defined constructors and
+free helpers into standard memory operations. Typed C++ braced returns can carry
+the same relationship across files. A matching lower bound closes subtraction
+only; source accessibility, allocation success and other conversions remain
+separate questions. Volatile reads do not reuse an earlier value check.
+
+Arbitrary wrappers, overload resolution, implicit member lookup, virtual calls
+and cross-function ranges remain limited. A buffer copy in source can therefore
+lack a review question even when a related low-level API is recognized elsewhere.
 
 ## Choose the source you intend to review
 
