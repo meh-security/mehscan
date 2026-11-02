@@ -6,6 +6,7 @@ mod csharp_business;
 mod csharp_crypto;
 mod csharp_deserialization;
 mod csharp_handoff;
+mod csharp_hash;
 mod csharp_identity;
 mod csharp_ingress;
 mod csharp_injection;

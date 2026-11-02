@@ -1,18 +1,100 @@
 - id: csharp-hash-algorithm-selection
-  version: 1
-  title: .NET hash algorithm selection
+  version: 2
+  title: .NET hash algorithm operation
   language: csharp
   kind: security_configuration
   capability: cryptographic_hash
-  cwe: [CWE-327]
+  cwe: [CWE-327, CWE-916]
   match:
     any:
       - pattern: HashAlgorithm.Create($ALGORITHM)
         captures: { algorithm: ALGORITHM }
+      - pattern: $TYPE.Create()
+        captures: { algorithm: TYPE }
+      - pattern: $TYPE.Create($ALGORITHM)
+        captures: { algorithm: ALGORITHM }
+      - pattern: $TYPE.HashData($DATA, $$$ARGUMENTS)
+        captures: { algorithm: TYPE, data: DATA }
+      - pattern: $TYPE.HashDataAsync($DATA, $$$ARGUMENTS)
+        captures: { algorithm: TYPE, data: DATA }
+      - pattern: $TYPE.TryHashData($DATA, $$$ARGUMENTS)
+        captures: { algorithm: TYPE, data: DATA }
+      - pattern: new $TYPE($$$ARGUMENTS)
+        captures: { algorithm: TYPE }
   symbols:
     - canonical: System.Security.Cryptography.HashAlgorithm.Create
       captures: { algorithm: 0 }
-  tags: [cryptography, hash, algorithm-selection]
+    - canonical: System.Security.Cryptography.MD5.Create
+    - canonical: System.Security.Cryptography.MD5.HashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.MD5.HashDataAsync
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.MD5.TryHashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA1.Create
+    - canonical: System.Security.Cryptography.SHA1.HashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA1.HashDataAsync
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA1.TryHashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA256.Create
+    - canonical: System.Security.Cryptography.SHA256.HashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA256.HashDataAsync
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA256.TryHashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA384.Create
+    - canonical: System.Security.Cryptography.SHA384.HashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA384.HashDataAsync
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA384.TryHashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA512.Create
+    - canonical: System.Security.Cryptography.SHA512.HashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA512.HashDataAsync
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA512.TryHashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA3_256.Create
+    - canonical: System.Security.Cryptography.SHA3_256.HashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA3_256.HashDataAsync
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA3_256.TryHashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA3_384.Create
+    - canonical: System.Security.Cryptography.SHA3_384.HashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA3_384.HashDataAsync
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA3_384.TryHashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA3_512.Create
+    - canonical: System.Security.Cryptography.SHA3_512.HashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA3_512.HashDataAsync
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.SHA3_512.TryHashData
+      captures: { data: 0 }
+    - canonical: System.Security.Cryptography.MD5CryptoServiceProvider
+    - canonical: System.Security.Cryptography.MD5Cng
+    - canonical: System.Security.Cryptography.SHA1Managed
+    - canonical: System.Security.Cryptography.SHA1CryptoServiceProvider
+    - canonical: System.Security.Cryptography.SHA1Cng
+    - canonical: System.Security.Cryptography.SHA256Managed
+    - canonical: System.Security.Cryptography.SHA256CryptoServiceProvider
+    - canonical: System.Security.Cryptography.SHA256Cng
+    - canonical: System.Security.Cryptography.SHA384Managed
+    - canonical: System.Security.Cryptography.SHA384CryptoServiceProvider
+    - canonical: System.Security.Cryptography.SHA384Cng
+    - canonical: System.Security.Cryptography.SHA512Managed
+    - canonical: System.Security.Cryptography.SHA512CryptoServiceProvider
+    - canonical: System.Security.Cryptography.SHA512Cng
+  tags: [cryptography, hash, algorithm-selection, exact-symbol-ownership]
   ai: &hash_guidance
     investigate:
       - the selected algorithm and the security purpose of the digest
@@ -21,11 +103,13 @@
     verify:
       - resolve the effective algorithm value and the data or security decision protected by the digest
       - confirm whether an attacker can benefit from violating the required collision, preimage, password-cost, signature, or integrity property
+      - a method, class or operand name is a purpose clue, not proof of password storage, reset-token acceptance or another security effect
+      - fast SHA-2 or SHA-3 alone does not provide password-hardening cost; inspect the complete password KDF or storage construction before recommending a fix
     exclude:
       - do not report a weak algorithm used only as a non-security checksum, cache key, or compatibility identifier
       - do not classify dynamic algorithm-selection syntax without resolving a weak effective value and a security-sensitive purpose
   provenance:
-    note: .NET name-based hash selection mapped to CWE-327 review.
+    note: Exact .NET hash factories, static hashing and concrete providers; algorithm inventory requires separate security-purpose and consumer review.
     references:
       - https://cwe.mitre.org/data/definitions/327.html
       - https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.hashalgorithm.create

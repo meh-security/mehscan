@@ -28,8 +28,9 @@ fn closes_dvcsharp_request_sql_privilege_hash_and_jwt_shapes() {
     assert_eq!(counts["csharp-ef-legacy-from-sql-query"], 1);
     assert_eq!(counts["csharp-request-controlled-role-assignment"], 1);
     assert_eq!(counts["csharp-role-assignment-caller-control"], 1);
-    assert_eq!(counts["csharp-password-fast-hash"], 1);
-    assert_eq!(counts["csharp-predictable-password-reset-hash"], 1);
+    assert_eq!(counts["csharp-hash-algorithm-selection"], 3);
+    assert!(!counts.contains_key("csharp-password-fast-hash"));
+    assert!(!counts.contains_key("csharp-predictable-password-reset-hash"));
     assert_eq!(counts["csharp-hardcoded-jwt-signing-key"], 1);
     assert_eq!(counts["csharp-jwt-signing-with-hardcoded-key"], 1);
 
@@ -38,8 +39,15 @@ fn closes_dvcsharp_request_sql_privilege_hash_and_jwt_shapes() {
             && item.location.path == "DvcsharpShapes.cs"
             && item.captures["name"].text == "\"url\""
     }));
-    assert!(!result.evidence.iter().any(|item| {
-        item.rule_id == "csharp-password-fast-hash" && item.captures["password"].text == "contents"
+    // Inventory the checksum's real algorithm without labeling password/reset
+    // purpose from nearby names. Purpose and the consumed effect need review.
+    assert!(result.evidence.iter().any(|item| {
+        item.rule_id == "csharp-hash-algorithm-selection"
+            && item.enclosing_symbol.as_deref() == Some("FileChecksum")
+            && item
+                .symbol_resolution
+                .as_ref()
+                .is_some_and(|symbol| symbol.canonical == "System.Security.Cryptography.MD5.Create")
     }));
 
     for capability in [

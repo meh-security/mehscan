@@ -274,6 +274,33 @@ fn suitable_digest_selection(item: &Evidence, sources: &RepositorySources) -> bo
                 }
             })
         });
+    let algorithm = algorithm.or_else(|| {
+        if item.rule_id != "csharp-hash-algorithm-selection" {
+            return None;
+        }
+        let name = item
+            .symbol_resolution
+            .as_ref()?
+            .canonical
+            .strip_prefix("System.Security.Cryptography.")?
+            .split('.')
+            .next()?;
+        match name {
+            "SHA256" | "SHA256Managed" | "SHA256CryptoServiceProvider" | "SHA256Cng" => {
+                Some("sha256")
+            }
+            "SHA384" | "SHA384Managed" | "SHA384CryptoServiceProvider" | "SHA384Cng" => {
+                Some("sha384")
+            }
+            "SHA512" | "SHA512Managed" | "SHA512CryptoServiceProvider" | "SHA512Cng" => {
+                Some("sha512")
+            }
+            "SHA3_256" => Some("sha3256"),
+            "SHA3_384" => Some("sha3384"),
+            "SHA3_512" => Some("sha3512"),
+            _ => None,
+        }
+    });
     algorithm.is_some_and(|algorithm| {
         matches!(
             algorithm.to_ascii_lowercase().replace('-', "").as_str(),

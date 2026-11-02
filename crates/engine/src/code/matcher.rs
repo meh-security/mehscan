@@ -227,6 +227,7 @@ pub(crate) fn scan_source(
     let mut declarative_patterns_skipped = 0;
     let mut extended_symbols = None;
     let mut database_receivers = None;
+    let mut csharp_hash_receivers = None;
     for compiled_rule in rules {
         let rule_started = start_summary_pass();
         for compiled_pattern in &compiled_rule.patterns {
@@ -513,18 +514,19 @@ pub(crate) fn scan_source(
                 }
                 if language == Language::Csharp
                     && !compiled_rule.rule.symbols.is_empty()
-                    && !call_site(matched.get_node().clone()).is_some_and(|call| {
-                        call.node.kind().as_ref() == "object_creation_expression"
-                            || (call.observed.contains('.')
-                                && !symbol_environment.has_declared_receiver(&call.observed))
-                            || compiled_rule.rule.symbols.iter().any(|symbol| {
-                                symbol_environment
-                                    .resolve(&call.observed, &symbol.canonical)
-                                    .is_some_and(|resolution| {
-                                        resolution.confidence != SymbolConfidence::Ambiguous
-                                    })
-                            })
-                    })
+                    && !call_site_for_rule(matched.get_node().clone(), &compiled_rule.rule.id)
+                        .is_some_and(|call| {
+                            call.node.kind().as_ref() == "object_creation_expression"
+                                || (call.observed.contains('.')
+                                    && !symbol_environment.has_declared_receiver(&call.observed))
+                                || compiled_rule.rule.symbols.iter().any(|symbol| {
+                                    symbol_environment
+                                        .resolve(&call.observed, &symbol.canonical)
+                                        .is_some_and(|resolution| {
+                                            resolution.confidence != SymbolConfidence::Ambiguous
+                                        })
+                                })
+                        })
                 {
                     continue;
                 }
@@ -533,26 +535,41 @@ pub(crate) fn scan_source(
                     .tags
                     .iter()
                     .any(|tag| tag == "exact-symbol-ownership")
-                    && !call_site(matched.get_node().clone()).is_some_and(|call| {
-                        compiled_rule.rule.symbols.iter().any(|symbol| {
-                            symbol_environment
-                                .resolve(&call.observed, &symbol.canonical)
-                                .is_some_and(|resolution| {
-                                    resolution.confidence != SymbolConfidence::Ambiguous
-                                })
+                    && !call_site_for_rule(matched.get_node().clone(), &compiled_rule.rule.id)
+                        .is_some_and(|call| {
+                            compiled_rule.rule.symbols.iter().any(|symbol| {
+                                symbol_environment
+                                    .resolve(&call.observed, &symbol.canonical)
+                                    .is_some_and(|resolution| {
+                                        resolution.confidence != SymbolConfidence::Ambiguous
+                                    })
+                            })
                         })
-                    })
                 {
                     continue;
                 }
                 if !compiled_rule.rule.symbols.is_empty()
-                    && call_site(matched.get_node().clone()).is_some_and(|call| {
-                        symbol_environment.has_shadowing_parameter(
-                            &call.node,
-                            &call.observed,
-                            language,
-                        )
-                    })
+                    && call_site_for_rule(matched.get_node().clone(), &compiled_rule.rule.id)
+                        .is_some_and(|call| {
+                            call.node.kind().as_ref() != "object_creation_expression"
+                                && symbol_environment.has_shadowing_parameter(
+                                    &call.node,
+                                    &call.observed,
+                                    language,
+                                )
+                        })
+                {
+                    continue;
+                }
+                if compiled_rule.rule.id == "csharp-hash-algorithm-selection"
+                    && call_site_for_rule(matched.get_node().clone(), &compiled_rule.rule.id)
+                        .is_some_and(|call| {
+                            !csharp_hash_receivers
+                                .get_or_insert_with(|| {
+                                    super::csharp_hash::StaticReceiverIndex::new(&root)
+                                })
+                                .accepts(&call.node, &call.observed)
+                        })
                 {
                     continue;
                 }
@@ -564,10 +581,11 @@ pub(crate) fn scan_source(
                         language,
                         Language::Javascript | Language::Typescript | Language::Tsx
                     )
-                    && call_site(matched.get_node().clone()).is_some_and(|call| {
-                        symbol_environment.has_declared_receiver(&call.observed)
-                            && !symbol_environment.has_import_alias_receiver(&call.observed)
-                    })
+                    && call_site_for_rule(matched.get_node().clone(), &compiled_rule.rule.id)
+                        .is_some_and(|call| {
+                            symbol_environment.has_declared_receiver(&call.observed)
+                                && !symbol_environment.has_import_alias_receiver(&call.observed)
+                        })
                 {
                     continue;
                 }
@@ -787,16 +805,27 @@ pub(crate) fn scan_source(
             .or_insert(index);
     }
     for node in root.dfs() {
-        let Some(call) = call_site(node) else {
+        let Some(call) = call_site(node.clone()).or_else(|| {
+            (language == Language::Csharp)
+                .then(|| csharp_hash_constructor(node))
+                .flatten()
+        }) else {
             continue;
         };
         if comments.is_in_comment(call.node.range()) {
             continue;
         }
-        if symbol_environment.has_shadowing_parameter(&call.node, &call.observed, language) {
+        if call.node.kind().as_ref() != "object_creation_expression"
+            && symbol_environment.has_shadowing_parameter(&call.node, &call.observed, language)
+        {
             continue;
         }
         for compiled_rule in rules {
+            if call.node.kind().as_ref() == "object_creation_expression"
+                && compiled_rule.rule.id != "csharp-hash-algorithm-selection"
+            {
+                continue;
+            }
             for symbol in &compiled_rule.rule.symbols {
                 if matches!(
                     language,
@@ -817,6 +846,14 @@ pub(crate) fn scan_source(
                 if symbol_resolution.confidence == SymbolConfidence::Ambiguous {
                     continue;
                 }
+                if compiled_rule.rule.id == "csharp-hash-algorithm-selection"
+                    && !csharp_hash_receivers
+                        .get_or_insert_with(|| super::csharp_hash::StaticReceiverIndex::new(&root))
+                        .accepts(&call.node, &call.observed)
+                {
+                    continue;
+                }
+
                 // Names-only collectors are not filesystem-content boundaries.
                 // Keep option-selected/recursive roots, which can feed export.
                 if compiled_rule.rule.id == "csharp-filesystem-read"
@@ -3385,6 +3422,31 @@ struct CallSite<'tree> {
     node: Node<'tree, StrDoc<SupportLang>>,
     observed: String,
     arguments: Vec<Node<'tree, StrDoc<SupportLang>>>,
+}
+
+fn csharp_hash_constructor(node: Node<'_, StrDoc<SupportLang>>) -> Option<CallSite<'_>> {
+    if node.kind().as_ref() != "object_creation_expression" {
+        return None;
+    }
+    let observed = node.field("type")?.text().into_owned();
+    let arguments = node
+        .field("arguments")?
+        .children()
+        .filter(|child| child.is_named())
+        .collect();
+    Some(CallSite {
+        node,
+        observed,
+        arguments,
+    })
+}
+
+fn call_site_for_rule<'a>(node: Node<'a, StrDoc<SupportLang>>, rule: &str) -> Option<CallSite<'a>> {
+    call_site(node.clone()).or_else(|| {
+        (rule == "csharp-hash-algorithm-selection")
+            .then(|| csharp_hash_constructor(node))
+            .flatten()
+    })
 }
 
 fn call_site(node: Node<'_, StrDoc<SupportLang>>) -> Option<CallSite<'_>> {
