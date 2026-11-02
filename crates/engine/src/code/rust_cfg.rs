@@ -1,7 +1,7 @@
 //! Attribute-scoped Rust configuration without executing Cargo or assuming host features.
 use ast_grep_core::{Node, tree_sitter::StrDoc};
 use ast_grep_language::SupportLang;
-use std::ops::Range;
+use std::{collections::BTreeMap, ops::Range};
 type AstNode<'a> = Node<'a, StrDoc<SupportLang>>;
 
 #[derive(Clone, Copy)]
@@ -125,6 +125,7 @@ pub(super) fn test_only(node: &AstNode<'_>) -> bool {
 
 pub(super) fn conditions(root: &AstNode<'_>) -> Vec<(Range<usize>, String, Option<bool>)> {
     let mut result = Vec::new();
+    let mut items_by_parent = BTreeMap::<usize, Vec<Range<usize>>>::new();
     for node in root
         .dfs()
         .filter(|n| matches!(n.kind().as_ref(), "attribute_item" | "inner_attribute_item"))
@@ -138,21 +139,94 @@ pub(super) fn conditions(root: &AstNode<'_>) -> Vec<(Range<usize>, String, Optio
         let range = if node.kind().as_ref() == "inner_attribute_item" {
             parent.range()
         } else {
-            let Some(item) = parent
-                .children()
-                .filter(|n| n.range().start >= node.range().end)
-                .find(|n| {
-                    n.is_named()
-                        && n.kind().as_ref() != "attribute_item"
-                        && !n.kind().contains("comment")
-                })
-            else {
+            // Attributes on the same module/file share this source-ordered
+            // table. Do not walk every earlier sibling again for each item.
+            let items = items_by_parent.entry(parent.node_id()).or_insert_with(|| {
+                parent
+                    .children()
+                    .filter(|n| {
+                        n.is_named()
+                            && n.kind().as_ref() != "attribute_item"
+                            && !n.kind().contains("comment")
+                    })
+                    .map(|n| n.range())
+                    .collect()
+            });
+            let next = items.partition_point(|range| range.start < node.range().end);
+            let Some(range) = items.get(next) else {
                 continue;
             };
-            item.range()
+            range.clone()
         };
         result.push((range, condition, truth));
     }
     result.sort_by_key(|(range, _, _)| (std::cmp::Reverse(range.len()), range.start));
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ast_grep_core::tree_sitter::LanguageExt;
+
+    #[test]
+    fn indexed_ownership_keeps_attribute_order_comments_and_nested_parent_boundaries() {
+        let source = r##"
+            #![cfg(feature="package")]
+            #[cfg(feature="module")]
+            mod nested {
+                #![cfg(target_os="linux")]
+                #[cfg(unix)]
+                // comments and unrelated attributes do not own the cfg
+                #[allow(dead_code)]
+                #[cfg(feature="first")]
+                fn first() { consume(); }
+                #[cfg(any())] fn excluded() { absent(); }
+                struct Record { #[cfg(feature="field")] field: u8 }
+                impl Record { #[cfg(feature="method")] fn method(&self) {} }
+            }
+            #[cfg_attr(feature="optional",cfg(target_arch="arm"))]
+            fn last() { maybe(); }
+        "##;
+        let ast = SupportLang::Rust.ast_grep(source);
+        let root = ast.root();
+        assert!(!root.dfs().any(|node| node.kind().as_ref() == "ERROR"));
+        // Differential contract against the former sibling search. Keep the
+        // complete selected byte ranges and stable condition order, including
+        // AST shapes whose attribution is intentionally not expanded here.
+        let mut expected = Vec::new();
+        for node in root.dfs().filter(|node| {
+            matches!(
+                node.kind().as_ref(),
+                "attribute_item" | "inner_attribute_item"
+            )
+        }) {
+            let Some((condition, truth)) = attribute(&node, None) else {
+                continue;
+            };
+            let Some(parent) = node.parent() else {
+                continue;
+            };
+            let range = if node.kind().as_ref() == "inner_attribute_item" {
+                parent.range()
+            } else {
+                let Some(item) = parent
+                    .children()
+                    .filter(|child| child.range().start >= node.range().end)
+                    .find(|child| {
+                        child.is_named()
+                            && child.kind().as_ref() != "attribute_item"
+                            && !child.kind().contains("comment")
+                    })
+                else {
+                    continue;
+                };
+                item.range()
+            };
+            expected.push((range, condition, truth));
+        }
+        expected.sort_by_key(|(range, _, _)| (std::cmp::Reverse(range.len()), range.start));
+        assert_eq!(conditions(&root), expected);
+        assert_eq!(expected.len(), 9);
+    }
 }
