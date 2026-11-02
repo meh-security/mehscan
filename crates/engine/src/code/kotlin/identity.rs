@@ -1,6 +1,7 @@
 use ast_grep_core::{Node, tree_sitter::StrDoc};
 use ast_grep_language::SupportLang;
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 
 pub(super) type KNode<'a> = Node<'a, StrDoc<SupportLang>>;
 
@@ -8,6 +9,23 @@ pub(super) type KNode<'a> = Node<'a, StrDoc<SupportLang>>;
 pub(in crate::code) struct Imports {
     aliases: BTreeMap<String, BTreeSet<String>>,
     wildcards: BTreeSet<String>,
+    declarations: BTreeMap<String, Vec<DeclarationScope>>,
+}
+
+struct DeclarationScope {
+    kind: String,
+    declaration: Range<usize>,
+    scope: Range<usize>,
+    visible_before_declaration: bool,
+}
+
+impl DeclarationScope {
+    fn visible(&self, site: &KNode<'_>) -> bool {
+        let site = site.range();
+        self.scope.start <= site.start
+            && site.end <= self.scope.end
+            && (self.visible_before_declaration || self.declaration.start < site.start)
+    }
 }
 
 impl Imports {
@@ -23,7 +41,7 @@ impl Imports {
                 && !self.aliases.contains_key(observed)
                 && (self.wildcards.is_empty()
                     || self.wildcards.len() == 1 && self.wildcards.contains("kotlin.io"))
-                && !name_shadowed(root, use_site, observed)
+                && !self.name_shadowed(use_site, observed)
     }
     pub(super) fn local_type<'a>(
         &self,
@@ -33,10 +51,10 @@ impl Imports {
     ) -> Option<KNode<'a>> {
         if self.aliases.contains_key(observed)
             || !self.wildcards.is_empty()
-            || root.dfs().any(|n| {
-                n.kind().as_ref() == "type_parameter"
-                    && name(&n).as_deref() == Some(observed)
-                    && visible(&n, use_site)
+            || self.declarations.get(observed).is_some_and(|entries| {
+                entries
+                    .iter()
+                    .any(|n| n.kind == "type_parameter" && n.visible(use_site))
             })
         {
             return None;
@@ -71,13 +89,14 @@ impl Imports {
         });
         let declaration = declarations.next()?;
         if declarations.next().is_some()
-            || root.dfs().any(|n| {
-                matches!(
-                    n.kind().as_ref(),
-                    "class_declaration" | "object_declaration" | "type_alias"
-                ) && name(&n).as_deref() == Some(observed)
-                    && n.range() != declaration.range()
-                    && visible(&n, use_site)
+            || self.declarations.get(observed).is_some_and(|entries| {
+                entries.iter().any(|n| {
+                    matches!(
+                        n.kind.as_str(),
+                        "class_declaration" | "object_declaration" | "type_alias"
+                    ) && n.declaration != declaration.range()
+                        && n.visible(use_site)
+                })
             })
         {
             return None;
@@ -87,7 +106,44 @@ impl Imports {
 
     pub(in crate::code) fn build(root: &KNode<'_>) -> Self {
         let mut result = Self::default();
-        for import in root.dfs().filter(|n| n.kind().as_ref() == "import_header") {
+        for import in root.dfs() {
+            if matches!(
+                import.kind().as_ref(),
+                "variable_declaration"
+                    | "parameter"
+                    | "class_parameter"
+                    | "class_declaration"
+                    | "object_declaration"
+                    | "type_alias"
+                    | "type_parameter"
+                    | "function_declaration"
+                    | "catch_block"
+            ) && let Some(name) = name(&import)
+                && let Some(owner) = scope(&import)
+            {
+                let visible_before_declaration =
+                    matches!(
+                        import.kind().as_ref(),
+                        "parameter"
+                            | "class_parameter"
+                            | "class_declaration"
+                            | "object_declaration"
+                            | "type_alias"
+                    ) || matches!(owner.kind().as_ref(), "class_body" | "source_file");
+                result
+                    .declarations
+                    .entry(name)
+                    .or_default()
+                    .push(DeclarationScope {
+                        kind: import.kind().into_owned(),
+                        declaration: import.range(),
+                        scope: owner.range(),
+                        visible_before_declaration,
+                    });
+            }
+            if import.kind().as_ref() != "import_header" {
+                continue;
+            }
             let text = import.text();
             let words = text
                 .trim()
@@ -115,9 +171,15 @@ impl Imports {
         result
     }
 
+    fn name_shadowed(&self, site: &KNode<'_>, name: &str) -> bool {
+        self.declarations
+            .get(name.trim_matches('`'))
+            .is_some_and(|entries| entries.iter().any(|n| n.visible(site)))
+    }
+
     pub(super) fn exact(
         &self,
-        root: &KNode<'_>,
+        _root: &KNode<'_>,
         use_site: &KNode<'_>,
         observed: &str,
         canonical: &str,
@@ -126,7 +188,7 @@ impl Imports {
         let Some(head) = observed.split('.').next() else {
             return false;
         };
-        if name_shadowed(root, use_site, head) {
+        if self.name_shadowed(use_site, head) {
             return false;
         }
         if observed == canonical {

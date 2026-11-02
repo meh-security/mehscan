@@ -44,8 +44,9 @@ pub(super) fn file_operands<'a>(
 
 /// Bounded JVM identities. Only exact declarations, immutable local aliases and
 /// enumerated library factories contribute identity; helper return types do not.
-pub(crate) fn owned<'a>(
+pub(crate) fn owned_with_imports<'a>(
     root: &KNode<'a>,
+    imports: &Imports,
     expression: &KNode<'a>,
     canonical: &str,
     depth: usize,
@@ -57,7 +58,7 @@ pub(crate) fn owned<'a>(
         return expression
             .children()
             .find(|n| n.is_named())
-            .is_some_and(|n| owned(root, &n, canonical, depth - 1));
+            .is_some_and(|n| owned_with_imports(root, imports, &n, canonical, depth - 1));
     }
     if expression.kind().as_ref() == "as_expression"
         && matches!(
@@ -68,7 +69,6 @@ pub(crate) fn owned<'a>(
                 | "okhttp3.Call"
         )
     {
-        let imports = Imports::build(root);
         return expression
             .children()
             .filter(|n| n.is_named())
@@ -87,7 +87,7 @@ pub(crate) fn owned<'a>(
                         })
             });
     }
-    let imports = Imports::build(root);
+
     let symbol = expression.text();
     if expression.kind().as_ref() == "simple_identifier"
         || symbol
@@ -134,7 +134,8 @@ pub(crate) fn owned<'a>(
                 .filter(|n| n.is_named())
                 .last()
                 .is_some_and(|value| {
-                    value.range() != binding.range() && owned(root, &value, canonical, depth - 1)
+                    value.range() != binding.range()
+                        && owned_with_imports(root, imports, &value, canonical, depth - 1)
                 });
     }
     let Some(call) = identity::call(expression) else {
@@ -177,7 +178,7 @@ pub(crate) fn owned<'a>(
         };
         if method == "getPart"
             && call.arguments.len() == 1
-            && request.is_some_and(|ty| owned(root, &receiver, ty, depth - 1))
+            && request.is_some_and(|ty| owned_with_imports(root, imports, &receiver, ty, depth - 1))
         {
             return true;
         }
@@ -187,8 +188,9 @@ pub(crate) fn owned<'a>(
                 method,
                 "getEngineByName" | "getEngineByExtension" | "getEngineByMimeType"
             )
-            && owned(
+            && owned_with_imports(
                 root,
+                imports,
                 &receiver,
                 "javax.script.ScriptEngineManager",
                 depth - 1,
@@ -221,7 +223,9 @@ pub(crate) fn owned<'a>(
                 .callee
                 .children()
                 .find(|n| n.is_named())
-                .is_some_and(|receiver| owned(root, &receiver, CREATOR, depth - 1));
+                .is_some_and(|receiver| {
+                    owned_with_imports(root, imports, &receiver, CREATOR, depth - 1)
+                });
         }
     }
     if canonical == VERIFICATION {
@@ -248,7 +252,9 @@ pub(crate) fn owned<'a>(
                 .callee
                 .children()
                 .find(|n| n.is_named())
-                .is_some_and(|receiver| owned(root, &receiver, VERIFICATION, depth - 1));
+                .is_some_and(|receiver| {
+                    owned_with_imports(root, imports, &receiver, VERIFICATION, depth - 1)
+                });
         }
     }
     if matches!(
@@ -261,7 +267,9 @@ pub(crate) fn owned<'a>(
             .callee
             .children()
             .find(|n| n.is_named())
-            .is_some_and(|receiver| owned(root, &receiver, VERIFICATION, depth - 1));
+            .is_some_and(|receiver| {
+                owned_with_imports(root, imports, &receiver, VERIFICATION, depth - 1)
+            });
     }
     if canonical == "javax.net.ssl.SSLContext"
         && method == "getInstance"
@@ -306,24 +314,26 @@ pub(crate) fn owned<'a>(
                 WEBCLIENT => Some(WEBCLIENT_BUILDER),
                 _ => None,
             };
-            if builder.is_some_and(|builder| owned(root, &receiver, builder, depth - 1)) {
+            if builder.is_some_and(|builder| {
+                owned_with_imports(root, imports, &receiver, builder, depth - 1)
+            }) {
                 return true;
             }
         }
         if canonical == "okhttp3.Call"
             && ((method == "newCall"
                 && call.arguments.len() == 1
-                && owned(root, &receiver, "okhttp3.OkHttpClient", depth - 1))
+                && owned_with_imports(root, imports, &receiver, "okhttp3.OkHttpClient", depth - 1))
                 || method == "clone"
                     && call.arguments.is_empty()
-                    && owned(root, &receiver, canonical, depth - 1))
+                    && owned_with_imports(root, imports, &receiver, canonical, depth - 1))
         {
             return true;
         }
         if canonical == WEBCLIENT_BUILDER
             && ((method == "mutate"
                 && call.arguments.is_empty()
-                && owned(root, &receiver, WEBCLIENT, depth - 1))
+                && owned_with_imports(root, imports, &receiver, WEBCLIENT, depth - 1))
                 || (matches!(
                     method,
                     "baseUrl"
@@ -348,7 +358,7 @@ pub(crate) fn owned<'a>(
                         && !call.arguments.is_empty()
                     || method == "defaultStatusHandler" && call.arguments.len() == 2
                     || method == "clone" && call.arguments.is_empty())
-                    && owned(root, &receiver, WEBCLIENT_BUILDER, depth - 1))
+                    && owned_with_imports(root, imports, &receiver, WEBCLIENT_BUILDER, depth - 1))
         {
             return true;
         }
@@ -362,7 +372,7 @@ pub(crate) fn owned<'a>(
             "get" | "head" | "delete" | "options" | "post" | "put" | "patch"
         ) && call.arguments.is_empty()
             || method == "method" && call.arguments.len() == 1)
-            && owned(root, &receiver, WEBCLIENT, depth - 1)
+            && owned_with_imports(root, imports, &receiver, WEBCLIENT, depth - 1)
         {
             // Both URI-spec families share UriSpec; this is boundary ownership,
             // not a claim of the exact generic return type of each HTTP method.
@@ -383,7 +393,7 @@ pub(crate) fn owned<'a>(
                     | "sslParameters"
                     | "version"
             )
-            && owned(root, &receiver, canonical, depth - 1)
+            && owned_with_imports(root, imports, &receiver, canonical, depth - 1)
         {
             return true;
         }
@@ -398,7 +408,7 @@ pub(crate) fn owned<'a>(
                         | "redirectOutput"
                         | "redirectError"
                 ) && call.arguments.len() == 1))
-            && owned(root, &receiver, canonical, depth - 1)
+            && owned_with_imports(root, imports, &receiver, canonical, depth - 1)
         {
             return true;
         }
@@ -427,7 +437,7 @@ pub(crate) fn owned<'a>(
     if factory == "java.net.URL" {
         super::network::known(root, &receiver, factory, depth - 1)
     } else {
-        owned(root, &receiver, factory, depth - 1)
+        owned_with_imports(root, imports, &receiver, factory, depth - 1)
     }
 }
 
@@ -445,7 +455,12 @@ pub(in crate::code) fn file_content<'a>(node: &KNode<'a>) -> Option<KNode<'a>> {
         })
 }
 
-pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> bool {
+pub(super) fn accepts_with_imports<'a>(
+    root: &KNode<'a>,
+    imports: &Imports,
+    rule: &str,
+    node: &KNode<'a>,
+) -> bool {
     let Some(call) = identity::call(node) else {
         return false;
     };
@@ -528,12 +543,7 @@ pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> boo
         let Some((_, method)) = text.rsplit_once('.') else {
             return false;
         };
-        if !Imports::build(root).default_extension(
-            root,
-            node,
-            method,
-            &format!("kotlin.io.{method}"),
-        ) {
+        if !imports.default_extension(root, node, method, &format!("kotlin.io.{method}")) {
             return false;
         }
     }
@@ -577,7 +587,7 @@ pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> boo
             && method != "setFeature")
             && !(matches!(method, "getResponseCode" | "getResponseMessage")
                 && *canonical == "java.net.URLConnection")
-            && owned(root, &receiver, canonical, 8)
+            && owned_with_imports(root, imports, &receiver, canonical, 8)
     })
 }
 
@@ -683,4 +693,16 @@ mod tests {
             assert!(!accepts(&root, "kotlin-file-read", &read), "{source}");
         }
     }
+}
+
+pub(crate) fn owned<'a>(
+    root: &KNode<'a>,
+    expression: &KNode<'a>,
+    canonical: &str,
+    depth: usize,
+) -> bool {
+    owned_with_imports(root, &Imports::build(root), expression, canonical, depth)
+}
+pub(super) fn accepts<'a>(root: &KNode<'a>, rule: &str, node: &KNode<'a>) -> bool {
+    accepts_with_imports(root, &Imports::build(root), rule, node)
 }

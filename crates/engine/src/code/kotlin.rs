@@ -273,7 +273,7 @@ pub(super) fn accept<'a>(
     };
     // Kotlin File extensions support named arguments; Java methods do not.
     if matches!(rule, "kotlin-file-read" | "kotlin-file-write") {
-        return jvm::accepts(root, rule, node);
+        return jvm::accepts_with_imports(root, imports, rule, node);
     }
     if call
         .arguments
@@ -283,7 +283,7 @@ pub(super) fn accept<'a>(
         return false;
     }
     let observed = call.callee.text();
-    if jvm::accepts(root, rule, node) {
+    if jvm::accepts_with_imports(root, imports, rule, node) {
         return true;
     }
     let Some((receiver, method)) = observed.rsplit_once('.') else {

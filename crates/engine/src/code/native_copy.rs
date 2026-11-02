@@ -54,6 +54,7 @@ pub(crate) struct NativeCopyProjectContext {
     declarations: BTreeSet<(String, usize)>,
     namespaces: BTreeSet<String>,
     non_integer_types: BTreeSet<String>,
+    non_integer_type_names: BTreeSet<String>,
 }
 
 impl NativeCopyProjectContext {
@@ -260,12 +261,17 @@ impl NativeCopyProjectContext {
             }
             proved.extend(additions);
         }
+        let non_integer_type_names = non_integer_types
+            .iter()
+            .filter_map(|name| name.rsplit("::").next().map(str::to_string))
+            .collect();
         Self {
             copies,
             rejects: proved,
             declarations: signatures.into_keys().collect(),
             namespaces,
             non_integer_types,
+            non_integer_type_names,
         }
     }
 
@@ -315,7 +321,13 @@ impl NativeCopyProjectContext {
             {
                 continue;
             }
-            if self
+            if self.non_integer_type_names.contains(
+                integer
+                    .resolved_type
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(&integer.resolved_type),
+            ) && self
                 .lookup_groups(path, &count, &integer.resolved_type, conditional, 0)
                 .iter()
                 .flatten()

@@ -435,6 +435,14 @@ fn catalog_types_methods_and_repositories(
     shell_helpers: &mut BTreeSet<(String, String)>,
 ) {
     let spring_data_imported = imports_spring_data_repository(root);
+    let runtime_shadowed = root.dfs().any(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "class_declaration" | "interface_declaration" | "record_declaration"
+        ) && node
+            .field("name")
+            .is_some_and(|name| name.text().as_ref() == "Runtime")
+    });
     for declaration in root.dfs().filter(|node| {
         matches!(
             node.kind().as_ref(),
@@ -493,7 +501,7 @@ fn catalog_types_methods_and_repositories(
                 parameters: method_parameters(path, &method),
                 path: path.to_string(),
             });
-            if is_shell_helper_method(root, &method) {
+            if is_shell_helper_method(&method, runtime_shadowed) {
                 shell_helpers.insert((name.clone(), method_name));
             }
         }
@@ -630,18 +638,8 @@ fn resolve_call(
     })
 }
 
-fn is_shell_helper_method(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    method: &Node<'_, StrDoc<SupportLang>>,
-) -> bool {
-    if root.dfs().any(|node| {
-        matches!(
-            node.kind().as_ref(),
-            "class_declaration" | "interface_declaration" | "record_declaration"
-        ) && node
-            .field("name")
-            .is_some_and(|name| name.text().as_ref() == "Runtime")
-    }) {
+fn is_shell_helper_method(method: &Node<'_, StrDoc<SupportLang>>, runtime_shadowed: bool) -> bool {
+    if runtime_shadowed {
         return false;
     }
     let Some(parameters) = method.field("parameters") else {
