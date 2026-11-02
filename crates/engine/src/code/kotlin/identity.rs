@@ -4,13 +4,22 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 pub(super) type KNode<'a> = Node<'a, StrDoc<SupportLang>>;
+type ScopeKey = (usize, usize);
+
+#[derive(Default)]
+struct MutationIndex {
+    symbols: BTreeMap<String, usize>,
+    bindings: BTreeMap<ScopeKey, usize>,
+}
 
 #[derive(Default)]
 pub(in crate::code) struct Imports {
     aliases: BTreeMap<String, BTreeSet<String>>,
     wildcards: BTreeSet<String>,
     declarations: BTreeMap<String, Vec<DeclarationScope>>,
+    binding_scopes: BTreeMap<ScopeKey, BTreeMap<String, Vec<usize>>>,
     assignments: BTreeMap<Option<(usize, usize)>, Vec<Range<usize>>>,
+    mutations: std::cell::RefCell<BTreeMap<Option<ScopeKey>, MutationIndex>>,
 }
 
 struct DeclarationScope {
@@ -38,11 +47,22 @@ impl Imports {
     ) -> Option<KNode<'a>> {
         let symbol_key = symbol.trim_end_matches("!!");
         let symbol_key = symbol_key.strip_prefix("this.").unwrap_or(symbol_key);
-        let candidates = self
-            .declarations
-            .get(symbol_key)
-            .into_iter()
+        let entries = self.declarations.get(symbol_key)?;
+        let mut positions = std::iter::once(use_site.clone())
+            .chain(use_site.ancestors())
+            .filter_map(|scope| {
+                self.binding_scopes
+                    .get(&(scope.range().start, scope.range().end))
+            })
+            .filter_map(|names| names.get(symbol_key))
             .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        positions.sort_unstable();
+        positions.dedup();
+        let candidates = positions
+            .into_iter()
+            .map(|position| &entries[position])
             .filter(|entry| entry.visible(use_site))
             .filter(|entry| {
                 matches!(
@@ -75,21 +95,46 @@ impl Imports {
         let symbol = symbol.trim_end_matches("!!");
         let target = self.binding(root, use_site, symbol).map(|n| n.range());
         let owner = callable(use_site).map(|n| (n.range().start, n.range().end));
-        !self
-            .assignments
-            .get(&owner)
-            .into_iter()
-            .flatten()
-            .filter(|range| range.start < use_site.range().start)
-            .filter_map(|range| node_of_kind(root, range.clone(), "assignment"))
-            .any(|n| {
-                n.children().find(|n| n.is_named()).is_some_and(|n| {
-                    let assigned = n.text();
-                    let assigned = assigned.trim();
-                    assigned == symbol
-                        || target.is_some()
-                            && self.binding(root, &n, assigned).map(|n| n.range()) == target
-                })
+        if !self.mutations.borrow().contains_key(&owner) {
+            let mut index = MutationIndex::default();
+            if let Some(ranges) = self.assignments.get(&owner) {
+                for range in ranges {
+                    let Some(assignment) = node_of_kind(root, range.clone(), "assignment") else {
+                        continue;
+                    };
+                    let Some(left) = assignment.children().find(|n| n.is_named()) else {
+                        continue;
+                    };
+                    let assigned = left.text().trim().to_string();
+                    index
+                        .symbols
+                        .entry(assigned.clone())
+                        .and_modify(|first| *first = (*first).min(range.start))
+                        .or_insert(range.start);
+                    if let Some(binding) = self.binding(root, &left, &assigned) {
+                        let key = (binding.range().start, binding.range().end);
+                        index
+                            .bindings
+                            .entry(key)
+                            .and_modify(|first| *first = (*first).min(range.start))
+                            .or_insert(range.start);
+                    }
+                }
+            }
+            self.mutations.borrow_mut().insert(owner, index);
+        }
+        let indexes = self.mutations.borrow();
+        let mutations = &indexes[&owner];
+        let before = use_site.range().start;
+        !mutations
+            .symbols
+            .get(symbol)
+            .is_some_and(|first| *first < before)
+            && !target.is_some_and(|target| {
+                mutations
+                    .bindings
+                    .get(&(target.start, target.end))
+                    .is_some_and(|first| *first < before)
             })
     }
 
@@ -202,16 +247,25 @@ impl Imports {
                             | "object_declaration"
                             | "type_alias"
                     ) || matches!(owner.kind().as_ref(), "class_body" | "source_file");
-                result
-                    .declarations
-                    .entry(name)
-                    .or_default()
-                    .push(DeclarationScope {
-                        kind: import.kind().into_owned(),
-                        declaration: import.range(),
-                        scope: owner.range(),
-                        visible_before_declaration,
-                    });
+                let declarations = result.declarations.entry(name.clone()).or_default();
+                if matches!(
+                    import.kind().as_ref(),
+                    "variable_declaration" | "parameter" | "class_parameter"
+                ) {
+                    result
+                        .binding_scopes
+                        .entry((owner.range().start, owner.range().end))
+                        .or_default()
+                        .entry(name)
+                        .or_default()
+                        .push(declarations.len());
+                }
+                declarations.push(DeclarationScope {
+                    kind: import.kind().into_owned(),
+                    declaration: import.range(),
+                    scope: owner.range(),
+                    visible_before_declaration,
+                });
             }
             if import.kind().as_ref() != "import_header" {
                 continue;

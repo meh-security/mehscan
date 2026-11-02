@@ -52,6 +52,16 @@ fn trace_scan_phase(name: &str, microseconds: u128) {
     }
 }
 
+fn trace_source_read(path: &Path, mode: &str, microseconds: u128, bytes: Option<usize>) {
+    eprintln!(
+        "mehscan_read {}",
+        serde_json::json!({
+            "path": path.to_string_lossy(), "mode": mode, "microseconds": microseconds, "bytes": bytes,
+            "success": bytes.is_some(),
+        })
+    );
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct ScanProfile {
     pub total_microseconds: u128,
@@ -229,16 +239,30 @@ pub(crate) fn scan_profiled(
     let mut source_read_microseconds = 0;
     let mut secret_read_microseconds = 0;
     let mut loading_secret_scan_microseconds = 0;
+    let trace_reads = std::env::var_os("MEHSCAN_TRACE_READS").is_some();
     let mut read_source_text = |path: &Path| {
         let started = Instant::now();
         let result = fs::read_to_string(path);
-        source_read_microseconds += started.elapsed().as_micros();
+        let micros = started.elapsed().as_micros();
+        source_read_microseconds += micros;
+        if trace_reads {
+            trace_source_read(path, "utf8", micros, result.as_ref().ok().map(String::len));
+        }
         result
     };
     let mut read_secret_source = |path: &Path| {
         let started = Instant::now();
         let result = read_secret_text(path);
-        secret_read_microseconds += started.elapsed().as_micros();
+        let micros = started.elapsed().as_micros();
+        secret_read_microseconds += micros;
+        if trace_reads {
+            trace_source_read(
+                path,
+                "bounded_text",
+                micros,
+                result.as_ref().ok().map(String::len),
+            );
+        }
         result
     };
     let mut scan_loading_secrets = |path: &str, source: &str| {

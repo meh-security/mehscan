@@ -476,6 +476,7 @@ type IncludedDatabase = (Range<usize>, String, DatabaseExports);
 #[derive(Default)]
 struct DatabaseScope<'a> {
     includes: Vec<PhpNode<'a>>,
+    state_barriers: Vec<PhpNode<'a>>,
     handoffs: BTreeMap<String, Vec<PhpNode<'a>>>,
     writes: BTreeMap<String, Vec<PhpNode<'a>>>,
     parameters: BTreeMap<String, Vec<PhpNode<'a>>>,
@@ -497,11 +498,23 @@ fn database_scopes<'a>(root: &PhpNode<'a>) -> DatabaseScopes<'a> {
                 | "assignment_expression"
                 | "augmented_assignment_expression"
                 | "reference_assignment_expression"
+                | "unset_statement"
                 | "simple_parameter"
         )
     }) {
         let owner = function_scope(&node, root);
         let scope = scopes.entry((owner.start, owner.end)).or_default();
+        if matches!(
+            node.kind().as_ref(),
+            "include_expression"
+                | "include_once_expression"
+                | "require_expression"
+                | "require_once_expression"
+                | "reference_assignment_expression"
+                | "unset_statement"
+        ) {
+            scope.state_barriers.push(node.clone());
+        }
         match node.kind().as_ref() {
             "include_expression"
             | "include_once_expression"
@@ -1702,25 +1715,19 @@ impl<'a> PhpContext<'a> {
             return None;
         }
         let owner = function_scope(call, &self.root);
-        let writes: Vec<_> = self
-            .root
-            .dfs()
-            .filter(|n| {
-                n.range().start < call.range().start
-                    && matches!(
-                        n.kind().as_ref(),
-                        "assignment_expression"
-                            | "reference_assignment_expression"
-                            | "augmented_assignment_expression"
-                    )
-                    && function_scope(n, &self.root) == owner
-                    && n.field("left")
-                        .is_some_and(|left| left.text() == handle.text())
-            })
+        let scope = self.database_scope(call)?;
+        let handle_name = handle.text();
+        let writes: Vec<_> = scope
+            .writes
+            .get(handle_name.as_ref())
+            .into_iter()
+            .flatten()
+            .filter(|node| node.range().start < call.range().start)
             .collect();
         let [binding] = writes.as_slice() else {
             return None;
         };
+        let binding = *binding;
         if binding.kind().as_ref() != "assignment_expression"
             || !mandatory_before(binding, call, &owner)
         {
@@ -1736,37 +1743,23 @@ impl<'a> PhpContext<'a> {
             return None;
         }
         let mut endpoint = init_args.first().cloned();
-        for prior in self.root.dfs().filter(|n| {
-            n.range().start >= binding.range().end
-                && n.range().end <= call.range().start
-                && function_scope(n, &self.root) == owner
+        if scope.state_barriers.iter().any(|node| {
+            node.range().start >= binding.range().end && node.range().end <= call.range().start
         }) {
-            if matches!(
-                prior.kind().as_ref(),
-                "include_expression"
-                    | "include_once_expression"
-                    | "require_expression"
-                    | "require_once_expression"
-                    | "reference_assignment_expression"
-                    | "unset_statement"
-            ) {
-                return None;
-            }
-            if !matches!(
-                prior.kind().as_ref(),
-                "function_call_expression" | "member_call_expression"
-            ) {
-                continue;
-            }
+            return None;
+        }
+        for prior in scope
+            .handoffs
+            .get(handle_name.as_ref())
+            .into_iter()
+            .flatten()
+            .filter(|node| {
+                node.range().start >= binding.range().end && node.range().end <= call.range().start
+            })
+        {
             let Some(args) = prior.field("arguments") else {
                 continue;
             };
-            if !args
-                .dfs()
-                .any(|n| n.kind().as_ref() == "variable_name" && n.text() == handle.text())
-            {
-                continue;
-            }
             if !self.exact_function(&prior, "curl_setopt") {
                 return None;
             }

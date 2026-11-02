@@ -611,23 +611,150 @@ pub(super) fn typed_database_receiver(
     canonical: &str,
     depth: usize,
 ) -> bool {
-    typed_database_receiver_inner(root, expression, canonical, depth, false)
+    typed_database_receiver_inner(root, expression, canonical, depth, false, None)
+}
+
+type IndexedReceiverBindings<'a> = BTreeMap<String, Vec<(usize, Node<'a, StrDoc<SupportLang>>)>>;
+
+pub(super) struct DatabaseReceiverIndex<'a> {
+    bindings: BTreeMap<(usize, usize), IndexedReceiverBindings<'a>>,
+    fields: BTreeMap<(usize, usize), IndexedReceiverBindings<'a>>,
+    generic_scopes: BTreeMap<(usize, usize), BTreeSet<String>>,
+    imports: BTreeSet<String>,
+    declarations: BTreeSet<String>,
+}
+
+impl<'a> DatabaseReceiverIndex<'a> {
+    pub(super) fn new(root: &Node<'a, StrDoc<SupportLang>>) -> Self {
+        let mut index = Self {
+            bindings: BTreeMap::new(),
+            fields: BTreeMap::new(),
+            generic_scopes: BTreeMap::new(),
+            imports: imports(root),
+            declarations: declared_types(root),
+        };
+        for (order, node) in root.dfs().enumerate() {
+            if matches!(
+                node.kind().as_ref(),
+                "resource" | "variable_declarator" | "formal_parameter"
+            ) {
+                if let Some(name) = node.field("name") {
+                    let field = node
+                        .parent()
+                        .is_some_and(|parent| parent.kind().as_ref() == "field_declaration");
+                    let scope = node.ancestors().find(|parent| {
+                        if field {
+                            matches!(
+                                parent.kind().as_ref(),
+                                "class_declaration" | "record_declaration"
+                            )
+                        } else {
+                            matches!(
+                                parent.kind().as_ref(),
+                                "block"
+                                    | "lambda_expression"
+                                    | "method_declaration"
+                                    | "constructor_declaration"
+                            )
+                        }
+                    });
+                    if let Some(scope) = scope {
+                        let entries = if field {
+                            &mut index.fields
+                        } else {
+                            &mut index.bindings
+                        };
+                        entries
+                            .entry((scope.range().start, scope.range().end))
+                            .or_default()
+                            .entry(name.text().into_owned())
+                            .or_default()
+                            .push((order, node));
+                    }
+                }
+            } else if node.kind().as_ref() == "type_parameter" {
+                if let Some(owner) = node.ancestors().find(|owner| {
+                    matches!(
+                        owner.kind().as_ref(),
+                        "method_declaration"
+                            | "class_declaration"
+                            | "interface_declaration"
+                            | "record_declaration"
+                    )
+                }) {
+                    for name in node
+                        .children()
+                        .filter(|n| n.kind().as_ref() == "type_identifier")
+                    {
+                        index
+                            .generic_scopes
+                            .entry((owner.range().start, owner.range().end))
+                            .or_default()
+                            .insert(name.text().into_owned());
+                    }
+                }
+            }
+        }
+        index
+    }
+
+    fn candidates(
+        &self,
+        expression: &Node<'_, StrDoc<SupportLang>>,
+        name: &str,
+    ) -> Vec<Node<'a, StrDoc<SupportLang>>> {
+        let scopes = std::iter::once(expression.clone())
+            .chain(expression.ancestors())
+            .map(|node| (node.range().start, node.range().end))
+            .collect::<BTreeSet<_>>();
+        let mut entries = scopes
+            .iter()
+            .filter_map(|scope| self.bindings.get(scope))
+            .filter_map(|names| names.get(name))
+            .flatten()
+            .collect::<Vec<_>>();
+        if let Some(owner) = expression.ancestors().find(|node| {
+            matches!(
+                node.kind().as_ref(),
+                "class_declaration" | "record_declaration"
+            )
+        }) {
+            entries.extend(
+                self.fields
+                    .get(&(owner.range().start, owner.range().end))
+                    .and_then(|names| names.get(name))
+                    .into_iter()
+                    .flatten(),
+            );
+        }
+        entries.sort_by_key(|(order, _)| *order);
+        entries.into_iter().map(|(_, node)| node.clone()).collect()
+    }
 }
 
 /// Resource declarations are supported for navigation without expanding rule admission.
-pub(super) fn prepared_connection_receiver(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    expression: &Node<'_, StrDoc<SupportLang>>,
+pub(super) fn prepared_connection_receiver<'a>(
+    root: &Node<'a, StrDoc<SupportLang>>,
+    expression: &Node<'a, StrDoc<SupportLang>>,
+    index: &DatabaseReceiverIndex<'a>,
 ) -> bool {
-    typed_database_receiver_inner(root, expression, "java.sql.Connection", 8, true)
+    typed_database_receiver_inner(
+        root,
+        expression,
+        "java.sql.Connection",
+        8,
+        true,
+        Some(index),
+    )
 }
 
-fn typed_database_receiver_inner(
-    root: &Node<'_, StrDoc<SupportLang>>,
+fn typed_database_receiver_inner<'a>(
+    root: &Node<'a, StrDoc<SupportLang>>,
     expression: &Node<'_, StrDoc<SupportLang>>,
     canonical: &str,
     depth: usize,
     resources: bool,
+    index: Option<&DatabaseReceiverIndex<'a>>,
 ) -> bool {
     if depth == 0 {
         return false;
@@ -637,7 +764,12 @@ fn typed_database_receiver_inner(
         return expression.field("type").is_some_and(|ty| {
             ty.text() == canonical
                 || ty.text() == short
-                    && imported_exact(&imports(root), &declared_types(root), canonical, short)
+                    && index.map_or_else(
+                        || imported_exact(&imports(root), &declared_types(root), canonical, short),
+                        |index| {
+                            imported_exact(&index.imports, &index.declarations, canonical, short)
+                        },
+                    )
         });
     }
     if expression.kind().as_ref() == "method_invocation" {
@@ -653,6 +785,7 @@ fn typed_database_receiver_inner(
                 "java.sql.Connection",
                 depth - 1,
                 resources,
+                index,
             );
     }
     let name = expression.text();
@@ -675,7 +808,11 @@ fn typed_database_receiver_inner(
         .map(|n| n.range());
     let mut locals = Vec::new();
     let mut fields = Vec::new();
-    for binding in root.dfs().filter(|n| {
+    let candidates: Box<dyn Iterator<Item = Node<'a, StrDoc<SupportLang>>> + '_> = match index {
+        Some(index) => Box::new(index.candidates(expression, name).into_iter()),
+        None => Box::new(root.dfs()),
+    };
+    for binding in candidates.filter(|n| {
         (resources && n.kind().as_ref() == "resource")
             || matches!(
                 n.kind().as_ref(),
@@ -742,34 +879,52 @@ fn typed_database_receiver_inner(
     if ty == canonical {
         return true;
     }
-    let generic_shadow = root.dfs().any(|n| {
-        n.kind().as_ref() == "type_parameter"
-            && n.children()
-                .any(|child| child.kind().as_ref() == "type_identifier" && child.text() == short)
-            && n.ancestors()
-                .find(|owner| {
-                    matches!(
-                        owner.kind().as_ref(),
-                        "method_declaration"
-                            | "class_declaration"
-                            | "interface_declaration"
-                            | "record_declaration"
-                    )
+    let generic_shadow = index.map_or_else(
+        || {
+            root.dfs().any(|n| {
+                n.kind().as_ref() == "type_parameter"
+                    && n.children().any(|child| {
+                        child.kind().as_ref() == "type_identifier" && child.text() == short
+                    })
+                    && n.ancestors()
+                        .find(|owner| {
+                            matches!(
+                                owner.kind().as_ref(),
+                                "method_declaration"
+                                    | "class_declaration"
+                                    | "interface_declaration"
+                                    | "record_declaration"
+                            )
+                        })
+                        .is_some_and(|owner| {
+                            owner.range().start <= expression.range().start
+                                && expression.range().end <= owner.range().end
+                        })
+            })
+        },
+        |index| {
+            std::iter::once(expression.clone())
+                .chain(expression.ancestors())
+                .any(|owner| {
+                    index
+                        .generic_scopes
+                        .get(&(owner.range().start, owner.range().end))
+                        .is_some_and(|names| names.contains(short))
                 })
-                .is_some_and(|owner| {
-                    owner.range().start <= expression.range().start
-                        && expression.range().end <= owner.range().end
-                })
-    });
+        },
+    );
     if ty == short
         && !generic_shadow
-        && imported_exact(&imports(root), &declared_types(root), canonical, short)
+        && index.map_or_else(
+            || imported_exact(&imports(root), &declared_types(root), canonical, short),
+            |index| imported_exact(&index.imports, &index.declarations, canonical, short),
+        )
     {
         return true;
     }
     ty == "var"
         && binding.field("value").is_some_and(|value| {
-            typed_database_receiver_inner(root, &value, canonical, depth - 1, resources)
+            typed_database_receiver_inner(root, &value, canonical, depth - 1, resources, index)
         })
 }
 
