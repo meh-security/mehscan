@@ -1725,7 +1725,7 @@ fn build_path_review_jobs_internal(
         .iter()
         .filter(|candidate| {
             !practical_exclusions.contains_key(&candidate.sink.id)
-                && !is_closed_native_ownership_proof(candidate.capability, candidate.state)
+                && !is_closed_native_invariant(candidate.capability, candidate.state)
                 && !evidence_by_id
                     .get(candidate.sink.id.as_str())
                     .is_some_and(|sink| closed_output_operand(sink).is_some())
@@ -2573,15 +2573,16 @@ fn build_path_review_jobs_internal(
 /// Exact native ownership-family matches and standard RAII owners are useful
 /// audit evidence, but have no unresolved invariant for an AI verdict. Keep
 /// them in scan/candidate output while excluding them from review jobs. Their
-/// unknown counterparts (leaks and allocation-family mismatches) remain
-/// reviewable.
-fn is_closed_native_ownership_proof(capability: Capability, state: SecurityPathState) -> bool {
+/// unknown counterparts remain reviewable. A lower-bound proof closes only
+/// the subtraction claim; it does not certify other copy or buffer invariants.
+fn is_closed_native_invariant(capability: Capability, state: SecurityPathState) -> bool {
     state == SecurityPathState::Protected
         && matches!(
             capability,
             Capability::LocalHeapDeallocation
                 | Capability::CppHeapDeallocation
                 | Capability::CppRaiiOwner
+                | Capability::SubtractedMemoryExtent
         )
 }
 
@@ -4347,6 +4348,7 @@ fn report_remediation(
             | Capability::SignedSizeMemoryOperation
             | Capability::LocalHeapDeallocation
             | Capability::RemainingInputRead
+            | Capability::SubtractedMemoryExtent
     ) || (capability == Capability::FilesystemWrite && cwes.iter().any(|cwe| cwe == "CWE-367"))
         || (capability == Capability::FileUpload && cwes.iter().any(|cwe| cwe == "CWE-434"))
     {
@@ -4388,6 +4390,9 @@ fn human_finding_title(rule_id: &str, fallback: &str) -> String {
         }
         "c-family-local-heap-deallocation" => {
             "Allocated memory leaks on an early return".to_string()
+        }
+        "c-family-subtracted-copy-extent" => {
+            "Subtraction can produce an invalid copy count".to_string()
         }
         "c-family-remaining-input-read" => {
             "Decoded length can exceed the remaining parser input".to_string()
@@ -4542,6 +4547,9 @@ fn finding_remediation(capability: Capability, cwes: &[String]) -> FindingRemedi
         }
         Capability::LocalHeapDeallocation => {
             "Route every post-allocation failure through the shared cleanup path, or free the exact allocation before returning."
+        }
+        Capability::SubtractedMemoryExtent => {
+            "Validate the original count against the subtracted offset before arithmetic and preserve its effective type through the copy helper or constructor; confirm source and destination extents separately."
         }
         Capability::RemainingInputRead => {
             "First prove the cursor is within the input, then reject any decoded extent greater than total_size - cursor before reading or advancing; do not validate with cursor + extent in a type where it can wrap."
@@ -5600,6 +5608,7 @@ fn review_playbook_bucket(
             capability,
             Capability::BufferWrite
                 | Capability::SignedSizeMemoryOperation
+                | Capability::SubtractedMemoryExtent
                 | Capability::LocalHeapAllocation
                 | Capability::CppHeapAllocation
                 | Capability::XmlParsing
@@ -16266,6 +16275,9 @@ fn missing_protection_question(capability: Capability) -> &'static str {
         Capability::SerializedBlobCopy => {
             "Does the loader-reported blob length exactly match the fixed-layout copy extent before this copy, independently of the separate multiplication-overflow invariant?"
         }
+        Capability::SubtractedMemoryExtent => {
+            "Can subtracting this offset produce an invalid copy count through underflow or a negative-to-size conversion, using the actual helper/constructor mapping and rejecting lower bound? This settles subtraction only; confirm copy execution, initializer effects, source accessibility and other conversions separately."
+        }
         Capability::LoadedMemoryExtent => {
             "Can the shown serialized scalar and other operands overflow this exact allocation-and-memory-operation extent under their effective C/C++ types, and do the rejecting checks safely cover zero and SIZE_MAX before computation?"
         }
@@ -23593,16 +23605,16 @@ mod tests {
             Capability::CppHeapDeallocation,
             Capability::CppRaiiOwner,
         ] {
-            assert!(is_closed_native_ownership_proof(
+            assert!(is_closed_native_invariant(
                 capability,
                 SecurityPathState::Protected
             ));
-            assert!(!is_closed_native_ownership_proof(
+            assert!(!is_closed_native_invariant(
                 capability,
                 SecurityPathState::Unknown
             ));
         }
-        assert!(!is_closed_native_ownership_proof(
+        assert!(!is_closed_native_invariant(
             Capability::SignedSizeMemoryOperation,
             SecurityPathState::Protected
         ));

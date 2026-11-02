@@ -48,7 +48,7 @@ pub(crate) enum ParseOutcome {
     },
 }
 
-pub(crate) const NATIVE_PASS_NAMES: [&str; 21] = [
+pub(crate) const NATIVE_PASS_NAMES: [&str; 22] = [
     "api_context",
     "arithmetic",
     "domain_bounds",
@@ -70,6 +70,7 @@ pub(crate) const NATIVE_PASS_NAMES: [&str; 21] = [
     "state",
     "ownership",
     "buffer",
+    "defined_copy",
 ];
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -78,7 +79,7 @@ pub(crate) struct FileScanTiming {
     pub declarative_rules_microseconds: u128,
     pub symbol_rules_microseconds: u128,
     pub summaries_microseconds: u128,
-    pub native_pass_microseconds: [u128; 21],
+    pub native_pass_microseconds: [u128; 22],
     pub security_paths_microseconds: u128,
     pub declarative_patterns_considered: usize,
     pub declarative_patterns_skipped: usize,
@@ -100,6 +101,7 @@ pub(crate) struct ScanDependencies<'a> {
     pub drogon_project_context: &'a super::native_drogon::DrogonProjectContext,
     pub native_invalidation_context:
         &'a super::native_invalidation::NativeInvalidationProjectContext,
+    pub native_copy_context: &'a super::native_copy::NativeCopyProjectContext,
     pub python_project_context: &'a super::python_context::PythonProjectContext,
     pub rust_project_context: &'a super::rust_project::RustProjectContext,
     pub php_project_context: &'a super::php::PhpProjectContext,
@@ -143,6 +145,7 @@ pub(crate) fn scan_source(
         go_project_context,
         drogon_project_context,
         native_invalidation_context,
+        native_copy_context,
         python_project_context,
         rust_project_context,
         php_project_context,
@@ -1493,7 +1496,7 @@ pub(crate) fn scan_source(
         &mut evidence,
     );
     super::rust_context::annotate_rust_build_script(path, language, &mut evidence);
-    let mut native_pass_microseconds = [0; 21];
+    let mut native_pass_microseconds = [0; 22];
     let mut native_started = Instant::now();
     let native_api = super::native_api::NativeApiContext::new(&root, language);
     native_pass_microseconds[0] = native_started.elapsed().as_micros();
@@ -1732,6 +1735,18 @@ pub(crate) fn scan_source(
         &mut evidence,
     );
     native_pass_microseconds[20] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
+    let mut native_copy_paths = native_copy_context.add_observations(
+        path,
+        &root,
+        language,
+        &comments,
+        &conditional,
+        &literals,
+        &native_api,
+        &mut evidence,
+    );
+    native_pass_microseconds[21] = native_started.elapsed().as_micros();
     node_context.add_request_boundary_observations(
         path,
         &root,
@@ -1762,6 +1777,7 @@ pub(crate) fn scan_source(
                             | "tree-sitter c-family serialized-blob extent relationship"
                             | "tree-sitter c-family loaded-memory-extent relationship"
                             | "tree-sitter c-family remaining-input relationship"
+                            | "tree-sitter c-family defined-copy subtraction relationship"
                             | "tree-sitter c++ allocation-ownership relationship"
                             | "tree-sitter c-family libxml2 parser-options relationship"
                             | "tree-sitter c-family libarchive extraction-options relationship"
@@ -2034,6 +2050,15 @@ pub(crate) fn scan_source(
                 .iter()
                 .all(|id| retained_evidence_ids.contains(id.as_str()))
     });
+    native_copy_paths.retain(|path| {
+        retained_evidence_ids.contains(path.source_evidence_id.as_str())
+            && retained_evidence_ids.contains(path.sink_evidence_id.as_str())
+            && path
+                .protection_evidence_ids
+                .iter()
+                .all(|id| retained_evidence_ids.contains(id.as_str()))
+    });
+    security_paths.append(&mut native_copy_paths);
     security_paths.append(&mut native_arithmetic_paths);
     security_paths.append(&mut native_domain_bound_paths);
     security_paths.append(&mut native_region_bound_paths);

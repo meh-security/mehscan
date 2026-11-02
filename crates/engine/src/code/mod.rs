@@ -79,6 +79,7 @@ mod native_allocation;
 mod native_api;
 mod native_arithmetic;
 mod native_buffer;
+mod native_copy;
 mod native_cpp_ownership;
 mod native_curl;
 mod native_domain_bounds;

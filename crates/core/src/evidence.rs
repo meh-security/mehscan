@@ -175,6 +175,15 @@ pub enum Capability {
     /// Exact rejecting checks that make a loaded multiplicative memory extent
     /// representable before it is computed and consumed.
     MemoryExtentOverflowValidation,
+    /// A source integer used before subtracting an offset for a copy count.
+    IntegerExtentInput,
+    /// Defined source/count parameters forwarded to a standard copy operation.
+    MemoryCopyContract,
+    /// A copy extent obtained by subtracting an offset, including through a
+    /// source-defined helper or constructor. Other buffer invariants stay open.
+    SubtractedMemoryExtent,
+    /// An exact lower bound before subtraction; not a complete buffer proof.
+    MemoryExtentLowerBoundValidation,
     /// A decoded native length or extent compared with an authoritative
     /// remaining-input boundary before buffer consumption.
     DecodedInputExtent,

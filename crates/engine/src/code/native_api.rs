@@ -149,6 +149,22 @@ impl NativeApiContext {
         self.resolve(&text, call.range().start, 0)
     }
 
+    pub(super) fn local_shadow(&self, call: &Node<'_, StrDoc<SupportLang>>, name: &str) -> bool {
+        let Some(function) = call.ancestors().find(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "function_definition" | "lambda_expression"
+            )
+        }) else {
+            return false;
+        };
+        self.binding(name, call.range().start)
+            .is_some_and(|binding| {
+                function.range().start <= binding.scope.start
+                    && binding.scope.end <= function.range().end
+            })
+    }
+
     fn resolve(&self, text: &str, offset: usize, depth: usize) -> Option<&'static str> {
         if depth > 4 {
             return None;

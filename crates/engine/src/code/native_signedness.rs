@@ -243,6 +243,160 @@ fn signed_declaration<'tree>(
     call: &Node<'tree, StrDoc<SupportLang>>,
     value: &str,
 ) -> Option<SignedDeclaration<'tree>> {
+    let integer = integer_declaration(call, value)?;
+    integer
+        .signed
+        .then_some((integer.source_type, integer.nominal, integer.alias))
+}
+
+pub(super) struct IntegerDeclaration<'tree> {
+    pub source_type: String,
+    pub resolved_type: String,
+    pub declaration: Node<'tree, StrDoc<SupportLang>>,
+    pub alias: Option<Node<'tree, StrDoc<SupportLang>>>,
+    pub signed: bool,
+    pub nominal: bool,
+}
+
+pub(super) fn integer_declaration<'tree>(
+    call: &Node<'tree, StrDoc<SupportLang>>,
+    value: &str,
+) -> Option<IntegerDeclaration<'tree>> {
+    let (source_type, resolved, declaration, alias) = scalar_declaration(call, value)?;
+    let base = resolved.strip_prefix("std::").unwrap_or(&resolved);
+    if identifier_like_type(base)
+        && call.ancestors().last()?.dfs().any(|node| {
+            matches!(
+                node.kind().as_ref(),
+                "class_specifier" | "struct_specifier" | "union_specifier" | "enum_specifier"
+            ) && visible_declaration(&node, call)
+                && node
+                    .field("name")
+                    .is_some_and(|name| name.text().trim() == base)
+        })
+    {
+        return None;
+    }
+    let (signed, nominal) = if unsigned_type(base) {
+        (false, false)
+    } else {
+        (true, signed_type(base)?)
+    };
+    Some(IntegerDeclaration {
+        source_type,
+        resolved_type: resolved,
+        declaration,
+        alias,
+        signed,
+        nominal,
+    })
+}
+
+fn identifier_like_type(value: &str) -> bool {
+    !matches!(
+        value,
+        "int" | "char" | "short" | "long" | "signed" | "unsigned"
+    ) && value
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+fn unsigned_type(value: &str) -> bool {
+    matches!(
+        value,
+        "unsigned"
+            | "unsigned char"
+            | "unsigned short"
+            | "unsigned short int"
+            | "unsigned int"
+            | "unsigned long"
+            | "unsigned long int"
+            | "unsigned long long"
+            | "unsigned long long int"
+            | "size_t"
+            | "uint8_t"
+            | "uint16_t"
+            | "uint32_t"
+            | "uint64_t"
+    )
+}
+
+type ScalarDeclaration<'tree> = (
+    String,
+    String,
+    Node<'tree, StrDoc<SupportLang>>,
+    Option<Node<'tree, StrDoc<SupportLang>>>,
+);
+
+fn scalar_declaration<'tree>(
+    call: &Node<'tree, StrDoc<SupportLang>>,
+    value: &str,
+) -> Option<ScalarDeclaration<'tree>> {
+    let (declaration, declared) = declarator_at(call, value)?;
+    if declared.dfs().any(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "pointer_declarator" | "array_declarator" | "function_declarator"
+        )
+    }) {
+        return None;
+    }
+    let source_type = declaration
+        .field("type")
+        .map(|node| normalize_type(node.text().as_ref()))
+        .unwrap_or_else(|| declaration_prefix_type(&declaration, &declared));
+    if source_type.split_whitespace().all(|part| {
+        matches!(
+            part,
+            "signed" | "unsigned" | "char" | "short" | "int" | "long"
+        )
+    }) {
+        return Some((source_type.clone(), source_type, declaration, None));
+    }
+    let root = call.ancestors().last()?;
+    let mut resolved = source_type.clone();
+    let mut definition = None;
+    for _ in 0..8 {
+        let aliases = root
+            .dfs()
+            .filter(|node| {
+                matches!(
+                    node.kind().as_ref(),
+                    "type_definition" | "alias_declaration"
+                ) && visible_declaration(node, call)
+                    && node
+                        .field("name")
+                        .or_else(|| node.field("declarator"))
+                        .is_some_and(|name| name.text().trim() == resolved)
+            })
+            .collect::<Vec<_>>();
+        if aliases.is_empty() {
+            return Some((source_type, resolved, declaration, definition));
+        }
+        let targets = aliases
+            .iter()
+            .filter_map(|alias| {
+                alias
+                    .field("type")
+                    .map(|node| normalize_type(node.text().as_ref()))
+            })
+            .collect::<Vec<_>>();
+        if targets.len() != aliases.len() || targets.iter().any(|target| target != &targets[0]) {
+            return None;
+        }
+        resolved = targets[0].clone();
+        definition = aliases.last().cloned();
+    }
+    None
+}
+
+pub(super) fn declarator_at<'tree>(
+    call: &Node<'tree, StrDoc<SupportLang>>,
+    value: &str,
+) -> Option<(
+    Node<'tree, StrDoc<SupportLang>>,
+    Node<'tree, StrDoc<SupportLang>>,
+)> {
     let scope = call.ancestors().find(|node| {
         matches!(
             node.kind().as_ref(),
@@ -280,61 +434,7 @@ fn signed_declaration<'tree>(
             };
             (declarator_identifier(&declared).as_deref() == Some(value)).then_some(declared)
         })?;
-    if declared.dfs().any(|node| {
-        matches!(
-            node.kind().as_ref(),
-            "pointer_declarator" | "array_declarator" | "function_declarator"
-        )
-    }) {
-        return None;
-    }
-    let source_type = declaration
-        .field("type")
-        .map(|node| normalize_type(node.text().as_ref()))
-        .unwrap_or_else(|| declaration_prefix_type(&declaration, &declared));
-    if source_type.split_whitespace().all(|part| {
-        matches!(
-            part,
-            "signed" | "unsigned" | "char" | "short" | "int" | "long"
-        )
-    }) {
-        return signed_type(&source_type).map(|nominal| (source_type, nominal, None));
-    }
-    let root = call.ancestors().last()?;
-    let mut resolved = source_type.clone();
-    let mut definition = None;
-    for _ in 0..8 {
-        let aliases = root
-            .dfs()
-            .filter(|node| {
-                matches!(
-                    node.kind().as_ref(),
-                    "type_definition" | "alias_declaration"
-                ) && visible_declaration(node, call)
-                    && node
-                        .field("name")
-                        .or_else(|| node.field("declarator"))
-                        .is_some_and(|name| name.text().trim() == resolved)
-            })
-            .collect::<Vec<_>>();
-        if aliases.is_empty() {
-            return signed_type(&resolved).map(|nominal| (source_type, nominal, definition));
-        }
-        let targets = aliases
-            .iter()
-            .filter_map(|alias| {
-                alias
-                    .field("type")
-                    .map(|node| normalize_type(node.text().as_ref()))
-            })
-            .collect::<Vec<_>>();
-        if targets.len() != aliases.len() || targets.iter().any(|target| target != &targets[0]) {
-            return None;
-        }
-        resolved = targets[0].clone();
-        definition = aliases.last().cloned();
-    }
-    None
+    Some((declaration, declared))
 }
 
 fn declarator_identifier(node: &Node<'_, StrDoc<SupportLang>>) -> Option<String> {
@@ -430,7 +530,7 @@ fn nonnegative_guard<'tree>(
         })
 }
 
-fn rejecting_branch(branch: &Node<'_, StrDoc<SupportLang>>) -> bool {
+pub(super) fn rejecting_branch(branch: &Node<'_, StrDoc<SupportLang>>) -> bool {
     match branch.kind().as_ref() {
         "return_statement" | "throw_statement" => true,
         "compound_statement" => {
@@ -455,7 +555,7 @@ fn rejecting_branch(branch: &Node<'_, StrDoc<SupportLang>>) -> bool {
     }
 }
 
-fn changed_between(
+pub(super) fn changed_between(
     scope: &Node<'_, StrDoc<SupportLang>>,
     value: &str,
     start: usize,
@@ -508,7 +608,7 @@ fn exits_before(node: &Node<'_, StrDoc<SupportLang>>, end: usize) -> bool {
         })
 }
 
-fn loop_changes_after_use(
+pub(super) fn loop_changes_after_use(
     call: &Node<'_, StrDoc<SupportLang>>,
     condition: &Node<'_, StrDoc<SupportLang>>,
     value: &str,
@@ -523,7 +623,7 @@ fn loop_changes_after_use(
         .any(|node| changed_between(&node, value, call.range().end, node.range().end))
 }
 
-fn guard_bypassed(
+pub(super) fn guard_bypassed(
     scope: &Node<'_, StrDoc<SupportLang>>,
     condition: &Node<'_, StrDoc<SupportLang>>,
     call: &Node<'_, StrDoc<SupportLang>>,
@@ -558,7 +658,7 @@ fn contains(parent: &Node<'_, StrDoc<SupportLang>>, child: &Node<'_, StrDoc<Supp
     parent.range().start <= child.range().start && child.range().end <= parent.range().end
 }
 
-fn dominates_use(
+pub(super) fn dominates_use(
     statement: &Node<'_, StrDoc<SupportLang>>,
     call: &Node<'_, StrDoc<SupportLang>>,
 ) -> bool {

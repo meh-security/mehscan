@@ -15,6 +15,7 @@ all caller preconditions. A boundary names the unresolved binding or caller.
 | Buffer write/read | Destination capacity, offset, count and every relevant axis before the operation. |
 | Parser remaining input | Cursor bound and `length <= total - cursor` before the read; `cursor + length` may wrap. |
 | Fixed-layout blob | Reported source length against the exact copy extent. Allocation size is a different invariant. |
+| Subtracted copy count | The original integer's lower bound before subtraction, its promotions and conversion into the actual copy-count parameter. |
 | Ownership/lifetime | Same allocation, pointer, release family and reachable path. A failed-allocation return is not a post-allocation leak. |
 | Format string | Whether the complete format is compile-time fixed; runtime text should be a data argument or constrained as a whole format. |
 
@@ -23,3 +24,17 @@ use and its rejection terminates. Do not infer typedef widths, macro effects,
 custom deleters or caller preconditions from names. `native-call-sites` and
 `structural` are syntax navigation, not call graphs or new scan evidence;
 use them only for an exact unresolved syntax question.
+
+For a defined helper or constructor, use `definition`, `defined_copy` and
+`binding_*` captures to check the qualified implementation and source/count
+positions. A braced return can invoke a copying constructor. Its name alone
+does not establish the effect. A rejecting helper's body can establish that
+normal return implies its predicate; it need not prove termination.
+
+A protected subtraction path settles that arithmetic invariant. It does not
+prove source accessibility, allocation success, destination capacity or every
+conversion inside the helper. `member_initializers` and an unresolved-effect
+tag identify remaining applicability questions. Check those definitions when
+they could change the verdict. Also distinguish a negative count passed to a
+generic `std::copy_n` from a negative value converted into an unsigned count
+before that call; their effects differ. See the [standard copy-count semantics](https://eel.is/c++draft/alg.copy#lib:copy_n).

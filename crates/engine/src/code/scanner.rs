@@ -19,6 +19,7 @@ use crate::code::dotnet_project::DotnetProjectContext;
 use crate::code::go_context::GoProjectContext;
 use crate::code::java_context::JavaProjectContext;
 use crate::code::matcher::{ParseOutcome, ScanDependencies, scan_source};
+use crate::code::native_copy::NativeCopyProjectContext;
 use crate::code::native_drogon::DrogonProjectContext;
 use crate::code::native_invalidation::NativeInvalidationProjectContext;
 use crate::code::node_context::NodeProjectContext;
@@ -67,6 +68,7 @@ pub struct ScanProfile {
     pub go_project_context_microseconds: u128,
     pub drogon_project_context_microseconds: u128,
     pub native_invalidation_context_microseconds: u128,
+    pub native_copy_context_microseconds: u128,
     pub python_project_context_microseconds: u128,
     pub worker_count: usize,
     pub file_analysis: FileAnalysisProfile,
@@ -724,6 +726,17 @@ pub(crate) fn scan_profiled(
         "native_invalidation_context",
         native_invalidation_context_microseconds,
     );
+    let native_copy_context_started = Instant::now();
+    let native_copy_context = NativeCopyProjectContext::from_sources(prepared.iter().map(|file| {
+        (
+            file.relative.as_str(),
+            file.language,
+            file.source.as_str(),
+            &file.build_symbols,
+        )
+    }));
+    let native_copy_context_microseconds = native_copy_context_started.elapsed().as_micros();
+    trace_scan_phase("native_copy_context", native_copy_context_microseconds);
     let python_project_context_started = Instant::now();
     let python_project_context = PythonProjectContext::from_sources(
         prepared
@@ -800,6 +813,7 @@ pub(crate) fn scan_profiled(
         &go_project_context,
         &drogon_project_context,
         &native_invalidation_context,
+        &native_copy_context,
         &python_project_context,
         &rust_project_context,
         &php_project_context,
@@ -958,6 +972,7 @@ pub(crate) fn scan_profiled(
         go_project_context_microseconds,
         drogon_project_context_microseconds,
         native_invalidation_context_microseconds,
+        native_copy_context_microseconds,
         python_project_context_microseconds,
         worker_count,
         file_analysis,
@@ -983,6 +998,7 @@ fn analyze_prepared_files(
     go_project_context: &GoProjectContext,
     drogon_project_context: &DrogonProjectContext,
     native_invalidation_context: &NativeInvalidationProjectContext,
+    native_copy_context: &NativeCopyProjectContext,
     python_project_context: &PythonProjectContext,
     rust_project_context: &RustProjectContext,
     php_project_context: &super::php::PhpProjectContext,
@@ -1012,6 +1028,7 @@ fn analyze_prepared_files(
                     go_project_context,
                     drogon_project_context,
                     native_invalidation_context,
+                    native_copy_context,
                     python_project_context,
                     rust_project_context,
                     php_project_context,
@@ -1052,6 +1069,7 @@ fn analyze_prepared_files(
                                 go_project_context,
                                 drogon_project_context,
                                 native_invalidation_context,
+                                native_copy_context,
                                 python_project_context,
                                 rust_project_context,
                                 php_project_context,
@@ -1091,6 +1109,7 @@ fn scan_prepared_file(
     go_project_context: &GoProjectContext,
     drogon_project_context: &DrogonProjectContext,
     native_invalidation_context: &NativeInvalidationProjectContext,
+    native_copy_context: &NativeCopyProjectContext,
     python_project_context: &PythonProjectContext,
     rust_project_context: &RustProjectContext,
     php_project_context: &super::php::PhpProjectContext,
@@ -1122,6 +1141,7 @@ fn scan_prepared_file(
             go_project_context,
             drogon_project_context,
             native_invalidation_context,
+            native_copy_context,
             python_project_context,
             rust_project_context,
             php_project_context,
@@ -1461,6 +1481,10 @@ fn capability_name(capability: Capability) -> &'static str {
         Capability::SerializedScalarLoad => "serialized_scalar_load",
         Capability::LoadedMemoryExtent => "loaded_memory_extent",
         Capability::MemoryExtentOverflowValidation => "memory_extent_overflow_validation",
+        Capability::IntegerExtentInput => "integer_extent_input",
+        Capability::MemoryCopyContract => "memory_copy_contract",
+        Capability::SubtractedMemoryExtent => "subtracted_memory_extent",
+        Capability::MemoryExtentLowerBoundValidation => "memory_extent_lower_bound_validation",
         Capability::DecodedInputExtent => "decoded_input_extent",
         Capability::RemainingInputRead => "remaining_input_read",
         Capability::RemainingInputValidation => "remaining_input_validation",
