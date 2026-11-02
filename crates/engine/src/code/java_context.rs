@@ -12,8 +12,7 @@ use super::comments::CommentRanges;
 use super::conditional::ConditionalRegions;
 use super::context::enclosing_symbol;
 use super::java_ingress::{
-    is_bound_spring_parameter, is_spring_multipart_parameter, spring_multipart_evidence_id,
-    spring_parameter_evidence_id,
+    SpringParameterContext, spring_multipart_evidence_id, spring_parameter_evidence_id,
 };
 use super::literals::LiteralEnvironment;
 use super::reachability;
@@ -110,9 +109,31 @@ impl JavaProjectContext {
             );
             catalog_controller_calls(path, &root, &mut calls);
         }
+        let mut implementors = BTreeMap::<String, BTreeSet<String>>::new();
+        let mut method_index = BTreeMap::<_, Vec<usize>>::new();
+        if !calls.is_empty() {
+            for kind in types.iter().filter(|kind| !kind.interface) {
+                for base in &kind.bases {
+                    implementors
+                        .entry(base.clone())
+                        .or_default()
+                        .insert(kind.name.clone());
+                }
+            }
+            for (index, method) in methods.iter().enumerate() {
+                method_index
+                    .entry((
+                        method.owner.clone(),
+                        method.name.clone(),
+                        method.parameters.len(),
+                    ))
+                    .or_default()
+                    .push(index);
+            }
+        }
         let mut handoffs = calls
             .into_iter()
-            .filter_map(|call| resolve_call(call, &types, &methods))
+            .filter_map(|call| resolve_call(call, &implementors, &method_index, &methods))
             .collect::<Vec<_>>();
         handoffs.sort_by(|left, right| {
             left.target_path
@@ -526,20 +547,21 @@ fn catalog_controller_calls(
     root: &Node<'_, StrDoc<SupportLang>>,
     calls: &mut Vec<PendingCall>,
 ) {
+    let parameter_context = SpringParameterContext::new(root);
     for method in root
         .dfs()
         .filter(|node| node.kind().as_ref() == "method_declaration")
     {
         let source_parameters = method_parameter_nodes(&method)
             .into_iter()
-            .filter(|parameter| is_bound_spring_parameter(root, &method, parameter))
+            .filter(|parameter| parameter_context.is_bound_spring_parameter(&method, parameter))
             .filter_map(|parameter| {
                 let name = parameter.field("name")?;
                 Some((
                     name.text().into_owned(),
                     (
                         location(path, &name),
-                        is_spring_multipart_parameter(root, &method, &parameter),
+                        parameter_context.is_spring_multipart_parameter(&method, &parameter),
                     ),
                 ))
             })
@@ -600,25 +622,24 @@ fn catalog_controller_calls(
 
 fn resolve_call(
     call: PendingCall,
-    types: &[TypeRecord],
+    implementors: &BTreeMap<String, BTreeSet<String>>,
+    method_index: &BTreeMap<(String, String, usize), Vec<usize>>,
     methods: &[MethodRecord],
 ) -> Option<ParameterHandoff> {
-    let implementors = types
+    let owners = implementors
+        .get(&call.receiver_type)
+        .cloned()
+        .unwrap_or_else(|| BTreeSet::from([call.receiver_type.clone()]));
+    let candidates = owners
         .iter()
-        .filter(|kind| !kind.interface && kind.bases.contains(&call.receiver_type))
-        .map(|kind| kind.name.clone())
-        .collect::<BTreeSet<_>>();
-    let owners = if implementors.is_empty() {
-        BTreeSet::from([call.receiver_type.clone()])
-    } else {
-        implementors
-    };
-    let candidates = methods
-        .iter()
-        .filter(|method| owners.contains(&method.owner))
-        .filter(|method| {
-            method.name == call.method_name && method.parameters.len() == call.argument_count
+        .flat_map(|owner| {
+            method_index
+                .get(&(owner.clone(), call.method_name.clone(), call.argument_count))
+                .into_iter()
+                .flatten()
+                .map(|index| &methods[*index])
         })
+        .take(2)
         .collect::<Vec<_>>();
     if candidates.len() != 1 {
         return None;

@@ -751,9 +751,9 @@ pub(crate) fn is_duplicate_copy_source(item: &Evidence, evidence: &[Evidence]) -
         })
 }
 
-fn dangerous_json_settings(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    use_site: &Node<'_, StrDoc<SupportLang>>,
+fn dangerous_json_settings<'tree>(
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    use_site: &Node<'tree, StrDoc<SupportLang>>,
     settings: &Node<'_, StrDoc<SupportLang>>,
 ) -> bool {
     let value = compact(settings.text().as_ref());
@@ -763,8 +763,9 @@ fn dangerous_json_settings(
     let Some(name) = simple_identifier(&value) else {
         return false;
     };
-    let scope = scope_range(use_site, root);
-    let mut states = root
+    let scope_root = scope_node(use_site, root);
+    let scope = scope_root.range();
+    let mut states = scope_root
         .dfs()
         .filter(|node| is_prior_in_scope(node, use_site, &scope))
         .filter_map(|node| match node.kind().as_ref() {
@@ -810,13 +811,14 @@ fn dangerous_type_name_handling(text: &str) -> bool {
         .any(|value| text.contains(&format!("TypeNameHandling=TypeNameHandling.{value}")))
 }
 
-fn json_serializer_is_dangerous(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    use_site: &Node<'_, StrDoc<SupportLang>>,
+fn json_serializer_is_dangerous<'tree>(
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    use_site: &Node<'tree, StrDoc<SupportLang>>,
     receiver: &str,
 ) -> bool {
-    let scope = scope_range(use_site, root);
-    let mut states = root
+    let scope_root = scope_node(use_site, root);
+    let scope = scope_root.range();
+    let mut states = scope_root
         .dfs()
         .filter(|node| is_prior_in_scope(node, use_site, &scope))
         .filter_map(|node| match node.kind().as_ref() {
@@ -863,13 +865,14 @@ fn json_serializer_is_dangerous(
     states.last().is_some_and(|(_, dangerous)| *dangerous)
 }
 
-fn xml_document_resolver_state(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    use_site: &Node<'_, StrDoc<SupportLang>>,
+fn xml_document_resolver_state<'tree>(
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    use_site: &Node<'tree, StrDoc<SupportLang>>,
     receiver: &str,
 ) -> Option<bool> {
-    let scope = scope_range(use_site, root);
-    let mut states = root
+    let scope_root = scope_node(use_site, root);
+    let scope = scope_root.range();
+    let mut states = scope_root
         .dfs()
         .filter(|node| is_prior_in_scope(node, use_site, &scope))
         .filter_map(|node| {
@@ -899,9 +902,9 @@ fn xml_document_resolver_state(
     states.pop().map(|(_, enabled)| enabled)
 }
 
-fn dangerous_xml_settings(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    use_site: &Node<'_, StrDoc<SupportLang>>,
+fn dangerous_xml_settings<'tree>(
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    use_site: &Node<'tree, StrDoc<SupportLang>>,
     settings: &Node<'_, StrDoc<SupportLang>>,
 ) -> bool {
     let value = compact(settings.text().as_ref());
@@ -911,8 +914,9 @@ fn dangerous_xml_settings(
     let Some(name) = simple_identifier(&value) else {
         return false;
     };
-    let scope = scope_range(use_site, root);
-    let mut events = root
+    let scope_root = scope_node(use_site, root);
+    let scope = scope_root.range();
+    let mut events = scope_root
         .dfs()
         .filter(|node| is_prior_in_scope(node, use_site, &scope))
         .filter_map(|node| {
@@ -996,9 +1000,9 @@ fn xml_settings_are_dangerous(text: &str, variable: Option<&str>) -> bool {
     dtd && resolver
 }
 
-fn powershell_script_is_invoked(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    add_script: &Node<'_, StrDoc<SupportLang>>,
+fn powershell_script_is_invoked<'tree>(
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    add_script: &Node<'tree, StrDoc<SupportLang>>,
     callee: &str,
 ) -> bool {
     if add_script
@@ -1049,9 +1053,10 @@ fn process_start_info_command<'tree>(
     }
     let argument_text = argument.text();
     let name = simple_identifier(argument_text.trim())?;
-    let scope = scope_range(use_site, root);
+    let scope_root = scope_node(use_site, root);
+    let scope = scope_root.range();
     let before = use_site.range().start;
-    let mut candidates = root
+    let mut candidates = scope_root
         .dfs()
         .filter(|node| {
             scope.start <= node.range().start
@@ -1103,8 +1108,9 @@ fn process_instance_start_info<'tree>(
     if !receiver_has_short_type(root, use_site, receiver, "Process") {
         return None;
     }
-    let scope = scope_range(use_site, root);
-    let mut candidates = root
+    let scope_root = scope_node(use_site, root);
+    let scope = scope_root.range();
+    let mut candidates = scope_root
         .dfs()
         .filter(|node| is_prior_in_scope(node, use_site, &scope))
         .filter_map(|node| {
@@ -1279,9 +1285,10 @@ fn process_start_info_property<'tree>(
     }
     let start_info_text = start_info.text();
     let name = simple_identifier(start_info_text.trim())?;
-    let scope = scope_range(use_site, root);
+    let scope_root = scope_node(use_site, root);
+    let scope = scope_root.range();
     let before = use_site.range().start;
-    let mut candidates = root
+    let mut candidates = scope_root
         .dfs()
         .filter(|node| {
             scope.start <= node.range().start
@@ -1335,8 +1342,9 @@ fn argument_list_values<'tree>(
 ) -> Option<Vec<Node<'tree, StrDoc<SupportLang>>>> {
     let start_info_text = start_info.text();
     let name = simple_identifier(start_info_text.trim())?;
-    let scope = scope_range(use_site, root);
-    let mut values = root
+    let scope_root = scope_node(use_site, root);
+    let scope = scope_root.range();
+    let mut values = scope_root
         .dfs()
         .filter(|node| is_prior_in_scope(node, use_site, &scope))
         .filter_map(|node| {
@@ -1386,14 +1394,15 @@ fn file_name_initializer<'tree>(
     })
 }
 
-fn receiver_has_short_type(
-    root: &Node<'_, StrDoc<SupportLang>>,
-    use_site: &Node<'_, StrDoc<SupportLang>>,
+fn receiver_has_short_type<'tree>(
+    root: &Node<'tree, StrDoc<SupportLang>>,
+    use_site: &Node<'tree, StrDoc<SupportLang>>,
     receiver: &str,
     expected: &str,
 ) -> bool {
-    let scope = scope_range(use_site, root);
-    root.dfs().any(|node| {
+    let scope_root = scope_node(use_site, root);
+    let scope = scope_root.range();
+    scope_root.dfs().any(|node| {
         node.range().start < use_site.range().start
             && scope.start <= node.range().start
             && node.range().end <= scope.end
@@ -1438,7 +1447,20 @@ fn scope_suffix(
     root: &Node<'_, StrDoc<SupportLang>>,
     node: &Node<'_, StrDoc<SupportLang>>,
 ) -> String {
-    slice_root(root, node.range().end..scope_range(node, root).end)
+    let end = node
+        .ancestors()
+        .find(|ancestor| {
+            matches!(
+                ancestor.kind().as_ref(),
+                "method_declaration"
+                    | "constructor_declaration"
+                    | "local_function_statement"
+                    | "lambda_expression"
+                    | "anonymous_method_expression"
+            )
+        })
+        .map_or(root.range().end, |ancestor| ancestor.range().end);
+    slice_root(root, node.range().end..end)
 }
 
 fn slice_root(root: &Node<'_, StrDoc<SupportLang>>, range: Range<usize>) -> String {
@@ -1449,10 +1471,10 @@ fn slice_root(root: &Node<'_, StrDoc<SupportLang>>, range: Range<usize>) -> Stri
     text.get(start..end).unwrap_or_default().to_string()
 }
 
-fn scope_range(
-    node: &Node<'_, StrDoc<SupportLang>>,
-    root: &Node<'_, StrDoc<SupportLang>>,
-) -> Range<usize> {
+fn scope_node<'tree>(
+    node: &Node<'tree, StrDoc<SupportLang>>,
+    root: &Node<'tree, StrDoc<SupportLang>>,
+) -> Node<'tree, StrDoc<SupportLang>> {
     node.ancestors()
         .find(|ancestor| {
             matches!(
@@ -1464,8 +1486,7 @@ fn scope_range(
                     | "anonymous_method_expression"
             )
         })
-        .map(|ancestor| ancestor.range())
-        .unwrap_or_else(|| root.range())
+        .unwrap_or_else(|| root.clone())
 }
 
 fn short_type(text: &str) -> &str {

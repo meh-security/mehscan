@@ -262,7 +262,7 @@ pub(super) fn accept<'a>(
     if rule == "kotlin-exposed-sql-exec" {
         return exposed::accepts(root, node);
     }
-    if ktor::accepts(root, rule, node) {
+    if ktor::accepts_with_imports(root, imports, rule, node) {
         return true;
     }
     if rule == "kotlin-url-connection-consumer" && node.kind().as_ref() == "navigation_expression" {

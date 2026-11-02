@@ -646,8 +646,9 @@ struct Import {
 pub(super) struct PhpContext<'a> {
     root: PhpNode<'a>,
     imports: Vec<Import>,
-    declarations: Vec<(String, bool, Range<usize>)>,
-    namespaced_scopes: Vec<Range<usize>>,
+    declarations: BTreeMap<(String, bool), BTreeSet<(usize, usize)>>,
+    global_declarations: BTreeSet<(String, bool)>,
+    namespaced_scopes: BTreeSet<(usize, usize)>,
     included: Vec<IncludedDatabase>,
     json_candidates: BTreeSet<(usize, usize, String)>,
     constants: std::sync::Arc<value::Constants>,
@@ -701,7 +702,7 @@ impl<'a> PhpContext<'a> {
                 });
             }
         }
-        let declarations = root
+        let declarations: Vec<_> = root
             .dfs()
             .filter_map(|node| {
                 let function = match node.kind().as_ref() {
@@ -716,17 +717,31 @@ impl<'a> PhpContext<'a> {
                 ))
             })
             .collect();
-        let namespaced_scopes = root
+        let namespaced_scopes: BTreeSet<_> = root
             .dfs()
             .filter(|node| {
                 node.kind().as_ref() == "namespace_definition" && node.field("name").is_some()
             })
-            .map(|node| namespace_scope(&node, root))
+            .map(|node| {
+                let scope = namespace_scope(&node, root);
+                (scope.start, scope.end)
+            })
             .collect();
+        let mut declaration_scopes = BTreeMap::<_, BTreeSet<_>>::new();
+        let mut global_declarations = BTreeSet::new();
+        for (name, function, scope) in declarations {
+            let key = (name, function);
+            let scope = (scope.start, scope.end);
+            if !namespaced_scopes.contains(&scope) {
+                global_declarations.insert(key.clone());
+            }
+            declaration_scopes.entry(key).or_default().insert(scope);
+        }
         let mut context = Self {
             root: root.clone(),
             imports,
-            declarations,
+            declarations: declaration_scopes,
+            global_declarations,
             namespaced_scopes,
             included: Vec::new(),
             json_candidates: BTreeSet::new(),
@@ -1212,9 +1227,7 @@ impl<'a> PhpContext<'a> {
     fn sdk_class_exact(&self, name: &PhpNode<'a>, canonical: &str) -> bool {
         let observed = name.text().trim().to_ascii_lowercase();
         let scope = namespace_scope(name, &self.root);
-        if self.declarations.iter().any(|(declared, function, owner)| {
-            !function && *owner == scope && *declared == observed
-        }) {
+        if self.declaration_in_scope(&observed, false, &scope) {
             return false;
         }
         if observed.starts_with('\\') {
@@ -1340,10 +1353,7 @@ impl<'a> PhpContext<'a> {
     fn resolve(&self, name: &PhpNode<'a>, function: bool) -> Option<String> {
         let observed = name.text().trim().to_ascii_lowercase();
         let scope = namespace_scope(name, &self.root);
-        let collision = self
-            .declarations
-            .iter()
-            .any(|(name, kind, owner)| *kind == function && *owner == scope && *name == observed);
+        let collision = self.declaration_in_scope(&observed, function, &scope);
         if collision {
             return None;
         };
@@ -1781,13 +1791,18 @@ impl<'a> PhpContext<'a> {
     }
 
     fn namespaced_scope(&self, scope: &Range<usize>) -> bool {
-        self.namespaced_scopes.contains(scope)
+        self.namespaced_scopes.contains(&(scope.start, scope.end))
+    }
+
+    fn declaration_in_scope(&self, name: &str, function: bool, scope: &Range<usize>) -> bool {
+        self.declarations
+            .get(&(name.to_string(), function))
+            .is_some_and(|scopes| scopes.contains(&(scope.start, scope.end)))
     }
 
     fn global_shadow(&self, canonical: &str, function: bool) -> bool {
-        self.declarations.iter().any(|(name, kind, scope)| {
-            *kind == function && name == canonical && !self.namespaced_scope(scope)
-        })
+        self.global_declarations
+            .contains(&(canonical.to_string(), function))
     }
 
     fn native_database_receiver(

@@ -120,6 +120,19 @@ fn builders<'a>(
     evidence: &mut Vec<Evidence>,
 ) {
     let calls = root.dfs().filter(|n| is_call(n)).collect::<Vec<_>>();
+    let mut calls_by_range = BTreeMap::new();
+    let mut calls_by_start = BTreeMap::<_, Vec<usize>>::new();
+    let mut calls_by_scope = BTreeMap::<_, Vec<usize>>::new();
+    for (index, call) in calls.iter().enumerate() {
+        calls_by_range
+            .entry((call.range().start, call.range().end))
+            .or_insert(call);
+        calls_by_start
+            .entry(call.range().start)
+            .or_default()
+            .push(index);
+        calls_by_scope.entry(scope(call)).or_default().push(index);
+    }
     let producers = evidence
         .iter()
         .enumerate()
@@ -127,10 +140,8 @@ fn builders<'a>(
             if e.kind != EvidenceKind::Sink || e.capability != Capability::ProcessExecution {
                 return None;
             }
-            let n = calls.iter().find(|n| {
-                n.range().start == e.location.start.byte_offset
-                    && n.range().end == e.location.end.byte_offset
-            })?;
+            let n =
+                *calls_by_range.get(&(e.location.start.byte_offset, e.location.end.byte_offset))?;
             let method = method(n)?;
             let builder = match language {
                 Language::Java => {
@@ -152,6 +163,18 @@ fn builders<'a>(
             builder.then(|| (i, n.clone()))
         })
         .collect::<Vec<_>>();
+    let mut producers_by_range = BTreeMap::<_, Vec<usize>>::new();
+    let mut producers_by_scope = BTreeMap::<_, Vec<usize>>::new();
+    for (index, (_, producer)) in producers.iter().enumerate() {
+        producers_by_range
+            .entry((producer.range().start, producer.range().end))
+            .or_default()
+            .push(index);
+        producers_by_scope
+            .entry(scope(producer))
+            .or_default()
+            .push(index);
+    }
     let mut consumed = BTreeSet::new();
     let mut discarded = BTreeSet::new();
     let mut launches = Vec::new();
@@ -179,8 +202,21 @@ fn builders<'a>(
         } else {
             None
         };
-        let mut inputs = producers
+        let mut candidate_indices = BTreeSet::new();
+        receiver_chain_producers(&receiver, &producers_by_range, &mut candidate_indices);
+        if let Some((_, value)) = &origin {
+            receiver_chain_producers(value, &producers_by_range, &mut candidate_indices);
+            candidate_indices.extend(
+                producers_by_scope
+                    .get(&scope(terminal))
+                    .into_iter()
+                    .flatten()
+                    .copied(),
+            );
+        }
+        let mut inputs = candidate_indices
             .iter()
+            .map(|index| &producers[*index])
             .filter(|(_, n)| {
                 let inline = receiver_chain_contains(&receiver, n);
                 let local = origin.as_ref().is_some_and(|(b, value)| {
@@ -315,7 +351,21 @@ fn builders<'a>(
             .context
             .literals
             .retain(|role, _| !role.starts_with("argument_literal_"));
-        for call in &calls {
+        let mut configuration_calls = calls_by_start
+            .range(receiver.range().start..=receiver.range().end)
+            .flat_map(|(_, indices)| indices.iter().copied())
+            .filter(|index| contains(&receiver, &calls[*index]))
+            .collect::<BTreeSet<_>>();
+        if origin.is_some() {
+            configuration_calls.extend(
+                calls_by_scope
+                    .get(&scope(terminal))
+                    .into_iter()
+                    .flatten()
+                    .copied(),
+            );
+        }
+        for call in configuration_calls.iter().map(|index| &calls[*index]) {
             let Some(r) = call_receiver(call) else {
                 continue;
             };
@@ -454,6 +504,18 @@ fn builders<'a>(
                 .push("process-invocation:unresolved-execution".into());
         }
     }
+    let mut launches_by_producer = BTreeMap::<_, Vec<_>>::new();
+    for launch in &launches {
+        let mut seen = BTreeSet::new();
+        for id in &launch.related_evidence {
+            if seen.insert(id) {
+                launches_by_producer
+                    .entry(id.as_str())
+                    .or_default()
+                    .push(launch.id.clone());
+            }
+        }
+    }
     for i in consumed {
         evidence[i].kind = EvidenceKind::Resource;
         evidence[i]
@@ -461,10 +523,11 @@ fn builders<'a>(
             .push("process-context:consumed-builder".into());
         let id = evidence[i].id.clone();
         evidence[i].related_evidence.extend(
-            launches
-                .iter()
-                .filter(|l| l.related_evidence.contains(&id))
-                .map(|l| l.id.clone()),
+            launches_by_producer
+                .get(id.as_str())
+                .into_iter()
+                .flatten()
+                .cloned(),
         );
     }
     // A returned local builder owns one unresolved factory question. Retain
@@ -609,6 +672,21 @@ fn receiver_chain_contains(a: &N<'_>, b: &N<'_>) -> bool {
         && method(a).is_some_and(|m| configuration_method(&m))
         && call_receiver(a).is_some_and(|r| receiver_chain_contains(&r, b))
 }
+fn receiver_chain_producers(
+    node: &N<'_>,
+    producers: &BTreeMap<(usize, usize), Vec<usize>>,
+    candidates: &mut BTreeSet<usize>,
+) {
+    if let Some(indices) = producers.get(&(node.range().start, node.range().end)) {
+        candidates.extend(indices.iter().copied());
+    }
+    if is_call(node)
+        && method(node).is_some_and(|m| configuration_method(&m))
+        && let Some(receiver) = call_receiver(node)
+    {
+        receiver_chain_producers(&receiver, producers, candidates);
+    }
+}
 fn is_call(n: &N<'_>) -> bool {
     matches!(
         n.kind().as_ref(),
@@ -671,7 +749,10 @@ fn binding<'a>(n: &N<'a>) -> Option<(N<'a>, String)> {
         })
 }
 fn local_initializer<'a>(root: &N<'a>, site: &N<'a>) -> Option<(N<'a>, N<'a>)> {
-    let candidates = root
+    let owner = scope_node(site);
+    let candidates = owner
+        .as_ref()
+        .unwrap_or(root)
         .dfs()
         .filter_map(|b| {
             let (name, value) = match b.kind().as_ref() {

@@ -4265,10 +4265,37 @@ fn smallest_node_containing<'tree>(
     }
     let mut current = root.clone();
     loop {
-        let next = current
-            .children()
-            .filter(|child| contains_range(child.range(), range.clone()))
-            .min_by_key(|child| child.range().end - child.range().start);
+        // Sibling byte ranges are ordered. Skip siblings ending before the
+        // requested range instead of walking every function in the file for
+        // every operand. Inspect ties at a boundary (including missing nodes)
+        // to retain the original narrowest/first-child selection.
+        let mut low = 0;
+        let mut high = current.children().len();
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let Some(child) = current.child(middle) else {
+                return Some(current);
+            };
+            if child.range().end < range.end {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        let mut next = None;
+        let mut width = usize::MAX;
+        while let Some(child) = current.child(low) {
+            let child_range = child.range();
+            if child_range.start > range.start {
+                break;
+            }
+            let child_width = child_range.end - child_range.start;
+            if contains_range(child_range, range.clone()) && child_width < width {
+                width = child_width;
+                next = Some(child);
+            }
+            low += 1;
+        }
         let Some(next) = next else {
             return Some(current);
         };
@@ -5101,4 +5128,94 @@ fn is_csharp_crypto_policy(evidence: &Evidence) -> bool {
         .provenance
         .engine
         .starts_with("mehscan csharp-crypto-policy ")
+}
+
+#[cfg(test)]
+mod range_lookup_tests {
+    use super::*;
+    use ast_grep_core::tree_sitter::LanguageExt;
+
+    #[test]
+    fn indexed_operand_lookup_preserves_boundaries_and_recovered_nodes() {
+        for (language, source) in [
+            (SupportLang::C, "void f(){run(x);} void g(){run(y);}"),
+            (SupportLang::Cpp, "void f(){run(x);} void g(){run(y);}"),
+            (
+                SupportLang::CSharp,
+                "class C { void F(){Run(x);} void G(){Run(y);} }",
+            ),
+            (
+                SupportLang::Go,
+                "package p\nfunc f(){run(x)}\nfunc g(){run(y)}",
+            ),
+            (
+                SupportLang::Java,
+                "class C { void f(){run(x);} void g(){run(y);} }",
+            ),
+            (
+                SupportLang::JavaScript,
+                "function f(){run(x)} function g(){run(y)}",
+            ),
+            (
+                SupportLang::TypeScript,
+                "function f(x:string){run(x)} function g(){run(y)}",
+            ),
+            (
+                SupportLang::Tsx,
+                "const f=()=> <span>{x}</span>; const g=()=>run(y);",
+            ),
+            (
+                SupportLang::Python,
+                "def f():\n run(x)\ndef g():\n run(y)\n",
+            ),
+            (SupportLang::Rust, "fn f(){run(x);} fn g(){run(y);}"),
+            (
+                SupportLang::Php,
+                "<?php function f(){run($x);} function g(){run($y);}",
+            ),
+            (SupportLang::Kotlin, "fun f(){run(x)}\nfun g(){run(y)}"),
+            (
+                SupportLang::JavaScript,
+                "function f( { run(x); }\nconst g = (",
+            ),
+        ] {
+            let ast = language.ast_grep(source);
+            let root = ast.root();
+            let mut ranges = root
+                .dfs()
+                .map(|node| (node.range().start, node.range().end))
+                .collect::<BTreeSet<_>>();
+            for offset in 0..=source.len() {
+                ranges.insert((offset, offset));
+                if offset < source.len() {
+                    ranges.insert((offset, offset + 1));
+                }
+            }
+            ranges.insert((0, source.len() + 1));
+            for (start, end) in ranges {
+                let range = start..end;
+                let expected = if contains_range(root.range(), range.clone()) {
+                    let mut current = root.clone();
+                    loop {
+                        let next = current
+                            .children()
+                            .filter(|child| contains_range(child.range(), range.clone()))
+                            .min_by_key(|child| child.range().len());
+                        match next {
+                            Some(next) => current = next,
+                            None => break Some(current),
+                        }
+                    }
+                } else {
+                    None
+                };
+                let actual = smallest_node_containing(&root, range.clone());
+                assert_eq!(
+                    actual.map(|node| (node.range(), node.kind().into_owned())),
+                    expected.map(|node| (node.range(), node.kind().into_owned())),
+                    "{language:?} {range:?}"
+                );
+            }
+        }
+    }
 }

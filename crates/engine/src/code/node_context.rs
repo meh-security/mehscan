@@ -1532,8 +1532,11 @@ impl NodeProjectContext {
         let Some(module) = module_path(path) else {
             return;
         };
+        let commonjs_methods = commonjs_methods_at_evidence(root, evidence);
         for item in evidence.iter_mut() {
-            let symbol = enclosing_commonjs_method(root, item.location.start.byte_offset)
+            let symbol = commonjs_methods
+                .get(&item.location.start.byte_offset)
+                .cloned()
                 .or_else(|| item.enclosing_symbol.clone());
             let Some(symbol) = symbol else { continue };
             let handler = format!("{module}.{symbol}");
@@ -1939,26 +1942,47 @@ fn request_origin_for_argument<'tree>(
         })
 }
 
-fn enclosing_commonjs_method(
+fn commonjs_methods_at_evidence(
     root: &Node<'_, StrDoc<SupportLang>>,
-    byte_offset: usize,
-) -> Option<String> {
-    root.dfs()
+    evidence: &[Evidence],
+) -> BTreeMap<usize, String> {
+    let mut symbols = evidence
+        .iter()
+        .map(|item| (item.location.start.byte_offset, None::<String>))
+        .collect::<BTreeMap<_, _>>();
+    if symbols.is_empty() {
+        return BTreeMap::new();
+    }
+    for assignment in root
+        .dfs()
         .filter(|node| node.kind().as_ref() == "assignment_expression")
-        .filter_map(|assignment| {
-            let left = assignment.field("left")?;
-            let right = assignment.field("right")?;
-            if !is_function_node(&right)
-                || !(right.range().start <= byte_offset && byte_offset <= right.range().end)
+    {
+        let (Some(left), Some(right)) = (assignment.field("left"), assignment.field("right"))
+        else {
+            continue;
+        };
+        if !is_function_node(&right) {
+            continue;
+        }
+        let left = compact(left.text().as_ref());
+        let Some(name) = left.strip_prefix("this.").and_then(simple_identifier) else {
+            continue;
+        };
+        // Keep the original shortest-name selection and first DFS match on ties,
+        // including the inclusive end boundary. Visit only requested locations.
+        for (_, symbol) in symbols.range_mut(right.range().start..=right.range().end) {
+            if symbol
+                .as_ref()
+                .is_none_or(|current| name.len() < current.len())
             {
-                return None;
+                *symbol = Some(name.to_string());
             }
-            let left = compact(left.text().as_ref());
-            left.strip_prefix("this.")
-                .and_then(simple_identifier)
-                .map(str::to_string)
-        })
-        .min_by_key(String::len)
+        }
+    }
+    symbols
+        .into_iter()
+        .filter_map(|(offset, symbol)| symbol.map(|symbol| (offset, symbol)))
+        .collect()
 }
 
 pub(crate) fn classify_runtime_environment(

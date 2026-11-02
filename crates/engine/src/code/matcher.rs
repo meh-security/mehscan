@@ -199,11 +199,27 @@ pub(crate) fn scan_source(
     let php_context = (language == Language::Php)
         .then(|| super::php::PhpContext::build(&root).with_project(path, php_project_context));
     let mut seen = BTreeSet::new();
+    let trace_summary_passes = std::env::var_os("MEHSCAN_TRACE_PASSES").is_some();
+    let start_summary_pass = || trace_summary_passes.then(Instant::now);
+    let finish_summary_pass = |name: &str, started: Option<Instant>| {
+        if let Some(started) = started {
+            let microseconds = started.elapsed().as_micros();
+            if microseconds >= 1000 {
+                eprintln!(
+                    "mehscan_pass {}",
+                    serde_json::json!({
+                        "path": path, "language": language, "pass": name, "microseconds": microseconds,
+                    })
+                );
+            }
+        }
+    };
     let declarative_started = Instant::now();
     let mut declarative_patterns_considered = 0;
     let mut declarative_patterns_skipped = 0;
     let mut extended_symbols = None;
     for compiled_rule in rules {
+        let rule_started = start_summary_pass();
         for compiled_pattern in &compiled_rule.patterns {
             declarative_patterns_considered += 1;
             // PHP keywords and function names are case-insensitive. The AST
@@ -710,6 +726,7 @@ pub(crate) fn scan_source(
                 });
             }
         }
+        finish_summary_pass(&compiled_rule.rule.id, rule_started);
     }
     let declarative_rules_microseconds = declarative_started.elapsed().as_micros();
 
@@ -817,22 +834,6 @@ pub(crate) fn scan_source(
     }
     let symbol_rules_microseconds = symbol_started.elapsed().as_micros();
     let summaries_started = Instant::now();
-
-    let trace_summary_passes = std::env::var_os("MEHSCAN_TRACE_PASSES").is_some();
-    let start_summary_pass = || trace_summary_passes.then(Instant::now);
-    let finish_summary_pass = |name: &str, started: Option<Instant>| {
-        if let Some(started) = started {
-            let microseconds = started.elapsed().as_micros();
-            if microseconds >= 1000 {
-                eprintln!(
-                    "mehscan_pass {}",
-                    serde_json::json!({
-                        "path": path, "language": language, "pass": name, "microseconds": microseconds,
-                    })
-                );
-            }
-        }
-    };
 
     if let Some(imports) = kotlin_imports.as_ref() {
         super::kotlin::sources(
