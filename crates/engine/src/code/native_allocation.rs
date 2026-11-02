@@ -82,15 +82,31 @@ pub(crate) fn add_native_allocation_observations<'tree>(
         }
     }
 
-    for declaration in root
-        .dfs()
-        .filter(|node| node.kind().as_ref() == "declaration")
+    let mut assignments: BTreeMap<Option<String>, Vec<Node<'tree, StrDoc<SupportLang>>>> =
+        BTreeMap::new();
+    let mut calls: BTreeMap<Option<String>, Vec<Node<'tree, StrDoc<SupportLang>>>> =
+        BTreeMap::new();
+    let mut declarations = Vec::new();
+    for node in root.dfs() {
+        match node.kind().as_ref() {
+            "assignment_expression" => assignments
+                .entry(enclosing_symbol(&node))
+                .or_default()
+                .push(node),
+            "call_expression" => calls.entry(enclosing_symbol(&node)).or_default().push(node),
+            "declaration" => declarations.push(node),
+            _ => {}
+        }
+    }
+    for declaration in declarations
+        .into_iter()
         .filter(|node| !comments.is_in_comment(node.range()))
     {
         let Some(local) = size_local(&declaration) else {
             continue;
         };
-        let Some(calculation) = allocation_calculation(root, &declaration, &local) else {
+        let Some(calculation) = allocation_calculation(&assignments, &calls, &declaration, &local)
+        else {
             continue;
         };
         evidence.push(allocation_evidence(
@@ -209,16 +225,17 @@ fn size_local(declaration: &Node<'_, StrDoc<SupportLang>>) -> Option<String> {
 }
 
 fn allocation_calculation<'tree>(
-    root: &Node<'tree, StrDoc<SupportLang>>,
+    assignments: &BTreeMap<Option<String>, Vec<Node<'tree, StrDoc<SupportLang>>>>,
+    calls: &BTreeMap<Option<String>, Vec<Node<'tree, StrDoc<SupportLang>>>>,
     declaration: &Node<'tree, StrDoc<SupportLang>>,
     local: &str,
 ) -> Option<AllocationCalculation<'tree>> {
     let symbol = enclosing_symbol(declaration);
-    let mut assignments = root
-        .dfs()
-        .filter(|node| node.kind().as_ref() == "assignment_expression")
+    let mut assignments = assignments
+        .get(&symbol)?
+        .iter()
+        .cloned()
         .filter(|node| node.range().start > declaration.range().start)
-        .filter(|node| enclosing_symbol(node) == symbol)
         .filter(|node| {
             node.field("left")
                 .is_some_and(|left| left.text().trim() == local)
@@ -241,11 +258,11 @@ fn allocation_calculation<'tree>(
         .field("right")?
         .dfs()
         .find(|node| macro_call_uses_local(node, local))?;
-    let allocation = root
-        .dfs()
-        .filter(|node| node.kind().as_ref() == "call_expression")
+    let allocation = calls
+        .get(&symbol)?
+        .iter()
+        .cloned()
         .filter(|node| node.range().start > computation.range().end)
-        .filter(|node| enclosing_symbol(node) == symbol)
         .find(|node| {
             node.field("function").is_some_and(|function| {
                 let name = function.text().to_ascii_lowercase();

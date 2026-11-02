@@ -13,6 +13,7 @@ use super::comments::CommentRanges;
 use super::conditional::ConditionalRegions;
 use super::context::enclosing_symbol;
 use super::literals::LiteralEnvironment;
+use super::native_api::NativeApiContext;
 use super::reachability;
 
 const LOAD_RULE_ID: &str = "c-family-serialized-blob-load";
@@ -25,6 +26,7 @@ type SyntaxNode<'tree> = Node<'tree, StrDoc<SupportLang>>;
 type ExtentDeclaration<'tree> = (SyntaxNode<'tree>, SyntaxNode<'tree>);
 type BlobLoad<'tree> = (SyntaxNode<'tree>, SyntaxNode<'tree>, Option<String>);
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_native_serialized_blob_observations<'tree>(
     path: &str,
     root: &Node<'tree, StrDoc<SupportLang>>,
@@ -32,6 +34,7 @@ pub(crate) fn add_native_serialized_blob_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    api: &NativeApiContext,
     evidence: &mut Vec<Evidence>,
 ) -> Vec<SecurityPath> {
     if !matches!(language, Language::C | Language::Cpp) {
@@ -44,7 +47,7 @@ pub(crate) fn add_native_serialized_blob_observations<'tree>(
         .dfs()
         .filter(|node| node.kind().as_ref() == "call_expression")
         .filter(|node| !comments.is_in_comment(node.range()))
-        .filter(|node| is_memcpy(node))
+        .filter(|node| is_memcpy(node, api))
     {
         let arguments = named_arguments(&copy);
         if arguments.len() != 3 {
@@ -364,9 +367,8 @@ fn reassigned_between(
         })
 }
 
-fn is_memcpy(call: &Node<'_, StrDoc<SupportLang>>) -> bool {
-    call.field("function")
-        .is_some_and(|function| function.text().trim() == "memcpy")
+fn is_memcpy(call: &Node<'_, StrDoc<SupportLang>>, api: &NativeApiContext) -> bool {
+    api.call_name(call) == Some("memcpy")
 }
 
 fn blob_path(source: &Evidence, sink: &Evidence, protection: Option<&Evidence>) -> SecurityPath {

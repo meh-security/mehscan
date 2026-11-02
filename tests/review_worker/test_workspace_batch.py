@@ -56,8 +56,10 @@ class BatchComparisonTests(unittest.TestCase):
             task=json.loads(payload);calls.append(task)
             rid=task['review_ids'][0]
             if len(calls)==1:
+                # Conflicting scopes stay invalid; a directory in path is supported.
                 queries=[{'tool':'definition','review_id':rid,'purpose':'Inspect the policy implementation.',
-                          'arguments':{'name':'policy','path':'helpers','limit':1}}]
+                          'arguments':{'name':'policy','path':'helpers/policy.ts',
+                                       'path_prefix':'helpers','limit':1}}]
             elif len(calls)==2:
                 queries=[{'tool':'source','review_id':rid,'purpose':'Inspect the selected evaluator.',
                           'arguments':{'path':'app.js','start_line':line,'end_line':line}} for line in (1,2)]

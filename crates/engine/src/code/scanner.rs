@@ -81,6 +81,7 @@ pub struct FileAnalysisProfile {
     pub declarative_rules_microseconds: u128,
     pub symbol_rules_microseconds: u128,
     pub summaries_microseconds: u128,
+    pub native_pass_microseconds: BTreeMap<&'static str, u128>,
     pub security_paths_microseconds: u128,
     pub declarative_patterns_considered: usize,
     pub declarative_patterns_skipped: usize,
@@ -376,6 +377,7 @@ pub(crate) fn scan_profiled(
                     relative: file.relative,
                     language: sfc.language,
                     source: sfc.script,
+                    rust_original: None,
                     build_symbols: BTreeMap::new(),
                     vue: Some(VueFile {
                         original: source,
@@ -422,6 +424,7 @@ pub(crate) fn scan_profiled(
                     relative: file.relative,
                     language: Language::Javascript,
                     source,
+                    rust_original: None,
                     build_symbols: BTreeMap::new(),
                     vue: None,
                 });
@@ -597,10 +600,20 @@ pub(crate) fn scan_profiled(
                     continue;
                 }
                 coverage.languages.entry(language).or_default().discovered += 1;
+                let (source, rust_original) =
+                    if language == Language::Rust && !options.include_tests {
+                        match super::rust_tests::production_source(&source) {
+                            Some(masked) => (masked, Some(source)),
+                            None => (source, None),
+                        }
+                    } else {
+                        (source, None)
+                    };
                 prepared.push(PreparedFile {
                     relative: file.relative,
                     language,
                     source,
+                    rust_original,
                     build_symbols: file.build_symbols,
                     vue: None,
                 });
@@ -742,6 +755,14 @@ pub(crate) fn scan_profiled(
             .iter()
             .map(|file| (file.relative.as_str(), file.language, file.source.as_str())),
     );
+    let rust_originals: BTreeMap<_, _> = prepared
+        .iter()
+        .filter_map(|file| {
+            file.rust_original
+                .as_ref()
+                .map(|source| (file.relative.clone(), (source.clone(), file.source.clone())))
+        })
+        .collect();
     let mut analysis_prepared = Vec::new();
     for file in prepared {
         if impact_plan.includes(&file.relative) {
@@ -864,6 +885,16 @@ pub(crate) fn scan_profiled(
     trace_scan_phase("file_analysis", file_analysis.total_microseconds);
 
     let finalization_started = Instant::now();
+    for item in &mut evidence {
+        super::rust_tests::restore_evidence(item, &rust_originals);
+    }
+    for path in &mut security_paths {
+        for step in &mut path.steps {
+            if let Some((original, _)) = rust_originals.get(&step.location.path) {
+                super::rust_tests::restore_location(&mut step.location, original);
+            }
+        }
+    }
     security_paths.extend(super::native_allocation::link_native_allocation_paths(
         &mut evidence,
     ));
@@ -1079,7 +1110,7 @@ fn scan_prepared_file(
         ScanDependencies {
             project_symbols,
             secret_allowlist,
-            scan_secrets: scan_secrets && file.vue.is_none(),
+            scan_secrets: scan_secrets && file.vue.is_none() && file.rust_original.is_none(),
             relations,
             node_context,
             vue_dom_refs: file.vue.as_ref().map(|vue| &vue.dom_refs),
@@ -1098,6 +1129,42 @@ fn scan_prepared_file(
             build_symbols: &file.build_symbols,
         },
     );
+    if scan_secrets {
+        if let Some(original) = &file.rust_original {
+            let comments = ast_grep_core::tree_sitter::StrDoc::try_new(
+                original,
+                ast_grep_language::SupportLang::Rust,
+            )
+            .ok()
+            .map(|doc| {
+                let ast = ast_grep_core::AstGrep::doc(doc);
+                CommentRanges::from_root(&ast.root())
+            })
+            .unwrap_or_default();
+            let raw =
+                crate::secrets::scan_source(&file.relative, original, &comments, secret_allowlist);
+            match &mut outcome {
+                ParseOutcome::Parsed {
+                    evidence,
+                    secret_suppressed,
+                    ..
+                }
+                | ParseOutcome::Recovered {
+                    evidence,
+                    secret_suppressed,
+                    ..
+                }
+                | ParseOutcome::Failed {
+                    evidence,
+                    secret_suppressed,
+                    ..
+                } => {
+                    evidence.extend(raw.evidence);
+                    *secret_suppressed += raw.suppressed;
+                }
+            }
+        }
+    }
     if let Some(vue) = &file.vue {
         let (evidence, paths) = match &mut outcome {
             ParseOutcome::Parsed {
@@ -1191,6 +1258,7 @@ fn scan_prepared_file(
                 "declarative_rules_microseconds": timing.declarative_rules_microseconds,
                 "symbol_rules_microseconds": timing.symbol_rules_microseconds,
                 "summaries_microseconds": timing.summaries_microseconds,
+                "native_pass_microseconds": crate::code::matcher::NATIVE_PASS_NAMES.into_iter().zip(timing.native_pass_microseconds).collect::<BTreeMap<_, _>>(),
                 "security_paths_microseconds": timing.security_paths_microseconds,
             })
         );
@@ -1219,6 +1287,12 @@ fn add_file_timing(
     aggregate.declarative_rules_microseconds += timing.declarative_rules_microseconds;
     aggregate.symbol_rules_microseconds += timing.symbol_rules_microseconds;
     aggregate.summaries_microseconds += timing.summaries_microseconds;
+    for (name, micros) in crate::code::matcher::NATIVE_PASS_NAMES
+        .into_iter()
+        .zip(timing.native_pass_microseconds)
+    {
+        *aggregate.native_pass_microseconds.entry(name).or_default() += micros;
+    }
     aggregate.security_paths_microseconds += timing.security_paths_microseconds;
     aggregate.declarative_patterns_considered += timing.declarative_patterns_considered;
     aggregate.declarative_patterns_skipped += timing.declarative_patterns_skipped;
@@ -1231,6 +1305,7 @@ struct PreparedFile {
     relative: String,
     language: Language,
     source: String,
+    rust_original: Option<String>,
     build_symbols: BTreeMap<String, bool>,
     vue: Option<VueFile>,
 }

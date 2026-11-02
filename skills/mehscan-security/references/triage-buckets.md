@@ -9,7 +9,7 @@ evidence chain. Read [the common workflow](review-workflow.md) once per bundle.
 | `interpreted_input` | [SQL, commands, BSON, templates, HTML, deserialization or loaders](buckets/interpreted-input.md) |
 | `resource_boundary` | [Files, URLs, redirects, network destinations or selected resources](buckets/resource-boundary.md) |
 | `authorization` | [Server actions, identity, policy attachment or object ownership](buckets/authorization.md) |
-| `credential_state` | [Password, MFA, recovery or API-key changes](buckets/credential-state.md) |
+| `credential_state` | [Password, MFA, recovery, API-key changes or token renewal](buckets/credential-state.md) |
 | `state_integrity` | [Binding, CSRF, financial values, transitions or shared limits](buckets/state-integrity.md) |
 | `crypto_configuration` | [Cryptography, randomness, cookies or CORS](buckets/crypto-configuration.md) |
 | `native_memory` | [C/C++ bounds, ownership, lifetime or parser state](buckets/native-memory.md) |

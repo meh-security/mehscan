@@ -30,6 +30,35 @@ enum Truth {
 }
 
 impl ConditionalRegions {
+    pub(crate) fn with_rust_cfg(
+        mut self,
+        language: Language,
+        root: &ast_grep_core::Node<
+            '_,
+            ast_grep_core::tree_sitter::StrDoc<ast_grep_language::SupportLang>,
+        >,
+    ) -> Self {
+        if language != Language::Rust {
+            return self;
+        }
+        for (range, condition, value) in super::rust_cfg::conditions(root) {
+            let truth = match value {
+                Some(true) => Truth::True,
+                Some(false) => Truth::False,
+                None => Truth::Unknown,
+            };
+            let availability = combine(&self.availability_for(range.clone()), truth, &condition);
+            // Multiple attributes on one item and nested module attributes all
+            // constrain it. Unknown features never inherit this scanner's host.
+            if let Some(region) = self.regions.iter_mut().find(|region| region.range == range) {
+                region.availability = availability;
+            } else {
+                push_region(&mut self.regions, range, availability);
+            }
+        }
+        self
+    }
+
     pub(crate) fn from_source(
         language: Language,
         source: &str,
@@ -337,5 +366,47 @@ mod tests {
                 .state,
             AvailabilityState::Always
         );
+    }
+
+    #[test]
+    fn rust_features_targets_and_nested_attributes_keep_all_conditions() {
+        use ast_grep_core::tree_sitter::LanguageExt;
+        let source = r##"
+            #![cfg(feature = "package")]
+            #[cfg(feature = "server")]
+            mod nested {
+                #[cfg(unix)]
+                #[cfg(not(target_os = "macos"))]
+                fn run() { consume(); }
+                #[cfg(any())] fn absent() { never(); }
+            }
+            #[cfg_attr(feature = "optional", cfg(target_arch = "arm"))]
+            fn selected() { maybe(); }
+            #[cfg_attr(feature = "optional", allow(dead_code))]
+            fn ordinary() { ordinary_call(); }
+            const DOC: &str = "#[cfg(any())]";
+        "##;
+        let ast = ast_grep_language::SupportLang::Rust.ast_grep(source);
+        assert!(!ast.root().dfs().any(|n| n.kind().as_ref() == "ERROR"));
+        let regions = ConditionalRegions::default().with_rust_cfg(Language::Rust, &ast.root());
+        let nested = regions.availability_for(range_of(source, "consume()"));
+        assert_eq!(nested.state, AvailabilityState::Conditional);
+        let condition = nested.condition.unwrap();
+        for predicate in ["package", "server", "unix", "macos"] {
+            assert!(condition.contains(predicate), "{condition}");
+        }
+        assert_eq!(
+            regions.availability_for(range_of(source, "never()")).state,
+            AvailabilityState::Excluded
+        );
+        assert!(
+            regions
+                .availability_for(range_of(source, "maybe()"))
+                .condition
+                .unwrap()
+                .contains("cfg_attr")
+        );
+        let ordinary = regions.availability_for(range_of(source, "ordinary_call()"));
+        assert!(ordinary.condition.unwrap().contains("package"));
     }
 }

@@ -270,3 +270,75 @@ fn exact_unit_test_directories_are_excluded_without_hiding_lookalikes() {
     assert_eq!(complete.coverage.totals.scanned, 2);
     fs::remove_dir_all(&root).expect("remove unit-test policy fixture");
 }
+
+#[test]
+fn end_to_end_and_spec_sources_do_not_supply_default_scan_evidence() {
+    let root = std::env::temp_dir().join(format!(
+        "mehscan-e2e-file-policy-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let tests = [
+        "src/login.e2e-spec.ts",
+        "src/login.e2e-test.ts",
+        "src/login.integration-spec.ts",
+        "src/login.unit-spec.ts",
+        "src/login.specs.ts",
+        "src/login.tests.ts",
+        "src/login.e2e.ts",
+        "packages/api/e2e/client.ts",
+        "packages/api/end-to-end/client.ts",
+        "packages/api/__specs__/client.ts",
+        "example/api.ts",
+        "server/Sample/api.ts",
+    ];
+    let production = [
+        "src/e2e-status.ts",
+        "src/specification.ts",
+        "src/exampledata/client.ts",
+        "src/app/api/e2e/route.ts",
+    ];
+    for path in tests.iter().chain(production.iter()) {
+        let file = root.join(path);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(
+            file,
+            "export function handler(req: any) { return req.body.email; }\n",
+        )
+        .unwrap();
+    }
+    let default = mehscan_engine::scan_path(&root).unwrap();
+    assert_eq!(default.coverage.totals.scanned, production.len());
+    assert_eq!(default.coverage.totals.ignored, tests.len());
+    assert!(!default.evidence.is_empty());
+    assert!(
+        default
+            .evidence
+            .iter()
+            .all(|item| production.contains(&item.location.path.as_str()))
+    );
+    let included = mehscan_engine::scan_path_with_options(
+        &root,
+        mehscan_engine::ScanOptions {
+            include_tests: true,
+            jobs: Some(1),
+            scan_secrets: false,
+            impact_scope: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        included.coverage.totals.scanned,
+        tests.len() + production.len()
+    );
+    assert!(
+        included
+            .evidence
+            .iter()
+            .any(|item| tests.contains(&item.location.path.as_str()))
+    );
+    fs::remove_dir_all(root).unwrap();
+}

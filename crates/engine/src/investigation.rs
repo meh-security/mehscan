@@ -1693,6 +1693,7 @@ fn build_path_review_jobs_internal(
                 || frontend::unverified_sanitizer_binding(file)
         });
     let constant_operand_exclusions = node_constant_admission::exclusions(&scan.evidence, &sources);
+    let duplicate_html_sinks = superseded_go_html_sinks(&all_candidates);
     let practical_exclusions = scan
         .evidence
         .iter()
@@ -1714,6 +1715,11 @@ fn build_path_review_jobs_internal(
                 )
         })
         .map(|item| (item.id.clone(), ReviewAdmissionDisposition::InventoryOnly))
+        .chain(
+            duplicate_html_sinks
+                .into_iter()
+                .map(|id| (id, ReviewAdmissionDisposition::DuplicateSuperseded)),
+        )
         .collect::<BTreeMap<_, _>>();
     let mut candidates = all_candidates
         .iter()
@@ -1855,15 +1861,7 @@ fn build_path_review_jobs_internal(
     // review counts only to this continuation's selected marker questions.
     if marker_page > 0 {
         candidates.clear();
-        observation_groups.retain(|group| {
-            group.evidence.first().is_some_and(|fact| {
-                matches!(
-                    fact.rule_id.as_str(),
-                    "framework-authorization-review-marker"
-                        | "framework-credential-lifecycle-review-marker"
-                )
-            })
-        });
+        observation_groups.retain(|group| group.evidence.iter().any(review_admission::is_marker));
     }
     let mut identity_catalog =
         identity::build_catalog(root, &sources, &candidates, &observation_groups)?;
@@ -13263,6 +13261,50 @@ fn is_local_observation_context(
     item_start <= anchor_end.saturating_add(8) && anchor_start <= item_end.saturating_add(8)
 }
 
+/// The local Go formatter summary and ordinary flow can describe the same
+/// request-to-cast operation. Prefer the summary's explicit format context only
+/// when it covers every source path attached to that raw sink. Different casts
+/// or uncovered inputs are independent review work, regardless of proximity.
+fn superseded_go_html_sinks(candidates: &[mehscan_core::Candidate]) -> BTreeSet<String> {
+    let summaries = candidates
+        .iter()
+        .filter(|c| {
+            c.sink.rule_id == "go-request-fmt-to-trusted-html"
+                && c.capability == Capability::HtmlOutput
+                && c.cwe_candidates == ["CWE-79"]
+        })
+        .map(|c| {
+            (
+                c.source.id.as_str(),
+                c.sink.location.path.as_str(),
+                c.sink.location.start.byte_offset,
+                c.sink.location.end.byte_offset,
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    let mut covered = BTreeMap::new();
+    for c in candidates.iter().filter(|c| {
+        c.sink.rule_id == "go-html-output"
+            && c.capability == Capability::HtmlOutput
+            && c.cwe_candidates == ["CWE-79"]
+    }) {
+        let equivalent = summaries.contains(&(
+            c.source.id.as_str(),
+            c.sink.location.path.as_str(),
+            c.sink.location.start.byte_offset,
+            c.sink.location.end.byte_offset,
+        ));
+        covered
+            .entry(c.sink.id.as_str())
+            .and_modify(|all| *all &= equivalent)
+            .or_insert(equivalent);
+    }
+    covered
+        .into_iter()
+        .filter_map(|(id, all)| all.then(|| id.to_string()))
+        .collect()
+}
+
 fn observation_sink_covered_by_candidate(
     item: &Evidence,
     candidates: &[mehscan_core::Candidate],
@@ -13281,7 +13323,11 @@ fn observation_sink_covered_by_candidate(
             let overlaps = candidate.sink.location.start.byte_offset
                 < item.location.end.byte_offset
                 && item.location.start.byte_offset < candidate.sink.location.end.byte_offset;
-            let same_local_invariant = item.enclosing_symbol.is_some()
+            // Adjacent HTML calls can fill different rendered fields, branches
+            // or interpretation contexts. Cover the actual operation, not its
+            // function/capability neighborhood. Raw/summary overlap still folds.
+            let same_local_invariant = item.capability != Capability::HtmlOutput
+                && item.enclosing_symbol.is_some()
                 && item.enclosing_symbol == candidate.sink.enclosing_symbol
                 && item.capability == candidate.capability
                 && item
@@ -21369,12 +21415,29 @@ pub fn find_symbol(
     path: Option<&str>,
     limit: Option<usize>,
 ) -> Result<QueryResponse<Vec<OutlineSymbol>>, EngineError> {
+    find_symbol_scoped(root, name, path, None, limit)
+}
+
+pub fn find_symbol_scoped(
+    root: &Path,
+    name: &str,
+    path: Option<&str>,
+    path_prefix: Option<&str>,
+    limit: Option<usize>,
+) -> Result<QueryResponse<Vec<OutlineSymbol>>, EngineError> {
     if name.is_empty() {
         return Err(EngineError("symbol name must not be empty".to_string()));
+    }
+    if path.is_some() && path_prefix.is_some() {
+        return Err(EngineError(
+            "choose either --path or --path-prefix".to_string(),
+        ));
     }
     let limit = bounded_limit(limit)?;
     let sources = if let Some(path) = path {
         RepositorySources::load_selected(root, path)?
+    } else if let Some(prefix) = path_prefix {
+        RepositorySources::load_directory(root, prefix)?
     } else {
         RepositorySources::load(root)?
     };
@@ -23269,7 +23332,7 @@ mod tests {
             SourceFile {
                 path: "AccountController.cs".to_string(),
                 language: Some(Language::Csharp),
-                source: "[HttpPost(\"password\")]\npublic IActionResult ChangePassword(ChangePasswordRequest request) {\n account.UpdatePassword(request.NewPassword);\n return Ok();\n}\n"
+                source: "class AccountController {\n[HttpPost(\"password\")]\npublic IActionResult ChangePassword(ChangePasswordRequest request) {\n account.UpdatePassword(request.NewPassword);\n return Ok();\n}\n}\n"
                     .to_string(),
             },
         );

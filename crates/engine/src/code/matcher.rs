@@ -48,12 +48,37 @@ pub(crate) enum ParseOutcome {
     },
 }
 
+pub(crate) const NATIVE_PASS_NAMES: [&str; 21] = [
+    "api_context",
+    "arithmetic",
+    "domain_bounds",
+    "region_bounds",
+    "multiplication",
+    "signedness",
+    "heap_lifetime",
+    "cpp_ownership",
+    "libxml2",
+    "libarchive",
+    "toctou",
+    "drogon",
+    "invalidation",
+    "serialized_blob",
+    "loaded_extent",
+    "remaining_input",
+    "allocation",
+    "lifetime",
+    "state",
+    "ownership",
+    "buffer",
+];
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct FileScanTiming {
     pub parse_context_microseconds: u128,
     pub declarative_rules_microseconds: u128,
     pub symbol_rules_microseconds: u128,
     pub summaries_microseconds: u128,
+    pub native_pass_microseconds: [u128; 21],
     pub security_paths_microseconds: u128,
     pub declarative_patterns_considered: usize,
     pub declarative_patterns_skipped: usize,
@@ -157,7 +182,8 @@ pub(crate) fn scan_source(
         .filter(|node| super::typescript_syntax::unsupported_error(node, language))
         .map(|node| node.range())
         .collect::<Vec<_>>();
-    let conditional = ConditionalRegions::from_source(language, source, build_symbols);
+    let conditional = ConditionalRegions::from_source(language, source, build_symbols)
+        .with_rust_cfg(language, &root);
     let literals = LiteralEnvironment::build(&root, language);
     let symbol_environment =
         FileSymbolEnvironment::build(path, &root, language, source, project_symbols);
@@ -287,12 +313,19 @@ pub(crate) fn scan_source(
                 {
                     continue;
                 }
-                if language == Language::Rust
+                let typed_http_support = if language == Language::Rust
                     && compiled_rule.rule.id == "rust-outbound-http"
                     && !super::rust_context::is_exact_reqwest_request(&root, matched.get_node())
                 {
-                    continue;
-                }
+                    let Some(support) =
+                        rust_project_context.http_support(path, &root, matched.get_node())
+                    else {
+                        continue;
+                    };
+                    Some(support)
+                } else {
+                    None
+                };
                 if language == Language::Rust
                     && compiled_rule.rule.id == "rust-iron-response-body"
                     && !super::rust_context::is_exact_iron_response(&root, matched.get_node())
@@ -347,6 +380,12 @@ pub(crate) fn scan_source(
                             query.text().as_ref(),
                         )
                     })
+                {
+                    continue;
+                }
+                if language == Language::Go
+                    && compiled_rule.rule.id == "go-outbound-http"
+                    && !super::go_summary_binding::compatible_http_call(&root, matched.get_node())
                 {
                     continue;
                 }
@@ -457,6 +496,9 @@ pub(crate) fn scan_source(
                 }
                 let evidence_location = location(path, matched.get_node());
                 let mut captures = BTreeMap::new();
+                if let Some(support) = typed_http_support {
+                    captures.extend(support);
+                }
                 let mut literal_values = BTreeMap::new();
                 for (semantic_name, variable_name) in &compiled_pattern.specification.captures {
                     if compiled_rule.rule.capability == Capability::ProcessExecution {
@@ -1451,6 +1493,11 @@ pub(crate) fn scan_source(
         &mut evidence,
     );
     super::rust_context::annotate_rust_build_script(path, language, &mut evidence);
+    let mut native_pass_microseconds = [0; 21];
+    let mut native_started = Instant::now();
+    let native_api = super::native_api::NativeApiContext::new(&root, language);
+    native_pass_microseconds[0] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_arithmetic_paths = super::native_arithmetic::add_native_arithmetic_observations(
         path,
         &root,
@@ -1460,6 +1507,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[1] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_domain_bound_paths =
         super::native_domain_bounds::add_native_domain_bound_observations(
             path,
@@ -1468,8 +1517,11 @@ pub(crate) fn scan_source(
             &comments,
             &conditional,
             &literals,
+            &native_api,
             &mut evidence,
         );
+    native_pass_microseconds[2] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_region_bound_paths =
         super::native_region_bounds::add_native_region_bound_observations(
             path,
@@ -1480,6 +1532,8 @@ pub(crate) fn scan_source(
             &literals,
             &mut evidence,
         );
+    native_pass_microseconds[3] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_multiplication_paths =
         super::native_multiplication::add_native_multiplication_observations(
             path,
@@ -1488,8 +1542,11 @@ pub(crate) fn scan_source(
             &comments,
             &conditional,
             &literals,
+            &native_api,
             &mut evidence,
         );
+    native_pass_microseconds[4] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_signedness_paths = super::native_signedness::add_native_signedness_observations(
         path,
         &root,
@@ -1497,8 +1554,11 @@ pub(crate) fn scan_source(
         &comments,
         &conditional,
         &literals,
+        &native_api,
         &mut evidence,
     );
+    native_pass_microseconds[5] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_heap_lifetime_paths =
         super::native_heap_lifetime::add_native_heap_lifetime_observations(
             path,
@@ -1507,8 +1567,11 @@ pub(crate) fn scan_source(
             &comments,
             &conditional,
             &literals,
+            &native_api,
             &mut evidence,
         );
+    native_pass_microseconds[6] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_cpp_ownership_paths =
         super::native_cpp_ownership::add_native_cpp_ownership_observations(
             path,
@@ -1519,6 +1582,8 @@ pub(crate) fn scan_source(
             &literals,
             &mut evidence,
         );
+    native_pass_microseconds[7] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_libxml2_paths = super::native_libxml2::add_native_libxml2_observations(
         path,
         &root,
@@ -1528,6 +1593,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[8] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_libarchive_paths = super::native_libarchive::add_native_libarchive_observations(
         path,
         &root,
@@ -1537,6 +1604,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[9] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_toctou_paths = super::native_toctou::add_native_toctou_observations(
         path,
         &root,
@@ -1546,6 +1615,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[10] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_drogon_paths = drogon_project_context.add_observations(
         path,
         &root,
@@ -1555,6 +1626,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[11] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_invalidation_paths = native_invalidation_context.add_observations(
         path,
         &root,
@@ -1564,6 +1637,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[12] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_serialized_blob_paths =
         super::native_serialized_blob::add_native_serialized_blob_observations(
             path,
@@ -1572,8 +1647,11 @@ pub(crate) fn scan_source(
             &comments,
             &conditional,
             &literals,
+            &native_api,
             &mut evidence,
         );
+    native_pass_microseconds[13] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_loaded_extent_paths =
         super::native_loaded_extent::add_native_loaded_extent_observations(
             path,
@@ -1582,8 +1660,11 @@ pub(crate) fn scan_source(
             &comments,
             &conditional,
             &literals,
+            &native_api,
             &mut evidence,
         );
+    native_pass_microseconds[14] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     let mut native_remaining_input_paths =
         super::native_remaining_input::add_native_remaining_input_observations(
             path,
@@ -1592,8 +1673,11 @@ pub(crate) fn scan_source(
             &comments,
             &conditional,
             &literals,
+            &native_api,
             &mut evidence,
         );
+    native_pass_microseconds[15] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     super::native_allocation::add_native_allocation_observations(
         path,
         &root,
@@ -1604,6 +1688,8 @@ pub(crate) fn scan_source(
         build_symbols,
         &mut evidence,
     );
+    native_pass_microseconds[16] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     super::native_lifetime::add_native_lifetime_observations(
         path,
         &root,
@@ -1613,6 +1699,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[17] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     super::native_state::add_native_state_observations(
         path,
         &root,
@@ -1622,6 +1710,8 @@ pub(crate) fn scan_source(
         &literals,
         &mut evidence,
     );
+    native_pass_microseconds[18] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     super::native_ownership::add_native_ownership_observations(
         path,
         &root,
@@ -1632,6 +1722,8 @@ pub(crate) fn scan_source(
         build_symbols,
         &mut evidence,
     );
+    native_pass_microseconds[19] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
     super::native_buffer::annotate_native_buffer_capacity(
         path,
         &root,
@@ -1639,6 +1731,7 @@ pub(crate) fn scan_source(
         &conditional,
         &mut evidence,
     );
+    native_pass_microseconds[20] = native_started.elapsed().as_micros();
     node_context.add_request_boundary_observations(
         path,
         &root,
@@ -1979,6 +2072,7 @@ pub(crate) fn scan_source(
         declarative_rules_microseconds,
         symbol_rules_microseconds,
         summaries_microseconds,
+        native_pass_microseconds,
         security_paths_microseconds,
         declarative_patterns_considered,
         declarative_patterns_skipped,

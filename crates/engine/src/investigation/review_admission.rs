@@ -1,5 +1,9 @@
 use super::*;
+mod csharp_boundaries;
 mod javascript_boundaries;
+mod python_credentials;
+mod rust_credential_renewal;
+mod rust_shared_state;
 
 const AUTHORIZATION_REVIEW_MARKER_RULE_ID: &str = "framework-authorization-review-marker";
 const CREDENTIAL_LIFECYCLE_REVIEW_MARKER_RULE_ID: &str =
@@ -19,6 +23,7 @@ struct ServerMutationMarker {
     symbol: String,
     effect: String,
     related_handlers: Vec<String>,
+    credential_effect: Option<(std::ops::Range<usize>, &'static str)>,
 }
 
 struct ReviewAdmissionDescriptor {
@@ -56,7 +61,14 @@ fn server_mutation_review_marker_groups(
     page: usize,
     include_review_material: bool,
 ) -> (Vec<ObservationGroup>, mehscan_core::ReviewMarkerAdmission) {
-    let mut groups = Vec::new();
+    let mut groups =
+        rust_shared_state::groups(sources, existing_evidence, scope, include_review_material);
+    groups.extend(rust_credential_renewal::groups(
+        sources,
+        existing_evidence,
+        scope,
+        include_review_material,
+    ));
     let mut seen = BTreeSet::new();
     for file in sources.files.values() {
         if !include_review_material && is_review_material_path(&file.path) {
@@ -97,7 +109,9 @@ fn server_mutation_review_marker_groups(
             continue;
         }
         let spans = line_spans(&file.source);
+        let mut csharp_boundaries = csharp_boundaries::inspect(file, &spans);
         let mut javascript_boundaries = javascript_boundaries::inspect(file, &spans);
+        let mut python_credentials = python_credentials::inspect(file, &spans);
         let comment_ranges = javascript_boundaries
             .as_ref()
             .map(|index| index.comments.clone())
@@ -127,7 +141,11 @@ fn server_mutation_review_marker_groups(
                 continue;
             }
             let line = file.source[line_start..line_end].trim();
-            let marker = if let Some(index) = javascript_boundaries.as_mut() {
+            let marker = if file.language == Some(Language::Csharp) {
+                csharp_boundaries.remove(&line_index)
+            } else if let Some(marker) = python_credentials.remove(&line_index) {
+                Some(marker)
+            } else if let Some(index) = javascript_boundaries.as_mut() {
                 if ["@Post(", "@Put(", "@Patch(", "@Delete(", "@Mutation("]
                     .iter()
                     .any(|s| line.starts_with(s))
@@ -153,6 +171,20 @@ fn server_mutation_review_marker_groups(
             let Some(marker) = marker else {
                 continue;
             };
+            // Prefer the AST-backed credential effect to the surrounding Python
+            // decorator marker; the same implementation is one review question.
+            if marker.credential_effect.is_none()
+                && file.language == Some(Language::Python)
+                && (marker.start_index..=marker.end_index)
+                    .find(|index| {
+                        let (start, end) = spans[*index];
+                        authorization_definition_identifier(&file.source[start..end]).as_deref()
+                            == Some(marker.symbol.as_str())
+                    })
+                    .is_some_and(|index| python_credentials.contains_key(&index))
+            {
+                continue;
+            }
             let start = spans[marker.start_index].0;
             let end = spans[marker.end_index].1;
             if !seen.insert((file.path.clone(), start, end)) {
@@ -187,10 +219,27 @@ fn server_mutation_review_marker_groups(
             captures.insert(
                 "effect".to_string(),
                 Capture {
-                    text: marker.effect,
-                    location: location.clone(),
+                    text: marker.credential_effect.as_ref().map_or_else(
+                        || marker.effect.clone(),
+                        |(range, _)| file.source[range.clone()].to_string(),
+                    ),
+                    location: marker.credential_effect.as_ref().map_or_else(
+                        || location.clone(),
+                        |(range, _)| {
+                            location_from_offsets(&file.path, &file.source, range.start, range.end)
+                        },
+                    ),
                 },
             );
+            if let Some((_, basis)) = &marker.credential_effect {
+                captures.insert(
+                    "effect_basis".to_string(),
+                    Capture {
+                        text: (*basis).to_string(),
+                        location: location.clone(),
+                    },
+                );
+            }
             for (index, handler) in marker.related_handlers.iter().enumerate() {
                 captures.insert(
                     format!("related_handler_{}", index + 1),
@@ -212,8 +261,17 @@ fn server_mutation_review_marker_groups(
                 tags: descriptor.tags,
                 confidence: Confidence::Medium,
                 provenance: Provenance {
-                    resolution: Resolution::Textual,
-                    engine: "bounded server mutation classifier".to_string(),
+                    resolution: if marker.credential_effect.is_some() {
+                        Resolution::Ast
+                    } else {
+                        Resolution::Textual
+                    },
+                    engine: if marker.credential_effect.is_some() {
+                        "bounded Python credential effect classifier"
+                    } else {
+                        "bounded server mutation classifier"
+                    }
+                    .to_string(),
                     rule_version: 1,
                 },
                 context: EvidenceContext::default(),
@@ -230,6 +288,32 @@ fn server_mutation_review_marker_groups(
                 priority: 1,
             });
         }
+    }
+    if !include_review_material {
+        let excluded: BTreeMap<_, _> = sources
+            .files
+            .values()
+            .filter(|file| file.language == Some(Language::Rust))
+            .map(|file| {
+                (
+                    file.path.as_str(),
+                    crate::code::rust_tests::ranges(&file.source),
+                )
+            })
+            .filter(|(_, ranges)| !ranges.is_empty())
+            .collect();
+        groups.retain(|group| {
+            !group.evidence.iter().any(|e| {
+                excluded
+                    .get(e.location.path.as_str())
+                    .is_some_and(|ranges| {
+                        ranges.iter().any(|r| {
+                            r.start <= e.location.start.byte_offset
+                                && e.location.end.byte_offset <= r.end
+                        })
+                    })
+            })
+        });
     }
     let recognized = groups.len();
     let mut previously_admitted = 0;
@@ -426,21 +510,22 @@ fn review_admission_descriptor(
         operation.push(' ');
         operation.push_str(&handler.to_ascii_lowercase());
     }
-    let credential_lifecycle = [
-        "password",
-        "passwd",
-        "passcode",
-        "credential",
-        "mfa",
-        "totp",
-        "authenticator",
-        "recoverycode",
-        "recovery_code",
-        "apikey",
-        "api_key",
-    ]
-    .iter()
-    .any(|marker| operation.contains(marker));
+    let credential_lifecycle = marker.credential_effect.is_some()
+        || [
+            "password",
+            "passwd",
+            "passcode",
+            "credential",
+            "mfa",
+            "totp",
+            "authenticator",
+            "recoverycode",
+            "recovery_code",
+            "apikey",
+            "api_key",
+        ]
+        .iter()
+        .any(|marker| operation.contains(marker));
     if credential_lifecycle {
         let recovery = operation.contains("reset")
             || operation.contains("recover")
@@ -480,6 +565,18 @@ pub(super) fn is_marker(evidence: &Evidence) -> bool {
 }
 
 pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewContract> {
+    // A renewal marker selects renewal validity, not only initial sign-in proof.
+    // Review procedure and token semantics remain in the routed skill guides.
+    if evidence
+        .iter()
+        .any(|e| e.tags.iter().any(|t| t == "credential-renewal"))
+    {
+        return Some(OperationReviewContract {
+            relationship: "bounded_credential_renewal_review",
+            security_question: "Which presented credential does this exchange accept, which subject and authority does it issue, and do applicable expiry, rotation, revocation and security-state changes invalidate that same renewal proof before further authority is issued?",
+            title: "Review credential renewal validity",
+        });
+    }
     match operation_review_family(evidence)? {
         OperationReviewFamily::Authorization => Some(OperationReviewContract {
             relationship: "bounded_action_resource_authorization_review",
@@ -595,6 +692,12 @@ pub(super) fn decision_questions(
     evidence: &[Evidence],
     facts: &[ReviewNeighborhoodFact],
 ) -> Vec<String> {
+    if evidence
+        .iter()
+        .any(|e| e.tags.iter().any(|t| t == "credential-renewal"))
+    {
+        return vec!["Does the accepting record invalidate the same presented renewal proof under applicable expiry, rotation, revocation and security-state changes before further authority is issued, and is this exchange exposed by the registered application?".into()];
+    }
     match operation_review_family(evidence) {
         Some(OperationReviewFamily::Authorization | OperationReviewFamily::CredentialLifecycle)
             if evidence.iter().any(is_marker) =>
@@ -767,7 +870,7 @@ fn server_mutation_review_marker(
         return None;
     }
     match file.language? {
-        Language::Csharp | Language::Java | Language::Python => {
+        Language::Java | Language::Python => {
             attributed_server_mutation_marker(file, spans, line_index, line)
         }
         Language::Kotlin => kotlin_server_mutation_marker(file, spans, line_index, line),
@@ -795,9 +898,6 @@ fn attributed_server_mutation_marker(
     line: &str,
 ) -> Option<ServerMutationMarker> {
     let is_boundary = match file.language? {
-        Language::Csharp => ["[HttpPost", "[HttpPut", "[HttpPatch", "[HttpDelete"]
-            .iter()
-            .any(|prefix| line.starts_with(prefix)),
         Language::Java => [
             "@PostMapping",
             "@PutMapping",
@@ -1025,6 +1125,7 @@ fn marker_from_definition(
         end_index,
         effect,
         related_handlers: terminal_call_identifiers(excerpt, &symbol),
+        credential_effect: None,
         symbol,
     })
 }
@@ -1102,6 +1203,7 @@ fn marker_from_inline_boundary_through(
         symbol,
         effect,
         related_handlers: handlers,
+        credential_effect: None,
     })
 }
 
@@ -1462,6 +1564,85 @@ fn review_admission_marker_id(path: &str, rule_id: &str, start: usize, end: usiz
 #[cfg(test)]
 mod effect_cases {
     use super::*;
+
+    #[test]
+    fn csharp_http_attributes_keep_the_owning_handler_and_review_family() {
+        let source = r#"
+using Microsoft.AspNetCore.Mvc;
+class AccountController {
+    [HttpPost]
+    [ActionName("ResetPassword")]
+    [Route(
+        "account/recover",
+        Name = nameof(ResetPassword)
+    )]
+    [ValidateAntiForgeryToken]
+    public IActionResult ResetPassword(string token, string next) {
+        users.ResetPassword(token, next);
+        return Ok();
+    }
+    [HttpPut, Route("settings")]
+    public IActionResult UpdateSettings(string next) {
+        settings.Save(next);
+        return Ok();
+    }
+    public void Helper() {
+        var example = "[HttpPost]";
+        settings.Save(example);
+    }
+    [Example.HttpPost]
+    public void SaveUnrelatedAttribute() { settings.Save(); }
+    [HttpPost, ActionName("Index")]
+    [FormValueRequired("Filter")]
+    public IActionResult Filter() {
+        editor.UpdateEditor();
+        return RedirectToAction("Index");
+    }
+}
+[HttpPost]
+class NotAHandler {
+    public void SaveHelper() { settings.Save(); }
+}
+"#;
+        let sources = RepositorySources {
+            node_modules: Default::default(),
+            root: ".".into(),
+            files: BTreeMap::from([(
+                "Account.cs".into(),
+                SourceFile {
+                    path: "Account.cs".into(),
+                    language: Some(Language::Csharp),
+                    source: source.into(),
+                },
+            )]),
+        };
+        let groups = server_mutation_review_marker_groups(&sources, &[], None, 0, true).0;
+        assert_eq!(groups.len(), 2);
+        for (symbol, capability, family, call) in [
+            (
+                "ResetPassword",
+                Capability::Authentication,
+                "review-invariant:credential-lifecycle",
+                "users.ResetPassword(token, next)",
+            ),
+            (
+                "UpdateSettings",
+                Capability::Authorization,
+                "review-invariant:action-resource-authorization",
+                "settings.Save(next)",
+            ),
+        ] {
+            let group = groups.iter().find(|group| group.symbol == symbol).unwrap();
+            let marker = &group.evidence[0];
+            assert_eq!(marker.capability, capability);
+            assert!(marker.tags.iter().any(|tag| tag == family));
+            let excerpt =
+                &source[marker.location.start.byte_offset..marker.location.end.byte_offset];
+            assert!(excerpt.contains(call));
+            assert!(excerpt.contains("return Ok()"));
+            assert!(!excerpt.contains("public void Helper"));
+        }
+    }
 
     #[test]
     fn simulated_and_actual_transitions_keep_separate_source_bound_questions() {

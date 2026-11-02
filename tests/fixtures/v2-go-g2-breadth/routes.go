@@ -13,7 +13,7 @@ func Routes(router *httprouter.Router) {
 
 func UnsafeHandler(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	uid := GetCookie(r, "uid")
-	_ = profile.UnsafeQuery(uid)
+	_ = UnsafeQuery(uid)
 }
 
 func GetCookie(r *http.Request, name string) string {
@@ -23,5 +23,5 @@ func GetCookie(r *http.Request, name string) string {
 
 func SafeHandler(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	uid := r.FormValue("uid")
-	_ = profile.SafeQuery(uid)
+	_ = SafeQuery(uid)
 }

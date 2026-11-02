@@ -285,7 +285,31 @@ pub(crate) fn add_native_cpp_ownership_observations<'tree>(
         additions.extend([source, validation, sink]);
     }
 
-    evidence.extend(additions);
+    // A conditional initializer can have several allocation origins for one
+    // owner declaration. Keep its fact once, without losing any origin or
+    // borrowing a matching branch's validation for a mismatched path.
+    let mut positions = BTreeMap::<String, usize>::new();
+    let mut merged = Vec::<Evidence>::new();
+    for addition in additions {
+        if let Some(&index) = positions.get(&addition.id) {
+            let existing = &mut merged[index];
+            let mut prior_core = existing.clone();
+            let mut next_core = addition.clone();
+            prior_core.related_evidence.clear();
+            next_core.related_evidence.clear();
+            if prior_core == next_core {
+                existing.related_evidence.extend(addition.related_evidence);
+                existing.related_evidence.sort();
+                existing.related_evidence.dedup();
+                continue;
+            }
+            // Conflicting facts must still reach the duplicate-ID validator.
+        } else {
+            positions.insert(addition.id.clone(), merged.len());
+        }
+        merged.push(addition);
+    }
+    evidence.extend(merged);
     paths
 }
 

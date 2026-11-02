@@ -159,3 +159,127 @@ fn decoded_extents_are_related_to_remaining_input_in_c() {
 fn decoded_extents_are_related_to_remaining_input_in_cpp() {
     assert_language("cpp");
 }
+
+#[test]
+fn qualified_memory_apis_preserve_bounds_and_source_argument_roles() {
+    let root = fixture_root("qualified");
+    let cases = [
+        ("plain", "", "", "memcpy(dst, buf + pos, item_len)", true),
+        (
+            "qualified",
+            "",
+            "",
+            "std::memcpy(dst, buf + pos, item_len)",
+            true,
+        ),
+        ("global", "", "", "::memcpy(dst, buf + pos, item_len)", true),
+        (
+            "alias",
+            "namespace crt = std;",
+            "",
+            "crt::memcpy(dst, buf + pos, item_len)",
+            true,
+        ),
+        (
+            "imported",
+            "using std::memcpy;",
+            "",
+            "memcpy(dst, buf + pos, item_len)",
+            true,
+        ),
+        (
+            "forwarded",
+            "",
+            "const auto copier = std::memcpy;",
+            "copier(dst, buf + pos, item_len)",
+            true,
+        ),
+        ("bcopy", "", "", "bcopy(buf + pos, dst, item_len)", true),
+        (
+            "unrelated",
+            "",
+            "",
+            "project::memcpy(dst, buf + pos, item_len)",
+            false,
+        ),
+        (
+            "member",
+            "",
+            "",
+            "object.memcpy(dst, buf + pos, item_len)",
+            false,
+        ),
+        (
+            "shadow",
+            "",
+            "auto memcpy = custom_copy;",
+            "memcpy(dst, buf + pos, item_len)",
+            false,
+        ),
+        (
+            "wrong_source",
+            "",
+            "",
+            "std::memcpy(buf + pos, dst, item_len)",
+            false,
+        ),
+        (
+            "wrong_count",
+            "",
+            "",
+            "std::memcpy(dst, buf + pos, other)",
+            false,
+        ),
+        (
+            "bcopy_destination",
+            "",
+            "",
+            "bcopy(dst, buf + pos, item_len)",
+            false,
+        ),
+    ];
+    for (label, declarations, setup, operation, expected) in cases {
+        for guarded in [false, true] {
+            let bounds = if guarded {
+                "if (pos > total || item_len > total - pos) return;"
+            } else {
+                "if (pos + item_len > total) return;"
+            };
+            fs::write(root.join(format!("{label}-{guarded}.cpp")), format!(
+                "{declarations}\nunsigned decode_length(const unsigned char*);\nvoid run(unsigned char *dst, const unsigned char *buf, unsigned total, unsigned pos, unsigned other) {{\n{setup}\nunsigned item_len = decode_length(buf);\n{bounds}\n{operation};\n}}\n"
+            )).expect("write source");
+        }
+        // Each file is scanned separately to check both admission and absence.
+        for guarded in [false, true] {
+            let result = mehscan_engine::scan_path(&root.join(format!("{label}-{guarded}.cpp")))
+                .expect("scan source");
+            let paths = result
+                .security_paths
+                .iter()
+                .filter(|p| {
+                    p.provenance.engine == "mehscan c-family remaining-input relationship 1"
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(paths.len(), usize::from(expected), "{label}-{guarded}");
+            if let Some(path) = paths.first() {
+                assert_eq!(
+                    path.state,
+                    if guarded {
+                        SecurityPathState::Protected
+                    } else {
+                        SecurityPathState::Unknown
+                    },
+                    "{label}-{guarded}"
+                );
+                let sink = result
+                    .evidence
+                    .iter()
+                    .find(|e| e.rule_id == "c-family-remaining-input-read")
+                    .unwrap();
+                assert!(sink.location.start.byte_offset < sink.location.end.byte_offset);
+                assert!(sink.captures.values().any(|c| c.text.contains(operation)));
+            }
+        }
+    }
+    fs::remove_dir_all(root).expect("remove fixture");
+}

@@ -136,12 +136,13 @@ def missing_source_result(query, error):
         return {"operation":"import_target_lookup_error", "results":[], "error":{
             "code":"unsupported_language", "path":path,
             "message":"Import-target navigation supports JavaScript/TypeScript source. Use source or the relevant language's lookup; this establishes no missing implementation or security conclusion."}}
-    if query["tool"] == "references" and "path_prefix" in query["arguments"]:
+    if query["tool"] in ("references", "symbol", "definition") and "path_prefix" in query["arguments"]:
         path = query["arguments"]["path_prefix"].rstrip("/")
         prefix = 'error: cannot access query directory ' + json.dumps(path, ensure_ascii=False) + ': '
         diagnostic = error.stderr.strip()
         if diagnostic.startswith(prefix) and diagnostic.endswith("(os error 2)") and "\n" not in diagnostic:
-            return {"operation":"reference_lookup_error", "results":[], "error":{
+            operation = "reference_lookup_error" if query["tool"] == "references" else "symbol_lookup_error"
+            return {"operation":operation, "results":[], "error":{
                 "code":"scope_not_found", "path":path,
                 "message":"The requested query directory was not found. Discover the actual component path before retrying; this is not evidence that a symbol or control is absent."}}
         return None
@@ -179,19 +180,24 @@ def citation_feedback(error, ids):
 
 
 def finalization_feedback(error, ids):
-    """Allow one bounded correction of citations or CWE syntax, never a verdict."""
+    """Allow one bounded correction of citations or text format, never a verdict."""
     message = citation_feedback(error, ids)
     if message is not None:
         return message
     cwes = "diagnosis CWEs must be at most five distinct CWE-N identifiers"
     if error.returncode == 2 and error.stderr.strip() == "error: invalid reviewer work: " + cwes:
         return cwes
+    checks = "review triage checks must be one non-empty line of at most 300 characters for "
+    if error.returncode == 2 and error.stderr.strip() in {
+            "error: invalid reviewer work: " + checks + json.dumps(identity) for identity in ids}:
+        return error.stderr.strip().removeprefix("error: invalid reviewer work: ")
     return None
 
 
 def finalization_correction(message, draft):
     return {"reason":message, "rejected_draft":draft,
-            "instruction":"Correct only the rejected citation or diagnosis.cwes format. Preserve every result's verdict, "
+            "instruction":"Correct only the rejected citation, diagnosis.cwes or checks text format named in the reason. "
+                          "Remove blank checks but retain all substantive deciding questions; do not invent new checks. Preserve every result's verdict, "
                           "source evidence, mechanism, qualifications and honest uncertainty. Do not research or invent a replacement CWE. "
                           "The draft was not admitted."}
 
@@ -246,7 +252,16 @@ def write_text(path, body):
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(body)
-        os.replace(pending, path)
+        for attempt in range(6):
+            try:
+                os.replace(pending, path)
+                break
+            except PermissionError as error:
+                # Windows readers and antivirus can briefly deny replacement.
+                # Keep the old checkpoint intact and fail on persistent denial.
+                if getattr(error, "winerror", None) not in (5, 32, 33) or attempt == 5:
+                    raise
+                time.sleep(0.02 * 2 ** attempt)
     finally:
         if os.path.exists(pending):
             os.unlink(pending)
@@ -656,7 +671,7 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
     # Never turn different filters, unknown paths or required-file tools into
     # a directory search. Keep the original request separate from effective argv.
     normalization = None
-    if (tool == "references" and "path_prefix" in optional and "path" in values
+    if (tool in ("references", "symbol", "definition") and "path_prefix" in optional and "path" in values
             and (root / values["path"]).is_dir()
             and ("path_prefix" not in values or values["path_prefix"] == values["path"])):
         values["path_prefix"] = values.pop("path")
@@ -687,11 +702,12 @@ def research_arguments(query, root, review_ids, journals, *, api=None, guidance=
     return ResearchArguments(arguments, normalization)
 
 
-def research_cost(queries):
+def research_cost(queries, *, api=None):
     # Reserve the complete bounded operation before dispatch, including failed,
     # cached or ambiguous lookups. No extra unaccounted source reads on recovery.
-    units = {item["name"]:item["query_units"] for item in context.research_api(
-        Path(__file__).resolve().parents[1] / "skills/mehscan-security")["tools"]}
+    api = api if api is not None else context.research_api(
+        Path(__file__).resolve().parents[1] / "skills/mehscan-security")
+    units = {item["name"]:item["query_units"] for item in api["tools"]}
     return sum(units[query["tool"]] for query in queries)
 
 
@@ -711,11 +727,41 @@ def research_batch_arguments(queries, root, review_ids, journals, *, api=None, g
                     "research result limit must be 1 to 100"):
                 raise
             errors.append((index,error))
-    if query_units_remaining is not None and research_cost(queries) > query_units_remaining:
+    if query_units_remaining is not None and research_cost(queries, api=api) > query_units_remaining:
         errors.append((None,ValueError("research batch exceeds remaining query units")))
     if errors:
         raise ResearchBatchError(errors)
     return commands
+
+
+def research_batch_plan(queries, root, review_ids, journals, query_units_remaining, *, api=None, guidance=None):
+    """Validate all requests, then select whole lookups in requested priority order.
+
+    An invalid later request rejects the entire batch, including requests that
+    would be deferred. Budget omissions are scheduling feedback, never facts.
+    """
+    if type(query_units_remaining) is not int or query_units_remaining < 0:
+        raise ValueError("remaining research query units must be a nonnegative integer")
+    commands = research_batch_arguments(queries, root, review_ids, journals, api=api, guidance=guidance)
+    selected, deferred, remaining = [], [], query_units_remaining
+    for index, (query, command) in enumerate(zip(queries, commands)):
+        cost = research_cost([query], api=api)
+        if cost <= remaining:
+            selected.append((index, query, command))
+            remaining -= cost
+        else:
+            deferred.append({"query_index":index, "query":query, "required_query_units":cost,
+                             "queries_remaining":remaining, "executed":False})
+    feedback = None
+    if deferred:
+        feedback = {"reason":"research_query_budget_deferral",
+            "instruction":"The entire batch passed argument validation. Whole lookups that fit were scheduled in requested "
+                "priority order; deferred_queries did not execute and provide no source evidence or inspected progress. "
+                "Use only returned results. If research remains, prioritize an affordable deciding lookup; otherwise "
+                "preserve the precise unread question. No extra calls or query units were granted.",
+            "scheduled_query_indices":[index for index, _, _ in selected], "deferred_queries":deferred,
+            "reserved_query_units":query_units_remaining - remaining, "queries_remaining":remaining}
+    return ([query for _, query, _ in selected], [command for _, _, command in selected], feedback)
 
 
 def definition_result(discovery, read_source):
@@ -1120,7 +1166,9 @@ def run_locked(args):
             record.setdefault("prepared_contexts", []).append({"conversation_id": conversation_id, "bytes": packet_path.stat().st_size,
                                                               "contract_id": packet["contract"]["contract_id"]})
         facts_path = output / ("facts-" + conversation_id + ".json")
-        working_chain, progress, feedback, corrections = job.state.get("working_chain", ""), job.state.get("progress", []), None, 0
+        working_chain, progress = job.state.get("working_chain", ""), job.state.get("progress", [])
+        feedback, corrections = job.state.get("research_budget_feedback"), 0
+        lookup_api = context.research_api(skill_root)
 
         def artifact_handles():
             aliases = {}
@@ -1233,8 +1281,8 @@ def run_locked(args):
                      "queries_remaining": remaining_count("queries", args.research_queries - query_count),
                      "bytes_remaining": remaining_count("bytes", args.research_bytes - byte_count),
                      "shared_budget_remaining": shared_remaining(),
-                     "tools": [item["name"] for item in context.research_api(skill_root)["tools"]],
-                     "semantics": {item["name"]:item["semantics"] for item in context.research_api(skill_root)["tools"]},
+                     "tools": [item["name"] for item in lookup_api["tools"]],
+                     "semantics": {item["name"]:item["semantics"] for item in lookup_api["tools"]},
                      "artifact_handles": aliases, "source_artifact_handles":source_handles,
                      "dependency_catalog":dependency_catalog,
                      "evidence_agenda":orchestration.evidence_agenda(task, display_facts),
@@ -1399,9 +1447,10 @@ def run_locked(args):
                 if round_index >= calls_left - 1 or job.state.get("citation_feedback"):
                     raise ValueError("reviewer exhausted its research budget without a final draft")
                 # Validate the entire batch before running any lookup.
-                commands = research_batch_arguments(queries, root, task.get("review_ids", []), journals,
-                    api=context.research_api(skill_root), guidance=context.guidance_catalog(skill_root),
-                    query_units_remaining=remaining_count("queries", args.research_queries - query_count))
+                queries, commands, budget_feedback = research_batch_plan(queries, root,
+                    task.get("review_ids", []), journals,
+                    remaining_count("queries", args.research_queries - query_count),
+                    api=lookup_api, guidance=context.guidance_catalog(skill_root))
             except ValueError as error:
                 recoverable = isinstance(error, (ResearchFilterError, ResearchBatchError)) or str(error) in (
                             "review progress must cite current inspected artifacts",
@@ -1451,12 +1500,19 @@ def run_locked(args):
                 # Discard rejected progress; retain actual source facts and query receipts.
                 working_chain, progress = "", []
                 continue
-            feedback = None
+            feedback = budget_feedback
             # Reserve the whole validated batch before execution so a failed or
             # interrupted batch does not gain free queries on recovery.
+            reserved_units = research_cost(queries, api=lookup_api)
             if shared_budget:
-                shared_budget.reserve(case_id, "queries", research_cost(queries))
-            job.save(queries=query_count + research_cost(queries), active_since=time.time())
+                shared_budget.reserve(case_id, "queries", reserved_units)
+            job.save(queries=query_count + reserved_units, research_budget_feedback=feedback,
+                     active_since=time.time())
+            if feedback:
+                execution_trace.emit("research_budget_deferred", job_id=job.path.stem,
+                    conversation_id=conversation_id, round=round_index, feedback=feedback)
+                with shared_lock:
+                    record["research_budget_deferrals"] = record.get("research_budget_deferrals", 0) + len(feedback["deferred_queries"])
 
             def lookup(pair):
                 query, arguments = pair
@@ -1531,7 +1587,7 @@ def run_locked(args):
                 save_facts()
             for (query, fact, reused), arguments in zip(batch,commands):
                 result = fact["result"]
-                cost = research_cost([query])
+                cost = research_cost([query], api=lookup_api)
                 query_count += cost
                 result_bytes = len(json.dumps(result, ensure_ascii=False).encode("utf-8"))
                 if shared_budget:

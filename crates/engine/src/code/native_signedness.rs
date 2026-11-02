@@ -13,6 +13,7 @@ use super::comments::CommentRanges;
 use super::conditional::ConditionalRegions;
 use super::context::enclosing_symbol;
 use super::literals::LiteralEnvironment;
+use super::native_api::NativeApiContext;
 use super::reachability;
 
 const CONVERSION_RULE_ID: &str = "c-family-signed-to-size-conversion";
@@ -20,6 +21,7 @@ const MEMORY_RULE_ID: &str = "c-family-signed-size-memory-operation";
 const VALIDATION_RULE_ID: &str = "c-family-nonnegative-size-validation";
 const ENGINE: &str = "tree-sitter c-family signed-size relationship";
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_native_signedness_observations<'tree>(
     path: &str,
     root: &Node<'tree, StrDoc<SupportLang>>,
@@ -27,6 +29,7 @@ pub(crate) fn add_native_signedness_observations<'tree>(
     comments: &CommentRanges,
     conditional: &ConditionalRegions,
     literals: &LiteralEnvironment<'tree, StrDoc<SupportLang>>,
+    api: &NativeApiContext,
     evidence: &mut Vec<Evidence>,
 ) -> Vec<SecurityPath> {
     if !matches!(language, Language::C | Language::Cpp) {
@@ -40,19 +43,19 @@ pub(crate) fn add_native_signedness_observations<'tree>(
         .filter(|node| node.kind().as_ref() == "call_expression")
         .filter(|node| !comments.is_in_comment(node.range()))
     {
-        let Some((operation, extent)) = memory_extent(&call) else {
+        let Some((operation, extent)) = memory_extent(&call, api) else {
             continue;
         };
-        let Some(conversion) = signed_size_cast(&extent) else {
+        let Some(conversion) = size_conversion(&call, &extent) else {
             continue;
         };
-        let Some((source_type, nominal_type)) =
+        let Some((source_type, nominal_type, alias_definition)) =
             signed_declaration(&call, conversion.value.as_str())
         else {
             continue;
         };
 
-        let source = conversion_evidence(
+        let mut source = conversion_evidence(
             path,
             &conversion,
             &source_type,
@@ -61,6 +64,16 @@ pub(crate) fn add_native_signedness_observations<'tree>(
             conditional,
             literals,
         );
+        if let Some(alias) = alias_definition {
+            source
+                .captures
+                .insert("source_type_definition".into(), capture(path, &alias));
+        }
+        if conversion.implicit {
+            source
+                .tags
+                .push("signed-size:implicit-standard-count-conversion".into());
+        }
         if excluded(&source) {
             continue;
         }
@@ -107,13 +120,14 @@ pub(crate) fn add_native_signedness_observations<'tree>(
 struct SignedSizeCast<'tree> {
     node: Node<'tree, StrDoc<SupportLang>>,
     value: String,
+    implicit: bool,
 }
 
 fn memory_extent<'tree>(
     call: &Node<'tree, StrDoc<SupportLang>>,
+    api: &NativeApiContext,
 ) -> Option<(&'static str, Node<'tree, StrDoc<SupportLang>>)> {
-    let function = call.field("function")?;
-    let operation = match function.text().trim() {
+    let operation = match api.call_name(call)? {
         "memcpy" => "memcpy",
         "memmove" => "memmove",
         "memset" => "memset",
@@ -137,7 +151,7 @@ fn memory_extent<'tree>(
     indexes
         .iter()
         .filter_map(|index| values.get(*index))
-        .find(|argument| signed_size_cast(argument).is_some())
+        .find(|argument| size_conversion(call, argument).is_some())
         .cloned()
         .map(|extent| (operation, extent))
 }
@@ -156,7 +170,11 @@ fn signed_size_cast<'tree>(
     {
         let operand = unwrap_parentheses(cast.field("value")?);
         let value = simple_identifier(operand.text().trim())?.to_string();
-        return Some(SignedSizeCast { node: cast, value });
+        return Some(SignedSizeCast {
+            node: cast,
+            value,
+            implicit: false,
+        });
     }
 
     std::iter::once(extent.clone())
@@ -167,43 +185,156 @@ fn signed_size_cast<'tree>(
                 .strip_prefix("static_cast<size_t>(")?
                 .strip_suffix(')')?;
             let value = simple_identifier(value)?.to_string();
-            Some(SignedSizeCast { node, value })
+            Some(SignedSizeCast {
+                node,
+                value,
+                implicit: false,
+            })
         })
 }
 
-fn signed_declaration(call: &Node<'_, StrDoc<SupportLang>>, value: &str) -> Option<(String, bool)> {
-    let scope = call
-        .ancestors()
-        .find(|node| node.kind().as_ref() == "function_definition")?;
-    scope
+fn size_conversion<'tree>(
+    call: &Node<'tree, StrDoc<SupportLang>>,
+    extent: &Node<'tree, StrDoc<SupportLang>>,
+) -> Option<SignedSizeCast<'tree>> {
+    if let Some(explicit) = signed_size_cast(extent) {
+        return Some(explicit);
+    }
+    let node = unwrap_parentheses(extent.clone());
+    let value = simple_identifier(node.text().trim())?.to_string();
+    // The standard API count parameter establishes the unsigned destination.
+    // Implicit conversion requires a concrete scalar signed type, not a name hint.
+    let (_, nominal, _) = signed_declaration(call, &value)?;
+    (!nominal).then_some(SignedSizeCast {
+        node,
+        value,
+        implicit: true,
+    })
+}
+
+fn visible_declaration(
+    node: &Node<'_, StrDoc<SupportLang>>,
+    call: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    node.range().start < call.range().start
+        && node
+            .ancestors()
+            .find(|n| {
+                matches!(
+                    n.kind().as_ref(),
+                    "compound_statement"
+                        | "function_definition"
+                        | "lambda_expression"
+                        | "namespace_definition"
+                        | "translation_unit"
+                        | "for_statement"
+                        | "for_range_loop"
+                        | "if_statement"
+                        | "while_statement"
+                        | "catch_clause"
+                )
+            })
+            .is_some_and(|scope| contains(&scope, call))
+}
+
+type SignedDeclaration<'tree> = (String, bool, Option<Node<'tree, StrDoc<SupportLang>>>);
+
+fn signed_declaration<'tree>(
+    call: &Node<'tree, StrDoc<SupportLang>>,
+    value: &str,
+) -> Option<SignedDeclaration<'tree>> {
+    let scope = call.ancestors().find(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "function_definition" | "lambda_expression"
+        )
+    })?;
+    // Select the visible binding before deciding signedness. An unsigned inner
+    // binding must not fall back to an outer signed declaration.
+    let declaration = scope
         .dfs()
         .filter(|node| {
             matches!(
                 node.kind().as_ref(),
                 "parameter_declaration" | "declaration"
-            ) && node.range().start < call.range().start
+            ) && visible_declaration(node, call)
         })
-        .filter_map(|declaration| {
-            let declared = if declaration.kind().as_ref() == "parameter_declaration" {
-                declaration.field("declarator")
+        .filter(|declaration| {
+            declaration.field_children("declarator").any(|declared| {
+                let declared = if declared.kind().as_ref() == "init_declarator" {
+                    declared.field("declarator").unwrap_or(declared)
+                } else {
+                    declared
+                };
+                declarator_identifier(&declared).as_deref() == Some(value)
+            })
+        })
+        .last()?;
+    let declared = declaration
+        .field_children("declarator")
+        .find_map(|declared| {
+            let declared = if declared.kind().as_ref() == "init_declarator" {
+                declared.field("declarator")?
             } else {
-                declaration.children().find_map(|child| {
-                    (child.kind().as_ref() == "init_declarator")
-                        .then(|| child.field("declarator"))
-                        .flatten()
-                        .or_else(|| (child.kind().as_ref() == "identifier").then_some(child))
-                })
-            }?;
-            if declarator_identifier(&declared).as_deref() != Some(value) {
-                return None;
-            }
-            let source_type = declaration
-                .field("type")
-                .map(|node| normalize_type(node.text().as_ref()))
-                .unwrap_or_else(|| declaration_prefix_type(&declaration, &declared));
-            signed_type(&source_type).map(|nominal| (source_type, nominal))
-        })
-        .last()
+                declared
+            };
+            (declarator_identifier(&declared).as_deref() == Some(value)).then_some(declared)
+        })?;
+    if declared.dfs().any(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "pointer_declarator" | "array_declarator" | "function_declarator"
+        )
+    }) {
+        return None;
+    }
+    let source_type = declaration
+        .field("type")
+        .map(|node| normalize_type(node.text().as_ref()))
+        .unwrap_or_else(|| declaration_prefix_type(&declaration, &declared));
+    if source_type.split_whitespace().all(|part| {
+        matches!(
+            part,
+            "signed" | "unsigned" | "char" | "short" | "int" | "long"
+        )
+    }) {
+        return signed_type(&source_type).map(|nominal| (source_type, nominal, None));
+    }
+    let root = call.ancestors().last()?;
+    let mut resolved = source_type.clone();
+    let mut definition = None;
+    for _ in 0..8 {
+        let aliases = root
+            .dfs()
+            .filter(|node| {
+                matches!(
+                    node.kind().as_ref(),
+                    "type_definition" | "alias_declaration"
+                ) && visible_declaration(node, call)
+                    && node
+                        .field("name")
+                        .or_else(|| node.field("declarator"))
+                        .is_some_and(|name| name.text().trim() == resolved)
+            })
+            .collect::<Vec<_>>();
+        if aliases.is_empty() {
+            return signed_type(&resolved).map(|nominal| (source_type, nominal, definition));
+        }
+        let targets = aliases
+            .iter()
+            .filter_map(|alias| {
+                alias
+                    .field("type")
+                    .map(|node| normalize_type(node.text().as_ref()))
+            })
+            .collect::<Vec<_>>();
+        if targets.len() != aliases.len() || targets.iter().any(|target| target != &targets[0]) {
+            return None;
+        }
+        resolved = targets[0].clone();
+        definition = aliases.last().cloned();
+    }
+    None
 }
 
 fn declarator_identifier(node: &Node<'_, StrDoc<SupportLang>>) -> Option<String> {
@@ -232,6 +363,13 @@ fn signed_type(value: &str) -> Option<bool> {
             | "long long int"
             | "signed long long"
             | "signed long long int"
+            | "short"
+            | "short int"
+            | "signed short"
+            | "signed short int"
+            | "signed char"
+            | "int8_t"
+            | "int16_t"
             | "ssize_t"
             | "ptrdiff_t"
             | "int32_t"
@@ -251,6 +389,12 @@ fn nonnegative_guard<'tree>(
     value: &str,
     conditional: &ConditionalRegions,
 ) -> Option<Node<'tree, StrDoc<SupportLang>>> {
+    let scope = call.ancestors().find(|node| {
+        matches!(
+            node.kind().as_ref(),
+            "function_definition" | "lambda_expression"
+        )
+    })?;
     for statement in call.ancestors() {
         if statement.kind().as_ref() == "if_statement" {
             let condition = statement.field("condition")?;
@@ -258,49 +402,184 @@ fn nonnegative_guard<'tree>(
             if contains(&consequence, call)
                 && positive_condition(condition.text().as_ref(), value)
                 && availability_compatible(call, &condition, conditional)
+                && !guard_bypassed(&scope, &condition, call)
+                && !changed_between(&scope, value, condition.range().start, call.range().start)
+                && !loop_changes_after_use(call, &condition, value)
             {
                 return Some(condition);
             }
         }
     }
-    let scope = call
-        .ancestors()
-        .find(|node| node.kind().as_ref() == "function_definition")?;
     root.dfs()
         .filter(|node| node.kind().as_ref() == "if_statement")
         .filter(|node| scope.range().start <= node.range().start)
         .filter(|node| node.range().end <= scope.range().end)
         .filter(|node| node.range().end < call.range().start)
-        .filter(dominates_function_tail)
+        .filter(|statement| dominates_use(statement, call))
+        .filter(|statement| super::context::precedes_in_block(statement, call))
         .find_map(|statement| {
             let condition = statement.field("condition")?;
             let consequence = statement.field("consequence")?;
             (availability_compatible(call, &condition, conditional)
                 && negative_condition(condition.text().as_ref(), value)
-                && consequence
-                    .dfs()
-                    .any(|node| node.kind().as_ref() == "return_statement"))
+                && rejecting_branch(&consequence)
+                && !guard_bypassed(&scope, &condition, call)
+                && !changed_between(&scope, value, condition.range().start, call.range().start)
+                && !loop_changes_after_use(call, &condition, value))
             .then_some(condition)
         })
+}
+
+fn rejecting_branch(branch: &Node<'_, StrDoc<SupportLang>>) -> bool {
+    match branch.kind().as_ref() {
+        "return_statement" | "throw_statement" => true,
+        "compound_statement" => {
+            !branch
+                .dfs()
+                .any(|node| node.kind().as_ref() == "goto_statement")
+                && branch
+                    .children()
+                    .filter(|node| node.is_named() && !node.kind().contains("comment"))
+                    .last()
+                    .is_some_and(|node| rejecting_branch(&node))
+        }
+        "if_statement" => {
+            branch
+                .field("consequence")
+                .is_some_and(|node| rejecting_branch(&node))
+                && branch
+                    .field("alternative")
+                    .is_some_and(|node| rejecting_branch(&node))
+        }
+        _ => false,
+    }
+}
+
+fn changed_between(
+    scope: &Node<'_, StrDoc<SupportLang>>,
+    value: &str,
+    start: usize,
+    end: usize,
+) -> bool {
+    scope
+        .dfs()
+        .filter(|node| start < node.range().start && node.range().start < end)
+        .filter(|node| !exits_before(node, end))
+        .any(|node| match node.kind().as_ref() {
+            "assignment_expression" => node
+                .field("left")
+                .is_some_and(|left| compact(unwrap_parentheses(left).text().as_ref()) == value),
+            "update_expression" => node
+                .dfs()
+                .any(|child| child.kind().as_ref() == "identifier" && child.text().trim() == value),
+            "call_expression" => node.field("arguments").is_some_and(|arguments| {
+                arguments
+                    .children()
+                    .filter(|arg| arg.is_named())
+                    .any(|arg| {
+                        let text = compact(arg.text().as_ref());
+                        text == value || text.strip_prefix('&') == Some(value)
+                    })
+            }),
+            _ => false,
+        })
+}
+
+fn exits_before(node: &Node<'_, StrDoc<SupportLang>>, end: usize) -> bool {
+    node.ancestors()
+        .take_while(|ancestor| {
+            !matches!(
+                ancestor.kind().as_ref(),
+                "function_definition" | "lambda_expression"
+            )
+        })
+        .any(|ancestor| {
+            if ancestor.range().end >= end {
+                return false;
+            }
+            if ancestor.kind().as_ref() == "return_statement" {
+                return true;
+            }
+            ancestor.kind().as_ref() == "if_statement"
+                && ["consequence", "alternative"]
+                    .iter()
+                    .filter_map(|field| ancestor.field(field))
+                    .any(|branch| contains(&branch, node) && rejecting_branch(&branch))
+        })
+}
+
+fn loop_changes_after_use(
+    call: &Node<'_, StrDoc<SupportLang>>,
+    condition: &Node<'_, StrDoc<SupportLang>>,
+    value: &str,
+) -> bool {
+    call.ancestors()
+        .filter(|node| {
+            matches!(
+                node.kind().as_ref(),
+                "for_statement" | "for_range_loop" | "while_statement" | "do_statement"
+            ) && condition.range().end < node.range().start
+        })
+        .any(|node| changed_between(&node, value, call.range().end, node.range().end))
+}
+
+fn guard_bypassed(
+    scope: &Node<'_, StrDoc<SupportLang>>,
+    condition: &Node<'_, StrDoc<SupportLang>>,
+    call: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    let labels = scope
+        .dfs()
+        .filter(|node| {
+            node.kind().as_ref() == "labeled_statement"
+                && condition.range().end < node.range().start
+                && node.range().start < call.range().start
+        })
+        .filter_map(|node| {
+            node.field("label").or_else(|| {
+                node.children()
+                    .find(|child| child.kind().as_ref() == "statement_identifier")
+            })
+        })
+        .map(|node| compact(node.text().as_ref()))
+        .collect::<Vec<_>>();
+    !labels.is_empty()
+        && scope
+            .dfs()
+            .filter(|node| node.kind().as_ref() == "goto_statement")
+            .any(|node| {
+                let text = compact(node.text().as_ref());
+                text.starts_with("goto*")
+                    || labels.iter().any(|label| text == format!("goto{label};"))
+            })
 }
 
 fn contains(parent: &Node<'_, StrDoc<SupportLang>>, child: &Node<'_, StrDoc<SupportLang>>) -> bool {
     parent.range().start <= child.range().start && child.range().end <= parent.range().end
 }
 
-fn dominates_function_tail(statement: &Node<'_, StrDoc<SupportLang>>) -> bool {
+fn dominates_use(
+    statement: &Node<'_, StrDoc<SupportLang>>,
+    call: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
     !statement
         .ancestors()
-        .take_while(|ancestor| ancestor.kind().as_ref() != "function_definition")
-        .any(|ancestor| {
-            matches!(
-                ancestor.kind().as_ref(),
-                "if_statement"
-                    | "for_statement"
-                    | "while_statement"
-                    | "do_statement"
-                    | "switch_statement"
+        .take_while(|node| {
+            !matches!(
+                node.kind().as_ref(),
+                "function_definition" | "lambda_expression"
             )
+        })
+        .any(|node| match node.kind().as_ref() {
+            "if_statement" => !["consequence", "alternative"]
+                .iter()
+                .filter_map(|field| node.field(field))
+                .any(|branch| contains(&branch, statement) && contains(&branch, call)),
+            "for_statement" | "for_range_loop" | "while_statement" | "do_statement" => !node
+                .field("body")
+                .is_some_and(|body| contains(&body, statement) && contains(&body, call)),
+            "switch_statement" | "conditional_expression" => true,
+            _ => false,
         })
 }
 
