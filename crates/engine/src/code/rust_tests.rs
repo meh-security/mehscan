@@ -1,5 +1,5 @@
 //! Provably test-only Rust items; unknown production cfg branches remain visible.
-use std::ops::Range;
+use std::{ops::Range, sync::OnceLock};
 
 use ast_grep_core::{AstGrep, tree_sitter::StrDoc};
 use ast_grep_language::SupportLang;
@@ -14,14 +14,15 @@ pub(crate) fn ranges(source: &str) -> Vec<Range<usize>> {
     let ast = AstGrep::doc(doc);
     let root = ast.root();
     let mut found: Vec<Range<usize>> = Vec::new();
+    let mut covered_end = 0;
+    let mut attributes = super::rust_cfg::AttributeIndex::default();
     for attribute in root
         .dfs()
         .filter(|n| matches!(n.kind().as_ref(), "attribute_item" | "inner_attribute_item"))
     {
-        if found
-            .iter()
-            .any(|r| r.start <= attribute.range().start && attribute.range().end <= r.end)
-        {
+        // DFS visits attributes in source order. Every earlier selected range
+        // starts before this attribute, so only its furthest end is needed.
+        if attribute.range().end <= covered_end {
             continue;
         }
         if !super::rust_cfg::test_only(&attribute) {
@@ -32,38 +33,22 @@ pub(crate) fn ranges(source: &str) -> Vec<Range<usize>> {
         };
         if attribute.kind().as_ref() == "inner_attribute_item" {
             if parent.kind().as_ref() == "source_file" {
+                covered_end = covered_end.max(parent.range().end);
                 found.push(parent.range());
             } else if let Some(module) = parent
                 .parent()
                 .filter(|node| node.kind().as_ref() == "mod_item")
             {
+                covered_end = covered_end.max(module.range().end);
                 found.push(module.range());
             }
             continue;
         }
-        let siblings: Vec<_> = parent.children().collect();
-        let mut start = attribute.range().start;
-        for previous in siblings
-            .iter()
-            .rev()
-            .filter(|n| n.range().end <= attribute.range().start)
-        {
-            if previous.kind().as_ref() == "attribute_item" {
-                start = previous.range().start;
-            } else if !previous.kind().contains("comment") {
-                break;
-            }
-        }
-        let item = parent
-            .children()
-            .filter(|n| n.range().start >= attribute.range().end)
-            .find(|n| {
-                n.is_named()
-                    && n.kind().as_ref() != "attribute_item"
-                    && !n.kind().contains("comment")
-            });
+        let start = attributes.group_start(&attribute);
+        let item = attributes.following(&attribute);
         if let Some(item) = item.filter(|n| !n.dfs().any(|child| child.kind().as_ref() == "ERROR"))
         {
+            covered_end = covered_end.max(item.range().end);
             found.push(start..item.range().end);
         }
     }
@@ -97,42 +82,89 @@ pub(crate) fn production_source(source: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-pub(crate) fn restore_location(location: &mut mehscan_core::Location, source: &str) {
-    for position in [&mut location.start, &mut location.end] {
-        if let Some(before) = source.get(..position.byte_offset) {
-            position.line = before.bytes().filter(|b| *b == b'\n').count() + 1;
-            position.column = before
-                .rsplit('\n')
-                .next()
-                .unwrap_or_default()
-                .chars()
-                .count()
-                + 1;
+pub(crate) struct OriginalSource {
+    original: String,
+    analysis: String,
+    coordinates: OnceLock<SourceCoordinates>,
+}
+
+impl OriginalSource {
+    pub(crate) fn new(original: String, analysis: String) -> Self {
+        Self {
+            original,
+            analysis,
+            coordinates: OnceLock::new(),
+        }
+    }
+
+    pub(crate) fn restore_location(&self, location: &mut mehscan_core::Location) {
+        let coordinates = self
+            .coordinates
+            .get_or_init(|| SourceCoordinates::new(&self.original));
+        for position in [&mut location.start, &mut location.end] {
+            let offset = position.byte_offset;
+            if offset > self.original.len() || !self.original.is_char_boundary(offset) {
+                continue;
+            }
+            let line = coordinates.lines.partition_point(|start| *start <= offset) - 1;
+            let start = coordinates.lines[line];
+            let extra = coordinates
+                .continuations
+                .partition_point(|byte| *byte < offset)
+                - coordinates
+                    .continuations
+                    .partition_point(|byte| *byte < start);
+            position.line = line + 1;
+            position.column = offset - start - extra + 1;
+        }
+    }
+}
+
+struct SourceCoordinates {
+    lines: Vec<usize>,
+    continuations: Vec<usize>,
+}
+
+impl SourceCoordinates {
+    fn new(source: &str) -> Self {
+        let mut lines = vec![0];
+        let mut continuations = Vec::new();
+        for (offset, byte) in source.bytes().enumerate() {
+            if byte == b'\n' {
+                lines.push(offset + 1);
+            }
+            if byte & 0b1100_0000 == 0b1000_0000 {
+                continuations.push(offset);
+            }
+        }
+        Self {
+            lines,
+            continuations,
         }
     }
 }
 
 pub(crate) fn restore_evidence(
     evidence: &mut mehscan_core::Evidence,
-    originals: &std::collections::BTreeMap<String, (String, String)>,
+    originals: &std::collections::BTreeMap<String, OriginalSource>,
 ) {
     // Secret captures are deliberately redacted and must never be replaced
     // with source bytes. Other normalized/derived captures remain unchanged.
     if evidence.kind == mehscan_core::EvidenceKind::Secret {
         return;
     }
-    if let Some((original, _)) = originals.get(&evidence.location.path) {
-        restore_location(&mut evidence.location, original);
+    if let Some(original) = originals.get(&evidence.location.path) {
+        original.restore_location(&mut evidence.location);
     }
     for capture in evidence.captures.values_mut() {
-        if let Some((original, analysis)) = originals.get(&capture.location.path) {
+        if let Some(original) = originals.get(&capture.location.path) {
             let range = capture.location.start.byte_offset..capture.location.end.byte_offset;
-            if analysis.get(range.clone()) == Some(capture.text.as_str()) {
-                if let Some(text) = original.get(range) {
+            if original.analysis.get(range.clone()) == Some(capture.text.as_str()) {
+                if let Some(text) = original.original.get(range) {
                     capture.text = text.to_string();
                 }
             }
-            restore_location(&mut capture.location, original);
+            original.restore_location(&mut capture.location);
         }
     }
 }
@@ -140,6 +172,120 @@ pub(crate) fn restore_evidence(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn indexed_coordinates_keep_utf8_crlf_boundaries_and_invalid_offsets() {
+        let source = "🦀 e\u{301}\r\nsecond λ\nlast\t字";
+        let original = OriginalSource::new(source.to_string(), source.to_string());
+        for offset in 0..=source.len() + 1 {
+            let mut location = mehscan_core::Location {
+                path: "module.rs".to_string(),
+                start: mehscan_core::Position {
+                    line: 999,
+                    column: 999,
+                    byte_offset: offset,
+                },
+                end: mehscan_core::Position {
+                    line: 999,
+                    column: 999,
+                    byte_offset: offset,
+                },
+            };
+            original.restore_location(&mut location);
+            let expected = source
+                .get(..offset)
+                .map(|before| {
+                    (
+                        before.bytes().filter(|byte| *byte == b'\n').count() + 1,
+                        before.rsplit('\n').next().unwrap().chars().count() + 1,
+                    )
+                })
+                .unwrap_or((999, 999));
+            assert_eq!(
+                (location.start.line, location.start.column),
+                expected,
+                "{offset}"
+            );
+            assert_eq!(location.start, location.end);
+        }
+    }
+
+    #[test]
+    fn indexed_masking_keeps_legacy_nested_and_stacked_item_ranges() {
+        let source = r##"
+            #[allow(dead_code)] // preceding annotation
+            #[test] #[cfg(test)] fn first() { let marker="🦀"; }
+            fn live() {}
+            #[cfg(test)] mod suite { #[test] fn child() {} }
+            mod inner { #![cfg(test)] fn hidden() {} }
+            #[cfg(any(test,feature="server"))] fn optional() {}
+            #[allow(unused)] /* between */ #[test] fn last() {}
+        "##;
+        let doc = StrDoc::try_new(source, SupportLang::Rust).unwrap();
+        let ast = AstGrep::doc(doc);
+        let root = ast.root();
+        let mut expected: Vec<Range<usize>> = Vec::new();
+        for attribute in root.dfs().filter(|node| {
+            matches!(
+                node.kind().as_ref(),
+                "attribute_item" | "inner_attribute_item"
+            )
+        }) {
+            if expected.iter().any(|range| {
+                range.start <= attribute.range().start && attribute.range().end <= range.end
+            }) || !super::super::rust_cfg::test_only(&attribute)
+            {
+                continue;
+            }
+            let parent = attribute.parent().unwrap();
+            if attribute.kind().as_ref() == "inner_attribute_item" {
+                if parent.kind().as_ref() == "source_file" {
+                    expected.push(parent.range());
+                } else if let Some(module) = parent
+                    .parent()
+                    .filter(|node| node.kind().as_ref() == "mod_item")
+                {
+                    expected.push(module.range());
+                }
+                continue;
+            }
+            let siblings: Vec<_> = parent.children().collect();
+            let mut start = attribute.range().start;
+            for previous in siblings
+                .iter()
+                .rev()
+                .filter(|node| node.range().end <= attribute.range().start)
+            {
+                if previous.kind().as_ref() == "attribute_item" {
+                    start = previous.range().start;
+                } else if !previous.kind().contains("comment") {
+                    break;
+                }
+            }
+            if let Some(item) = parent
+                .children()
+                .filter(|node| node.range().start >= attribute.range().end)
+                .find(|node| {
+                    node.is_named()
+                        && node.kind().as_ref() != "attribute_item"
+                        && !node.kind().contains("comment")
+                })
+                .filter(|node| !node.dfs().any(|child| child.kind().as_ref() == "ERROR"))
+            {
+                expected.push(start..item.range().end);
+            }
+        }
+        expected.sort_by_key(|range| (range.start, range.end));
+        let mut merged: Vec<Range<usize>> = Vec::new();
+        for range in expected {
+            if let Some(last) = merged.last_mut().filter(|last| last.end >= range.start) {
+                last.end = last.end.max(range.end);
+            } else {
+                merged.push(range);
+            }
+        }
+        assert_eq!(ranges(source), merged);
+    }
 
     #[test]
     fn cfg_ownership_keeps_production_after_test_items_and_utf8_coordinates() {

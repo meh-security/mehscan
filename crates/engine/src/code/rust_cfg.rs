@@ -4,6 +4,61 @@ use ast_grep_language::SupportLang;
 use std::{collections::BTreeMap, ops::Range};
 type AstNode<'a> = Node<'a, StrDoc<SupportLang>>;
 
+#[derive(Default)]
+pub(super) struct AttributeIndex<'tree> {
+    parents: BTreeMap<usize, AttributeSiblings<'tree>>,
+}
+
+struct AttributeSiblings<'tree> {
+    items: Vec<(usize, AstNode<'tree>)>,
+    group_starts: BTreeMap<usize, usize>,
+}
+
+impl<'tree> AttributeIndex<'tree> {
+    fn siblings(&mut self, attribute: &AstNode<'tree>) -> Option<&AttributeSiblings<'tree>> {
+        let parent = attribute.parent()?;
+        Some(self.parents.entry(parent.node_id()).or_insert_with(|| {
+            let mut items = Vec::new();
+            let mut group_starts = BTreeMap::new();
+            let mut start = None;
+            for child in parent.children() {
+                let kind = child.kind();
+                if child.is_named()
+                    && kind.as_ref() != "attribute_item"
+                    && !kind.contains("comment")
+                {
+                    items.push((child.range().start, child.clone()));
+                }
+                if kind.as_ref() == "attribute_item" {
+                    let first = *start.get_or_insert(child.range().start);
+                    group_starts.insert(child.node_id(), first);
+                } else if !kind.contains("comment") {
+                    start = None;
+                }
+            }
+            AttributeSiblings {
+                items,
+                group_starts,
+            }
+        }))
+    }
+
+    pub(super) fn following(&mut self, attribute: &AstNode<'tree>) -> Option<AstNode<'tree>> {
+        let siblings = self.siblings(attribute)?;
+        let next = siblings
+            .items
+            .partition_point(|(start, _)| *start < attribute.range().end);
+        siblings.items.get(next).map(|(_, node)| node.clone())
+    }
+
+    pub(super) fn group_start(&mut self, attribute: &AstNode<'tree>) -> usize {
+        self.siblings(attribute)
+            .and_then(|siblings| siblings.group_starts.get(&attribute.node_id()))
+            .copied()
+            .unwrap_or(attribute.range().start)
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Truth {
     Yes,
@@ -125,7 +180,7 @@ pub(super) fn test_only(node: &AstNode<'_>) -> bool {
 
 pub(super) fn conditions(root: &AstNode<'_>) -> Vec<(Range<usize>, String, Option<bool>)> {
     let mut result = Vec::new();
-    let mut items_by_parent = BTreeMap::<usize, Vec<Range<usize>>>::new();
+    let mut attributes = AttributeIndex::default();
     for node in root
         .dfs()
         .filter(|n| matches!(n.kind().as_ref(), "attribute_item" | "inner_attribute_item"))
@@ -139,24 +194,10 @@ pub(super) fn conditions(root: &AstNode<'_>) -> Vec<(Range<usize>, String, Optio
         let range = if node.kind().as_ref() == "inner_attribute_item" {
             parent.range()
         } else {
-            // Attributes on the same module/file share this source-ordered
-            // table. Do not walk every earlier sibling again for each item.
-            let items = items_by_parent.entry(parent.node_id()).or_insert_with(|| {
-                parent
-                    .children()
-                    .filter(|n| {
-                        n.is_named()
-                            && n.kind().as_ref() != "attribute_item"
-                            && !n.kind().contains("comment")
-                    })
-                    .map(|n| n.range())
-                    .collect()
-            });
-            let next = items.partition_point(|range| range.start < node.range().end);
-            let Some(range) = items.get(next) else {
+            let Some(item) = attributes.following(&node) else {
                 continue;
             };
-            range.clone()
+            item.range()
         };
         result.push((range, condition, truth));
     }

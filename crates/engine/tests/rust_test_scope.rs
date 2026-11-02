@@ -141,6 +141,44 @@ fn production_routes() {
 }
 
 #[test]
+fn surviving_operations_keep_original_unicode_columns_after_same_line_masks() {
+    let fixture = Fixture::new("unicode-columns");
+    let source = "#[test] fn fixture(){let marker=\"🦀é\";} fn production(value:&str){std::process::Command::new(value).status();}\r\n#[cfg(any(test,feature=\"server\"))] fn optional(value:&str){std::process::Command::new(value).status();}\n";
+    fixture.write("module.rs", source);
+    let scan = mehscan_engine::scan_path(&fixture.0).unwrap();
+    assert_eq!(scan.coverage.totals.parse_failed, 0);
+    let operations = scan
+        .evidence
+        .iter()
+        .filter(|item| item.capability == mehscan_core::Capability::ProcessExecution)
+        .collect::<Vec<_>>();
+    assert_eq!(operations.len(), 4);
+    for item in operations {
+        for location in std::iter::once(&item.location)
+            .chain(item.captures.values().map(|capture| &capture.location))
+        {
+            for position in [&location.start, &location.end] {
+                let before = &source[..position.byte_offset];
+                assert_eq!(
+                    position.line,
+                    before.bytes().filter(|byte| *byte == b'\n').count() + 1
+                );
+                assert_eq!(
+                    position.column,
+                    before.rsplit('\n').next().unwrap().chars().count() + 1
+                );
+            }
+        }
+        for capture in item.captures.values() {
+            assert_eq!(
+                capture.text,
+                source[capture.location.start.byte_offset..capture.location.end.byte_offset]
+            );
+        }
+    }
+}
+
+#[test]
 fn opting_into_secrets_keeps_test_credentials_redacted() {
     let fixture = Fixture::new("secret-redaction");
     let credential_fixture = fs::read_to_string(

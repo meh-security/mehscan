@@ -801,9 +801,12 @@ pub(crate) fn scan_profiled(
     let rust_originals: BTreeMap<_, _> = prepared
         .iter()
         .filter_map(|file| {
-            file.rust_original
-                .as_ref()
-                .map(|source| (file.relative.clone(), (source.clone(), file.source.clone())))
+            file.rust_original.as_ref().map(|source| {
+                (
+                    file.relative.clone(),
+                    super::rust_tests::OriginalSource::new(source.clone(), file.source.clone()),
+                )
+            })
         })
         .collect();
     let mut analysis_prepared = Vec::new();
@@ -934,8 +937,8 @@ pub(crate) fn scan_profiled(
     }
     for path in &mut security_paths {
         for step in &mut path.steps {
-            if let Some((original, _)) = rust_originals.get(&step.location.path) {
-                super::rust_tests::restore_location(&mut step.location, original);
+            if let Some(original) = rust_originals.get(&step.location.path) {
+                original.restore_location(&mut step.location);
             }
         }
     }
