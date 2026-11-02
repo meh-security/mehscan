@@ -84,6 +84,7 @@ mod native_curl;
 mod native_domain_bounds;
 mod native_drogon;
 mod native_heap_lifetime;
+mod native_index;
 mod native_invalidation;
 mod native_libarchive;
 mod native_libxml2;

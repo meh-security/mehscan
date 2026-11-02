@@ -21,6 +21,7 @@ const MEMORY_RULE_ID: &str = "c-family-signed-size-memory-operation";
 const VALIDATION_RULE_ID: &str = "c-family-nonnegative-size-validation";
 const ENGINE: &str = "tree-sitter c-family signed-size relationship";
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_native_signedness_observations<'tree>(
     path: &str,
     root: &Node<'tree, StrDoc<SupportLang>>,
@@ -236,10 +237,12 @@ fn visible_declaration(
             .is_some_and(|scope| contains(&scope, call))
 }
 
+type SignedDeclaration<'tree> = (String, bool, Option<Node<'tree, StrDoc<SupportLang>>>);
+
 fn signed_declaration<'tree>(
     call: &Node<'tree, StrDoc<SupportLang>>,
     value: &str,
-) -> Option<(String, bool, Option<Node<'tree, StrDoc<SupportLang>>>)> {
+) -> Option<SignedDeclaration<'tree>> {
     let scope = call.ancestors().find(|node| {
         matches!(
             node.kind().as_ref(),

@@ -40,6 +40,7 @@ struct MemoryUses<'tree> {
     operation: Node<'tree, StrDoc<SupportLang>>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_native_loaded_extent_observations<'tree>(
     path: &str,
     root: &Node<'tree, StrDoc<SupportLang>>,

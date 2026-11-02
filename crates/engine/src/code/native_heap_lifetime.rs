@@ -21,6 +21,7 @@ const RELEASE_RULE_ID: &str = "c-family-local-heap-deallocation";
 const EARLY_RELEASE_RULE_ID: &str = "c-family-early-exit-deallocation";
 const ENGINE: &str = "tree-sitter c-family local-heap-lifetime relationship";
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_native_heap_lifetime_observations<'tree>(
     path: &str,
     root: &Node<'tree, StrDoc<SupportLang>>,

@@ -21,6 +21,7 @@ const MULTIPLICATION_RULE_ID: &str = "c-family-memory-relevant-multiplication";
 const VALIDATION_RULE_ID: &str = "c-family-multiplication-overflow-validation";
 const ENGINE: &str = "tree-sitter c-family multiplication relationship";
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_native_multiplication_observations<'tree>(
     path: &str,
     root: &Node<'tree, StrDoc<SupportLang>>,

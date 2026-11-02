@@ -37,6 +37,7 @@ struct BoundsCheck<'tree> {
     kind: CheckKind,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_native_remaining_input_observations<'tree>(
     path: &str,
     root: &Node<'tree, StrDoc<SupportLang>>,

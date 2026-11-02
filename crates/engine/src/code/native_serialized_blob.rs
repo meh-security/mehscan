@@ -26,6 +26,7 @@ type SyntaxNode<'tree> = Node<'tree, StrDoc<SupportLang>>;
 type ExtentDeclaration<'tree> = (SyntaxNode<'tree>, SyntaxNode<'tree>);
 type BlobLoad<'tree> = (SyntaxNode<'tree>, SyntaxNode<'tree>, Option<String>);
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_native_serialized_blob_observations<'tree>(
     path: &str,
     root: &Node<'tree, StrDoc<SupportLang>>,

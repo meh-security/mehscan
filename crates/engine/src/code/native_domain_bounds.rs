@@ -14,6 +14,7 @@ use super::conditional::ConditionalRegions;
 use super::context::enclosing_symbol;
 use super::literals::LiteralEnvironment;
 use super::native_api::NativeApiContext;
+use super::native_index::NativeIndex;
 use super::reachability;
 
 const INPUT_RULE_ID: &str = "c-family-domain-limited-input-quantity";
@@ -22,6 +23,7 @@ const VALIDATION_RULE_ID: &str = "c-family-derived-domain-limit-validation";
 const SINK_RULE_ID: &str = "c-family-count-controlled-memory-operation";
 const ENGINE: &str = "tree-sitter c-family domain-bound relationship";
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_native_domain_bound_observations<'tree>(
     path: &str,
     root: &Node<'tree, StrDoc<SupportLang>>,
@@ -38,10 +40,18 @@ pub(crate) fn add_native_domain_bound_observations<'tree>(
 
     let mut additions = Vec::new();
     let mut paths = Vec::new();
-    let function_declarators = root
-        .dfs()
-        .filter(|node| node.kind().as_ref() == "function_declarator")
-        .collect::<Vec<_>>();
+    let syntax = NativeIndex::new(
+        root,
+        &[
+            "function_declarator",
+            "declaration",
+            "assignment_expression",
+            "call_expression",
+            "if_statement",
+            "return_statement",
+        ],
+    );
+    let function_declarators = syntax.nodes("function_declarator");
     for (index, function) in function_declarators.iter().enumerate() {
         let scope_start = function.range().start;
         let scope_end = function_declarators
@@ -49,14 +59,12 @@ pub(crate) fn add_native_domain_bound_observations<'tree>(
             .map(|next| next.range().start)
             .unwrap_or_else(|| root.range().end);
         let parameters = parameter_names(function);
-        for limit in derived_limits(root, scope_start, scope_end) {
-            for sink_node in root
-                .dfs()
-                .filter(|node| node.kind().as_ref() == "call_expression")
-                .filter(|node| {
-                    node.range().start > limit.declaration.range().end
-                        && node.range().end < scope_end
-                })
+        if parameters.is_empty() {
+            continue;
+        }
+        for limit in derived_limits(&syntax, scope_start, scope_end) {
+            for sink_node in syntax
+                .between("call_expression", limit.declaration.range().end, scope_end)
                 .filter(|node| is_memory_operation(node, api))
             {
                 if comments.is_in_comment(sink_node.range()) {
@@ -88,7 +96,7 @@ pub(crate) fn add_native_domain_bound_observations<'tree>(
                     limit_evidence(path, &limit, comments, conditional, literals),
                 );
 
-                for comparison in upper_bound_comparisons(root, &limit, count, &sink_node) {
+                for comparison in upper_bound_comparisons(&syntax, &limit, count, &sink_node) {
                     let source = input_evidence(
                         path,
                         &comparison,
@@ -142,19 +150,13 @@ struct BoundComparison<'tree> {
 }
 
 fn derived_limits<'tree>(
-    root: &Node<'tree, StrDoc<SupportLang>>,
+    syntax: &NativeIndex<'tree>,
     scope_start: usize,
     scope_end: usize,
 ) -> Vec<DerivedLimit<'tree>> {
-    let mut limits = root
-        .dfs()
+    let mut limits = syntax
+        .between("declaration", scope_start, scope_end)
         .filter_map(|declaration| {
-            if declaration.kind().as_ref() != "declaration" {
-                return None;
-            }
-            if declaration.range().start <= scope_start || declaration.range().end >= scope_end {
-                return None;
-            }
             let init = declaration
                 .children()
                 .find(|child| child.kind().as_ref() == "init_declarator")?;
@@ -180,52 +182,45 @@ fn derived_limits<'tree>(
         })
         .collect::<Vec<_>>();
 
-    limits.extend(root.dfs().filter_map(|assignment| {
-        if assignment.kind().as_ref() != "assignment_expression" {
-            return None;
-        }
-        if assignment.range().start <= scope_start || assignment.range().end >= scope_end {
-            return None;
-        }
-        let left = unwrap_parentheses(assignment.field("left")?);
-        let name = simple_identifier(left.text().trim())?.to_string();
-        let value = unwrap_parentheses(assignment.field("right")?);
-        if value.kind().as_ref() != "conditional_expression"
-            || !has_preceding_declaration(root, &assignment, &name, scope_start)
-        {
-            return None;
-        }
-        let text = value.text();
-        let has_state_derived_part = value.dfs().any(|node| {
-            matches!(
-                node.kind().as_ref(),
-                "field_expression" | "subscript_expression"
-            )
-        });
-        let has_fixed_maximum = identifiers(text.as_ref()).any(is_constant_identifier);
-        (has_state_derived_part && has_fixed_maximum).then_some(DerivedLimit {
-            declaration: assignment,
-            value,
-            name,
-        })
-    }));
+    limits.extend(
+        syntax
+            .between("assignment_expression", scope_start, scope_end)
+            .filter_map(|assignment| {
+                let left = unwrap_parentheses(assignment.field("left")?);
+                let name = simple_identifier(left.text().trim())?.to_string();
+                let value = unwrap_parentheses(assignment.field("right")?);
+                if value.kind().as_ref() != "conditional_expression"
+                    || !has_preceding_declaration(syntax, &assignment, &name, scope_start)
+                {
+                    return None;
+                }
+                let text = value.text();
+                let has_state_derived_part = value.dfs().any(|node| {
+                    matches!(
+                        node.kind().as_ref(),
+                        "field_expression" | "subscript_expression"
+                    )
+                });
+                let has_fixed_maximum = identifiers(text.as_ref()).any(is_constant_identifier);
+                (has_state_derived_part && has_fixed_maximum).then_some(DerivedLimit {
+                    declaration: assignment,
+                    value,
+                    name,
+                })
+            }),
+    );
     limits.sort_by_key(|limit| limit.declaration.range().start);
     limits
 }
 
 fn has_preceding_declaration(
-    function: &Node<'_, StrDoc<SupportLang>>,
+    syntax: &NativeIndex<'_>,
     assignment: &Node<'_, StrDoc<SupportLang>>,
     name: &str,
     scope_start: usize,
 ) -> bool {
-    function
-        .dfs()
-        .filter(|node| {
-            node.kind().as_ref() == "declaration"
-                && node.range().start > scope_start
-                && node.range().end < assignment.range().start
-        })
+    syntax
+        .between("declaration", scope_start, assignment.range().start)
         .any(|declaration| {
             declaration
                 .dfs()
@@ -256,23 +251,22 @@ fn is_memory_operation(node: &Node<'_, StrDoc<SupportLang>>, api: &NativeApiCont
 }
 
 fn upper_bound_comparisons<'tree>(
-    function: &Node<'tree, StrDoc<SupportLang>>,
+    syntax: &NativeIndex<'tree>,
     limit: &DerivedLimit<'tree>,
     count: &str,
     sink: &Node<'tree, StrDoc<SupportLang>>,
 ) -> Vec<BoundComparison<'tree>> {
-    function
-        .dfs()
-        .filter(|node| node.kind().as_ref() == "if_statement")
-        .filter(|node| {
-            node.range().start > limit.declaration.range().end
-                && node.range().end < sink.range().start
-        })
+    syntax
+        .between(
+            "if_statement",
+            limit.declaration.range().end,
+            sink.range().start,
+        )
         .filter_map(|statement| {
             let rejecting = statement
                 .field("consequence")
                 .is_some_and(|consequence| is_rejecting_consequence(&consequence))
-                || has_rejection_between(function, &statement, sink);
+                || has_rejection_between(syntax, &statement, sink);
             if !rejecting {
                 return None;
             }
@@ -302,15 +296,21 @@ fn upper_bound_comparisons<'tree>(
 }
 
 fn has_rejection_between(
-    root: &Node<'_, StrDoc<SupportLang>>,
+    syntax: &NativeIndex<'_>,
     comparison_statement: &Node<'_, StrDoc<SupportLang>>,
     sink: &Node<'_, StrDoc<SupportLang>>,
 ) -> bool {
-    root.dfs()
-        .filter(|node| {
-            node.range().start > comparison_statement.range().end
-                && node.range().end < sink.range().start
-        })
+    syntax
+        .between(
+            "return_statement",
+            comparison_statement.range().end,
+            sink.range().start,
+        )
+        .chain(syntax.between(
+            "call_expression",
+            comparison_statement.range().end,
+            sink.range().start,
+        ))
         .any(|node| {
             node.kind().as_ref() == "return_statement"
                 || node.kind().as_ref() == "call_expression"
