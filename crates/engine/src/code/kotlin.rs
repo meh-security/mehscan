@@ -245,7 +245,7 @@ pub(super) fn accept<'a>(
         return cookie::accepts(root, rule, node);
     }
     if rule.starts_with("kotlin-auth0-jwt-") {
-        return jwt::accepts(root, rule, node);
+        return jwt::accepts_with_imports(root, imports, rule, node);
     }
     if rule.starts_with("kotlin-webflux-") {
         return webflux::accepts(root, rule, node);
