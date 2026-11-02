@@ -263,6 +263,13 @@ fn capacity_and_termination_require_the_consumed_array_binding() {
     ));
     fs::create_dir_all(&root).unwrap();
     let source = r#"#include <string.h>
+char global_dst[64];
+void global_copy(const char *src) {
+    strncpy(global_dst, src, 32); global_dst[63] = 0;
+}
+void borrowed_global(char *global_dst, const char *src) {
+    strncpy(global_dst, src, 32); global_dst[63] = 0;
+}
 void sibling(char *dst, const char *src) {
     { char dst[64]; }
     strncpy(dst, src, 32); dst[63] = 0;
@@ -308,12 +315,18 @@ void conditional_safe(const char *src) {
                     )
             })
             .collect::<Vec<_>>();
-        assert_eq!(validations.len(), 4, "{extension}: {validations:#?}");
+        assert_eq!(validations.len(), 6, "{extension}: {validations:#?}");
         assert!(validations.iter().all(|item| matches!(
             item.enclosing_symbol.as_deref(),
-            Some("actual" | "conditional_safe")
+            Some("actual" | "conditional_safe" | "global_copy")
         )));
-        for symbol in ["sibling", "shadow", "wrong_terminator", "excluded"] {
+        for symbol in [
+            "sibling",
+            "shadow",
+            "wrong_terminator",
+            "excluded",
+            "borrowed_global",
+        ] {
             assert!(
                 scan.evidence
                     .iter()
