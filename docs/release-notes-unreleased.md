@@ -7,7 +7,7 @@
 
 ## Bug fixes
 
-- Exclude additional test and spec conventions from ordinary scans.
+- Exclude additional test, spec and sample conventions from ordinary scans.
 - Preserve C# handler bindings and C++ allocation ownership evidence.
 - Recover from transient Windows review-checkpoint locks and correct rejected checklist formatting within the review budget.
 - Include language coverage guides and linked license files in release packages.

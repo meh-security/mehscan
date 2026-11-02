@@ -148,8 +148,10 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
     let in_nonproduction_directory = components.iter().enumerate().any(|(index, component)| {
         // Below a JVM production source root these names can be namespace
         // segments. Top-level examples and all test/generated roles still apply.
-        if matches!(component.as_str(), "samples" | "examples")
-            && jvm_main.is_some_and(|root| index > root)
+        if matches!(
+            component.as_str(),
+            "sample" | "samples" | "example" | "examples"
+        ) && jvm_main.is_some_and(|root| index > root)
         {
             return false;
         }
@@ -183,7 +185,9 @@ pub(crate) fn is_sast_excluded_source(path: &Path) -> bool {
                 | "fixture"
                 | "fixtures"
                 | "testdata"
+                | "example"
                 | "examples"
+                | "sample"
                 | "samples"
                 | "benches"
                 | "benchmark"
@@ -421,6 +425,9 @@ mod tests {
             "tests/native_test.c",
             "contrib/libtests/image_check.c",
             "tools/libtest/check_connection.cpp",
+            "example/server.cc",
+            "server/Sample/handler.c",
+            "sample/client.rs",
             "fuzz/parser.cpp",
             "apps/oss-fuzz/parser.c",
             "Form.Designer.cs",
@@ -444,6 +451,9 @@ mod tests {
             "src/specification.ts",
             "src/contest.ts",
             "src/libtests_adapter.ts",
+            "src/example_client.ts",
+            "src/sample_store.ts",
+            "src/exampledata/client.ts",
             "src/app/api/e2e/route.ts",
         ] {
             assert_eq!(
@@ -537,6 +547,8 @@ mod tests {
                 "src/main/java/org/springframework/samples/Owner.java",
                 Language::Java,
             ),
+            ("src/main/java/org/example/Owner.java", Language::Java),
+            ("src/main/kotlin/org/sample/Owner.kt", Language::Kotlin),
         ] {
             assert_eq!(
                 classify_path(Path::new(path)),
@@ -547,6 +559,8 @@ mod tests {
         for path in [
             "samples/app/src/main/kotlin/App.kt",
             "examples/src/main/java/App.java",
+            "example/src/main/java/App.java",
+            "sample/src/main/kotlin/App.kt",
             "src/test/kotlin/org/samples/Owner.kt",
             "src/main/kotlin/tests/App.kt",
         ] {

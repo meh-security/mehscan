@@ -292,10 +292,13 @@ fn end_to_end_and_spec_sources_do_not_supply_default_scan_evidence() {
         "packages/api/e2e/client.ts",
         "packages/api/end-to-end/client.ts",
         "packages/api/__specs__/client.ts",
+        "example/api.ts",
+        "server/Sample/api.ts",
     ];
     let production = [
         "src/e2e-status.ts",
         "src/specification.ts",
+        "src/exampledata/client.ts",
         "src/app/api/e2e/route.ts",
     ];
     for path in tests.iter().chain(production.iter()) {

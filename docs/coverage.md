@@ -32,8 +32,9 @@ review question even when a related low-level API is recognized elsewhere.
 
 Directory scans honor repository ignore files and built-in dependency/build
 exclusions. Ordinary SAST also excludes conventional tests, specs, fixtures,
-samples and generated or bundled sources. This includes `libtest` and `libtests`
-directories. Names are source-scope conventions, not evidence that code is safe.
+samples and generated or bundled sources. This includes `sample`, `example`,
+`libtest` and `libtests` directories. Names are source-scope conventions, not
+evidence that code is safe.
 
 Use `mehscan scan ROOT --include-tests` to include supported nonproduction source
 in SAST when that is the intended scope. Built-in dependency/build exclusions
