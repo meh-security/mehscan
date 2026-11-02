@@ -87,6 +87,51 @@ fn implicit_standard_counts_require_a_visible_signed_scalar_and_unchanged_guard(
             Some(SecurityPathState::Protected),
         ),
         ("count_wrong_role", "COPY(count,src,8);", None),
+        (
+            "return_logging",
+            "if(count<0)return log_error(count); COPY(dst,src,count);",
+            Some(SecurityPathState::Protected),
+        ),
+        (
+            "terminating_logging",
+            "if(count<0){log_error(count);return;} if(count==0){log_error(count);return;} COPY(dst,src,count);",
+            Some(SecurityPathState::Protected),
+        ),
+        (
+            "cleanup_label",
+            "if(count<0)return; COPY(dst,src,count); if(enabled)goto cleanup; cleanup: return;",
+            Some(SecurityPathState::Protected),
+        ),
+        (
+            "backward_bypass",
+            "if(count<0)return; consume: COPY(dst,src,count); count=-1; if(enabled)goto consume;",
+            Some(SecurityPathState::Unknown),
+        ),
+        (
+            "overflow_after_guard",
+            "if(count>0){count++; COPY(dst,src,count);}",
+            Some(SecurityPathState::Unknown),
+        ),
+        (
+            "condition_mutates",
+            "if(count<0 || mutate(&count))return; COPY(dst,src,count);",
+            Some(SecurityPathState::Unknown),
+        ),
+        (
+            "later_loop_change",
+            "if(count<0)return; while(enabled){COPY(dst,src,count); count=-1;}",
+            Some(SecurityPathState::Unknown),
+        ),
+        (
+            "unchanged_loop",
+            "if(count<0)return; while(enabled){COPY(dst,src,count);}",
+            Some(SecurityPathState::Protected),
+        ),
+        (
+            "refreshed_loop_guard",
+            "while(enabled){if(count<0)return; COPY(dst,src,count); count=-1;}",
+            Some(SecurityPathState::Protected),
+        ),
     ];
     for extension in ["c", "cpp"] {
         let operation = if extension == "cpp" {

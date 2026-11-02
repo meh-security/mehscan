@@ -395,12 +395,6 @@ fn nonnegative_guard<'tree>(
             "function_definition" | "lambda_expression"
         )
     })?;
-    if scope
-        .dfs()
-        .any(|node| node.kind().as_ref() == "goto_statement")
-    {
-        return None;
-    }
     for statement in call.ancestors() {
         if statement.kind().as_ref() == "if_statement" {
             let condition = statement.field("condition")?;
@@ -408,7 +402,9 @@ fn nonnegative_guard<'tree>(
             if contains(&consequence, call)
                 && positive_condition(condition.text().as_ref(), value)
                 && availability_compatible(call, &condition, conditional)
+                && !guard_bypassed(&scope, &condition, call)
                 && !changed_between(&scope, value, condition.range().start, call.range().start)
+                && !loop_changes_after_use(call, &condition, value)
             {
                 return Some(condition);
             }
@@ -419,7 +415,7 @@ fn nonnegative_guard<'tree>(
         .filter(|node| scope.range().start <= node.range().start)
         .filter(|node| node.range().end <= scope.range().end)
         .filter(|node| node.range().end < call.range().start)
-        .filter(dominates_function_tail)
+        .filter(|statement| dominates_use(statement, call))
         .filter(|statement| super::context::precedes_in_block(statement, call))
         .find_map(|statement| {
             let condition = statement.field("condition")?;
@@ -427,7 +423,9 @@ fn nonnegative_guard<'tree>(
             (availability_compatible(call, &condition, conditional)
                 && negative_condition(condition.text().as_ref(), value)
                 && rejecting_branch(&consequence)
-                && !changed_between(&scope, value, condition.range().start, call.range().start))
+                && !guard_bypassed(&scope, &condition, call)
+                && !changed_between(&scope, value, condition.range().start, call.range().start)
+                && !loop_changes_after_use(call, &condition, value))
             .then_some(condition)
         })
 }
@@ -466,6 +464,7 @@ fn changed_between(
     scope
         .dfs()
         .filter(|node| start < node.range().start && node.range().start < end)
+        .filter(|node| !exits_before(node, end))
         .any(|node| match node.kind().as_ref() {
             "assignment_expression" => node
                 .field("left")
@@ -486,23 +485,101 @@ fn changed_between(
         })
 }
 
+fn exits_before(node: &Node<'_, StrDoc<SupportLang>>, end: usize) -> bool {
+    node.ancestors()
+        .take_while(|ancestor| {
+            !matches!(
+                ancestor.kind().as_ref(),
+                "function_definition" | "lambda_expression"
+            )
+        })
+        .any(|ancestor| {
+            if ancestor.range().end >= end {
+                return false;
+            }
+            if ancestor.kind().as_ref() == "return_statement" {
+                return true;
+            }
+            ancestor.kind().as_ref() == "if_statement"
+                && ["consequence", "alternative"]
+                    .iter()
+                    .filter_map(|field| ancestor.field(field))
+                    .any(|branch| contains(&branch, node) && rejecting_branch(&branch))
+        })
+}
+
+fn loop_changes_after_use(
+    call: &Node<'_, StrDoc<SupportLang>>,
+    condition: &Node<'_, StrDoc<SupportLang>>,
+    value: &str,
+) -> bool {
+    call.ancestors()
+        .filter(|node| {
+            matches!(
+                node.kind().as_ref(),
+                "for_statement" | "for_range_loop" | "while_statement" | "do_statement"
+            ) && condition.range().end < node.range().start
+        })
+        .any(|node| changed_between(&node, value, call.range().end, node.range().end))
+}
+
+fn guard_bypassed(
+    scope: &Node<'_, StrDoc<SupportLang>>,
+    condition: &Node<'_, StrDoc<SupportLang>>,
+    call: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
+    let labels = scope
+        .dfs()
+        .filter(|node| {
+            node.kind().as_ref() == "labeled_statement"
+                && condition.range().end < node.range().start
+                && node.range().start < call.range().start
+        })
+        .filter_map(|node| {
+            node.field("label").or_else(|| {
+                node.children()
+                    .find(|child| child.kind().as_ref() == "statement_identifier")
+            })
+        })
+        .map(|node| compact(node.text().as_ref()))
+        .collect::<Vec<_>>();
+    !labels.is_empty()
+        && scope
+            .dfs()
+            .filter(|node| node.kind().as_ref() == "goto_statement")
+            .any(|node| {
+                let text = compact(node.text().as_ref());
+                text.starts_with("goto*")
+                    || labels.iter().any(|label| text == format!("goto{label};"))
+            })
+}
+
 fn contains(parent: &Node<'_, StrDoc<SupportLang>>, child: &Node<'_, StrDoc<SupportLang>>) -> bool {
     parent.range().start <= child.range().start && child.range().end <= parent.range().end
 }
 
-fn dominates_function_tail(statement: &Node<'_, StrDoc<SupportLang>>) -> bool {
+fn dominates_use(
+    statement: &Node<'_, StrDoc<SupportLang>>,
+    call: &Node<'_, StrDoc<SupportLang>>,
+) -> bool {
     !statement
         .ancestors()
-        .take_while(|ancestor| ancestor.kind().as_ref() != "function_definition")
-        .any(|ancestor| {
-            matches!(
-                ancestor.kind().as_ref(),
-                "if_statement"
-                    | "for_statement"
-                    | "while_statement"
-                    | "do_statement"
-                    | "switch_statement"
+        .take_while(|node| {
+            !matches!(
+                node.kind().as_ref(),
+                "function_definition" | "lambda_expression"
             )
+        })
+        .any(|node| match node.kind().as_ref() {
+            "if_statement" => !["consequence", "alternative"]
+                .iter()
+                .filter_map(|field| node.field(field))
+                .any(|branch| contains(&branch, statement) && contains(&branch, call)),
+            "for_statement" | "for_range_loop" | "while_statement" | "do_statement" => !node
+                .field("body")
+                .is_some_and(|body| contains(&body, statement) && contains(&body, call)),
+            "switch_statement" | "conditional_expression" => true,
+            _ => false,
         })
 }
 
