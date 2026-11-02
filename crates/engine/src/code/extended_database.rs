@@ -602,6 +602,7 @@ pub(super) fn accepts(
     receiver: Option<&DbNode<'_>>,
     symbol: Option<&DbNode<'_>>,
     symbols: Option<&ExactSymbolIndex<'_>>,
+    receivers: Option<&super::database_receiver::ReceiverIndex<'_>>,
 ) -> bool {
     if rule.ends_with("-extended-nosql-dispatch") {
         return receiver
@@ -644,7 +645,15 @@ pub(super) fn accepts(
         Language::Javascript | Language::Typescript | Language::Tsx | Language::Python
     ) && let Some(receiver) = receiver
     {
-        return if rule.contains("nosql") {
+        return if let Some(index) = receivers {
+            super::database_receiver::proven_with_index(
+                root,
+                receiver,
+                language,
+                rule.contains("nosql"),
+                index,
+            )
+        } else if rule.contains("nosql") {
             super::database_receiver::document_receiver(root, receiver, language)
         } else {
             super::database_receiver::proven(root, receiver, language)
@@ -1175,6 +1184,7 @@ pub(super) fn pgx_receiver(root: &DbNode<'_>, node: &DbNode<'_>, receiver: &DbNo
         "go-extended-pgx-query",
         Language::Go,
         Some(receiver),
+        None,
         None,
         None,
     )

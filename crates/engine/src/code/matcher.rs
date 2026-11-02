@@ -218,6 +218,7 @@ pub(crate) fn scan_source(
     let mut declarative_patterns_considered = 0;
     let mut declarative_patterns_skipped = 0;
     let mut extended_symbols = None;
+    let mut database_receivers = None;
     for compiled_rule in rules {
         let rule_started = start_summary_pass();
         for compiled_pattern in &compiled_rule.patterns {
@@ -252,6 +253,18 @@ pub(crate) fn scan_source(
                         matched.get_env().get_match("TYPE").map(|_| {
                             extended_symbols.get_or_insert_with(|| {
                                 super::extended_database::ExactSymbolIndex::new(&root)
+                            }) as &_
+                        }),
+                        matches!(
+                            language,
+                            Language::Javascript
+                                | Language::Typescript
+                                | Language::Tsx
+                                | Language::Python
+                        )
+                        .then(|| {
+                            database_receivers.get_or_insert_with(|| {
+                                super::database_receiver::ReceiverIndex::new(&root)
                             }) as &_
                         }),
                     )
@@ -299,7 +312,14 @@ pub(crate) fn scan_source(
                 ) {
                     let receiver = matched.get_env().get_match("DATABASE");
                     if receiver.is_some_and(|receiver| {
-                        !super::database_receiver::accepts(&root, receiver, language)
+                        !super::database_receiver::accepts(
+                            &root,
+                            receiver,
+                            language,
+                            database_receivers.get_or_insert_with(|| {
+                                super::database_receiver::ReceiverIndex::new(&root)
+                            }),
+                        )
                     }) {
                         continue;
                     }
@@ -731,6 +751,18 @@ pub(crate) fn scan_source(
     let declarative_rules_microseconds = declarative_started.elapsed().as_micros();
 
     let symbol_started = Instant::now();
+    // Declarative and symbol matches can name the same observation. Retain the
+    // first matching item, without searching all earlier observations per call.
+    let mut symbol_evidence = BTreeMap::new();
+    for (index, item) in evidence.iter().enumerate() {
+        symbol_evidence
+            .entry((
+                item.rule_id.clone(),
+                item.location.start.byte_offset,
+                item.location.end.byte_offset,
+            ))
+            .or_insert(index);
+    }
     for node in root.dfs() {
         let Some(call) = call_site(node) else {
             continue;
@@ -776,15 +808,9 @@ pub(crate) fn scan_source(
                     continue;
                 }
                 let range = call.node.range();
-                let key = (compiled_rule.rule.id.as_str(), range.start, range.end);
-                if let Some(existing) = evidence.iter_mut().find(|item| {
-                    (
-                        item.rule_id.as_str(),
-                        item.location.start.byte_offset,
-                        item.location.end.byte_offset,
-                    ) == key
-                }) {
-                    existing.symbol_resolution = Some(symbol_resolution);
+                let key = (compiled_rule.rule.id.clone(), range.start, range.end);
+                if let Some(index) = symbol_evidence.get(&key) {
+                    evidence[*index].symbol_resolution = Some(symbol_resolution);
                     continue;
                 }
 
@@ -803,6 +829,7 @@ pub(crate) fn scan_source(
                         },
                     );
                 }
+                symbol_evidence.insert(key, evidence.len());
                 evidence.push(Evidence {
                     id: evidence_id(path, &compiled_rule.rule.id, range.start, range.end),
                     kind: compiled_rule.rule.kind,

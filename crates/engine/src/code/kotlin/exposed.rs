@@ -7,14 +7,13 @@ const TRANSACTION: &str = "org.jetbrains.exposed.v1.jdbc.JdbcTransaction";
 const MANAGER: &str = "org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager";
 const DSL: &str = "org.jetbrains.exposed.v1.jdbc.transactions.transaction";
 
-fn owned_receiver<'a>(root: &KNode<'a>, node: &KNode<'a>, depth: usize) -> bool {
+fn owned_receiver<'a>(root: &KNode<'a>, imports: &Imports, node: &KNode<'a>, depth: usize) -> bool {
     if depth == 0 {
         return false;
     }
-    if super::jvm::owned(root, node, TRANSACTION, depth) {
+    if super::jvm::owned_with_imports(root, imports, node, TRANSACTION, depth) {
         return true;
     }
-    let imports = Imports::build(root);
     if let Some(factory) = identity::call(node) {
         return factory.arguments.is_empty()
             && factory
@@ -52,17 +51,39 @@ fn owned_receiver<'a>(root: &KNode<'a>, node: &KNode<'a>, depth: usize) -> bool 
         .filter(|n| n.is_named())
         .last()
         .is_some_and(|value| {
-            value.range() != binding.range() && owned_receiver(root, &value, depth - 1)
+            value.range() != binding.range() && owned_receiver(root, imports, &value, depth - 1)
         })
 }
 
 pub(super) fn accepts<'a>(root: &KNode<'a>, node: &KNode<'a>) -> bool {
+    accepts_with_imports(root, &Imports::build(root), node)
+}
+
+pub(super) fn accepts_with_imports<'a>(
+    root: &KNode<'a>,
+    imports: &Imports,
+    node: &KNode<'a>,
+) -> bool {
     let Some(call) = identity::call(node) else {
         return false;
     };
     let text = call.callee.text();
-    let imports = Imports::build(root);
     if call.arguments.is_empty() {
+        return false;
+    }
+    // Establish the SDK operation before looking up the SQL operand's type.
+    // An unrelated exec (for example an OS process) cannot become Exposed SQL.
+    let receiver_owned = if let Some((_, method)) = text.rsplit_once('.') {
+        method == "exec"
+            && call
+                .callee
+                .children()
+                .find(|n| n.is_named())
+                .is_some_and(|receiver| owned_receiver(root, imports, &receiver, 8))
+    } else {
+        text == "exec" && !imports.name_shadowed(node, "exec")
+    };
+    if !receiver_owned {
         return false;
     }
     // BlockingExecutable overloads are not SQL-string boundaries.
@@ -83,17 +104,8 @@ pub(super) fn accepts<'a>(root: &KNode<'a>, node: &KNode<'a>) -> bool {
     {
         return false;
     }
-    if let Some((_, method)) = text.rsplit_once('.') {
-        if method != "exec" {
-            return false;
-        }
-        let Some(receiver) = call.callee.children().find(|n| n.is_named()) else {
-            return false;
-        };
-        return owned_receiver(root, &receiver, 8);
-    }
-    if text != "exec" || identity::name_shadowed(root, node, "exec") {
-        return false;
+    if text.rsplit_once('.').is_some() {
+        return true;
     }
     let Some(lambda) = identity::callable(node).filter(|n| n.kind().as_ref() == "lambda_literal")
     else {

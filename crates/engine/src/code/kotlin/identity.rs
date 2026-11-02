@@ -171,7 +171,7 @@ impl Imports {
         result
     }
 
-    fn name_shadowed(&self, site: &KNode<'_>, name: &str) -> bool {
+    pub(super) fn name_shadowed(&self, site: &KNode<'_>, name: &str) -> bool {
         self.declarations
             .get(name.trim_matches('`'))
             .is_some_and(|entries| entries.iter().any(|n| n.visible(site)))
@@ -291,24 +291,6 @@ pub(super) fn visible(declaration: &KNode<'_>, use_site: &KNode<'_>) -> bool {
                     | "type_alias"
             ) || matches!(scope.kind().as_ref(), "class_body" | "source_file")
                 || declaration.range().start < use_range.start)
-    })
-}
-
-pub(super) fn name_shadowed(root: &KNode<'_>, use_site: &KNode<'_>, symbol: &str) -> bool {
-    root.dfs().any(|n| {
-        matches!(
-            n.kind().as_ref(),
-            "variable_declaration"
-                | "parameter"
-                | "class_parameter"
-                | "class_declaration"
-                | "object_declaration"
-                | "type_alias"
-                | "type_parameter"
-                | "function_declaration"
-                | "catch_block"
-        ) && name(&n).as_deref() == Some(symbol.trim_matches('`'))
-            && visible(&n, use_site)
     })
 }
 

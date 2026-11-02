@@ -1,4 +1,5 @@
-use std::collections::BTreeMap;
+use std::cell::OnceCell;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ast_grep_core::Node;
 use ast_grep_core::tree_sitter::StrDoc;
@@ -697,6 +698,9 @@ pub(crate) fn is_identifier(text: &str) -> bool {
 pub(crate) struct RustFileContext<'tree> {
     root: Node<'tree, StrDoc<SupportLang>>,
     imports: BTreeMap<String, String>,
+    clients: OnceCell<(BTreeSet<String>, BTreeSet<String>)>,
+    iron_prelude: OnceCell<bool>,
+    declarations: OnceCell<BTreeMap<String, Vec<Node<'tree, StrDoc<SupportLang>>>>>,
 }
 
 impl<'tree> RustFileContext<'tree> {
@@ -704,6 +708,9 @@ impl<'tree> RustFileContext<'tree> {
         Self {
             root: root.clone(),
             imports: rust_imports(root),
+            clients: OnceCell::new(),
+            iron_prelude: OnceCell::new(),
+            declarations: OnceCell::new(),
         }
     }
     fn is_jsonwebtoken_validation_receiver(
@@ -721,7 +728,25 @@ impl<'tree> RustFileContext<'tree> {
             .find(|node| matches!(node.kind().as_ref(), "function_item" | "closure_expression"))
             .map(|node| node.range())
             .unwrap_or_else(|| root.range());
-        root.dfs()
+        self.declarations
+            .get_or_init(|| {
+                let mut declarations = BTreeMap::<_, Vec<_>>::new();
+                for node in root
+                    .dfs()
+                    .filter(|node| node.kind().as_ref() == "let_declaration")
+                {
+                    if let Some(pattern) = node.field("pattern") {
+                        declarations
+                            .entry(pattern.text().trim().to_string())
+                            .or_default()
+                            .push(node);
+                    }
+                }
+                declarations
+            })
+            .get(receiver)
+            .into_iter()
+            .flatten()
             .filter(|node| {
                 node.kind().as_ref() == "let_declaration"
                     && node.range().start >= scope.start
@@ -1008,64 +1033,52 @@ impl<'tree> RustFileContext<'tree> {
     }
 
     fn is_postgres_client(&self, receiver: &str) -> bool {
-        let root = &self.root;
-
-        if !is_identifier(receiver) {
-            return false;
-        }
-        root.dfs()
-            .filter(|node| node.kind().as_ref() == "let_declaration")
-            .any(|declaration| {
-                let text = compact(declaration.text().as_ref());
-                let Some((left, right)) = text
-                    .strip_prefix("let")
-                    .and_then(|text| text.split_once('='))
-                else {
-                    return false;
-                };
-                let left = left.strip_prefix("mut").unwrap_or(left);
-                let declared = left.split(':').next().unwrap_or(left);
-                if declared != receiver {
-                    return false;
-                }
-                let initializer = right.trim_end_matches(';');
-                let Some(connect_path) = initializer.split('(').next() else {
-                    return false;
-                };
-                matches!(
-                    self.canonical_path(connect_path).as_str(),
-                    "postgres::Client::connect"
-                )
-            })
+        is_identifier(receiver) && self.client_bindings().0.contains(receiver)
     }
 
     fn is_reqwest_client(&self, receiver: &str) -> bool {
-        let root = &self.root;
+        is_identifier(receiver) && self.client_bindings().1.contains(receiver)
+    }
 
-        if !is_identifier(receiver) {
-            return false;
-        }
-        root.dfs()
-            .filter(|node| node.kind().as_ref() == "let_declaration")
-            .any(|declaration| {
+    fn client_bindings(&self) -> &(BTreeSet<String>, BTreeSet<String>) {
+        self.clients.get_or_init(|| {
+            let mut postgres = BTreeSet::new();
+            let mut reqwest = BTreeSet::new();
+            for declaration in self
+                .root
+                .dfs()
+                .filter(|node| node.kind().as_ref() == "let_declaration")
+            {
                 let text = compact(declaration.text().as_ref());
                 let Some((left, right)) = text
                     .strip_prefix("let")
                     .and_then(|text| text.split_once('='))
                 else {
-                    return false;
+                    continue;
                 };
                 let left = left.strip_prefix("mut").unwrap_or(left);
-                if left.split(':').next().unwrap_or(left) != receiver {
-                    return false;
-                }
+                let declared = left.split(':').next().unwrap_or(left);
                 let initializer = right.trim_end_matches(';');
+                let Some(connect_path) = initializer.split('(').next() else {
+                    continue;
+                };
+                if matches!(
+                    self.canonical_path(connect_path).as_str(),
+                    "postgres::Client::connect"
+                ) {
+                    postgres.insert(declared.to_string());
+                }
                 let canonical = self.canonical_path(initializer);
-                canonical.starts_with("reqwest::Client::new()")
+                if canonical.starts_with("reqwest::Client::new()")
                     || canonical.starts_with("reqwest::blocking::Client::new()")
                     || canonical.starts_with("reqwest::Client::builder().build()")
                     || canonical.starts_with("reqwest::blocking::Client::builder().build()")
-            })
+                {
+                    reqwest.insert(declared.to_string());
+                }
+            }
+            (postgres, reqwest)
+        })
     }
 
     fn is_iron_request_parameter(
@@ -1094,9 +1107,11 @@ impl<'tree> RustFileContext<'tree> {
     fn has_iron_prelude_glob(&self) -> bool {
         let root = &self.root;
 
-        root.dfs().any(|node| {
-            node.kind().as_ref() == "use_declaration"
-                && compact(node.text().as_ref()) == "useiron::prelude::*;"
+        *self.iron_prelude.get_or_init(|| {
+            root.dfs().any(|node| {
+                node.kind().as_ref() == "use_declaration"
+                    && compact(node.text().as_ref()) == "useiron::prelude::*;"
+            })
         })
     }
 }

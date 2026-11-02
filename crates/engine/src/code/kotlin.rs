@@ -260,7 +260,7 @@ pub(super) fn accept<'a>(
         return tls::accepts(root, node);
     }
     if rule == "kotlin-exposed-sql-exec" {
-        return exposed::accepts(root, node);
+        return exposed::accepts_with_imports(root, imports, node);
     }
     if ktor::accepts_with_imports(root, imports, rule, node) {
         return true;
