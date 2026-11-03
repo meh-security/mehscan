@@ -249,3 +249,26 @@ fn test_only_sdk_shadows_do_not_suppress_an_active_persistence_helper() {
         );
     }
 }
+
+#[test]
+fn cached_rust_inventory_from_before_pointer_cast_admission_requires_regeneration() {
+    let project = Project::new(
+        "mod models;mod operations;pub fn bytes<T:Copy>(v:Vec<T>)->Vec<u8>{let mut v=std::mem::ManuallyDrop::new(v);unsafe{Vec::from_raw_parts(v.as_mut_ptr().cast::<u8>(),v.len()*std::mem::size_of::<T>(),v.capacity()*std::mem::size_of::<T>())}}",
+    );
+    let mut inventory = project.inventory();
+    assert!(
+        inventory
+            .entries
+            .iter()
+            .any(|e| e.rule_id == "rust-vector-layout-review")
+    );
+    mehscan_engine::investigation::validate_review_inventory(&project.0, &inventory).unwrap();
+    inventory.rust_configuration_revision = Some("typed-source-and-raw-memory-v4".into());
+    let error = mehscan_engine::investigation::validate_review_inventory(&project.0, &inventory)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("Rust source configuration analysis changed"),
+        "{error}"
+    );
+}

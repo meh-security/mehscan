@@ -139,6 +139,25 @@ fn generic_retyping_keeps_layout_and_manually_dropped_owner_evidence() {
         !rules.contains(&"rust-vector-ownership-review".into()),
         "{rules:?}"
     );
+    for pointer in [
+        "source.as_mut_ptr().cast::<u8>()",
+        "source.as_mut_ptr().cast()",
+    ] {
+        let candidate = source.replace("source.as_mut_ptr() as *mut u8", pointer);
+        let rules = Project::new(&candidate).rules();
+        assert!(
+            rules.contains(&"rust-vector-metadata-review".into()),
+            "{rules:?}"
+        );
+        assert!(
+            rules.contains(&"rust-vector-layout-review".into()),
+            "{rules:?}"
+        );
+        assert!(
+            !rules.contains(&"rust-vector-ownership-review".into()),
+            "{rules:?}"
+        );
+    }
 }
 #[test]
 fn source_coordinates_and_bytes_survive_unicode_crlf_and_context_pooling() {

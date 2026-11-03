@@ -29,7 +29,10 @@ fn strip<'a>(mut n: N<'a>) -> N<'a> {
     n
 }
 fn method<'a>(n: &N<'a>) -> Option<(N<'a>, String)> {
-    let f = n.field("function")?;
+    let mut f = n.field("function")?;
+    if f.kind().as_ref() == "generic_function" {
+        f = f.field("function")?;
+    }
     (f.kind().as_ref() == "field_expression").then_some(())?;
     Some((f.field("value")?, f.field("field")?.text().into_owned()))
 }
@@ -709,10 +712,10 @@ pub(super) fn groups(
                                 scope,
                             );
                         }
-                        if arguments[0]
-                            .dfs()
-                            .any(|n| n.kind().as_ref() == "type_cast_expression")
-                        {
+                        if arguments[0].dfs().any(|n| {
+                            n.kind().as_ref() == "type_cast_expression"
+                                || self::method(&n).is_some_and(|(_, name)| name == "cast")
+                        }) {
                             emit(
                                 file,
                                 f,

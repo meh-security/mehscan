@@ -188,3 +188,28 @@ fn trait_object_identity_keeps_its_contract_without_selecting_an_unrelated_concr
     assert!(!context.contains("person:Person"), "{context}");
     assert!(!context.contains("self.person.id>0"), "{context}");
 }
+
+#[test]
+fn inline_modules_do_not_inherit_a_parent_import_over_their_own_type() {
+    let p = Project::new();
+    fs::write(p.0.join("src/identity.rs"),"use crate::models::Meter as Actor;pub mod nested{pub struct Actor{pub permitted:bool}impl Actor{pub fn authorized(&self)->bool{self.permitted}}}\n").unwrap();
+    let path = p.0.join("src/operations.rs");
+    let text = fs::read_to_string(&path).unwrap().replace(
+        "use crate::identity::Actor;",
+        "use crate::identity::nested::Actor;",
+    );
+    fs::write(path, text).unwrap();
+    let fact = p.fact();
+    let context = fact
+        .captures
+        .iter()
+        .filter(|(k, _)| k.starts_with("rust_context_"))
+        .map(|(_, c)| c.text.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        context.contains("authorized(&self)->bool{self.permitted}"),
+        "{context}"
+    );
+    assert!(context.contains("struct Actor"), "{context}");
+}

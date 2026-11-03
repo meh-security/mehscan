@@ -139,6 +139,9 @@ fn canonical(
             "block" | "declaration_list" | "source_file"
         )
     }) {
+        let module_boundary = scope
+            .parent()
+            .is_some_and(|p| p.kind().as_ref() == "mod_item");
         if let Some(prepared) = prepared {
             for binding in prepared
                 .scopes
@@ -152,7 +155,7 @@ fn canonical(
                     }
                 }
             }
-            if !choices.is_empty() {
+            if !choices.is_empty() || module_boundary {
                 break;
             }
             continue;
@@ -168,7 +171,7 @@ fn canonical(
                 }
             }
         }
-        if !choices.is_empty() {
+        if !choices.is_empty() || module_boundary {
             break;
         }
     }
