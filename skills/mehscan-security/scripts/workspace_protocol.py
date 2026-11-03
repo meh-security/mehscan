@@ -68,8 +68,9 @@ def schema(task, *, bound_handles=True):
     text = {"type":"string","minLength":1,"maxLength":1000}
     question_text = {"type":"string","minLength":1,"maxLength":300}
     names = {"type":"string","minLength":1,"maxLength":200}
-    ids = {"type":"array","minItems":1,"maxItems":len(task["review_ids"]),
-           "items":{"type":"string","enum":task["review_ids"]}}
+    identifier = ordinary.review_id_schema(task["review_ids"], bound_handles=bound_handles)
+    ids = {"type":"array","minItems":1,**({"maxItems":len(task["review_ids"])} if bound_handles else {}),
+           "items":identifier}
     handles = task["research"].get("source_artifact_handles", [])
     evidence = {"type":"array","maxItems":8,"items":({"type":"string","enum":handles}
                 if handles and bound_handles else {"type":"string","pattern":r"^source[1-9][0-9]*$"})}
@@ -81,7 +82,7 @@ def schema(task, *, bound_handles=True):
         updates += [obj({"kind":{"type":"string","enum":["proposition"]},"proposition_id":names,
                     **{k:text for k in ("statement","scope","conditions","exclusions")},"evidence":proof}),
                     obj({"kind":{"type":"string","enum":["applicability"]},
-                         "review_id":{"type":"string","enum":task["review_ids"]},"proposition_id":names,
+                         "review_id":identifier,"proposition_id":names,
                          "proposition_revision":{"type":"integer","minimum":1},"evidence":proof,"reason":text})]
     updates += [obj({"kind":{"type":"string","enum":["question"]},"question_id":names,"review_ids":ids,"question":question_text}),
                 obj({"kind":{"type":"string","enum":["answer"]},"question_id":names,
@@ -99,7 +100,7 @@ def schema(task, *, bound_handles=True):
         if tool["name"] == "guidance":
             properties["name"] = {"type":"string","enum":list(ordinary.GUIDANCE)}
         queries.append(obj({"tool":{"type":"string","enum":[tool["name"]]},
-                            "review_id":{"type":"string","enum":task["review_ids"]},
+                            "review_id":identifier,
                             "purpose":{"type":"string","minLength":1,"maxLength":300},"arguments":obj(properties)}))
     # Reuse the native brief result shape, not its progress/routing envelope.
     draft = ordinary.build_schema(task,bound_handles=bound_handles)["properties"]["draft"]
@@ -120,7 +121,7 @@ def schema(task, *, bound_handles=True):
                     task["research"].get("queries_remaining",0) and not final) else 0,
                            "items":obj({"question_id":names,"review_ids":ids,"question":question_text,
                                         "queries":{"type":"array","minItems":1,"maxItems":4,"items":{"anyOf":queries}}})},
-                "decisions":{"type":"array","maxItems":len(task["review_ids"]),
+                "decisions":{"type":"array",**({"maxItems":len(task["review_ids"])} if bound_handles else {}),
                              **({"minItems":len(task["review_ids"])} if bound_handles and final else {}),
                              "items":{"anyOf":variants}}})
 
