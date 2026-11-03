@@ -144,6 +144,14 @@ struct Function<'a> {
     nodes: Vec<N<'a>>,
     lets: BTreeMap<String, Vec<N<'a>>>,
     terminated: BTreeMap<usize, usize>,
+    apis: RefCell<BTreeMap<(usize, usize), Option<String>>>,
+    ownership: OnceCell<OwnershipEffects>,
+}
+#[derive(Default)]
+struct OwnershipEffects {
+    vectors: BTreeSet<usize>,
+    disabled: BTreeMap<usize, usize>,
+    hazards: BTreeMap<usize, usize>,
 }
 impl<'a> Function<'a> {
     fn new(root: N<'a>, node: N<'a>) -> Self {
@@ -192,7 +200,399 @@ impl<'a> Function<'a> {
             nodes,
             lets,
             terminated,
+            apis: RefCell::new(BTreeMap::new()),
+            ownership: OnceCell::new(),
         }
+    }
+    fn api(&self, call: &N<'a>) -> Option<String> {
+        let key = (call.range().start, call.range().end);
+        if let Some(value) = self.apis.borrow().get(&key) {
+            return value.clone();
+        }
+        let value = api(&self.root, call);
+        self.apis.borrow_mut().insert(key, value.clone());
+        value
+    }
+    fn visible_binding(&self, name: &str, value: &N<'a>, before: usize) -> Option<N<'a>> {
+        self.lets
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(|n| {
+                n.range().end <= before
+                    && n.ancestors()
+                        .find(|n| n.kind().as_ref() == "block")
+                        .is_some_and(|b| {
+                            b.range().start <= value.range().start
+                                && value.range().end <= b.range().end
+                        })
+            })
+            .max_by_key(|n| n.range().start)
+            .cloned()
+    }
+    // A consuming carrier is different from a borrow or a derived raw pointer.
+    fn carrier(
+        &self,
+        value: &N<'a>,
+        before: usize,
+        depth: usize,
+        owned: &BTreeSet<usize>,
+    ) -> Option<usize> {
+        if depth > 8 {
+            return None;
+        }
+        if matches!(
+            value.kind().as_ref(),
+            "parenthesized_expression" | "try_expression"
+        ) {
+            return self.carrier(&named(value).into_iter().next()?, before, depth + 1, owned);
+        }
+        if value.kind().as_ref() == "identifier" {
+            if let Some(binding) = self.visible_binding(value.text().as_ref(), value, before) {
+                if owned.contains(&binding.range().start) {
+                    return Some(binding.range().start);
+                }
+                return self.carrier(
+                    &binding.field("value").or_else(|| binding.field("right"))?,
+                    binding.range().start,
+                    depth + 1,
+                    owned,
+                );
+            }
+            return parameters(&self.node)
+                .iter()
+                .find(|p| {
+                    parameter_name(p).as_deref() == Some(value.text().as_ref())
+                        && owned.contains(&p.range().start)
+                })
+                .map(|p| p.range().start);
+        }
+        if value.kind().as_ref() == "call_expression"
+            && self.api(value).is_some_and(|s| {
+                matches!(
+                    s.as_str(),
+                    "std::mem::ManuallyDrop::new" | "core::mem::ManuallyDrop::new"
+                )
+            })
+        {
+            return self.carrier(args(value).first()?, value.range().start, depth + 1, owned);
+        }
+        None
+    }
+    // May-origins are used only to retain a question, never to certify a move.
+    fn possible_origins(
+        &self,
+        value: &N<'a>,
+        before: usize,
+        depth: usize,
+        owned: &BTreeSet<usize>,
+        result: &mut BTreeSet<usize>,
+        limited: &mut bool,
+    ) {
+        if depth > 8 {
+            *limited = true;
+            return;
+        }
+        // A result derived solely from a shared borrow of a standard owner
+        // cannot acquire its allocation. Keep mutable and raw-pointer borrows.
+        if value.kind().as_ref() == "reference_expression"
+            && !value
+                .children()
+                .any(|n| n.kind().as_ref() == "mutable_specifier" || n.text() == "mut")
+            && value
+                .field("value")
+                .or_else(|| named(value).into_iter().last())
+                .and_then(|v| self.carrier(&v, before, 0, owned))
+                .is_some()
+        {
+            return;
+        }
+        if let Some((_, _, binding)) = self.origin(value, before, 0) {
+            if binding != usize::MAX {
+                result.insert(binding);
+            }
+        }
+        let value = strip(value.clone());
+        if value.kind().as_ref() == "identifier" {
+            for parameter in parameters(&self.node)
+                .iter()
+                .filter(|p| parameter_name(p).as_deref() == Some(value.text().as_ref()))
+            {
+                result.insert(parameter.range().start);
+            }
+            for binding in self
+                .lets
+                .get(value.text().as_ref())
+                .into_iter()
+                .flatten()
+                .filter(|n| n.range().end <= before)
+            {
+                if owned.contains(&binding.range().start) {
+                    result.insert(binding.range().start);
+                }
+                if let Some(rhs) = binding.field("value").or_else(|| binding.field("right")) {
+                    self.possible_origins(
+                        &rhs,
+                        binding.range().start,
+                        depth + 1,
+                        owned,
+                        result,
+                        limited,
+                    );
+                }
+            }
+        } else if let Some((receiver, name)) = method(&value) {
+            if matches!(
+                name.as_str(),
+                "as_ptr"
+                    | "as_mut_ptr"
+                    | "cast"
+                    | "cast_const"
+                    | "cast_mut"
+                    | "add"
+                    | "sub"
+                    | "offset"
+                    | "wrapping_add"
+                    | "wrapping_sub"
+                    | "wrapping_offset"
+                    | "byte_add"
+                    | "byte_sub"
+            ) {
+                self.possible_origins(&receiver, before, depth + 1, owned, result, limited);
+            }
+        } else {
+            // Calls, composites and dereferences may carry an existing owner.
+            // Literal/scalar expressions do not become allocation evidence.
+            let children = if value.kind().as_ref() == "call_expression" {
+                args(&value)
+            } else {
+                named(&value)
+            };
+            for child in children {
+                self.possible_origins(&child, before, depth + 1, owned, result, limited);
+            }
+        }
+    }
+    fn ownership_effects(&self) -> &OwnershipEffects {
+        self.ownership.get_or_init(|| {
+            let mut effects = OwnershipEffects::default();
+            let mut owned = BTreeSet::new();
+            for declaration in parameters(&self.node)
+                .iter()
+                .cloned()
+                .chain(self.lets.values().flatten().cloned())
+            {
+                let ty = declaration.field("type");
+                let constructor = declaration
+                    .field("value")
+                    .or_else(|| declaration.field("right"))
+                    .and_then(|v| self.api(&v))
+                    .unwrap_or_default();
+                let vector = ty.as_ref().is_some_and(|t| {
+                    let text = compact(&t.text());
+                    !text.starts_with('&')
+                        && canonical(&self.root, t, text.split('<').next().unwrap_or_default())
+                            .is_some_and(|s| {
+                                matches!(s.as_str(), "std::vec::Vec" | "alloc::vec::Vec")
+                            })
+                }) || matches!(
+                    constructor.as_str(),
+                    "std::vec::Vec::new"
+                        | "alloc::vec::Vec::new"
+                        | "std::vec::Vec::with_capacity"
+                        | "alloc::vec::Vec::with_capacity"
+                );
+                if vector {
+                    effects.vectors.insert(declaration.range().start);
+                }
+                if vector
+                    || ty.is_some_and(|t| owned_type(&self.root, &t))
+                    || matches!(
+                        constructor.as_str(),
+                        "std::boxed::Box::new" | "alloc::boxed::Box::new"
+                    )
+                {
+                    owned.insert(declaration.range().start);
+                }
+            }
+            for node in self
+                .nodes
+                .iter()
+                .filter(|n| n.kind().as_ref() == "call_expression")
+            {
+                if self.api(node).is_some_and(|s| {
+                    matches!(
+                        s.as_str(),
+                        "std::mem::forget"
+                            | "core::mem::forget"
+                            | "std::mem::ManuallyDrop::new"
+                            | "core::mem::ManuallyDrop::new"
+                    )
+                }) && node
+                    .ancestors()
+                    .take_while(|n| n.range() != self.node.range())
+                    .all(|n| {
+                        !matches!(
+                            n.kind().as_ref(),
+                            "if_expression"
+                                | "match_expression"
+                                | "for_expression"
+                                | "while_expression"
+                                | "loop_expression"
+                                | "closure_expression"
+                        )
+                    })
+                {
+                    if let Some(binding) = args(node)
+                        .first()
+                        .and_then(|v| self.carrier(v, node.range().start, 0, &owned))
+                    {
+                        effects
+                            .disabled
+                            .entry(binding)
+                            .and_modify(|offset| *offset = (*offset).min(node.range().end))
+                            .or_insert(node.range().end);
+                    }
+                }
+            }
+            if effects.disabled.is_empty() {
+                return effects;
+            }
+            for node in &self.nodes {
+                let mut roots = BTreeSet::new();
+                let mut limited = false;
+                if node.kind().as_ref() == "call_expression" {
+                    let name = self.api(node).unwrap_or_default();
+                    let disable = matches!(
+                        name.as_str(),
+                        "std::mem::forget"
+                            | "core::mem::forget"
+                            | "std::mem::ManuallyDrop::new"
+                            | "core::mem::ManuallyDrop::new"
+                    );
+                    if disable {
+                        continue;
+                    }
+                    if let Some((receiver, method)) = method(node) {
+                        let passive = self.origin(&receiver, node.range().start, 0).is_some_and(
+                            |(_, pointer, binding)| {
+                                effects.vectors.contains(&binding)
+                                    && if pointer.is_some() {
+                                        matches!(
+                                            method.as_str(),
+                                            "cast"
+                                                | "cast_const"
+                                                | "cast_mut"
+                                                | "add"
+                                                | "sub"
+                                                | "offset"
+                                                | "wrapping_add"
+                                                | "wrapping_sub"
+                                                | "wrapping_offset"
+                                                | "byte_add"
+                                                | "byte_sub"
+                                                | "is_null"
+                                        )
+                                    } else {
+                                        args(node).is_empty()
+                                            && matches!(
+                                                method.as_str(),
+                                                "len"
+                                                    | "capacity"
+                                                    | "is_empty"
+                                                    | "as_ptr"
+                                                    | "as_mut_ptr"
+                                            )
+                                    }
+                            },
+                        );
+                        if passive {
+                            continue;
+                        }
+                        self.possible_origins(
+                            &receiver,
+                            node.range().start,
+                            0,
+                            &owned,
+                            &mut roots,
+                            &mut limited,
+                        );
+                    }
+                    for argument in args(node) {
+                        // An immutable borrow of the standard carrier does not
+                        // transfer or mutate its allocation. Pointer borrows
+                        // and mutable/opaque carriers remain possible effects.
+                        if argument.kind().as_ref() == "reference_expression"
+                            && !argument.children().any(|n| {
+                                n.kind().as_ref() == "mutable_specifier" || n.text() == "mut"
+                            })
+                            && argument
+                                .field("value")
+                                .or_else(|| named(&argument).into_iter().last())
+                                .and_then(|v| self.carrier(&v, node.range().start, 0, &owned))
+                                .is_some_and(|id| effects.vectors.contains(&id))
+                        {
+                            continue;
+                        }
+                        self.possible_origins(
+                            &argument,
+                            node.range().start,
+                            0,
+                            &owned,
+                            &mut roots,
+                            &mut limited,
+                        );
+                    }
+                } else if node.kind().as_ref() == "assignment_expression" {
+                    if let Some(left) = node.field("left") {
+                        self.possible_origins(
+                            &left,
+                            node.range().start,
+                            0,
+                            &owned,
+                            &mut roots,
+                            &mut limited,
+                        );
+                    }
+                    if let Some(right) = node.field("right") {
+                        self.possible_origins(
+                            &right,
+                            node.range().start,
+                            0,
+                            &owned,
+                            &mut roots,
+                            &mut limited,
+                        );
+                    }
+                } else if matches!(
+                    node.kind().as_ref(),
+                    "struct_expression"
+                        | "tuple_expression"
+                        | "array_expression"
+                        | "closure_expression"
+                ) {
+                    self.possible_origins(
+                        node,
+                        node.range().start,
+                        0,
+                        &owned,
+                        &mut roots,
+                        &mut limited,
+                    );
+                }
+                if limited {
+                    roots.extend(effects.vectors.iter().copied());
+                }
+                for binding in roots {
+                    effects
+                        .hazards
+                        .entry(binding)
+                        .and_modify(|offset| *offset = (*offset).min(node.range().end))
+                        .or_insert(node.range().end);
+                }
+            }
+            effects
+        })
     }
     fn origin(
         &self,
@@ -205,7 +605,7 @@ impl<'a> Function<'a> {
         }
         let value = strip(value.clone());
         if value.kind().as_ref() == "call_expression"
-            && api(&self.root, &value).is_some_and(|s| {
+            && self.api(&value).is_some_and(|s| {
                 matches!(
                     s.as_str(),
                     "std::mem::ManuallyDrop::new" | "core::mem::ManuallyDrop::new"
@@ -239,7 +639,7 @@ impl<'a> Function<'a> {
                         .field("value")
                         .or_else(|| binding.field("right"))
                         .is_some_and(|v| {
-                            api(&self.root, &v).is_some_and(|s| {
+                            self.api(&v).is_some_and(|s| {
                                 matches!(
                                     s.as_str(),
                                     "std::vec::Vec::new"
@@ -344,62 +744,22 @@ fn owned_binding<'a>(
         .cloned()
 }
 fn ownership_disabled<'a>(
-    root: &N<'a>,
+    _root: &N<'a>,
     f: &Function<'a>,
     _owner: &str,
     binding: usize,
     before: usize,
 ) -> bool {
-    let same = |call: &N<'a>| {
-        args(call)
-            .first()
-            .and_then(|v| f.origin(v, call.range().start, 0))
-            .is_some_and(|(_, _, id)| id == binding)
-    };
-    if f.nodes
-        .iter()
-        .filter(|n| n.kind().as_ref() == "call_expression" && n.range().end < before)
-        .any(|n| {
-            api(root, n).is_some_and(|s| {
-                matches!(
-                    s.as_str(),
-                    "std::mem::ManuallyDrop::drop"
-                        | "core::mem::ManuallyDrop::drop"
-                        | "std::mem::ManuallyDrop::into_inner"
-                        | "core::mem::ManuallyDrop::into_inner"
-                )
-            }) && same(n)
-        })
-    {
-        return false;
-    }
-    f.nodes
-        .iter()
-        .filter(|n| n.kind().as_ref() == "call_expression" && n.range().end < before)
-        .any(|n| {
-            api(root, n).is_some_and(|s| {
-                matches!(
-                    s.as_str(),
-                    "std::mem::forget"
-                        | "core::mem::forget"
-                        | "std::mem::ManuallyDrop::new"
-                        | "core::mem::ManuallyDrop::new"
-                )
-            }) && same(n)
-                && n.ancestors()
-                    .take_while(|n| n.range() != f.node.range())
-                    .all(|n| {
-                        !matches!(
-                            n.kind().as_ref(),
-                            "if_expression"
-                                | "match_expression"
-                                | "for_expression"
-                                | "while_expression"
-                                | "loop_expression"
-                                | "closure_expression"
-                        )
-                    })
-        })
+    let effects = f.ownership_effects();
+    effects.vectors.contains(&binding)
+        && effects
+            .disabled
+            .get(&binding)
+            .is_some_and(|offset| *offset < before)
+        && !effects
+            .hazards
+            .get(&binding)
+            .is_some_and(|offset| *offset < before)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -570,7 +930,7 @@ pub(super) fn groups(
                 .field("value")
                 .or_else(|| declaration.field("right"))
                 .is_some_and(|v| {
-                    api(&root, &v).is_some_and(|s| {
+                    f.api(&v).is_some_and(|s| {
                         matches!(
                             s.as_str(),
                             "std::vec::Vec::new"
@@ -620,7 +980,7 @@ pub(super) fn groups(
         for call in f.nodes.iter().filter(|n| {
             n.kind().as_ref() == "call_expression" && reachable(file, n, f, selection, &literals)
         }) {
-            let name = api(&root, call).unwrap_or_default();
+            let name = f.api(call).unwrap_or_default();
             let arguments = args(call);
             let reconstruct = matches!(
                 name.as_str(),
@@ -846,7 +1206,6 @@ pub(super) fn groups(
             )) else {
                 continue;
             };
-            let helper_root = parsed.root(&helper.location.path).unwrap();
             let hp = parameters(&h.node);
             for (index, argument) in arguments.iter().enumerate() {
                 if argument.kind().as_ref() != "reference_expression" {
@@ -868,7 +1227,7 @@ pub(super) fn groups(
                     .iter()
                     .filter(|n| n.kind().as_ref() == "call_expression")
                     .find(|n| {
-                        api(&helper_root, n).is_some_and(|s| {
+                        h.api(n).is_some_and(|s| {
                             matches!(
                                 s.as_str(),
                                 "core::ptr::copy_nonoverlapping" | "std::ptr::copy_nonoverlapping"

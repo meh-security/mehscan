@@ -263,12 +263,18 @@ fn cached_rust_inventory_from_before_pointer_cast_admission_requires_regeneratio
             .any(|e| e.rule_id == "rust-vector-layout-review")
     );
     mehscan_engine::investigation::validate_review_inventory(&project.0, &inventory).unwrap();
-    inventory.rust_configuration_revision = Some("typed-source-and-raw-memory-v4".into());
-    let error = mehscan_engine::investigation::validate_review_inventory(&project.0, &inventory)
-        .unwrap_err()
-        .to_string();
-    assert!(
-        error.contains("Rust source configuration analysis changed"),
-        "{error}"
-    );
+    for previous in [
+        "typed-source-and-raw-memory-v4",
+        "typed-source-and-raw-memory-v5",
+    ] {
+        inventory.rust_configuration_revision = Some(previous.into());
+        let error =
+            mehscan_engine::investigation::validate_review_inventory(&project.0, &inventory)
+                .unwrap_err()
+                .to_string();
+        assert!(
+            error.contains("Rust source configuration analysis changed"),
+            "{error}"
+        );
+    }
 }

@@ -26,6 +26,12 @@ through moves and shadowing; forgetting a replacement owner does not release the
 original one. An opaque helper leaves its precise effect unresolved. See
 [raw-copy requirements](https://doc.rust-lang.org/std/ptr/fn.copy_nonoverlapping.html).
 
+Distinguish consuming the owner from forgetting a reference or derived pointer:
+the latter does not disable the backing container's destructor. After drop is
+disabled, trace actual reallocations, additional owners and handoffs of that
+allocation before reconstruction. A `ManuallyDrop` constructor does not prove
+the captured allocation remains live after a later helper or mutation.
+
 `rust_context_*` captures provide bounded typed definitions, import/re-export
 bindings and macro bodies as source context. They do not prove trait dispatch,
 macro expansion, active features, caller authority or a transaction's coverage.

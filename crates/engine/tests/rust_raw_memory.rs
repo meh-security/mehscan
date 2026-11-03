@@ -191,6 +191,12 @@ fn ownership_suppression_follows_the_original_binding_across_moves_and_rebinding
         "source=std::vec::Vec::<u8>::new();std::mem::forget(source);",
         "let other=std::vec::Vec::<u8>::new();let source=std::mem::ManuallyDrop::new(other);",
         "let mut holder=std::mem::ManuallyDrop::new(source);unsafe{std::mem::ManuallyDrop::drop(&mut holder);}",
+        "std::mem::forget(pointer);",
+        "std::mem::forget(&source);",
+        "let borrowed=&source;std::mem::forget(borrowed);",
+        "let holder=std::mem::ManuallyDrop::new(pointer);",
+        "let holder=std::mem::ManuallyDrop::new(&source);",
+        "if source.is_empty(){source=std::vec::Vec::<u8>::new();}std::mem::forget(source);",
     ] {
         let source = VECTOR.replace(" unsafe {", &format!(" {insertion}\n unsafe {{"));
         assert!(
@@ -212,6 +218,56 @@ fn ownership_suppression_follows_the_original_binding_across_moves_and_rebinding
             "{source}"
         );
     }
+}
+
+#[test]
+fn disabling_drop_does_not_prove_liveness_after_reallocation_escape_or_reconstruction() {
+    let source = "pub fn rebuild(v:Vec<u8>)->Vec<u8>{let mut h=std::mem::ManuallyDrop::new(v);let p=h.as_mut_ptr();let n=h.len();let c=h.capacity();EFFECT;unsafe{Vec::from_raw_parts(p,n,c)}}";
+    for effect in [
+        "h.reserve(16)",
+        "opaque(h)",
+        "object.len(h)",
+        "let other=unsafe{Vec::from_raw_parts(p,n,c)}",
+        "let wrapper=Wrapper{value:h}",
+    ] {
+        let candidate = source.replace("EFFECT", effect);
+        assert!(
+            Project::new(&candidate)
+                .rules()
+                .contains(&"rust-vector-ownership-review".into()),
+            "{candidate}"
+        );
+    }
+    let clean = source.replace("EFFECT;", "");
+    assert!(
+        !Project::new(&clean)
+            .rules()
+            .contains(&"rust-vector-ownership-review".into())
+    );
+}
+
+#[test]
+fn chained_calls_do_not_hide_the_reconstruction_at_the_same_start_offset() {
+    let source = "pub unsafe fn rebuild(mut v:Vec<u8>)->Box<[u8]>{let p=v.as_mut_ptr();let n=v.len();let c=v.capacity();Vec::from_raw_parts(p,n,c).into_boxed_slice()}";
+    let rules = Project::new(source).rules();
+    assert!(
+        rules.contains(&"rust-vector-metadata-review".into()),
+        "{rules:?}"
+    );
+    assert!(
+        rules.contains(&"rust-vector-ownership-review".into()),
+        "{rules:?}"
+    );
+}
+
+#[test]
+fn reading_the_standard_owner_does_not_reopen_its_transferred_allocation() {
+    let source = "struct Guard;impl Guard{fn check<T>(_:&Vec<u8>)->Result<(),()>{Ok(())}}pub fn rebuild(mut v:Vec<u8>)->Vec<u8>{Guard::check::<u8>(&v).unwrap();let p=v.as_mut_ptr();let n=v.len();let c=v.capacity();std::mem::forget(v);unsafe{Vec::from_raw_parts(p,n,c)}}";
+    assert!(
+        !Project::new(source)
+            .rules()
+            .contains(&"rust-vector-ownership-review".into())
+    );
 }
 
 #[test]
