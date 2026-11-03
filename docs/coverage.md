@@ -47,6 +47,13 @@ samples and generated or bundled sources. This includes `sample`, `example`,
 `libtest` and `libtests` directories. Names are source-scope conventions, not
 evidence that code is safe.
 
+Rust directory scans also follow supported static Cargo targets and source-module
+declarations. Established module exclusions apply to evidence and review helper
+lookup. Unknown features, targets, generated modules and ambiguous inclusion stay
+explicit in review context. Source availability does not establish runtime
+reachability or caller authority. Mehscan does not run Cargo, build scripts or
+procedural macros to select a convenient configuration.
+
 Use `mehscan scan ROOT --include-tests` to include supported nonproduction source
 in SAST when that is the intended scope. Built-in dependency/build exclusions
 remain in force. Choose a maintained source directory deliberately when a larger
