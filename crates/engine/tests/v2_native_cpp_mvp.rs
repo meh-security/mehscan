@@ -6,6 +6,53 @@ use std::path::PathBuf;
 use mehscan_core::{AvailabilityState, CandidateReport, Capability, Language, SecurityPathState};
 
 #[test]
+fn many_local_owners_keep_unicode_names_and_allocation_families_separate() {
+    let root = support::temp_dir("cpp-many-owners");
+    let mut source = String::from("#include <memory>\nvoid check(){\n");
+    for index in 0..48 {
+        source.push_str(&format!(
+            "int *données{index}=new int(7);std::unique_ptr<int> owner{index}(données{index});\nint *array{index}=new int[2];delete array{index};\n"
+        ));
+    }
+    source.push('}');
+    fs::write(root.join("source.cpp"), &source).unwrap();
+    let scan = mehscan_engine::scan_path(&root).unwrap();
+    fs::remove_dir_all(root).unwrap();
+    assert_eq!(scan.coverage.totals.parse_failed, 0);
+    let paths = scan
+        .security_paths
+        .iter()
+        .filter(|path| path.provenance.engine == "mehscan c++ allocation-ownership relationship 1")
+        .collect::<Vec<_>>();
+    assert_eq!(paths.len(), 96);
+    assert_eq!(
+        paths
+            .iter()
+            .filter(|path| path.state == SecurityPathState::Protected)
+            .count(),
+        48
+    );
+    assert_eq!(
+        paths
+            .iter()
+            .filter(|path| path.state == SecurityPathState::Unknown)
+            .count(),
+        48
+    );
+    for fact in &scan.evidence {
+        for capture in ["allocation", "release", "owner_declaration", "transfer"]
+            .into_iter()
+            .filter_map(|key| fact.captures.get(key))
+        {
+            assert_eq!(
+                &source[capture.location.start.byte_offset..capture.location.end.byte_offset],
+                capture.text
+            );
+        }
+    }
+}
+
+#[test]
 fn native_same_path_check_use_requires_atomic_or_nofollow_controls() {
     let root = support::temp_dir("native-toctou");
     fs::create_dir_all(&root).expect("create TOCTOU fixture");

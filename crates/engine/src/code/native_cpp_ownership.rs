@@ -52,6 +52,7 @@ pub(crate) fn add_native_cpp_ownership_observations<'tree>(
 
     let mut additions = Vec::new();
     let mut paths = Vec::new();
+    let mut scope_events = BTreeMap::new();
 
     for allocation in root
         .dfs()
@@ -118,9 +119,12 @@ pub(crate) fn add_native_cpp_ownership_observations<'tree>(
         else {
             continue;
         };
-        if let Some(owner) = raw_unique_transfer(&scope, &local, binding.range().end) {
+        let events = scope_events
+            .entry(scope.range().start)
+            .or_insert_with(|| ScopeEvents::new(&scope));
+        if let Some(owner) = raw_unique_transfer(events, &local, binding.range().end) {
             if reassigned_between(
-                &scope,
+                events,
                 &local,
                 binding.range().end,
                 owner.node.range().start,
@@ -184,15 +188,12 @@ pub(crate) fn add_native_cpp_ownership_observations<'tree>(
             continue;
         }
 
-        let Some(release) = scope
-            .dfs()
-            .filter(|node| node.kind().as_ref() == "delete_expression")
-            .filter(|node| node.range().start > binding.range().end)
-            .find(|node| delete_target(node).as_deref() == Some(local.as_str()))
-        else {
+        let Some(release) = events.releases.get(&local).and_then(|nodes| {
+            nodes.get(nodes.partition_point(|node| node.range().start <= binding.range().end))
+        }) else {
             continue;
         };
-        if reassigned_between(&scope, &local, binding.range().end, release.range().start) {
+        if reassigned_between(events, &local, binding.range().end, release.range().start) {
             continue;
         }
         let source = allocation_evidence(
@@ -313,10 +314,75 @@ pub(crate) fn add_native_cpp_ownership_observations<'tree>(
     paths
 }
 
+#[derive(Clone)]
 struct UniqueOwner<'tree> {
     node: Node<'tree, StrDoc<SupportLang>>,
     local: String,
     family: Family,
+}
+
+/// Keep the existing local ownership predicates, preparing their source events
+/// once per function instead of walking the function for every allocation.
+struct ScopeEvents<'tree> {
+    releases: BTreeMap<String, Vec<Node<'tree, StrDoc<SupportLang>>>>,
+    assignments: BTreeMap<String, Vec<Node<'tree, StrDoc<SupportLang>>>>,
+    owners: BTreeMap<String, Vec<UniqueOwner<'tree>>>,
+}
+impl<'tree> ScopeEvents<'tree> {
+    fn new(scope: &Node<'tree, StrDoc<SupportLang>>) -> Self {
+        let mut result = Self {
+            releases: BTreeMap::new(),
+            assignments: BTreeMap::new(),
+            owners: BTreeMap::new(),
+        };
+        for node in scope.dfs() {
+            match node.kind().as_ref() {
+                "delete_expression" => {
+                    if let Some(target) = delete_target(&node) {
+                        result.releases.entry(target).or_default().push(node);
+                    }
+                }
+                "assignment_expression" => {
+                    if let Some(left) = node.field("left") {
+                        result
+                            .assignments
+                            .entry(left.text().trim().into())
+                            .or_default()
+                            .push(node);
+                    }
+                }
+                "declaration" if default_unique_owner(node.text().as_ref()) => {
+                    let Some(local) = declaration_local(&node) else {
+                        continue;
+                    };
+                    let text = compact(node.text().as_ref());
+                    let mut arguments = std::collections::BTreeSet::new();
+                    // These are precisely the old `(raw)` / `{raw}` matches.
+                    // Read just the identifier after each opening delimiter.
+                    for (offset, open) in
+                        text.char_indices().filter(|(_, c)| matches!(c, '(' | '{'))
+                    {
+                        let tail = &text[offset + 1..];
+                        let end = tail.find(['(', ')', '{', '}']).unwrap_or(tail.len());
+                        let raw = &tail[..end];
+                        let close = if open == '(' { ')' } else { '}' };
+                        if !raw.is_empty() && tail[end..].starts_with(close) {
+                            arguments.insert(raw.to_owned());
+                        }
+                    }
+                    for raw in arguments {
+                        result.owners.entry(raw).or_default().push(UniqueOwner {
+                            node: node.clone(),
+                            local: local.clone(),
+                            family: unique_owner_family(&text),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        result
+    }
 }
 
 fn ordinary_new(node: &Node<'_, StrDoc<SupportLang>>) -> bool {
@@ -383,29 +449,15 @@ fn enclosing_unique_owner<'tree>(
 }
 
 fn raw_unique_transfer<'tree>(
-    scope: &Node<'tree, StrDoc<SupportLang>>,
+    events: &ScopeEvents<'tree>,
     raw: &str,
     after: usize,
 ) -> Option<UniqueOwner<'tree>> {
-    scope
-        .dfs()
-        .filter(|node| node.kind().as_ref() == "declaration")
-        .filter(|node| node.range().start > after)
-        .filter(|node| default_unique_owner(node.text().as_ref()))
-        .find_map(|node| {
-            let text = compact(node.text().as_ref());
-            ((text.contains(&format!("({raw})")) || text.contains(&format!("{{{raw}}}")))
-                && !released_between(scope, raw, after, node.range().start))
-            .then(|| {
-                let local = declaration_local(&node)?;
-                Some(UniqueOwner {
-                    family: unique_owner_family(node.text().as_ref()),
-                    node,
-                    local,
-                })
-            })
-            .flatten()
-        })
+    let owners = events.owners.get(raw)?;
+    owners[owners.partition_point(|owner| owner.node.range().start <= after)..]
+        .iter()
+        .find(|owner| !released_between(events, raw, after, owner.node.range().start))
+        .cloned()
 }
 
 fn declaration_local(node: &Node<'_, StrDoc<SupportLang>>) -> Option<String> {
@@ -502,33 +554,25 @@ fn delete_family(node: &Node<'_, StrDoc<SupportLang>>) -> Family {
     }
 }
 
-fn reassigned_between(
-    scope: &Node<'_, StrDoc<SupportLang>>,
-    local: &str,
-    start: usize,
-    end: usize,
-) -> bool {
-    scope
-        .dfs()
-        .filter(|node| node.kind().as_ref() == "assignment_expression")
-        .filter(|node| start < node.range().start && node.range().end < end)
-        .any(|node| {
-            node.field("left")
-                .is_some_and(|left| left.text().trim() == local)
-        })
+fn reassigned_between(events: &ScopeEvents<'_>, local: &str, start: usize, end: usize) -> bool {
+    events
+        .assignments
+        .get(local)
+        .is_some_and(|nodes| between(nodes, start, end))
 }
 
-fn released_between(
-    scope: &Node<'_, StrDoc<SupportLang>>,
-    local: &str,
-    start: usize,
-    end: usize,
-) -> bool {
-    scope
-        .dfs()
-        .filter(|node| node.kind().as_ref() == "delete_expression")
-        .filter(|node| start < node.range().start && node.range().end < end)
-        .any(|node| delete_target(&node).as_deref() == Some(local))
+fn released_between(events: &ScopeEvents<'_>, local: &str, start: usize, end: usize) -> bool {
+    events
+        .releases
+        .get(local)
+        .is_some_and(|nodes| between(nodes, start, end))
+}
+
+fn between(nodes: &[Node<'_, StrDoc<SupportLang>>], start: usize, end: usize) -> bool {
+    nodes[nodes.partition_point(|node| node.range().start <= start)..]
+        .iter()
+        .take_while(|node| node.range().start < end)
+        .any(|node| node.range().end < end)
 }
 
 #[allow(clippy::too_many_arguments)]
