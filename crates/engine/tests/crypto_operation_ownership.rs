@@ -168,7 +168,7 @@ fn go_digest_helpers_require_owned_input_hash_and_return() {
             .find(|e| e.rule_id == "go-md5-password-hash")
             .expect("owned digest path survives renaming");
         assert!(
-            fact.captures["hash_implementation"]
+            fact.captures["helper_definition"]
                 .text
                 .contains(&format!("func {name}("))
         );

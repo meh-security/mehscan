@@ -27,6 +27,9 @@ mod node_url;
 
 const MAX_PROPAGATION_DEPTH: usize = 4;
 
+type SourceNodeIndex<'tree> =
+    BTreeMap<(usize, usize), Option<(Node<'tree, StrDoc<SupportLang>>, Range<usize>)>>;
+
 #[derive(Clone)]
 struct Assignment<'tree> {
     node: Node<'tree, StrDoc<SupportLang>>,
@@ -53,6 +56,7 @@ pub(crate) fn build_security_paths<'tree>(
 ) -> Vec<SecurityPath> {
     let returned_objects = node_context.returned_objects_for_path(path);
     let mut paths = Vec::new();
+    let mut source_nodes = SourceNodeIndex::new();
     // Built only if a Node guarded-operand check needs it; shared across all
     // source/sink pairs and relation families in this file.
     let mut node_operands = None;
@@ -82,6 +86,7 @@ pub(crate) fn build_security_paths<'tree>(
                 relation,
                 &mut node_operands,
                 &returned_objects,
+                &mut source_nodes,
             )),
             RelationStrategy::StoredSubtitleFile => paths.extend(build_stored_subtitle_html_paths(
                 path, root, language, evidence, relation,
@@ -286,6 +291,7 @@ fn build_family_paths<'tree>(
     family: &RelationContract,
     node_operands: &mut Option<NodeOperandIndex<'tree>>,
     returned_objects: &BTreeMap<String, super::node_context::ReturnedObject>,
+    source_nodes: &mut SourceNodeIndex<'tree>,
 ) -> Vec<SecurityPath> {
     let sources = evidence
         .iter()
@@ -312,6 +318,27 @@ fn build_family_paths<'tree>(
                 && !(family.sink.capability == Capability::OutboundNetworkRequest
                     && item.context.runtime_environment == Some(RuntimeEnvironment::Browser))
                 && !is_definitely_unreachable(item)
+        })
+        .collect::<Vec<_>>();
+    if sources.is_empty() || sinks.is_empty() {
+        return Vec::new();
+    }
+    // Resolve immutable source geometry once per file, rather than navigating
+    // the AST again for every sink. Keep all existing pair/closure checks.
+    let sources = sources
+        .into_iter()
+        .filter_map(|source| {
+            let range = location_range(&source.location);
+            let entry = source_nodes
+                .entry((range.start, range.end))
+                .or_insert_with(|| {
+                    let node = smallest_node_containing(root, range)?;
+                    let scope = scope_range(&node, root);
+                    Some((node, scope))
+                });
+            entry
+                .as_ref()
+                .map(|(node, scope)| (source, node.clone(), scope.clone()))
         })
         .collect::<Vec<_>>();
     let protections = family
@@ -415,7 +442,9 @@ fn build_family_paths<'tree>(
             .filter(|protection| protection_belongs_to_sink(root, protection, sink, family))
             .collect::<Vec<_>>();
 
-        for source in &sources {
+        for (source, source_node, source_scope) in &sources {
+            let source_node = source_node.clone();
+            let source_scope = source_scope.clone();
             if family.id == "cwe-79-browser-input-to-html-output"
                 && !sink.rule_id.contains("browser-dom-html-output")
                 && !sink.rule_id.contains("react-dangerous-html-output")
@@ -506,10 +535,6 @@ fn build_family_paths<'tree>(
                 continue;
             }
             let source_range = location_range(&source.location);
-            let Some(source_node) = smallest_node_containing(root, source_range.clone()) else {
-                continue;
-            };
-            let source_scope = scope_range(&source_node, root);
             if matches!(
                 language,
                 Language::Javascript | Language::Typescript | Language::Tsx

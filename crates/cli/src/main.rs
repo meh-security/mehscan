@@ -3612,20 +3612,16 @@ fn compact_helper_context(
         }).collect::<Vec<_>>();
     // Path candidates intentionally omit captures. The definition fact remains
     // bound to this exact evidence ID; do not infer a target from its spelling.
-    if !anchor["rule_id"].as_str().is_some_and(|rule| {
-        ["javascript-", "typescript-", "tsx-"]
-            .iter()
-            .any(|prefix| rule.starts_with(prefix))
-            && rule.ends_with("parameter-sink-summary")
-    }) {
-        return contexts;
-    }
     let Some(fact) = review["facts"]
         .as_array()
         .into_iter()
         .flatten()
         .find(|fact| {
-            fact["role"] == "captured_definition_context" && fact["evidence_id"] == anchor["id"]
+            fact["role"] == "captured_definition_context"
+                && fact["evidence_id"] == anchor["id"]
+                && fact["excerpt"]
+                    .as_str()
+                    .is_some_and(|text| !text.is_empty())
         })
     else {
         return contexts;
@@ -4534,6 +4530,21 @@ mod tests {
         assert_eq!(context.len(), 1);
         assert_eq!(context[0]["location"]["path"], "helper.ts");
         assert_eq!(context[0]["truncated"], false);
+        for rule in [
+            "go-md5-password-hash",
+            "java-helper-summary",
+            "csharp-helper-summary",
+            "rust-helper-summary",
+        ] {
+            let other_anchor = serde_json::json!({"id":"selected", "rule_id":rule});
+            assert_eq!(
+                super::compact_helper_context(&review, &other_anchor),
+                context
+            );
+        }
+        let mut empty = review.clone();
+        empty["facts"][0]["excerpt"] = serde_json::json!("");
+        assert!(super::compact_helper_context(&empty, &anchor).is_empty());
         review["truncation"]["occurred"] = serde_json::json!(true);
         assert_eq!(
             super::compact_helper_context(&review, &anchor)[0]["truncated"],

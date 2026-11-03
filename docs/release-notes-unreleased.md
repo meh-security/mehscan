@@ -6,6 +6,7 @@
 - Source lookups support directory-scoped helper discovery.
 - Follow copy-count arithmetic through selected C/C++ constructors and helpers.
 - Review nullable Rust buffers passed to raw-slice APIs.
+- Preserve captured helper evidence during AI review.
 
 ## Bug fixes
 
