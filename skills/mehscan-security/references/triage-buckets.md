@@ -12,7 +12,7 @@ evidence chain. Read [the common workflow](review-workflow.md) once per bundle.
 | `credential_state` | [Password, MFA, recovery, API-key changes or token renewal](buckets/credential-state.md) |
 | `state_integrity` | [Binding, CSRF, financial values, transitions or shared limits](buckets/state-integrity.md) |
 | `crypto_configuration` | [Cryptography, randomness, cookies or CORS](buckets/crypto-configuration.md) |
-| `native_memory` | [C/C++ bounds, ownership, lifetime or parser state](buckets/native-memory.md) |
+| `native_memory` | [Native bounds, ownership, lifetime, initialized buffers or parser state](buckets/native-memory.md) |
 | `operation_policy` | [Another operation-specific invariant](buckets/operation-policy.md) |
 
 If the bundle's bucket conflicts with its named operation, follow the exact

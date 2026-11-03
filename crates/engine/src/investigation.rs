@@ -428,7 +428,7 @@ impl ReviewInventory {
 }
 
 pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "26";
-const RUST_CONFIGURATION_REVISION: &str = "source-modules-v2";
+const RUST_CONFIGURATION_REVISION: &str = "source-modules-and-buffer-effects-v3";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -4603,6 +4603,9 @@ fn finding_remediation(capability: Capability, cwes: &[String]) -> FindingRemedi
         Capability::RustRawSliceConstruction => {
             "Handle the null field before constructing a raw slice, including zero-length input; return an empty slice or use a suitable non-null sentinel, and verify alignment, initialized extent, lifetime and aliasing separately."
         }
+        Capability::BufferLengthPublication => {
+            "Initialize the full newly exposed prefix before publishing the vector length or output position. A capacity bound does not initialize memory; preserve the same buffer, range and branch through any helper or FFI handoff."
+        }
         Capability::RemainingInputRead => {
             "First prove the cursor is within the input, then reject any decoded extent greater than total_size - cursor before reading or advancing; do not validate with cursor + extent in a type where it can wrap."
         }
@@ -5633,6 +5636,12 @@ fn review_playbook_bucket(
 ) -> &'static str {
     let tags = tags.into_iter().collect::<BTreeSet<_>>();
     let has = |name: &str| tags.contains(name);
+    if matches!(
+        capability,
+        Capability::BufferLengthPublication | Capability::RustRawSliceConstruction
+    ) {
+        return "native_memory";
+    }
     if has("review-invariant:credential-lifecycle") {
         return "credential_state";
     }

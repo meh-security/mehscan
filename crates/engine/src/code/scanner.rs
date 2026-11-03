@@ -1605,6 +1605,7 @@ fn capability_name(capability: Capability) -> &'static str {
         Capability::SubtractedMemoryExtent => "subtracted_memory_extent",
         Capability::RawNullPointerState => "raw_null_pointer_state",
         Capability::RustRawSliceConstruction => "rust_raw_slice_construction",
+        Capability::BufferLengthPublication => "buffer_length_publication",
         Capability::RawSliceNonNullValidation => "raw_slice_non_null_validation",
         Capability::MemoryExtentLowerBoundValidation => "memory_extent_lower_bound_validation",
         Capability::DecodedInputExtent => "decoded_input_extent",

@@ -97,7 +97,7 @@ separate authority/state question. Keep those claims distinct.
 | Angular pipes, inputs, dialogs and trust-marking handoffs | [Angular output](references/angular-output-review.md), `angular-output` |
 | XML, YAML, deserialization, expansion and resource bounds | [Parser/resource effects](references/categories/parser-resource.md), `parser-resource` |
 | Crypto, hashing, randomness, cookies, CORS | [Crypto/configuration](references/buckets/crypto-configuration.md), `crypto-configuration` |
-| C/C++ bounds, lifetime and ownership | [Native memory](references/buckets/native-memory.md), `native-memory` |
+| Native bounds, lifetime, ownership and initialized buffers | [Native memory](references/buckets/native-memory.md), `native-memory` |
 
 In worker mode, the initial contract already contains relevant shared/bucket
 guidance. Use `guidance` with the exact catalog name for a needed additional guide;

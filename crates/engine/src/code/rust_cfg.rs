@@ -139,6 +139,34 @@ fn expression(
     })
 }
 
+fn cfg_attr_gates_item(parts: &[String], test: Option<bool>) -> bool {
+    let mut cursor = 4;
+    if expression(parts, &mut cursor, 0, test).is_none()
+        || parts.get(cursor).is_none_or(|p| p != ",")
+    {
+        return true;
+    }
+    let mut depth = 0usize;
+    let mut head = true;
+    for token in &parts[cursor + 1..] {
+        if head {
+            if !matches!(token.as_str(), "doc" | "allow" | "deny" | "warn" | "forbid") {
+                return true;
+            }
+            head = false;
+        }
+        match token.as_str() {
+            "(" | "[" | "{" => depth += 1,
+            ")" | "]" | "}" if depth > 0 => depth -= 1,
+            ")" if depth == 0 => break,
+            "," if depth == 0 => head = true,
+            "::" if depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 fn attribute(node: &AstNode<'_>, test: Option<bool>) -> Option<(String, Option<bool>)> {
     let mut parts = Vec::new();
     tokens(node, &mut parts);
@@ -150,6 +178,7 @@ fn attribute(node: &AstNode<'_>, test: Option<bool>) -> Option<(String, Option<b
         .get(..4)
         .is_some_and(|p| p == ["#", "[", "cfg_attr", "("])
         && parts.windows(2).any(|p| p == ["cfg", "("])
+        && cfg_attr_gates_item(&parts, test)
     {
         return Some((node.text().into_owned(), None));
     }
@@ -240,6 +269,25 @@ fn scoped_records(
 mod tests {
     use super::*;
     use ast_grep_core::tree_sitter::LanguageExt;
+
+    #[test]
+    fn documentation_cfg_metadata_is_not_an_item_inclusion_predicate() {
+        let source = r#"
+            #[cfg(feature="std")]
+            #[cfg_attr(feature="doc-cfg",doc(cfg(feature="std")))]
+            fn first() {}
+            #[cfg_attr(feature="docs",doc(cfg(unix)),allow(dead_code))]
+            fn second() {}
+            #[cfg_attr(feature="optional",doc(cfg(unix)),cfg(target_os="linux"))]
+            fn third() {}
+        "#;
+        let ast = SupportLang::Rust.ast_grep(source);
+        let values = conditions(&ast.root());
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0].1, "#[cfg(feature=\"std\")]");
+        assert!(values[1].1.contains("cfg(target_os"));
+        assert!(values.iter().all(|(_, _, truth)| truth.is_none()));
+    }
 
     #[test]
     fn indexed_ownership_keeps_attribute_order_comments_and_nested_parent_boundaries() {

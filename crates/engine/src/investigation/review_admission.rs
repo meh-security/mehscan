@@ -2,6 +2,7 @@ use super::*;
 mod csharp_boundaries;
 mod javascript_boundaries;
 mod python_credentials;
+mod rust_buffer_initialization;
 mod rust_configuration;
 mod rust_credential_renewal;
 mod rust_shared_state;
@@ -73,6 +74,13 @@ fn server_mutation_review_marker_groups(
         &selection,
     );
     groups.extend(rust_credential_renewal::configured_groups(
+        sources,
+        existing_evidence,
+        scope,
+        include_review_material,
+        &selection,
+    ));
+    groups.extend(rust_buffer_initialization::groups(
         sources,
         existing_evidence,
         scope,
@@ -570,6 +578,16 @@ pub(super) fn is_marker(evidence: &Evidence) -> bool {
 }
 
 pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewContract> {
+    if evidence
+        .iter()
+        .any(|e| e.capability == Capability::BufferLengthPublication)
+    {
+        return Some(OperationReviewContract {
+            relationship: "bounded_initialized_prefix_publication_review",
+            security_question: "Does the stored buffer position reach publication as vector length before every byte in that prefix has been initialized? Establish the same buffer and range through the supplied implementation and transfer.",
+            title: "Review initialized buffer length publication",
+        });
+    }
     // A renewal marker selects renewal validity, not only initial sign-in proof.
     // Review procedure and token semantics remain in the routed skill guides.
     if evidence

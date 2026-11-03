@@ -68,6 +68,9 @@ pub enum Capability {
     RawNullPointerState,
     /// A safe wrapper constructs a standard raw slice from that same owned field.
     RustRawSliceConstruction,
+    /// A source-defined buffer position can reach publication of initialized length.
+    /// The relationship requires review; allocation capacity is not initialization.
+    BufferLengthPublication,
     /// A rejecting check establishes the raw slice pointer's non-null invariant only.
     RawSliceNonNullValidation,
     /// Exact local evidence that a native byte-copy size does not exceed a

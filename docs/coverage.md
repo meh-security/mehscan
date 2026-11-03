@@ -39,6 +39,14 @@ the same owned type. A rejecting null check closes only the non-null invariant.
 Arbitrary trait dispatch, cross-file state changes, macro expansion, alignment,
 initialization and general unsafe-code correctness remain outside that proof.
 
+Selected Rust initialized-prefix reviews follow source-defined `Vec<u8>` effects
+from a safe buffer constructor through stored-position transfer and length
+publication. Capacity, initialized length and the order and extent of writes
+are separate questions. The implementation witness does not establish every
+trait implementation. Recognition currently requires supported local definitions
+in one file; arbitrary wrappers, cross-file dispatch and other containers remain
+limited. Unknown external initialization stays a review question.
+
 ## Choose the source you intend to review
 
 Directory scans honor repository ignore files and built-in dependency/build
