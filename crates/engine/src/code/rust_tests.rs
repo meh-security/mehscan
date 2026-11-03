@@ -13,6 +13,12 @@ pub(crate) fn ranges(source: &str) -> Vec<Range<usize>> {
     };
     let ast = AstGrep::doc(doc);
     let root = ast.root();
+    ranges_in_root(&root)
+}
+
+pub(super) fn ranges_in_root(
+    root: &ast_grep_core::Node<'_, StrDoc<SupportLang>>,
+) -> Vec<Range<usize>> {
     let mut found: Vec<Range<usize>> = Vec::new();
     let mut covered_end = 0;
     let mut attributes = super::rust_cfg::AttributeIndex::default();

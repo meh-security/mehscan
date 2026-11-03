@@ -2440,6 +2440,11 @@ pub(crate) fn scan_source(
     );
     let summaries_microseconds =
         summaries_started.elapsed().as_micros() + native_pass_microseconds[0];
+    if language == Language::Rust {
+        // File inclusion constrains applicability, not a same-file guard's
+        // implication. Keep local invariant analysis independent of that gate.
+        rust_project_context.modules.annotate(path, &mut evidence);
+    }
     let paths_started = Instant::now();
     let mut security_paths = super::security_paths::build_security_paths(
         path,
@@ -3415,6 +3420,7 @@ fn evidence_context<'tree>(
         http_routes: Vec::new(),
         resource_policy: None,
         runtime_environment: None,
+        configuration_dependencies: Vec::new(),
     }
 }
 

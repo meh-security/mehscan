@@ -3859,7 +3859,7 @@ fn review_card_from_value(
     }
     lookups.dedup();
     lookups.truncate(2);
-    Ok(serde_json::json!({
+    let mut card = serde_json::json!({
         "bundle_fingerprint": bundle.bundle_fingerprint,
         "review_id": review_id,
         "selected_anchor_id": selected_anchor_id,
@@ -3885,7 +3885,30 @@ fn review_card_from_value(
         "nearby_locations": nearby_locations,
         "suggested_lookups": lookups,
         "truncation": truncation,
-    }))
+    });
+    if let Some(configuration) = compact_source_configuration(anchor) {
+        card["source_configuration"] = configuration;
+    }
+    Ok(card)
+}
+
+fn compact_source_configuration(anchor: &serde_json::Value) -> Option<serde_json::Value> {
+    let dependencies = anchor["context"]["configuration_dependencies"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !anchor["rule_id"]
+        .as_str()
+        .is_some_and(|id| id.starts_with("rust-"))
+        && dependencies.is_empty()
+    {
+        return None;
+    }
+    let availability = anchor["context"].get("availability")?;
+    if availability["state"] == "always" && dependencies.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({"availability":availability,"dependencies":dependencies}))
 }
 
 fn brief_location(location: &serde_json::Value) -> serde_json::Value {
@@ -4623,6 +4646,22 @@ mod tests {
             super::compact_path_steps(&review)[0]["context"]["truncated"],
             true
         );
+    }
+
+    #[test]
+    fn compact_cards_keep_rust_module_conditions_and_hashed_declarations() {
+        let anchor = serde_json::json!({"rule_id":"rust-database-query","context":{
+            "availability":{"state":"conditional","condition":"src/lib.rs: #[cfg(feature=\"extra\")]"},
+            "configuration_dependencies":[{"target_path":"src/helper.rs","source_sha256":"abc","declaration":{"text":"mod helper;","location":{"path":"src/lib.rs","start":{"line":2},"end":{"line":2}}}}]
+        }});
+        let compact = super::compact_source_configuration(&anchor).unwrap();
+        assert_eq!(compact["availability"], anchor["context"]["availability"]);
+        assert_eq!(
+            compact["dependencies"],
+            anchor["context"]["configuration_dependencies"]
+        );
+        assert!(super::compact_source_configuration(&serde_json::json!({"rule_id":"rust-database-query","context":{"availability":{"state":"always"}}})).is_none());
+        assert!(super::compact_source_configuration(&serde_json::json!({"rule_id":"javascript-query","context":{"availability":{"state":"conditional"}}})).is_none());
     }
 
     #[test]

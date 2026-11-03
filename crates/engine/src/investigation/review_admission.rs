@@ -2,6 +2,7 @@ use super::*;
 mod csharp_boundaries;
 mod javascript_boundaries;
 mod python_credentials;
+mod rust_configuration;
 mod rust_credential_renewal;
 mod rust_shared_state;
 
@@ -60,17 +61,29 @@ fn server_mutation_review_marker_groups(
     scope: Option<&mehscan_core::ImpactScanScope>,
     page: usize,
     include_review_material: bool,
+    configurations: &BTreeMap<String, mehscan_core::SourceConfiguration>,
 ) -> (Vec<ObservationGroup>, mehscan_core::ReviewMarkerAdmission) {
-    let mut groups =
-        rust_shared_state::groups(sources, existing_evidence, scope, include_review_material);
-    groups.extend(rust_credential_renewal::groups(
+    let selection =
+        rust_configuration::Selection::build(sources, configurations, include_review_material);
+    let mut groups = rust_shared_state::configured_groups(
         sources,
         existing_evidence,
         scope,
         include_review_material,
+        &selection,
+    );
+    groups.extend(rust_credential_renewal::configured_groups(
+        sources,
+        existing_evidence,
+        scope,
+        include_review_material,
+        &selection,
     ));
     let mut seen = BTreeSet::new();
     for file in sources.files.values() {
+        if selection.excluded_file(&file.path) {
+            continue;
+        }
         if !include_review_material && is_review_material_path(&file.path) {
             continue;
         }
@@ -289,32 +302,22 @@ fn server_mutation_review_marker_groups(
             });
         }
     }
-    if !include_review_material {
-        let excluded: BTreeMap<_, _> = sources
-            .files
-            .values()
-            .filter(|file| file.language == Some(Language::Rust))
-            .map(|file| {
-                (
-                    file.path.as_str(),
-                    crate::code::rust_tests::ranges(&file.source),
-                )
-            })
-            .filter(|(_, ranges)| !ranges.is_empty())
-            .collect();
-        groups.retain(|group| {
-            !group.evidence.iter().any(|e| {
-                excluded
-                    .get(e.location.path.as_str())
-                    .is_some_and(|ranges| {
-                        ranges.iter().any(|r| {
-                            r.start <= e.location.start.byte_offset
-                                && e.location.end.byte_offset <= r.end
-                        })
-                    })
-            })
-        });
+    for group in &mut groups {
+        for fact in &mut group.evidence {
+            selection.annotate(fact);
+        }
     }
+    groups.retain(|group| {
+        group.evidence.iter().all(|fact| {
+            !fact
+                .context
+                .availability
+                .as_ref()
+                .is_some_and(|availability| {
+                    availability.state == mehscan_core::AvailabilityState::Excluded
+                })
+        })
+    });
     let recognized = groups.len();
     let mut previously_admitted = 0;
     let mut selected = Vec::new();
@@ -452,7 +455,7 @@ pub(super) fn scoped_marker_groups(
     existing_evidence: &[Evidence],
     scope: Option<&mehscan_core::ImpactScanScope>,
 ) -> Vec<ObservationGroup> {
-    marker_page(sources, existing_evidence, scope, 0, true).0
+    marker_page(sources, existing_evidence, scope, 0, true, &BTreeMap::new()).0
 }
 
 pub(super) fn marker_page(
@@ -461,6 +464,7 @@ pub(super) fn marker_page(
     scope: Option<&mehscan_core::ImpactScanScope>,
     page: usize,
     include_review_material: bool,
+    configurations: &BTreeMap<String, mehscan_core::SourceConfiguration>,
 ) -> (Vec<ObservationGroup>, mehscan_core::ReviewMarkerAdmission) {
     server_mutation_review_marker_groups(
         sources,
@@ -468,6 +472,7 @@ pub(super) fn marker_page(
         scope,
         page,
         include_review_material,
+        configurations,
     )
 }
 
@@ -1616,7 +1621,8 @@ class NotAHandler {
                 },
             )]),
         };
-        let groups = server_mutation_review_marker_groups(&sources, &[], None, 0, true).0;
+        let groups =
+            server_mutation_review_marker_groups(&sources, &[], None, 0, true, &BTreeMap::new()).0;
         assert_eq!(groups.len(), 2);
         for (symbol, capability, family, call) in [
             (
@@ -1659,7 +1665,8 @@ class NotAHandler {
                 },
             )]),
         };
-        let groups = server_mutation_review_marker_groups(&sources, &[], None, 0, true).0;
+        let groups =
+            server_mutation_review_marker_groups(&sources, &[], None, 0, true, &BTreeMap::new()).0;
         assert_eq!(groups.len(), 3);
         let mut identities = BTreeSet::new();
         for symbol in ["ResetPasswordDemo", "ResetPassword", "DeleteUser"] {

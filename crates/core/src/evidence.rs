@@ -452,6 +452,18 @@ pub struct EvidenceContext {
     pub resource_policy: Option<ResourcePolicyContext>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_environment: Option<RuntimeEnvironment>,
+    /// Source declarations governing module availability, not runtime reachability.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub configuration_dependencies: Vec<ConfigurationDependency>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ConfigurationDependency {
+    pub declaration: Capture,
+    pub source_sha256: String,
+    pub target_path: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
 }
 
 impl EvidenceContext {
@@ -466,6 +478,7 @@ impl EvidenceContext {
             && self.http_routes.is_empty()
             && self.resource_policy.is_none()
             && self.runtime_environment.is_none()
+            && self.configuration_dependencies.is_empty()
     }
 }
 

@@ -642,6 +642,7 @@ fn evidence_context<'tree>(
         http_routes: Vec::new(),
         resource_policy: None,
         runtime_environment: None,
+        configuration_dependencies: Vec::new(),
     }
 }
 

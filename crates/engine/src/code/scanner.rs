@@ -70,6 +70,7 @@ pub struct ScanProfile {
     pub rule_compilation_microseconds: u128,
     pub source_loading_and_secret_scan_microseconds: u128,
     pub source_read_microseconds: u128,
+    pub rust_module_configuration_microseconds: u128,
     pub loading_secret_scan_microseconds: u128,
     pub project_symbols_microseconds: u128,
     pub node_project_context_microseconds: u128,
@@ -131,6 +132,26 @@ pub(crate) fn scan_profiled(
         })
         .map(|file| file.relative.clone())
         .collect::<Vec<_>>();
+    let rust_manifest_paths = if !discovery.root.is_file()
+        && discovery
+            .files
+            .iter()
+            .any(|file| matches!(file.class, FileClass::Supported(Language::Rust)))
+    {
+        discovery
+            .files
+            .iter()
+            .filter(|file| {
+                file.absolute
+                    .file_name()
+                    .is_some_and(|name| name == "Cargo.toml")
+            })
+            .filter(|file| !matches!(file.class, FileClass::Ignored))
+            .map(|file| (file.relative.clone(), file.absolute.clone()))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     let dotnet_project_sources = discovery
         .files
         .iter()
@@ -658,6 +679,65 @@ pub(crate) fn scan_profiled(
     );
     trace_scan_phase("loading_secret_scan", loading_secret_scan_microseconds);
 
+    let rust_modules_started = Instant::now();
+    let rust_manifest_sources = rust_manifest_paths
+        .iter()
+        .filter_map(|(path, absolute)| {
+            fs::metadata(absolute)
+                .ok()
+                .filter(|m| m.len() <= 2 * 1024 * 1024)
+                .and_then(|_| fs::read_to_string(absolute).ok())
+                .map(|source| (path.clone(), source))
+        })
+        .collect::<Vec<_>>();
+    let rust_modules = if discovery.root.is_file() {
+        super::rust_modules::RustModules::default()
+    } else {
+        super::rust_modules::RustModules::build(
+            prepared.iter().map(|file| {
+                (
+                    file.relative.as_str(),
+                    file.language,
+                    file.rust_original.as_deref().unwrap_or(&file.source),
+                )
+            }),
+            &rust_manifest_sources,
+            options.include_tests,
+        )
+    };
+    coverage.source_configurations = rust_modules.configurations();
+    let mut included = Vec::with_capacity(prepared.len());
+    for file in prepared {
+        if file.language != Language::Rust || !rust_modules.excluded(&file.relative) {
+            included.push(file);
+            continue;
+        }
+        if options.scan_secrets {
+            let raw = file.rust_original.as_deref().unwrap_or(&file.source);
+            let secret = crate::secrets::scan_source(
+                &file.relative,
+                raw,
+                &CommentRanges::default(),
+                &secret_allowlist,
+            );
+            coverage.totals.secret_scanned += 1;
+            coverage.totals.secret_suppressed += secret.suppressed;
+            evidence.extend(secret.evidence);
+        }
+        coverage.totals.ignored += 1;
+        coverage.files.push(FileCoverage {
+            path: file.relative,
+            language: Some(Language::Rust),
+            status: FileStatus::Ignored,
+            reason: Some("Rust module excluded by established source configuration".into()),
+        });
+    }
+    let prepared = included;
+    let rust_module_configuration_microseconds = rust_modules_started.elapsed().as_micros();
+    trace_scan_phase(
+        "rust_module_configuration",
+        rust_module_configuration_microseconds,
+    );
     let project_symbols_started = Instant::now();
     let node_modules_started = Instant::now();
     let node_modules = std::sync::Arc::new(NodeModuleIndex::build(
@@ -792,7 +872,8 @@ pub(crate) fn scan_profiled(
         prepared
             .iter()
             .map(|file| (file.relative.as_str(), file.language, file.source.as_str())),
-    );
+    )
+    .with_modules(rust_modules);
     let php_project_context = super::php::PhpProjectContext::from_sources(
         prepared
             .iter()
@@ -997,6 +1078,7 @@ pub(crate) fn scan_profiled(
         rule_compilation_microseconds,
         source_loading_and_secret_scan_microseconds,
         source_read_microseconds: source_read_microseconds + secret_read_microseconds,
+        rust_module_configuration_microseconds,
         loading_secret_scan_microseconds,
         project_symbols_microseconds,
         node_project_context_microseconds,

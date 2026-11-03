@@ -107,6 +107,8 @@ fn expression(
     }
     if !tokens.get(*cursor).is_some_and(|s| s == "(") {
         return Some(match (name, test) {
+            ("true", _) => Truth::Yes,
+            ("false", _) => Truth::No,
             ("test", Some(true)) => Truth::Yes,
             ("test", Some(false)) => Truth::No,
             _ => Truth::Unknown,
@@ -179,13 +181,38 @@ pub(super) fn test_only(node: &AstNode<'_>) -> bool {
 }
 
 pub(super) fn conditions(root: &AstNode<'_>) -> Vec<(Range<usize>, String, Option<bool>)> {
+    condition_records(root, None)
+        .into_iter()
+        .map(|(range, _, text, truth)| (range, text, truth))
+        .collect()
+}
+
+pub(super) fn condition_records(
+    root: &AstNode<'_>,
+    test: Option<bool>,
+) -> Vec<(Range<usize>, Range<usize>, String, Option<bool>)> {
+    scoped_records(root, test, false)
+}
+
+pub(super) fn review_condition_records(
+    root: &AstNode<'_>,
+    test: Option<bool>,
+) -> Vec<(Range<usize>, Range<usize>, String, Option<bool>)> {
+    scoped_records(root, test, true)
+}
+
+fn scoped_records(
+    root: &AstNode<'_>,
+    test: Option<bool>,
+    include_attributes: bool,
+) -> Vec<(Range<usize>, Range<usize>, String, Option<bool>)> {
     let mut result = Vec::new();
     let mut attributes = AttributeIndex::default();
     for node in root
         .dfs()
         .filter(|n| matches!(n.kind().as_ref(), "attribute_item" | "inner_attribute_item"))
     {
-        let Some((condition, truth)) = attribute(&node, None) else {
+        let Some((condition, truth)) = attribute(&node, test) else {
             continue;
         };
         let Some(parent) = node.parent() else {
@@ -197,11 +224,15 @@ pub(super) fn conditions(root: &AstNode<'_>) -> Vec<(Range<usize>, String, Optio
             let Some(item) = attributes.following(&node) else {
                 continue;
             };
-            item.range()
+            if include_attributes {
+                attributes.group_start(&node)..item.range().end
+            } else {
+                item.range()
+            }
         };
-        result.push((range, condition, truth));
+        result.push((range, node.range(), condition, truth));
     }
-    result.sort_by_key(|(range, _, _)| (std::cmp::Reverse(range.len()), range.start));
+    result.sort_by_key(|(range, _, _, _)| (std::cmp::Reverse(range.len()), range.start));
     result
 }
 

@@ -330,14 +330,15 @@ impl Function {
 }
 
 impl<'a> Functions<'a> {
-    fn build(sources: &'a RepositorySources) -> Self {
+    fn build(sources: &'a RepositorySources, selection: &rust_configuration::Selection) -> Self {
         let mut result = Self {
             sources,
-            models: ModelBindings::build(sources),
+            models: ModelBindings::build(sources, selection),
             functions: BTreeMap::new(),
         };
         for file in sources.files.values().filter(|f| {
             f.language == Some(Language::Rust)
+                && !selection.excluded_file(&f.path)
                 && f.source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES
         }) {
             let Ok(doc) = StrDoc::try_new(&file.source, ast_grep_language::SupportLang::Rust)
@@ -348,24 +349,27 @@ impl<'a> Functions<'a> {
             let root = ast.root();
             let namespace = module(&file.path);
             let mut root_imports = Vec::new();
-            for n in root
-                .children()
-                .filter(|n| n.kind().as_ref() == "use_declaration")
-            {
+            for n in root.children().filter(|n| {
+                n.kind().as_ref() == "use_declaration" && !selection.excluded(&file.path, n.range())
+            }) {
                 imports(&n, "", false, &mut root_imports);
             }
             let blocked = root
                 .children()
                 .filter(|n| {
-                    matches!(
-                        n.kind().as_ref(),
-                        "mod_item" | "struct_item" | "enum_item" | "type_item"
-                    )
+                    !selection.excluded(&file.path, n.range())
+                        && matches!(
+                            n.kind().as_ref(),
+                            "mod_item" | "struct_item" | "enum_item" | "type_item"
+                        )
                 })
                 .filter_map(|n| n.field("name"))
                 .map(|n| n.text().into_owned())
                 .collect::<BTreeSet<_>>();
             for node in root.children() {
+                if selection.excluded(&file.path, node.range()) {
+                    continue;
+                }
                 let (owner, guard, functions) = if node.kind().as_ref() == "function_item" {
                     (None, false, vec![node.clone()])
                 } else if node.kind().as_ref() == "impl_item" {
@@ -409,6 +413,9 @@ impl<'a> Functions<'a> {
                     continue;
                 };
                 for function in functions {
+                    if selection.excluded(&file.path, function.range()) {
+                        continue;
+                    }
                     let Some(name) = function.field("name") else {
                         continue;
                     };
@@ -713,25 +720,42 @@ fn eligible(
         })
 }
 
+#[cfg(test)]
 pub(super) fn groups(
     sources: &RepositorySources,
     existing: &[Evidence],
     scope: Option<&mehscan_core::ImpactScanScope>,
     include_material: bool,
 ) -> Vec<ObservationGroup> {
+    configured_groups(
+        sources,
+        existing,
+        scope,
+        include_material,
+        &rust_configuration::Selection::default(),
+    )
+}
+
+pub(super) fn configured_groups(
+    sources: &RepositorySources,
+    existing: &[Evidence],
+    scope: Option<&mehscan_core::ImpactScanScope>,
+    include_material: bool,
+    selection: &rust_configuration::Selection,
+) -> Vec<ObservationGroup> {
     let mut groups = Vec::new();
-    if !sources
-        .files
-        .values()
-        .any(|f| eligible(f, scope, include_material) && f.source.contains("refresh_token"))
-        || !sources
-            .files
-            .values()
-            .any(|f| f.language == Some(Language::Rust) && f.source.contains("jsonwebtoken"))
-    {
+    if !sources.files.values().any(|f| {
+        !selection.excluded_file(&f.path)
+            && eligible(f, scope, include_material)
+            && f.source.contains("refresh_token")
+    }) || !sources.files.values().any(|f| {
+        !selection.excluded_file(&f.path)
+            && f.language == Some(Language::Rust)
+            && f.source.contains("jsonwebtoken")
+    }) {
         return groups;
     }
-    let index = Functions::build(sources);
+    let index = Functions::build(sources, selection);
     for caller in index
         .functions
         .values()
@@ -1366,6 +1390,60 @@ impl FromRequest for Principal {
             })
             .collect(),
         }
+    }
+
+    #[test]
+    fn optional_revocation_writer_does_not_gate_the_whole_credential_exchange() {
+        let model = MODEL.replace("pub fn revoke", "#[cfg(feature=\"revoke\")] pub fn revoke");
+        let source = sources(API, &model, CRYPTO, GUARD);
+        let selection = rust_configuration::Selection::build(&source, &BTreeMap::new(), false);
+        let mut groups = super::configured_groups(&source, &[], None, false, &selection);
+        assert_eq!(groups.len(), 1);
+        selection.annotate(&mut groups[0].evidence[0]);
+        let fact = &groups[0].evidence[0];
+        assert_eq!(
+            fact.context.availability.as_ref().unwrap().state,
+            mehscan_core::AvailabilityState::Always
+        );
+        assert!(
+            fact.context
+                .configuration_dependencies
+                .iter()
+                .any(|dependency| dependency.declaration.text.contains("revoke"))
+        );
+    }
+
+    #[test]
+    fn configuration_selects_issuer_and_accepting_consumer_definitions_before_binding() {
+        for (model, guard) in [
+            (
+                MODEL.replace("pub fn issue", "#[cfg(test)] pub fn issue"),
+                GUARD.into(),
+            ),
+            (
+                MODEL.into(),
+                GUARD.replace("impl FromRequest", "#[cfg(any())] impl FromRequest"),
+            ),
+        ] {
+            let source = sources(API, &model, CRYPTO, &guard);
+            let selection = rust_configuration::Selection::build(&source, &BTreeMap::new(), false);
+            assert!(super::configured_groups(&source, &[], None, false, &selection).is_empty());
+        }
+        let model = MODEL.replace("pub fn issue", "#[cfg(feature=\"issue\")] pub fn issue");
+        let source = sources(API, &model, CRYPTO, GUARD);
+        let selection = rust_configuration::Selection::build(&source, &BTreeMap::new(), false);
+        let mut groups = super::configured_groups(&source, &[], None, false, &selection);
+        assert_eq!(groups.len(), 1);
+        selection.annotate(&mut groups[0].evidence[0]);
+        assert_eq!(
+            groups[0].evidence[0]
+                .context
+                .availability
+                .as_ref()
+                .unwrap()
+                .state,
+            mehscan_core::AvailabilityState::Conditional
+        );
     }
 
     #[test]

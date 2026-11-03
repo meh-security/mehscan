@@ -48,6 +48,7 @@ pub(crate) struct RustProjectContext {
     direct: Vec<DirectBinding>,
     forwarded: Vec<ForwardedBinding>,
     http: super::rust_http::RustHttpProjectContext,
+    pub(crate) modules: super::rust_modules::RustModules,
 }
 
 impl RustProjectContext {
@@ -166,7 +167,13 @@ impl RustProjectContext {
             direct,
             forwarded,
             http,
+            modules: super::rust_modules::RustModules::default(),
         }
+    }
+
+    pub(crate) fn with_modules(mut self, modules: super::rust_modules::RustModules) -> Self {
+        self.modules = modules;
+        self
     }
 
     pub(crate) fn http_support<'a>(

@@ -601,6 +601,7 @@ fn candidate_to_evidence(
             http_routes: Vec::new(),
             resource_policy: None,
             runtime_environment: None,
+            configuration_dependencies: Vec::new(),
         },
         symbol_resolution: None,
         rule_id: candidate.rule_id.to_string(),

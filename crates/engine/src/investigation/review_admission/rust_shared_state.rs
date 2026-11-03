@@ -217,10 +217,11 @@ pub(super) fn imports(
 }
 
 impl Index {
-    fn build(sources: &RepositorySources) -> Self {
+    fn build(sources: &RepositorySources, selection: &rust_configuration::Selection) -> Self {
         let mut index = Self::default();
         for file in sources.files.values().filter(|f| {
             f.language == Some(Language::Rust)
+                && !selection.excluded_file(&f.path)
                 && f.source.len() <= MAX_REVIEW_CONTEXT_INDEX_FILE_BYTES
         }) {
             let Ok(document) = StrDoc::try_new(&file.source, SupportLang::Rust) else {
@@ -232,16 +233,29 @@ impl Index {
                 module: module(&file.path),
                 ..Default::default()
             };
-            for declaration in root
-                .children()
-                .filter(|n| n.kind().as_ref() == "use_declaration")
-            {
+            for declaration in root.children().filter(|n| {
+                n.kind().as_ref() == "use_declaration" && !selection.excluded(&file.path, n.range())
+            }) {
                 let public = declaration
                     .children()
                     .any(|n| n.kind().as_ref() == "visibility_modifier");
                 imports(&declaration, "", public, &mut facts.imports);
             }
+            let shadowed = root.dfs().any(|n| {
+                !selection.excluded(&file.path, n.range())
+                    && matches!(
+                        n.kind().as_ref(),
+                        "mod_item" | "struct_item" | "enum_item" | "type_item"
+                    )
+                    && n.field("name").is_some_and(|n| n.text() == "diesel")
+            }) || facts
+                .imports
+                .iter()
+                .any(|(alias, target, _)| alias == "diesel" && target != "diesel");
             for child in root.children() {
+                if selection.excluded(&file.path, child.range()) {
+                    continue;
+                }
                 match child.kind().as_ref() {
                     "struct_item" | "enum_item" | "type_item" => {
                         if let Some(name) = child.field("name") {
@@ -269,10 +283,10 @@ impl Index {
                         }
                         let owner = owner.text().into_owned();
                         facts.types.insert(owner.clone());
-                        for function in body
-                            .children()
-                            .filter(|n| n.kind().as_ref() == "function_item")
-                        {
+                        for function in body.children().filter(|n| {
+                            n.kind().as_ref() == "function_item"
+                                && !selection.excluded(&file.path, n.range())
+                        }) {
                             let (Some(name), Some(body)) =
                                 (function.field("name"), function.field("body"))
                             else {
@@ -284,15 +298,6 @@ impl Index {
                                 continue;
                             }
                             let text = tokens(&body);
-                            let shadowed = root.dfs().any(|n| {
-                                matches!(
-                                    n.kind().as_ref(),
-                                    "mod_item" | "struct_item" | "enum_item" | "type_item"
-                                ) && n.field("name").is_some_and(|n| n.text() == "diesel")
-                            }) || facts
-                                .imports
-                                .iter()
-                                .any(|(alias, target, _)| alias == "diesel" && target != "diesel");
                             let writes_self = !shadowed
                                 && [
                                     "diesel::update(",
@@ -433,8 +438,11 @@ impl Index {
 pub(super) struct ModelBindings(Index);
 
 impl ModelBindings {
-    pub(super) fn build(sources: &RepositorySources) -> Self {
-        Self(Index::build(sources))
+    pub(super) fn build(
+        sources: &RepositorySources,
+        selection: &rust_configuration::Selection,
+    ) -> Self {
+        Self(Index::build(sources, selection))
     }
 
     pub(super) fn resolve_type(&self, path: &str, name: &str) -> Option<String> {
@@ -576,26 +584,43 @@ fn eligible(
         })
 }
 
+#[cfg(test)]
 pub(super) fn groups(
     sources: &RepositorySources,
     existing: &[Evidence],
     scope: Option<&mehscan_core::ImpactScanScope>,
     include_material: bool,
 ) -> Vec<ObservationGroup> {
+    configured_groups(
+        sources,
+        existing,
+        scope,
+        include_material,
+        &rust_configuration::Selection::default(),
+    )
+}
+
+pub(super) fn configured_groups(
+    sources: &RepositorySources,
+    existing: &[Evidence],
+    scope: Option<&mehscan_core::ImpactScanScope>,
+    include_material: bool,
+    selection: &rust_configuration::Selection,
+) -> Vec<ObservationGroup> {
     let mut groups = Vec::new();
-    if !sources
-        .files
-        .values()
-        .any(|f| eligible(f, scope, include_material) && f.source.contains("+="))
-    {
+    if !sources.files.values().any(|f| {
+        !selection.excluded_file(&f.path)
+            && eligible(f, scope, include_material)
+            && f.source.contains("+=")
+    }) {
         return groups;
     }
-    let index = Index::build(sources);
-    for file in sources
-        .files
-        .values()
-        .filter(|f| eligible(f, scope, include_material) && f.source.contains("+="))
-    {
+    let index = Index::build(sources, selection);
+    for file in sources.files.values().filter(|f| {
+        !selection.excluded_file(&f.path)
+            && eligible(f, scope, include_material)
+            && f.source.contains("+=")
+    }) {
         let Ok(document) = StrDoc::try_new(&file.source, SupportLang::Rust) else {
             continue;
         };
@@ -604,10 +629,9 @@ pub(super) fn groups(
         let Some(file_index) = index.files.get(&file.path) else {
             continue;
         };
-        for function in root
-            .children()
-            .filter(|n| n.kind().as_ref() == "function_item")
-        {
+        for function in root.children().filter(|n| {
+            n.kind().as_ref() == "function_item" && !selection.excluded(&file.path, n.range())
+        }) {
             let Some(name) = function.field("name") else {
                 continue;
             };

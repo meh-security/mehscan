@@ -193,11 +193,24 @@ pub struct ReviewInventoryEntry {
     pub capability: Capability,
     pub cwe_candidates: Vec<String>,
     pub evidence_strength: String,
+    /// Source applicability for the initial question; never a security verdict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_configuration: Option<mehscan_core::Availability>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub operand_facts: Vec<ReviewOperandSummary>,
     /// Review-effort heuristic, never a safety verdict or admission closure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_hint: Option<ValueReviewHint>,
+}
+
+fn question_source_configuration(
+    rule: &str,
+    context: &EvidenceContext,
+) -> Option<mehscan_core::Availability> {
+    (rule.starts_with("rust-") || !context.configuration_dependencies.is_empty())
+        .then(|| context.availability.clone())
+        .flatten()
+        .filter(|availability| availability.state != mehscan_core::AvailabilityState::Always)
 }
 
 fn complete_native_path_fact(anchor: &Evidence, kind: mehscan_core::OperandFactKind) -> bool {
@@ -389,6 +402,9 @@ pub struct ReviewInventory {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_catalog: Option<mehscan_core::ReviewIdentityCatalog>,
     pub schema_version: String,
+    /// Invalidates cached Rust facts without expiring unrelated language work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rust_configuration_revision: Option<String>,
     pub source_fingerprint: String,
     pub include_review_material: bool,
     pub entries: Vec<ReviewInventoryEntry>,
@@ -412,6 +428,7 @@ impl ReviewInventory {
 }
 
 pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "26";
+const RUST_CONFIGURATION_REVISION: &str = "source-modules-v2";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -455,6 +472,18 @@ fn validate_review_inventory_sources(
     inventory: &ReviewInventory,
     sources: &RepositorySources,
 ) -> Result<(), EngineError> {
+    if inventory
+        .scan
+        .coverage
+        .languages
+        .contains_key(&Language::Rust)
+        && inventory.rust_configuration_revision.as_deref() != Some(RUST_CONFIGURATION_REVISION)
+    {
+        return Err(EngineError(
+            "review inventory is stale: Rust source configuration analysis changed; regenerate it"
+                .into(),
+        ));
+    }
     if let Some(scope) = &inventory.scan.impact_scope {
         crate::impact::validate_scope(root, scope)?;
     }
@@ -490,6 +519,7 @@ impl<'a> ReviewHistoryValidator<'a> {
             inventory.scan.impact_scope.as_ref(),
             inventory.marker_admission.page,
             inventory.include_review_material,
+            &inventory.scan.coverage.source_configurations,
         )
         .0
         .into_iter()
@@ -734,6 +764,11 @@ pub fn build_review_inventory_scoped_with_native_backends(
     Ok(ReviewInventory {
         identity_catalog: job.identity_catalog,
         schema_version: REVIEW_INVENTORY_SCHEMA_VERSION.to_string(),
+        rust_configuration_revision: scan
+            .coverage
+            .languages
+            .contains_key(&Language::Rust)
+            .then(|| RUST_CONFIGURATION_REVISION.to_string()),
         source_fingerprint,
         include_review_material,
         entries,
@@ -1755,6 +1790,7 @@ fn build_path_review_jobs_internal(
         scan.impact_scope.as_ref(),
         marker_page,
         include_review_material,
+        &scan.coverage.source_configurations,
     );
     observation_groups.extend(markers);
     observation_groups.sort_by(|left, right| {
@@ -1881,6 +1917,10 @@ fn build_path_review_jobs_internal(
                 capability: candidate.capability,
                 cwe_candidates: candidate.cwe_candidates.clone(),
                 evidence_strength: format!("{:?}", candidate.state).to_ascii_lowercase(),
+                source_configuration: question_source_configuration(
+                    &candidate.sink.rule_id,
+                    &candidate.sink.context,
+                ),
                 operand_facts: evidence_by_id
                     .get(candidate.sink.id.as_str())
                     .map_or_else(Vec::new, |sink| operand_summaries(sink)),
@@ -1923,6 +1963,10 @@ fn build_path_review_jobs_internal(
                     "sink"
                 }
                 .to_string(),
+                source_configuration: question_source_configuration(
+                    &anchor.rule_id,
+                    &anchor.context,
+                ),
                 operand_facts: operand_summaries(anchor),
                 value_hint: (group.priority == 2)
                     .then(|| practical_admission::frontend_research_hint(anchor, &scan.evidence))
@@ -9209,6 +9253,16 @@ fn review_evidence_basis(
         tags: evidence.tags.clone(),
         captures,
         rule_note: rule.map(|rule| rule.provenance.note.clone()),
+        configuration: evidence
+            .context
+            .availability
+            .as_ref()
+            .filter(|a| {
+                evidence.rule_id.starts_with("rust-")
+                    && a.state != mehscan_core::AvailabilityState::Always
+            })
+            .cloned(),
+        configuration_dependencies: evidence.context.configuration_dependencies.clone(),
     }
 }
 

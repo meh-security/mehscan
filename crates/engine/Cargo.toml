@@ -33,3 +33,4 @@ sha2 = "0.10.9"
 ignore.workspace = true
 oxc_resolver = "=11.0.0"
 globset = "0.4.18"
+toml_edit = { version = "=0.25.13", default-features = false, features = ["parse"] }
