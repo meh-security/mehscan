@@ -37,8 +37,12 @@ Selected C++ vector lifetime reviews connect an explicitly typed `std::vector`
 reference in a loop to persistent keyed storage, mutations and element addresses
 passed to outward insertion calls. The review checks whether the callee retains
 the pointer, whether it is used later, and whether duplicate-entry or capacity
-guards keep it valid. This currently covers supported same-file relationships;
-inferred container types, arbitrary aliases, other containers and a complete
+guards keep it valid. Local vectors that survive a loop also connect
+`back()`/`front()` references to
+outward insertion calls. Review distinguishes independent owning copies from
+retained views and checks the referenced storage's actual move behavior.
+These are selected same-file relationships. Inferred container types,
+arbitrary aliases, other containers and a complete
 control-flow or lifetime model remain outside that recognition.
 
 Rust raw-slice analysis follows selected null field initializers from safe

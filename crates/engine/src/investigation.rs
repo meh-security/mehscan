@@ -432,7 +432,7 @@ impl ReviewInventory {
 
 pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "26";
 const RUST_CONFIGURATION_REVISION: &str = "source-modules-and-buffer-effects-v3";
-const CPP_EFFECT_REVISION: &str = "vector-loop-borrows-v1";
+const CPP_EFFECT_REVISION: &str = "vector-element-publications-v2";
 
 pub fn validate_review_inventory(
     root: &Path,

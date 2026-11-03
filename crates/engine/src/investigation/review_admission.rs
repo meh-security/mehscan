@@ -578,6 +578,17 @@ pub(super) fn is_marker(evidence: &Evidence) -> bool {
 }
 
 pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewContract> {
+    if evidence.iter().any(|e| {
+        e.tags
+            .iter()
+            .any(|t| t == "loop-carried-reference-publication")
+    }) {
+        return Some(OperationReviewContract {
+            relationship: "bounded_vector_element_publication_review",
+            security_question: "Does the outward call retain a reference or view into this vector element, or make an independent owning copy? Establish the actual stored type/conversion and later use, then whether a later iteration's same-vector mutation invalidates the referenced storage. Check short-string and move behavior, capacity, duplicate and exit guards; a reference argument alone does not prove retained borrowing.",
+            title: "Review vector element publication lifetime",
+        });
+    }
     if evidence
         .iter()
         .any(|e| e.capability == Capability::ContainerBorrowLifetime)

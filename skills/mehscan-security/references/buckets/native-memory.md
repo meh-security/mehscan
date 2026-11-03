@@ -53,6 +53,16 @@ mutation of storage already lending elements. Do not require exhaustive caller
 discovery once the selected relationship is settled. Keep capacity, allocation
 failure and unrelated lifetime claims separate. See [vector invalidation](https://eel.is/c++draft/vector.capacity).
 
+For `loop-carried-reference-publication`, `back()` or `front()` passes an element
+reference outward; `outward_storage_*` supplies a local receiver declaration when
+available. Inspect the actual stored type and conversion: an owning string copy
+differs from a copied view containing a pointer and length. A reference argument
+does not prove retained borrowing. For views into string data, vector relocation
+does not necessarily invalidate a moved heap buffer; establish the relevant
+element move/copy behavior and possible inline or short-string storage. Trace a
+retained view to its later read or comparison after growth. An opaque storage
+implementation leaves that exact retention/use question unresolved.
+
 For Rust raw slices, use `null_pointer`, `safe_constructor`, `field_transfer`
 and `safe_accessor` to check that a possible null state belongs to the same
 object field. A raw slice requires a non-null pointer even for zero length.

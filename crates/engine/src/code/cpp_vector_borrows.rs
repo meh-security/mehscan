@@ -1,4 +1,4 @@
-//! Loop-carried element borrows from explicitly typed persistent vectors.
+//! Loop-carried element publications from explicitly typed persistent vectors.
 use super::{
     conditional::ConditionalRegions,
     context::enclosing_symbol,
@@ -72,10 +72,10 @@ fn capture(path: &str, node: &N<'_>) -> Capture {
         location: location(path, node),
     }
 }
-fn id(path: &str, node: &N<'_>) -> String {
+fn id(path: &str, node: &N<'_>, rule: &str) -> String {
     let mut hash = 0xcbf29ce484222325u64;
     for byte in format!(
-        "{path}\0{RULE}\0{}\0{}",
+        "{path}\0{rule}\0{}\0{}",
         node.range().start,
         node.range().end
     )
@@ -85,6 +85,23 @@ fn id(path: &str, node: &N<'_>) -> String {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("ev-{hash:016x}")
+}
+fn owned_declarator(node: &N<'_>) -> bool {
+    node.kind().as_ref() == "identifier"
+        || (node.kind().as_ref() == "init_declarator"
+            && node
+                .field("declarator")
+                .is_some_and(|n| n.kind().as_ref() == "identifier"))
+}
+fn enclosing_loop<'a>(node: &N<'a>, function: &N<'a>) -> Option<N<'a>> {
+    node.ancestors()
+        .take_while(|n| n.range() != function.range())
+        .find(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "for_statement" | "for_range_loop" | "while_statement" | "do_statement"
+            )
+        })
 }
 fn joined_availability(values: Vec<Availability>) -> Availability {
     let state = if values
@@ -185,16 +202,41 @@ pub(super) fn add_observations<'a>(
     }
     // Discover the narrow relationship's owners before preparing any function.
     // Most C++ functions contain no persistent vector reference at all.
+    let reference_owners = root
+        .dfs()
+        .filter(|n| n.kind().as_ref() == "call_expression")
+        .filter(|n| method(n).is_some_and(|(_, m)| matches!(m.as_str(), "back" | "front")))
+        .filter(|n| {
+            n.ancestors()
+                .take_while(|p| p.kind().as_ref() != "expression_statement")
+                .any(|p| {
+                    p.kind().as_ref() == "call_expression"
+                        && method(&p).is_some_and(|(_, m)| {
+                            matches!(
+                                m.as_str(),
+                                "insert" | "emplace" | "push_back" | "emplace_back"
+                            )
+                        })
+                })
+        })
+        .filter_map(|n| {
+            n.ancestors()
+                .find(|p| p.kind().as_ref() == "function_definition")
+                .map(|p| p.range().start)
+        })
+        .collect::<BTreeSet<_>>();
     let mut owners = BTreeMap::new();
     for declaration in root.dfs().filter(|n| n.kind().as_ref() == "declaration") {
         if !declaration
             .field("type")
             .is_some_and(|ty| api.standard_vector_type(&ty))
             || !declaration.field_children("declarator").any(|d| {
-                d.field("declarator")
-                    .is_some_and(|n| n.kind().as_ref() == "reference_declarator")
-                    && d.field("value")
-                        .is_some_and(|n| n.kind().as_ref() == "subscript_expression")
+                owned_declarator(&d)
+                    || (d
+                        .field("declarator")
+                        .is_some_and(|n| n.kind().as_ref() == "reference_declarator")
+                        && d.field("value")
+                            .is_some_and(|n| n.kind().as_ref() == "subscript_expression"))
             })
         {
             continue;
@@ -205,15 +247,25 @@ pub(super) fn add_observations<'a>(
         else {
             continue;
         };
+        if !reference_owners.contains(&function.range().start)
+            && declaration
+                .field_children("declarator")
+                .all(|d| owned_declarator(&d))
+        {
+            continue;
+        }
         if declaration
-            .ancestors()
-            .take_while(|n| n.range() != function.range())
-            .any(|n| {
-                matches!(
-                    n.kind().as_ref(),
-                    "for_statement" | "for_range_loop" | "while_statement" | "do_statement"
-                )
-            })
+            .field_children("declarator")
+            .any(|d| owned_declarator(&d))
+            || declaration
+                .ancestors()
+                .take_while(|n| n.range() != function.range())
+                .any(|n| {
+                    matches!(
+                        n.kind().as_ref(),
+                        "for_statement" | "for_range_loop" | "while_statement" | "do_statement"
+                    )
+                })
         {
             owners.entry(function.range().start).or_insert(function);
         }
@@ -236,11 +288,15 @@ pub(super) fn add_observations<'a>(
             continue;
         }
         let mut bindings = BTreeMap::<String, Vec<Binding<'a>>>::new();
-        for declaration in nodes
-            .iter()
-            .filter(|n| matches!(n.kind().as_ref(), "declaration" | "parameter_declaration"))
-        {
-            let scope = if declaration.kind().as_ref() == "parameter_declaration" {
+        for declaration in nodes.iter().filter(|n| {
+            matches!(
+                n.kind().as_ref(),
+                "declaration" | "parameter_declaration" | "for_range_loop"
+            )
+        }) {
+            let scope = if declaration.kind().as_ref() == "for_range_loop" {
+                declaration.clone()
+            } else if declaration.kind().as_ref() == "parameter_declaration" {
                 body.clone()
             } else {
                 let Some(scope) = declaration.ancestors().find(|n| {
@@ -253,9 +309,10 @@ pub(super) fn add_observations<'a>(
                 };
                 scope
             };
-            let vector = declaration
-                .field("type")
-                .is_some_and(|ty| api.standard_vector_type(&ty));
+            let vector = declaration.kind().as_ref() != "for_range_loop"
+                && declaration
+                    .field("type")
+                    .is_some_and(|ty| api.standard_vector_type(&ty));
             for declarator in declaration.field_children("declarator") {
                 let Some(local) = name(&declarator) else {
                     continue;
@@ -275,11 +332,16 @@ pub(super) fn add_observations<'a>(
             .values()
             .flatten()
             .filter_map(|binding| {
-                if !binding.vector
-                    || !binding
-                        .declarator
-                        .field("declarator")
-                        .is_some_and(|n| n.kind().as_ref() == "reference_declarator")
+                if !binding.vector {
+                    return None;
+                }
+                if owned_declarator(&binding.declarator) {
+                    return Some((binding.declarator.range().start, (binding, None)));
+                }
+                if !binding
+                    .declarator
+                    .field("declarator")
+                    .is_some_and(|n| n.kind().as_ref() == "reference_declarator")
                 {
                     return None;
                 }
@@ -306,7 +368,7 @@ pub(super) fn add_observations<'a>(
                 {
                     return None;
                 }
-                Some((binding.declarator.range().start, (binding, loop_node)))
+                Some((binding.declarator.range().start, (binding, Some(loop_node))))
             })
             .collect::<BTreeMap<_, _>>();
         if candidates.is_empty() {
@@ -314,7 +376,7 @@ pub(super) fn add_observations<'a>(
         }
         let flow = ControlFlow::new(&function, literals);
         let mut mutations = BTreeMap::<usize, Vec<N<'a>>>::new();
-        let mut publications = BTreeMap::<usize, Vec<(N<'a>, N<'a>)>>::new();
+        let mut publications = BTreeMap::<(usize, usize), (N<'a>, Vec<(N<'a>, N<'a>)>)>::new();
         for call in nodes
             .iter()
             .filter(|n| n.kind().as_ref() == "call_expression")
@@ -341,29 +403,60 @@ pub(super) fn add_observations<'a>(
                 mutations.entry(key).or_default().push(call.clone());
             }
         }
-        for borrow in nodes
-            .iter()
-            .filter(|n| n.kind().as_ref() == "pointer_expression" && compact(n).starts_with('&'))
-        {
-            let Some(element) = borrow
-                .field("argument")
-                .filter(|n| n.kind().as_ref() == "subscript_expression")
-            else {
-                continue;
+        for borrow in nodes.iter().filter(|n| {
+            (n.kind().as_ref() == "pointer_expression" && compact(n).starts_with('&'))
+                || (n.kind().as_ref() == "call_expression"
+                    && method(n).is_some_and(|(_, m)| matches!(m.as_str(), "back" | "front")))
+        }) {
+            let reference_call = borrow.kind().as_ref() == "call_expression";
+            let receiver = if reference_call {
+                let Some((receiver, operation)) = method(borrow) else {
+                    continue;
+                };
+                if api.macro_precedes(&operation, borrow.range().start)
+                    || !borrow
+                        .field("arguments")
+                        .is_some_and(|args| !args.children().any(|n| n.is_named()))
+                {
+                    continue;
+                }
+                Some(receiver)
+            } else {
+                borrow
+                    .field("argument")
+                    .filter(|n| n.kind().as_ref() == "subscript_expression")
+                    .and_then(|n| n.field("argument"))
             };
-            let Some(receiver) = element
-                .field("argument")
-                .filter(|n| n.kind().as_ref() == "identifier")
-            else {
+            let Some(receiver) = receiver.filter(|n| n.kind().as_ref() == "identifier") else {
                 continue;
             };
             let Some(binding) = binding_at(&bindings, receiver.text().as_ref(), borrow) else {
                 continue;
             };
             let key = binding.declarator.range().start;
-            let Some((_, loop_node)) = candidates.get(&key) else {
+            let Some((_, persistent_loop)) = candidates.get(&key) else {
                 continue;
             };
+            // A local vector must survive the selected iteration. Reference
+            // publications and raw keyed-vector pointers have distinct contracts.
+            if reference_call != persistent_loop.is_none() {
+                continue;
+            }
+            let Some(loop_node) = persistent_loop
+                .clone()
+                .or_else(|| enclosing_loop(borrow, &function))
+            else {
+                continue;
+            };
+            if reference_call
+                && (contains(&loop_node, &binding.declaration)
+                    || loop_node
+                        .field("condition")
+                        .and_then(|n| literals.known_bool(&n))
+                        == Some(false))
+            {
+                continue;
+            }
             let Some(publication) = borrow
                 .ancestors()
                 .take_while(|n| {
@@ -390,16 +483,18 @@ pub(super) fn add_observations<'a>(
             {
                 continue;
             }
-            if !contains(loop_node, &publication) {
+            if !contains(&loop_node, &publication) {
                 continue;
             }
             publications
-                .entry(key)
-                .or_default()
+                .entry((key, loop_node.range().start))
+                .or_insert_with(|| (loop_node, Vec::new()))
+                .1
                 .push((borrow.clone(), publication));
         }
-        for (key, borrows) in publications {
-            let (binding, loop_node) = &candidates[&key];
+        for ((key, _), (loop_node, borrows)) in publications {
+            let (binding, persistent_loop) = &candidates[&key];
+            let reference_call = persistent_loop.is_none();
             let Some(changes) = mutations.get(&key) else {
                 continue;
             };
@@ -415,7 +510,7 @@ pub(super) fn add_observations<'a>(
                     changes.partition_point(|change| change.range().start < borrow.range().start);
                 if let Some(change) = changes[..before].iter().rev().find(|change| {
                     change.range().end < borrow.range().start
-                        && contains(loop_node, change)
+                        && contains(&loop_node, change)
                         && conditional.availability_for(change.range()).state
                             != AvailabilityState::Excluded
                         && runtime_reachable(change, &flow, literals)
@@ -429,27 +524,40 @@ pub(super) fn add_observations<'a>(
             let Some((_, anchor, _)) = selected.first() else {
                 continue;
             };
-            let mut captures = BTreeMap::from([
-                (
-                    "container_binding".into(),
-                    capture(path, &binding.declaration),
-                ),
-                (
-                    "persistent_storage".into(),
-                    capture(path, &binding.declarator.field("value").unwrap()),
-                ),
-            ]);
+            let mut captures = BTreeMap::from([(
+                "container_binding".into(),
+                capture(path, &binding.declaration),
+            )]);
+            if let Some(value) = binding
+                .declarator
+                .field("value")
+                .filter(|_| !reference_call)
+            {
+                captures.insert("persistent_storage".into(), capture(path, &value));
+            }
             for (index, (change, borrow, publication)) in selected.iter().enumerate() {
                 captures.insert(format!("mutation_{index}"), capture(path, change));
                 captures.insert(format!("borrow_{index}"), capture(path, borrow));
                 captures.insert(format!("outward_call_{index}"), capture(path, publication));
+                if reference_call {
+                    if let Some((receiver, _)) = method(publication) {
+                        if let Some(storage) =
+                            binding_at(&bindings, receiver.text().as_ref(), publication)
+                        {
+                            captures.insert(
+                                format!("outward_storage_{index}"),
+                                capture(path, &storage.declaration),
+                            );
+                        }
+                    }
+                }
             }
             // Preserve the complete entry/duplicate/capacity guards when bounded.
             if function.range().len() <= 32768 {
                 captures.insert("operation_definition".into(), capture(path, &function));
             }
             if loop_node.range().len() <= 32768 {
-                captures.insert("iteration".into(), capture(path, loop_node));
+                captures.insert("iteration".into(), capture(path, &loop_node));
             }
             let mut alternatives = Vec::new();
             for (change, _, publication) in &selected {
@@ -462,8 +570,13 @@ pub(super) fn add_observations<'a>(
                 conditional.availability_for(binding.declaration.range()),
                 any_availability(alternatives),
             ]);
+            let rule = if reference_call {
+                "cpp-vector-element-publication-review"
+            } else {
+                RULE
+            };
             evidence.push(Evidence {
-                id: id(path, anchor),
+                id: id(path, anchor, rule),
                 kind: EvidenceKind::SensitiveOperation,
                 capability: Capability::ContainerBorrowLifetime,
                 location: location(path, anchor),
@@ -472,7 +585,11 @@ pub(super) fn add_observations<'a>(
                 cwe_candidates: vec!["CWE-416".into()],
                 tags: [
                     "native-container-borrow-review",
-                    "loop-carried-pointer-stability",
+                    if reference_call {
+                        "loop-carried-reference-publication"
+                    } else {
+                        "loop-carried-pointer-stability"
+                    },
                     "storage-effect-and-later-use-require-review",
                 ]
                 .into_iter()
@@ -489,7 +606,7 @@ pub(super) fn add_observations<'a>(
                     ..Default::default()
                 },
                 symbol_resolution: None,
-                rule_id: RULE.into(),
+                rule_id: rule.into(),
                 related_evidence: vec![],
             });
         }
