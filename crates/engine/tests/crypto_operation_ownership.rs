@@ -1,19 +1,9 @@
 use mehscan_core::ScanResult;
-use std::{
-    fs,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::fs;
+mod support;
 
 fn scan(extension: &str, source: &str) -> ScanResult {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "mehscan-crypto-ownership-{}-{nonce}",
-        std::process::id()
-    ));
-    fs::create_dir_all(&root).unwrap();
+    let root = support::temp_dir("crypto-ownership");
     fs::write(root.join(format!("input.{extension}")), source).unwrap();
     let result = mehscan_engine::scan_path(&root).unwrap();
     fs::remove_dir_all(root).unwrap();
