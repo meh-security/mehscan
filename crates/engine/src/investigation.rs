@@ -432,7 +432,7 @@ impl ReviewInventory {
 
 pub const REVIEW_INVENTORY_SCHEMA_VERSION: &str = "26";
 const RUST_CONFIGURATION_REVISION: &str = "source-modules-and-buffer-effects-v3";
-const CPP_EFFECT_REVISION: &str = "vector-element-publications-v2";
+const CPP_EFFECT_REVISION: &str = "exceptional-collection-cleanup-v3";
 
 pub fn validate_review_inventory(
     root: &Path,
@@ -5661,6 +5661,7 @@ fn review_playbook_bucket(
         Capability::BufferLengthPublication
             | Capability::RustRawSliceConstruction
             | Capability::ContainerBorrowLifetime
+            | Capability::ExceptionalOwnershipCleanup
     ) {
         return "native_memory";
     }

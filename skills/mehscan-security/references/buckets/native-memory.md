@@ -63,6 +63,18 @@ element move/copy behavior and possible inline or short-string storage. Trace a
 retained view to its later read or comparison after growth. An opaque storage
 implementation leaves that exact retention/use question unresolved.
 
+For pending collection ownership, follow `collection_binding`, `allocation_*`,
+`collection_insert_*` and `exceptional_exit` through the complete operation.
+A throw early in an iteration can abandon allocations from prior iterations.
+Check cleanup before the selected throw, enclosing handlers or scope guards,
+and when the successful path actually transfers those same allocations.
+Destroying a standard raw-pointer vector releases its slots, not its pointees.
+Borrowed entries and independently owned allocations can coexist; settle the
+selected allocation's cleanup without treating every entry as newly owned.
+Deleting with a different allocation family or an opaque cleanup helper does
+not establish correct cleanup. Keep unrelated throw sites, failed insertion,
+double deletion and other lifetime claims separate from the selected exit.
+
 For Rust raw slices, use `null_pointer`, `safe_constructor`, `field_transfer`
 and `safe_accessor` to check that a possible null state belongs to the same
 object field. A raw slice requires a non-null pointer even for zero length.

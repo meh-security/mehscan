@@ -48,7 +48,7 @@ pub(crate) enum ParseOutcome {
     },
 }
 
-pub(crate) const NATIVE_PASS_NAMES: [&str; 23] = [
+pub(crate) const NATIVE_PASS_NAMES: [&str; 24] = [
     "api_context",
     "arithmetic",
     "domain_bounds",
@@ -72,6 +72,7 @@ pub(crate) const NATIVE_PASS_NAMES: [&str; 23] = [
     "buffer",
     "defined_copy",
     "vector_borrows",
+    "exception_cleanup",
 ];
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -2068,6 +2069,17 @@ pub(crate) fn scan_source(
         &mut evidence,
     );
     native_pass_microseconds[22] = native_started.elapsed().as_micros();
+    native_started = Instant::now();
+    super::cpp_exception_cleanup::add_observations(
+        path,
+        &root,
+        language,
+        &conditional,
+        &literals,
+        &native_api,
+        &mut evidence,
+    );
+    native_pass_microseconds[23] = native_started.elapsed().as_micros();
     native_started = Instant::now();
     let mut native_libxml2_paths = super::native_libxml2::add_native_libxml2_observations(
         path,

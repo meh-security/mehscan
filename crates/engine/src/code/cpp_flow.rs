@@ -32,7 +32,7 @@ impl ControlFlow {
         for node in nodes.iter().rev() {
             let children = named(node);
             let returns = match node.kind().as_ref() {
-                "return_statement" => true,
+                "return_statement" | "throw_statement" => true,
                 "compound_statement" | "else_clause" => children
                     .last()
                     .is_some_and(|n| result.returns.contains(&n.range().start)),

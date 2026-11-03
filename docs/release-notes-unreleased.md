@@ -6,6 +6,7 @@
 - Source lookups support directory-scoped helper discovery.
 - Follow copy-count arithmetic through selected C/C++ constructors and helpers.
 - Review C++ vector element lifetimes across repeated mutations.
+- Review pending C++ allocations abandoned by explicit exceptional exits.
 - Review nullable Rust buffers passed to raw-slice APIs.
 - Review initialized Rust buffer ranges before publishing their length.
 - Preserve captured helper evidence during AI review.

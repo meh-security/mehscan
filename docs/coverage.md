@@ -45,6 +45,12 @@ These are selected same-file relationships. Inferred container types,
 arbitrary aliases, other containers and a complete
 control-flow or lifetime model remain outside that recognition.
 
+C++ exceptional-cleanup reviews connect direct `new` insertions into a local
+standard raw-pointer vector with an explicit earlier throw in the same loop.
+Review checks pending allocations from prior iterations, cleanup and handlers,
+and the successful ownership handoff. Arbitrary containers, inferred allocation
+helpers and exceptions from ordinary calls remain outside this recognition.
+
 Rust raw-slice analysis follows selected null field initializers from safe
 constructors, including a defined raw-record transfer, into a safe accessor of
 the same owned type. A rejecting null check closes only the non-null invariant.

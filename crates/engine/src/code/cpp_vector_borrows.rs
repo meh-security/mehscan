@@ -19,10 +19,10 @@ const RULE: &str = "cpp-vector-loop-borrow-review";
 fn compact(node: &N<'_>) -> String {
     node.text().split_whitespace().collect()
 }
-fn contains(a: &N<'_>, b: &N<'_>) -> bool {
+pub(super) fn contains(a: &N<'_>, b: &N<'_>) -> bool {
     a.range().start <= b.range().start && b.range().end <= a.range().end
 }
-fn name<'a>(node: &N<'a>) -> Option<N<'a>> {
+pub(super) fn name<'a>(node: &N<'a>) -> Option<N<'a>> {
     if matches!(node.kind().as_ref(), "identifier" | "field_identifier") {
         return Some(node.clone());
     }
@@ -39,7 +39,7 @@ fn name<'a>(node: &N<'a>) -> Option<N<'a>> {
         .flatten()
     })
 }
-fn same_function(node: &N<'_>, function: &N<'_>) -> bool {
+pub(super) fn same_function(node: &N<'_>, function: &N<'_>) -> bool {
     !node
         .ancestors()
         .take_while(|n| n.range() != function.range())
@@ -49,7 +49,7 @@ fn same_function(node: &N<'_>, function: &N<'_>) -> bool {
             .find(|n| n.kind().as_ref() == "function_definition")
             .is_some_and(|n| n.range() == function.range())
 }
-fn location(path: &str, node: &N<'_>) -> Location {
+pub(super) fn location(path: &str, node: &N<'_>) -> Location {
     let a = node.start_pos();
     let b = node.end_pos();
     Location {
@@ -66,13 +66,13 @@ fn location(path: &str, node: &N<'_>) -> Location {
         },
     }
 }
-fn capture(path: &str, node: &N<'_>) -> Capture {
+pub(super) fn capture(path: &str, node: &N<'_>) -> Capture {
     Capture {
         text: node.text().into_owned(),
         location: location(path, node),
     }
 }
-fn id(path: &str, node: &N<'_>, rule: &str) -> String {
+pub(super) fn id(path: &str, node: &N<'_>, rule: &str) -> String {
     let mut hash = 0xcbf29ce484222325u64;
     for byte in format!(
         "{path}\0{rule}\0{}\0{}",
@@ -86,7 +86,7 @@ fn id(path: &str, node: &N<'_>, rule: &str) -> String {
     }
     format!("ev-{hash:016x}")
 }
-fn owned_declarator(node: &N<'_>) -> bool {
+pub(super) fn owned_declarator(node: &N<'_>) -> bool {
     node.kind().as_ref() == "identifier"
         || (node.kind().as_ref() == "init_declarator"
             && node
@@ -103,7 +103,7 @@ fn enclosing_loop<'a>(node: &N<'a>, function: &N<'a>) -> Option<N<'a>> {
             )
         })
 }
-fn joined_availability(values: Vec<Availability>) -> Availability {
+pub(super) fn joined_availability(values: Vec<Availability>) -> Availability {
     let state = if values
         .iter()
         .any(|v| v.state == AvailabilityState::Excluded)
@@ -134,7 +134,7 @@ fn joined_availability(values: Vec<Availability>) -> Availability {
         }),
     }
 }
-fn any_availability(values: Vec<Availability>) -> Availability {
+pub(super) fn any_availability(values: Vec<Availability>) -> Availability {
     if values.iter().any(|v| v.state == AvailabilityState::Always) {
         return Availability {
             state: AvailabilityState::Always,
@@ -162,13 +162,13 @@ fn any_availability(values: Vec<Availability>) -> Availability {
         }),
     }
 }
-struct Binding<'a> {
-    declaration: N<'a>,
-    declarator: N<'a>,
-    scope: N<'a>,
-    vector: bool,
+pub(super) struct Binding<'a> {
+    pub(super) declaration: N<'a>,
+    pub(super) declarator: N<'a>,
+    pub(super) scope: N<'a>,
+    pub(super) vector: bool,
 }
-fn binding_at<'a, 'b>(
+pub(super) fn binding_at<'a, 'b>(
     bindings: &'b BTreeMap<String, Vec<Binding<'a>>>,
     local: &str,
     node: &N<'a>,
@@ -179,7 +179,7 @@ fn binding_at<'a, 'b>(
         .filter(|b| b.declarator.range().start < node.range().start && contains(&b.scope, node))
         .max_by_key(|b| (b.scope.range().start, b.declarator.range().start))
 }
-fn method<'a>(call: &N<'a>) -> Option<(N<'a>, String)> {
+pub(super) fn method<'a>(call: &N<'a>) -> Option<(N<'a>, String)> {
     let callee = call.field("function")?;
     if callee.kind().as_ref() != "field_expression" {
         return None;

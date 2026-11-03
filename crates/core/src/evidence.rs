@@ -112,6 +112,10 @@ pub enum Capability {
     /// that can be mutated on a later iteration. Storage and subsequent use
     /// of the pointer remain review obligations.
     ContainerBorrowLifetime,
+    /// A local standard raw-pointer collection receives fresh allocations in a
+    /// loop with an explicit exceptional exit. Pending pointee ownership and
+    /// cleanup on that exit require review.
+    ExceptionalOwnershipCleanup,
     /// A C-family conversion that may discard higher-order integer bits before
     /// the converted value reaches a security-relevant arithmetic operation.
     IntegerNarrowing,

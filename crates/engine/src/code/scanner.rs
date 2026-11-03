@@ -1575,6 +1575,7 @@ fn capability_name(capability: Capability) -> &'static str {
         Capability::CppRaiiOwner => "cpp_raii_owner",
         Capability::CppOwnershipTransfer => "cpp_ownership_transfer",
         Capability::ContainerBorrowLifetime => "container_borrow_lifetime",
+        Capability::ExceptionalOwnershipCleanup => "exceptional_ownership_cleanup",
         Capability::IntegerNarrowing => "integer_narrowing",
         Capability::ArithmeticDivision => "arithmetic_division",
         Capability::NonzeroValidation => "nonzero_validation",

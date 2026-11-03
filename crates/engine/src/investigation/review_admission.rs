@@ -578,6 +578,16 @@ pub(super) fn is_marker(evidence: &Evidence) -> bool {
 }
 
 pub(super) fn review_contract(evidence: &[Evidence]) -> Option<OperationReviewContract> {
+    if evidence
+        .iter()
+        .any(|e| e.capability == Capability::ExceptionalOwnershipCleanup)
+    {
+        return Some(OperationReviewContract {
+            relationship: "bounded_pending_collection_cleanup_review",
+            security_question: "Can allocations stored in this local raw-pointer collection survive a prior iteration and remain unowned at the selected throw? Establish pending ownership, applicable cleanup/handlers and successful-path transfer. Destroying a vector of raw pointers does not destroy its pointees; distinguish borrowed entries and the selected allocation family.",
+            title: "Review pending ownership at exceptional exit",
+        });
+    }
     if evidence.iter().any(|e| {
         e.tags
             .iter()
